@@ -2672,6 +2672,112 @@ describe('resumable event handler transformation', () => {
     expect(code).not.toContain('setAttribute(\"on:click\"')
   })
 
+  it('falls back for auto-extracted mutable module handler identifiers', () => {
+    const ast = parseFile(`
+      export const calls = []
+      const make = (label) => () => calls.push(label)
+      export let handler = make('a')
+
+      export function swap() {
+        handler = make('b')
+      }
+
+      export function App() {
+        return <button onClick={handler}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",/)
+    expect(code).not.toContain('setAttribute("on:click"')
+    expect(code).not.toContain('export const __fict_e')
+  })
+
+  it('falls back for auto-extracted imported handler identifiers', () => {
+    const ast = parseFile(`
+      import { handler } from './events'
+
+      export function App() {
+        return <button onClick={handler}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",/)
+    expect(code).not.toContain('setAttribute("on:click"')
+    expect(code).not.toContain('export const __fict_e')
+  })
+
+  it('falls back for auto-extracted local let handler identifiers', () => {
+    const ast = parseFile(`
+      export function App() {
+        let handler = () => console.log('click')
+        return <button onClick={handler}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",/)
+    expect(code).not.toContain('setAttribute("on:click"')
+    expect(code).not.toContain('export const __fict_e')
+  })
+
+  it('falls back for auto-extracted local handler aliases with unknown stability', () => {
+    const ast = parseFile(`
+      export function App() {
+        const base = () => console.log('click')
+        const handler = base
+        return <button onClick={handler}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",/)
+    expect(code).not.toContain('setAttribute("on:click"')
+    expect(code).not.toContain('export const __fict_e')
+  })
+
+  it('auto-extracts stable bare handler identifiers', () => {
+    const ast = parseFile(`
+      export const moduleConstHandler = () => console.log('module const')
+      export function moduleFunctionHandler() {
+        console.log('module function')
+      }
+
+      export function App() {
+        const localConstHandler = () => console.log('local const')
+        function localFunctionHandler() {
+          console.log('local function')
+        }
+        return (
+          <div>
+            <button onClick={moduleConstHandler}>Module const</button>
+            <button onClick={moduleFunctionHandler}>Module function</button>
+            <button onClick={localConstHandler}>Local const</button>
+            <button onClick={localFunctionHandler}>Local function</button>
+          </div>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code.match(/setAttribute\("on:click"/g)).toHaveLength(4)
+    expect(code).toContain('export const __fict_e0')
+    expect(code).toContain('export const __fict_e1')
+    expect(code).toContain('export const __fict_e2')
+    expect(code).toContain('export const __fict_e3')
+  })
+
   it('falls back for auto resumable handlers that would capture keyed-list aliases', () => {
     const ast = parseFile(`
       function Comp() {

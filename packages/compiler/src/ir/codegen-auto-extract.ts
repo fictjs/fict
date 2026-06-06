@@ -1,5 +1,5 @@
 import type { CodegenContext } from './codegen'
-import type { BasicBlock, Expression, Instruction } from './hir'
+import { getSSABaseName, type BasicBlock, type Expression, type Instruction } from './hir'
 
 /**
  * Count AST nodes in an expression for complexity estimation.
@@ -324,6 +324,23 @@ function blockHasAsyncAwait(block: BasicBlock): boolean {
   return false
 }
 
+function isStableBareHandlerIdentifier(name: string, ctx: CodegenContext): boolean {
+  const baseName = getSSABaseName(name)
+  const isFunctionLocal = ctx.currentFunctionDeclaredNames?.has(baseName) ?? false
+  if (isFunctionLocal) {
+    if (ctx.mutatedVars?.has(baseName)) return false
+    const kind = ctx.functionBindingKinds?.get(baseName)
+    return kind === 'const' || kind === 'function'
+  }
+
+  if (!(ctx.moduleDeclaredNames?.has(baseName) ?? false)) {
+    return false
+  }
+
+  const kind = ctx.moduleBindingKinds?.get(baseName) ?? 'unknown'
+  return kind === 'const' || kind === 'function' || kind === 'class'
+}
+
 /**
  * Check if an instruction contains async/await.
  */
@@ -356,9 +373,9 @@ export function shouldAutoExtract(expr: Expression | undefined, ctx: CodegenCont
 
   const threshold = ctx.autoExtractThreshold ?? 3
 
-  // If the handler is a reference to an external function, always extract
+  // Bare handler identifiers are safe to extract only when the binding is stable.
   if (expr.kind === 'Identifier') {
-    return true
+    return isStableBareHandlerIdentifier(expr.name, ctx)
   }
 
   // For inline functions, analyze complexity

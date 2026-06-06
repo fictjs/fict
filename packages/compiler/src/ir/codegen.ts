@@ -755,6 +755,8 @@ export interface CodegenContext {
   nonSerializableSignalVars?: Set<string> | undefined
   /** Variables assigned to function expressions (should not be treated as reactive accessors) */
   functionVars?: Set<string> | undefined
+  /** Declaration kind for function-valued local bindings. */
+  functionBindingKinds?: Map<string, ModuleBindingKind> | undefined
   /** Variables that are memos (derived values) - these shouldn't be cached by getter cache */
   memoVars?: Set<string> | undefined
   /** Memo call names (including aliases) that return accessors */
@@ -916,6 +918,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     callableSignalVars: new Set(),
     nonSerializableSignalVars: new Set(),
     functionVars: new Set(),
+    functionBindingKinds: new Map(),
     memoVars: new Set(),
     memoMacroNames: new Set(['$memo', 'createMemo']),
     storeMacroNames: new Set(['$store']),
@@ -6377,6 +6380,7 @@ function lowerTopLevelStatementBlock(
   ctx.aliasVars = aliasVars
 
   const functionVars = ctx.functionVars ?? new Set<string>()
+  const functionBindingKinds = ctx.functionBindingKinds ?? new Map<string, ModuleBindingKind>()
   const signalVars = ctx.signalVars ?? new Set<string>()
   const callableSignalVars = ctx.callableSignalVars ?? new Set<string>()
   const nonSerializableSignalVars = ctx.nonSerializableSignalVars ?? new Set<string>()
@@ -6385,6 +6389,7 @@ function lowerTopLevelStatementBlock(
   const mutatedVars = new Set<string>()
   const memberMutatedVars = new Set<string>()
   ctx.functionVars = functionVars
+  ctx.functionBindingKinds = functionBindingKinds
   ctx.signalVars = signalVars
   ctx.callableSignalVars = callableSignalVars
   ctx.nonSerializableSignalVars = nonSerializableSignalVars
@@ -6406,6 +6411,7 @@ function lowerTopLevelStatementBlock(
         const target = deSSAVarName(instr.target.name)
         if (instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression') {
           functionVars.add(target)
+          functionBindingKinds.set(target, instr.declarationKind ?? 'unknown')
           // Store the HIR expression for potential hoisting in handlers
           componentFunctionDefs.set(target, instr.value)
           if (signalVars.has(target)) {
@@ -7586,6 +7592,7 @@ function lowerFunctionWithRegions(
   const prevCallableSignalVars = ctx.callableSignalVars
   const prevNonSerializableSignalVars = ctx.nonSerializableSignalVars
   const prevFunctionVars = ctx.functionVars
+  const prevFunctionBindingKinds = ctx.functionBindingKinds
   const prevMemoVars = ctx.memoVars
   const prevStoreVars = ctx.storeVars
   const prevNamespaceStoreAliasVars = ctx.namespaceStoreAliasVars
@@ -7640,6 +7647,7 @@ function lowerFunctionWithRegions(
     ctx.nonSerializableSignalVars?.delete(name)
   }
   ctx.functionVars = new Set(prevFunctionVars ?? [])
+  ctx.functionBindingKinds = new Map(prevFunctionBindingKinds ?? [])
   ctx.memoVars = new Set(prevMemoVars ?? [])
   ctx.storeVars = new Set(prevStoreVars ?? [])
   ctx.namespaceStoreAliasVars = new Set(prevNamespaceStoreAliasVars ?? [])
@@ -7850,6 +7858,7 @@ function lowerFunctionWithRegions(
         }
         if (instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression') {
           ctx.functionVars?.add(target)
+          ctx.functionBindingKinds?.set(target, instr.declarationKind ?? 'unknown')
           // Store HIR expression for potential hoisting in resumable handlers
           ctx.componentFunctionDefs?.set(target, instr.value)
           if (ctx.signalVars?.has(target)) {
@@ -8457,6 +8466,7 @@ function lowerFunctionWithRegions(
       ctx.callableSignalVars = prevCallableSignalVars
       ctx.nonSerializableSignalVars = prevNonSerializableSignalVars
       ctx.functionVars = prevFunctionVars
+      ctx.functionBindingKinds = prevFunctionBindingKinds
       ctx.componentFunctionDefs = prevComponentFunctionDefs
       ctx.componentFunctionMutations = prevComponentFunctionMutations
       ctx.hoistedFunctionDepNames = prevHoistedFunctionDepNames
@@ -8488,6 +8498,7 @@ function lowerFunctionWithRegions(
     ctx.callableSignalVars = prevCallableSignalVars
     ctx.nonSerializableSignalVars = prevNonSerializableSignalVars
     ctx.functionVars = prevFunctionVars
+    ctx.functionBindingKinds = prevFunctionBindingKinds
     ctx.componentFunctionDefs = prevComponentFunctionDefs
     ctx.componentFunctionMutations = prevComponentFunctionMutations
     ctx.hoistedFunctionDepNames = prevHoistedFunctionDepNames
@@ -8620,6 +8631,7 @@ function lowerFunctionWithRegions(
   ctx.callableSignalVars = prevCallableSignalVars
   ctx.nonSerializableSignalVars = prevNonSerializableSignalVars
   ctx.functionVars = prevFunctionVars
+  ctx.functionBindingKinds = prevFunctionBindingKinds
   ctx.componentFunctionDefs = prevComponentFunctionDefs
   ctx.componentFunctionMutations = prevComponentFunctionMutations
   ctx.hoistedFunctionDepNames = prevHoistedFunctionDepNames
