@@ -3,13 +3,14 @@ import { parseSync } from '@babel/core'
 import * as t from '@babel/types'
 import { buildHIR } from '../src/ir/build-hir'
 import { createCodegenContext, lowerHIRWithRegions } from '../src/ir/codegen'
-import { HIRError } from '../src/ir/hir'
+import { HIRError, type Expression } from '../src/ir/hir'
 import { analyzeReactiveScopes } from '../src/ir/scopes'
 import {
   generateRegions,
   regionToMetadata,
   generateRegionCode,
   analyzeRegionMemoization,
+  expressionUsesTracked,
 } from '../src/ir/regions'
 import { firstFunction } from './hir-test-utils'
 
@@ -60,6 +61,30 @@ describe('generateRegions', () => {
     if (multiBlockRegion) {
       expect(multiBlockRegion.hasControlFlow).toBe(true)
     }
+  })
+})
+
+describe('expressionUsesTracked', () => {
+  const id = (name: string): Expression => ({ kind: 'Identifier', name })
+
+  it('detects tracked reads through newer expression containers', () => {
+    const ctx = createCodegenContext(t)
+    ctx.trackedVars.add('count')
+    const cases: Expression[] = [
+      { kind: 'SequenceExpression', expressions: [{ kind: 'Literal', value: 0 }, id('count')] },
+      {
+        kind: 'TaggedTemplateExpression',
+        tag: id('tag'),
+        quasi: { kind: 'TemplateLiteral', quasis: ['', ''], expressions: [id('count')] },
+      },
+      { kind: 'NewExpression', callee: id('Box'), arguments: [id('count')] },
+      { kind: 'AwaitExpression', argument: id('count') },
+      { kind: 'YieldExpression', argument: id('count'), delegate: false },
+      { kind: 'ImportExpression', source: id('count') },
+      { kind: 'ClassExpression', superClass: id('count'), body: [] },
+    ]
+
+    expect(cases.map(expr => expressionUsesTracked(expr, ctx))).toEqual(cases.map(() => true))
   })
 })
 

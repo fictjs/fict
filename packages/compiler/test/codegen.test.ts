@@ -498,6 +498,38 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(code).toMatch(/return count\(\)/)
   })
 
+  it('wraps tracked expression statements inside expression containers in effects', () => {
+    const ast = parseFile(`
+      function tag(strings, value) {
+        globalThis.tagged = value
+      }
+
+      class Box {
+        constructor(value) {
+          globalThis.boxed = value
+        }
+      }
+
+      function Counter() {
+        let count = $state(0)
+        let seen = []
+        ;(0, seen.push(count))
+        tag\`\${count}\`
+        new Box(count)
+        import(count)
+        return <p>{seen.length}</p>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toMatch(/__fictUseEffect\(__fictCtx, \(\) => \(0, seen\.push\(count\(\)\)\)/)
+    expect(code).toMatch(/__fictUseEffect\(__fictCtx, \(\) => tag`\$\{count\(\)\}`/)
+    expect(code).toMatch(/__fictUseEffect\(__fictCtx, \(\) => new Box\(count\(\)\)/)
+    expect(code).toMatch(/__fictUseEffect\(__fictCtx, \(\) => import\(count\(\)\)/)
+  })
+
   it('handles hook return object without destructuring by treating properties as accessors', () => {
     const ast = parseFile(`
       const useCounter = () => {

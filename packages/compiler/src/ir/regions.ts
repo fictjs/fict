@@ -938,6 +938,8 @@ export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): bo
         expressionUsesTracked(expr.source as Expression, ctx) ||
         (expr.options ? expressionUsesTracked(expr.options as Expression, ctx) : false)
       )
+    case 'ClassExpression':
+      return expr.superClass ? expressionUsesTracked(expr.superClass as Expression, ctx) : false
     case 'AssignmentExpression':
       return (
         assignmentTargetUsesTrackedRead(expr.left as Expression) ||
