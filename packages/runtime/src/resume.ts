@@ -472,6 +472,33 @@ function objectChildPath(path: string, key: string): string {
   return `${path}.${JSON.stringify(key)}`
 }
 
+function isArrayIndexKey(key: string): boolean {
+  const index = Number(key)
+  return Number.isInteger(index) && index >= 0 && index < 4294967295 && String(index) === key
+}
+
+function assertArraySerializableShape(value: unknown[], path: string): void {
+  const extraKey = Object.keys(value).find(key => !isArrayIndexKey(key))
+  if (extraKey !== undefined) {
+    throw new Error(
+      `[Fict] Cannot serialize array with enumerable non-index property at ${objectChildPath(
+        path,
+        extraKey,
+      )}. Array snapshot values only support indexed elements.`,
+    )
+  }
+
+  const symbolKey = enumerableOwnSymbols(value)[0]
+  if (symbolKey !== undefined) {
+    throw new Error(
+      `[Fict] Cannot serialize array with enumerable symbol property at ${objectChildPath(
+        path,
+        String(symbolKey),
+      )}. Array snapshot values only support indexed elements.`,
+    )
+  }
+}
+
 function unsupportedObjectName(value: object): string {
   const ctor = (value as { constructor?: { name?: string } }).constructor
   if (ctor?.name) return ctor.name
@@ -605,6 +632,7 @@ export function serializeValue(
     // Array
     if (Array.isArray(value)) {
       seen.set(value, path)
+      assertArraySerializableShape(value, path)
       return Array.from({ length: value.length }, (_, i) =>
         Object.prototype.hasOwnProperty.call(value, i)
           ? serializeValue(value[i], seen, `${path}[${i}]`)

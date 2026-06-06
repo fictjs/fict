@@ -239,6 +239,67 @@ describe('serializeValue / deserializeValue', () => {
       expect(Number.isNaN(result[5])).toBe(true)
       expect((result[6] as Date).getTime()).toBe(new Date('2024-01-01').getTime())
     })
+
+    it('should reject dense arrays with enumerable non-index properties', () => {
+      const arr = [1] as unknown[] & { extra: string }
+      arr.extra = 'x'
+
+      expect(() => serializeValue(arr)).toThrow(
+        /Cannot serialize array with enumerable non-index property at \$\."extra"/,
+      )
+    })
+
+    it('should reject sparse arrays with enumerable non-index properties', () => {
+      const arr = [1, , 3] as unknown[] & { extra: string }
+      arr.extra = 'x'
+
+      expect(() => serializeValue(arr)).toThrow(
+        /Cannot serialize array with enumerable non-index property at \$\."extra"/,
+      )
+    })
+
+    it('should reject arrays with enumerable symbol properties', () => {
+      const key = Symbol.for('fict.serialize.array-extra')
+      const arr = [1]
+      Object.defineProperty(arr, key, { value: 'x', enumerable: true })
+
+      expect(() => serializeValue(arr)).toThrow(
+        /Cannot serialize array with enumerable symbol property at \$\."Symbol\(fict\.serialize\.array-extra\)"/,
+      )
+    })
+
+    it('should ignore non-enumerable array properties', () => {
+      const key = Symbol.for('fict.serialize.array-hidden')
+      const arr = [1] as unknown[] & Record<string | symbol, unknown>
+      Object.defineProperty(arr, 'extra', { value: 'x', enumerable: false })
+      Object.defineProperty(arr, key, { value: 'symbol', enumerable: false })
+
+      const result = deserializeValue(JSON.parse(JSON.stringify(serializeValue(arr)))) as unknown[]
+
+      expect(result).toEqual([1])
+      expect(Object.keys(result)).toEqual(['0'])
+      expect((result as Record<string, unknown>).extra).toBeUndefined()
+      expect((result as Record<symbol, unknown>)[key]).toBeUndefined()
+    })
+
+    it('should reject nested arrays with enumerable non-index properties', () => {
+      const objectArray = [1] as unknown[] & { extra: string }
+      objectArray.extra = 'object'
+      const mapArray = [2] as unknown[] & { extra: string }
+      mapArray.extra = 'map'
+      const setArray = [3] as unknown[] & { extra: string }
+      setArray.extra = 'set'
+
+      expect(() => serializeValue({ arr: objectArray })).toThrow(
+        /Cannot serialize array with enumerable non-index property at \$\."arr"\."extra"/,
+      )
+      expect(() => serializeValue(new Map([['arr', mapArray]]))).toThrow(
+        /Cannot serialize array with enumerable non-index property at \$\.v0\."extra"/,
+      )
+      expect(() => serializeValue(new Set([setArray]))).toThrow(
+        /Cannot serialize array with enumerable non-index property at \$\[0\]\."extra"/,
+      )
+    })
   })
 
   describe('objects', () => {
