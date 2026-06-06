@@ -6189,6 +6189,55 @@ describe('compiled templates DOM integration', () => {
     delete globals.__fictConditionalChildLogical
   })
 
+  it('uses intrinsic undefined for missing logical conditional child branches', async () => {
+    const globals = globalThis as Record<string, unknown>
+    globals.__fictLogicalChildVisible = false
+
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const visible = (globalThis as any).__fictLogicalChildVisible === true
+        const undefined = () => <em data-id="wrong">wrong</em>
+
+        return (
+          <div data-id="root">
+            {visible && <span data-id="right">right</span>}
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const output = transformCommonJS(source, {
+      fineGrainedDom: true,
+      lazyConditional: true,
+    })
+    expect(output).toContain('createConditional')
+    expect(output).toMatch(/createElement,\s*void 0,\s*__el_/)
+    expect(output).not.toMatch(/createElement,\s*undefined,\s*__el_/)
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: true,
+      lazyConditional: true,
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+    expect(container.querySelector('[data-id="wrong"]')).toBeNull()
+    expect(container.querySelector('[data-id="right"]')).toBeNull()
+    expect(container.querySelector('[data-id="root"]')?.textContent).toBe('')
+
+    teardown()
+    container.remove()
+    delete globals.__fictLogicalChildVisible
+  })
+
   it('keeps list receivers from generated controller temp shadowing', async () => {
     const renderText = async (source: string): Promise<string> => {
       const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
