@@ -4041,6 +4041,79 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps reactive component prop values live inside expression containers', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      class Box {
+        constructor(value) {
+          this.value = value
+        }
+      }
+
+      function tag(strings, value) {
+        return value
+      }
+
+      export let api: { set(value: number): void; getTmp(): number }
+
+      function Child(props: any) {
+        return (
+          <span data-testid="value">
+            {props.box.value}:{props.seq}:{props.assigned}:{props.tagged}:{props.spreadBox.value}
+          </span>
+        )
+      }
+
+      export function App() {
+        let count = $state(1)
+        let tmp = 0
+        api = {
+          set(value: number) {
+            count = value
+          },
+          getTmp() {
+            return tmp
+          },
+        }
+        return (
+          <Child
+            box={new Box(count)}
+            seq={(0, count)}
+            assigned={(tmp = count)}
+            tagged={tag\`\${count}\`}
+            {...{ spreadBox: new Box(count) }}
+          />
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      api: { set(value: number): void; getTmp(): number }
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const value = container.querySelector('[data-testid="value"]') as HTMLSpanElement
+
+    expect(value.textContent).toBe('1:1:1:1:1')
+    expect(mod.api.getTmp()).toBe(1)
+
+    mod.api.set(2)
+    await flushUpdates()
+
+    expect(value.textContent).toBe('2:2:2:2:2')
+    expect(mod.api.getTmp()).toBe(2)
+
+    teardown()
+    container.remove()
+  })
+
   it('does not invoke function-valued component spread sources', async () => {
     const source = `
       import { render } from 'fict'

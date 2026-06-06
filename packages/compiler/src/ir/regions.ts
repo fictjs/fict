@@ -847,6 +847,22 @@ function getNamespaceReactiveMemberKind(
 }
 
 export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): boolean {
+  const assignmentTargetUsesTrackedRead = (target: Expression): boolean => {
+    switch (target.kind) {
+      case 'Identifier':
+        return false
+      case 'MemberExpression':
+      case 'OptionalMemberExpression':
+        if (expressionUsesTracked(target.object as Expression, ctx)) return true
+        if (target.computed && target.property.kind !== 'Literal') {
+          return expressionUsesTracked(target.property as Expression, ctx)
+        }
+        return false
+      default:
+        return expressionUsesTracked(target, ctx)
+    }
+  }
+
   switch (expr.kind) {
     case 'Identifier':
       return (
@@ -865,6 +881,9 @@ export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): bo
       return false
     case 'CallExpression':
     case 'OptionalCallExpression':
+      if (expressionUsesTracked(expr.callee as Expression, ctx)) return true
+      return expr.arguments.some(arg => expressionUsesTracked(arg as Expression, ctx))
+    case 'NewExpression':
       if (expressionUsesTracked(expr.callee as Expression, ctx)) return true
       return expr.arguments.some(arg => expressionUsesTracked(arg as Expression, ctx))
     case 'LogicalExpression':
@@ -895,10 +914,31 @@ export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): bo
       })
     case 'TemplateLiteral':
       return expr.expressions.some(e => expressionUsesTracked(e as Expression, ctx))
+    case 'TaggedTemplateExpression':
+      return (
+        expressionUsesTracked(expr.tag as Expression, ctx) ||
+        expressionUsesTracked(expr.quasi as Expression, ctx)
+      )
     case 'SpreadElement':
       return expressionUsesTracked(expr.argument as Expression, ctx)
     case 'UnaryExpression':
       return expressionUsesTracked(expr.argument as Expression, ctx)
+    case 'AwaitExpression':
+      return expressionUsesTracked(expr.argument as Expression, ctx)
+    case 'SequenceExpression':
+      return expr.expressions.some(e => expressionUsesTracked(e as Expression, ctx))
+    case 'YieldExpression':
+      return expr.argument ? expressionUsesTracked(expr.argument as Expression, ctx) : false
+    case 'ImportExpression':
+      return (
+        expressionUsesTracked(expr.source as Expression, ctx) ||
+        (expr.options ? expressionUsesTracked(expr.options as Expression, ctx) : false)
+      )
+    case 'AssignmentExpression':
+      return (
+        assignmentTargetUsesTrackedRead(expr.left as Expression) ||
+        expressionUsesTracked(expr.right as Expression, ctx)
+      )
     case 'UpdateExpression':
       return expressionUsesTracked(expr.argument as Expression, ctx)
     default:
