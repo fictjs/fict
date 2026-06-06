@@ -943,6 +943,7 @@ export function propagateHookResultAlias(
   ctx: CodegenContext,
 ): void {
   targetBase = deSSAVarName(targetBase)
+  propagateHookFunctionAlias(targetBase, value, ctx)
   clearHookResultAlias(targetBase, ctx)
   const hookResultPassthroughCalls = new Set(['_slicedToArray', '_toArray'])
   const hookResultRestCalls = new Set(['__fictPropsRest', '__fictObjectRest'])
@@ -1398,6 +1399,8 @@ export interface CodegenContext {
   hookReturnInfo?: Map<string, HookReturnInfo> | undefined
   /** Hook metadata cache keys that came from imported module metadata. */
   importedHookReturnInfoNames?: Set<string> | undefined
+  /** Local function aliases that point at hook functions with known return metadata. */
+  hookFunctionAliases?: Map<string, string> | undefined
   /** Map of local variables bound to hook results (per function) */
   hookResultVarMap?: Map<string, string> | undefined
   /** Imported hook bindings that did not publish hook-return metadata */
@@ -1521,6 +1524,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     resumablePropRests: new Map(),
     hookReturnInfo: new Map(),
     importedHookReturnInfoNames: new Set(),
+    hookFunctionAliases: new Map(),
     opaqueImportedHookNames: new Set(),
     hoistedTemplates: new Map(),
     hoistedTemplateStatements: [],
@@ -1574,6 +1578,44 @@ function getCachedHookReturnInfo(name: string, ctx: CodegenContext): HookReturnI
 function getHookReturnInfo(name: string, ctx: CodegenContext): HookReturnInfo | null {
   if (hasShadowedImportedHookReturnInfo(name, ctx)) return null
   return getHookReturnInfoWithOps(name, ctx, hookReturnInfoAnalysisOps)
+}
+
+function getHookFunctionAliasName(name: string, ctx: CodegenContext): string | null {
+  const baseName = deSSAVarName(name)
+  if (ctx.shadowedNames?.has(baseName) ?? false) return null
+  return ctx.hookFunctionAliases?.get(baseName) ?? null
+}
+
+function resolveHookFunctionNameForAliasSource(name: string, ctx: CodegenContext): string | null {
+  const baseName = deSSAVarName(name)
+  const aliased = getHookFunctionAliasName(baseName, ctx)
+  if (aliased) return aliased
+  return getHookReturnInfo(baseName, ctx) ? baseName : null
+}
+
+function clearHookFunctionAlias(targetBase: string, ctx: CodegenContext): void {
+  ctx.hookFunctionAliases?.delete(deSSAVarName(targetBase))
+}
+
+function propagateHookFunctionAlias(
+  targetBase: string,
+  value: Expression,
+  ctx: CodegenContext,
+): void {
+  const target = deSSAVarName(targetBase)
+  clearHookFunctionAlias(target, ctx)
+  const resolveSource = (expr: Expression): string | null => {
+    if (expr.kind === 'Identifier') return resolveHookFunctionNameForAliasSource(expr.name, ctx)
+    if (expr.kind === 'SequenceExpression') {
+      const last = expr.expressions[expr.expressions.length - 1]
+      return last ? resolveSource(last) : null
+    }
+    return null
+  }
+  const source = resolveSource(value)
+  if (!source) return
+  ctx.hookFunctionAliases = ctx.hookFunctionAliases ?? new Map()
+  ctx.hookFunctionAliases.set(target, source)
 }
 
 export function resolveHookMemberValue(
@@ -1633,13 +1675,17 @@ function resolveDirectHookCallInfo(
   if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return null
   if (expr.callee.kind !== 'Identifier') return null
 
-  const hookName = deSSAVarName(expr.callee.name)
-  const cached = getCachedHookReturnInfo(hookName, ctx)
-  if (cached) return { hookName, info: cached }
-  if (!isHookName(hookName)) return null
-  if (ctx.opaqueImportedHookNames?.has(hookName)) return null
+  const localName = deSSAVarName(expr.callee.name)
+  const aliasedHookName = getHookFunctionAliasName(localName, ctx)
+  const resolvedHookName = aliasedHookName ?? localName
+  const cached = getCachedHookReturnInfo(resolvedHookName, ctx)
+  if (cached) return { hookName: resolvedHookName, info: cached }
+  if (aliasedHookName)
+    return { hookName: resolvedHookName, info: getHookReturnInfo(resolvedHookName, ctx) }
+  if (!isHookName(resolvedHookName)) return null
+  if (ctx.opaqueImportedHookNames?.has(resolvedHookName)) return null
 
-  return { hookName, info: getHookReturnInfo(hookName, ctx) }
+  return { hookName: resolvedHookName, info: getHookReturnInfo(resolvedHookName, ctx) }
 }
 
 function getHookReturnAccessorKind(
@@ -1991,6 +2037,7 @@ export function lowerHIRToBabel(
   ctx.classComponentPaths = collectClassComponentPaths(originalBody, t)
   ctx.staticRestExclusionKeys = collectStaticRestExclusionKeys(originalBody, t)
   addDestructuredJSXComponentSourcePaths(program, ctx)
+  seedSameFileHookAliasMetadata(program, originalBody, ctx, t)
   const body: BabelCore.types.Statement[] = []
   const emittedFunctionNames = new Set<string>()
   for (const fn of program.functions) {
@@ -2266,6 +2313,7 @@ function lowerFunction(
   const prevLocalDeclared = ctx.localDeclaredNames
   const prevImportedReactiveKinds = ctx.importedReactiveKinds
   const prevContextLocalName = ctx.contextLocalName
+  const prevHookFunctionAliases = ctx.hookFunctionAliases
   const scopedTracked = new Set(ctx.trackedVars)
   const scopedImportedReactiveKinds = new Map(prevImportedReactiveKinds ?? [])
   fn.params.forEach(p => scopedTracked.delete(deSSAVarName(p.name)))
@@ -2284,6 +2332,7 @@ function lowerFunction(
     ctx.nonSerializableSignalVars?.delete(name)
   }
   ctx.localDeclaredNames = localDeclared
+  ctx.hookFunctionAliases = new Map(prevHookFunctionAliases ?? [])
   ctx.contextLocalName = undefined
   ctx.needsCtx = false
   const prevHookFlag = ctx.currentFnIsHook
@@ -2328,6 +2377,7 @@ function lowerFunction(
   ctx.nonSerializableSignalVars = prevNonSerializableSignalVars
   ctx.localDeclaredNames = prevLocalDeclared
   ctx.importedReactiveKinds = prevImportedReactiveKinds
+  ctx.hookFunctionAliases = prevHookFunctionAliases
   ctx.contextLocalName = prevContextLocalName
   ctx.currentFnIsHook = prevHookFlag
   return result
@@ -3181,6 +3231,7 @@ function lowerExpressionImpl(
     const prevShadowed = ctx.shadowedNames
     const prevLocalDeclared = ctx.localDeclaredNames
     const prevCurrentFunctionDeclared = ctx.currentFunctionDeclaredNames
+    const prevHookFunctionAliases = ctx.hookFunctionAliases
     const scoped = new Set(ctx.trackedVars)
     paramNames.forEach(n => scoped.delete(deSSAVarName(n)))
     if (localDeclared) {
@@ -3218,6 +3269,7 @@ function lowerExpressionImpl(
       }
     }
     ctx.aliasVars = new Set(ctx.aliasVars)
+    ctx.hookFunctionAliases = new Map(prevHookFunctionAliases ?? [])
     ctx.externalTracked = new Set(prevTracked)
     const shadowed = new Set(prevShadowed ?? [])
     paramNames.forEach(n => shadowed.add(deSSAVarName(n)))
@@ -3250,6 +3302,7 @@ function lowerExpressionImpl(
     ctx.shadowedNames = prevShadowed
     ctx.localDeclaredNames = prevLocalDeclared
     ctx.currentFunctionDeclaredNames = prevCurrentFunctionDeclared
+    ctx.hookFunctionAliases = prevHookFunctionAliases
     return result
   }
   const withListKeyConstificationScope = <T>(
@@ -5540,6 +5593,7 @@ function propagateLocalHookAliasMetadata(
   t: typeof BabelCore.types,
 ): void {
   const aliasPairs: { target: string; source: string }[] = []
+  const reassignedAliases = new Set<string>()
   const collectDeclaration = (decl: BabelCore.types.VariableDeclaration): void => {
     for (const item of decl.declarations) {
       if (!t.isIdentifier(item.id) || !item.init || !t.isIdentifier(item.init)) continue
@@ -5548,6 +5602,14 @@ function propagateLocalHookAliasMetadata(
         source: deSSAVarName(item.init.name),
       })
     }
+  }
+  const collectReassignment = (stmt: BabelCore.types.Statement): void => {
+    if (!t.isExpressionStatement(stmt)) return
+    const expr = stmt.expression
+    if (!t.isAssignmentExpression(expr) || expr.operator !== '=' || !t.isIdentifier(expr.left)) {
+      return
+    }
+    reassignedAliases.add(deSSAVarName(expr.left.name))
   }
 
   for (const stmt of body) {
@@ -5561,7 +5623,9 @@ function propagateLocalHookAliasMetadata(
       t.isVariableDeclaration(stmt.declaration)
     ) {
       collectDeclaration(stmt.declaration)
+      continue
     }
+    collectReassignment(stmt)
   }
 
   if (aliasPairs.length === 0) return
@@ -5570,16 +5634,32 @@ function propagateLocalHookAliasMetadata(
   while (changed) {
     changed = false
     for (const { target, source } of aliasPairs) {
+      if (reassignedAliases.has(target)) continue
       if (ctx.hookReturnInfo.has(target)) continue
       const sourceInfo = ctx.hookReturnInfo.get(source)
       if (!sourceInfo) continue
       ctx.hookReturnInfo.set(target, sourceInfo)
+      ctx.hookFunctionAliases = ctx.hookFunctionAliases ?? new Map()
+      ctx.hookFunctionAliases.set(target, ctx.hookFunctionAliases.get(source) ?? source)
       if (ctx.importedHookReturnInfoNames?.has(source)) {
         markImportedHookReturnInfoName(target, ctx)
       }
       changed = true
     }
   }
+}
+
+function seedSameFileHookAliasMetadata(
+  program: HIRProgram,
+  originalBody: BabelCore.types.Statement[],
+  ctx: CodegenContext,
+  t: typeof BabelCore.types,
+): void {
+  for (const fn of program.functions) {
+    if (!fn.name || !isHookName(fn.name)) continue
+    getHookReturnInfo(fn.name, ctx)
+  }
+  propagateLocalHookAliasMetadata(originalBody, ctx, t)
 }
 
 function preserveHookReturnAccessorsInStatements(
@@ -6817,6 +6897,7 @@ export function codegenWithScopes(
   ctx.classComponentPaths = collectClassComponentPaths(originalBody, t)
   ctx.staticRestExclusionKeys = collectStaticRestExclusionKeys(originalBody, t)
   addDestructuredJSXComponentSourcePaths(program, ctx)
+  seedSameFileHookAliasMetadata(program, originalBody, ctx, t)
   ctx.scopes = scopes
 
   // Mark tracked variables based on scope analysis
@@ -6852,8 +6933,10 @@ function lowerFunctionWithScopes(
   const { t } = ctx
   const prevKnownArrayVars = ctx.knownArrayVars
   const prevImportedReactiveKinds = ctx.importedReactiveKinds
+  const prevHookFunctionAliases = ctx.hookFunctionAliases
   ctx.knownArrayVars = new Set(prevKnownArrayVars ?? [])
   ctx.importedReactiveKinds = new Map(prevImportedReactiveKinds ?? [])
+  ctx.hookFunctionAliases = new Map(prevHookFunctionAliases ?? [])
   fn.params.forEach(p => ctx.knownArrayVars?.delete(deSSAVarName(p.name)))
   fn.params.forEach(p => ctx.importedReactiveKinds?.delete(deSSAVarName(p.name)))
   for (const name of collectLocalDeclaredNames(fn.params, fn.blocks, t)) {
@@ -6883,6 +6966,7 @@ function lowerFunctionWithScopes(
   result.generator = !!fn.meta?.isGenerator || functionHasYield(fn)
   ctx.knownArrayVars = prevKnownArrayVars
   ctx.importedReactiveKinds = prevImportedReactiveKinds
+  ctx.hookFunctionAliases = prevHookFunctionAliases
   return result
 }
 
@@ -7178,6 +7262,7 @@ export function lowerHIRWithRegions(
   ctx.memoMacroNames = memoMacroNames
   ctx.storeMacroNames = storeMacroNames
   ctx.strictMacroBindings = macroAliases?.strictMacroBindings ?? false
+  seedSameFileHookAliasMetadata(program, originalBody, ctx, t)
 
   // Pre-mark top-level tracked variables so nested functions can treat captured signals as reactive
   for (const stmt of originalBody) {
@@ -8814,6 +8899,7 @@ function lowerFunctionWithRegions(
   const prevWrapTracked = ctx.wrapTrackedExpressions
   const prevIsComponent = ctx.isComponentFn
   const prevHookResultVarMap = ctx.hookResultVarMap
+  const prevHookFunctionAliases = ctx.hookFunctionAliases
   const prevInModule = ctx.inModule
   const prevContextLocalName = ctx.contextLocalName
   const prevLocalValueVars = ctx.localValueVars
@@ -8872,6 +8958,7 @@ function lowerFunctionWithRegions(
   ctx.memberMutatedVars = new Set()
   ctx.noMemo = !!(prevNoMemo || fn.meta?.noMemo)
   ctx.hookResultVarMap = new Map()
+  ctx.hookFunctionAliases = new Map(prevHookFunctionAliases ?? [])
   // Save and initialize componentFunctionDefs for this function scope
   const prevComponentFunctionDefs = ctx.componentFunctionDefs
   const prevComponentFunctionMutations = ctx.componentFunctionMutations
@@ -9714,6 +9801,7 @@ function lowerFunctionWithRegions(
       ctx.noMemo = prevNoMemo
       ctx.wrapTrackedExpressions = prevWrapTracked
       ctx.hookResultVarMap = prevHookResultVarMap
+      ctx.hookFunctionAliases = prevHookFunctionAliases
       ctx.inModule = prevInModule
       ctx.contextLocalName = prevContextLocalName
       ctx.resumablePropAccessors = prevResumablePropAccessors
@@ -9747,6 +9835,7 @@ function lowerFunctionWithRegions(
     ctx.noMemo = prevNoMemo
     ctx.wrapTrackedExpressions = prevWrapTracked
     ctx.hookResultVarMap = prevHookResultVarMap
+    ctx.hookFunctionAliases = prevHookFunctionAliases
     ctx.inModule = prevInModule
     ctx.contextLocalName = prevContextLocalName
     ctx.resumablePropAccessors = prevResumablePropAccessors
@@ -9884,6 +9973,7 @@ function lowerFunctionWithRegions(
   ctx.currentFnIsHook = prevHookFlag
   ctx.isComponentFn = prevIsComponent
   ctx.hookResultVarMap = prevHookResultVarMap
+  ctx.hookFunctionAliases = prevHookFunctionAliases
   ctx.propsParamName = prevPropsParam
   ctx.propAccessorDecls = prevPropAccessors
   ctx.resumablePropAccessors = prevResumablePropAccessors

@@ -877,6 +877,78 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).not.toContain('alias.count++')
   })
 
+  it('preserves same-file hook aliases with non-hook names', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+
+        export function App() {
+          const counter = useCounter
+          const read = counter
+          const state = read()
+          state.count = 2
+          state.count++
+          return <span>{state.count}</span>
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(output).toContain('state.count(2)')
+    expect(output).toMatch(/state\.count\([+-]{2}__prev_/)
+    expect(output).toMatch(/state(?:\(\))?\.count\(\)/)
+    expect(output).not.toContain('state.count = 2')
+    expect(output).not.toContain('state.count++')
+
+    const reassigned = transform(
+      `
+        import { $state } from 'fict'
+
+        function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+
+        export function App() {
+          let counter = useCounter
+          counter = () => ({ count: 1 })
+          const state = counter()
+          return <span>{state.count}</span>
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(reassigned).toContain('counter = () =>')
+    expect(reassigned).toMatch(/state(?:\(\))?\.count/)
+    expect(reassigned).not.toMatch(/state(?:\(\))?\.count\(\)/)
+
+    const directAccessor = transform(
+      `
+        import { $state } from 'fict'
+
+        function useCount() {
+          const count = $state(0)
+          return count
+        }
+
+        export function App() {
+          const counter = useCount
+          const count = counter()
+          return <span>{count}</span>
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(directAccessor).toMatch(/=> count\(\)/)
+  })
+
   it('preserves static plain hook-return object properties in DOM bindings', () => {
     const output = transform(
       `

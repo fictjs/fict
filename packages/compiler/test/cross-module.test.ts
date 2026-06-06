@@ -4397,6 +4397,73 @@ describe('Cross-Module Reactivity', () => {
       )
     })
 
+    it('propagates same-file hook metadata through non-hook local aliases', () => {
+      const producerPath = path.join(baseDir, 'same-file-hook-alias.tsx')
+      const consumerPath = path.join(baseDir, 'same-file-hook-alias-consumer.tsx')
+      const invalidatedPath = path.join(baseDir, 'same-file-hook-alias-invalidated.tsx')
+      const moduleMetadata = new Map()
+      const producerSource = `
+        import { $state } from 'fict'
+
+        function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+
+        const counter = useCounter
+
+        export function App() {
+          const state = counter()
+          return <span>{state.count}</span>
+        }
+
+        export { counter }
+      `
+
+      const producerOutput = transform(producerSource, { moduleMetadata }, producerPath)
+
+      expect(producerOutput).toMatch(/state(?:\(\))?\.count\(\)/)
+      expect(moduleMetadata.get(path.resolve(producerPath))?.hooks).toMatchObject({
+        counter: { objectProps: { count: 'signal' } },
+      })
+
+      const consumerOutput = transform(
+        `
+          import { counter } from './same-file-hook-alias'
+
+          export function App() {
+            const state = counter()
+            return <span>{state.count}</span>
+          }
+        `,
+        { moduleMetadata },
+        consumerPath,
+      )
+
+      expect(consumerOutput).toMatch(/state(?:\(\))?\.count\(\)/)
+
+      transform(
+        `
+          import { $state } from 'fict'
+
+          function useCounter() {
+            const count = $state(0)
+            return { count }
+          }
+
+          let counter = useCounter
+          counter = () => ({ count: 1 })
+          export { counter }
+        `,
+        { moduleMetadata },
+        invalidatedPath,
+      )
+
+      expect(moduleMetadata.get(path.resolve(invalidatedPath))?.hooks ?? {}).not.toHaveProperty(
+        'counter',
+      )
+    })
+
     it('preserves hook return accessors inside branch returns before publishing metadata', () => {
       const hookPath = path.join(baseDir, 'branch-hook-returns.tsx')
       const moduleMetadata = new Map()
