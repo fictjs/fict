@@ -1920,6 +1920,55 @@ describe('resumable event handler transformation', () => {
     expect(code).toContain('console.log(count())')
   })
 
+  it('allows explicit resumable function refs that capture scalar signals', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const count = $state(0)
+        const step = $state(1)
+        const handler = () => count(count() + step())
+        return <button onClick$={handler}>{count}</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('__fictUseLexicalScope(scopeId, ["count", "step"])')
+    expect(code).toContain('const handler = () => count(count() + step())')
+    expect(code).toContain('const __handler = handler')
+    expect(code).toContain('setAttribute("on:click"')
+  })
+
+  it('allows explicit resumable function refs that return closures with signal captures', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const count = $state(0)
+        const handler = () => () => count(count() + 1)
+        return <button onClick$={handler}>{count}</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('__fictUseLexicalScope(scopeId, ["count"])')
+    expect(code).toContain('const handler = () => () => count(count() + 1)')
+    expect(code).toContain('__result !== __handler')
+  })
+
+  it('throws for explicit resumable function refs that capture function-valued signals', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const callback = $state(() => 'hit')
+        const handler = () => console.log(typeof callback())
+        return <button onClick$={handler}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(/signals: callback/i)
+  })
+
   it('throws for explicit nested resumable handlers that capture outer signals', () => {
     const ast = parseFile(`
       function App() {

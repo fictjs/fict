@@ -267,13 +267,7 @@ export function emitResumableEventBinding(
     Array.from(ctx.resumablePropRests ?? []).filter(([name]) => captured.has(name)),
   )
 
-  const lexicalNames = Array.from(captured).filter(name => ctx.signalVars?.has(name))
-  const nonSerializableSignalCaptures = lexicalNames.filter(name =>
-    ctx.nonSerializableSignalVars?.has(name),
-  )
-  const outerSignalCaptures = ctx.currentFunctionDeclaredNames
-    ? lexicalNames.filter(name => !ctx.currentFunctionDeclaredNames?.has(name))
-    : []
+  const lexicalNameSet = new Set(Array.from(captured).filter(name => ctx.signalVars?.has(name)))
   const propsName =
     ctx.propsParamName &&
     captured.has(ctx.propsParamName) &&
@@ -357,32 +351,54 @@ export function emitResumableEventBinding(
     const localFnCaptures = Array.from(fnCaptured)
       .filter(dep => ctx.localDeclaredNames?.has(dep))
       .sort()
-    const restorableFnCaptures = localFnCaptures.filter(
+    const restorablePropFnCaptures = localFnCaptures.filter(
       dep => ctx.propsParamName && dep === ctx.propsParamName,
     )
-    const unsafeFnCaptures = localFnCaptures.filter(dep => !restorableFnCaptures.includes(dep))
+    const restorableSignalFnCaptures = localFnCaptures.filter(dep => ctx.signalVars?.has(dep))
+    const restorableFnCaptures = new Set([
+      ...restorablePropFnCaptures,
+      ...restorableSignalFnCaptures,
+    ])
+    const unsafeFnCaptures = localFnCaptures.filter(dep => !restorableFnCaptures.has(dep))
     if (unsafeFnCaptures.length > 0) {
       unsafeFunctionCaptures.push(`${name} -> ${unsafeFnCaptures.join(', ')}`)
       continue
     }
-    if (ctx.propsParamName && restorableFnCaptures.includes(ctx.propsParamName)) {
+    const capturesRestorableProps = ctx.propsParamName
+      ? restorablePropFnCaptures.includes(ctx.propsParamName)
+      : false
+    if (capturesRestorableProps && ctx.propsParamName) {
       const fnCalledPropMembers = collectCalledPropMembers(loweredFn, ctx.propsParamName, t)
       if (fnCalledPropMembers.length > 0) {
         calledPropMembers.push(...fnCalledPropMembers.map(path => `${name} -> ${path}`))
         continue
       }
       functionDepsCaptureProps = true
+    }
+    for (const signalName of restorableSignalFnCaptures) {
+      lexicalNameSet.add(signalName)
+    }
+    if (capturesRestorableProps || restorableSignalFnCaptures.length > 0) {
       inlineFunctionDeps.set(name, loweredFn)
       continue
     }
     loweredFunctionDeps.set(name, loweredFn)
   }
 
+  const lexicalNames = Array.from(lexicalNameSet)
+  const nonSerializableSignalCaptures = lexicalNames.filter(name =>
+    ctx.nonSerializableSignalVars?.has(name),
+  )
+  const outerSignalCaptures = ctx.currentFunctionDeclaredNames
+    ? lexicalNames.filter(name => !ctx.currentFunctionDeclaredNames?.has(name))
+    : []
+
+  const loweredHandlerFunctionDep = t.isIdentifier(handlerExpr)
+    ? (loweredFunctionDeps.get(handlerExpr.name) ?? inlineFunctionDeps.get(handlerExpr.name))
+    : undefined
   const handlerMayPreventDefault =
     callsEventPreventDefault(handlerExpr, t) ||
-    (t.isIdentifier(handlerExpr)
-      ? callsEventPreventDefault(loweredFunctionDeps.get(handlerExpr.name), t)
-      : false)
+    callsEventPreventDefault(loweredHandlerFunctionDep, t)
 
   if (
     unsupportedLocals.length > 0 ||
