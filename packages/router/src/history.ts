@@ -465,9 +465,12 @@ export function createMemoryHistory(
   const { initialEntries = ['/'], initialIndex } = options
   const listeners = new Set<HistoryListener>()
   const blockers = new Set<Blocker>()
+  const normalizedInitialEntries = initialEntries.length > 0 ? initialEntries : ['/']
 
   // Initialize entries
-  const entries: Location[] = initialEntries.map((entry, i) => createLocation(entry, null, `${i}`))
+  const entries: Location[] = normalizedInitialEntries.map((entry, i) =>
+    createLocation(entry, null, `${i}`),
+  )
 
   let index = initialIndex ?? entries.length - 1
   let action: HistoryAction = 'POP'

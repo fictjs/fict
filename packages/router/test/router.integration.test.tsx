@@ -43,6 +43,16 @@ function Guarded({
 }
 
 describe('Router integration (MemoryRouter)', () => {
+  it('normalizes empty initial entries to the root route', () => {
+    render(() => (
+      <MemoryRouter initialEntries={[]}>
+        <Route path="/" element={<LocationText />} />
+      </MemoryRouter>
+    ))
+
+    expect(screen.getByTestId('path').textContent).toBe('/')
+  })
+
   it('navigates between routes and updates location signal', async () => {
     render(() => (
       <MemoryRouter initialEntries={['/']}>

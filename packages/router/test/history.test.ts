@@ -16,6 +16,30 @@ describe('createMemoryHistory', () => {
     expect(history.location.pathname).toBe('/users')
   })
 
+  it('should normalize empty initial entries to the default entry', () => {
+    const history = createMemoryHistory({ initialEntries: [] })
+
+    expect(history.location.pathname).toBe('/')
+    expect(history.location.search).toBe('')
+    expect(history.location.hash).toBe('')
+    expect(history.action).toBe('POP')
+  })
+
+  it('should support replace and push after empty initial entries', () => {
+    const history = createMemoryHistory({ initialEntries: [] })
+
+    history.replace('/login')
+    expect(history.location.pathname).toBe('/login')
+    expect(history.action).toBe('REPLACE')
+
+    history.push('/dashboard')
+    expect(history.location.pathname).toBe('/dashboard')
+    expect(history.action).toBe('PUSH')
+
+    history.back()
+    expect(history.location.pathname).toBe('/login')
+  })
+
   it('should push new entries', () => {
     const history = createMemoryHistory()
     history.push('/users')
@@ -111,6 +135,14 @@ describe('createMemoryHistory', () => {
     const history = createMemoryHistory({
       initialEntries: ['/users'],
       initialIndex: 10, // Out of range
+    })
+    expect(history.location.pathname).toBe('/users')
+  })
+
+  it('should clamp negative index to valid range', () => {
+    const history = createMemoryHistory({
+      initialEntries: ['/users'],
+      initialIndex: -10,
     })
     expect(history.location.pathname).toBe('/users')
   })
