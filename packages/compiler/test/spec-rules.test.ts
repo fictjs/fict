@@ -319,6 +319,70 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-C004')).toBe(true)
   })
 
+  it('warns when default-exported components may fall through without returning', () => {
+    const cases = [
+      `
+        export default function({ ready }) {
+          if (ready) return <div>ready</div>
+        }
+      `,
+      `
+        export default ({ ready }) => {
+          if (ready) return <div>ready</div>
+        }
+      `,
+      `
+        export default function named({ ready }) {
+          if (ready) return <div>ready</div>
+        }
+      `,
+    ]
+
+    for (const input of cases) {
+      expect(hasWarning(input, 'FICT-C004')).toBe(true)
+    }
+  })
+
+  it('emits one missing-return warning for named default component declarations', () => {
+    const warnings: CompilerWarning[] = []
+
+    transform(
+      `
+        export default function Counter({ ready }) {
+          if (ready) return <div>ready</div>
+        }
+      `,
+      { onWarn: w => warnings.push(w) },
+    )
+
+    expect(warnings.filter(w => w.code === 'FICT-C004')).toHaveLength(1)
+  })
+
+  it('does not warn for all-returning or non-component default exports', () => {
+    expect(
+      hasWarning(
+        `
+          export default ({ ready }) => {
+            if (ready) return <div>ready</div>
+            return <div>waiting</div>
+          }
+        `,
+        'FICT-C004',
+      ),
+    ).toBe(false)
+
+    expect(
+      hasWarning(
+        `
+          export default function({ ready }) {
+            if (ready) return 1
+          }
+        `,
+        'FICT-C004',
+      ),
+    ).toBe(false)
+  })
+
   it('does not warn when all conditional branches return', () => {
     const warnings: CompilerWarning[] = []
     const input = `

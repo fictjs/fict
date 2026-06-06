@@ -2387,19 +2387,24 @@ function createHIREntrypointVisitor(
         }
 
         // Warn on component-like functions missing a return
+        const emitNoReturnComponentWarning = (
+          fnPath: BabelCore.NodePath<BabelCore.types.Function>,
+        ): void => {
+          if (!functionHasJSX(fnPath) && !functionUsesStateLike(fnPath, t)) return
+          if (functionHasReturn(fnPath.node)) return
+          emitWarning(
+            fnPath,
+            'FICT-C004',
+            'Component has no return statement and will render nothing.',
+            warn,
+            fileName,
+          )
+        }
         path.traverse({
           FunctionDeclaration(fnPath) {
             const name = fnPath.node.id?.name
             if (!isComponentName(name)) return
-            if (!functionHasJSX(fnPath) && !functionUsesStateLike(fnPath, t)) return
-            if (functionHasReturn(fnPath.node)) return
-            emitWarning(
-              fnPath,
-              'FICT-C004',
-              'Component has no return statement and will render nothing.',
-              warn,
-              fileName,
-            )
+            emitNoReturnComponentWarning(fnPath)
           },
           VariableDeclarator(varPath) {
             if (!t.isIdentifier(varPath.node.id) || !isComponentName(varPath.node.id.name)) return
@@ -2411,15 +2416,25 @@ function createHIREntrypointVisitor(
             const fnPath = varPath.get('init') as BabelCore.NodePath<
               BabelCore.types.ArrowFunctionExpression | BabelCore.types.FunctionExpression
             >
-            if (!functionHasJSX(fnPath) && !functionUsesStateLike(fnPath, t)) return
-            if (functionHasReturn(init)) return
-            emitWarning(
-              fnPath,
-              'FICT-C004',
-              'Component has no return statement and will render nothing.',
-              warn,
-              fileName,
-            )
+            emitNoReturnComponentWarning(fnPath)
+          },
+          ExportDefaultDeclaration(exportPath) {
+            const declarationPath = exportPath.get('declaration')
+            if (
+              !declarationPath.isFunctionDeclaration() &&
+              !declarationPath.isFunctionExpression() &&
+              !declarationPath.isArrowFunctionExpression()
+            ) {
+              return
+            }
+            if (
+              declarationPath.isFunctionDeclaration() &&
+              isComponentName(declarationPath.node.id?.name)
+            ) {
+              return
+            }
+
+            emitNoReturnComponentWarning(declarationPath)
           },
         })
         // Collect macro imports from fict
