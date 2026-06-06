@@ -1602,6 +1602,66 @@ describe('event handler transformation', () => {
     expect(code.match(/row\(\)\.label/g) ?? []).toHaveLength(1)
   })
 
+  it('specializes list item params that collide with object prototype keys', () => {
+    const names = ['__proto__', 'valueOf', 'toString', 'hasOwnProperty', 'constructor', 'prototype']
+
+    for (const name of names) {
+      const ast = parseFile(`
+        function List() {
+          const items = [1]
+          return <ul>{items.map(${name} => <li key={${name}}>{${name}}</li>)}</ul>
+        }
+      `)
+      const hir = buildHIR(ast)
+      const file = lowerHIRWithRegions(hir, t)
+      const { code } = generate(file)
+
+      expect(code).toContain('createKeyedList')
+      expect(code).toContain(`() => ${name}()`)
+    }
+  })
+
+  it('specializes list index params that collide with object prototype keys', () => {
+    const names = ['__proto__', 'valueOf', 'toString', 'hasOwnProperty', 'constructor', 'prototype']
+
+    for (const name of names) {
+      const ast = parseFile(`
+        function List() {
+          const items = ['a']
+          return <ul>{items.map((item, ${name}) => <li key={${name}}>{${name}}</li>)}</ul>
+        }
+      `)
+      const hir = buildHIR(ast)
+      const file = lowerHIRWithRegions(hir, t)
+      const { code } = generate(file)
+
+      expect(code).toContain('createKeyedList')
+      expect(code).toContain(`() => ${name}()`)
+    }
+  })
+
+  it('specializes list key aliases that collide with object prototype keys', () => {
+    const names = ['__proto__', 'valueOf', 'toString', 'hasOwnProperty', 'constructor', 'prototype']
+
+    for (const name of names) {
+      const ast = parseFile(`
+        function List() {
+          const items = [1]
+          return <ul>{items.map(item => {
+            const ${name} = item
+            return <li key={${name}}>{${name}}</li>
+          })}</ul>
+        }
+      `)
+      const hir = buildHIR(ast)
+      const file = lowerHIRWithRegions(hir, t)
+      const { code } = generate(file)
+
+      expect(code).toContain('createKeyedList')
+      expect(code).toContain(`const ${name} = __key`)
+    }
+  })
+
   it('falls back when list key aliases are reassigned', () => {
     const ast = parseFile(`
       function List() {

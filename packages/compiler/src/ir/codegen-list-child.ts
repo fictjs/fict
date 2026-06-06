@@ -1027,7 +1027,7 @@ export function buildListCallExpression(
 
   if (t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)) {
     const [firstParam, secondParam] = callbackExpr.params
-    const overrides: RegionOverrideMap = {}
+    const overrides = Object.create(null) as RegionOverrideMap
 
     if (t.isIdentifier(firstParam)) {
       overrides[firstParam.name] = () => t.callExpression(t.identifier(firstParam.name), [])
@@ -1068,7 +1068,7 @@ export function buildListCallExpression(
   if (isKeyed && keyExpr) {
     let keyExprAst = ops.lowerExpression(keyExpr, ctx)
     if (keyAliasDeclarations.size > 0) {
-      const keyOverrides: RegionOverrideMap = {}
+      const keyOverrides = Object.create(null) as RegionOverrideMap
       for (const [name, value] of keyAliasDeclarations) {
         const replacement = ops.lowerExpression(value, ctx)
         replaceIdentifiersWithOverrides(replacement, keyOverrides, t)
