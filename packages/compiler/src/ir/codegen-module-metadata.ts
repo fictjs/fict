@@ -19,11 +19,25 @@ import { collectRuntimeImports } from './codegen-runtime-imports'
 import { isHookName } from './hook-utils'
 import { deSSAVarName } from './regions'
 
-function addImportedReactiveBinding(
-  name: string,
-  kind: ReactiveExportKind,
-  ctx: CodegenContext,
-): void {
+function isReactiveExportKind(value: unknown): value is ReactiveExportKind {
+  return value === 'signal' || value === 'memo' || value === 'store'
+}
+
+function getOwnRecordValue<T>(record: Record<string, T> | undefined, key: string): T | undefined {
+  if (!record || !Object.prototype.hasOwnProperty.call(record, key)) return undefined
+  return record[key]
+}
+
+function getImportedReactiveExportKind(
+  meta: ModuleReactiveMetadata,
+  exportName: string,
+): ReactiveExportKind | undefined {
+  const kind = getOwnRecordValue(meta.exports, exportName)
+  return isReactiveExportKind(kind) ? kind : undefined
+}
+
+function addImportedReactiveBinding(name: string, kind: unknown, ctx: CodegenContext): void {
+  if (!isReactiveExportKind(kind)) return
   const base = deSSAVarName(name)
   ctx.importedReactiveVars?.add(base)
   ctx.importedReactiveKinds?.set(base, kind)
@@ -117,15 +131,15 @@ export function applyImportedReactiveMetadata(
           ? spec.imported.name
           : String(spec.imported.value)
         const localName = spec.local.name
-        const kind = meta.exports[importedName]
+        const kind = getImportedReactiveExportKind(meta, importedName)
         if (kind) {
           addImportedReactiveBinding(localName, kind, ctx)
         }
-        const namespaceMeta = meta.namespaces?.[importedName]
+        const namespaceMeta = getOwnRecordValue(meta.namespaces, importedName)
         if (namespaceMeta) {
           namespaces.set(localName, namespaceMeta)
         }
-        const hookInfo = meta.hooks?.[importedName]
+        const hookInfo = getOwnRecordValue(meta.hooks, importedName)
         if (hookInfo && hooks?.setImportedHookInfo) {
           hooks.setImportedHookInfo(localName, hookInfo)
         }
@@ -134,11 +148,11 @@ export function applyImportedReactiveMetadata(
       }
       if (t.isImportDefaultSpecifier(spec)) {
         const localName = spec.local.name
-        const kind = meta.exports.default
+        const kind = getImportedReactiveExportKind(meta, 'default')
         if (kind) {
           addImportedReactiveBinding(localName, kind, ctx)
         }
-        const hookInfo = meta.hooks?.default
+        const hookInfo = getOwnRecordValue(meta.hooks, 'default')
         if (hookInfo && hooks?.setImportedHookInfo) {
           hooks.setImportedHookInfo(localName, hookInfo)
         }

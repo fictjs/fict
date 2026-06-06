@@ -13,7 +13,12 @@ import { getFictMacroKind, markFictMacroCall, type FictMacroKind } from './ir/ma
 import { optimizeHIR } from './ir/optimize'
 import { resolveModuleMetadata } from './module-metadata'
 import { MODULE_REACTIVE_METADATA_VERSION } from './types'
-import type { CompilerWarning, FictCompilerOptions } from './types'
+import type {
+  CompilerWarning,
+  FictCompilerOptions,
+  ModuleReactiveMetadata,
+  ReactiveExportKind,
+} from './types'
 import {
   DirectiveType,
   getRootIdentifier,
@@ -32,6 +37,19 @@ function importSpecifierImportedName(
   t: typeof BabelCore.types,
 ): string {
   return t.isIdentifier(spec.imported) ? spec.imported.name : String(spec.imported.value)
+}
+
+function isReactiveExportKind(value: unknown): value is ReactiveExportKind {
+  return value === 'signal' || value === 'memo' || value === 'store'
+}
+
+function getOwnReactiveExportKind(
+  meta: ModuleReactiveMetadata,
+  exportName: string,
+): ReactiveExportKind | undefined {
+  if (!Object.prototype.hasOwnProperty.call(meta.exports, exportName)) return undefined
+  const kind = meta.exports[exportName]
+  return isReactiveExportKind(kind) ? kind : undefined
 }
 
 function stripMacroImports(
@@ -2571,7 +2589,7 @@ function createHIREntrypointVisitor(
                 const importedName = t.isIdentifier(spec.imported)
                   ? spec.imported.name
                   : String(spec.imported.value)
-                if (meta.exports[importedName]) {
+                if (getOwnReactiveExportKind(meta, importedName)) {
                   const binding = importPath.scope.getBinding(spec.local.name)
                   if (binding) {
                     importedReactiveBindingIds.add(binding.identifier as BabelCore.types.Identifier)
@@ -2580,7 +2598,7 @@ function createHIREntrypointVisitor(
                 continue
               }
               if (t.isImportDefaultSpecifier(spec)) {
-                if (meta.exports.default) {
+                if (getOwnReactiveExportKind(meta, 'default')) {
                   const binding = importPath.scope.getBinding(spec.local.name)
                   if (binding) {
                     importedReactiveBindingIds.add(binding.identifier as BabelCore.types.Identifier)

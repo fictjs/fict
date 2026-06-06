@@ -2,7 +2,11 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { clearModuleMetadata, type FictCompilerOptions } from '../src/index'
+import {
+  clearModuleMetadata,
+  MODULE_REACTIVE_METADATA_VERSION,
+  type FictCompilerOptions,
+} from '../src/index'
 import { transform } from './test-utils'
 
 describe('Cross-Module Reactivity', () => {
@@ -379,6 +383,40 @@ describe('Cross-Module Reactivity', () => {
       // misclassifying helpers that return arrays/JSX. Verify the insert path.
       expect(output).toContain('insert')
       expect(output).toMatch(/count\(\)/)
+    })
+
+    it('does not mark Object.prototype-named imports reactive from empty metadata', () => {
+      const moduleMetadata = new Map()
+      const depPath = path.join(baseDir, 'empty-object-prototype-names.ts')
+      const appPath = path.join(baseDir, 'app-empty-object-prototype-names.tsx')
+      moduleMetadata.set(path.resolve(depPath), {
+        version: MODULE_REACTIVE_METADATA_VERSION,
+        exports: {},
+      })
+
+      const output = transform(
+        `
+          import {
+            toString as value,
+            hasOwnProperty as hasOwn,
+            constructor as ctor,
+          } from './empty-object-prototype-names'
+
+          export function App() {
+            const derived = value + 1
+            const combined = hasOwn + ctor
+            return <div>{derived}{combined}</div>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        appPath,
+      )
+
+      expect(output).toContain('const derived = value + 1')
+      expect(output).toContain('const combined = hasOwn + ctor')
+      expect(output).not.toContain('__fictUseMemo(__fictCtx, () => value + 1')
+      expect(output).not.toContain('derived()')
+      expect(output).not.toContain('combined()')
     })
 
     it('keeps resumable handlers using imported accessors at module scope', () => {
