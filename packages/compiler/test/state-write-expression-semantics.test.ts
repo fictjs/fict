@@ -921,7 +921,8 @@ describe('state write expression semantics', () => {
       }
     `
     const output = transformCommonJS(source)
-    expect(output).toMatch(/__key_\d+ === 0[\s\S]*__key_\d+ === "0"/)
+    expect(output).toContain('pair["0"](__next_')
+    expect(output).not.toContain('pair["0"] += 2')
 
     const mod = runCompiled(output)
     const raw = compiledFunction(mod, 'useNumericStringHookArrayWrite')() as unknown[]
@@ -949,7 +950,8 @@ describe('state write expression semantics', () => {
       }
     `
     const output = transformCommonJS(source)
-    expect(output).toMatch(/__key_\d+ === "0"[\s\S]*__key_\d+ === 0/)
+    expect(output).toContain('obj[0](__next_')
+    expect(output).not.toContain('obj[0] += 2')
 
     const mod = runCompiled(output)
     const raw = compiledFunction(mod, 'useNumericHookObjectWrite')() as unknown[]
@@ -984,6 +986,54 @@ describe('state write expression semantics', () => {
       typeof value === 'function' ? (value as () => unknown)() : value,
     )
     expect(values).toEqual([5, 1, 5])
+  })
+
+  it('coerces numeric string keys for hook-return array reads', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function usePair() {
+        let count = $state(1)
+        return [count]
+      }
+
+      export function useNumericStringHookArrayRead() {
+        const pair = usePair()
+        return [pair[0], pair['0'], pair['00']]
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).toContain('pair["0"]()')
+    expect(output).toContain('pair[0]()')
+    expect(output).toContain('pair["00"]')
+    expect(output).not.toContain('pair["00"]()')
+
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useNumericStringHookArrayRead')() as unknown[]
+    expect(raw).toEqual([1, 1, undefined])
+  })
+
+  it('coerces numeric keys for hook-return object reads', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function useObj() {
+        let count = $state(1)
+        return { 0: count }
+      }
+
+      export function useNumericHookObjectRead() {
+        const obj = useObj()
+        return [obj[0], obj['0']]
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).toContain('obj[0]()')
+    expect(output).toContain('obj["0"]()')
+
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useNumericHookObjectRead')() as unknown[]
+    expect(raw).toEqual([1, 1])
   })
 
   it('preserves bigint update semantics for $state', () => {

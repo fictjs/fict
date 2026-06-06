@@ -1020,11 +1020,26 @@ function getHookReturnAccessorKind(
   if (typeof propName === 'string') {
     const kind = info?.objectProps?.get(propName)
     if (kind) return kind
+    const numeric = getCanonicalNumericKey(propName)
+    if (numeric !== null) {
+      const arrayKind = info?.arrayProps?.get(numeric)
+      if (arrayKind) return arrayKind
+    }
   } else if (typeof propName === 'number') {
     const kind = info?.arrayProps?.get(propName)
     if (kind) return kind
+    if (Number.isFinite(propName)) {
+      const objectKind = info?.objectProps?.get(String(propName))
+      if (objectKind) return objectKind
+    }
   }
   return null
+}
+
+function getCanonicalNumericKey(key: string): number | null {
+  const numeric = Number(key)
+  if (!Number.isFinite(numeric) || String(numeric) !== key) return null
+  return numeric
 }
 
 function resolveHookReturnMemberInfo(
@@ -2286,8 +2301,8 @@ function lowerExpressionImpl(
       test = test ? t.logicalExpression('||', test, eq) : eq
     }
     const addNumericStringEquivalent = (key: string): void => {
-      const numeric = Number(key)
-      if (!Number.isFinite(numeric) || String(numeric) !== key) return
+      const numeric = getCanonicalNumericKey(key)
+      if (numeric === null) return
       addKeyTest(numeric)
     }
 
