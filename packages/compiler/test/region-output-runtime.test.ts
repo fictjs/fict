@@ -158,6 +158,98 @@ describe('region output runtime regressions', () => {
     expect(result).toBe('1:3:2')
   })
 
+  it('keeps computed-key destructuring declaration temps ordered in control flow', () => {
+    const exports = compileModule(`
+      import { $state } from 'fict'
+
+      export function useIfDestructure() {
+        let enabled = $state(true)
+        let key = 'a'
+        let out = 'unset'
+
+        if (enabled) {
+          const { [key]: value } = { a: 'if' }
+          out = value
+        }
+
+        return out
+      }
+
+      export function useLoopDestructure() {
+        let remaining = $state(2)
+        let key = 'a'
+        let out = ''
+
+        while (remaining) {
+          const { [key]: value } = { a: 'loop' }
+          out += value
+          remaining--
+        }
+
+        return out
+      }
+
+      export function useSwitchDestructure() {
+        let mode = $state('a')
+        let key = 'a'
+        let out = 'unset'
+
+        switch (mode) {
+          case 'a': {
+            const { [key]: value } = { a: 'switch' }
+            out = value
+            break
+          }
+        }
+
+        return out
+      }
+
+      export function useNestedBlockDestructure() {
+        let enabled = $state(true)
+        let key = 'a'
+        let out = 'unset'
+
+        if (enabled) {
+          {
+            const { [key]: value } = { a: 'nested' }
+            out = value
+          }
+        }
+
+        return out
+      }
+
+      export function useStaticAndAssignmentControls() {
+        let enabled = $state(true)
+        let key = 'a'
+        let out = 'unset'
+
+        if (enabled) {
+          const { a: staticValue } = { a: 'static' }
+          let assigned = ''
+          ;({ [key]: assigned } = { a: 'assign' })
+          out = staticValue + ':' + assigned
+        }
+
+        return out
+      }
+    `)
+
+    const render = (name: string) => {
+      const value = runtimeInternal.__fictRender({ slots: [], cursor: 0 }, () =>
+        (exports[name] as () => string | (() => string))(),
+      )
+      return typeof value === 'function' ? value() : value
+    }
+
+    expect(render('useIfDestructure')).toBe('if')
+    expect(render('useLoopDestructure')).toBe('looploop')
+    expect(render('useSwitchDestructure')).toBe('switch')
+    expect(render('useNestedBlockDestructure')).toBe('nested')
+    expect(render('useStaticAndAssignmentControls')).toBe('static:assign')
+  })
+
   it('assigns region output accessors through mutable cells', () => {
     const exports = compileModule(`
       import { $state } from 'fict'

@@ -430,6 +430,7 @@ function collectEagerDestructuringDeclaratorNames(
   const eager = new Set<string>()
   const initByName = new Map<string, BabelCore.types.Expression | null | undefined>()
   const priorNames = new Set<string>()
+  const priorGeneratedNames = new Set<string>()
 
   for (const declarator of declaration.declarations) {
     if (!t.isIdentifier(declarator.id)) continue
@@ -442,8 +443,19 @@ function collectEagerDestructuringDeclaratorNames(
         eager.add(name)
         eager.add(tempName)
       }
+
+      const deps = new Set<string>()
+      collectBabelIdentifierNames(declarator.init, deps)
+      for (const dep of deps) {
+        if (!priorGeneratedNames.has(dep)) continue
+        eager.add(name)
+        eager.add(dep)
+      }
     }
 
+    if (!declarator.id.loc) {
+      priorGeneratedNames.add(name)
+    }
     priorNames.add(name)
   }
 
