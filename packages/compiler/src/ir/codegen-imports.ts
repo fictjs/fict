@@ -88,8 +88,13 @@ export function collectDeclaredNames(
       }
       continue
     }
-    if (t.isExportDefaultDeclaration(stmt) && t.isIdentifier(stmt.declaration)) {
-      declared.add(stmt.declaration.name)
+    if (t.isExportDefaultDeclaration(stmt)) {
+      const decl = stmt.declaration
+      if (t.isIdentifier(decl)) {
+        declared.add(decl.name)
+      } else if ((t.isFunctionDeclaration(decl) || t.isClassDeclaration(decl)) && decl.id) {
+        declared.add(decl.id.name)
+      }
     }
   }
 

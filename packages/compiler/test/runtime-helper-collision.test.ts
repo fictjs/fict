@@ -32,6 +32,93 @@ describe('runtime helper name collisions', () => {
     expect(output).toMatch(/const doubled = __fictUseMemo_1\(__fictCtx, \(\) => count\(\) \* 2/)
   })
 
+  it('aliases helper imports when named default function exports declare helper names', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        export default function __fictUseSignal() {
+          return null
+        }
+
+        export function useProbe() {
+          let count = $state(1)
+          return count
+        }
+      `,
+      { dev: false, optimize: true },
+    )
+
+    expect(output).toMatch(/__fictUseSignal as __fictUseSignal_1/)
+    expect(output).toContain('export default function __fictUseSignal()')
+    expect(output).toMatch(/const count = __fictUseSignal_1\(__fictCtx, 1/)
+  })
+
+  it('aliases helper imports when named default class exports declare helper names', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        export default class __fictUseContext {}
+
+        export function useProbe() {
+          let count = $state(1)
+          return count
+        }
+      `,
+      { dev: false, optimize: true },
+    )
+
+    expect(output).toMatch(/__fictUseContext as __fictUseContext_1/)
+    expect(output).toContain('export default class __fictUseContext')
+    expect(output).toMatch(/const __fictCtx = __fictUseContext_1\(\)/)
+  })
+
+  it('keeps existing internal helper aliases usable with default exports', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+        import { __fictUseSignal } from 'fict/internal'
+
+        export default function LocalDefault() {
+          return __fictUseSignal
+        }
+
+        export function useProbe() {
+          let count = $state(1)
+          return count
+        }
+      `,
+      { dev: false, optimize: true },
+    )
+
+    expect(output).not.toMatch(/__fictUseSignal as __fictUseSignal_1/)
+    expect(output).toMatch(/import \{ __fictUseSignal \} from ['"]fict\/internal['"]/)
+    expect(output).toMatch(/const count = __fictUseSignal\(__fictCtx, 1/)
+  })
+
+  it('does not alias helper imports for anonymous default exports', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        export default function() {
+          return null
+        }
+
+        export function useProbe() {
+          let count = $state(1)
+          return count
+        }
+      `,
+      { dev: false, optimize: true },
+    )
+
+    expect(output).not.toContain('__fictUseSignal_1')
+    expect(output).toContain('export default function ()')
+    expect(output).toMatch(/const count = __fictUseSignal\(__fictCtx, 1/)
+  })
+
   it('renames inlined for-of and for-in helpers when source declares their names', () => {
     const output = transform(
       `
