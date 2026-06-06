@@ -405,6 +405,19 @@ function throwAsyncRenderHookAfterAwait(
   )
 }
 
+function throwAsyncComponent(fn: HIRFunction, ctx: CodegenContext): never {
+  const name = fn.name ?? '<anonymous>'
+  throw new HIRError(
+    `Async component "${name}" is not supported by the current synchronous render ABI. Use a synchronous component or move async work into a non-component helper.`,
+    'BUILD_ERROR',
+    {
+      file: ctx.options?.filename,
+      line: fn.loc?.start.line,
+      variable: name,
+    },
+  )
+}
+
 function throwGeneratorComponentOrHook(
   fn: HIRFunction,
   ctx: CodegenContext,
@@ -9013,6 +9026,9 @@ function lowerFunctionWithRegions(
   const isGenerator = !!fn.meta?.isGenerator || functionHasYield(fn)
   if (isGenerator && (isComponent || inferredHook)) {
     throwGeneratorComponentOrHook(fn, ctx, isComponent ? 'component' : 'hook')
+  }
+  if (isAsync && isComponent) {
+    throwAsyncComponent(fn, ctx)
   }
   if (
     isAsync &&

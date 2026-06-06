@@ -1310,6 +1310,20 @@ describe('tracked reads/writes in HIR codegen', () => {
 
   it.each([
     {
+      name: 'JSX without await',
+      source: `
+        export async function App() {
+          return <span>ok</span>
+        }
+      `,
+    },
+    {
+      name: 'async arrow component',
+      source: `
+        export const App = async () => <span>ok</span>
+      `,
+    },
+    {
       name: 'JSX after await',
       source: `
         import { $state } from 'fict'
@@ -1346,8 +1360,23 @@ describe('tracked reads/writes in HIR codegen', () => {
         }
       `,
     },
-  ])('rejects async components that create render hooks after await: $name', testCase => {
-    expect(() => transform(testCase.source)).toThrow(/Async component "App".*after await/)
+    {
+      name: 'render setup before await',
+      source: `
+        import { $state } from 'fict'
+
+        export async function App() {
+          const count = $state(1)
+          const view = <div>{count}</div>
+          await Promise.resolve()
+          return view
+        }
+      `,
+    },
+  ])('rejects async components unsupported by the sync ABI: $name', testCase => {
+    expect(() => transform(testCase.source)).toThrow(
+      /Async component "App".*synchronous render ABI/,
+    )
   })
 
   it('rejects async hooks that create render hooks after await', () => {
@@ -1359,22 +1388,6 @@ describe('tracked reads/writes in HIR codegen', () => {
         }
       `),
     ).toThrow(/Async hook "useView".*after await/)
-  })
-
-  it('allows async components when render hook setup finishes before await', () => {
-    const output = transform(`
-      import { $state } from 'fict'
-
-      export async function App() {
-        const count = $state(1)
-        const view = <div>{count}</div>
-        await Promise.resolve()
-        return view
-      }
-    `)
-
-    expect(output).toContain('export async function App()')
-    expect(output).toContain('await Promise.resolve()')
   })
 
   it('allows async hooks that only read existing accessors after await', () => {
@@ -1579,7 +1592,7 @@ describe('tracked reads/writes in HIR codegen', () => {
 
   it('keeps destructured function props unwrapped when called in expression containers', () => {
     const ast = parseFile(`
-      async function Child({ cb, tag, Ctor }) {
+      function Child({ cb, tag, Ctor }) {
         const label = \`value:\${cb('template')}\`
         tag\`\${cb('tagged')}\`
         ;(0, cb('sequence'))
@@ -1587,8 +1600,8 @@ describe('tracked reads/writes in HIR codegen', () => {
         new Ctor(cb('new-arg'))
         let assigned
         assigned = cb('assignment')
+        Promise.resolve(cb('promise'))
         const view = <div>{label}{assigned}</div>
-        await cb('await')
         return view
       }
 
