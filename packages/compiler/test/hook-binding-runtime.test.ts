@@ -141,4 +141,61 @@ describe('hook binding regressions', () => {
 
     expect(result).toBe(2)
   })
+
+  it('only lowers hook return members with explicit accessor metadata', () => {
+    const result = compileAndRunHook<{
+      value: number
+      count: number
+      arrayValue: number
+      arrayCount: number
+      methodValue: number
+    }>(
+      `
+        import { $state } from 'fict'
+
+        function useMixedObject() {
+          let count = $state(1)
+          return {
+            value: 7,
+            count,
+            method() {
+              return this.value + 1
+            },
+          }
+        }
+
+        function useMixedArray() {
+          let count = $state(2)
+          return [9, count]
+        }
+
+        export function useProbe() {
+          const object = useMixedObject()
+          object.value = object.value + 1
+          object.count = object.count + 1
+
+          const list = useMixedArray()
+          list[0] = list[0] + 1
+          list[1] = list[1] + 1
+
+          return {
+            value: object.value,
+            count: object.count,
+            arrayValue: list[0],
+            arrayCount: list[1],
+            methodValue: object.method(),
+          }
+        }
+      `,
+      'useProbe',
+    )
+
+    expect(result).toEqual({
+      value: 8,
+      count: 2,
+      arrayValue: 10,
+      arrayCount: 3,
+      methodValue: 9,
+    })
+  })
 })
