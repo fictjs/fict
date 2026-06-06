@@ -530,6 +530,48 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(code).toMatch(/__fictUseEffect\(__fictCtx, \(\) => import\(count\(\)\)/)
   })
 
+  it('wraps side-effect-only if tests with tracked expression containers in effects', () => {
+    const ast = parseFile(`
+      function tag(strings, value) {
+        return value > 0
+      }
+
+      class Box {
+        constructor(value) {
+          this.value = value
+        }
+      }
+
+      function Counter() {
+        let count = $state(0)
+        let seen = []
+        if ((0, count)) {
+          seen.push('sequence')
+        }
+        if (tag\`\${count}\`) {
+          seen.push('tagged')
+        }
+        if (new Box(count)) {
+          seen.push('new')
+        }
+        if (class Derived extends count {}) {
+          seen.push('class')
+        }
+        return <p>{seen.length}</p>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toMatch(/__fictUseEffect\(__fictCtx, \(\) => \{\s*if \(0, count\(\)\)/)
+    expect(code).toMatch(/__fictUseEffect\(__fictCtx, \(\) => \{\s*if \(tag`\$\{count\(\)\}`\)/)
+    expect(code).toMatch(/__fictUseEffect\(__fictCtx, \(\) => \{\s*if \(new Box\(count\(\)\)\)/)
+    expect(code).toMatch(
+      /__fictUseEffect\(__fictCtx, \(\) => \{\s*if \(class Derived extends count\(\)/,
+    )
+  })
+
   it('handles hook return object without destructuring by treating properties as accessors', () => {
     const ast = parseFile(`
       const useCounter = () => {
