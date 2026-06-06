@@ -7,6 +7,7 @@ import {
   ErrorBoundary,
   Fragment,
   onMount,
+  createEffect,
 } from '../src/index'
 import { createSignal, reactive } from '../src/advanced'
 
@@ -47,6 +48,258 @@ describe('Suspense', () => {
     await tick()
 
     expect(container.textContent).toBe('ready')
+
+    dispose()
+  })
+
+  it('does not let a Suspense boundary catch sibling effect tokens', async () => {
+    const sibling = createSuspenseToken()
+    const trigger = createSignal(false)
+    const container = document.createElement('div')
+
+    const Outside = () => {
+      createEffect(() => {
+        if (trigger()) {
+          throw sibling.token
+        }
+      })
+      return { type: 'span', props: { children: 'outside' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: 'outer-fallback',
+          children: {
+            type: Fragment,
+            props: {
+              children: [
+                {
+                  type: Suspense,
+                  props: {
+                    fallback: 'inner-fallback',
+                    children: { type: 'span', props: { children: 'inside' } },
+                  },
+                },
+                { type: Outside, props: {} },
+              ],
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('insideoutside')
+
+    trigger(true)
+    await tick()
+
+    expect(container.textContent).toBe('outer-fallback')
+
+    dispose()
+  })
+
+  it('does not let a Suspense boundary catch sibling render tokens', async () => {
+    const sibling = createSuspenseToken()
+    const show = createSignal(false)
+    const container = document.createElement('div')
+
+    const OutsideRender = () => {
+      throw sibling.token
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: 'outer-render-fallback',
+          children: {
+            type: Fragment,
+            props: {
+              children: [
+                {
+                  type: Suspense,
+                  props: {
+                    fallback: 'inner-render-fallback',
+                    children: { type: 'span', props: { children: 'inside' } },
+                  },
+                },
+                reactive(() =>
+                  show()
+                    ? { type: OutsideRender, props: {} }
+                    : { type: 'span', props: { children: 'outside' } },
+                ),
+              ],
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('insideoutside')
+
+    show(true)
+    await tick()
+
+    expect(container.textContent).toBe('outer-render-fallback')
+
+    dispose()
+  })
+
+  it('keeps nested child tokens inside the inner Suspense boundary', async () => {
+    const inner = createSuspenseToken()
+    const trigger = createSignal(false)
+    const container = document.createElement('div')
+
+    const Inside = () => {
+      createEffect(() => {
+        if (trigger()) {
+          throw inner.token
+        }
+      })
+      return { type: 'span', props: { children: 'inside' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: 'outer-fallback',
+          children: {
+            type: Suspense,
+            props: {
+              fallback: 'inner-fallback',
+              children: { type: Inside, props: {} },
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('inside')
+
+    trigger(true)
+    await tick()
+
+    expect(container.textContent).toBe('inner-fallback')
+
+    dispose()
+  })
+
+  it('does not catch sibling tokens after the Suspense boundary unmounts', async () => {
+    const sibling = createSuspenseToken()
+    const showInner = createSignal(true)
+    const trigger = createSignal(false)
+    const container = document.createElement('div')
+
+    const Outside = () => {
+      createEffect(() => {
+        if (trigger()) {
+          throw sibling.token
+        }
+      })
+      return { type: 'span', props: { children: 'outside' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: 'outer-unmount-fallback',
+          children: {
+            type: Fragment,
+            props: {
+              children: [
+                reactive(() =>
+                  showInner()
+                    ? {
+                        type: Suspense,
+                        props: {
+                          fallback: 'inner-unmount-fallback',
+                          children: { type: 'span', props: { children: 'inside' } },
+                        },
+                      }
+                    : null,
+                ),
+                { type: Outside, props: {} },
+              ],
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('insideoutside')
+
+    showInner(false)
+    await tick()
+    expect(container.textContent).toBe('outside')
+
+    trigger(true)
+    await tick()
+
+    expect(container.textContent).toBe('outer-unmount-fallback')
+
+    dispose()
+  })
+
+  it('does not let same-host sibling Suspense ordering steal sibling tokens', async () => {
+    const sibling = createSuspenseToken()
+    const trigger = createSignal(false)
+    const container = document.createElement('div')
+
+    const Outside = () => {
+      createEffect(() => {
+        if (trigger()) {
+          throw sibling.token
+        }
+      })
+      return { type: 'span', props: { children: 'outside' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: 'outer-order-fallback',
+          children: {
+            type: Fragment,
+            props: {
+              children: [
+                {
+                  type: Suspense,
+                  props: {
+                    fallback: 'first-fallback',
+                    children: { type: 'span', props: { children: 'first' } },
+                  },
+                },
+                {
+                  type: Suspense,
+                  props: {
+                    fallback: 'second-fallback',
+                    children: { type: 'span', props: { children: 'second' } },
+                  },
+                },
+                { type: Outside, props: {} },
+              ],
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('firstsecondoutside')
+
+    trigger(true)
+    await tick()
+
+    expect(container.textContent).toBe('outer-order-fallback')
 
     dispose()
   })
