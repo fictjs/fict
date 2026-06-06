@@ -818,6 +818,61 @@ describe('tracked reads/writes in HIR codegen', () => {
     }
   })
 
+  it('preserves user-authored __fictPropsRest calls', () => {
+    const cases = [
+      `
+        import { $state } from 'fict'
+
+        export function App() {
+          const count = $state(1)
+          const x = __fictPropsRest({ a: count }, [])
+          return <div>{String(x.a)}</div>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+
+        const __fictPropsRest = (value) => value
+
+        export function App() {
+          const count = $state(1)
+          const x = __fictPropsRest({ a: count }, [])
+          return <div>{String(x.a)}</div>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+
+        export function App() {
+          function __fictPropsRest(value) {
+            return value
+          }
+          const count = $state(1)
+          const x = __fictPropsRest({ a: count }, [])
+          return <div>{String(x.a)}</div>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        import { __fictPropsRest } from './user-helpers'
+
+        export function App() {
+          const count = $state(1)
+          const x = __fictPropsRest({ a: count }, [])
+          return <div>{String(x.a)}</div>
+        }
+      `,
+    ]
+
+    for (const source of cases) {
+      const output = transform(source)
+
+      expect(output).toContain('__fictPropsRest({')
+      expect(output).toContain('a: count()')
+      expect(output).not.toMatch(/import \{[^}]*\b__fictPropsRest\b[^}]*\} from "fict\/internal"/)
+    }
+  })
+
   it('lowers array-literal component spreads to index props', () => {
     const output = transform(`
       import { $state } from 'fict'

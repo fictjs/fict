@@ -3355,11 +3355,6 @@ function lowerExpressionImpl(
           ...args,
         ])
       }
-      if (expr.callee.kind === 'Identifier' && expr.callee.name === '__fictPropsRest') {
-        ctx.helpersUsed.add('propsRest')
-        const args = lowerCallArguments(expr.arguments)
-        return t.callExpression(runtimeIdentifier(ctx, 'propsRest'), args)
-      }
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '__fictObjectRest') {
         const sourceArg = expr.arguments[0]
         const isComponentPropsRest =
