@@ -6052,6 +6052,138 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('renders dynamic hook-return DOM bindings without calling plain values', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let controls: {
+        setTextKey(value: string): void
+        setAttrKey(value: string): void
+        setPropKey(value: string): void
+        setTupleKey(value: number): void
+      }
+
+      function useBucket() {
+        let count = $state(1)
+        return { count, plain: 7, label: 'ok' }
+      }
+
+      function useTuple() {
+        let count = $state(2)
+        return [count, 9]
+      }
+
+      function Child(props: { value: unknown }) {
+        return <em data-id="child">{props.value}</em>
+      }
+
+      export function App() {
+        const bucket = useBucket()
+        const tuple = useTuple()
+        let textKey = $state('plain')
+        let attrKey = $state('label')
+        let propKey = $state('plain')
+        let tupleKey = $state(1)
+
+        controls = {
+          setTextKey: value => (textKey = value),
+          setAttrKey: value => (attrKey = value),
+          setPropKey: value => (propKey = value),
+          setTupleKey: value => (tupleKey = value),
+        }
+
+        return (
+          <div>
+            <span data-id="text">{bucket[textKey]}</span>
+            <span data-id="attr" title={bucket[attrKey]}>attr</span>
+            <Child value={bucket[propKey]} />
+            <span data-id="tuple">{tuple[tupleKey]}</span>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      controls: {
+        setTextKey(value: string): void
+        setAttrKey(value: string): void
+        setPropKey(value: string): void
+        setTupleKey(value: number): void
+      }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-id="text"]')?.textContent).toBe('7')
+    expect(container.querySelector('[data-id="attr"]')?.getAttribute('title')).toBe('ok')
+    expect(container.querySelector('[data-id="child"]')?.textContent).toBe('7')
+    expect(container.querySelector('[data-id="tuple"]')?.textContent).toBe('9')
+
+    mod.controls.setTextKey('label')
+    mod.controls.setAttrKey('plain')
+    mod.controls.setPropKey('label')
+    mod.controls.setTupleKey(1)
+    await flushUpdates()
+
+    expect(container.querySelector('[data-id="text"]')?.textContent).toBe('ok')
+    expect(container.querySelector('[data-id="attr"]')?.getAttribute('title')).toBe('7')
+    expect(container.querySelector('[data-id="child"]')?.textContent).toBe('ok')
+    expect(container.querySelector('[data-id="tuple"]')?.textContent).toBe('9')
+
+    teardown()
+    container.remove()
+  })
+
+  it('keeps dynamic hook-return DOM binding keys conservative in output', () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function useBucket() {
+        let count = $state(1)
+        return { count, plain: 7 }
+      }
+
+      function useTuple() {
+        let count = $state(2)
+        return [count, 9]
+      }
+
+      function Child(props: { value: unknown }) {
+        return <em>{props.value}</em>
+      }
+
+      export function App() {
+        const bucket = useBucket()
+        const tuple = useTuple()
+        let key = $state('count')
+        let index = $state(0)
+        return (
+          <div title={bucket[key]}>
+            <Child value={bucket[key]} />
+            <span>{bucket[key]}</span>
+            <span>{tuple[index]}</span>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+    const output = transformCommonJS(source, { fineGrainedDom: true })
+
+    expect(output).toContain('bucket[key()]')
+    expect(output).toContain('tuple[index()]')
+    expect(output).not.toContain('bucket[key()]()')
+    expect(output).not.toContain('tuple[index()]()')
+  })
+
   it('exposes latest state to DOM event handlers', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'
