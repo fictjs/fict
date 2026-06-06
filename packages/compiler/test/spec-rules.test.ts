@@ -209,6 +209,31 @@ describe('Spec rule coverage', () => {
     ).toBe(true)
   })
 
+  it('does not warn for expression-bodied arrow components', () => {
+    const cases = [
+      `
+        const App = () => <span />
+        export { App }
+      `,
+      `
+        const App = () => <>x</>
+        export { App }
+      `,
+      `
+        const App = flag => flag ? <span /> : null
+        export { App }
+      `,
+      `
+        const App = () => (<span /> as any)
+        export { App }
+      `,
+    ]
+
+    for (const input of cases) {
+      expect(hasWarning(input, 'FICT-C004')).toBe(false)
+    }
+  })
+
   it('warns when a no-return component only uses memo primitives', () => {
     const cases = [
       `

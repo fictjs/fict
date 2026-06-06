@@ -787,7 +787,7 @@ function caseStatementPathCompletions(
 }
 
 function functionHasReturn(node: BabelCore.types.Function): boolean {
-  if (node.type === 'ArrowFunctionExpression' && node.expression) return true
+  if (node.type === 'ArrowFunctionExpression' && node.body.type !== 'BlockStatement') return true
   if (node.body && node.body.type === 'BlockStatement') {
     return !statementListCompletions(node.body.body).has('normal')
   }
