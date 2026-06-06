@@ -2027,6 +2027,65 @@ describe('resumable event handler transformation', () => {
     expect(code).toContain('return new.target')
   })
 
+  it('throws for explicit resumable arrow handlers that capture lexical this', () => {
+    const ast = parseFile(`
+      function App(props) {
+        return <button onClick$={() => this.value}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(/this/i)
+  })
+
+  it('throws for explicit resumable function refs that capture lexical this', () => {
+    const ast = parseFile(`
+      function App(props) {
+        const handler = () => this.value
+        return <button onClick$={handler}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(/this/i)
+  })
+
+  it('falls back for auto resumable handlers that capture lexical this', () => {
+    const ast = parseFile(`
+      function App(props) {
+        return (
+          <button onClick={() => {
+            console.log(this.value)
+            console.log('a')
+            console.log('b')
+          }}>
+            Click
+          </button>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",/)
+    expect(code).not.toContain('setAttribute("on:click"')
+  })
+
+  it('allows explicit resumable function handlers with dynamic this', () => {
+    const ast = parseFile(`
+      function App(props) {
+        return <button onClick$={function () { return this.value }}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('setAttribute("on:click"')
+    expect(code).toContain('return this.value')
+  })
+
   it('falls back for auto-extracted handlers that capture function-valued signals', () => {
     const ast = parseFile(`
       function Comp() {

@@ -136,6 +136,33 @@ export function capturesLexicalNewTargetInExpr(
 }
 
 /**
+ * Detect `this` reads captured lexically by an arrow function. Non-arrow
+ * handlers intentionally receive dynamic DOM `this` via `.call(el, event)`.
+ */
+export function capturesLexicalThisInExpr(
+  expr: BabelCore.types.Expression,
+  t: typeof BabelCore.types,
+): boolean {
+  const traverse = ((traverseModule as unknown as { default?: typeof traverseModule }).default ??
+    traverseModule) as typeof traverseModule
+  const file = t.file(t.program([t.expressionStatement(t.cloneNode(expr, true))]))
+  let found = false
+
+  traverse(file, {
+    Function(path) {
+      if (path.isArrowFunctionExpression()) return
+      path.skip()
+    },
+    ThisExpression(path) {
+      found = true
+      path.stop()
+    },
+  })
+
+  return found
+}
+
+/**
  * Generate module URL expression for QRL generation.
  * Uses filename from compiler options when available; falls back to import.meta.url.
  */
