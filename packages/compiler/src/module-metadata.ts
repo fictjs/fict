@@ -119,7 +119,8 @@ function normalizeFileName(fileName: string): string {
     normalized = normalized.slice(0, queryStart)
   }
   if (normalized.startsWith('/@fs/')) {
-    normalized = normalized.slice('/@fs/'.length)
+    const fsPath = normalized.slice('/@fs/'.length)
+    normalized = fsPath.startsWith('/') || isWindowsDrivePath(fsPath) ? fsPath : `/${fsPath}`
   }
   if (normalized.startsWith('file://')) {
     try {

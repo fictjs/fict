@@ -703,6 +703,48 @@ describe('module metadata safety', () => {
     }
   })
 
+  it('preserves absolute paths for /@fs metadata imports', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_metadata_atfs__')
+    const importer = path.join(baseDir, 'consumer.ts')
+    const depPath = path.join(baseDir, 'dep.ts')
+    const depMetaPath = `${depPath}.fict.meta.json`
+    const moduleMetadata = new Map<string, ModuleReactiveMetadata>([
+      [depPath, { exports: { value: 'memo' } }],
+    ])
+    mkdirSync(baseDir, { recursive: true })
+
+    try {
+      expect(
+        resolveModuleMetadata(`/@fs${depPath}`, importer, {
+          emitModuleMetadata: false,
+          moduleMetadata,
+        }),
+      ).toEqual({ exports: { value: 'memo' } })
+      expect(
+        resolveModuleMetadata(`/@fs/${depPath}`, importer, {
+          emitModuleMetadata: false,
+          moduleMetadata,
+        }),
+      ).toEqual({ exports: { value: 'memo' } })
+
+      writeFileSync(depMetaPath, JSON.stringify({ exports: { value: 'signal' } }), 'utf8')
+      expect(
+        resolveModuleMetadata(`/@fs${depPath}`, importer, {
+          emitModuleMetadata: false,
+        }),
+      ).toEqual({ exports: { value: 'signal' } })
+    } finally {
+      if (existsSync(depMetaPath)) {
+        rmSync(depMetaPath, { force: true })
+      }
+      if (existsSync(baseDir)) {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+      clearModuleMetadata()
+    }
+  })
+
   it('invalidates fs probe cache when metadata sidecars are created', () => {
     clearModuleMetadata()
     const baseDir = path.join(process.cwd(), '__fict_metadata_probe_cache__')
