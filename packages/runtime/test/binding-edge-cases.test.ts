@@ -1008,6 +1008,43 @@ describe('Binding Edge Cases', () => {
       dispose()
     })
 
+    it('sets SVG spread class props through the class attribute', async () => {
+      const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+      const circleProps = createSignal<Record<string, unknown>>({ class: 'hot' })
+      const rectProps = createSignal<Record<string, unknown>>({ className: 'warm' })
+      const pathProps = createSignal<Record<string, unknown>>({
+        class: { active: true, off: false },
+      })
+
+      const { dispose } = createRoot(() => {
+        spread(circle, () => circleProps(), true)
+        spread(rect, () => rectProps(), true)
+        spread(path, () => pathProps(), true)
+      })
+
+      await tick()
+      expect(circle.getAttribute('class')).toBe('hot')
+      expect((circle.className as SVGAnimatedString).baseVal).toBe('hot')
+      expect(rect.getAttribute('class')).toBe('warm')
+      expect((rect.className as SVGAnimatedString).baseVal).toBe('warm')
+      expect(path.classList.contains('active')).toBe(true)
+      expect(path.classList.contains('off')).toBe(false)
+
+      circleProps({ class: null })
+      rectProps({})
+      pathProps({ class: { active: false, off: true } })
+      await tick()
+
+      expect(circle.hasAttribute('class')).toBe(false)
+      expect(rect.hasAttribute('class')).toBe(false)
+      expect(path.classList.contains('active')).toBe(false)
+      expect(path.classList.contains('off')).toBe(true)
+
+      dispose()
+    })
+
     it('handles ref callback in props', () => {
       const el = document.createElement('div')
       let refElement: Element | null = null

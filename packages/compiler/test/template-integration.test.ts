@@ -3095,6 +3095,88 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('sets SVG spread classes through the class attribute in fine-grained output', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { set(value: string | null): void; toggle(): void }
+
+      function App() {
+        let cls = $state<string | null>('hot')
+        let active = $state(true)
+        let show = $state(true)
+        api = {
+          set(value) {
+            cls = value
+          },
+          toggle() {
+            active = !active
+          },
+        }
+
+        return (
+          <svg data-id="root" {...{ class: cls }}>
+            <circle data-id="circle" {...{ class: cls }} />
+            <rect data-id="rect" {...{ className: cls }} />
+            <path data-id="path" {...{ class: { active, off: !active } }} />
+            {show && <g data-id="dynamic" {...{ class: cls }}></g>}
+          </svg>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { set(value: string | null): void; toggle(): void }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    const root = container.querySelector('[data-id="root"]') as SVGSVGElement
+    const circle = container.querySelector('[data-id="circle"]') as SVGCircleElement
+    const rect = container.querySelector('[data-id="rect"]') as SVGRectElement
+    const path = container.querySelector('[data-id="path"]') as SVGPathElement
+    const dynamic = container.querySelector('[data-id="dynamic"]') as SVGGElement
+
+    expect(root.getAttribute('class')).toBe('hot')
+    expect(circle.getAttribute('class')).toBe('hot')
+    expect(circle.className.baseVal).toBe('hot')
+    expect(rect.getAttribute('class')).toBe('hot')
+    expect(rect.className.baseVal).toBe('hot')
+    expect(path.classList.contains('active')).toBe(true)
+    expect(path.classList.contains('off')).toBe(false)
+    expect(dynamic.getAttribute('class')).toBe('hot')
+
+    mod.api.set('cool')
+    mod.api.toggle()
+    await flushUpdates()
+
+    expect(root.getAttribute('class')).toBe('cool')
+    expect(circle.getAttribute('class')).toBe('cool')
+    expect(rect.getAttribute('class')).toBe('cool')
+    expect(path.classList.contains('active')).toBe(false)
+    expect(path.classList.contains('off')).toBe(true)
+    expect(dynamic.getAttribute('class')).toBe('cool')
+
+    mod.api.set(null)
+    await flushUpdates()
+
+    expect(root.hasAttribute('class')).toBe(false)
+    expect(circle.hasAttribute('class')).toBe(false)
+    expect(rect.hasAttribute('class')).toBe(false)
+    expect(dynamic.hasAttribute('class')).toBe(false)
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps generated template temps from shadowing source bindings', async () => {
     const cases: Array<{
       source: string
