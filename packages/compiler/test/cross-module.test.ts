@@ -2301,6 +2301,99 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toContain('real.count()')
     })
 
+    it('does not publish malformed imported hook metadata through local exports', () => {
+      const emptyPath = path.join(baseDir, 'empty-imported-hook-prototype-names.ts')
+      const inheritedPath = path.join(baseDir, 'inherited-imported-hook-prototype-names.ts')
+      const realPath = path.join(baseDir, 'real-imported-hook-control.ts')
+      const malformedPath = path.join(baseDir, 'malformed-imported-hook-control.ts')
+      const malformedDefaultPath = path.join(baseDir, 'malformed-default-hook-control.ts')
+      const barrelPath = path.join(baseDir, 'barrel-imported-hook-prototype-names.ts')
+      const appPath = path.join(baseDir, 'app-imported-hook-prototype-names.tsx')
+      const malformedHook = Object.assign(
+        function malformedHook() {
+          return ''
+        },
+        {
+          objectProps: { count: 'signal' },
+        },
+      )
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(emptyPath), {
+        version: MODULE_REACTIVE_METADATA_VERSION,
+        exports: {},
+        hooks: {},
+      })
+      moduleMetadata.set(path.resolve(inheritedPath), {
+        version: MODULE_REACTIVE_METADATA_VERSION,
+        exports: {},
+        hooks: Object.create({
+          toString: { objectProps: { count: 'signal' } },
+        }),
+      })
+      moduleMetadata.set(path.resolve(realPath), {
+        version: MODULE_REACTIVE_METADATA_VERSION,
+        exports: {},
+        hooks: {
+          useReal: { objectProps: { count: 'signal' } },
+        },
+      })
+      moduleMetadata.set(path.resolve(malformedPath), {
+        version: MODULE_REACTIVE_METADATA_VERSION,
+        exports: {},
+        hooks: {
+          useMalformed: malformedHook,
+        },
+      })
+      moduleMetadata.set(path.resolve(malformedDefaultPath), {
+        version: MODULE_REACTIVE_METADATA_VERSION,
+        exports: {},
+        hooks: {
+          default: malformedHook,
+        },
+      })
+
+      transform(
+        `
+          import { toString as useBad } from './empty-imported-hook-prototype-names'
+          import { toString as useInherited } from './inherited-imported-hook-prototype-names'
+          import { useReal } from './real-imported-hook-control'
+          import { useMalformed } from './malformed-imported-hook-control'
+          import useDefaultMalformed from './malformed-default-hook-control'
+
+          export { useBad, useInherited, useReal, useMalformed, useDefaultMalformed }
+        `,
+        { moduleMetadata },
+        barrelPath,
+      )
+
+      const meta = moduleMetadata.get(path.resolve(barrelPath))
+      expect(Object.keys(meta?.hooks ?? {})).toEqual(['useReal'])
+      expect(meta?.hooks?.useReal).toMatchObject({
+        objectProps: { count: 'signal' },
+      })
+      for (const name of ['useBad', 'useInherited', 'useMalformed', 'useDefaultMalformed']) {
+        expect(Object.prototype.hasOwnProperty.call(meta?.hooks, name)).toBe(false)
+      }
+
+      const output = transform(
+        `
+          import { useMalformed, useReal } from './barrel-imported-hook-prototype-names'
+
+          export function App() {
+            const bad = useMalformed()
+            const real = useReal()
+            return <div>{bad.count}{real.count}</div>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        appPath,
+      )
+
+      expect(output).toContain('bad.count')
+      expect(output).not.toContain('bad.count()')
+      expect(output).toContain('real.count()')
+    })
+
     it('ignores type-only re-export declarations when propagating metadata', () => {
       const storeSource = `
         import { createSignal } from 'fict/advanced'

@@ -181,7 +181,7 @@ export function applyImportedReactiveMetadata(
         if (namespaceMeta) {
           namespaces.set(localName, namespaceMeta)
         }
-        const hookInfo = getOwnRecordValue(meta.hooks, importedName)
+        const hookInfo = getOwnHookReturnInfo(meta.hooks, importedName)
         if (hookInfo && hooks?.setImportedHookInfo) {
           hooks.setImportedHookInfo(localName, hookInfo)
         }
@@ -194,7 +194,7 @@ export function applyImportedReactiveMetadata(
         if (kind) {
           addImportedReactiveBinding(localName, kind, ctx)
         }
-        const hookInfo = getOwnRecordValue(meta.hooks, 'default')
+        const hookInfo = getOwnHookReturnInfo(meta.hooks, 'default')
         if (hookInfo && hooks?.setImportedHookInfo) {
           hooks.setImportedHookInfo(localName, hookInfo)
         }
