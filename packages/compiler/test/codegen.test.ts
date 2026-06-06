@@ -1265,6 +1265,45 @@ describe('resumable event handler transformation', () => {
     expect(code).not.toMatch(/\{\s*__fict_fn_helper_\d+\s*\}/)
   })
 
+  it('preserves shadowed shorthand values when renaming hoisted deps', () => {
+    const ast = parseFile(`
+      export const log = []
+
+      function Comp() {
+        const helper = () => log.push('outer')
+        return (
+          <button
+            onClick$={() => {
+              function inner(helper) {
+                log.push(({ helper }).helper)
+              }
+              const arrow = helper => log.push(({ helper }).helper)
+              {
+                const helper = 'block'
+                log.push(({ helper }).helper)
+              }
+              inner('local')
+              arrow('arrow')
+              helper()
+            }}
+          >
+            Click
+          </button>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('export const __fict_fn_helper_')
+    expect(code).toContain('function inner(helper)')
+    expect(code).toContain('const arrow = helper =>')
+    expect(code).toContain('const helper = "block"')
+    expect(code).not.toMatch(/helper:\s*__fict_fn_helper_\d+/)
+    expect(code).toMatch(/__fict_fn_helper_\d+\(\)/)
+  })
+
   it('does not inject event parameter into zero-arg resumable handlers', () => {
     const ast = parseFile(`
       const event = 42

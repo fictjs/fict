@@ -25,6 +25,12 @@ export function renameIdentifiersInExpr(
       const nextName = renames.get(oldName)
       if (!nextName) return
 
+      if (!path.isReferencedIdentifier()) return
+
+      // Avoid renaming locally-bound identifiers inside nested scopes.
+      const binding = path.scope.getBinding(oldName)
+      if (binding && binding.scope !== path.scope.getProgramParent()) return
+
       // Preserve shorthand key names: { helper } -> { helper: __fict_fn_helper_0 }
       if (
         path.parentPath.isObjectProperty() &&
@@ -36,12 +42,6 @@ export function renameIdentifiersInExpr(
         path.parentPath.node.value = t.identifier(nextName)
         return
       }
-
-      if (!path.isReferencedIdentifier()) return
-
-      // Avoid renaming locally-bound identifiers inside nested scopes.
-      const binding = path.scope.getBinding(oldName)
-      if (binding && binding.scope !== path.scope.getProgramParent()) return
 
       path.node.name = nextName
     },
