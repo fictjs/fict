@@ -5892,4 +5892,59 @@ describe('compiled templates DOM integration', () => {
     teardown()
     container.remove()
   })
+
+  it('keeps conditional return predicates from generated temp shadowing', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const flag = (globalThis as any).__fictConditionalFlag === true
+        const __cond_0 = flag
+        const __cond_1 = flag
+        const __cond_2 = flag
+        const __cond_3 = flag
+        const __cond_4 = flag
+        const __cond_5 = flag
+        const __cond_6 = flag
+        const __cond_7 = flag
+        const __cond_8 = flag
+        const __cond_9 = flag
+        const __cond_10 = flag
+        const __cond_11 = flag
+        const __cond_12 = flag
+
+        if (__cond_0) return <span>0</span>
+        if (__cond_1) return <span>1</span>
+        if (__cond_2) return <span>2</span>
+        if (__cond_3) return <span>3</span>
+        if (__cond_4) return <span>4</span>
+        if (__cond_5) return <span>5</span>
+        if (__cond_6) return <span>6</span>
+        if (__cond_7) return <span>7</span>
+        if (__cond_8) return <span>8</span>
+        if (__cond_9) return <span>9</span>
+        if (__cond_10) return <span>10</span>
+        if (__cond_11) return <span>11</span>
+        if (__cond_12) return <span>12</span>
+        return <span>B</span>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: true,
+      lazyConditional: true,
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.textContent).toBe('B')
+
+    teardown()
+    container.remove()
+  })
 })
