@@ -511,6 +511,7 @@ export interface RegionLoweringOps {
   applyRegionToContext: typeof applyRegionToContext
   applyRegionMetadataToExpression: typeof applyRegionMetadataToExpression
   buildDependencyGetter: typeof buildDependencyGetter
+  contextIdentifier: typeof contextIdentifier
   getReactiveCallKind: typeof getReactiveCallKind
   lowerExpression: typeof lowerExpression
   propagateHookResultAlias: typeof propagateHookResultAlias
@@ -597,6 +598,7 @@ function createRegionLoweringOps(): RegionLoweringOps {
     applyRegionToContext,
     applyRegionMetadataToExpression,
     buildDependencyGetter,
+    contextIdentifier,
     getReactiveCallKind,
     lowerExpression,
     propagateHookResultAlias,
@@ -699,6 +701,8 @@ export interface CodegenContext {
   scopes?: ReactiveScopeResult | undefined
   /** Whether a context object (__fictCtx) is needed */
   needsCtx?: boolean | undefined
+  /** Local name chosen for the current function/module runtime context object. */
+  contextLocalName?: string | undefined
   /** Whether local for-of helper is needed */
   needsForOfHelper?: boolean | undefined
   /** Whether local for-in helper is needed */
@@ -1063,6 +1067,49 @@ function genTemp(ctx: CodegenContext, prefix = 'tmp'): BabelCore.types.Identifie
   return createGeneratedIdentifier(ctx, prefix)
 }
 
+function isContextNameReserved(
+  ctx: CodegenContext,
+  name: string,
+  scope: 'function' | 'module',
+): boolean {
+  if (scope === 'module') {
+    return (
+      (ctx.moduleDeclaredNames?.has(name) ?? false) ||
+      (ctx.moduleRuntimeNames?.has(name) ?? false) ||
+      Array.from(ctx.runtimeHelperLocalNames?.values() ?? []).includes(name) ||
+      Array.from(ctx.inlineHelperLocalNames?.values() ?? []).includes(name)
+    )
+  }
+
+  return (ctx.localDeclaredNames?.has(name) ?? false) || (ctx.shadowedNames?.has(name) ?? false)
+}
+
+function reserveContextLocalName(ctx: CodegenContext, scope: 'function' | 'module'): string {
+  const preferred = '__fictCtx'
+  if (!isContextNameReserved(ctx, preferred, scope)) return preferred
+
+  let index = 1
+  while (true) {
+    const candidate = `${preferred}_${index++}`
+    if (!isContextNameReserved(ctx, candidate, scope)) return candidate
+  }
+}
+
+function contextLocalName(ctx: CodegenContext, scope: 'function' | 'module' = 'function'): string {
+  if (!ctx.contextLocalName) {
+    ctx.contextLocalName = reserveContextLocalName(ctx, scope)
+  }
+  return ctx.contextLocalName
+}
+
+export function contextIdentifier(ctx: CodegenContext): BabelCore.types.Identifier {
+  return ctx.t.identifier(contextLocalName(ctx))
+}
+
+function moduleContextIdentifier(ctx: CodegenContext): BabelCore.types.Identifier {
+  return ctx.t.identifier(contextLocalName(ctx, 'module'))
+}
+
 /**
  * Minimal lowering from HIR back to Babel AST.
  * - Emits a single function declaration per HIR function.
@@ -1333,14 +1380,20 @@ function lowerFunction(
   const { t } = ctx
   const prevTracked = ctx.trackedVars
   const prevCallableSignalVars = ctx.callableSignalVars
+  const prevLocalDeclared = ctx.localDeclaredNames
+  const prevContextLocalName = ctx.contextLocalName
   const scopedTracked = new Set(ctx.trackedVars)
   fn.params.forEach(p => scopedTracked.delete(deSSAVarName(p.name)))
   ctx.trackedVars = scopedTracked
   ctx.callableSignalVars = new Set(prevCallableSignalVars ?? [])
   fn.params.forEach(p => ctx.callableSignalVars?.delete(deSSAVarName(p.name)))
+  const localDeclared = new Set(prevLocalDeclared ?? [])
   for (const name of collectLocalDeclaredNames(fn.params, fn.blocks, t)) {
+    localDeclared.add(name)
     ctx.callableSignalVars?.delete(name)
   }
+  ctx.localDeclaredNames = localDeclared
+  ctx.contextLocalName = undefined
   ctx.needsCtx = false
   const prevHookFlag = ctx.currentFnIsHook
   ctx.currentFnIsHook = isHookLikeFunction(fn)
@@ -1362,7 +1415,7 @@ function lowerFunction(
     statements.unshift(
       t.variableDeclaration('const', [
         t.variableDeclarator(
-          t.identifier('__fictCtx'),
+          contextIdentifier(ctx),
           t.callExpression(runtimeIdentifier(ctx, 'useContext'), []),
         ),
       ]),
@@ -1381,6 +1434,8 @@ function lowerFunction(
   result.generator = !!fn.meta?.isGenerator || functionHasYield(fn)
   ctx.trackedVars = prevTracked
   ctx.callableSignalVars = prevCallableSignalVars
+  ctx.localDeclaredNames = prevLocalDeclared
+  ctx.contextLocalName = prevContextLocalName
   ctx.currentFnIsHook = prevHookFlag
   return result
 }
@@ -2807,7 +2862,7 @@ function lowerExpressionImpl(
         ctx.helpersUsed.add('useSignal')
         ctx.needsCtx = true
         return t.callExpression(runtimeIdentifier(ctx, 'useSignal'), [
-          t.identifier('__fictCtx'),
+          contextIdentifier(ctx),
           ...args,
         ])
       }
@@ -2881,7 +2936,7 @@ function lowerExpressionImpl(
         ctx.helpersUsed.add('useEffect')
         ctx.needsCtx = true
         return t.callExpression(runtimeIdentifier(ctx, 'useEffect'), [
-          t.identifier('__fictCtx'),
+          contextIdentifier(ctx),
           ...args,
         ])
       }
@@ -5165,7 +5220,7 @@ function lowerIntrinsicElement(
     if (ctx.inModule) {
       return t.callExpression(t.callExpression(runtimeIdentifier(ctx, 'memo'), [memoBody]), [])
     }
-    const memoArgs: BabelCore.types.Expression[] = [t.identifier('__fictCtx'), memoBody]
+    const memoArgs: BabelCore.types.Expression[] = [contextIdentifier(ctx), memoBody]
     if (ctx.isComponentFn) {
       const slot = reserveHookSlot(ctx)
       if (slot >= 0) {
@@ -5557,7 +5612,7 @@ export function lowerHIRWithRegions(
     body.push(
       t.variableDeclaration('const', [
         t.variableDeclarator(
-          t.identifier('__fictCtx'),
+          moduleContextIdentifier(ctx),
           t.callExpression(runtimeIdentifier(ctx, 'pushContext'), []),
         ),
       ]),
@@ -6955,6 +7010,7 @@ function lowerFunctionWithRegions(
   const prevIsComponent = ctx.isComponentFn
   const prevHookResultVarMap = ctx.hookResultVarMap
   const prevInModule = ctx.inModule
+  const prevContextLocalName = ctx.contextLocalName
   const scopedTracked = new Set(ctx.trackedVars)
   const shadowedParams = new Set(fn.params.map(p => deSSAVarName(p.name)))
   fn.params.forEach(p => scopedTracked.delete(deSSAVarName(p.name)))
@@ -6963,6 +7019,7 @@ function lowerFunctionWithRegions(
   fn.params.forEach(p => ctx.knownArrayVars?.delete(deSSAVarName(p.name)))
   const prevNeedsCtx = ctx.needsCtx
   ctx.needsCtx = false
+  ctx.contextLocalName = undefined
   ctx.inModule = false
   const prevShadowed = ctx.shadowedNames
   const functionShadowed = new Set(prevShadowed ?? [])
@@ -7528,7 +7585,7 @@ function lowerFunctionWithRegions(
         pureStatements.unshift(
           t.variableDeclaration('const', [
             t.variableDeclarator(
-              t.identifier('__fictCtx'),
+              contextIdentifier(ctx),
               t.callExpression(runtimeIdentifier(ctx, 'useContext'), []),
             ),
           ]),
@@ -7563,6 +7620,7 @@ function lowerFunctionWithRegions(
       ctx.wrapTrackedExpressions = prevWrapTracked
       ctx.hookResultVarMap = prevHookResultVarMap
       ctx.inModule = prevInModule
+      ctx.contextLocalName = prevContextLocalName
       ctx.resumablePropAccessors = prevResumablePropAccessors
       ctx.resumablePropRests = prevResumablePropRests
       return funcDecl
@@ -7586,6 +7644,7 @@ function lowerFunctionWithRegions(
     ctx.wrapTrackedExpressions = prevWrapTracked
     ctx.hookResultVarMap = prevHookResultVarMap
     ctx.inModule = prevInModule
+    ctx.contextLocalName = prevContextLocalName
     ctx.resumablePropAccessors = prevResumablePropAccessors
     ctx.resumablePropRests = prevResumablePropRests
     return null
@@ -7606,7 +7665,7 @@ function lowerFunctionWithRegions(
     statements.unshift(
       t.variableDeclaration('const', [
         t.variableDeclarator(
-          t.identifier('__fictCtx'),
+          contextIdentifier(ctx),
           t.callExpression(runtimeIdentifier(ctx, 'useContext'), []),
         ),
       ]),
@@ -7717,6 +7776,7 @@ function lowerFunctionWithRegions(
   ctx.resumablePropRests = prevResumablePropRests
   ctx.delegatedEventsUsed = prevDelegatedEventsUsed
   ctx.inModule = prevInModule
+  ctx.contextLocalName = prevContextLocalName
   return funcDecl
 }
 

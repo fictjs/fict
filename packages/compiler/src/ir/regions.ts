@@ -279,6 +279,9 @@ const propagateHookResultAlias: RegionLoweringOps['propagateHookResultAlias'] = 
 const resolveHookMemberValue: RegionLoweringOps['resolveHookMemberValue'] = (expr, ctx) =>
   getRegionLoweringOps(ctx).resolveHookMemberValue(expr, ctx)
 
+const contextIdentifier: RegionLoweringOps['contextIdentifier'] = ctx =>
+  getRegionLoweringOps(ctx).contextIdentifier(ctx)
+
 function buildEffectCall(
   ctx: CodegenContext,
   t: typeof BabelCore.types,
@@ -291,7 +294,7 @@ function buildEffectCall(
   }
   ctx.helpersUsed.add('useEffect')
   ctx.needsCtx = true
-  const args: BabelCore.types.Expression[] = [t.identifier('__fictCtx'), effectFn]
+  const args: BabelCore.types.Expression[] = [contextIdentifier(ctx), effectFn]
   const slot = options?.slot
   if (options?.forceSlot) {
     args.push(slot !== undefined && slot >= 0 ? t.numericLiteral(slot) : voidZero(t))
@@ -338,7 +341,7 @@ function buildMemoCall(
   }
   ctx.helpersUsed.add('useMemo')
   ctx.needsCtx = true
-  const args: BabelCore.types.Expression[] = [t.identifier('__fictCtx'), memoFn]
+  const args: BabelCore.types.Expression[] = [contextIdentifier(ctx), memoFn]
   if (memoOptions) {
     args.push(memoOptions)
     if (slot !== undefined && slot >= 0) {
