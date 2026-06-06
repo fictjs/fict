@@ -33,6 +33,11 @@ type SerializedMarker =
   | { __t: 'b'; v: string } // BigInt (as string)
   | { __t: 'ref'; v: string } // Circular reference (path)
 
+interface SerializeOptions {
+  omitFunctionProperties?: boolean
+  omitCurrentFunction?: boolean
+}
+
 export type SlotSnapshot =
   | [index: number, type: 'sig', value: unknown]
   | [index: number, type: 'store', value: unknown]
@@ -212,20 +217,7 @@ export function __fictSerializeSSRState(): SSRState {
   const scopes: Record<string, ScopeSnapshot> = {}
 
   for (const [id, record] of getScopeRegistry().entries()) {
-    const snapshot: ScopeSnapshot = {
-      id,
-      slots: serializeSlots(record.ctx),
-    }
-    if (record.type !== undefined) {
-      snapshot.t = record.type
-    }
-    if (record.props !== undefined) {
-      snapshot.props = record.props
-    }
-    if (record.ctx.slotMap !== undefined) {
-      snapshot.vars = record.ctx.slotMap
-    }
-    scopes[id] = snapshot
+    scopes[id] = serializeScopeRecord(record)
   }
 
   return { v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION, scopes }
@@ -237,20 +229,7 @@ export function __fictSerializeSSRStateForScopes(scopeIds: Iterable<string>): SS
   for (const id of scopeIds) {
     const record = getScopeRegistry().get(id)
     if (!record) continue
-    const snapshot: ScopeSnapshot = {
-      id,
-      slots: serializeSlots(record.ctx),
-    }
-    if (record.type !== undefined) {
-      snapshot.t = record.type
-    }
-    if (record.props !== undefined) {
-      snapshot.props = record.props
-    }
-    if (record.ctx.slotMap !== undefined) {
-      snapshot.vars = record.ctx.slotMap
-    }
-    scopes[id] = snapshot
+    scopes[id] = serializeScopeRecord(record)
   }
 
   return { v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION, scopes }
@@ -285,14 +264,15 @@ export function __fictEnsureScope(
   const existing = resumedScopes.get(scopeId)
   if (existing) return existing.ctx
 
-  const ctx = createContextFromSnapshot(snapshot)
+  const refs = new Map<string, unknown>()
+  const ctx = createContextFromSnapshot(snapshot, refs)
   ctx.scopeId = scopeId
   if (snapshot?.t !== undefined) {
     ctx.scopeType = snapshot.t
   }
   const entry: { ctx: HookContext; host: Element; props?: Record<string, unknown> } = { ctx, host }
   if (snapshot?.props !== undefined) {
-    entry.props = snapshot.props
+    entry.props = deserializeValue(snapshot.props, refs, '$.props') as Record<string, unknown>
   }
   resumedScopes.set(scopeId, entry)
   return ctx
@@ -365,14 +345,40 @@ export function __fictGetResume(key: string): ((...args: unknown[]) => unknown) 
   return resumeFunctionRegistry.get(key)
 }
 
-function serializeSlots(ctx: HookContext): SlotSnapshot[] {
+function serializeScopeRecord(record: ScopeRecord): ScopeSnapshot {
+  const seen = new Map<object, string>()
+  const snapshot: ScopeSnapshot = {
+    id: record.id,
+    slots: serializeSlots(record.ctx, seen),
+  }
+  if (record.type !== undefined) {
+    snapshot.t = record.type
+  }
+  if (record.props !== undefined) {
+    snapshot.props = serializeValue(record.props, seen, '$.props', {
+      omitFunctionProperties: true,
+    }) as Record<string, unknown>
+  }
+  if (record.ctx.slotMap !== undefined) {
+    snapshot.vars = record.ctx.slotMap
+  }
+  return snapshot
+}
+
+function serializeSlots(ctx: HookContext, seen = new Map<object, string>()): SlotSnapshot[] {
   const slots: SlotSnapshot[] = []
   const values = ctx.slots ?? []
-  // Share the 'seen' map across all slots to handle cross-slot circular references
-  const seen = new Map<object, string>()
 
   for (let i = 0; i < values.length; i++) {
+    if (!Object.prototype.hasOwnProperty.call(values, i)) {
+      continue
+    }
+
     const value = values[i]
+    if (typeof value === 'function') {
+      continue
+    }
+
     // Note: we don't skip undefined anymore since we can serialize it
     if (value === undefined) {
       slots.push([i, 'raw', serializeValue(undefined, seen, `$[${i}]`)])
@@ -402,11 +408,13 @@ function serializeSlots(ctx: HookContext): SlotSnapshot[] {
   return slots
 }
 
-function createContextFromSnapshot(snapshot?: ScopeSnapshot): HookContext {
+function createContextFromSnapshot(
+  snapshot?: ScopeSnapshot,
+  refs = new Map<string, unknown>(),
+): HookContext {
   const ctx: HookContext = { slots: [], cursor: 0 }
   if (!snapshot) return ctx
 
-  const refs = new Map<string, unknown>()
   for (const slot of snapshot.slots) {
     const [index, type, value] = slot
     const path = `$[${index}]`
@@ -541,6 +549,7 @@ function serializeObjectEntries(
   seen: Map<object, string>,
   path: string,
   symbolKeys: symbol[],
+  options: SerializeOptions,
 ): [unknown, unknown][] {
   const entries: [unknown, unknown][] = []
   for (const key of Object.keys(value)) {
@@ -548,6 +557,7 @@ function serializeObjectEntries(
       (value as Record<string, unknown>)[key],
       seen,
       objectChildPath(path, key),
+      forObjectProperty(options),
     )
     if (serialized !== undefined) {
       entries.push([key, serialized])
@@ -555,7 +565,12 @@ function serializeObjectEntries(
   }
   for (const key of symbolKeys) {
     const keyPath = objectChildPath(path, String(key))
-    const serialized = serializeValue((value as Record<symbol, unknown>)[key], seen, keyPath)
+    const serialized = serializeValue(
+      (value as Record<symbol, unknown>)[key],
+      seen,
+      keyPath,
+      forObjectProperty(options),
+    )
     if (serialized !== undefined) {
       entries.push([serializeSymbol(key, keyPath), serialized])
     }
@@ -571,6 +586,7 @@ export function serializeValue(
   value: unknown,
   seen = new Map<object, string>(),
   path = '$',
+  options: SerializeOptions = {},
 ): unknown {
   // Handle primitives that JSON can't represent correctly
   if (value === undefined) {
@@ -607,6 +623,9 @@ export function serializeValue(
   }
 
   if (typeof value === 'function') {
+    if (options.omitCurrentFunction) {
+      return undefined
+    }
     throw new Error(
       `[Fict] Cannot serialize function at ${path}. Functions cannot be stored in resumable snapshot values.`,
     )
@@ -643,8 +662,8 @@ export function serializeValue(
       let i = 0
       for (const [k, v] of value) {
         entries.push([
-          serializeValue(k, seen, `${path}.k${i}`),
-          serializeValue(v, seen, `${path}.v${i}`),
+          serializeValue(k, seen, `${path}.k${i}`, forContainerValue(options)),
+          serializeValue(v, seen, `${path}.v${i}`, forContainerValue(options)),
         ])
         i++
       }
@@ -658,7 +677,7 @@ export function serializeValue(
       const items: unknown[] = []
       let i = 0
       for (const item of value) {
-        items.push(serializeValue(item, seen, `${path}[${i}]`))
+        items.push(serializeValue(item, seen, `${path}[${i}]`, forContainerValue(options)))
         i++
       }
       return { __t: 's', v: items } as SerializedMarker
@@ -670,7 +689,7 @@ export function serializeValue(
       assertArraySerializableShape(value, path)
       return Array.from({ length: value.length }, (_, i) =>
         Object.prototype.hasOwnProperty.call(value, i)
-          ? serializeValue(value[i], seen, `${path}[${i}]`)
+          ? serializeValue(value[i], seen, `${path}[${i}]`, forContainerValue(options))
           : ({ __t: 'h' } as SerializedMarker),
       )
     }
@@ -690,7 +709,7 @@ export function serializeValue(
     if (symbolKeys.length > 0 || proto === null || hasOwnMarkerKey(value)) {
       const marker: Extract<SerializedMarker, { __t: 'o' }> = {
         __t: 'o',
-        v: serializeObjectEntries(value, seen, path, symbolKeys),
+        v: serializeObjectEntries(value, seen, path, symbolKeys, options),
       }
       if (proto === null) marker.p = 'n'
       return marker
@@ -702,6 +721,7 @@ export function serializeValue(
         (value as Record<string, unknown>)[key],
         seen,
         objectChildPath(path, key),
+        forObjectProperty(options),
       )
       if (serialized !== undefined) {
         defineEnumerableDataProperty(result, key, serialized)
@@ -711,6 +731,16 @@ export function serializeValue(
   }
 
   return value
+}
+
+function forObjectProperty(options: SerializeOptions): SerializeOptions {
+  if (!options.omitFunctionProperties) return options
+  return { ...options, omitCurrentFunction: true }
+}
+
+function forContainerValue(options: SerializeOptions): SerializeOptions {
+  if (!options.omitCurrentFunction) return options
+  return { ...options, omitCurrentFunction: false }
 }
 
 /**
