@@ -515,6 +515,7 @@ export interface RegionLoweringOps {
   getReactiveCallKind: typeof getReactiveCallKind
   lowerExpression: typeof lowerExpression
   propagateHookResultAlias: typeof propagateHookResultAlias
+  reserveFunctionLocalName: typeof reservePreferredFunctionLocalName
   resolveHookMemberValue: typeof resolveHookMemberValue
 }
 
@@ -602,6 +603,7 @@ function createRegionLoweringOps(): RegionLoweringOps {
     getReactiveCallKind,
     lowerExpression,
     propagateHookResultAlias,
+    reserveFunctionLocalName: reservePreferredFunctionLocalName,
     resolveHookMemberValue,
   }
 }
@@ -6061,12 +6063,19 @@ function lowerTopLevelStatementBlock(
   }
 
   const prevInModule = ctx.inModule
+  const prevLocalDeclared = ctx.localDeclaredNames
+  const topLevelDeclared = new Set(prevLocalDeclared ?? [])
+  for (const declaredName of collectLocalDeclaredNames(fn.params, fn.blocks, t)) {
+    topLevelDeclared.add(declaredName)
+  }
+  ctx.localDeclaredNames = topLevelDeclared
   ctx.inModule = true
   try {
     const lowered = generateRegionCode(fn, scopeResult, t, ctx)
     return { statements: lowered, aliases: aliasVars }
   } finally {
     ctx.inModule = prevInModule
+    ctx.localDeclaredNames = prevLocalDeclared
   }
 }
 

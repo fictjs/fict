@@ -282,6 +282,9 @@ const resolveHookMemberValue: RegionLoweringOps['resolveHookMemberValue'] = (exp
 const contextIdentifier: RegionLoweringOps['contextIdentifier'] = ctx =>
   getRegionLoweringOps(ctx).contextIdentifier(ctx)
 
+const reserveFunctionLocalName: RegionLoweringOps['reserveFunctionLocalName'] = (ctx, preferred) =>
+  getRegionLoweringOps(ctx).reserveFunctionLocalName(ctx, preferred)
+
 function buildEffectCall(
   ctx: CodegenContext,
   t: typeof BabelCore.types,
@@ -3693,7 +3696,7 @@ function wrapInMemo(
       internal: true,
     })
 
-    const regionVarName = `__region_${region.id}`
+    const regionVarName = reserveFunctionLocalName(ctx, `__region_${region.id}`)
 
     // Declare region variable
     statements.push(
@@ -4061,7 +4064,7 @@ function generateLazyConditionalMemo(
     )
   }
 
-  const regionVarName = `__region_${region.id}`
+  const regionVarName = reserveFunctionLocalName(ctx, `__region_${region.id}`)
 
   const memoCall = buildMemoCall(
     ctx,
