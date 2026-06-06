@@ -3000,7 +3000,9 @@ function createHIREntrypointVisitor(
           }
         }
         const isImportedReactiveCreationCall = (
-          callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
+          callPath: BabelCore.NodePath<
+            BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
+          >,
         ): boolean => {
           const callee = callPath.node.callee
           if (t.isIdentifier(callee)) {
@@ -3010,7 +3012,7 @@ function createHIREntrypointVisitor(
               reactiveCreationBindingIds.has(binding.identifier as BabelCore.types.Identifier)
             )
           }
-          if (!t.isMemberExpression(callee)) return false
+          if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee)) return false
           if (!t.isIdentifier(callee.object)) return false
           const propertyName = getStaticMemberPropertyName(callee)
           if (!propertyName || !isReactiveCreationName(propertyName)) return false
@@ -3021,6 +3023,25 @@ function createHIREntrypointVisitor(
               binding.identifier as BabelCore.types.Identifier,
             )
           )
+        }
+        const emitReactiveCreationPlacementWarning = (
+          callPath: BabelCore.NodePath<
+            BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
+          >,
+        ): void => {
+          if (
+            isImportedReactiveCreationCall(callPath) &&
+            (isInsideLoop(callPath) || isInsideConditional(callPath)) &&
+            !isInsideJSX(callPath)
+          ) {
+            emitWarning(
+              callPath,
+              'FICT-R004',
+              'Reactive creation inside non-JSX control flow may not auto-dispose in complex paths. Prefer createScope/runInScope (or JSX-managed regions) for explicit lifecycle control.',
+              warn,
+              fileName,
+            )
+          }
         }
         const isImportedDollarMemoCall = (
           callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
@@ -3356,19 +3377,7 @@ function createHIREntrypointVisitor(
                   `Move the $memo() call before the nested block.`,
               )
             }
-            if (
-              isImportedReactiveCreationCall(callPath) &&
-              (isInsideLoop(callPath) || isInsideConditional(callPath)) &&
-              !isInsideJSX(callPath)
-            ) {
-              emitWarning(
-                callPath,
-                'FICT-R004',
-                'Reactive creation inside non-JSX control flow may not auto-dispose in complex paths. Prefer createScope/runInScope (or JSX-managed regions) for explicit lifecycle control.',
-                warn,
-                fileName,
-              )
-            }
+            emitReactiveCreationPlacementWarning(callPath)
             validateMemberHookPlacement(callPath)
             validateDirectHookPlacement(callPath)
             const isAllowedStateCallee =
@@ -3508,6 +3517,9 @@ function createHIREntrypointVisitor(
                 )
               }
             }
+          },
+          OptionalCallExpression(callPath) {
+            emitReactiveCreationPlacementWarning(callPath)
           },
           AssignmentExpression(assignPath) {
             const rightPath = assignPath.get('right') as BabelCore.NodePath | null

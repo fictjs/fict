@@ -1442,6 +1442,119 @@ describe('Spec rule coverage', () => {
     ).not.toThrow(/FICT-R004/)
   })
 
+  it('throws when optional reactive creator calls are inside non-JSX control flow (FICT-R004)', () => {
+    const cases = [
+      `
+        import { $state, createEffect } from 'fict'
+        function Demo({ ready }) {
+          const count = $state(0)
+          if (ready) {
+            createEffect?.(() => console.log(count))
+          }
+          return <button>{count}</button>
+        }
+      `,
+      `
+        import { $state, createMemo } from 'fict'
+        function Demo({ ready }) {
+          const count = $state(0)
+          if (ready) {
+            createMemo?.(() => count * 2)
+          }
+          return <button>{count}</button>
+        }
+      `,
+      `
+        import { $state, createSelector } from 'fict'
+        function Demo({ ready }) {
+          const count = $state(0)
+          if (ready) {
+            createSelector?.(() => count)
+          }
+          return <button>{count}</button>
+        }
+      `,
+      `
+        import { $state, createMemo as memo } from 'fict'
+        function Demo({ ready }) {
+          const count = $state(0)
+          if (ready) {
+            memo?.(() => count * 2)
+          }
+          return <button>{count}</button>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        import * as F from 'fict'
+        function Demo({ ready }) {
+          const count = $state(0)
+          if (ready) {
+            F.createMemo?.(() => count * 2)
+          }
+          return <button>{count}</button>
+        }
+      `,
+      `
+        import { $state, createMemo } from 'fict'
+        function Demo({ items }) {
+          const count = $state(0)
+          for (const item of items) {
+            createMemo?.(() => count + item)
+          }
+          return <button>{count}</button>
+        }
+      `,
+    ]
+
+    for (const input of cases) {
+      expect(() => transform(input)).toThrow(/FICT-R004/)
+    }
+  })
+
+  it('can downgrade optional FICT-R004 reactive creator diagnostics to warnings', () => {
+    const { warnings } = transformWithWarnings(
+      `
+        import { $state, createMemo } from 'fict'
+        function Demo({ ready }) {
+          const count = $state(0)
+          if (ready) {
+            createMemo?.(() => count * 2)
+          }
+          return <button>{count}</button>
+        }
+      `,
+      { warningLevels: { 'FICT-R004': 'warn' } },
+    )
+
+    expect(warnings.some(w => w.code === 'FICT-R004')).toBe(true)
+  })
+
+  it('does not treat optional local shadows or JSX-managed optional calls as FICT-R004', () => {
+    expect(() =>
+      transform(`
+        import { $state } from 'fict'
+        function Demo({ ready }) {
+          const count = $state(0)
+          const createMemo = (fn: () => number) => fn()
+          if (ready) {
+            createMemo?.(() => count)
+          }
+          return <button>{count}</button>
+        }
+      `),
+    ).not.toThrow(/FICT-R004/)
+
+    expect(() =>
+      transform(`
+        import { createMemo } from 'fict'
+        function Demo({ ready }) {
+          return <div>{ready && createMemo?.(() => 1)}</div>
+        }
+      `),
+    ).not.toThrow(/FICT-R004/)
+  })
+
   it('throws when $memo is created inside loops or conditionals', () => {
     const cases = [
       `
