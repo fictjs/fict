@@ -499,6 +499,28 @@ function assertArraySerializableShape(value: unknown[], path: string): void {
   }
 }
 
+function assertNoEnumerableOwnExtras(value: object, path: string, typeName: string): void {
+  const extraKey = Object.keys(value)[0]
+  if (extraKey !== undefined) {
+    throw new Error(
+      `[Fict] Cannot serialize ${typeName} with enumerable own property at ${objectChildPath(
+        path,
+        extraKey,
+      )}. ${typeName} snapshot values only support their built-in data.`,
+    )
+  }
+
+  const symbolKey = enumerableOwnSymbols(value)[0]
+  if (symbolKey !== undefined) {
+    throw new Error(
+      `[Fict] Cannot serialize ${typeName} with enumerable symbol property at ${objectChildPath(
+        path,
+        String(symbolKey),
+      )}. ${typeName} snapshot values only support their built-in data.`,
+    )
+  }
+}
+
 function unsupportedObjectName(value: object): string {
   const ctor = (value as { constructor?: { name?: string } }).constructor
   if (ctor?.name) return ctor.name
@@ -590,12 +612,14 @@ export function serializeValue(
 
     // Date
     if (value instanceof Date) {
+      assertNoEnumerableOwnExtras(value, path, 'Date')
       const time = value.getTime()
       return { __t: 'd', v: Number.isNaN(time) ? 'invalid' : time } as SerializedMarker
     }
 
     // RegExp
     if (value instanceof RegExp) {
+      assertNoEnumerableOwnExtras(value, path, 'RegExp')
       return {
         __t: 'r',
         v: { s: value.source, f: value.flags, l: value.lastIndex },
@@ -604,6 +628,7 @@ export function serializeValue(
 
     // Map
     if (value instanceof Map) {
+      assertNoEnumerableOwnExtras(value, path, 'Map')
       seen.set(value, path)
       const entries: [unknown, unknown][] = []
       let i = 0
@@ -619,6 +644,7 @@ export function serializeValue(
 
     // Set
     if (value instanceof Set) {
+      assertNoEnumerableOwnExtras(value, path, 'Set')
       seen.set(value, path)
       const items: unknown[] = []
       let i = 0

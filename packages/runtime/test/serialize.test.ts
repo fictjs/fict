@@ -227,6 +227,115 @@ describe('serializeValue / deserializeValue', () => {
     })
   })
 
+  describe('built-in own properties', () => {
+    it('should reject supported built-ins with enumerable string properties', () => {
+      const date = new Date(0) as Date & { extra: string }
+      date.extra = 'date'
+      const regex = /a/g as RegExp & { extra: string }
+      regex.extra = 'regex'
+      const map = new Map([['a', 1]]) as Map<string, number> & { extra: string }
+      map.extra = 'map'
+      const set = new Set([1]) as Set<number> & { extra: string }
+      set.extra = 'set'
+
+      expect(() => serializeValue(date)).toThrow(
+        /Cannot serialize Date with enumerable own property at \$\."extra"/,
+      )
+      expect(() => serializeValue(regex)).toThrow(
+        /Cannot serialize RegExp with enumerable own property at \$\."extra"/,
+      )
+      expect(() => serializeValue(map)).toThrow(
+        /Cannot serialize Map with enumerable own property at \$\."extra"/,
+      )
+      expect(() => serializeValue(set)).toThrow(
+        /Cannot serialize Set with enumerable own property at \$\."extra"/,
+      )
+    })
+
+    it('should reject supported built-ins with enumerable symbol properties', () => {
+      const key = Symbol.for('fict.serialize.builtin-extra')
+      const date = new Date(0)
+      const regex = /a/g
+      const map = new Map([['a', 1]])
+      const set = new Set([1])
+
+      for (const value of [date, regex, map, set]) {
+        Object.defineProperty(value, key, { value: 'x', enumerable: true })
+      }
+
+      expect(() => serializeValue(date)).toThrow(
+        /Cannot serialize Date with enumerable symbol property at \$\."Symbol\(fict\.serialize\.builtin-extra\)"/,
+      )
+      expect(() => serializeValue(regex)).toThrow(
+        /Cannot serialize RegExp with enumerable symbol property at \$\."Symbol\(fict\.serialize\.builtin-extra\)"/,
+      )
+      expect(() => serializeValue(map)).toThrow(
+        /Cannot serialize Map with enumerable symbol property at \$\."Symbol\(fict\.serialize\.builtin-extra\)"/,
+      )
+      expect(() => serializeValue(set)).toThrow(
+        /Cannot serialize Set with enumerable symbol property at \$\."Symbol\(fict\.serialize\.builtin-extra\)"/,
+      )
+    })
+
+    it('should reject nested supported built-ins with enumerable own properties', () => {
+      const date = new Date(0) as Date & { extra: string }
+      date.extra = 'date'
+      const map = new Map([['a', 1]]) as Map<string, number> & { extra: string }
+      map.extra = 'map'
+      const set = new Set([1]) as Set<number> & { extra: string }
+      set.extra = 'set'
+
+      expect(() => serializeValue({ date })).toThrow(
+        /Cannot serialize Date with enumerable own property at \$\."date"\."extra"/,
+      )
+      expect(() => serializeValue(new Map([['map', map]]))).toThrow(
+        /Cannot serialize Map with enumerable own property at \$\.v0\."extra"/,
+      )
+      expect(() => serializeValue(new Set([set]))).toThrow(
+        /Cannot serialize Set with enumerable own property at \$\[0\]\."extra"/,
+      )
+    })
+
+    it('should ignore non-enumerable properties on supported built-ins', () => {
+      const key = Symbol.for('fict.serialize.builtin-hidden')
+      const date = new Date(0) as Date & Record<string | symbol, unknown>
+      const regex = /a/g as RegExp & Record<string | symbol, unknown>
+      const map = new Map([['a', 1]]) as Map<string, number> & Record<string | symbol, unknown>
+      const set = new Set([1]) as Set<number> & Record<string | symbol, unknown>
+
+      for (const value of [date, regex, map, set]) {
+        Object.defineProperty(value, 'extra', { value: 'x', enumerable: false })
+        Object.defineProperty(value, key, { value: 'symbol', enumerable: false })
+      }
+
+      const restoredDate = deserializeValue(
+        JSON.parse(JSON.stringify(serializeValue(date))),
+      ) as Date & Record<string | symbol, unknown>
+      const restoredRegex = deserializeValue(
+        JSON.parse(JSON.stringify(serializeValue(regex))),
+      ) as RegExp & Record<string | symbol, unknown>
+      const restoredMap = deserializeValue(JSON.parse(JSON.stringify(serializeValue(map)))) as Map<
+        string,
+        number
+      > &
+        Record<string | symbol, unknown>
+      const restoredSet = deserializeValue(
+        JSON.parse(JSON.stringify(serializeValue(set))),
+      ) as Set<number> & Record<string | symbol, unknown>
+
+      expect(restoredDate.getTime()).toBe(0)
+      expect(restoredRegex.source).toBe('a')
+      expect(restoredRegex.flags).toBe('g')
+      expect(restoredMap.get('a')).toBe(1)
+      expect(restoredSet.has(1)).toBe(true)
+
+      for (const value of [restoredDate, restoredRegex, restoredMap, restoredSet]) {
+        expect(value.extra).toBeUndefined()
+        expect(value[key]).toBeUndefined()
+      }
+    })
+  })
+
   describe('arrays', () => {
     it('should serialize and deserialize arrays with mixed types', () => {
       const arr = [1, 'hello', true, null, undefined, NaN, new Date('2024-01-01')]
