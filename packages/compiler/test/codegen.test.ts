@@ -132,6 +132,23 @@ describe('lowerHIRWithRegions', () => {
     expect(code).not.toContain('number[]')
   })
 
+  it('destructures lazy conditional region outputs from memo values', () => {
+    const ast = parseFile(`
+      export function Component(props) {
+        const a = props.x + 1
+        const b = props.y + 2
+        const out = props.choose ? a : b
+        return <span>{out}</span>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { lazyConditional: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(/const\s*\{\s*a,\s*out\s*\}\s*=\s*__region_\d+\(\);/)
+    expect(code).not.toMatch(/const\s*\{\s*a,\s*out\s*\}\s*=\s*__region_\d+;/)
+  })
+
   it('omits type-only imports and declarations from emitted modules', () => {
     const ast = parseFile(`
       import type { Foo } from './types'

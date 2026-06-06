@@ -5036,7 +5036,7 @@ function generateLazyConditionalMemo(
         t.objectPattern(
           orderedOutputs.map(name => regionOutputProperty(t, name, t.identifier(name), true)),
         ),
-        t.identifier(regionVarName),
+        t.callExpression(t.identifier(regionVarName), []),
       ),
     ]),
   )
