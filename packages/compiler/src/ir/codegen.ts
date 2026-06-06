@@ -3097,6 +3097,9 @@ function lowerExpressionImpl(
         }
         return lowerMemberExpressionWithoutAccessorCall(argument)
       }
+      if (isNamespaceReactiveAccessorMember(argument)) {
+        return lowerMemberExpressionWithoutAccessorCall(argument)
+      }
     }
     return lowerExpression(argument, ctx)
   }

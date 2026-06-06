@@ -3879,6 +3879,53 @@ describe('Cross-Module Reactivity', () => {
       expect(output).not.toContain('return store?.["count"];')
     })
 
+    it('preserves delete targets for namespace reactive members', () => {
+      const storeSource = `
+        import { createMemo, createSignal } from 'fict/advanced'
+        export const count = createSignal(1)
+        export const total = createMemo(() => count() * 2)
+        export const plain = 1
+      `
+      const appSource = `
+        import * as store from './store-ns-delete'
+
+        export function App() {
+          const signalRemoved = delete store.count
+          const memoRemoved = delete store.total
+          const computedRemoved = delete store["count"]
+          const plainRemoved = delete store.plain
+          return <div>{signalRemoved}{memoRemoved}{computedRemoved}{plainRemoved}{store.count}{store.total}</div>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(storeSource, { moduleMetadata }, path.join(baseDir, 'store-ns-delete.ts'))
+
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata, strictGuarantee: false },
+        path.join(baseDir, 'app-ns-delete-false.tsx'),
+      )
+
+      expect(output).toContain('delete store.count')
+      expect(output).toContain('delete store.total')
+      expect(output).toContain('delete store["count"]')
+      expect(output).toContain('delete store.plain')
+      expect(output).not.toContain('delete store.count()')
+      expect(output).not.toContain('delete store.total()')
+      expect(output).not.toContain('delete store["count"]()')
+      expect(output).toContain('store.count()')
+      expect(output).toContain('store.total()')
+
+      expect(() =>
+        transform(
+          appSource,
+          { fineGrainedDom: true, moduleMetadata, strictGuarantee: true },
+          path.join(baseDir, 'app-ns-delete-true.tsx'),
+        ),
+      ).toThrow(/FICT-M/)
+    })
+
     it('preserves namespace signal assignment targets in non-strict mode', () => {
       const storeSource = `
         import { createSignal } from 'fict/advanced'
