@@ -362,7 +362,7 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).toMatch(/createKeyedList\([\s\S]*?=>\s*__index\b/)
     })
 
-    it('uses returned sequence tail for key extraction', () => {
+    it('moves returned sequence prefixes into extracted list keys', () => {
       const input = `
         import { $state } from 'fict'
         function Component() {
@@ -381,7 +381,35 @@ describe('Fict Compiler - Control Flow', () => {
       const output = runTransform(input)
       expect(output).toContain('createKeyedList')
       expect(output).not.toMatch(/createKeyedList\([\s\S]*?=>\s*__index\b/)
-      expect(output).toMatch(/createKeyedList\([\s\S]*?\.id\b/)
+      expect(output).toMatch(/createKeyedList\([\s\S]*?__fictUseMemo[\s\S]*user\.id/)
+    })
+
+    it('moves side-effectful sequence prefixes into extracted list keys', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let users = $state([{ id: 1, name: 'Alice' }, { id: 2, name: 'Bob' }])
+          let seq = 0
+          return (
+            <ul>
+              {users.map(user => (
+                log.push('pre ' + user.id),
+                seq++,
+                <li key={(log.push('key ' + user.id), seq)}>{user.name}</li>
+              ))}
+            </ul>
+          )
+        }
+      `
+
+      const output = runTransform(input)
+      expect(output).toContain('createKeyedList')
+      expect(output).toMatch(
+        /=>\s*\(log\.push\("pre "\s*\+\s*user\.id\),\s*seq\+\+,\s*log\.push\("key "\s*\+\s*user\.id\),\s*seq\)/,
+      )
+      const renderStart = output.indexOf('(user, __index, __key) =>')
+      const renderEnd = output.indexOf('false, __el_', renderStart)
+      expect(output.slice(renderStart, renderEnd)).not.toContain('log.push')
     })
 
     it('handles array map with index', () => {

@@ -35,6 +35,27 @@ function getCallbackBlocks(callback: Expression): BasicBlock[] {
   return []
 }
 
+function stripExpressionBodySequencePrefix(callback: Expression, keyExpr: Expression): Expression {
+  if (
+    callback.kind !== 'ArrowFunction' ||
+    !callback.isExpression ||
+    Array.isArray(callback.body) ||
+    callback.body.kind !== 'SequenceExpression' ||
+    callback.body.expressions.length <= 1 ||
+    keyExpr.kind !== 'SequenceExpression'
+  ) {
+    return callback
+  }
+
+  const tail = callback.body.expressions[callback.body.expressions.length - 1]
+  if (!tail) return callback
+
+  return {
+    ...callback,
+    body: tail,
+  }
+}
+
 function addPatternNames(
   pattern: BabelCore.types.LVal | BabelCore.types.PatternLike,
   names: Set<string>,
@@ -456,6 +477,7 @@ function collectIgnoredKeyEffectNodes(
   }
 
   const ignoredNodes = new Set<Expression>()
+  collectExpressionNodes(extractedKeyExpr, ignoredNodes)
   for (const keyExpr of getReturnedKeyAttributeExpressionsFromMapCallback(callback)) {
     collectExpressionNodes(keyExpr, ignoredNodes)
   }
@@ -821,6 +843,10 @@ export function buildListCallExpression(
   const generatedItemParamName = reserveFreshName('__item', generatedNameReservations)
   const generatedIndexParamName = reserveFreshName('__index', generatedNameReservations)
   const generatedKeyParamName = reserveFreshName('__key', generatedNameReservations)
+  const renderMapCallback =
+    extractedKeyExpr && keyExpr
+      ? stripExpressionBodySequencePrefix(mapCallback, keyExpr)
+      : mapCallback
 
   if (isKeyed) {
     ctx.helpersUsed.add('keyedList')
@@ -845,7 +871,7 @@ export function buildListCallExpression(
   if (canConstifyKey && keyExpr) {
     ctx.listKeyExpr = keyExpr
     ctx.listKeyParamName = generatedKeyParamName
-    ctx.listKeyBindingSignatures = collectReturnedKeyBindingSignatures(mapCallback)
+    ctx.listKeyBindingSignatures = collectReturnedKeyBindingSignatures(renderMapCallback)
     ctx.listKeyAliasNames = extractedKeyExpr
       ? collectResolvedKeyAliasNames(extractedKeyExpr, keyAliasDeclarations)
       : undefined
@@ -867,7 +893,7 @@ export function buildListCallExpression(
   }
   let callbackExpr: BabelCore.types.Expression
   try {
-    callbackExpr = ops.lowerExpression(mapCallback, ctx)
+    callbackExpr = ops.lowerExpression(renderMapCallback, ctx)
   } finally {
     ctx.inListRender = prevInListRender
     ctx.listItemAccessorParamNames = prevListItemAccessorParamNames

@@ -3125,6 +3125,49 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('preserves sequence prefixes before keyed JSX list children', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const log: string[] = []
+
+      export function App() {
+        const items = [1, 2]
+        let seq = 0
+
+        return (
+          <ul>
+            {items.map(item => (
+              log.push('pre ' + item + ':' + seq),
+              seq++,
+              <li key={(log.push('key ' + item + ':' + seq), seq)}>{seq}</li>
+            ))}
+          </ul>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        log.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      log: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(mod.log).toEqual(['pre 1:0', 'key 1:1', 'pre 2:1', 'key 2:2'])
+    expect(container.textContent).toBe('12')
+
+    teardown()
+    container.remove()
+  })
+
   it('preserves map callback arguments semantics by falling back from list specialization', async () => {
     const source = `
       import { render } from 'fict'

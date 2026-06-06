@@ -63,6 +63,24 @@ function expressionContainsBranching(expression: Expression): boolean {
   return false
 }
 
+function expressionHasSequencePrefix(expression: Expression): boolean {
+  if (expression.kind === 'SequenceExpression') {
+    return expression.expressions.length > 1
+  }
+  if (expression.kind === 'ConditionalExpression') {
+    return (
+      expressionHasSequencePrefix(expression.consequent) ||
+      expressionHasSequencePrefix(expression.alternate)
+    )
+  }
+  if (expression.kind === 'LogicalExpression') {
+    return (
+      expressionHasSequencePrefix(expression.left) || expressionHasSequencePrefix(expression.right)
+    )
+  }
+  return false
+}
+
 function isSafeToDuplicateForKeyExtraction(expression: Expression): boolean {
   switch (expression.kind) {
     case 'Literal':
@@ -123,7 +141,15 @@ function extractKeyExpressionFromReturnedExpression(
   }
   if (expression.kind === 'SequenceExpression') {
     const tail = expression.expressions[expression.expressions.length - 1]
-    return tail ? extractKeyExpressionFromReturnedExpression(tail) : undefined
+    if (!tail) return undefined
+    const tailKey = extractKeyExpressionFromReturnedExpression(tail)
+    if (!tailKey) return undefined
+    if (expression.expressions.length <= 1) return tailKey
+    return {
+      kind: 'SequenceExpression',
+      expressions: [...expression.expressions.slice(0, -1), tailKey],
+      loc: expression.loc,
+    }
   }
   return undefined
 }
@@ -271,7 +297,8 @@ export function extractKeyFromMapCallback(callback: Expression): Expression | un
   if (
     returnedExpressions.length === 0 ||
     returnedExpressions.some(expressionCanReturnNonJSX) ||
-    returnedExpressions.some(expressionContainsBranching)
+    returnedExpressions.some(expressionContainsBranching) ||
+    returnedExpressions.some(expressionHasSequencePrefix)
   ) {
     return undefined
   }
