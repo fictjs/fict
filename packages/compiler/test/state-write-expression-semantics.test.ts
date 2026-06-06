@@ -1210,6 +1210,54 @@ describe('state write expression semantics', () => {
     expect(raw).toEqual([9, 1])
   })
 
+  it('stops hook-return array metadata after spreads', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function useArr() {
+        let count = $state(1)
+        const prefix = [9, 8]
+        return [...prefix, count]
+      }
+
+      export function usePostSpreadHookArray() {
+        const arr = useArr()
+        return [arr[1], typeof arr[2]]
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).not.toContain('arr[1]()')
+    expect(output).not.toContain('arr[2]()')
+
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'usePostSpreadHookArray')() as unknown[]
+    expect(raw).toEqual([8, 'function'])
+  })
+
+  it('preserves hook-return array metadata before spreads', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function useArr() {
+        let count = $state(1)
+        const suffix = [9, 8]
+        return [count, ...suffix]
+      }
+
+      export function usePreSpreadHookArray() {
+        const arr = useArr()
+        return [arr[0], arr[1]]
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).toContain('arr[0]()')
+    expect(output).not.toContain('arr[1]()')
+
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'usePreSpreadHookArray')() as unknown[]
+    expect(raw).toEqual([1, 9])
+  })
+
   it('preserves bigint update semantics for $state', () => {
     const source = `
       import { $state } from 'fict'

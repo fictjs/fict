@@ -300,8 +300,14 @@ export function analyzeHookReturnInfo(
         })
       })
     } else if (expr.kind === 'ArrayExpression') {
+      let canRecordArrayProps = true
       expr.elements.forEach((el, idx) => {
         if (!el) return
+        if (el.kind === 'SpreadElement') {
+          canRecordArrayProps = false
+          return
+        }
+        if (!canRecordArrayProps) return
         const kind = returnExprAccessorKind(el)
         recordAccessor(kind, () => {
           if (!info.arrayProps) info.arrayProps = new Map()
