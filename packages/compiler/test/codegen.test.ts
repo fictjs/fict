@@ -1724,6 +1724,36 @@ describe('resumable event handler transformation', () => {
     )
   })
 
+  it('allows explicit resumable function refs that capture scalar props', () => {
+    const ast = parseFile(`
+      function Button(props) {
+        const handler = () => props.id
+        return <button onClick$={handler}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('const __scopeProps = __fictGetScopeProps(scopeId) || {}')
+    expect(code).toContain('const props = __scopeProps')
+    expect(code).toContain('const handler = () => props.id')
+    expect(code).toContain('const __handler = handler')
+    expect(code).toContain('setAttribute("on:click"')
+  })
+
+  it('throws for explicit resumable function refs that call function props', () => {
+    const ast = parseFile(`
+      function Button(props) {
+        const handler = () => props.onClick()
+        return <button onClick$={handler}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(/function props/i)
+  })
+
   it('allows explicit resumable handlers that read scalar props', () => {
     const ast = parseFile(`
       function Button(props) {

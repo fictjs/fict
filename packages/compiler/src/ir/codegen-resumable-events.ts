@@ -295,11 +295,13 @@ export function emitResumableEventBinding(
   // Pre-lower function dependencies and reject any that still capture component-local names.
   // Hoisted resumable helpers execute at module scope, so local closures are unsafe here.
   const loweredFunctionDeps = new Map<string, BabelCore.types.Expression>()
+  const inlineFunctionDeps = new Map<string, BabelCore.types.Expression>()
   const unsafeFunctionCaptures: string[] = []
   const lexicalArgumentsCaptures: string[] = []
   const lexicalNewTargetCaptures: string[] = []
   const lexicalThisCaptures: string[] = []
   const mutatedFunctionDeps: string[] = []
+  let functionDepsCaptureProps = false
   if (wrappedFactoryExpr && capturesLexicalArgumentsInExpr(valueExpr, t)) {
     lexicalArgumentsCaptures.push('factory -> arguments')
   }
@@ -355,8 +357,22 @@ export function emitResumableEventBinding(
     const localFnCaptures = Array.from(fnCaptured)
       .filter(dep => ctx.localDeclaredNames?.has(dep))
       .sort()
-    if (localFnCaptures.length > 0) {
-      unsafeFunctionCaptures.push(`${name} -> ${localFnCaptures.join(', ')}`)
+    const restorableFnCaptures = localFnCaptures.filter(
+      dep => ctx.propsParamName && dep === ctx.propsParamName,
+    )
+    const unsafeFnCaptures = localFnCaptures.filter(dep => !restorableFnCaptures.includes(dep))
+    if (unsafeFnCaptures.length > 0) {
+      unsafeFunctionCaptures.push(`${name} -> ${unsafeFnCaptures.join(', ')}`)
+      continue
+    }
+    if (ctx.propsParamName && restorableFnCaptures.includes(ctx.propsParamName)) {
+      const fnCalledPropMembers = collectCalledPropMembers(loweredFn, ctx.propsParamName, t)
+      if (fnCalledPropMembers.length > 0) {
+        calledPropMembers.push(...fnCalledPropMembers.map(path => `${name} -> ${path}`))
+        continue
+      }
+      functionDepsCaptureProps = true
+      inlineFunctionDeps.set(name, loweredFn)
       continue
     }
     loweredFunctionDeps.set(name, loweredFn)
@@ -428,6 +444,7 @@ export function emitResumableEventBinding(
   const functionDepRenames = new Map<string, string>()
   for (const name of captured) {
     if (ctx.functionVars?.has(name) && !ctx.signalVars?.has(name)) {
+      if (inlineFunctionDeps.has(name)) continue
       // Check if this function has already been hoisted.
       let hoistedName = ctx.hoistedFunctionDepNames?.get(name)
       if (!hoistedName) {
@@ -542,6 +559,13 @@ export function emitResumableEventBinding(
       ]),
     )
   }
+  if (!propsName && functionDepsCaptureProps && ctx.propsParamName) {
+    bodyStatements.push(
+      t.variableDeclaration('const', [
+        t.variableDeclarator(t.identifier(ctx.propsParamName), ensureScopeProps()),
+      ]),
+    )
+  }
 
   for (const [name, restore] of propAccessorRestores) {
     const valueExpr = buildPropsPathRead(restore.path)
@@ -576,6 +600,14 @@ export function emitResumableEventBinding(
             t.arrayExpression(restore.excludedKeys.map(key => t.stringLiteral(key))),
           ]),
         ),
+      ]),
+    )
+  }
+
+  for (const [name, loweredFn] of inlineFunctionDeps) {
+    bodyStatements.push(
+      t.variableDeclaration('const', [
+        t.variableDeclarator(t.identifier(name), t.cloneNode(loweredFn, true)),
       ]),
     )
   }
