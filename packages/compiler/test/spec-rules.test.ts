@@ -1551,6 +1551,100 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-M001')).toBe(false)
   })
 
+  it('does not warn when effects and memos read hook-return accessors', () => {
+    const { warnings } = transformWithWarnings(`
+      import { $state, $effect, $memo } from 'fict'
+
+      function useBucket() {
+        const count = $state(0)
+        return { count }
+      }
+
+      function usePair() {
+        const count = $state(1)
+        return [count]
+      }
+
+      function useCount() {
+        const count = $state(2)
+        return count
+      }
+
+      const useBucketAlias = useBucket
+
+      function Demo() {
+        const bucket = useBucketAlias()
+        const pair = usePair()
+        const count = useCount()
+        $effect(() => {
+          bucket.count
+          pair[0]
+          count
+        })
+        const value = $memo(() => bucket.count + pair[0] + count)
+        return <div>{value}</div>
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-E001')).toBe(false)
+    expect(warnings.some(w => w.code === 'FICT-M001')).toBe(false)
+  })
+
+  it('warns when hook-return reads are plain properties', () => {
+    const { warnings } = transformWithWarnings(`
+      import { $effect, $memo } from 'fict'
+
+      function usePlain() {
+        return { count: 1 }
+      }
+
+      function Demo() {
+        const bucket = usePlain()
+        $effect(() => {
+          bucket.count
+        })
+        const value = $memo(() => bucket.count + 1)
+        return <div>{value}</div>
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-E001')).toBe(true)
+    expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
+  })
+
+  it('does not warn when effects and memos read imported hook metadata accessors', () => {
+    const moduleMetadata = new Map<string, any>([
+      [
+        './bucket',
+        {
+          exports: {},
+          hooks: {
+            useBucket: { objectProps: { count: 'signal' } },
+          },
+        },
+      ],
+    ])
+    const { warnings } = transformWithWarnings(
+      `
+        import { $effect, $memo } from 'fict'
+        import { useBucket } from './bucket'
+
+        function Demo() {
+          const bucket = useBucket()
+          $effect(() => {
+            bucket.count
+          })
+          const value = $memo(() => bucket.count + 1)
+          return <div>{value}</div>
+        }
+      `,
+      { moduleMetadata },
+    )
+
+    expect(warnings.some(w => w.code === 'FICT-E001')).toBe(false)
+    expect(warnings.some(w => w.code === 'FICT-M001')).toBe(false)
+  })
+
   it('warns when memo reactive reads are only inside nested closures', () => {
     const cases = [
       'const f = () => count',

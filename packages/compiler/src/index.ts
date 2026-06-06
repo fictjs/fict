@@ -16,6 +16,7 @@ import { MODULE_REACTIVE_METADATA_VERSION } from './types'
 import type {
   CompilerWarning,
   FictCompilerOptions,
+  HookReturnInfoSerializable,
   ModuleReactiveMetadata,
   ReactiveExportKind,
 } from './types'
@@ -50,6 +51,63 @@ function getOwnReactiveExportKind(
   if (!Object.prototype.hasOwnProperty.call(meta.exports, exportName)) return undefined
   const kind = meta.exports[exportName]
   return isReactiveExportKind(kind) ? kind : undefined
+}
+
+function getOwnHookReturnInfo(
+  meta: ModuleReactiveMetadata,
+  exportName: string,
+): HookReturnInfoSerializable | undefined {
+  if (!meta.hooks || !Object.prototype.hasOwnProperty.call(meta.hooks, exportName)) {
+    return undefined
+  }
+  return meta.hooks[exportName]
+}
+
+function getStaticMemberKeyForDiagnostics(
+  member: BabelCore.types.MemberExpression | BabelCore.types.OptionalMemberExpression,
+  t: typeof BabelCore.types,
+): string | null {
+  if (!member.computed) {
+    return t.isIdentifier(member.property) ? member.property.name : null
+  }
+  if (t.isStringLiteral(member.property) || t.isNumericLiteral(member.property)) {
+    return String(member.property.value)
+  }
+  return null
+}
+
+function hookReturnInfoHasAccessor(info: HookReturnInfoSerializable, key: string): boolean {
+  if (info.objectProps && Object.prototype.hasOwnProperty.call(info.objectProps, key)) {
+    return true
+  }
+  if (info.arrayProps && Object.prototype.hasOwnProperty.call(info.arrayProps, key)) {
+    return true
+  }
+  return false
+}
+
+function pathReadsHookReturnAccessor(
+  exprPath: BabelCore.NodePath,
+  hookReturnBindingInfo: Map<BabelCore.types.Identifier, HookReturnInfoSerializable>,
+  callbackScope: BabelCore.NodePath['scope'],
+  t: typeof BabelCore.types,
+): boolean {
+  if (exprPath.isIdentifier()) {
+    const binding = exprPath.scope.getBinding(exprPath.node.name)
+    if (!binding || binding.scope === callbackScope) return false
+    const info = hookReturnBindingInfo.get(binding.identifier as BabelCore.types.Identifier)
+    return !!info?.directAccessor
+  }
+
+  if (!exprPath.isMemberExpression() && !exprPath.isOptionalMemberExpression()) return false
+  const object = exprPath.node.object
+  if (!t.isIdentifier(object)) return false
+  const binding = exprPath.scope.getBinding(object.name)
+  if (!binding || binding.scope === callbackScope) return false
+  const info = hookReturnBindingInfo.get(binding.identifier as BabelCore.types.Identifier)
+  if (!info) return false
+  const key = getStaticMemberKeyForDiagnostics(exprPath.node, t)
+  return key !== null && hookReturnInfoHasAccessor(info, key)
 }
 
 function stripMacroImports(
@@ -774,6 +832,7 @@ function runWarningPass(
   stateBindingIds: Set<BabelCore.types.Identifier>,
   stateRootBindingIds: Set<BabelCore.types.Identifier>,
   reactiveBindingIds: Set<BabelCore.types.Identifier>,
+  hookReturnBindingInfo: Map<BabelCore.types.Identifier, HookReturnInfoSerializable>,
   stateMacroNames: Set<string>,
   memoMacroNames: Set<string>,
   effectMacroNames: Set<string>,
@@ -1819,6 +1878,22 @@ function runWarningPass(
             }
             fnPath.skip()
           },
+          MemberExpression(memberPath) {
+            if (
+              pathReadsHookReturnAccessor(memberPath, hookReturnBindingInfo, callbackPath.scope, t)
+            ) {
+              hasReactiveDependency = true
+              memberPath.stop()
+            }
+          },
+          OptionalMemberExpression(memberPath) {
+            if (
+              pathReadsHookReturnAccessor(memberPath, hookReturnBindingInfo, callbackPath.scope, t)
+            ) {
+              hasReactiveDependency = true
+              memberPath.stop()
+            }
+          },
           Identifier(idPath) {
             if (
               idPath.parentPath.isMemberExpression({ property: idPath.node }) &&
@@ -1834,6 +1909,12 @@ function runWarningPass(
             }
             const binding = idPath.scope.getBinding(idPath.node.name)
             if (binding && binding.scope === callbackPath.scope) return
+
+            if (pathReadsHookReturnAccessor(idPath, hookReturnBindingInfo, callbackPath.scope, t)) {
+              hasReactiveDependency = true
+              idPath.stop()
+              return
+            }
 
             if (
               binding &&
@@ -2663,6 +2744,18 @@ function createHIREntrypointVisitor(
         const reactiveCreationNamespaceBindingIds = new Set<BabelCore.types.Identifier>()
         const stateArgumentAllowedBindingIds = new Set<BabelCore.types.Identifier>()
         const importedReactiveBindingIds = new Set<BabelCore.types.Identifier>()
+        const hookFunctionReturnInfoByBinding = new Map<
+          BabelCore.types.Identifier,
+          HookReturnInfoSerializable
+        >()
+        const hookNamespaceReturnInfoByBinding = new Map<
+          BabelCore.types.Identifier,
+          NonNullable<ModuleReactiveMetadata['hooks']>
+        >()
+        const hookReturnBindingInfo = new Map<
+          BabelCore.types.Identifier,
+          HookReturnInfoSerializable
+        >()
         const isReactiveCreationName = (name: string): boolean =>
           name === 'createEffect' ||
           name === 'createMemo' ||
@@ -2760,6 +2853,7 @@ function createHIREntrypointVisitor(
             )
             if (!meta) return
             const hasReactiveExports = Object.keys(meta.exports).length > 0
+            const hasHookExports = !!meta.hooks && Object.keys(meta.hooks).length > 0
             for (const spec of importPath.node.specifiers) {
               if (t.isImportSpecifier(spec)) {
                 const importedName = t.isIdentifier(spec.imported)
@@ -2771,6 +2865,16 @@ function createHIREntrypointVisitor(
                     importedReactiveBindingIds.add(binding.identifier as BabelCore.types.Identifier)
                   }
                 }
+                const hookInfo = getOwnHookReturnInfo(meta, importedName)
+                if (hookInfo) {
+                  const binding = importPath.scope.getBinding(spec.local.name)
+                  if (binding) {
+                    hookFunctionReturnInfoByBinding.set(
+                      binding.identifier as BabelCore.types.Identifier,
+                      hookInfo,
+                    )
+                  }
+                }
                 continue
               }
               if (t.isImportDefaultSpecifier(spec)) {
@@ -2778,6 +2882,16 @@ function createHIREntrypointVisitor(
                   const binding = importPath.scope.getBinding(spec.local.name)
                   if (binding) {
                     importedReactiveBindingIds.add(binding.identifier as BabelCore.types.Identifier)
+                  }
+                }
+                const hookInfo = getOwnHookReturnInfo(meta, 'default')
+                if (hookInfo) {
+                  const binding = importPath.scope.getBinding(spec.local.name)
+                  if (binding) {
+                    hookFunctionReturnInfoByBinding.set(
+                      binding.identifier as BabelCore.types.Identifier,
+                      hookInfo,
+                    )
                   }
                 }
                 continue
@@ -2788,6 +2902,186 @@ function createHIREntrypointVisitor(
                   importedReactiveBindingIds.add(binding.identifier as BabelCore.types.Identifier)
                 }
               }
+              if (t.isImportNamespaceSpecifier(spec) && hasHookExports && meta.hooks) {
+                const binding = importPath.scope.getBinding(spec.local.name)
+                if (binding) {
+                  hookNamespaceReturnInfoByBinding.set(
+                    binding.identifier as BabelCore.types.Identifier,
+                    meta.hooks,
+                  )
+                }
+              }
+            }
+          },
+        })
+        const staticObjectKey = (key: BabelCore.types.Node, computed?: boolean): string | null => {
+          if (!computed && t.isIdentifier(key)) return key.name
+          if (t.isStringLiteral(key) || t.isNumericLiteral(key)) return String(key.value)
+          return null
+        }
+        const analyzeLocalHookReturnInfo = (
+          fnPath: BabelCore.NodePath<BabelCore.types.Function>,
+        ): HookReturnInfoSerializable | null => {
+          const reactiveLocals = new Map<string, ReactiveExportKind>()
+          fnPath.traverse({
+            Function(innerPath) {
+              if (innerPath !== fnPath) innerPath.skip()
+            },
+            VariableDeclarator(declPath) {
+              if (!t.isIdentifier(declPath.node.id) || !declPath.node.init) return
+              const init = declPath.node.init
+              if (!t.isCallExpression(init) && !t.isOptionalCallExpression(init)) return
+              const macroKind = getFictMacroKind(init)
+              if (macroKind === 'state' || isStateCall(init, t, stateMacroNames)) {
+                reactiveLocals.set(declPath.node.id.name, 'signal')
+                return
+              }
+              if (macroKind === 'memo' || isMemoCall(init, t, memoMacroNames)) {
+                reactiveLocals.set(declPath.node.id.name, 'memo')
+              }
+            },
+          })
+
+          const info: HookReturnInfoSerializable = {}
+          let hasInfo = false
+          const localKind = (node: BabelCore.types.Node | null | undefined) =>
+            t.isIdentifier(node) ? reactiveLocals.get(node.name) : undefined
+          const recordKind = (kind: ReactiveExportKind | undefined, record: () => void) => {
+            if (!kind) return
+            hasInfo = true
+            record()
+          }
+
+          fnPath.traverse({
+            Function(innerPath) {
+              if (innerPath !== fnPath) innerPath.skip()
+            },
+            ReturnStatement(returnPath) {
+              const arg = returnPath.node.argument
+              const directKind = localKind(arg)
+              if (directKind) {
+                info.directAccessor = directKind
+                hasInfo = true
+                return
+              }
+              if (t.isObjectExpression(arg)) {
+                for (const prop of arg.properties) {
+                  if (!t.isObjectProperty(prop) || prop.computed) continue
+                  const key = staticObjectKey(prop.key, prop.computed)
+                  if (!key) continue
+                  const kind = localKind(prop.value)
+                  recordKind(kind, () => {
+                    info.objectProps = info.objectProps ?? {}
+                    info.objectProps[key] = kind!
+                  })
+                }
+                return
+              }
+              if (t.isArrayExpression(arg)) {
+                arg.elements.forEach((element, index) => {
+                  const kind = localKind(element)
+                  recordKind(kind, () => {
+                    info.arrayProps = info.arrayProps ?? {}
+                    info.arrayProps![String(index)] = kind!
+                  })
+                })
+              }
+            },
+          })
+
+          return hasInfo ? info : null
+        }
+        type ScopeBinding = NonNullable<ReturnType<typeof path.scope.getBinding>>
+        const registerLocalHookInfo = (
+          binding: ScopeBinding | undefined,
+          info: HookReturnInfoSerializable | null,
+        ): void => {
+          if (!binding || !info) return
+          hookFunctionReturnInfoByBinding.set(
+            binding.identifier as BabelCore.types.Identifier,
+            info,
+          )
+        }
+        path.traverse({
+          FunctionDeclaration(fnPath) {
+            const name = fnPath.node.id?.name
+            if (!name || !isHookName(name)) return
+            registerLocalHookInfo(fnPath.scope.getBinding(name), analyzeLocalHookReturnInfo(fnPath))
+          },
+          VariableDeclarator(declPath) {
+            if (!t.isIdentifier(declPath.node.id) || !isHookName(declPath.node.id.name)) return
+            const initPath = declPath.get('init') as BabelCore.NodePath | null
+            if (!initPath?.isFunction()) return
+            registerLocalHookInfo(
+              declPath.scope.getBinding(declPath.node.id.name),
+              analyzeLocalHookReturnInfo(initPath),
+            )
+          },
+        })
+        let hookAliasChanged = true
+        while (hookAliasChanged) {
+          hookAliasChanged = false
+          path.traverse({
+            VariableDeclarator(declPath) {
+              if (!t.isIdentifier(declPath.node.id) || !t.isIdentifier(declPath.node.init)) return
+              const targetBinding = declPath.scope.getBinding(declPath.node.id.name)
+              if (
+                !targetBinding ||
+                hookFunctionReturnInfoByBinding.has(
+                  targetBinding.identifier as BabelCore.types.Identifier,
+                )
+              ) {
+                return
+              }
+              const sourceBinding = declPath.scope.getBinding(declPath.node.init.name)
+              const sourceInfo = sourceBinding
+                ? hookFunctionReturnInfoByBinding.get(
+                    sourceBinding.identifier as BabelCore.types.Identifier,
+                  )
+                : undefined
+              if (!sourceInfo) return
+              hookFunctionReturnInfoByBinding.set(
+                targetBinding.identifier as BabelCore.types.Identifier,
+                sourceInfo,
+              )
+              hookAliasChanged = true
+            },
+          })
+        }
+        const resolveHookCallInfo = (
+          call: BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression,
+          callPath: BabelCore.NodePath,
+        ): HookReturnInfoSerializable | null => {
+          const callee = call.callee
+          if (t.isIdentifier(callee)) {
+            const binding = callPath.scope.getBinding(callee.name)
+            return binding
+              ? (hookFunctionReturnInfoByBinding.get(
+                  binding.identifier as BabelCore.types.Identifier,
+                ) ?? null)
+              : null
+          }
+          if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee)) return null
+          if (!t.isIdentifier(callee.object)) return null
+          const objectBinding = callPath.scope.getBinding(callee.object.name)
+          if (!objectBinding) return null
+          const namespaceHooks = hookNamespaceReturnInfoByBinding.get(
+            objectBinding.identifier as BabelCore.types.Identifier,
+          )
+          if (!namespaceHooks) return null
+          const key = getStaticMemberKeyForDiagnostics(callee, t)
+          return key ? (namespaceHooks[key] ?? null) : null
+        }
+        path.traverse({
+          VariableDeclarator(declPath) {
+            if (!t.isIdentifier(declPath.node.id) || !declPath.node.init) return
+            const init = declPath.node.init
+            if (!t.isCallExpression(init) && !t.isOptionalCallExpression(init)) return
+            const info = resolveHookCallInfo(init, declPath)
+            if (!info) return
+            const binding = declPath.scope.getBinding(declPath.node.id.name)
+            if (binding) {
+              hookReturnBindingInfo.set(binding.identifier as BabelCore.types.Identifier, info)
             }
           },
         })
@@ -3730,6 +4024,32 @@ function createHIREntrypointVisitor(
                     }
                     fnPath.skip()
                   },
+                  MemberExpression(memberPath) {
+                    if (
+                      pathReadsHookReturnAccessor(
+                        memberPath,
+                        hookReturnBindingInfo,
+                        firstArgPath.scope,
+                        t,
+                      )
+                    ) {
+                      hasReactiveDependency = true
+                      memberPath.stop()
+                    }
+                  },
+                  OptionalMemberExpression(memberPath) {
+                    if (
+                      pathReadsHookReturnAccessor(
+                        memberPath,
+                        hookReturnBindingInfo,
+                        firstArgPath.scope,
+                        t,
+                      )
+                    ) {
+                      hasReactiveDependency = true
+                      memberPath.stop()
+                    }
+                  },
                   Identifier(idPath) {
                     if (
                       idPath.parentPath.isMemberExpression({ property: idPath.node }) &&
@@ -3745,6 +4065,19 @@ function createHIREntrypointVisitor(
                     }
                     const binding = idPath.scope.getBinding(idPath.node.name)
                     if (binding && binding.scope === firstArgPath.scope) return
+
+                    if (
+                      pathReadsHookReturnAccessor(
+                        idPath,
+                        hookReturnBindingInfo,
+                        firstArgPath.scope,
+                        t,
+                      )
+                    ) {
+                      hasReactiveDependency = true
+                      idPath.stop()
+                      return
+                    }
 
                     if (binding && hasReactiveAliasSourceBinding(idPath, idPath.node.name)) {
                       hasReactiveDependency = true
@@ -3997,6 +4330,7 @@ function createHIREntrypointVisitor(
             stateBindingIds,
             stateRootBindingIds,
             reactiveBindingIds,
+            hookReturnBindingInfo,
             stateMacroNames,
             memoMacroNames,
             effectMacroNames,
