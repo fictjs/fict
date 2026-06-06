@@ -918,7 +918,14 @@ function toPropertyName(name: string): string {
  * Set an attribute on an element, handling various value types.
  */
 function shouldStringifyBooleanAttribute(key: string): boolean {
-  return key === 'draggable' || key.startsWith('aria-') || key.startsWith('data-')
+  const normalized = key.toLowerCase()
+  return (
+    normalized === 'draggable' ||
+    normalized === 'contenteditable' ||
+    normalized === 'spellcheck' ||
+    normalized.startsWith('aria-') ||
+    normalized.startsWith('data-')
+  )
 }
 
 const setAttribute: AttributeSetter = (el: Element, key: string, value: unknown): void => {

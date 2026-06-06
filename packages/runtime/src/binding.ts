@@ -464,7 +464,14 @@ function formatTextValue(value: unknown): string {
 export type AttributeSetter = (el: Element, key: string, value: unknown) => void
 
 function shouldStringifyBooleanAttribute(key: string): boolean {
-  return key === 'draggable' || key.startsWith('aria-') || key.startsWith('data-')
+  const normalized = key.toLowerCase()
+  return (
+    normalized === 'draggable' ||
+    normalized === 'contenteditable' ||
+    normalized === 'spellcheck' ||
+    normalized.startsWith('aria-') ||
+    normalized.startsWith('data-')
+  )
 }
 
 const EVENT_NAMES_WITH_MODIFIER_SUFFIX = ['GotPointerCapture', 'LostPointerCapture'] as const

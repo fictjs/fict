@@ -469,6 +469,22 @@ describe('Binding Edge Cases', () => {
       expect(el.draggable).toBe(true)
     })
 
+    it('stringifies boolean values for enumerated editing attributes', async () => {
+      const el = document.createElement('div')
+      const enabled = createSignal(false)
+
+      bindAttribute(el, 'contentEditable', () => enabled())
+      bindAttribute(el, 'spellCheck', () => enabled())
+      await tick()
+      expect(el.getAttribute('contenteditable')).toBe('false')
+      expect(el.getAttribute('spellcheck')).toBe('false')
+
+      enabled(true)
+      await tick()
+      expect(el.getAttribute('contenteditable')).toBe('true')
+      expect(el.getAttribute('spellcheck')).toBe('true')
+    })
+
     it('handles undefined values', async () => {
       const el = document.createElement('div')
       el.setAttribute('data-test', 'value')

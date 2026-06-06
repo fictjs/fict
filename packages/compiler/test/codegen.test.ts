@@ -2621,11 +2621,21 @@ describe('spread operator in JSX', () => {
               data-active={true}
               data-off={false}
               draggable={true}
+              contentEditable={true}
+              spellCheck={false}
               hidden={true}
               disabled={false}
             />
-            <div draggable={false} />
-            <div aria-live={on} data-on={on} draggable={on} hidden={on} bool:data-forced={on} />
+            <div draggable={false} contentEditable={false} spellCheck={true} />
+            <div
+              aria-live={on}
+              data-on={on}
+              draggable={on}
+              contentEditable={on}
+              spellCheck={on}
+              hidden={on}
+              bool:data-forced={on}
+            />
           </section>
         )
       }
@@ -2640,12 +2650,18 @@ describe('spread operator in JSX', () => {
     expect(code).toContain('data-off=\\"false\\"')
     expect(code).toContain('draggable=\\"true\\"')
     expect(code).toContain('draggable=\\"false\\"')
+    expect(code).toContain('contentEditable=\\"true\\"')
+    expect(code).toContain('contentEditable=\\"false\\"')
+    expect(code).toContain('spellCheck=\\"false\\"')
+    expect(code).toContain('spellCheck=\\"true\\"')
     expect(code).toContain(
-      '<div aria-hidden=\\"true\\" aria-expanded=\\"false\\" data-active=\\"true\\" data-off=\\"false\\" draggable=\\"true\\" hidden></div>',
+      '<div aria-hidden=\\"true\\" aria-expanded=\\"false\\" data-active=\\"true\\" data-off=\\"false\\" draggable=\\"true\\" contentEditable=\\"true\\" spellCheck=\\"false\\" hidden></div>',
     )
     expect(code).toMatch(/setAttr\([^,]+,\s*"aria-live",\s*on\(\)\)/)
     expect(code).toMatch(/setAttr\([^,]+,\s*"data-on",\s*on\(\)\)/)
     expect(code).toMatch(/setAttr\([^,]+,\s*"draggable",\s*on\(\)\)/)
+    expect(code).toMatch(/setAttr\([^,]+,\s*"contentEditable",\s*on\(\)\)/)
+    expect(code).toMatch(/setAttr\([^,]+,\s*"spellCheck",\s*on\(\)\)/)
     expect(code).toContain('setAttribute("data-forced", "")')
     expect(code).not.toContain('bool:data-forced')
   })

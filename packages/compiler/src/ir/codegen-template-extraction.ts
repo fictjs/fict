@@ -233,7 +233,14 @@ function escapeHtmlText(value: string): string {
 }
 
 function shouldStringifyBooleanAttribute(name: string): boolean {
-  return name === 'draggable' || name.startsWith('aria-') || name.startsWith('data-')
+  const normalized = name.toLowerCase()
+  return (
+    normalized === 'draggable' ||
+    normalized === 'contenteditable' ||
+    normalized === 'spellcheck' ||
+    normalized.startsWith('aria-') ||
+    normalized.startsWith('data-')
+  )
 }
 
 const PHRASING_HTML_TAGS = new Set([

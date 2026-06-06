@@ -944,6 +944,8 @@ describe('DOM Module', () => {
             'data-active': true,
             'data-off': false,
             draggable: true,
+            contentEditable: true,
+            spellCheck: false,
             hidden: true,
             disabled: false,
             'bool:data-forced': true,
@@ -957,6 +959,8 @@ describe('DOM Module', () => {
         expect(result.getAttribute('data-off')).toBe('false')
         expect(result.getAttribute('draggable')).toBe('true')
         expect(result.draggable).toBe(true)
+        expect(result.getAttribute('contenteditable')).toBe('true')
+        expect(result.getAttribute('spellcheck')).toBe('false')
         expect(result.hasAttribute('hidden')).toBe(true)
         expect(result.hasAttribute('disabled')).toBe(false)
         expect(result.getAttribute('data-forced')).toBe('')
@@ -971,6 +975,17 @@ describe('DOM Module', () => {
 
         expect(result.getAttribute('draggable')).toBe('false')
         expect(result.draggable).toBe(false)
+      })
+
+      it('stringifies false editing enumerated attributes', () => {
+        const result = createElement({
+          type: 'div',
+          props: { contentEditable: false, spellCheck: false },
+          key: undefined,
+        }) as HTMLDivElement
+
+        expect(result.getAttribute('contenteditable')).toBe('false')
+        expect(result.getAttribute('spellcheck')).toBe('false')
       })
     })
 

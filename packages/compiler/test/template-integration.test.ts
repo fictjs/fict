@@ -2020,16 +2020,25 @@ describe('compiled templates DOM integration', () => {
               data-active={true}
               data-off={false}
               draggable={true}
+              contentEditable={true}
+              spellCheck={false}
               hidden={true}
               disabled={false}
               bool:data-forced={true}
             />
-            <div data-testid="static-false" draggable={false} />
+            <div
+              data-testid="static-false"
+              draggable={false}
+              contentEditable={false}
+              spellCheck={true}
+            />
             <div
               data-testid="dynamic"
               aria-live={on}
               data-on={on}
               draggable={on}
+              contentEditable={on}
+              spellCheck={on}
               hidden={on}
               bool:data-flag={on}
             />
@@ -2060,8 +2069,12 @@ describe('compiled templates DOM integration', () => {
     expect(staticEl.getAttribute('data-off')).toBe('false')
     expect(staticEl.getAttribute('draggable')).toBe('true')
     expect(staticEl.draggable).toBe(true)
+    expect(staticEl.getAttribute('contenteditable')).toBe('true')
+    expect(staticEl.getAttribute('spellcheck')).toBe('false')
     expect(staticFalseEl.getAttribute('draggable')).toBe('false')
     expect(staticFalseEl.draggable).toBe(false)
+    expect(staticFalseEl.getAttribute('contenteditable')).toBe('false')
+    expect(staticFalseEl.getAttribute('spellcheck')).toBe('true')
     expect(staticEl.hasAttribute('hidden')).toBe(true)
     expect(staticEl.hasAttribute('disabled')).toBe(false)
     expect(staticEl.getAttribute('data-forced')).toBe('')
@@ -2070,6 +2083,8 @@ describe('compiled templates DOM integration', () => {
     expect(dynamicEl.getAttribute('data-on')).toBe('true')
     expect(dynamicEl.getAttribute('draggable')).toBe('true')
     expect(dynamicEl.draggable).toBe(true)
+    expect(dynamicEl.getAttribute('contenteditable')).toBe('true')
+    expect(dynamicEl.getAttribute('spellcheck')).toBe('true')
     expect(dynamicEl.hasAttribute('hidden')).toBe(true)
     expect(dynamicEl.getAttribute('data-flag')).toBe('')
 
@@ -2080,6 +2095,8 @@ describe('compiled templates DOM integration', () => {
     expect(dynamicEl.getAttribute('data-on')).toBe('false')
     expect(dynamicEl.getAttribute('draggable')).toBe('false')
     expect(dynamicEl.draggable).toBe(false)
+    expect(dynamicEl.getAttribute('contenteditable')).toBe('false')
+    expect(dynamicEl.getAttribute('spellcheck')).toBe('false')
     expect(dynamicEl.hasAttribute('hidden')).toBe(false)
     expect(dynamicEl.hasAttribute('data-flag')).toBe(false)
 
