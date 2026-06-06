@@ -699,6 +699,58 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps reassigned destructured props as mutable local values', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      function Mutated({ value, count, user: { name }, alias }: any) {
+        value = 'local'
+        count++
+        name = name.toUpperCase()
+        ;({ alias } = { alias: 'reassigned' })
+        return <span data-id="mutated">{value}:{count}:{name}:{alias}</span>
+      }
+
+      function Mixed({ reactive, local }: any) {
+        local = 'changed'
+        return <span data-id="mixed">{reactive}:{local}</span>
+      }
+
+      export function readPlain({ value }: any) {
+        value = 'plain'
+        return value
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => (
+          <>
+            <Mutated value="prop" count={1} user={{ name: 'ann' }} alias="initial" />
+            <Mixed reactive="live" local="prop" />
+          </>
+        ), el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      readPlain: (props: { value: string }) => string
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    expect(container.querySelector('[data-id="mutated"]')?.textContent).toBe(
+      'local:2:ANN:reassigned',
+    )
+    expect(container.querySelector('[data-id="mixed"]')?.textContent).toBe('live:changed')
+    expect(mod.readPlain({ value: 'prop' })).toBe('plain')
+
+    teardown()
+    container.remove()
+  })
+
   it('reads literal prop destructuring keys with computed access', async () => {
     const source = `
       import { render } from 'fict'

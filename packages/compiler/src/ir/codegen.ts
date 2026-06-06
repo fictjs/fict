@@ -692,6 +692,8 @@ export interface CodegenContext {
   currentFunctionDeclaredNames?: Set<string> | undefined
   /** Locals that should be treated as plain values even if reactive analysis tracks the name. */
   localValueVars?: Set<string> | undefined
+  /** Props destructuring aliases emitted as mutable function-scope locals. */
+  mutablePropVars?: Set<string> | undefined
   /** Tracks which runtime helpers are used */
   helpersUsed: Set<string>
   /** Runtime helper local names chosen to avoid source declarations. */
@@ -7493,11 +7495,13 @@ function lowerFunctionWithRegions(
   const prevInModule = ctx.inModule
   const prevContextLocalName = ctx.contextLocalName
   const prevLocalValueVars = ctx.localValueVars
+  const prevMutablePropVars = ctx.mutablePropVars
   const scopedTracked = new Set(ctx.trackedVars)
   const shadowedParams = new Set(fn.params.map(p => deSSAVarName(p.name)))
   fn.params.forEach(p => scopedTracked.delete(deSSAVarName(p.name)))
   ctx.trackedVars = scopedTracked
   ctx.localValueVars = new Set(prevLocalValueVars ?? [])
+  ctx.mutablePropVars = new Set()
   ctx.knownArrayVars = new Set(prevKnownArrayVars ?? [])
   fn.params.forEach(p => ctx.knownArrayVars?.delete(deSSAVarName(p.name)))
   const prevNeedsCtx = ctx.needsCtx
@@ -8068,6 +8072,8 @@ function lowerFunctionWithRegions(
         allowRest: boolean,
         propPath: string[] = [],
       ): void => {
+        const isMutatedPropBinding = (name: string): boolean => ctx.mutatedVars?.has(name) ?? false
+
         for (const prop of objectPattern.properties) {
           if (t.isObjectProperty(prop)) {
             if (prop.computed) {
@@ -8097,18 +8103,24 @@ function lowerFunctionWithRegions(
             const value = prop.value
 
             if (t.isIdentifier(value)) {
+              const isMutatedBinding = isMutatedPropBinding(value.name)
+              if (isMutatedBinding) {
+                ctx.mutablePropVars?.add(value.name)
+                ctx.localValueVars?.add(value.name)
+              }
               const shouldWrapProp =
-                jsxPropValueReadNames.has(value.name) || !calledIdentifiers.has(value.name)
+                !isMutatedBinding &&
+                (jsxPropValueReadNames.has(value.name) || !calledIdentifiers.has(value.name))
               if (shouldWrapProp) {
                 usesProp = true
                 propsPlanAliases.add(value.name)
                 ctx.resumablePropAccessors?.set(value.name, { path: nextPropPath })
                 emitEagerPropRead(value.name, member)
-              } else {
+              } else if (!isMutatedBinding && calledIdentifiers.has(value.name)) {
                 calledPropValueNames.add(value.name)
               }
               stmts.push(
-                t.variableDeclaration('const', [
+                t.variableDeclaration(isMutatedBinding ? 'var' : 'const', [
                   t.variableDeclarator(
                     t.identifier(value.name),
                     shouldWrapProp
@@ -8131,9 +8143,15 @@ function lowerFunctionWithRegions(
 
             if (t.isAssignmentPattern(value)) {
               if (t.isIdentifier(value.left)) {
+                const isMutatedBinding = isMutatedPropBinding(value.left.name)
+                if (isMutatedBinding) {
+                  ctx.mutablePropVars?.add(value.left.name)
+                  ctx.localValueVars?.add(value.left.name)
+                }
                 const shouldWrapProp =
-                  jsxPropValueReadNames.has(value.left.name) ||
-                  !calledIdentifiers.has(value.left.name)
+                  !isMutatedBinding &&
+                  (jsxPropValueReadNames.has(value.left.name) ||
+                    !calledIdentifiers.has(value.left.name))
                 if (shouldWrapProp) {
                   usesProp = true
                   propsPlanAliases.add(value.left.name)
@@ -8141,7 +8159,7 @@ function lowerFunctionWithRegions(
                     path: nextPropPath,
                     defaultValue: t.cloneNode(value.right, true) as BabelCore.types.Expression,
                   })
-                } else {
+                } else if (!isMutatedBinding && calledIdentifiers.has(value.left.name)) {
                   calledPropValueNames.add(value.left.name)
                 }
                 const loweredDefault = lowerPropDefaultExpression(value.right)
@@ -8150,7 +8168,7 @@ function lowerFunctionWithRegions(
                   ? buildEagerDefaultedPropAccessor(member, loweredDefault)
                   : baseInit
                 stmts.push(
-                  t.variableDeclaration('const', [
+                  t.variableDeclaration(isMutatedBinding ? 'var' : 'const', [
                     t.variableDeclarator(t.identifier(value.left.name), init),
                   ]),
                 )
@@ -8327,6 +8345,7 @@ function lowerFunctionWithRegions(
       ctx.localDeclaredNames = prevLocalDeclared
       ctx.currentFunctionDeclaredNames = prevCurrentFunctionDeclared
       ctx.localValueVars = prevLocalValueVars
+      ctx.mutablePropVars = prevMutablePropVars
       ctx.trackedVars = prevTracked
       ctx.externalTracked = prevExternalTracked
       ctx.signalVars = prevSignalVars
@@ -8358,6 +8377,7 @@ function lowerFunctionWithRegions(
     ctx.localDeclaredNames = prevLocalDeclared
     ctx.currentFunctionDeclaredNames = prevCurrentFunctionDeclared
     ctx.localValueVars = prevLocalValueVars
+    ctx.mutablePropVars = prevMutablePropVars
     ctx.trackedVars = prevTracked
     ctx.externalTracked = prevExternalTracked
     ctx.signalVars = prevSignalVars
@@ -8488,6 +8508,7 @@ function lowerFunctionWithRegions(
   ctx.localDeclaredNames = prevLocalDeclared
   ctx.currentFunctionDeclaredNames = prevCurrentFunctionDeclared
   ctx.localValueVars = prevLocalValueVars
+  ctx.mutablePropVars = prevMutablePropVars
   ctx.trackedVars = prevTracked
   ctx.externalTracked = prevExternalTracked
   ctx.signalVars = prevSignalVars

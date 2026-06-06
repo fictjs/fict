@@ -3956,7 +3956,10 @@ function wrapInMemo(
     outputNamesOverride ?? Array.from(region.declarations).map(name => deSSAVarName(name))
   // Remove duplicates that may result from de-versioning (e.g., count_1 and count_2 both become count)
   const uniqueOutputNames = [...new Set(outputNames)]
-  const bindableOutputs = uniqueOutputNames.filter(name => !declaredVars.has(name))
+  const mutablePropOutputs = uniqueOutputNames.filter(name => ctx.mutablePropVars?.has(name))
+  const bindableOutputs = uniqueOutputNames.filter(
+    name => !declaredVars.has(name) && !(ctx.mutablePropVars?.has(name) ?? false),
+  )
 
   debugLog('region', `Region memo ${region.id}`, {
     instructions: region.instructions.map(instr => instr.kind),
@@ -4032,6 +4035,24 @@ function wrapInMemo(
       memoVars: Array.from(ctx.memoVars ?? []),
     })
 
+    const regionResultName =
+      mutablePropOutputs.length > 0
+        ? reserveFunctionLocalName(ctx, `__region_${region.id}_value`)
+        : null
+    if (regionResultName) {
+      statements.push(
+        t.variableDeclaration('const', [
+          t.variableDeclarator(
+            t.identifier(regionResultName),
+            t.callExpression(t.identifier(regionVarName), []),
+          ),
+        ]),
+      )
+    }
+    const directOutputSource = regionResultName
+      ? t.identifier(regionResultName)
+      : t.callExpression(t.identifier(regionVarName), [])
+
     // Destructure outputs that are already accessors or non-reactive values.
     if (directOutputs.length > 0) {
       directOutputs.forEach(name => declaredVars.add(name))
@@ -4043,9 +4064,26 @@ function wrapInMemo(
                 t.objectProperty(t.identifier(name), t.identifier(name), false, true),
               ),
             ),
-            t.callExpression(t.identifier(regionVarName), []),
+            directOutputSource,
           ),
         ]),
+      )
+    }
+
+    for (const name of mutablePropOutputs) {
+      statements.push(
+        t.expressionStatement(
+          t.assignmentExpression(
+            '=',
+            t.identifier(name),
+            t.memberExpression(
+              regionResultName
+                ? t.identifier(regionResultName)
+                : t.callExpression(t.identifier(regionVarName), []),
+              t.identifier(name),
+            ),
+          ),
+        ),
       )
     }
 
