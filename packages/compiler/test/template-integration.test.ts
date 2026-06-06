@@ -6053,4 +6053,91 @@ describe('compiled templates DOM integration', () => {
     delete globals.__fictConditionalChildTernary
     delete globals.__fictConditionalChildLogical
   })
+
+  it('keeps list receivers from generated controller temp shadowing', async () => {
+    const renderText = async (source: string): Promise<string> => {
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+        fineGrainedDom: true,
+      })
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const teardown = mod.mount(container)
+
+      await flushUpdates()
+      const text = container.textContent ?? ''
+
+      teardown()
+      container.remove()
+      return text
+    }
+
+    await expect(
+      renderText(`
+        import { render } from 'fict'
+
+        export function App() {
+          const __list_8 = [{ id: 'a', label: 'keyed' }]
+          return <ul>{__list_8.map(item => <li key={item.id}>{item.label}</li>)}</ul>
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `),
+    ).resolves.toBe('keyed')
+
+    await expect(
+      renderText(`
+        import { render } from 'fict'
+
+        export function App() {
+          const __list_8 = ['unkeyed']
+          return <ul>{__list_8.map(item => <li>{item}</li>)}</ul>
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `),
+    ).resolves.toBe('unkeyed')
+
+    await expect(
+      renderText(`
+        import { render } from 'fict'
+
+        export function App() {
+          const __list_8: Array<{ id: string; label: string }> | null = [
+            { id: 'optional', label: 'optional' },
+          ]
+          return <ul>{__list_8?.map(item => <li key={item.id}>{item.label}</li>)}</ul>
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `),
+    ).resolves.toBe('optional')
+
+    await expect(
+      renderText(`
+        import { render } from 'fict'
+
+        export function App() {
+          const items = ['callback']
+          return (
+            <ul>
+              {items.map(item => {
+                const __list_8 = item.toUpperCase()
+                return <li>{__list_8}</li>
+              })}
+            </ul>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `),
+    ).resolves.toBe('CALLBACK')
+  })
 })
