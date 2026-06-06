@@ -1245,11 +1245,28 @@ function lowerParameterExpression(
   paramNames.forEach(name => shadowed.add(name))
   ctx.shadowedNames = shadowed
   try {
-    const lowered = lowerRawJSXInBabelNode(
+    const regionOverride = parameterRegionOverride(ctx) ?? undefined
+    const hirExpr = convertBabelExpressionToHIR(
       ctx.t.cloneNode(expr, true) as BabelCore.types.Expression,
-      ctx,
     )
-    return applyRegionMetadataToExpression(lowered, ctx, parameterRegionOverride(ctx) ?? undefined)
+    const lowered = lowerExpression(hirExpr, ctx)
+    if (ctx.t.isAssignmentExpression(lowered)) {
+      const right = applyRegionMetadataToExpression(lowered.right, ctx, regionOverride)
+      return ctx.t.assignmentExpression(lowered.operator, lowered.left, right)
+    }
+    if (ctx.t.isUpdateExpression(lowered)) {
+      const arg = applyRegionMetadataToExpression(
+        lowered.argument as BabelCore.types.Expression,
+        ctx,
+        regionOverride,
+      )
+      return ctx.t.updateExpression(
+        lowered.operator,
+        arg as BabelCore.types.Expression,
+        lowered.prefix,
+      )
+    }
+    return applyRegionMetadataToExpression(lowered, ctx, regionOverride)
   } finally {
     ctx.shadowedNames = prevShadowed
   }

@@ -1131,6 +1131,29 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe(4)
   })
 
+  it('lowers state writes in parameter defaults', () => {
+    const result = compileAndRunHook<{ read: () => number; current: () => number }>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(1)
+          const fn = (value = (count = count + 1)) => value
+          return {
+            read: () => fn(),
+            current: () => count,
+          }
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result.read()).toBe(2)
+    expect(result.current()).toBe(2)
+    expect(result.read()).toBe(3)
+    expect(result.current()).toBe(3)
+  })
+
   it('keeps parameter defaults shadowed from outer reactive values', () => {
     const result = compileAndRunHook<number>(
       `
