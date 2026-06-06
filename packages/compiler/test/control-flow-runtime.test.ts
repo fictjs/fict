@@ -467,6 +467,56 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe(5)
   })
 
+  it('skips statements after continue in the same loop block', () => {
+    const result = compileAndRunHook<number | (() => number)>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let n = $state(0)
+          let total = 0
+
+          while (n < 1) {
+            n++
+            continue
+            total = 99
+          }
+
+          return total
+        }
+      `,
+      'useRun',
+    )
+
+    const resolved = typeof result === 'function' ? result() : result
+    expect(resolved).toBe(0)
+  })
+
+  it('skips statements after break in the same loop block', () => {
+    const result = compileAndRunHook<number | (() => number)>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let n = $state(0)
+          let total = 0
+
+          while (n < 1) {
+            n++
+            break
+            total = 99
+          }
+
+          return total
+        }
+      `,
+      'useRun',
+    )
+
+    const resolved = typeof result === 'function' ? result() : result
+    expect(resolved).toBe(0)
+  })
+
   it('keeps classic for let initializer bindings scoped to the loop', () => {
     expect(() =>
       compileAndRunHook<number>(
@@ -3587,6 +3637,34 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe(2)
   })
 
+  it('skips statements after switch-case break in the same case block', () => {
+    const result = compileAndRunHook<string | (() => string)>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let mode = $state(0)
+          let label = 'start'
+
+          switch (mode) {
+            case 0:
+              label = 'hit'
+              break
+              label = 'dead'
+            default:
+              label = 'fallback'
+          }
+
+          return label
+        }
+      `,
+      'useRun',
+    )
+
+    const resolved = typeof result === 'function' ? result() : result
+    expect(resolved).toBe('hit')
+  })
+
   it('preserves direct switch case returns', () => {
     const result = compileAndRunHook<number>(
       `
@@ -3734,6 +3812,34 @@ describe('control flow runtime regressions', () => {
 
     const resolved = typeof result === 'function' ? result() : result
     expect(resolved).toBe(8)
+  })
+
+  it('skips statements after labeled continue in the same block', () => {
+    const result = compileAndRunHook<number | (() => number)>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let n = $state(0)
+          let total = 0
+
+          outer: while (n < 2) {
+            n++
+            if (n === 1) {
+              continue outer
+              total = 99
+            }
+            total = total + n
+          }
+
+          return total
+        }
+      `,
+      'useRun',
+    )
+
+    const resolved = typeof result === 'function' ? result() : result
+    expect(resolved).toBe(2)
   })
 
   it('preserves nested breaks to outer while loops before trailing returns', () => {
