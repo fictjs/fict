@@ -691,6 +691,36 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(code).not.toContain('const cb = prop(() => __props.cb)')
   })
 
+  it('keeps destructured function props unwrapped when called in expression containers', () => {
+    const ast = parseFile(`
+      async function Child({ cb, tag, Ctor }) {
+        const label = \`value:\${cb('template')}\`
+        tag\`\${cb('tagged')}\`
+        ;(0, cb('sequence'))
+        new cb('new-callee')
+        new Ctor(cb('new-arg'))
+        let assigned
+        assigned = cb('assignment')
+        await cb('await')
+        return <div>{label}{assigned}</div>
+      }
+
+      function* GenChild({ cb }) {
+        yield cb('yield')
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('const cb = __props.cb')
+    expect(code).toContain('const tag = __props.tag')
+    expect(code).toContain('const Ctor = __props.Ctor')
+    expect(code).not.toContain('const cb = prop(() => __props.cb)')
+    expect(code).not.toContain('const tag = prop(() => __props.tag)')
+    expect(code).not.toContain('const Ctor = prop(() => __props.Ctor)')
+  })
+
   it('keeps value props reactive when lexical shadows are called', () => {
     const ast = parseFile(`
       function Child({ value }) {

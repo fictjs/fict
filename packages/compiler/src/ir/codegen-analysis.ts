@@ -877,12 +877,51 @@ export function collectCalledIdentifiers(
         visitExpr(expr.property as Expression, shadowed)
         return
       case 'UnaryExpression':
+      case 'AwaitExpression':
+        visitExpr(expr.argument as Expression, shadowed)
+        return
+      case 'AssignmentExpression':
+        visitExpr(expr.left as Expression, shadowed)
+        visitExpr(expr.right as Expression, shadowed)
+        return
+      case 'UpdateExpression':
         visitExpr(expr.argument as Expression, shadowed)
         return
       case 'BinaryExpression':
       case 'LogicalExpression':
         visitExpr(expr.left as Expression, shadowed)
         visitExpr(expr.right as Expression, shadowed)
+        return
+      case 'TemplateLiteral':
+        expr.expressions.forEach(item => visitExpr(item as Expression, shadowed))
+        return
+      case 'TaggedTemplateExpression':
+        if (!recordCalledIdentifier(expr.tag as Expression, shadowed)) {
+          visitExpr(expr.tag as Expression, shadowed)
+        }
+        visitExpr(expr.quasi, shadowed)
+        return
+      case 'SequenceExpression':
+        expr.expressions.forEach(item => visitExpr(item as Expression, shadowed))
+        return
+      case 'NewExpression':
+        if (!recordCalledIdentifier(expr.callee as Expression, shadowed)) {
+          visitExpr(expr.callee as Expression, shadowed)
+        }
+        expr.arguments.forEach(arg => visitExpr(arg as Expression, shadowed))
+        return
+      case 'ImportExpression':
+        visitExpr(expr.source as Expression, shadowed)
+        visitExpr(expr.options ?? null, shadowed)
+        return
+      case 'YieldExpression':
+        visitExpr(expr.argument ?? null, shadowed)
+        return
+      case 'SpreadElement':
+        visitExpr(expr.argument as Expression, shadowed)
+        return
+      case 'ClassExpression':
+        visitExpr(expr.superClass ?? null, shadowed)
         return
       case 'ConditionalExpression':
         visitExpr(expr.test as Expression, shadowed)
