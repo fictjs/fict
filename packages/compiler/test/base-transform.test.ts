@@ -916,6 +916,68 @@ describe('createFictPlugin (HIR)', () => {
       expect(output).toContain('const __fictCtx = __fictUseContext()')
     })
 
+    it('throws on $effect inside ordinary helpers', () => {
+      expect(() =>
+        transform(`
+          import { $effect } from 'fict'
+
+          function helper() {
+            $effect(() => {})
+          }
+
+          export function App() {
+            return <button onClick={helper}>x</button>
+          }
+        `),
+      ).toThrow('$effect() must be called inside a component or hook function body')
+    })
+
+    it('throws on aliased $effect inside ordinary helpers', () => {
+      expect(() =>
+        transform(`
+          import { $effect as fx } from 'fict'
+
+          function helper() {
+            fx(() => {})
+          }
+
+          export function App() {
+            return <button onClick={helper}>x</button>
+          }
+        `),
+      ).toThrow('$effect() must be called inside a component or hook function body')
+    })
+
+    it('throws on $effect inside event callbacks', () => {
+      expect(() =>
+        transform(`
+          import { $effect } from 'fict'
+
+          export function App() {
+            const onClick = () => {
+              $effect(() => {})
+            }
+            return <button onClick={onClick}>x</button>
+          }
+        `),
+      ).toThrow(/\$effect\(\) cannot be called inside nested functions|\$effect\(\) must be called/)
+    })
+
+    it('allows $effect at module top level and hook top level', () => {
+      const output = transform(`
+        import { $effect } from 'fict'
+
+        $effect(() => {})
+
+        export function useLogger() {
+          $effect(() => {})
+        }
+      `)
+
+      expect(output).toContain('createEffect(() => {},')
+      expect(output).toContain('__fictUseEffect(__fictCtx')
+    })
+
     it('rewrites aliased $effect to useEffect', () => {
       const output = transform(`
         import { $state, $effect as fx } from 'fict'

@@ -3662,6 +3662,12 @@ function createHIREntrypointVisitor(
                     `or extract the nested logic into a custom hook (useXxx).`,
                 )
               }
+              const ownerComponent = callPath.getFunctionParent()
+              if (ownerComponent && !isComponentOrHookDefinition(ownerComponent)) {
+                throw callPath.buildCodeFrameError(
+                  `$effect() must be called inside a component or hook function body, or at module top level.`,
+                )
+              }
               if (
                 !isImmediateEffectStatement(callPath) &&
                 !isImmediateDefaultExportExpression(callPath)
