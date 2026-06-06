@@ -2201,6 +2201,19 @@ function createHIREntrypointVisitor(
                 return false
               })
             }
+            if (t.isJSXExpressionContainer(node)) return checkNode(node.expression)
+            if (t.isJSXSpreadChild(node)) return checkNode(node.expression)
+            if (t.isJSXFragment(node)) {
+              return node.children.some(child => checkNode(child))
+            }
+            if (t.isJSXElement(node)) {
+              return (
+                node.openingElement.attributes.some(attr => {
+                  if (t.isJSXSpreadAttribute(attr)) return checkNode(attr.argument)
+                  return t.isJSXAttribute(attr) && checkNode(attr.value)
+                }) || node.children.some(child => checkNode(child))
+              )
+            }
             if (t.isConditionalExpression(node))
               return checkNode(node.test) || checkNode(node.consequent) || checkNode(node.alternate)
             if (t.isIfStatement(node)) {

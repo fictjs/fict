@@ -691,6 +691,50 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
   })
 
+  it('warns when memo JSX expressions contain side effects', () => {
+    const cases = [
+      "return <div data-x={fetch('/api')} />",
+      "return <div>{fetch('/api')}</div>",
+      "return <div {...fetch('/api')} />",
+      "return <>{fetch('/api')}</>",
+      "return <Child value={fetch('/api')} />",
+    ]
+
+    for (const body of cases) {
+      const { warnings } = transformWithWarnings(`
+        import { $memo } from 'fict'
+        function Child(props: any) {
+          return <span>{props.value}</span>
+        }
+        const value = $memo(() => {
+          ${body}
+        })
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
+      expect(warnings.some(w => w.code === 'FICT-M001')).toBe(false)
+    }
+  })
+
+  it('does not warn when memo JSX only contains lazy callbacks or pure values', () => {
+    const cases = [
+      "return <button onClick={() => fetch('/api')}>go</button>",
+      'return <div data-x="x">{1}</div>',
+    ]
+
+    for (const body of cases) {
+      const { warnings } = transformWithWarnings(`
+        import { $memo } from 'fict'
+        const value = $memo(() => {
+          ${body}
+        })
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-M003')).toBe(false)
+      expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
+    }
+  })
+
   it('does not warn when memo returns lazy closures with side effects', () => {
     const cases = [
       'return () => console.log("later")',
