@@ -478,9 +478,10 @@ function resolveImportSource(
   if (!importer) return undefined
   const probeFs = options?.probeFs ?? true
   const isAbsolute = path.isAbsolute(source)
-  if (!isAbsolute && !source.startsWith('.')) return undefined
+  const isFileUrl = source.startsWith('file://')
+  if (!isAbsolute && !isFileUrl && !source.startsWith('.')) return undefined
 
-  const base = isAbsolute ? source : path.resolve(path.dirname(importer), source)
+  const base = isAbsolute || isFileUrl ? source : path.resolve(path.dirname(importer), source)
   const normalized = normalizeFileName(base)
 
   if (store.has(normalized)) return normalized

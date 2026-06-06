@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import { transformSync } from '@babel/core'
 import syntaxJsx from '@babel/plugin-syntax-jsx'
@@ -657,6 +658,44 @@ describe('module metadata safety', () => {
       if (existsSync(depMetaPath)) {
         rmSync(depMetaPath, { force: true })
       }
+      if (existsSync(baseDir)) {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+      clearModuleMetadata()
+    }
+  })
+
+  it('resolves file-url imports against normalized external metadata keys', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_metadata_file_url__')
+    const importer = path.join(baseDir, 'consumer.ts')
+    const depPath = path.join(baseDir, 'dep.ts')
+    const moduleMetadata = new Map<string, ModuleReactiveMetadata>([
+      [depPath, { exports: { value: 'signal' } }],
+    ])
+    mkdirSync(baseDir, { recursive: true })
+
+    try {
+      const expected = { exports: { value: 'signal' } }
+      expect(
+        resolveModuleMetadata(pathToFileURL(depPath).href, importer, {
+          emitModuleMetadata: false,
+          moduleMetadata,
+        }),
+      ).toEqual(expected)
+      expect(
+        resolveModuleMetadata(depPath, importer, {
+          emitModuleMetadata: false,
+          moduleMetadata,
+        }),
+      ).toEqual(expected)
+      expect(
+        resolveModuleMetadata('./dep.ts', importer, {
+          emitModuleMetadata: false,
+          moduleMetadata,
+        }),
+      ).toEqual(expected)
+    } finally {
       if (existsSync(baseDir)) {
         rmSync(baseDir, { recursive: true, force: true })
       }
