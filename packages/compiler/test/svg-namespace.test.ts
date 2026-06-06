@@ -221,6 +221,52 @@ describe('SVG/MathML Namespace Support ()', () => {
       expect(output).toContain('<mi data-id=\\"math-mi\\">')
       expect(output).toMatch(/template\([^)]*math-mi[^)]*,\s*void 0,\s*void 0,\s*true\)/)
     })
+
+    it.each(['mi', 'mo', 'mn', 'ms', 'mtext'])(
+      'exits MathML namespace for dynamic children under %s text integration points',
+      parentTag => {
+        const source = `
+          import { $state } from 'fict'
+          export function App() {
+            const show = $state(true)
+            return (
+              <math>
+                <${parentTag}>
+                  {show && <mi data-id="${parentTag}-child">y</mi>}
+                </${parentTag}>
+              </math>
+            )
+          }
+        `
+        const output = transform(source)
+
+        expect(output).toContain(`<mi data-id=\\"${parentTag}-child\\">`)
+        expect(output).not.toMatch(
+          new RegExp(`template\\([^)]*${parentTag}-child[^)]*,\\s*void 0,\\s*void 0,\\s*true\\)`),
+        )
+      },
+    )
+
+    it('keeps MathML-only text integration point exceptions in MathML namespace', () => {
+      const source = `
+        import { $state } from 'fict'
+        export function App() {
+          const show = $state(true)
+          return (
+            <math>
+              <mtext>
+                {show && <mglyph data-id="glyph"></mglyph>}
+                {show && <malignmark data-id="align"></malignmark>}
+              </mtext>
+            </math>
+          )
+        }
+      `
+      const output = transform(source)
+
+      expect(output).toMatch(/template\([^)]*glyph[^)]*,\s*void 0,\s*void 0,\s*true\)/)
+      expect(output).toMatch(/template\([^)]*align[^)]*,\s*void 0,\s*void 0,\s*true\)/)
+    })
   })
 
   describe('List rendering inside SVG', () => {

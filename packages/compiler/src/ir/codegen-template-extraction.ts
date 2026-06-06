@@ -34,7 +34,7 @@ export interface HIRTemplateExtractionResult {
 }
 
 /** Namespace context type for template extraction */
-export type NamespaceContext = 'svg' | 'mathml' | null
+export type NamespaceContext = 'svg' | 'mathml' | 'mathmlTextIntegration' | null
 
 export interface TemplateExtractionOps {
   isLikelyTextExpression: (expr: Expression, ctx: CodegenContext) => boolean
@@ -180,12 +180,16 @@ function isHtmlAnnotationXmlEncoding(value: string | null): boolean {
   return normalized === 'text/html' || normalized === 'application/xhtml+xml'
 }
 
+const MATHML_TEXT_INTEGRATION_POINTS = new Set(['mi', 'mo', 'mn', 'ms', 'mtext'])
+const MATHML_TEXT_INTEGRATION_EXCEPTIONS = new Set(['mglyph', 'malignmark'])
+
 /**
  * Resolve namespace context based on tag name and parent context.
  * - 'svg' enters SVG namespace
  * - 'math' enters MathML namespace
  * - 'foreignObject' inside SVG exits to null (HTML namespace)
  * - 'annotation-xml' with an HTML encoding inside MathML exits to null
+ * - MathML text integration point children exit to HTML except mglyph/malignmark
  * - Otherwise inherit from parent context
  */
 export function resolveNamespaceContext(
@@ -196,12 +200,18 @@ export function resolveNamespaceContext(
   if (tagName === 'svg') return 'svg'
   if (tagName === 'math') return 'mathml'
   if (tagName === 'foreignObject' && parentNamespace === 'svg') return null
+  if (parentNamespace === 'mathmlTextIntegration') {
+    return MATHML_TEXT_INTEGRATION_EXCEPTIONS.has(tagName) ? 'mathml' : null
+  }
   if (
     tagName === 'annotation-xml' &&
     parentNamespace === 'mathml' &&
     isHtmlAnnotationXmlEncoding(getStaticStringAttribute(attrs, 'encoding'))
   ) {
     return null
+  }
+  if (parentNamespace === 'mathml' && MATHML_TEXT_INTEGRATION_POINTS.has(tagName)) {
+    return 'mathmlTextIntegration'
   }
   return parentNamespace
 }
@@ -744,7 +754,10 @@ export function extractHIRStaticHtml(
   // - In that case, the browser would parse the HTML as HTML elements without the namespace
   // Note: If root IS 'svg' or 'math', the tag itself creates the namespace, no wrapping needed
   const needsSVG = namespace === 'svg' && tagName !== 'svg'
-  const needsMathML = namespace === 'mathml' && tagName !== 'math'
+  const needsMathML =
+    (namespace === 'mathml' ||
+      (namespace === 'mathmlTextIntegration' && resolvedNamespace === 'mathml')) &&
+    tagName !== 'math'
 
   return {
     html,

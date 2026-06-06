@@ -2600,6 +2600,59 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('renders dynamic MathML text integration point children in the HTML namespace', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const show = true
+        const items = [1]
+        return (
+          <math data-id="math">
+            <mtext>{show && <mi data-id="mtext-mi">text</mi>}</mtext>
+            <mi>{show && <><mi data-id="fragment-mi">fragment</mi></>}</mi>
+            <mo>{items.map(item => <mi key={item} data-id="list-mi">list</mi>)}</mo>
+            <mn>{show && <mglyph data-id="glyph"></mglyph>}</mn>
+          </math>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const output = transformCommonJS(source, { fineGrainedDom: true })
+    expect(output).not.toMatch(/"<mi data-id=\\"mtext-mi\\">text<\/mi>", void 0, void 0, true/)
+    expect(output).not.toMatch(
+      /"<mi data-id=\\"fragment-mi\\">fragment<\/mi>", void 0, void 0, true/,
+    )
+    expect(output).not.toMatch(/"<mi data-id=\\"list-mi\\">list<\/mi>", void 0, void 0, true/)
+    expect(output).toMatch(/"<mglyph data-id=\\"glyph\\"><\/mglyph>", void 0, void 0, true/)
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    const mtextMi = container.querySelector('[data-id="mtext-mi"]') as Element
+    const fragmentMi = container.querySelector('[data-id="fragment-mi"]') as Element
+    const listMi = container.querySelector('[data-id="list-mi"]') as Element
+    const glyph = container.querySelector('[data-id="glyph"]') as Element
+
+    expect(mtextMi.namespaceURI).toBe('http://www.w3.org/1999/xhtml')
+    expect(fragmentMi.namespaceURI).toBe('http://www.w3.org/1999/xhtml')
+    expect(listMi.namespaceURI).toBe('http://www.w3.org/1999/xhtml')
+    expect(glyph.namespaceURI).toBe('http://www.w3.org/1998/Math/MathML')
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps generated template temps from shadowing source bindings', async () => {
     const cases: Array<{
       source: string
