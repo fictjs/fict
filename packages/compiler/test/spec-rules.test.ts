@@ -285,6 +285,50 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-J002')).toBe(false)
   })
 
+  it('warns when hoisted rendered map results are missing keys', () => {
+    const { warnings } = transformWithWarnings(`
+      export function List({ items }) {
+        const rows = items.map(item => <li>{item.name}</li>)
+        return <ul>{rows}</ul>
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-J002')).toBe(true)
+  })
+
+  it('warns when conditional rendered map variables are missing keys', () => {
+    const { warnings } = transformWithWarnings(`
+      export function List({ items, compact }) {
+        const rows = compact ? items.map(item => <li>{item.name}</li>) : []
+        return <ul>{rows}</ul>
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-J002')).toBe(true)
+  })
+
+  it('does not warn when hoisted rendered map results have keys', () => {
+    const { warnings } = transformWithWarnings(`
+      export function List({ items }) {
+        const rows = items.map(item => <li key={item.id}>{item.name}</li>)
+        return <ul>{rows}</ul>
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-J002')).toBe(false)
+  })
+
+  it('does not warn when hoisted map results are not rendered', () => {
+    const { warnings } = transformWithWarnings(`
+      export function List({ items }) {
+        const rows = items.map(item => <li>{item.name}</li>)
+        return <ul />
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-J002')).toBe(false)
+  })
+
   it('warns when list items use the map index as key (FICT-J001)', () => {
     const { warnings } = transformWithWarnings(`
       export function List({ items }) {

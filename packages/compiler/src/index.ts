@@ -2387,24 +2387,76 @@ function createHIREntrypointVisitor(
         // Warn on list rendering without key
         path.traverse({
           JSXExpressionContainer(exprPath) {
-            const expr = exprPath.node.expression
-            if (!t.isCallExpression(expr) && !t.isOptionalCallExpression(expr)) return
-            if (
-              (!t.isMemberExpression(expr.callee) && !t.isOptionalMemberExpression(expr.callee)) ||
-              !t.isIdentifier(expr.callee.property, { name: 'map' })
-            ) {
-              return
+            const isMapCallPath = (
+              candidatePath: BabelCore.NodePath,
+            ): candidatePath is BabelCore.NodePath<
+              BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
+            > => {
+              const node = candidatePath.node
+              if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return false
+              return (
+                (t.isMemberExpression(node.callee) || t.isOptionalMemberExpression(node.callee)) &&
+                t.isIdentifier(node.callee.property, { name: 'map' })
+              )
             }
-            const callExprPath = exprPath.get('expression')
-            if (!callExprPath.isCallExpression() && !callExprPath.isOptionalCallExpression()) return
-            const argPaths = callExprPath.get('arguments')
-            const cbPath = Array.isArray(argPaths) ? argPaths[0] : undefined
-            if (
-              !cbPath ||
-              (!cbPath.isArrowFunctionExpression() && !cbPath.isFunctionExpression())
-            ) {
-              return
+            const collectRenderedMapCalls = (
+              candidatePath: BabelCore.NodePath,
+              calls: BabelCore.NodePath<
+                BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
+              >[],
+              seenBindings = new Set<BabelCore.types.Identifier>(),
+            ): void => {
+              if (isMapCallPath(candidatePath)) {
+                calls.push(candidatePath)
+                return
+              }
+              if (candidatePath.isIdentifier()) {
+                const binding = candidatePath.scope.getBinding(candidatePath.node.name)
+                const bindingId = binding?.identifier as BabelCore.types.Identifier | undefined
+                if (!binding || !bindingId || seenBindings.has(bindingId)) return
+                if (!binding.path.isVariableDeclarator()) return
+                seenBindings.add(bindingId)
+                const initPath = binding.path.get('init') as BabelCore.NodePath | null
+                if (initPath) collectRenderedMapCalls(initPath, calls, seenBindings)
+                return
+              }
+              if (candidatePath.isConditionalExpression()) {
+                collectRenderedMapCalls(candidatePath.get('consequent'), calls, seenBindings)
+                collectRenderedMapCalls(candidatePath.get('alternate'), calls, seenBindings)
+                return
+              }
+              if (candidatePath.isLogicalExpression()) {
+                collectRenderedMapCalls(candidatePath.get('left'), calls, seenBindings)
+                collectRenderedMapCalls(candidatePath.get('right'), calls, seenBindings)
+                return
+              }
+              if (candidatePath.isSequenceExpression()) {
+                const expressions = candidatePath.get('expressions')
+                const tail = expressions[expressions.length - 1]
+                if (tail) collectRenderedMapCalls(tail, calls, seenBindings)
+                return
+              }
+              if (
+                candidatePath.isParenthesizedExpression() ||
+                candidatePath.isTSAsExpression() ||
+                candidatePath.isTSTypeAssertion() ||
+                candidatePath.isTSNonNullExpression() ||
+                candidatePath.isTSSatisfiesExpression() ||
+                candidatePath.isTypeCastExpression()
+              ) {
+                collectRenderedMapCalls(
+                  candidatePath.get('expression') as BabelCore.NodePath,
+                  calls,
+                  seenBindings,
+                )
+              }
             }
+
+            const mapCallPaths: BabelCore.NodePath<
+              BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
+            >[] = []
+            collectRenderedMapCalls(exprPath.get('expression') as BabelCore.NodePath, mapCallPaths)
+            if (mapCallPaths.length === 0) return
 
             const getReturnedJsx = (
               fnPath: BabelCore.NodePath<
@@ -2478,62 +2530,75 @@ function createHIREntrypointVisitor(
               return returned
             }
 
-            const returnedJsx = getReturnedJsx(cbPath)
-            if (returnedJsx.length === 0) return
-            const indexParam = cbPath.node.params[1]
-            const indexParamName = t.isIdentifier(indexParam) ? indexParam.name : null
-            const findIndexKeyAttr = (
-              jsx: BabelCore.types.JSXElement | BabelCore.types.JSXFragment,
-            ): BabelCore.types.JSXAttribute | null => {
-              if (!indexParamName || t.isJSXFragment(jsx)) return null
-              for (const attr of jsx.openingElement.attributes) {
-                if (
-                  t.isJSXAttribute(attr) &&
-                  t.isJSXIdentifier(attr.name, { name: 'key' }) &&
-                  t.isJSXExpressionContainer(attr.value) &&
-                  t.isExpression(attr.value.expression) &&
-                  expressionHasFreeIdentifier(attr.value.expression, indexParamName, t)
-                ) {
-                  return attr
-                }
+            for (const callExprPath of mapCallPaths) {
+              const argPaths = callExprPath.get('arguments')
+              const cbPath = Array.isArray(argPaths) ? argPaths[0] : undefined
+              if (
+                !cbPath ||
+                (!cbPath.isArrowFunctionExpression() && !cbPath.isFunctionExpression())
+              ) {
+                continue
               }
-              return null
-            }
 
-            const hasMissingKeyBranch = returnedJsx.some(jsx => {
-              if (t.isJSXFragment(jsx)) return true
-
-              let hasKey = false
-              for (const attr of jsx.openingElement.attributes) {
-                if (t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name, { name: 'key' })) {
-                  hasKey = true
-                  break
+              const returnedJsx = getReturnedJsx(cbPath)
+              if (returnedJsx.length === 0) continue
+              const indexParam = cbPath.node.params[1]
+              const indexParamName = t.isIdentifier(indexParam) ? indexParam.name : null
+              const findIndexKeyAttr = (
+                jsx: BabelCore.types.JSXElement | BabelCore.types.JSXFragment,
+              ): BabelCore.types.JSXAttribute | null => {
+                if (!indexParamName || t.isJSXFragment(jsx)) return null
+                for (const attr of jsx.openingElement.attributes) {
+                  if (
+                    t.isJSXAttribute(attr) &&
+                    t.isJSXIdentifier(attr.name, { name: 'key' }) &&
+                    t.isJSXExpressionContainer(attr.value) &&
+                    t.isExpression(attr.value.expression) &&
+                    expressionHasFreeIdentifier(attr.value.expression, indexParamName, t)
+                  ) {
+                    return attr
+                  }
                 }
+                return null
               }
-              return !hasKey
-            })
 
-            if (hasMissingKeyBranch) {
+              const hasMissingKeyBranch = returnedJsx.some(jsx => {
+                if (t.isJSXFragment(jsx)) return true
+
+                let hasKey = false
+                for (const attr of jsx.openingElement.attributes) {
+                  if (t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name, { name: 'key' })) {
+                    hasKey = true
+                    break
+                  }
+                }
+                return !hasKey
+              })
+
+              if (hasMissingKeyBranch) {
+                const expr = callExprPath.node
+                warn({
+                  code: 'FICT-J002',
+                  message: 'Missing key prop in list rendering.',
+                  fileName,
+                  line: expr.loc?.start.line ?? 0,
+                  column: expr.loc ? expr.loc.start.column + 1 : 0,
+                })
+                return
+              }
+
+              const indexKeyAttr = returnedJsx.map(findIndexKeyAttr).find(Boolean) ?? null
+              if (!indexKeyAttr) continue
+
               warn({
-                code: 'FICT-J002',
-                message: 'Missing key prop in list rendering.',
+                code: 'FICT-J001',
+                message: 'Dynamic key expression may impact performance.',
                 fileName,
-                line: expr.loc?.start.line ?? 0,
-                column: expr.loc ? expr.loc.start.column + 1 : 0,
+                line: indexKeyAttr.loc?.start.line ?? 0,
+                column: indexKeyAttr.loc ? indexKeyAttr.loc.start.column + 1 : 0,
               })
               return
             }
-
-            const indexKeyAttr = returnedJsx.map(findIndexKeyAttr).find(Boolean) ?? null
-            if (!indexKeyAttr) return
-
-            warn({
-              code: 'FICT-J001',
-              message: 'Dynamic key expression may impact performance.',
-              fileName,
-              line: indexKeyAttr.loc?.start.line ?? 0,
-              column: indexKeyAttr.loc ? indexKeyAttr.loc.start.column + 1 : 0,
-            })
           },
         })
 
