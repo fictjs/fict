@@ -3936,7 +3936,10 @@ function lowerIntrinsicElementAsVNode(
 
     if (attr.value) {
       if (isEvent) {
-        if (!(t.isArrowFunctionExpression(rawExpr) || t.isFunctionExpression(rawExpr))) {
+        if (
+          !(t.isArrowFunctionExpression(rawExpr) || t.isFunctionExpression(rawExpr)) &&
+          eventHandlerExpressionNeedsReactiveGetter(attr.value, ctx)
+        ) {
           valueExpr = markCompilerReactiveGetter(ctx, t.arrowFunctionExpression([], rawExpr))
         }
       } else if (isExpressionReactive(attr.value, ctx)) {

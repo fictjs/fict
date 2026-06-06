@@ -6661,6 +6661,191 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('evaluates VNode fallback event handler factory expressions during render', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const log: string[] = []
+
+      const makeHandler = (label: string) => {
+        log.push('factory:' + label)
+        return () => log.push('hit:' + label)
+      }
+
+      const registry = {
+        make: makeHandler,
+      }
+
+      const staticHandler = () => log.push('static')
+
+      export function App() {
+        return (
+          <div>
+            <button data-id="factory" onClick={makeHandler('factory')}>factory</button>
+            <button data-id="member" onClick={registry.make('member')}>member</button>
+            <button
+              data-id="conditional"
+              onClick={true ? makeHandler('conditional') : makeHandler('unused')}
+            >
+              conditional
+            </button>
+            <button
+              data-id="object"
+              onClick={{
+                handleEvent() {
+                  log.push('object')
+                },
+              }}
+            >
+              object
+            </button>
+            <button data-id="static" onClick={staticHandler}>static</button>
+            <button data-id="inline" onClick={() => log.push('inline')}>inline</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        log.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      log: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: false })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(mod.log).toEqual(['factory:factory', 'factory:member', 'factory:conditional'])
+
+    const click = (id: string) => {
+      const button = container.querySelector(`[data-id="${id}"]`) as HTMLButtonElement
+      button.click()
+      button.click()
+    }
+
+    click('factory')
+    click('member')
+    click('conditional')
+    click('object')
+    click('static')
+    click('inline')
+    await flushUpdates()
+
+    expect(mod.log).toEqual([
+      'factory:factory',
+      'factory:member',
+      'factory:conditional',
+      'hit:factory',
+      'hit:factory',
+      'hit:member',
+      'hit:member',
+      'hit:conditional',
+      'hit:conditional',
+      'object',
+      'object',
+      'static',
+      'static',
+      'inline',
+      'inline',
+    ])
+
+    teardown()
+    container.remove()
+  })
+
+  it('throws VNode fallback event handler factories during render', () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const log: string[] = []
+
+      function makeHandler() {
+        log.push('factory')
+        throw new Error('factory boom')
+      }
+
+      export function App() {
+        return <button data-id="btn" onClick={makeHandler()}>boom</button>
+      }
+
+      export function mount(el: HTMLElement) {
+        log.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      log: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: false })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+
+    expect(() => mod.mount(container)).toThrow('factory boom')
+    expect(mod.log).toEqual(['factory'])
+
+    container.remove()
+  })
+
+  it('keeps reactive VNode fallback event handler values dynamic', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export const log: string[] = []
+
+      export function App() {
+        let mode = $state('A')
+
+        const handlerA = () => log.push('A')
+        const handlerB = () => log.push('B')
+
+        return (
+          <div>
+            <button data-id="btn" onClick={mode === 'A' ? handlerA : handlerB}>
+              Click
+            </button>
+            <button data-id="toggle" onClick={() => (mode = mode === 'A' ? 'B' : 'A')}>
+              Toggle
+            </button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        log.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      log: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: false })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const btn = container.querySelector('[data-id="btn"]') as HTMLButtonElement
+    const toggle = container.querySelector('[data-id="toggle"]') as HTMLButtonElement
+
+    btn.click()
+    toggle.click()
+    await flushUpdates()
+    btn.click()
+    toggle.click()
+    await flushUpdates()
+    btn.click()
+
+    expect(mod.log).toEqual(['A', 'B', 'A'])
+
+    teardown()
+    container.remove()
+  })
+
   it('dispatches EventListenerObject handlers in fine-grained mode', async () => {
     const source = `
       import { render } from 'fict'
