@@ -247,6 +247,43 @@ describe('lowerHIRWithRegions', () => {
     expect(output).toContain('out = e.x')
   })
 
+  it('keeps branch side effects with region outputs in source order once', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      function mark() {
+        return 1
+      }
+      function choose() {
+        return 'hit'
+      }
+
+      export function App() {
+        let count = $state(1)
+        let out = 0
+        if (count) {
+          mark()
+          out = 1
+        }
+        if (count) {
+          switch (choose()) {
+            case 'hit':
+              out = 2
+              break
+            default:
+              out = 3
+          }
+        }
+        return <span>{out}:{count}</span>
+      }
+    `)
+
+    expect(output.match(/mark\(\);/g) ?? []).toHaveLength(1)
+    expect(output.match(/switch \(choose\(\)\)/g) ?? []).toHaveLength(1)
+    expect(output).toMatch(/if \(count\(\)\) \{\s+mark\(\);\s+out = 1;/)
+    expect(output).toMatch(/switch \(choose\(\)\) \{\s+case "hit":\s+out = 2;/)
+  })
+
   it('omits type-only imports and declarations from emitted modules', () => {
     const ast = parseFile(`
       import type { Foo } from './types'

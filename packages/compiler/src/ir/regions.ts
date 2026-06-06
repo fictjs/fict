@@ -1199,6 +1199,28 @@ function lowerStructuredNodeWithRegions(
   return lowerStructuredNodeInternal(node, t, ctx, declaredVars, regionResult)
 }
 
+function collectSubsumedChildRegionIds(regionResult: RegionResult): Set<number> {
+  const disabled = new Set<number>()
+  const regionsById = new Map(regionResult.regions.map(region => [region.id, region]))
+
+  for (const region of regionResult.regions) {
+    if (
+      region.shouldMemoize ||
+      region.parentId === undefined ||
+      !region.hasControlFlow ||
+      region.hasJSX
+    ) {
+      continue
+    }
+    const parent = regionsById.get(region.parentId)
+    if (parent?.shouldMemoize && parent.hasControlFlow) {
+      disabled.add(region.id)
+    }
+  }
+
+  return disabled
+}
+
 /**
  * Context for tracking region emission during lowering
  */
@@ -1251,7 +1273,7 @@ function lowerStructuredNodeInternal(
     ? {
         regionResult,
         emittedRegions: new Set<number>(),
-        disabledRegions: new Set<number>(),
+        disabledRegions: collectSubsumedChildRegionIds(regionResult),
         hoistedInstructions: new Set<Instruction>(),
         pendingInstructions: new Map<number, Instruction[]>(),
         rootNode: node,
@@ -2143,7 +2165,14 @@ function lowerNodeWithRegionContext(
             instructionBuffer,
             regionCtx,
           )
-          const controlFlowRegion = directEmitCandidate?.region ?? controlFlowState.region
+          const partialRegion =
+            !controlFlowState.region && controlFlowState.partialRegionIds.size === 1
+              ? regionCtx?.regionResult.regions.find(
+                  region => region.id === Array.from(controlFlowState.partialRegionIds)[0],
+                )
+              : undefined
+          const controlFlowRegion =
+            directEmitCandidate?.region ?? controlFlowState.region ?? partialRegion
           if (controlFlowRegion && regionRequiresEagerDerivedLowering(controlFlowRegion, ctx)) {
             regionCtx?.disabledRegions.add(controlFlowRegion.id)
           }
@@ -2331,6 +2360,21 @@ function lowerNodeWithRegionContext(
         !ctx.inRegionMemo &&
         !inNonReactiveScope &&
         expressionUsesTracked(node.test, ctx)
+      const controlFlowState = analyzeControlFlowRegion(node, regionCtx)
+      const partialRegion =
+        !controlFlowState.region && controlFlowState.partialRegionIds.size === 1
+          ? regionCtx?.regionResult.regions.find(
+              region => region.id === Array.from(controlFlowState.partialRegionIds)[0],
+            )
+          : undefined
+      const memoizedControlFlowRegion = controlFlowState.region ?? partialRegion
+      if (
+        memoizedControlFlowRegion?.shouldMemoize &&
+        (regionCtx?.emittedRegions.has(memoizedControlFlowRegion.id) ||
+          !regionCtx?.disabledRegions.has(memoizedControlFlowRegion.id))
+      ) {
+        return []
+      }
 
       // If we might wrap in effect, mark children as being in a non-reactive scope
       // so they don't also get wrapped in effects
@@ -3000,6 +3044,15 @@ function lowerStructuredNodeForRegion(
         const stmt = instructionToStatement(node.instruction, t, declaredVars, ctx)
         return stmt ? [stmt] : []
       }
+      if (
+        owner.id !== region.id &&
+        regionCtx?.inlineUnownedInRegionBody &&
+        node.instruction.kind === 'Expression' &&
+        owner.declarations.size === 0
+      ) {
+        const stmt = instructionToStatement(node.instruction, t, declaredVars, ctx)
+        return stmt ? [stmt] : []
+      }
       if (owner.id !== region.id) return []
       const stmt = instructionToStatement(node.instruction, t, declaredVars, ctx)
       return stmt ? [stmt] : []
@@ -3007,6 +3060,15 @@ function lowerStructuredNodeForRegion(
 
     case 'if': {
       const inNonReactiveScope = !!(ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0)
+      const shouldInlineUnownedInstructions =
+        regionCtx?.inlineUnownedInRegionBody === true ||
+        (regionCtx
+          ? analyzeControlFlowRegion(node, regionCtx).hasUnownedInstructions === true
+          : false)
+      const childRegionCtx =
+        shouldInlineUnownedInstructions && regionCtx && !regionCtx.inlineUnownedInRegionBody
+          ? { ...regionCtx, inlineUnownedInRegionBody: true }
+          : regionCtx
       // fix: Pre-compute whether we *might* wrap this if in an effect BEFORE lowering children.
       // We check most conditions but NOT early exit (that requires the built statement).
       // If we might wrap in effect, process children with forceNonReactive=true to prevent nested effects.
@@ -3028,7 +3090,7 @@ function lowerStructuredNodeForRegion(
             t,
             ctx,
             declaredVars,
-            regionCtx,
+            childRegionCtx,
             skipInstructions,
           )
         }
@@ -3041,7 +3103,7 @@ function lowerStructuredNodeForRegion(
             t,
             ctx,
             declaredVars,
-            regionCtx,
+            childRegionCtx,
             skipInstructions,
           )
         } finally {
@@ -3050,8 +3112,13 @@ function lowerStructuredNodeForRegion(
       }
 
       // Lower children with forceNonReactive=true if we might wrap in effect
-      let consequent = lowerChild(node.consequent, mightWrapInEffect)
-      let alternate = node.alternate ? lowerChild(node.alternate, mightWrapInEffect) : []
+      let consequent = lowerChild(
+        node.consequent,
+        mightWrapInEffect || shouldInlineUnownedInstructions,
+      )
+      let alternate = node.alternate
+        ? lowerChild(node.alternate, mightWrapInEffect || shouldInlineUnownedInstructions)
+        : []
       if (consequent.length === 0 && alternate.length === 0) return []
       const buildIfStmt = (
         cons: BabelCore.types.Statement[],
@@ -3074,8 +3141,10 @@ function lowerStructuredNodeForRegion(
       // Only re-lower without the guard if there's no early exit AND we won't wrap in effect.
       if (!shouldWrapEffect && mightWrapInEffect && !hasEarlyExit) {
         // Re-lower without the non-reactive guard to preserve previous behavior
-        consequent = lowerChild(node.consequent, false)
-        alternate = node.alternate ? lowerChild(node.alternate, false) : []
+        consequent = lowerChild(node.consequent, shouldInlineUnownedInstructions)
+        alternate = node.alternate
+          ? lowerChild(node.alternate, shouldInlineUnownedInstructions)
+          : []
         if (consequent.length === 0 && alternate.length === 0) return []
         ifStmt = buildIfStmt(consequent, alternate)
       }
@@ -3394,6 +3463,10 @@ function analyzeControlFlowRegion(
     switch (current.kind) {
       case 'instruction': {
         sawInstruction = true
+        if (current.instruction.kind === 'Expression') {
+          hasUnownedInstruction = true
+          return
+        }
         const owner = findRegionForInstruction(current.instruction, regionCtx)
         if (!owner) {
           hasUnownedInstruction = true
