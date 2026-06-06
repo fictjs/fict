@@ -489,6 +489,53 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('evaluates destructured prop defaults against prior prop values', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      function Pair({
+        a,
+        b = a,
+        c: renamed,
+        d = renamed,
+        e = b,
+        fn,
+        fnResult = fn(),
+      }: any) {
+        return (
+          <span data-id="pair">
+            {typeof b}:{String(b)}:
+            {typeof d}:{String(d)}:
+            {typeof e}:{String(e)}:
+            {fnResult}
+          </span>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => (
+          <Pair a="first" c="alias" fn={() => 'called'} />
+        ), el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    expect(container.querySelector('[data-id="pair"]')?.textContent?.replace(/\s+/g, '')).toBe(
+      'string:first:string:alias:string:first:called',
+    )
+
+    teardown()
+    container.remove()
+  })
+
   it('reads literal prop destructuring keys with computed access', async () => {
     const source = `
       import { render } from 'fict'

@@ -1750,6 +1750,23 @@ describe('resumable event handler transformation', () => {
     expect(code).toContain('console.log(itemId())')
   })
 
+  it('restores defaulted prop captures that read prior prop accessors', () => {
+    const ast = parseFile(`
+      function Button({ a, b = a, fn, fnResult = fn() }) {
+        return <button onClick$={() => console.log(b, fnResult)}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(/const a = \(\) => __scopeProps\.a/)
+    expect(code).toMatch(/const b = \(\) => \(__value => .*a\(\).*__value/)
+    expect(code).toMatch(/const fn = \(\) => __scopeProps\.fn/)
+    expect(code).toMatch(/const fnResult = \(\) => \(__value => .*fn\(\)\(\).*__value/)
+    expect(code).toContain('console.log(b(), fnResult())')
+  })
+
   it('restores nested prop captures in resumable handlers', () => {
     const ast = parseFile(`
       function Button({ user: { id } }) {

@@ -2,6 +2,7 @@ import type * as BabelCore from '@babel/core'
 
 import type { CodegenContext, RegionInfo } from './codegen'
 import { reserveGeneratedIndexedModuleName } from './codegen-name-allocation'
+import { replaceIdentifiersWithOverrides, type RegionOverrideMap } from './codegen-overrides'
 import {
   collectFreeIdentifiersInExpr,
   capturesLexicalArgumentsInExpr,
@@ -260,8 +261,25 @@ export function emitResumableEventBinding(
   const handlerId = t.identifier(handlerName.name)
 
   const captured = collectFreeIdentifiersInExpr(handlerExpr, t)
+  const allPropAccessors = Array.from(ctx.resumablePropAccessors ?? [])
+  const propAccessorRestoreNames = new Set(
+    allPropAccessors.filter(([name]) => captured.has(name)).map(([name]) => name),
+  )
+  let addedPropAccessorRestore = true
+  while (addedPropAccessorRestore) {
+    addedPropAccessorRestore = false
+    for (const [name, restore] of allPropAccessors) {
+      if (!propAccessorRestoreNames.has(name) || !restore.defaultValue) continue
+      const defaultDeps = collectFreeIdentifiersInExpr(restore.defaultValue, t)
+      for (const dep of defaultDeps) {
+        if (!ctx.resumablePropAccessors?.has(dep) || propAccessorRestoreNames.has(dep)) continue
+        propAccessorRestoreNames.add(dep)
+        addedPropAccessorRestore = true
+      }
+    }
+  }
   const propAccessorRestores = new Map(
-    Array.from(ctx.resumablePropAccessors ?? []).filter(([name]) => captured.has(name)),
+    allPropAccessors.filter(([name]) => propAccessorRestoreNames.has(name)),
   )
   const propRestRestores = new Map(
     Array.from(ctx.resumablePropRests ?? []).filter(([name]) => captured.has(name)),
@@ -583,6 +601,19 @@ export function emitResumableEventBinding(
     )
   }
 
+  const restoredPropAccessorNames = new Set<string>()
+  const lowerRestoredDefaultValue = (
+    defaultValue: BabelCore.types.Expression,
+  ): BabelCore.types.Expression => {
+    const overrides: RegionOverrideMap = Object.create(null) as RegionOverrideMap
+    for (const name of restoredPropAccessorNames) {
+      overrides[name] = () => t.callExpression(t.identifier(name), [])
+    }
+    const lowered = t.cloneNode(defaultValue, true) as BabelCore.types.Expression
+    replaceIdentifiersWithOverrides(lowered, overrides, t, undefined, undefined, false, true)
+    return lowered
+  }
+
   for (const [name, restore] of propAccessorRestores) {
     const valueExpr = buildPropsPathRead(restore.path)
     const restoredValue = restore.defaultValue
@@ -591,7 +622,7 @@ export function emitResumableEventBinding(
             [t.identifier('__value')],
             t.conditionalExpression(
               t.binaryExpression('===', t.identifier('__value'), voidZero(t)),
-              t.cloneNode(restore.defaultValue, true) as BabelCore.types.Expression,
+              lowerRestoredDefaultValue(restore.defaultValue),
               t.identifier('__value'),
             ),
           ),
@@ -603,6 +634,7 @@ export function emitResumableEventBinding(
         t.variableDeclarator(t.identifier(name), t.arrowFunctionExpression([], restoredValue)),
       ]),
     )
+    restoredPropAccessorNames.add(name)
   }
 
   for (const [name, restore] of propRestRestores) {

@@ -7544,6 +7544,47 @@ function lowerFunctionWithRegions(
           [valueExpr],
         )
       }
+      const propAccessorEagerReads = new Map<
+        string,
+        { index: number; valueExpr: BabelCore.types.Expression }
+      >()
+      const propAccessorSnapshots = new Map<string, BabelCore.types.Identifier>()
+      const emitEagerPropRead = (name: string, valueExpr: BabelCore.types.Expression): void => {
+        const index = stmts.length
+        stmts.push(t.expressionStatement(t.cloneNode(valueExpr, true)))
+        propAccessorEagerReads.set(name, { index, valueExpr })
+      }
+      const ensurePropAccessorSnapshot = (name: string): BabelCore.types.Identifier => {
+        const existing = propAccessorSnapshots.get(name)
+        if (existing) return t.cloneNode(existing)
+
+        const snapshotId = genTemp(ctx, 'propValue')
+        const eagerRead = propAccessorEagerReads.get(name)
+        if (eagerRead) {
+          stmts[eagerRead.index] = t.variableDeclaration('const', [
+            t.variableDeclarator(snapshotId, t.cloneNode(eagerRead.valueExpr, true)),
+          ])
+        } else {
+          stmts.push(
+            t.variableDeclaration('const', [
+              t.variableDeclarator(snapshotId, t.callExpression(t.identifier(name), [])),
+            ]),
+          )
+        }
+        propAccessorSnapshots.set(name, snapshotId)
+        return t.cloneNode(snapshotId)
+      }
+      const lowerPropDefaultExpression = (
+        defaultExpr: BabelCore.types.Expression,
+      ): BabelCore.types.Expression => {
+        const overrides: RegionOverrideMap = Object.create(null) as RegionOverrideMap
+        for (const name of propsPlanAliases) {
+          overrides[name] = () => ensurePropAccessorSnapshot(name)
+        }
+        const lowered = t.cloneNode(defaultExpr, true) as BabelCore.types.Expression
+        replaceIdentifiersWithOverrides(lowered, overrides, t, undefined, undefined, false, true)
+        return lowered
+      }
       const buildEagerDefaultedPropAccessor = (
         valueExpr: BabelCore.types.Expression,
         defaultExpr: BabelCore.types.Expression,
@@ -7555,7 +7596,7 @@ function lowerFunctionWithRegions(
               defaultId,
               t.conditionalExpression(
                 t.binaryExpression('===', t.cloneNode(valueExpr, true), voidZero(t)),
-                t.cloneNode(defaultExpr, true) as BabelCore.types.Expression,
+                lowerPropDefaultExpression(defaultExpr),
                 voidZero(t),
               ),
             ),
@@ -7591,10 +7632,6 @@ function lowerFunctionWithRegions(
           ),
         )
       }
-      const emitEagerPropRead = (valueExpr: BabelCore.types.Expression): void => {
-        stmts.push(t.expressionStatement(t.cloneNode(valueExpr, true)))
-      }
-
       const buildDestructure = (
         objectPattern: BabelCore.types.ObjectPattern,
         baseExpr: BabelCore.types.Expression,
@@ -7635,7 +7672,7 @@ function lowerFunctionWithRegions(
                 usesProp = true
                 propsPlanAliases.add(value.name)
                 ctx.resumablePropAccessors?.set(value.name, { path: nextPropPath })
-                emitEagerPropRead(member)
+                emitEagerPropRead(value.name, member)
               } else {
                 calledPropValueNames.add(value.name)
               }
@@ -7674,9 +7711,10 @@ function lowerFunctionWithRegions(
                 } else {
                   calledPropValueNames.add(value.left.name)
                 }
-                const baseInit = buildDefaultValueExpression(member, value.right)
+                const loweredDefault = lowerPropDefaultExpression(value.right)
+                const baseInit = buildDefaultValueExpression(member, loweredDefault)
                 const init = shouldWrapProp
-                  ? buildEagerDefaultedPropAccessor(member, value.right)
+                  ? buildEagerDefaultedPropAccessor(member, loweredDefault)
                   : baseInit
                 stmts.push(
                   t.variableDeclaration('const', [
