@@ -718,6 +718,55 @@ describe('module metadata safety', () => {
     }
   })
 
+  it('resolves reactive metadata for hash-fragment import sources', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_metadata_hash_suffix__')
+    const importer = path.join(baseDir, 'consumer.ts')
+    const hashImporter = `${importer}#import`
+    const depPath = path.join(baseDir, 'dep.ts')
+    const depMetaPath = `${depPath}.fict.meta.json`
+    const moduleMetadata = new Map<string, ModuleReactiveMetadata>([
+      [depPath, { exports: { default: 'signal', value: 'memo' } }],
+    ])
+    mkdirSync(baseDir, { recursive: true })
+
+    try {
+      expect(
+        resolveModuleMetadata('./dep.ts#hash', importer, {
+          emitModuleMetadata: false,
+          moduleMetadata,
+        }),
+      ).toEqual({ exports: { default: 'signal', value: 'memo' } })
+      expect(
+        resolveModuleMetadata('./dep#hash', importer, {
+          emitModuleMetadata: false,
+          moduleMetadata,
+        }),
+      ).toEqual({ exports: { default: 'signal', value: 'memo' } })
+      expect(
+        resolveModuleMetadata('./dep.ts#hash', hashImporter, {
+          emitModuleMetadata: false,
+          moduleMetadata,
+        }),
+      ).toEqual({ exports: { default: 'signal', value: 'memo' } })
+
+      writeFileSync(depMetaPath, JSON.stringify({ exports: { default: 'signal' } }), 'utf8')
+      expect(
+        resolveModuleMetadata('./dep.ts#hash', importer, {
+          emitModuleMetadata: false,
+        }),
+      ).toEqual({ exports: { default: 'signal' } })
+    } finally {
+      if (existsSync(depMetaPath)) {
+        rmSync(depMetaPath, { force: true })
+      }
+      if (existsSync(baseDir)) {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+      clearModuleMetadata()
+    }
+  })
+
   it('resolves file-url imports against normalized external metadata keys', () => {
     clearModuleMetadata()
     const baseDir = path.join(process.cwd(), '__fict_metadata_file_url__')

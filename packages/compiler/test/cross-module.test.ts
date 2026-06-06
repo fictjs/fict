@@ -5656,6 +5656,31 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toContain('raw')
     })
 
+    it('resolves hash-suffixed imports when base module metadata exists', () => {
+      const moduleMetadata = new Map()
+      const depPath = path.join(baseDir, 'dep.ts')
+      const appPath = path.join(baseDir, 'app-hash-import.tsx')
+      moduleMetadata.set(path.resolve(depPath), {
+        exports: {
+          count: 'signal',
+        },
+      })
+
+      const output = transform(
+        `
+          import { count } from './dep#hash'
+
+          export function App() {
+            return <div>{count}</div>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        appPath,
+      )
+
+      expect(output).toContain('count()')
+    })
+
     it('resolves module metadata from sidecar files', () => {
       const hookSource = `
         import { $state } from 'fict'

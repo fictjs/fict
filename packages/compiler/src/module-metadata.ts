@@ -116,8 +116,15 @@ function isVirtualFileName(fileName: string): boolean {
 function normalizeFileName(fileName: string): string {
   let normalized = fileName
   const queryStart = normalized.indexOf('?')
-  if (queryStart !== -1) {
-    normalized = normalized.slice(0, queryStart)
+  const fragmentStart = normalized.indexOf('#')
+  const suffixStart =
+    queryStart === -1
+      ? fragmentStart
+      : fragmentStart === -1
+        ? queryStart
+        : Math.min(queryStart, fragmentStart)
+  if (suffixStart !== -1) {
+    normalized = normalized.slice(0, suffixStart)
   }
   if (normalized.startsWith('/@fs/')) {
     const fsPath = normalized.slice('/@fs/'.length)
