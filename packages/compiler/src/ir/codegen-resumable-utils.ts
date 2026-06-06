@@ -107,6 +107,35 @@ export function capturesLexicalArgumentsInExpr(
 }
 
 /**
+ * Detect `new.target` reads that would be captured lexically by an arrow
+ * function. Hoisting those arrows to module scope can produce invalid ESM.
+ */
+export function capturesLexicalNewTargetInExpr(
+  expr: BabelCore.types.Expression,
+  t: typeof BabelCore.types,
+): boolean {
+  const traverse = ((traverseModule as unknown as { default?: typeof traverseModule }).default ??
+    traverseModule) as typeof traverseModule
+  const file = t.file(t.program([t.expressionStatement(t.cloneNode(expr, true))]))
+  let found = false
+
+  traverse(file, {
+    Function(path) {
+      if (path.isArrowFunctionExpression()) return
+      path.skip()
+    },
+    MetaProperty(path) {
+      if (!t.isIdentifier(path.node.meta, { name: 'new' })) return
+      if (!t.isIdentifier(path.node.property, { name: 'target' })) return
+      found = true
+      path.stop()
+    },
+  })
+
+  return found
+}
+
+/**
  * Generate module URL expression for QRL generation.
  * Uses filename from compiler options when available; falls back to import.meta.url.
  */
