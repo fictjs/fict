@@ -69,6 +69,22 @@ describe('$store memoization and dynamic access', () => {
     )
   })
 
+  it('keeps true free reactive callback dependencies for store-derived values', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+      import { $store } from 'fict/plus'
+      function Component() {
+        const selected = $state(1)
+        const store = $store({ items: [{ id: 1, name: 'one' }, { id: 2, name: 'two' }] })
+        const found = store.items.find(item => item.id === selected())
+        return <span>{found?.name}</span>
+      }
+    `)
+
+    expect(output).toContain(`const found = __fictUseMemo(__fictCtx, () => store.items.find`)
+    expect(output).toContain(`item.id === selected()`)
+  })
+
   it('publishes aliased store macro exports as store metadata', () => {
     const moduleMetadata = new Map()
     const sourcePath = path.join(baseDir, 'aliased-store-export.ts')

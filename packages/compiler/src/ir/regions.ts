@@ -4412,7 +4412,8 @@ function instructionRequiresEagerDerivedLowering(instr: Instruction, ctx: Codege
   if (instr.kind !== 'Assign') return false
   const baseName = deSSAVarName(instr.target.name)
   if (baseName.startsWith('__destruct_')) return false
-  if (collectMutableNonReactiveDependencies(instr.value, ctx, baseName).length > 0) return true
+  const mutableDeps = collectMutableNonReactiveDependencies(instr.value, ctx, baseName)
+  if (mutableDeps.some(name => ctx.memberMutatedVars?.has(name) ?? false)) return true
   if (!expressionUsesTracked(instr.value, ctx) && !(ctx.memoVars?.has(baseName) ?? false)) {
     return false
   }

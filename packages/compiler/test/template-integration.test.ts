@@ -230,6 +230,55 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps callback-local declarations shadowed during reactive dependency planning', () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export const log: string[] = []
+
+      function App() {
+        let count = $state(0)
+        let source = 1
+        const direct = [1].map(() => {
+          const count = 99
+          log.push('direct')
+          return source + (count - 99)
+        })[0]
+        const destructured = [1].map(() => {
+          const { count } = { count: 99 }
+          return source + (count - 99)
+        })[0]
+        const caught = [1].map(() => {
+          try {
+            throw 99
+          } catch (count) {
+            return source + (count - 99)
+          }
+        })[0]
+        source = 2
+        return <span data-testid="value">{direct}:{destructured}:{caught}</span>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      log: string[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-testid="value"]')?.textContent).toBe('1:1:1')
+    expect(mod.log).toEqual(['direct'])
+
+    teardown()
+    container.remove()
+  })
+
   it('evaluates impure reactive derived declaration initializers eagerly', async () => {
     const source = `
       import { $state, render } from 'fict'

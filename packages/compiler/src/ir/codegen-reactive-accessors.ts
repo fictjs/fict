@@ -1,7 +1,95 @@
 import type { CodegenContext } from './codegen'
-import type { Expression, HIRFunction, Instruction } from './hir'
+import type { BasicBlock, BabelParamNode, Expression, HIRFunction, Instruction } from './hir'
 import { deSSAVarName } from './regions'
 import { structurizeCFG, type StructuredNode } from './structurize'
+
+function collectPatternBindingNames(pattern: BabelParamNode | null | undefined, into: Set<string>) {
+  if (!pattern || typeof pattern !== 'object') return
+  const node = pattern as { type?: string; [key: string]: unknown }
+  if (node.type === 'Identifier' && typeof node.name === 'string') {
+    into.add(deSSAVarName(node.name))
+    return
+  }
+  if (node.type === 'RestElement') {
+    collectPatternBindingNames(node.argument as BabelParamNode | null | undefined, into)
+    return
+  }
+  if (node.type === 'AssignmentPattern') {
+    collectPatternBindingNames(node.left as BabelParamNode | null | undefined, into)
+    return
+  }
+  if (node.type === 'ObjectPattern') {
+    const properties = Array.isArray(node.properties) ? node.properties : []
+    for (const prop of properties) {
+      if (!prop || typeof prop !== 'object') continue
+      const current = prop as { type?: string; value?: unknown; argument?: unknown }
+      if (current.type === 'RestElement') {
+        collectPatternBindingNames(current.argument as BabelParamNode | null | undefined, into)
+      } else {
+        collectPatternBindingNames(current.value as BabelParamNode | null | undefined, into)
+      }
+    }
+    return
+  }
+  if (node.type === 'ArrayPattern') {
+    const elements = Array.isArray(node.elements) ? node.elements : []
+    for (const element of elements) {
+      collectPatternBindingNames(element as BabelParamNode | null | undefined, into)
+    }
+  }
+}
+
+function collectFunctionScopeBindingNames(
+  params: { name: string }[],
+  rawParams: BabelParamNode[] | undefined,
+  blocks: BasicBlock[],
+  functionName?: string | undefined,
+  functionLoc?:
+    | { start: { line: number; column: number }; end: { line: number; column: number } }
+    | null
+    | undefined,
+): Set<string> {
+  const names = new Set(params.map(param => deSSAVarName(param.name)))
+  if (functionName) names.add(deSSAVarName(functionName))
+  rawParams?.forEach(param => collectPatternBindingNames(param, names))
+
+  const isInsideFunction = (
+    loc?:
+      | { start: { line: number; column: number }; end?: { line: number; column: number } }
+      | null
+      | undefined,
+  ): boolean => {
+    if (!functionLoc || !loc?.start) return true
+    const startsAfter =
+      loc.start.line > functionLoc.start.line ||
+      (loc.start.line === functionLoc.start.line && loc.start.column >= functionLoc.start.column)
+    const endsBefore =
+      !functionLoc.end ||
+      loc.start.line < functionLoc.end.line ||
+      (loc.start.line === functionLoc.end.line && loc.start.column <= functionLoc.end.column)
+    return startsAfter && endsBefore
+  }
+
+  for (const block of blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign' && instr.declarationKind && isInsideFunction(instr.loc)) {
+        names.add(deSSAVarName(instr.target.name))
+      }
+    }
+    const term = block.terminator
+    if (!isInsideFunction(term.loc)) continue
+    if (term.kind === 'ForOf' || term.kind === 'ForIn') {
+      if (term.leftKind === 'declaration') {
+        names.add(deSSAVarName(term.variable))
+        collectPatternBindingNames(term.pattern, names)
+      }
+    } else if (term.kind === 'Try' && term.catchParam) {
+      names.add(deSSAVarName(term.catchParam))
+    }
+  }
+
+  return names
+}
 
 function collectExpressionIdentifiers(expr: Expression, into: Set<string>): void {
   if (!expr || typeof expr !== 'object') return
@@ -123,6 +211,7 @@ export function collectExpressionIdentifiersDeep(
   expr: Expression,
   into: Set<string>,
   bound = new Set<string>(),
+  scopeFunctionLocals = false,
 ): void {
   if (!expr || typeof expr !== 'object') return
 
@@ -139,9 +228,14 @@ export function collectExpressionIdentifiersDeep(
       return
     case 'MemberExpression':
     case 'OptionalMemberExpression':
-      collectExpressionIdentifiersDeep(expr.object as Expression, into, bound)
+      collectExpressionIdentifiersDeep(expr.object as Expression, into, bound, scopeFunctionLocals)
       if (expr.computed && expr.property.kind !== 'Literal') {
-        collectExpressionIdentifiersDeep(expr.property as Expression, into, bound)
+        collectExpressionIdentifiersDeep(
+          expr.property as Expression,
+          into,
+          bound,
+          scopeFunctionLocals,
+        )
       }
       return
     case 'CallExpression':
@@ -157,45 +251,72 @@ export function collectExpressionIdentifiersDeep(
       const isIIFE =
         expr.callee.kind === 'ArrowFunction' || expr.callee.kind === 'FunctionExpression'
       if (!isMacroCallee && !isIIFE) {
-        collectExpressionIdentifiersDeep(expr.callee as Expression, into, bound)
+        collectExpressionIdentifiersDeep(
+          expr.callee as Expression,
+          into,
+          bound,
+          scopeFunctionLocals,
+        )
       }
       // Always traverse into arguments - this handles callbacks like array.find(n => n === target)
       expr.arguments.forEach(arg =>
-        collectExpressionIdentifiersDeep(arg as Expression, into, bound),
+        collectExpressionIdentifiersDeep(arg as Expression, into, bound, true),
       )
       return
     }
     case 'BinaryExpression':
     case 'LogicalExpression':
-      collectExpressionIdentifiersDeep(expr.left as Expression, into, bound)
-      collectExpressionIdentifiersDeep(expr.right as Expression, into, bound)
+      collectExpressionIdentifiersDeep(expr.left as Expression, into, bound, scopeFunctionLocals)
+      collectExpressionIdentifiersDeep(expr.right as Expression, into, bound, scopeFunctionLocals)
       return
     case 'UnaryExpression':
-      collectExpressionIdentifiersDeep(expr.argument as Expression, into, bound)
+      collectExpressionIdentifiersDeep(
+        expr.argument as Expression,
+        into,
+        bound,
+        scopeFunctionLocals,
+      )
       return
     case 'ConditionalExpression':
-      collectExpressionIdentifiersDeep(expr.test as Expression, into, bound)
-      collectExpressionIdentifiersDeep(expr.consequent as Expression, into, bound)
-      collectExpressionIdentifiersDeep(expr.alternate as Expression, into, bound)
+      collectExpressionIdentifiersDeep(expr.test as Expression, into, bound, scopeFunctionLocals)
+      collectExpressionIdentifiersDeep(
+        expr.consequent as Expression,
+        into,
+        bound,
+        scopeFunctionLocals,
+      )
+      collectExpressionIdentifiersDeep(
+        expr.alternate as Expression,
+        into,
+        bound,
+        scopeFunctionLocals,
+      )
       return
     case 'ArrayExpression':
       expr.elements.forEach(el => {
-        if (el) collectExpressionIdentifiersDeep(el as Expression, into, bound)
+        if (el) collectExpressionIdentifiersDeep(el as Expression, into, bound, scopeFunctionLocals)
       })
       return
     case 'ObjectExpression':
       expr.properties.forEach(prop => {
         if (prop.kind === 'SpreadElement') {
-          collectExpressionIdentifiersDeep(prop.argument as Expression, into, bound)
+          collectExpressionIdentifiersDeep(
+            prop.argument as Expression,
+            into,
+            bound,
+            scopeFunctionLocals,
+          )
           return
         }
-        if (prop.computed) collectExpressionIdentifiersDeep(prop.key as Expression, into, bound)
-        collectExpressionIdentifiersDeep(prop.value as Expression, into, bound)
+        if (prop.computed) {
+          collectExpressionIdentifiersDeep(prop.key as Expression, into, bound, scopeFunctionLocals)
+        }
+        collectExpressionIdentifiersDeep(prop.value as Expression, into, bound, scopeFunctionLocals)
       })
       return
     case 'TemplateLiteral':
       expr.expressions.forEach(ex =>
-        collectExpressionIdentifiersDeep(ex as Expression, into, bound),
+        collectExpressionIdentifiersDeep(ex as Expression, into, bound, scopeFunctionLocals),
       )
       return
     case 'ArrowFunction': {
@@ -205,6 +326,18 @@ export function collectExpressionIdentifiersDeep(
       // But for `(() => { return () => count })()`: don't detect `count` in the inner function
       const tempSet = new Set<string>()
       const localFunctions = new Map<string, Expression>()
+      const bodyBlocks = Array.isArray(expr.body) ? expr.body : []
+      const scopedBound = new Set(bound)
+      const localNames = scopeFunctionLocals
+        ? collectFunctionScopeBindingNames(
+            expr.params,
+            expr.rawParams,
+            bodyBlocks,
+            undefined,
+            expr.loc,
+          )
+        : new Set(expr.params.map(p => deSSAVarName(p.name)))
+      localNames.forEach(name => scopedBound.add(name))
       if (expr.isExpression && expr.body && !Array.isArray(expr.body)) {
         collectExpressionIdentifiers(expr.body as Expression, tempSet)
       } else if (Array.isArray(expr.body)) {
@@ -241,7 +374,12 @@ export function collectExpressionIdentifiersDeep(
             if (term.argument.kind === 'Identifier') {
               const returnedFunction = localFunctions.get(deSSAVarName(term.argument.name))
               if (returnedFunction) {
-                collectExpressionIdentifiersDeep(returnedFunction, tempSet, bound)
+                collectExpressionIdentifiersDeep(
+                  returnedFunction,
+                  tempSet,
+                  scopedBound,
+                  scopeFunctionLocals,
+                )
               }
             }
           } else if (term.kind === 'Throw') {
@@ -250,10 +388,8 @@ export function collectExpressionIdentifiersDeep(
         }
       }
       // Filter out bound parameters
-      const paramNames = new Set(expr.params.map(p => deSSAVarName(p.name)))
-      for (const name of bound) paramNames.add(name)
       for (const dep of tempSet) {
-        if (!paramNames.has(dep)) into.add(dep)
+        if (!scopedBound.has(dep)) into.add(dep)
       }
       return
     }
@@ -261,6 +397,17 @@ export function collectExpressionIdentifiersDeep(
       // Same logic as ArrowFunction - use shallow traversal inside function bodies
       const tempSet = new Set<string>()
       const localFunctions = new Map<string, Expression>()
+      const scopedBound = new Set(bound)
+      const localNames = scopeFunctionLocals
+        ? collectFunctionScopeBindingNames(
+            expr.params,
+            expr.rawParams,
+            expr.body,
+            expr.name,
+            expr.loc,
+          )
+        : new Set(expr.params.map(p => deSSAVarName(p.name)))
+      localNames.forEach(name => scopedBound.add(name))
       for (const block of expr.body) {
         for (const instr of block.instructions) {
           if (instr.kind === 'Assign') {
@@ -294,7 +441,12 @@ export function collectExpressionIdentifiersDeep(
           if (term.argument.kind === 'Identifier') {
             const returnedFunction = localFunctions.get(deSSAVarName(term.argument.name))
             if (returnedFunction) {
-              collectExpressionIdentifiersDeep(returnedFunction, tempSet, bound)
+              collectExpressionIdentifiersDeep(
+                returnedFunction,
+                tempSet,
+                scopedBound,
+                scopeFunctionLocals,
+              )
             }
           }
         } else if (term.kind === 'Throw') {
@@ -302,64 +454,99 @@ export function collectExpressionIdentifiersDeep(
         }
       }
       // Filter out bound parameters
-      const paramNames = new Set(expr.params.map(p => deSSAVarName(p.name)))
-      for (const name of bound) paramNames.add(name)
       for (const dep of tempSet) {
-        if (!paramNames.has(dep)) into.add(dep)
+        if (!scopedBound.has(dep)) into.add(dep)
       }
       return
     }
     case 'AssignmentExpression':
-      collectExpressionIdentifiersDeep(expr.left as Expression, into, bound)
-      collectExpressionIdentifiersDeep(expr.right as Expression, into, bound)
+      collectExpressionIdentifiersDeep(expr.left as Expression, into, bound, scopeFunctionLocals)
+      collectExpressionIdentifiersDeep(expr.right as Expression, into, bound, scopeFunctionLocals)
       return
     case 'UpdateExpression':
-      collectExpressionIdentifiersDeep(expr.argument as Expression, into, bound)
+      collectExpressionIdentifiersDeep(
+        expr.argument as Expression,
+        into,
+        bound,
+        scopeFunctionLocals,
+      )
       return
     case 'AwaitExpression':
-      collectExpressionIdentifiersDeep(expr.argument as Expression, into, bound)
+      collectExpressionIdentifiersDeep(
+        expr.argument as Expression,
+        into,
+        bound,
+        scopeFunctionLocals,
+      )
       return
     case 'NewExpression':
-      collectExpressionIdentifiersDeep(expr.callee as Expression, into, bound)
+      collectExpressionIdentifiersDeep(expr.callee as Expression, into, bound, scopeFunctionLocals)
       expr.arguments.forEach(arg =>
-        collectExpressionIdentifiersDeep(arg as Expression, into, bound),
+        collectExpressionIdentifiersDeep(arg as Expression, into, bound, scopeFunctionLocals),
       )
       return
     case 'SequenceExpression':
       expr.expressions.forEach(ex =>
-        collectExpressionIdentifiersDeep(ex as Expression, into, bound),
+        collectExpressionIdentifiersDeep(ex as Expression, into, bound, scopeFunctionLocals),
       )
       return
     case 'YieldExpression':
-      if (expr.argument) collectExpressionIdentifiersDeep(expr.argument as Expression, into, bound)
+      if (expr.argument) {
+        collectExpressionIdentifiersDeep(
+          expr.argument as Expression,
+          into,
+          bound,
+          scopeFunctionLocals,
+        )
+      }
       return
     case 'TaggedTemplateExpression':
-      collectExpressionIdentifiersDeep(expr.tag as Expression, into, bound)
+      collectExpressionIdentifiersDeep(expr.tag as Expression, into, bound, scopeFunctionLocals)
       expr.quasi.expressions.forEach(ex =>
-        collectExpressionIdentifiersDeep(ex as Expression, into, bound),
+        collectExpressionIdentifiersDeep(ex as Expression, into, bound, scopeFunctionLocals),
       )
       return
     case 'SpreadElement':
-      collectExpressionIdentifiersDeep(expr.argument as Expression, into, bound)
+      collectExpressionIdentifiersDeep(
+        expr.argument as Expression,
+        into,
+        bound,
+        scopeFunctionLocals,
+      )
       return
     case 'JSXElement': {
       if (typeof expr.tagName !== 'string') {
-        collectExpressionIdentifiersDeep(expr.tagName as Expression, into, bound)
+        collectExpressionIdentifiersDeep(
+          expr.tagName as Expression,
+          into,
+          bound,
+          scopeFunctionLocals,
+        )
       }
       expr.attributes.forEach(attr => {
         if (attr.isSpread && attr.spreadExpr) {
-          collectExpressionIdentifiersDeep(attr.spreadExpr, into, bound)
+          collectExpressionIdentifiersDeep(attr.spreadExpr, into, bound, scopeFunctionLocals)
           return
         }
         if (attr.value) {
-          collectExpressionIdentifiersDeep(attr.value, into, bound)
+          collectExpressionIdentifiersDeep(attr.value, into, bound, scopeFunctionLocals)
         }
       })
       expr.children.forEach(child => {
         if (child.kind === 'expression') {
-          collectExpressionIdentifiersDeep(child.value as Expression, into, bound)
+          collectExpressionIdentifiersDeep(
+            child.value as Expression,
+            into,
+            bound,
+            scopeFunctionLocals,
+          )
         } else if (child.kind === 'element') {
-          collectExpressionIdentifiersDeep(child.value as Expression, into, bound)
+          collectExpressionIdentifiersDeep(
+            child.value as Expression,
+            into,
+            bound,
+            scopeFunctionLocals,
+          )
         }
       })
       return
