@@ -66,6 +66,120 @@ describe('Cross-Module Reactivity', () => {
         user: 'store',
       })
     })
+
+    it('publishes metadata for destructured runtime reactive creator exports', () => {
+      const signalSource = `
+        import { createSignal } from 'fict/advanced'
+        export const [count] = [createSignal(0)]
+      `
+      const memoSource = `
+        import { createMemo } from 'fict/advanced'
+        const readDoubled = () => 2
+        export const [doubled] = [createMemo(readDoubled)]
+      `
+      const storeSource = `
+        import * as runtime from 'fict/advanced'
+        export const { user } = { user: runtime.createStore({ name: 'Ada' }) }
+      `
+      const namespaceMemoSource = `
+        import * as runtime from 'fict/advanced'
+        const readTotal = () => 3
+        export const { total } = { total: runtime.createMemo(readTotal) }
+      `
+      const appSource = `
+        import { count } from './destructured-signal-export'
+
+        export function App() {
+          return <div>{count}</div>
+        }
+      `
+      const moduleMetadata = new Map()
+      const signalPath = path.join(baseDir, 'destructured-signal-export.ts')
+      const memoPath = path.join(baseDir, 'destructured-memo-export.ts')
+      const storePath = path.join(baseDir, 'destructured-store-export.ts')
+      const namespaceMemoPath = path.join(baseDir, 'destructured-namespace-memo-export.ts')
+
+      transform(signalSource, { moduleMetadata }, signalPath)
+      transform(memoSource, { moduleMetadata }, memoPath)
+      transform(storeSource, { moduleMetadata }, storePath)
+      transform(namespaceMemoSource, { moduleMetadata }, namespaceMemoPath)
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-destructured-runtime-exports.tsx'),
+      )
+
+      expect(moduleMetadata.get(path.resolve(signalPath))?.exports).toEqual({
+        count: 'signal',
+      })
+      expect(moduleMetadata.get(path.resolve(memoPath))?.exports).toEqual({
+        doubled: 'memo',
+      })
+      expect(moduleMetadata.get(path.resolve(storePath))?.exports).toEqual({
+        user: 'store',
+      })
+      expect(moduleMetadata.get(path.resolve(namespaceMemoPath))?.exports).toEqual({
+        total: 'memo',
+      })
+      expect(output).toMatch(/count\(\)/)
+    })
+
+    it('keeps destructured metadata conservative for defaults rest and non-reactive values', () => {
+      const arrayDefaultSource = `
+        import { createSignal } from 'fict/advanced'
+
+        export const [fallback = createSignal(0), ...rest] = [undefined, 123]
+      `
+      const arrayNonReactiveSource = `
+        function local() {
+          return 1
+        }
+
+        export const [plain] = [local()]
+      `
+      const objectDefaultSource = `
+        import { createMemo } from 'fict/advanced'
+
+        const readMissing = () => 1
+        export const { missing = createMemo(readMissing), ...bag } = { plain: 1 }
+      `
+      const objectProvidedSource = `
+        import { createSignal } from 'fict/advanced'
+
+        export const { provided, ...bag } = { provided: createSignal(2), plain: 1 }
+      `
+      const objectDefaultedSource = `
+        import { createSignal } from 'fict/advanced'
+
+        export const { defaulted = createSignal(3), ...bag } = { defaulted: undefined }
+      `
+      const moduleMetadata = new Map()
+      const arrayDefaultPath = path.join(baseDir, 'destructured-runtime-array-default.ts')
+      const arrayNonReactivePath = path.join(baseDir, 'destructured-runtime-array-nonreactive.ts')
+      const objectDefaultPath = path.join(baseDir, 'destructured-runtime-object-default.ts')
+      const objectProvidedPath = path.join(baseDir, 'destructured-runtime-object-provided.ts')
+      const objectDefaultedPath = path.join(baseDir, 'destructured-runtime-object-defaulted.ts')
+
+      transform(arrayDefaultSource, { moduleMetadata }, arrayDefaultPath)
+      transform(arrayNonReactiveSource, { moduleMetadata }, arrayNonReactivePath)
+      transform(objectDefaultSource, { moduleMetadata }, objectDefaultPath)
+      transform(objectProvidedSource, { moduleMetadata }, objectProvidedPath)
+      transform(objectDefaultedSource, { moduleMetadata }, objectDefaultedPath)
+
+      expect(moduleMetadata.get(path.resolve(arrayDefaultPath))?.exports).toEqual({
+        fallback: 'signal',
+      })
+      expect(moduleMetadata.get(path.resolve(arrayNonReactivePath))?.exports).toEqual({})
+      expect(moduleMetadata.get(path.resolve(objectDefaultPath))?.exports).toEqual({
+        missing: 'memo',
+      })
+      expect(moduleMetadata.get(path.resolve(objectProvidedPath))?.exports).toEqual({
+        provided: 'signal',
+      })
+      expect(moduleMetadata.get(path.resolve(objectDefaultedPath))?.exports).toEqual({
+        defaulted: 'signal',
+      })
+    })
   })
 
   describe('Component Module (Imports)', () => {

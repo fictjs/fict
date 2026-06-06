@@ -15,6 +15,10 @@ const RUNTIME_REACTIVE_CREATORS = new Map<string, ReactiveExportKind>([
   ['$store', 'store'],
 ])
 
+export function getRuntimeReactiveCreatorKind(name: string): ReactiveExportKind | null {
+  return RUNTIME_REACTIVE_CREATORS.get(name) ?? null
+}
+
 function isNameShadowed(name: string, ctx: CodegenContext): boolean {
   return !!(ctx.shadowedNames?.has(name) || ctx.localDeclaredNames?.has(name))
 }

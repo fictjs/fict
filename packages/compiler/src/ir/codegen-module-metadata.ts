@@ -10,7 +10,11 @@ import type {
 } from '../types'
 
 import type { CodegenContext } from './codegen'
-import { getReactiveCallKindFromBabel } from './codegen-reactive-kind'
+import {
+  getReactiveCallKindFromBabel,
+  getRuntimeReactiveCreatorKind,
+} from './codegen-reactive-kind'
+import { collectRuntimeImports } from './codegen-runtime-imports'
 import { isHookName } from './hook-utils'
 import { deSSAVarName } from './regions'
 
@@ -159,6 +163,13 @@ export function buildModuleReactiveMetadata(
   const namespaceExports: Record<string, ModuleReactiveMetadata> = {}
   const explicitExportNames = new Set<string>()
   const starExportNames = new Set<string>()
+  const runtimeImports = collectRuntimeImports(body, t)
+  const runtimeImportMap = new Map(runtimeImports.importMap)
+  ctx.moduleRuntimeImportMap?.forEach((importedName, localName) => {
+    runtimeImportMap.set(localName, importedName)
+  })
+  const runtimeNamespaceImports = new Set(runtimeImports.namespaces)
+  ctx.moduleRuntimeNamespaceImports?.forEach(name => runtimeNamespaceImports.add(name))
   const markExplicitExport = (exportName: string) => {
     explicitExportNames.add(exportName)
     delete metadata.exports[exportName]
@@ -187,16 +198,245 @@ export function buildModuleReactiveMetadata(
     specifierName: BabelCore.types.Identifier | BabelCore.types.StringLiteral,
   ): string => (t.isIdentifier(specifierName) ? specifierName.name : specifierName.value)
   const getStaticMemberName = (
-    member: BabelCore.types.MemberExpression,
+    member: BabelCore.types.MemberExpression | BabelCore.types.OptionalMemberExpression,
   ): string | number | null => {
     if (!member.computed && t.isIdentifier(member.property)) return member.property.name
     if (t.isStringLiteral(member.property)) return member.property.value
     if (t.isNumericLiteral(member.property)) return member.property.value
     return null
   }
+  const isStaticUndefined = (expr: BabelCore.types.Expression): boolean =>
+    t.isIdentifier(expr, { name: 'undefined' }) ||
+    (t.isUnaryExpression(expr) && expr.operator === 'void')
+  type StaticValue =
+    | { kind: 'known'; value: BabelCore.types.Expression | null }
+    | { kind: 'unknown' }
+  const unknownStaticValue = (): StaticValue => ({ kind: 'unknown' })
+  const knownStaticValue = (value: BabelCore.types.Expression | null): StaticValue => ({
+    kind: 'known',
+    value,
+  })
+  const getObjectKey = (
+    key: BabelCore.types.Expression | BabelCore.types.PrivateName,
+    computed: boolean,
+  ): string | number | null => {
+    if (t.isPrivateName(key)) return null
+    if (!computed && t.isIdentifier(key)) return key.name
+    if (t.isStringLiteral(key)) return key.value
+    if (t.isNumericLiteral(key)) return key.value
+    return null
+  }
+  const getStaticObjectPropertyMap = (
+    expr: BabelCore.types.Expression | null,
+  ): Map<string | number, BabelCore.types.Expression> | null => {
+    if (!expr || !t.isObjectExpression(expr)) return null
+    const props = new Map<string | number, BabelCore.types.Expression>()
+    for (const prop of expr.properties) {
+      if (t.isSpreadElement(prop)) return null
+      if (!t.isObjectProperty(prop)) continue
+      const key = getObjectKey(prop.key, prop.computed)
+      if (key === null) continue
+      props.set(key, prop.value as BabelCore.types.Expression)
+    }
+    return props
+  }
+  const getStaticArrayElement = (
+    expr: BabelCore.types.Expression | null,
+    key: string | number,
+  ): StaticValue => {
+    if (!expr || !t.isArrayExpression(expr)) return unknownStaticValue()
+    if (expr.elements.some(element => element && t.isSpreadElement(element))) {
+      return unknownStaticValue()
+    }
+    const index = typeof key === 'number' ? key : Number(key)
+    if (!Number.isSafeInteger(index) || String(index) !== String(key)) return unknownStaticValue()
+    if (index < 0 || index >= expr.elements.length) return knownStaticValue(null)
+    const element = expr.elements[index]
+    return element && t.isExpression(element) ? knownStaticValue(element) : knownStaticValue(null)
+  }
+  const staticLocalValues = new Map<string, StaticValue>()
+  const getStaticUndefinedState = (value: StaticValue): boolean | null => {
+    if (value.kind !== 'known') return null
+    return !value.value || isStaticUndefined(value.value)
+  }
+  const evaluateStaticBoolean = (expr: BabelCore.types.Expression): boolean | null => {
+    if (!t.isBinaryExpression(expr)) return null
+    if (
+      expr.operator !== '===' &&
+      expr.operator !== '==' &&
+      expr.operator !== '!==' &&
+      expr.operator !== '!='
+    ) {
+      return null
+    }
+    const leftUndefined = getStaticUndefinedState(
+      resolveStaticValue(expr.left as BabelCore.types.Expression),
+    )
+    const rightUndefined = getStaticUndefinedState(
+      resolveStaticValue(expr.right as BabelCore.types.Expression),
+    )
+    if (leftUndefined === null || rightUndefined === null) return null
+    if (!leftUndefined && !rightUndefined) return null
+    const equal = leftUndefined === rightUndefined
+    return expr.operator === '===' || expr.operator === '==' ? equal : !equal
+  }
+  const resolveStaticValue = (expr: BabelCore.types.Expression | null | undefined): StaticValue => {
+    if (!expr) return unknownStaticValue()
+    if (t.isConditionalExpression(expr)) {
+      const test = evaluateStaticBoolean(expr.test as BabelCore.types.Expression)
+      if (test === true) return resolveStaticValue(expr.consequent as BabelCore.types.Expression)
+      if (test === false) return resolveStaticValue(expr.alternate as BabelCore.types.Expression)
+    }
+    if (t.isIdentifier(expr)) {
+      return staticLocalValues.get(deSSAVarName(expr.name)) ?? knownStaticValue(expr)
+    }
+    if (t.isMemberExpression(expr) || t.isOptionalMemberExpression(expr)) {
+      if (!t.isIdentifier(expr.object)) return knownStaticValue(expr)
+      const objectValue = staticLocalValues.get(deSSAVarName(expr.object.name))
+      if (!objectValue || objectValue.kind !== 'known') return knownStaticValue(expr)
+      const memberName = getStaticMemberName(expr)
+      if (memberName === null) return unknownStaticValue()
+      if (objectValue.value && t.isArrayExpression(objectValue.value)) {
+        return getStaticArrayElement(objectValue.value, memberName)
+      }
+      const props = getStaticObjectPropertyMap(objectValue.value)
+      if (!props) return unknownStaticValue()
+      return props.has(memberName)
+        ? knownStaticValue(props.get(memberName) ?? null)
+        : knownStaticValue(null)
+    }
+    return knownStaticValue(expr)
+  }
+  const classifyStaticValue = (source: StaticValue): ReactiveExportKind | null => {
+    if (source.kind !== 'known' || !source.value) return null
+    if (t.isCallExpression(source.value) || t.isOptionalCallExpression(source.value)) {
+      const kind = getReactiveCallKindFromBabel(source.value, ctx, t)
+      if (kind) return kind
+      const callee = source.value.callee
+      if (t.isIdentifier(callee)) {
+        const importedName = runtimeImportMap.get(callee.name)
+        return importedName ? getRuntimeReactiveCreatorKind(importedName) : null
+      }
+      if (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) {
+        if (!t.isIdentifier(callee.object)) return null
+        if (!runtimeNamespaceImports.has(callee.object.name)) return null
+        const memberName = getStaticMemberName(callee)
+        return typeof memberName === 'string' ? getRuntimeReactiveCreatorKind(memberName) : null
+      }
+    }
+    return null
+  }
+  const visitDestructuredBindings = (
+    pattern: BabelCore.types.LVal | BabelCore.types.PatternLike,
+    source: StaticValue,
+    visit: (name: string, source: StaticValue) => void,
+  ): void => {
+    if (t.isIdentifier(pattern)) {
+      visit(pattern.name, source)
+      return
+    }
+    if (t.isAssignmentPattern(pattern)) {
+      const shouldUseDefault =
+        source.kind === 'known' &&
+        (!source.value || (source.value && isStaticUndefined(source.value)))
+      const defaultSource = shouldUseDefault
+        ? knownStaticValue(pattern.right as BabelCore.types.Expression)
+        : source
+      visitDestructuredBindings(pattern.left as BabelCore.types.PatternLike, defaultSource, visit)
+      return
+    }
+    if (t.isRestElement(pattern)) {
+      visitDestructuredBindings(
+        pattern.argument as BabelCore.types.PatternLike,
+        unknownStaticValue(),
+        visit,
+      )
+      return
+    }
+    if (t.isArrayPattern(pattern)) {
+      const elements =
+        source.kind === 'known' &&
+        source.value &&
+        t.isArrayExpression(source.value) &&
+        !source.value.elements.some(element => element && t.isSpreadElement(element))
+          ? source.value.elements
+          : null
+      pattern.elements.forEach((element, index) => {
+        if (!element) return
+        const elementSource =
+          elements && index < elements.length
+            ? elements[index] && t.isExpression(elements[index])
+              ? knownStaticValue(elements[index])
+              : knownStaticValue(null)
+            : elements
+              ? knownStaticValue(null)
+              : unknownStaticValue()
+        visitDestructuredBindings(element as BabelCore.types.PatternLike, elementSource, visit)
+      })
+      return
+    }
+    if (t.isObjectPattern(pattern)) {
+      const props = source.kind === 'known' ? getStaticObjectPropertyMap(source.value) : null
+      for (const prop of pattern.properties) {
+        if (t.isRestElement(prop)) {
+          visitDestructuredBindings(
+            prop.argument as BabelCore.types.PatternLike,
+            unknownStaticValue(),
+            visit,
+          )
+          continue
+        }
+        if (!t.isObjectProperty(prop)) continue
+        const key = getObjectKey(prop.key, prop.computed)
+        const propSource =
+          props && key !== null && props.has(key)
+            ? knownStaticValue(props.get(key) ?? null)
+            : props
+              ? knownStaticValue(null)
+              : unknownStaticValue()
+        visitDestructuredBindings(prop.value as BabelCore.types.PatternLike, propSource, visit)
+      }
+    }
+  }
+  const localReactiveKinds = new Map<string, ReactiveExportKind>()
+  const collectDestructuredReactiveLocals = (decl: BabelCore.types.VariableDeclaration): void => {
+    for (const v of decl.declarations) {
+      if (t.isIdentifier(v.id)) {
+        const source = resolveStaticValue(v.init as BabelCore.types.Expression | null | undefined)
+        staticLocalValues.set(deSSAVarName(v.id.name), source)
+        const kind = classifyStaticValue(source)
+        if (kind) {
+          localReactiveKinds.set(deSSAVarName(v.id.name), kind)
+        }
+        continue
+      }
+      visitDestructuredBindings(
+        v.id,
+        resolveStaticValue(v.init as BabelCore.types.Expression | null | undefined),
+        (name, source) => {
+          const kind = classifyStaticValue(source)
+          if (kind) {
+            localReactiveKinds.set(deSSAVarName(name), kind)
+          }
+        },
+      )
+    }
+  }
+  for (const stmt of body) {
+    if (t.isVariableDeclaration(stmt)) {
+      collectDestructuredReactiveLocals(stmt)
+    } else if (
+      t.isExportNamedDeclaration(stmt) &&
+      stmt.declaration &&
+      t.isVariableDeclaration(stmt.declaration)
+    ) {
+      collectDestructuredReactiveLocals(stmt.declaration)
+    }
+  }
   const addExport = (exportName: string, localName: string) => {
     markExplicitExport(exportName)
-    const kind = classifyReactiveExport(localName, ctx)
+    const kind =
+      classifyReactiveExport(localName, ctx) ?? localReactiveKinds.get(deSSAVarName(localName))
     if (kind) {
       metadata.exports[exportName] = kind
     }
@@ -204,6 +444,18 @@ export function buildModuleReactiveMetadata(
     if (hookInfo) {
       hookExports[exportName] = hookInfo
     }
+  }
+  const addDestructuredExport = (
+    pattern: BabelCore.types.LVal | BabelCore.types.PatternLike,
+    source: StaticValue,
+  ): void => {
+    visitDestructuredBindings(pattern, source, (name, source) => {
+      markExplicitExport(name)
+      const kind = classifyStaticValue(source) ?? localReactiveKinds.get(deSSAVarName(name))
+      if (kind) {
+        metadata.exports[name] = kind
+      }
+    })
   }
   const addNamespaceExportFromSource = (source: string, exportName: string) => {
     const sourceMeta = resolveModuleMetadata(source, options?.filename, options)
@@ -279,6 +531,13 @@ export function buildModuleReactiveMetadata(
           for (const v of decl.declarations) {
             if (t.isIdentifier(v.id)) {
               addExport(v.id.name, v.id.name)
+            } else {
+              addDestructuredExport(
+                v.id,
+                v.init
+                  ? knownStaticValue(v.init as BabelCore.types.Expression)
+                  : unknownStaticValue(),
+              )
             }
           }
         }
