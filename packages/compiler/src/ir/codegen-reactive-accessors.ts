@@ -1,5 +1,13 @@
 import type { CodegenContext } from './codegen'
-import type { BasicBlock, BabelParamNode, Expression, HIRFunction, Instruction } from './hir'
+import type {
+  BabelClassMember,
+  BabelDecorator,
+  BasicBlock,
+  BabelParamNode,
+  Expression,
+  HIRFunction,
+  Instruction,
+} from './hir'
 import { deSSAVarName } from './regions'
 import { structurizeCFG, type StructuredNode } from './structurize'
 
@@ -35,6 +43,316 @@ function isKnownSynchronousCallbackHost(callee: Expression): boolean {
 
 function isFunctionExpressionValue(expr: Expression): boolean {
   return expr.kind === 'ArrowFunction' || expr.kind === 'FunctionExpression'
+}
+
+type BabelNodeLike = {
+  type?: string
+  [key: string]: unknown
+}
+
+function isBabelNodeLike(value: unknown): value is BabelNodeLike {
+  return !!value && typeof value === 'object' && typeof (value as BabelNodeLike).type === 'string'
+}
+
+function addBabelIdentifier(name: unknown, into: Set<string>, bound: Set<string>): void {
+  if (typeof name !== 'string') return
+  const base = deSSAVarName(name)
+  if (!bound.has(base)) into.add(base)
+}
+
+function collectBabelPatternBindingNames(node: unknown, into: Set<string>): void {
+  if (!isBabelNodeLike(node)) return
+  switch (node.type) {
+    case 'Identifier':
+      if (typeof node.name === 'string') into.add(deSSAVarName(node.name))
+      return
+    case 'RestElement':
+      collectBabelPatternBindingNames(node.argument, into)
+      return
+    case 'AssignmentPattern':
+      collectBabelPatternBindingNames(node.left, into)
+      return
+    case 'ArrayPattern':
+      ;(Array.isArray(node.elements) ? node.elements : []).forEach(element =>
+        collectBabelPatternBindingNames(element, into),
+      )
+      return
+    case 'ObjectPattern':
+      ;(Array.isArray(node.properties) ? node.properties : []).forEach(prop => {
+        if (!isBabelNodeLike(prop)) return
+        if (prop.type === 'ObjectProperty') {
+          collectBabelPatternBindingNames(prop.value, into)
+        } else if (prop.type === 'RestElement') {
+          collectBabelPatternBindingNames(prop.argument, into)
+        }
+      })
+      return
+    case 'TSParameterProperty':
+      collectBabelPatternBindingNames(node.parameter, into)
+      return
+    default:
+      return
+  }
+}
+
+function collectBabelStatementBindingNames(node: unknown, into: Set<string>): void {
+  if (!isBabelNodeLike(node)) return
+  switch (node.type) {
+    case 'VariableDeclaration':
+      ;(Array.isArray(node.declarations) ? node.declarations : []).forEach(decl => {
+        if (isBabelNodeLike(decl)) collectBabelPatternBindingNames(decl.id, into)
+      })
+      return
+    case 'FunctionDeclaration':
+    case 'ClassDeclaration':
+      if (isBabelNodeLike(node.id) && node.id.type === 'Identifier') {
+        collectBabelPatternBindingNames(node.id, into)
+      }
+      return
+    default:
+      return
+  }
+}
+
+function collectBabelStatementListDefinitionIdentifiers(
+  statements: unknown[],
+  into: Set<string>,
+  bound: Set<string>,
+): void {
+  const blockBound = new Set(bound)
+  statements.forEach(stmt => collectBabelStatementBindingNames(stmt, blockBound))
+  statements.forEach(stmt => collectBabelDefinitionTimeIdentifiers(stmt, into, blockBound))
+}
+
+function collectBabelAssignmentTargetReads(
+  node: unknown,
+  into: Set<string>,
+  bound: Set<string>,
+): void {
+  if (!isBabelNodeLike(node)) return
+  switch (node.type) {
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+      collectBabelDefinitionTimeIdentifiers(node.object, into, bound)
+      if (node.computed) collectBabelDefinitionTimeIdentifiers(node.property, into, bound)
+      return
+    case 'ObjectPattern':
+      ;(Array.isArray(node.properties) ? node.properties : []).forEach(prop => {
+        if (!isBabelNodeLike(prop)) return
+        if (prop.type === 'ObjectProperty') {
+          if (prop.computed) collectBabelDefinitionTimeIdentifiers(prop.key, into, bound)
+          collectBabelAssignmentTargetReads(prop.value, into, bound)
+        } else if (prop.type === 'RestElement') {
+          collectBabelAssignmentTargetReads(prop.argument, into, bound)
+        }
+      })
+      return
+    case 'ArrayPattern':
+      ;(Array.isArray(node.elements) ? node.elements : []).forEach(element =>
+        collectBabelAssignmentTargetReads(element, into, bound),
+      )
+      return
+    case 'AssignmentPattern':
+      collectBabelAssignmentTargetReads(node.left, into, bound)
+      collectBabelDefinitionTimeIdentifiers(node.right, into, bound)
+      return
+    case 'RestElement':
+      collectBabelAssignmentTargetReads(node.argument, into, bound)
+      return
+    default:
+      return
+  }
+}
+
+function collectBabelDefinitionTimeIdentifiers(
+  node: unknown,
+  into: Set<string>,
+  bound = new Set<string>(),
+): void {
+  if (!isBabelNodeLike(node)) return
+
+  switch (node.type) {
+    case 'Identifier':
+      addBabelIdentifier(node.name, into, bound)
+      return
+    case 'PrivateName':
+    case 'StringLiteral':
+    case 'NumericLiteral':
+    case 'BooleanLiteral':
+    case 'NullLiteral':
+    case 'BigIntLiteral':
+    case 'RegExpLiteral':
+    case 'ThisExpression':
+    case 'Super':
+      return
+    case 'FunctionDeclaration':
+    case 'FunctionExpression':
+    case 'ArrowFunctionExpression':
+    case 'ObjectMethod':
+    case 'ClassMethod':
+    case 'ClassPrivateMethod':
+      return
+    case 'Decorator':
+      collectBabelDefinitionTimeIdentifiers(node.expression, into, bound)
+      return
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+      collectBabelDefinitionTimeIdentifiers(node.object, into, bound)
+      if (node.computed) collectBabelDefinitionTimeIdentifiers(node.property, into, bound)
+      return
+    case 'CallExpression':
+    case 'OptionalCallExpression':
+    case 'NewExpression':
+      collectBabelDefinitionTimeIdentifiers(node.callee, into, bound)
+      ;(Array.isArray(node.arguments) ? node.arguments : []).forEach(arg =>
+        collectBabelDefinitionTimeIdentifiers(arg, into, bound),
+      )
+      return
+    case 'AssignmentExpression':
+      collectBabelAssignmentTargetReads(node.left, into, bound)
+      collectBabelDefinitionTimeIdentifiers(node.right, into, bound)
+      return
+    case 'UpdateExpression':
+      if (isBabelNodeLike(node.argument) && node.argument.type === 'Identifier') {
+        addBabelIdentifier(node.argument.name, into, bound)
+      } else {
+        collectBabelAssignmentTargetReads(node.argument, into, bound)
+      }
+      return
+    case 'VariableDeclaration':
+      collectBabelStatementListDefinitionIdentifiers(
+        Array.isArray(node.declarations) ? node.declarations : [],
+        into,
+        bound,
+      )
+      return
+    case 'VariableDeclarator':
+      collectBabelDefinitionTimeIdentifiers(node.init, into, bound)
+      return
+    case 'ObjectExpression':
+      ;(Array.isArray(node.properties) ? node.properties : []).forEach(prop =>
+        collectBabelDefinitionTimeIdentifiers(prop, into, bound),
+      )
+      return
+    case 'ObjectProperty':
+      if (node.computed) collectBabelDefinitionTimeIdentifiers(node.key, into, bound)
+      collectBabelDefinitionTimeIdentifiers(node.value, into, bound)
+      return
+    case 'ArrayExpression':
+      ;(Array.isArray(node.elements) ? node.elements : []).forEach(element =>
+        collectBabelDefinitionTimeIdentifiers(element, into, bound),
+      )
+      return
+    case 'ClassExpression':
+    case 'ClassDeclaration': {
+      const nextBound = new Set(bound)
+      if (isBabelNodeLike(node.id) && node.id.type === 'Identifier') {
+        nextBound.add(deSSAVarName(String(node.id.name)))
+      }
+      collectBabelDefinitionTimeIdentifiers(node.superClass, into, bound)
+      ;(Array.isArray(node.decorators) ? node.decorators : []).forEach(decorator =>
+        collectBabelDefinitionTimeIdentifiers(decorator, into, bound),
+      )
+      if (isBabelNodeLike(node.body)) {
+        ;(Array.isArray(node.body.body) ? node.body.body : []).forEach(member =>
+          collectBabelClassMemberDefinitionIdentifiers(member, into, nextBound),
+        )
+      }
+      return
+    }
+    case 'ClassProperty':
+    case 'ClassPrivateProperty':
+    case 'ClassAccessorProperty':
+      ;(Array.isArray(node.decorators) ? node.decorators : []).forEach(decorator =>
+        collectBabelDefinitionTimeIdentifiers(decorator, into, bound),
+      )
+      if (node.computed) collectBabelDefinitionTimeIdentifiers(node.key, into, bound)
+      if (node.static) collectBabelDefinitionTimeIdentifiers(node.value, into, bound)
+      return
+    case 'StaticBlock':
+      collectBabelStatementListDefinitionIdentifiers(
+        Array.isArray(node.body) ? node.body : [],
+        into,
+        bound,
+      )
+      return
+    case 'TSAsExpression':
+    case 'TSSatisfiesExpression':
+    case 'TSTypeAssertion':
+    case 'TSNonNullExpression':
+    case 'TypeCastExpression':
+      collectBabelDefinitionTimeIdentifiers(node.expression, into, bound)
+      return
+    default:
+      for (const [key, value] of Object.entries(node)) {
+        if (
+          key === 'type' ||
+          key === 'loc' ||
+          key === 'start' ||
+          key === 'end' ||
+          key === 'leadingComments' ||
+          key === 'innerComments' ||
+          key === 'trailingComments'
+        ) {
+          continue
+        }
+        if (Array.isArray(value)) {
+          value.forEach(child => collectBabelDefinitionTimeIdentifiers(child, into, bound))
+        } else {
+          collectBabelDefinitionTimeIdentifiers(value, into, bound)
+        }
+      }
+  }
+}
+
+function collectBabelClassMemberDefinitionIdentifiers(
+  member: unknown,
+  into: Set<string>,
+  bound: Set<string>,
+): void {
+  if (!isBabelNodeLike(member)) return
+  switch (member.type) {
+    case 'ClassMethod':
+    case 'ClassPrivateMethod':
+      ;(Array.isArray(member.decorators) ? member.decorators : []).forEach(decorator =>
+        collectBabelDefinitionTimeIdentifiers(decorator, into, bound),
+      )
+      if (member.computed) collectBabelDefinitionTimeIdentifiers(member.key, into, bound)
+      return
+    default:
+      collectBabelDefinitionTimeIdentifiers(member, into, bound)
+  }
+}
+
+function collectClassExpressionDefinitionIdentifiers(
+  expr: Extract<Expression, { kind: 'ClassExpression' }>,
+  into: Set<string>,
+  bound = new Set<string>(),
+  deep = false,
+  scopeFunctionLocals = false,
+  includeReturnedFunctionBodies = true,
+): void {
+  const classBound = new Set(bound)
+  if (expr.name) classBound.add(deSSAVarName(expr.name))
+  if (expr.superClass) {
+    if (deep) {
+      collectExpressionIdentifiersDeep(
+        expr.superClass as Expression,
+        into,
+        bound,
+        scopeFunctionLocals,
+        includeReturnedFunctionBodies,
+      )
+    } else {
+      collectExpressionIdentifiers(expr.superClass as Expression, into)
+    }
+  }
+  expr.decorators?.forEach((decorator: BabelDecorator) =>
+    collectBabelDefinitionTimeIdentifiers(decorator, into, bound),
+  )
+  expr.body?.forEach((member: BabelClassMember) =>
+    collectBabelClassMemberDefinitionIdentifiers(member, into, classBound),
+  )
 }
 
 function collectPatternBindingNames(pattern: BabelParamNode | null | undefined, into: Set<string>) {
@@ -220,7 +538,7 @@ function collectExpressionIdentifiers(expr: Expression, into: Set<string>): void
       expr.quasi.expressions.forEach(ex => collectExpressionIdentifiers(ex as Expression, into))
       return
     case 'ClassExpression':
-      if (expr.superClass) collectExpressionIdentifiers(expr.superClass as Expression, into)
+      collectClassExpressionDefinitionIdentifiers(expr, into)
       return
     case 'SpreadElement':
       collectExpressionIdentifiers(expr.argument as Expression, into)
@@ -827,15 +1145,14 @@ export function collectExpressionIdentifiersDeep(
       )
       return
     case 'ClassExpression':
-      if (expr.superClass) {
-        collectExpressionIdentifiersDeep(
-          expr.superClass as Expression,
-          into,
-          bound,
-          scopeFunctionLocals,
-          includeReturnedFunctionBodies,
-        )
-      }
+      collectClassExpressionDefinitionIdentifiers(
+        expr,
+        into,
+        bound,
+        true,
+        scopeFunctionLocals,
+        includeReturnedFunctionBodies,
+      )
       return
     case 'SpreadElement':
       collectExpressionIdentifiersDeep(

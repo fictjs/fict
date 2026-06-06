@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import * as t from '@babel/types'
 
 import { collectExpressionIdentifiersDeep } from '../src/ir/codegen-reactive-accessors'
 import type { BasicBlock, Expression, Identifier } from '../src/ir/hir'
@@ -125,5 +126,34 @@ describe('collectExpressionIdentifiersDeep', () => {
     }
 
     expect(depsOf(arrayExpr)).toEqual(new Set(['arrayEagerDep', 'arrayCalledDep']))
+  })
+
+  it('tracks class definition-time dependencies without scanning method bodies', () => {
+    const classExpr: Expression = {
+      kind: 'ClassExpression',
+      superClass: id('Base'),
+      body: [
+        t.classMethod(
+          'method',
+          t.identifier('methodKey'),
+          [],
+          t.blockStatement([t.returnStatement(t.identifier('methodBodyDep'))]),
+          true,
+        ),
+        t.classProperty(t.identifier('fieldKey'), t.identifier('instanceFieldDep'), null, [], true),
+        t.classProperty(t.identifier('staticValue'), t.identifier('staticDep'), null, []),
+        t.staticBlock([
+          t.variableDeclaration('const', [
+            t.variableDeclarator(t.identifier('staticBlockLocal'), t.identifier('staticBlockDep')),
+          ]),
+          t.expressionStatement(t.identifier('staticBlockLocal')),
+        ]),
+      ],
+    }
+    ;(classExpr.body[2] as { static?: boolean }).static = true
+
+    expect(depsOf(classExpr)).toEqual(
+      new Set(['Base', 'methodKey', 'fieldKey', 'staticDep', 'staticBlockDep']),
+    )
   })
 })

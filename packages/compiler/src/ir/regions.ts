@@ -4712,6 +4712,13 @@ function expressionReturnsAccessorOrReactiveObject(expr: Expression, ctx: Codege
   )
 }
 
+function classExpressionNeedsReactiveMemo(instr: Instruction, ctx: CodegenContext): boolean {
+  if (instr.kind !== 'Assign') return false
+  if (instr.value.kind !== 'ClassExpression') return false
+  const baseName = deSSAVarName(instr.target.name)
+  return expressionUsesTracked(instr.value, ctx) || (ctx.memoVars?.has(baseName) ?? false)
+}
+
 function instructionRequiresEagerDerivedLowering(instr: Instruction, ctx: CodegenContext): boolean {
   if (instr.kind !== 'Assign') return false
   const baseName = deSSAVarName(instr.target.name)
@@ -4725,6 +4732,7 @@ function instructionRequiresEagerDerivedLowering(instr: Instruction, ctx: Codege
   if (getNamespaceReactiveMemberKind(instr.value, ctx)) return false
   if (expressionNeedsAsyncContext(instr.value)) return false
   if (expressionReturnsAccessorOrReactiveObject(instr.value, ctx)) return false
+  if (classExpressionNeedsReactiveMemo(instr, ctx)) return false
   return !expressionIsLazyMemoSafe(instr.value, ctx)
 }
 
@@ -5323,6 +5331,7 @@ function instructionToStatement(
     // Combined check for skipping memo wrapping
     const isMemoReturningCall = isAccessorReturningCall
     const canLazyMemoizeDerived = expressionIsLazyMemoSafe(instr.value, ctx)
+    const needsReactiveClassMemo = classExpressionNeedsReactiveMemo(instr, ctx)
     // fix: Check if variable will be mutated (assigned to later without declaration)
     const needsMutable = ctx.mutatedVars?.has(baseName) ?? false
     const lowerAssignedValue = (forceAssigned = false) => {
@@ -5338,7 +5347,10 @@ function instructionToStatement(
     }
     const needsAsyncContext = expressionNeedsAsyncContext(instr.value)
     const shouldEagerDerivedValue =
-      !needsAsyncContext && !isMemoReturningCall && !canLazyMemoizeDerived
+      !needsAsyncContext &&
+      !isMemoReturningCall &&
+      !canLazyMemoizeDerived &&
+      !needsReactiveClassMemo
     const lowerEagerDerivedValue = (): BabelCore.types.Expression => {
       ctx.memoVars?.add(baseName)
       const valueName = reserveFunctionLocalName(ctx, `__eager_${baseName}`)

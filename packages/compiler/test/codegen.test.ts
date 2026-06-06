@@ -1173,6 +1173,85 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).not.toContain('class count()')
   })
 
+  it('memoizes class expressions with reactive computed member names', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      export function App() {
+        const name = $state('m')
+        const C = class {
+          [name]() {
+            return 1
+          }
+        }
+        return <span>{typeof new C().m}</span>
+      }
+    `)
+
+    expect(output).toContain('const C = __fictUseMemo(__fictCtx, () => class')
+    expect(output).toContain('[name()]()')
+    expect(output).toContain('new (C())().m')
+  })
+
+  it('memoizes class expressions with reactive static field initializers', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      export function App() {
+        const name = $state('m')
+        const C = class {
+          static v = name
+        }
+        return <span>{C.v}</span>
+      }
+    `)
+
+    expect(output).toContain('const C = __fictUseMemo(__fictCtx, () => class')
+    expect(output).toContain('static v = name()')
+    expect(output).toContain('() => C().v')
+  })
+
+  it('memoizes class expressions with reactive static blocks', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      export function App() {
+        const name = $state('m')
+        const C = class {
+          static v
+          static {
+            this.v = name
+          }
+        }
+        return <span>{C.v}</span>
+      }
+    `)
+
+    expect(output).toContain('const C = __fictUseMemo(__fictCtx, () => class')
+    expect(output).toContain('this.v = name()')
+    expect(output).toContain('() => C().v')
+  })
+
+  it('does not memoize class expressions for instance field initializer reads alone', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      export function App() {
+        const name = $state('m')
+        const C = class {
+          v = name
+        }
+        return <span>{new C().v}</span>
+      }
+    `)
+
+    expect(output).toContain('const C = class {')
+    expect(output).toContain('v = name()')
+    expect(output).toContain('new C().v')
+    expect(output).not.toContain('const C = __fictUseMemo')
+    expect(output).not.toContain('new (C())()')
+  })
+
   it('preserves meta-property identifiers from reactive overrides', () => {
     const output = transform(`
       import { $state } from 'fict'
