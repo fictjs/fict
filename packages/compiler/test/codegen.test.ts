@@ -718,6 +718,25 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(code).not.toContain('const cb = prop(() => __props.cb)')
   })
 
+  it('wraps optional-call accessor component spread sources lazily', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      function Child(props: { x: number; y?: number }) {
+        return <span>{props.x}</span>
+      }
+
+      export function App() {
+        const props = $state({ x: 1 })
+        return <Child {...props?.()} y={1} />
+      }
+    `)
+
+    expect(output).toContain('mergeProps')
+    expect(output).toMatch(/(?:propGetter|__fictProp)\(\(\) => props\?\.\(\)\)/)
+    expect(output).not.toContain('mergeProps(props?.()')
+  })
+
   it('keeps call/apply destructured function props unwrapped', () => {
     const ast = parseFile(`
       function Child({ cb }) {

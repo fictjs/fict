@@ -112,6 +112,16 @@ export function buildPropsPlan(
           return markLazySource(t.arrowFunctionExpression([], node))
         }
       }
+      if (
+        t.isOptionalCallExpression(node) &&
+        t.isIdentifier(node.callee) &&
+        node.arguments.length === 0
+      ) {
+        const baseName = helpers.deSSAVarName(node.callee.name)
+        if (isAccessorName(baseName)) {
+          return markLazySource(t.arrowFunctionExpression([], node))
+        }
+      }
       if (t.isIdentifier(node)) {
         const baseName = helpers.deSSAVarName(node.name)
         if (isAccessorName(baseName)) {

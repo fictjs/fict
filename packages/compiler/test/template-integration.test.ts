@@ -4857,6 +4857,57 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps optional-call accessor component spreads lazy', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { set(value: number): void }
+
+      function Child(props: { x: number; y?: number }) {
+        return <span data-testid="value">{props.x}:{props.y ?? 'none'}</span>
+      }
+
+      export function App() {
+        let props = $state({ x: 1 })
+        api = {
+          set(value: number) {
+            props = { x: value }
+          },
+        }
+        return (
+          <section>
+            <Child {...props?.()} />
+            <Child {...props?.()} y={10} />
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      api: { set(value: number): void }
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const values = () =>
+      Array.from(container.querySelectorAll('[data-testid="value"]')).map(el => el.textContent)
+
+    expect(values()).toEqual(['1:none', '1:10'])
+
+    mod.api.set(2)
+    await flushUpdates()
+
+    expect(values()).toEqual(['2:none', '2:10'])
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps reactive component prop values live inside expression containers', async () => {
     const source = `
       import { $state, render } from 'fict'
