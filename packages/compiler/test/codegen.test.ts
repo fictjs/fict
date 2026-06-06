@@ -207,6 +207,46 @@ describe('lowerHIRWithRegions', () => {
     expect(output).toContain('out = 1')
   })
 
+  it('preserves try and finally side effects inside emitted reactive regions', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      function side() {
+        return 1
+      }
+      function fail() {
+        throw { x: 2 }
+      }
+      function cleanup() {
+        side()
+      }
+
+      export function App() {
+        let count = $state(1)
+        let out = 0
+        if (count) {
+          try {
+            side()
+          } catch {}
+          try {
+            fail()
+          } catch (e) {
+            out = e.x
+          }
+          try {} finally {
+            cleanup()
+          }
+        }
+        return <span>{out}:{count}</span>
+      }
+    `)
+
+    expect(output).toMatch(/try \{\s+side\(\);\s+\} catch/)
+    expect(output).toMatch(/try \{\s+fail\(\);\s+\} catch \(e\) \{\s+out = e\.x;/)
+    expect(output).toMatch(/try \{\s*\} finally \{\s+cleanup\(\);/)
+    expect(output).toContain('out = e.x')
+  })
+
   it('omits type-only imports and declarations from emitted modules', () => {
     const ast = parseFile(`
       import type { Foo } from './types'

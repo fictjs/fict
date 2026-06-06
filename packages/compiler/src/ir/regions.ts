@@ -3309,44 +3309,30 @@ function lowerStructuredNodeForRegion(
     }
 
     case 'try': {
-      const blockStmts = lowerStructuredNodeForRegion(
-        node.block,
-        region,
-        t,
-        ctx,
-        declaredVars,
-        regionCtx,
-        skipInstructions,
-      )
+      const executableRegionCtx = regionCtx
+        ? { ...regionCtx, inlineUnownedInRegionBody: true }
+        : regionCtx
+      const lowerExecutableChild = (child: StructuredNode): BabelCore.types.Statement[] =>
+        withTrackedControlEffectScope(ctx, true, () =>
+          lowerStructuredNodeForRegion(
+            child,
+            region,
+            t,
+            ctx,
+            declaredVars,
+            executableRegionCtx,
+            skipInstructions,
+          ),
+        )
+      const blockStmts = lowerExecutableChild(node.block)
       let handlerStmts: BabelCore.types.Statement[] = []
       if (node.handler) {
         const handlerBindings = collectStructuredCatchBindingNames(node.handler, t)
         withShadowedBindings(ctx, handlerBindings, () => {
-          handlerStmts = lowerStructuredNodeForRegion(
-            node.handler!.body,
-            region,
-            t,
-            ctx,
-            declaredVars,
-            regionCtx,
-            skipInstructions,
-          )
+          handlerStmts = lowerExecutableChild(node.handler!.body)
         })
       }
-      const finalizerStmts = node.finalizer
-        ? lowerStructuredNodeForRegion(
-            node.finalizer,
-            region,
-            t,
-            ctx,
-            declaredVars,
-            regionCtx,
-            skipInstructions,
-          )
-        : []
-      if (blockStmts.length === 0 && handlerStmts.length === 0 && finalizerStmts.length === 0) {
-        return []
-      }
+      const finalizerStmts = node.finalizer ? lowerExecutableChild(node.finalizer) : []
       const handler = node.handler
         ? t.catchClause(lowerStructuredCatchParam(node.handler, t), t.blockStatement(handlerStmts))
         : null
