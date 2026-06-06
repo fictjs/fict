@@ -468,6 +468,11 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
   const descriptorSignals = new Map<string | symbol, SignalAccessor<number>>()
   const descriptorVersions = new Map<string | symbol, number>()
   const descriptorSnapshots = new Map<string | symbol, PropertyDescriptor | undefined>()
+  type Method = (...args: unknown[]) => unknown
+  const boundMethodCache = new WeakMap<object, Map<Method, Method>>()
+  let prototypeSignal: SignalAccessor<number> | undefined
+  let prototypeVersion = 0
+  let prototypeSnapshot = Reflect.getPrototypeOf(currentValue as object)
   let iterateSignal: SignalAccessor<number> | undefined
   let iterateVersion = 0
   let ownKeysSnapshot = Reflect.ownKeys(currentValue as object)
@@ -504,6 +509,45 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
     return false
   }
 
+  const shouldBindMethod = (
+    target: object,
+    prop: string | symbol,
+    value: unknown,
+  ): value is Method => {
+    if (typeof value !== 'function') return false
+    if (Array.isArray(target) || isPlainObject(target)) return false
+
+    let proto = Reflect.getPrototypeOf(target)
+    while (proto) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(proto, prop)
+      if (descriptor) return 'value' in descriptor && descriptor.value === value
+      proto = Reflect.getPrototypeOf(proto)
+    }
+    return false
+  }
+
+  const bindMethod = (target: object, method: Method): Method => {
+    let methods = boundMethodCache.get(target)
+    if (!methods) {
+      methods = new Map()
+      boundMethodCache.set(target, methods)
+    }
+
+    let bound = methods.get(method)
+    if (!bound) {
+      bound = method.bind(target) as Method
+      methods.set(method, bound)
+    }
+    return bound
+  }
+
+  const normalizeReadValue = (target: object, prop: string | symbol, value: unknown): unknown => {
+    if (shouldBindMethod(target, prop, value)) {
+      return bindMethod(target, value)
+    }
+    return value
+  }
+
   const getPropSignal = (prop: string | symbol) => {
     let s = signals.get(prop)
     if (!s) {
@@ -511,6 +555,28 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
       signals.set(prop, s)
     }
     return s
+  }
+
+  const trackPrototype = () => {
+    if (!prototypeSignal) {
+      prototypeSignal = signal(prototypeVersion)
+    }
+    prototypeSignal()
+  }
+
+  const bumpPrototype = () => {
+    if (!prototypeSignal) return
+    prototypeVersion += 1
+    prototypeSignal(prototypeVersion)
+  }
+
+  const updatePrototype = (next: object): void => {
+    const nextPrototype = Reflect.getPrototypeOf(next)
+    const changed = prototypeSnapshot !== nextPrototype
+    prototypeSnapshot = nextPrototype
+    if (changed) {
+      bumpPrototype()
+    }
   }
 
   const bumpVersionedSignal = (
@@ -599,7 +665,11 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
 
       // Subscribe to property
       const s = getPropSignal(prop)
-      return s()
+      return normalizeReadValue(currentValue as object, prop, s())
+    },
+    getPrototypeOf() {
+      trackPrototype()
+      return Reflect.getPrototypeOf(currentValue)
     },
     ownKeys() {
       trackIterate()
@@ -662,6 +732,7 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
       }
       updatePresenceSignals(next as object)
       updateDescriptorSignals(next as object)
+      updatePrototype(next as object)
       updateIterateFromOwnKeys(next as object)
       return
     }
@@ -678,17 +749,22 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
       const newOwn = newDescriptor !== undefined
       const oldVal = Reflect.get(prev as object, prop)
       const newVal = Reflect.get(next as object, prop)
+      const receiverChanged =
+        shouldBindMethod(prev as object, prop, oldVal) ||
+        shouldBindMethod(next as object, prop, newVal)
       if (
         oldVal !== newVal ||
         oldHas !== newHas ||
         oldOwn !== newOwn ||
-        descriptorShapeChanged(oldDescriptor, newDescriptor)
+        descriptorShapeChanged(oldDescriptor, newDescriptor) ||
+        receiverChanged
       ) {
         s(newVal)
       }
     }
     updatePresenceSignals(next as object)
     updateDescriptorSignals(next as object)
+    updatePrototype(next as object)
     updateIterateFromOwnKeys(next as object)
 
     // Note: If new properties appeared that weren't tracked, we don't care

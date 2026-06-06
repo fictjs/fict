@@ -918,6 +918,110 @@ describe('createDiffingSignal reactivity', () => {
     expect(seen[seen.length - 1]).toEqual(['b', 'a'])
   })
 
+  it('forwards prototype reflection for class instances', () => {
+    class Box {
+      value = 1
+    }
+
+    const [read] = createDiffingSignal(new Box())
+
+    expect(read()).toBeInstanceOf(Box)
+    expect(Object.getPrototypeOf(read())).toBe(Box.prototype)
+  })
+
+  it('updates prototype subscribers when the instance prototype changes', async () => {
+    class Box {
+      value = 1
+    }
+    class OtherBox {
+      value = 2
+    }
+
+    const [read, write] = createDiffingSignal<Box | OtherBox>(new Box())
+    const seen: boolean[] = []
+
+    createEffect(() => {
+      seen.push(read() instanceof Box)
+    })
+
+    await tick()
+    expect(seen).toEqual([true])
+
+    write(new OtherBox())
+    await tick()
+
+    expect(seen).toEqual([true, false])
+    expect(read()).toBeInstanceOf(OtherBox)
+    expect(Object.getPrototypeOf(read())).toBe(OtherBox.prototype)
+  })
+
+  it('binds class prototype methods to preserve private brands', async () => {
+    class Box {
+      #value: number
+
+      constructor(value: number) {
+        this.#value = value
+      }
+
+      read() {
+        return this.#value
+      }
+    }
+
+    const [read, write] = createDiffingSignal(new Box(1))
+    const seen: number[] = []
+
+    createEffect(() => {
+      seen.push(read().read())
+    })
+
+    await tick()
+    expect(seen).toEqual([1])
+
+    write(new Box(2))
+    await tick()
+
+    expect(seen).toEqual([1, 2])
+    expect(read().read()).toBe(2)
+    expect(read().read).toBe(read().read)
+  })
+
+  it('preserves null-prototype reflection', () => {
+    const source = Object.create(null) as { x: number }
+    source.x = 1
+    const [read] = createDiffingSignal(source)
+
+    expect(Object.getPrototypeOf(read())).toBe(null)
+    expect('toString' in read()).toBe(false)
+    expect(read().x).toBe(1)
+  })
+
+  it('keeps plain object methods proxy-bound for property tracking', async () => {
+    const readX = function (this: { x: number }) {
+      return this.x
+    }
+    const [read, write] = createDiffingSignal({ x: 1, read: readX })
+    const seen: number[] = []
+
+    createEffect(() => {
+      seen.push(read().read())
+    })
+
+    await tick()
+    expect(seen).toEqual([1])
+
+    write({ x: 2, read: readX })
+    await tick()
+
+    expect(seen).toEqual([1, 2])
+  })
+
+  it('keeps array prototype methods callable through the proxy', () => {
+    const [read] = createDiffingSignal([1, 2, 3])
+
+    expect(read().slice(1)).toEqual([2, 3])
+  })
+
   it('normalizes non-configurable descriptors to satisfy proxy invariants', () => {
     const source = {} as Record<string, number>
     Object.defineProperty(source, 'locked', {
