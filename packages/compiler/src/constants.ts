@@ -302,7 +302,6 @@ export const SAFE_FUNCTIONS = new Set([
   'Object.keys',
   'Object.values',
   'Object.entries',
-  'Object.freeze',
   'Object.isFrozen',
   'Object.isSealed',
   'Object.isExtensible',

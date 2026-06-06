@@ -544,6 +544,30 @@ describe('semantic validation', () => {
     expect(() => transform(source, { strictGuarantee: true, dev: false })).not.toThrow(/FICT-R002/)
   })
 
+  it('warns when mutating Object APIs receive nested reactive values', () => {
+    const cases = [
+      'Object.freeze({ count })',
+      'Object.seal({ count })',
+      'Object.preventExtensions({ count })',
+      'Object.defineProperty({}, "value", { value: count })',
+    ]
+
+    for (const expression of cases) {
+      const source = `
+        import { $state } from 'fict'
+        function App() {
+          let count = $state(0)
+          ${expression}
+          return <div>{count}</div>
+        }
+      `
+      const warnings: Array<{ code: string }> = []
+      transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+      expect(warnings.some(w => w.code === 'FICT-R002')).toBe(true)
+      expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow(/FICT-R002/)
+    }
+  })
+
   it('warns when passing reactive value inside optional-call argument to unknown function', () => {
     const source = `
       import { $state } from 'fict'
