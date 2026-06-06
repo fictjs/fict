@@ -250,6 +250,7 @@ export function emitResumableEventBinding(
   }
 
   const handlerExpr = ensureHandlerParam(valueExpr)
+  const wrappedFactoryExpr = handlerExpr !== valueExpr
   const handlerName = reserveGeneratedIndexedModuleName(
     ctx,
     '__fict_e',
@@ -299,6 +300,15 @@ export function emitResumableEventBinding(
   const lexicalNewTargetCaptures: string[] = []
   const lexicalThisCaptures: string[] = []
   const mutatedFunctionDeps: string[] = []
+  if (wrappedFactoryExpr && capturesLexicalArgumentsInExpr(valueExpr, t)) {
+    lexicalArgumentsCaptures.push('factory -> arguments')
+  }
+  if (wrappedFactoryExpr && capturesLexicalNewTargetInExpr(valueExpr, t)) {
+    lexicalNewTargetCaptures.push('factory -> new.target')
+  }
+  if (wrappedFactoryExpr && capturesLexicalThisInExpr(valueExpr, t)) {
+    lexicalThisCaptures.push('factory -> this')
+  }
   if (capturesLexicalArgumentsInExpr(handlerExpr, t)) {
     lexicalArgumentsCaptures.push('handler -> arguments')
   }

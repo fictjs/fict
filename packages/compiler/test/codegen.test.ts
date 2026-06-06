@@ -2118,6 +2118,42 @@ describe('resumable event handler transformation', () => {
     expect(code).toContain('return this.value')
   })
 
+  it('throws for explicit resumable factory handlers that capture lexical this', () => {
+    const ast = parseFile(`
+      function App(props) {
+        const make = (value) => () => value
+        return <button onClick$={make(this.value)}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(/this/i)
+  })
+
+  it('throws for explicit resumable factory handlers that capture lexical arguments', () => {
+    const ast = parseFile(`
+      function App(props) {
+        const make = (value) => () => value
+        return <button onClick$={make(arguments.length)}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(/arguments/i)
+  })
+
+  it('throws for explicit resumable factory handlers that capture lexical new.target', () => {
+    const ast = parseFile(`
+      function App(props) {
+        const make = (value) => () => value
+        return <button onClick$={make(new.target)}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(/new\.target/i)
+  })
+
   it('falls back for auto-extracted handlers that capture function-valued signals', () => {
     const ast = parseFile(`
       function Comp() {
