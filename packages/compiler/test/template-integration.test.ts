@@ -2712,6 +2712,85 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it.each([
+    { mode: 'fine-grained', options: { fineGrainedDom: true } },
+    { mode: 'vnode', options: { fineGrainedDom: false } },
+  ] satisfies Array<{ mode: string; options: FictCompilerOptions }>)(
+    'sets dynamic namespaced attributes with setAttributeNS in $mode mode',
+    async ({ options }) => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        export let api: { setHref(value: string | null): void; setLang(value: string): void }
+
+        function App() {
+          const href = $state<string | null>('#a')
+          const lang = $state('en')
+          api = {
+            setHref: value => href(value),
+            setLang: value => lang(value),
+          }
+
+          return (
+            <div>
+              <svg>
+                <use data-id="dynamic-use" xlink:href={href()} xml:lang={lang()}></use>
+                <use data-id="static-use" xlink:href="#static"></use>
+              </svg>
+              <math>
+                <maction data-id="dynamic-maction" xlink:href={href()} xml:lang={lang()}></maction>
+              </math>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+        api: { setHref(value: string | null): void; setLang(value: string): void }
+      }>(source, options)
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const teardown = mod.mount(container)
+
+      await flushUpdates()
+
+      const xlinkNs = 'http://www.w3.org/1999/xlink'
+      const xmlNs = 'http://www.w3.org/XML/1998/namespace'
+      const dynamicUse = container.querySelector('[data-id="dynamic-use"]') as Element
+      const staticUse = container.querySelector('[data-id="static-use"]') as Element
+      const dynamicMaction = container.querySelector('[data-id="dynamic-maction"]') as Element
+
+      expect(dynamicUse.getAttributeNS(xlinkNs, 'href')).toBe('#a')
+      expect(dynamicUse.getAttributeNS(xmlNs, 'lang')).toBe('en')
+      expect(staticUse.getAttributeNS(xlinkNs, 'href')).toBe('#static')
+      expect(dynamicMaction.getAttributeNS(xlinkNs, 'href')).toBe('#a')
+      expect(dynamicMaction.getAttributeNS(xmlNs, 'lang')).toBe('en')
+
+      mod.api.setHref('#b')
+      mod.api.setLang('fr')
+      await flushUpdates()
+
+      expect(dynamicUse.getAttributeNS(xlinkNs, 'href')).toBe('#b')
+      expect(dynamicUse.getAttributeNS(xmlNs, 'lang')).toBe('fr')
+      expect(dynamicMaction.getAttributeNS(xlinkNs, 'href')).toBe('#b')
+      expect(dynamicMaction.getAttributeNS(xmlNs, 'lang')).toBe('fr')
+
+      mod.api.setHref(null)
+      await flushUpdates()
+
+      expect(dynamicUse.hasAttributeNS(xlinkNs, 'href')).toBe(false)
+      expect(dynamicMaction.hasAttributeNS(xlinkNs, 'href')).toBe(false)
+
+      teardown()
+      container.remove()
+    },
+  )
+
   it('keeps generated template temps from shadowing source bindings', async () => {
     const cases: Array<{
       source: string

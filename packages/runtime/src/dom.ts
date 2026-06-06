@@ -853,6 +853,14 @@ function applyProps(el: Element, props: Record<string, unknown>, isSVG = false):
       continue
     }
 
+    const namespaced = getNamespacedProp(key)
+    if (namespaced) {
+      createAttributeBinding(el, key, value as MaybeReactive<unknown>, (el, _key, val) =>
+        setAttributeNS(el, namespaced.namespace, namespaced.localName, val),
+      )
+      continue
+    }
+
     // Check for property alias (element-specific mappings)
     const propAlias = !isSVG && isDev ? getPropAlias(key, tagName) : undefined
     const isProperty = !isSVG
@@ -878,23 +886,21 @@ function applyProps(el: Element, props: Record<string, unknown>, isSVG = false):
       continue
     }
 
-    // SVG namespaced attributes (xlink:href, xml:lang, etc.)
-    if (isSVG && key.indexOf(':') > -1) {
-      const [prefix, name] = key.split(':')
-      const ns = SVGNamespace[prefix!]
-      if (ns) {
-        createAttributeBinding(el, key, value as MaybeReactive<unknown>, (el, _key, val) =>
-          setAttributeNS(el, ns, name!, val),
-        )
-        continue
-      }
-    }
-
     // Regular attributes (potentially reactive)
     // Apply alias mapping (className -> class, htmlFor -> for)
     const attrName = key === 'htmlFor' ? 'for' : key
     createAttributeBinding(el, attrName, value as MaybeReactive<unknown>, setAttribute)
   }
+}
+
+function getNamespacedProp(key: string): { namespace: string; localName: string } | undefined {
+  const colonIndex = key.indexOf(':')
+  if (colonIndex <= 0) return undefined
+  const prefix = key.slice(0, colonIndex)
+  const localName = key.slice(colonIndex + 1)
+  const namespace = SVGNamespace[prefix]
+  if (!namespace || !localName) return undefined
+  return { namespace, localName }
 }
 
 /**
@@ -999,8 +1005,10 @@ const setBoolAttribute: AttributeSetter = (el: Element, key: string, value: unkn
  * Set an attribute with a namespace (for SVG xlink:href, etc.)
  */
 function setAttributeNS(el: Element, namespace: string, name: string, value: unknown): void {
-  if (value == null) {
+  if (value === undefined || value === null || value === false) {
     el.removeAttributeNS(namespace, name)
+  } else if (value === true) {
+    el.setAttributeNS(namespace, name, '')
   } else {
     el.setAttributeNS(namespace, name, String(value))
   }
