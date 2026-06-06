@@ -1,4 +1,4 @@
-import { Suspense, createRoot, render } from '@fictjs/runtime'
+import { ErrorBoundary, Suspense, createRoot, render } from '@fictjs/runtime'
 import { createSignal, reactive } from '@fictjs/runtime/advanced'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
@@ -317,6 +317,126 @@ describe('resource', () => {
     expect(lastResult?.loading).toBe(false)
     expect(lastResult?.data).toBe('done')
     dispose()
+  })
+
+  it('does not abort initial no-cache suspense fetches on suspended attempt cleanup', async () => {
+    const abortSpy = vi.fn()
+    let resolveFetch: ((value: string) => void) | undefined
+    const fetcher = vi.fn(
+      ({ signal }) =>
+        new Promise<string>(resolve => {
+          signal.addEventListener('abort', abortSpy)
+          resolveFetch = resolve
+        }),
+    )
+    const r = resource<string, string>({
+      fetch: fetcher,
+      suspense: true,
+      cache: { mode: 'none' },
+    })
+    const container = document.createElement('div')
+
+    const View = () => {
+      const result = r.read('k')
+      return { type: 'span', props: { children: result.data } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense as any,
+        props: {
+          fallback: 'loading',
+          children: { type: View, props: {} },
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    expect(container.textContent).toBe('loading')
+    expect(abortSpy).not.toHaveBeenCalled()
+
+    resolveFetch?.('ready')
+    await tick()
+    await tick()
+    await tick()
+
+    expect(container.textContent).toBe('ready')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(abortSpy).not.toHaveBeenCalled()
+    dispose()
+  })
+
+  it('routes no-cache suspense fetch failures through ErrorBoundary', async () => {
+    const error = new Error('load failed')
+    let rejectFetch: ((err: unknown) => void) | undefined
+    const fetcher = vi.fn(
+      () =>
+        new Promise<string>((_, reject) => {
+          rejectFetch = reject
+        }),
+    )
+    const r = resource<string, string>({
+      fetch: fetcher,
+      suspense: true,
+      cache: { mode: 'none' },
+    })
+    const container = document.createElement('div')
+    let captured: unknown = null
+
+    const View = () => {
+      const result = r.read('k')
+      return { type: 'span', props: { children: result.data } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary as any,
+        props: {
+          fallback: 'error',
+          onError: (err: unknown) => {
+            captured = err
+          },
+          children: {
+            type: Suspense as any,
+            props: {
+              fallback: 'loading',
+              children: { type: View, props: {} },
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    expect(container.textContent).toBe('loading')
+
+    rejectFetch?.(error)
+    await tick()
+    await tick()
+
+    expect(captured).toBe(error)
+    expect(container.textContent).toBe('error')
+    dispose()
+  })
+
+  it('keeps non-suspense no-cache cleanup abort behavior', async () => {
+    const abortSpy = vi.fn()
+    const fetcher = vi.fn(({ signal }) => {
+      signal.addEventListener('abort', abortSpy)
+      return new Promise<string>(() => {})
+    })
+    const r = resource<string, string>({ fetch: fetcher, cache: { mode: 'none' } })
+
+    const { dispose } = createRoot(() => {
+      r.read('k')
+    })
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    dispose()
+
+    expect(abortSpy).toHaveBeenCalledTimes(1)
   })
 
   it('retries a pending suspense read after specific-key invalidation', async () => {

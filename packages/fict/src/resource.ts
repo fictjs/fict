@@ -386,12 +386,14 @@ export function resource<T, Args = void>(
     entry.inFlight = fetchPromise
     entry.inFlightArgs = args
 
-    onCleanup(() => {
-      if (resolvedCacheOptions.mode === 'none') {
-        controller.abort()
-        cache.delete(key)
-      }
-    })
+    if (!shouldSuspend) {
+      onCleanup(() => {
+        if (resolvedCacheOptions.mode === 'none') {
+          controller.abort()
+          cache.delete(key)
+        }
+      })
+    }
   }
 
   const resolvePendingToken = (entry: ResourceEntry<T, Args>) => {
