@@ -123,6 +123,141 @@ describe('ErrorBoundary', () => {
     expect(mounted).toBe(0)
   })
 
+  it('captures initial child onMount errors and shows fallback', async () => {
+    const container = document.createElement('div')
+    let captured: unknown = null
+
+    const BadMount = () => {
+      onMount(() => {
+        throw new Error('mount boom')
+      })
+      return { type: 'span', props: { children: 'ok' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'fallback',
+          onError: err => {
+            captured = err
+          },
+          children: { type: BadMount, props: {} },
+        },
+      }),
+      container,
+    )
+
+    await nextTick()
+    expect(captured).toBeInstanceOf(Error)
+    expect((captured as Error).message).toBe('mount boom')
+    expect(container.textContent).toBe('fallback')
+
+    dispose()
+  })
+
+  it('passes initial onMount errors to function fallbacks', async () => {
+    const container = document.createElement('div')
+
+    const BadMount = () => {
+      onMount(() => {
+        throw new Error('mount boom')
+      })
+      return { type: 'span', props: { children: 'ok' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: err => `caught:${(err as Error).message}`,
+          children: { type: BadMount, props: {} },
+        },
+      }),
+      container,
+    )
+
+    await nextTick()
+    expect(container.textContent).toBe('caught:mount boom')
+
+    dispose()
+  })
+
+  it('lets outer boundaries capture fallback onMount errors', async () => {
+    const container = document.createElement('div')
+    let outerError: unknown = null
+
+    const BadMount = () => {
+      onMount(() => {
+        throw new Error('mount boom')
+      })
+      return { type: 'span', props: { children: 'ok' } }
+    }
+
+    const BadFallback = () => {
+      onMount(() => {
+        throw new Error('fallback mount boom')
+      })
+      return { type: 'span', props: { children: 'inner fallback' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'outer fallback',
+          onError: err => {
+            outerError = err
+          },
+          children: {
+            type: ErrorBoundary,
+            props: {
+              fallback: { type: BadFallback, props: {} },
+              children: { type: BadMount, props: {} },
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    await nextTick()
+    expect(outerError).toBeInstanceOf(Error)
+    expect((outerError as Error).message).toBe('fallback mount boom')
+    expect(container.textContent).toBe('outer fallback')
+
+    dispose()
+  })
+
+  it('runs successful initial child onMount callbacks once', async () => {
+    const container = document.createElement('div')
+    let mounted = 0
+
+    const GoodMount = () => {
+      onMount(() => {
+        mounted += 1
+      })
+      return { type: 'span', props: { children: 'ok' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'fallback',
+          children: { type: GoodMount, props: {} },
+        },
+      }),
+      container,
+    )
+
+    await nextTick()
+    expect(container.textContent).toBe('ok')
+    expect(mounted).toBe(1)
+
+    dispose()
+  })
+
   it('exposes reset to fallback and restores children', async () => {
     const container = document.createElement('div')
     const shouldThrow = createSignal(true)

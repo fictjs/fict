@@ -58,6 +58,12 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
     const root = createRootContext(hostRoot)
     const prev = pushRoot(root)
     let nodes: Node[] = []
+    let didPopRoot = false
+    const restoreRoot = () => {
+      if (didPopRoot) return
+      popRoot(prev)
+      didPopRoot = true
+    }
     try {
       const output = createElement(value)
       nodes = toNodeArray(output, markerOwnerDocument)
@@ -65,9 +71,12 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
       if (parentNode) {
         nodes = insertNodesBefore(parentNode, nodes, marker)
       }
+      restoreRoot()
+      flushOnMount(root)
     } catch (err) {
-      popRoot(prev)
+      restoreRoot()
       destroyRoot(root)
+      removeNodes(nodes)
       // Fall back immediately on render errors, avoid infinite recursion
       if (renderingFallback) {
         throw err
@@ -90,8 +99,6 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
       }
       return
     }
-    popRoot(prev)
-    flushOnMount(root)
 
     cleanup = () => {
       destroyRoot(root)
