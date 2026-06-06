@@ -2037,6 +2037,61 @@ describe('Cross-Module Reactivity', () => {
       })
     })
 
+    it('does not publish Object.prototype-named re-export metadata from empty exports', () => {
+      const emptyPath = path.join(baseDir, 'empty-reexport-prototype-names.ts')
+      const realPath = path.join(baseDir, 'real-reexport-control.ts')
+      const barrelPath = path.join(baseDir, 'barrel-empty-reexport-prototype-names.ts')
+      const appPath = path.join(baseDir, 'app-empty-reexport-prototype-names.tsx')
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(emptyPath), {
+        version: MODULE_REACTIVE_METADATA_VERSION,
+        exports: {},
+      })
+      moduleMetadata.set(path.resolve(realPath), {
+        version: MODULE_REACTIVE_METADATA_VERSION,
+        exports: {
+          count: 'memo',
+        },
+      })
+
+      transform(
+        `
+          export {
+            toString as x,
+            hasOwnProperty as y,
+            constructor as z,
+            valueOf as w,
+          } from './empty-reexport-prototype-names'
+          export { count } from './real-reexport-control'
+        `,
+        { moduleMetadata },
+        barrelPath,
+      )
+
+      const meta = moduleMetadata.get(path.resolve(barrelPath))
+      expect(meta?.exports).toEqual({ count: 'memo' })
+      for (const name of ['x', 'y', 'z', 'w']) {
+        expect(Object.prototype.hasOwnProperty.call(meta?.exports, name)).toBe(false)
+      }
+
+      const output = transform(
+        `
+          import { count, x } from './barrel-empty-reexport-prototype-names'
+
+          export function App() {
+            const derived = x + 1
+            return <div>{count}{derived}</div>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        appPath,
+      )
+
+      expect(output).toMatch(/count\(\)/)
+      expect(output).toContain('const derived = x + 1')
+      expect(output).not.toContain('x()')
+    })
+
     it('ignores type-only re-export declarations when propagating metadata', () => {
       const storeSource = `
         import { createSignal } from 'fict/advanced'

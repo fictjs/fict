@@ -28,7 +28,7 @@ function getOwnRecordValue<T>(record: Record<string, T> | undefined, key: string
   return record[key]
 }
 
-function getImportedReactiveExportKind(
+function getOwnReactiveExportKind(
   meta: ModuleReactiveMetadata,
   exportName: string,
 ): ReactiveExportKind | undefined {
@@ -131,7 +131,7 @@ export function applyImportedReactiveMetadata(
           ? spec.imported.name
           : String(spec.imported.value)
         const localName = spec.local.name
-        const kind = getImportedReactiveExportKind(meta, importedName)
+        const kind = getOwnReactiveExportKind(meta, importedName)
         if (kind) {
           addImportedReactiveBinding(localName, kind, ctx)
         }
@@ -148,7 +148,7 @@ export function applyImportedReactiveMetadata(
       }
       if (t.isImportDefaultSpecifier(spec)) {
         const localName = spec.local.name
-        const kind = getImportedReactiveExportKind(meta, 'default')
+        const kind = getOwnReactiveExportKind(meta, 'default')
         if (kind) {
           addImportedReactiveBinding(localName, kind, ctx)
         }
@@ -209,7 +209,7 @@ export function buildModuleReactiveMetadata(
   }
   const addStarExport = (
     exportName: string,
-    kind: ReactiveExportKind | undefined,
+    kind: unknown,
     hookInfo: HookReturnInfoSerializable | undefined,
   ) => {
     if (exportName === 'default' || explicitExportNames.has(exportName)) return
@@ -219,7 +219,7 @@ export function buildModuleReactiveMetadata(
       return
     }
     starExportNames.add(exportName)
-    if (kind) {
+    if (isReactiveExportKind(kind)) {
       setMetadataRecordValue(metadata.exports, exportName, kind)
     }
     if (hookInfo) {
@@ -550,7 +550,7 @@ export function buildModuleReactiveMetadata(
     markExplicitExport(exportName)
     const sourceMeta = resolveModuleMetadata(source, options?.filename, options)
     if (!sourceMeta) return
-    const kind = sourceMeta.exports[importedName]
+    const kind = getOwnReactiveExportKind(sourceMeta, importedName)
     if (kind) {
       setMetadataRecordValue(metadata.exports, exportName, kind)
     }
@@ -576,7 +576,7 @@ export function buildModuleReactiveMetadata(
 
     markExplicitExport('default')
     const key = String(memberName)
-    const kind = namespaceMeta.exports[key]
+    const kind = getOwnReactiveExportKind(namespaceMeta, key)
     if (kind) {
       setMetadataRecordValue(metadata.exports, 'default', kind)
     }
@@ -645,7 +645,11 @@ export function buildModuleReactiveMetadata(
         ...Object.keys(sourceMeta.hooks ?? {}),
       ])
       for (const exportName of starNames) {
-        addStarExport(exportName, sourceMeta.exports[exportName], sourceMeta.hooks?.[exportName])
+        addStarExport(
+          exportName,
+          getOwnReactiveExportKind(sourceMeta, exportName),
+          sourceMeta.hooks?.[exportName],
+        )
       }
       continue
     }
