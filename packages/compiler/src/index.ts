@@ -2181,8 +2181,20 @@ function createHIREntrypointVisitor(
           return isBoundDefinition(fnPath) || isExportDefaultDefinition(fnPath)
         }
         const memoHasSideEffects = (
-          fn: BabelCore.types.ArrowFunctionExpression | BabelCore.types.FunctionExpression,
+          fnPath: BabelCore.NodePath<
+            BabelCore.types.ArrowFunctionExpression | BabelCore.types.FunctionExpression
+          >,
         ): boolean => {
+          const fn = fnPath.node
+          const callScopes = new WeakMap<BabelCore.types.Node, BabelCore.NodePath['scope']>()
+          fnPath.traverse({
+            CallExpression(callPath) {
+              callScopes.set(callPath.node, callPath.scope)
+            },
+            OptionalCallExpression(callPath) {
+              callScopes.set(callPath.node, callPath.scope)
+            },
+          })
           const pureCalls = new Set(
             Array.from(SAFE_FUNCTIONS).filter(
               name => !name.startsWith('console.') && name !== 'Math.random',
@@ -2223,6 +2235,20 @@ function createHIREntrypointVisitor(
               t.isIdentifier(callee.object)
             ) {
               return `${callee.object.name}.${callee.property.name}`
+            }
+            return null
+          }
+          const getCalleeRootName = (
+            callee: BabelCore.types.Expression | BabelCore.types.V8IntrinsicIdentifier,
+          ): string | null => {
+            if (t.isIdentifier(callee)) return callee.name
+            if (
+              (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+              !callee.computed &&
+              t.isIdentifier(callee.property) &&
+              t.isIdentifier(callee.object)
+            ) {
+              return callee.object.name
             }
             return null
           }
@@ -2341,6 +2367,9 @@ function createHIREntrypointVisitor(
           ): boolean => {
             const name = getCalleeName(node.callee)
             if (!name) return true
+            const rootName = getCalleeRootName(node.callee)
+            const callScope = callScopes.get(node) ?? fnPath.scope
+            if (pureCalls.has(name) && rootName && callScope.getBinding(rootName)) return true
             if (isUserCodeInvokingBuiltinCall(name, node)) return true
             if (pureCalls.has(name)) return false
             if (effectfulCalls.has(name)) return true
@@ -3674,7 +3703,7 @@ function createHIREntrypointVisitor(
                     }
                   },
                 })
-                const hasSideEffects = memoHasSideEffects(firstArg)
+                const hasSideEffects = memoHasSideEffects(firstArgPath)
                 if (!hasReactiveDependency && !hasSideEffects) {
                   emitWarning(
                     callPath,

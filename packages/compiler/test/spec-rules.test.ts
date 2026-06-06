@@ -1008,6 +1008,8 @@ describe('Spec rule coverage', () => {
       `Object.values({ value: 1 })`,
       `Object.entries({ value: 1 })`,
       `Array.from([1, 2])`,
+      `Array.isArray([])`,
+      `Math.abs(-1)`,
       `String('x')`,
       `Number(1)`,
       `parseInt('10')`,
@@ -1026,6 +1028,74 @@ describe('Spec rule coverage', () => {
 
       expect(warnings.some(w => w.code === 'FICT-M003')).toBe(false)
       expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
+    }
+  })
+
+  it('warns when memo safe-call globals are shadowed (FICT-M003)', () => {
+    const cases = [
+      `
+        import { $memo } from 'fict'
+        const JSON = {
+          stringify() {
+            fetch('/api')
+            return 'x'
+          },
+        }
+        const value = $memo(() => JSON.stringify({ value: 1 }))
+      `,
+      `
+        import { $memo } from 'fict'
+        const Object = {
+          values() {
+            fetch('/api')
+            return []
+          },
+        }
+        const value = $memo(() => Object.values({ value: 1 }))
+      `,
+      `
+        import { $memo } from 'fict'
+        const Array = {
+          isArray() {
+            fetch('/api')
+            return true
+          },
+        }
+        const value = $memo(() => Array.isArray([]))
+      `,
+      `
+        import { $memo } from 'fict'
+        const Math = {
+          abs() {
+            fetch('/api')
+            return 1
+          },
+        }
+        const value = $memo(() => Math.abs(-1))
+      `,
+      `
+        import { $memo } from 'fict'
+        import { Math } from './dep'
+        const value = $memo(() => Math.max(1, 2))
+      `,
+      `
+        import { $memo } from 'fict'
+        import * as Object from './dep'
+        const value = $memo(() => Object.keys({ value: 1 }))
+      `,
+      `
+        import { $memo } from 'fict'
+        function make(Number: (value: number) => number) {
+          return $memo(() => Number(1))
+        }
+      `,
+    ]
+
+    for (const source of cases) {
+      const { warnings } = transformWithWarnings(source)
+
+      expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
+      expect(warnings.some(w => w.code === 'FICT-M001')).toBe(false)
     }
   })
 
