@@ -129,6 +129,116 @@ describe('fict runtime', () => {
     expect(cleaned).toBe(1)
   })
 
+  it('cleans up createRoot effects when setup throws', async () => {
+    const trigger = createSignal(0)
+    let runs = 0
+    let rootCleanups = 0
+    let destroyed = 0
+
+    expect(() => {
+      createRoot(() => {
+        createEffect(() => {
+          trigger()
+          runs++
+        })
+        onCleanup(() => {
+          rootCleanups++
+        })
+        onDestroy(() => {
+          destroyed++
+        })
+        throw new Error('root boom')
+      })
+    }).toThrow('root boom')
+
+    expect(runs).toBe(1)
+    expect(rootCleanups).toBe(1)
+    expect(destroyed).toBe(1)
+
+    trigger(1)
+    await tick()
+
+    expect(runs).toBe(1)
+  })
+
+  it('cleans up createRoot effects when mount flushing throws', async () => {
+    const trigger = createSignal(0)
+    let runs = 0
+    let mountCleanups = 0
+    let destroyed = 0
+
+    expect(() => {
+      createRoot(() => {
+        createEffect(() => {
+          trigger()
+          runs++
+        })
+        onDestroy(() => {
+          destroyed++
+        })
+        onMount(() => {
+          return () => {
+            mountCleanups++
+          }
+        })
+        onMount(() => {
+          throw new Error('mount boom')
+        })
+      })
+    }).toThrow('mount boom')
+
+    expect(runs).toBe(1)
+    expect(mountCleanups).toBe(1)
+    expect(destroyed).toBe(1)
+
+    trigger(1)
+    await tick()
+
+    expect(runs).toBe(1)
+  })
+
+  it('does not leak failed inherited createRoot handlers', async () => {
+    const trigger = createSignal(0)
+    const calls: string[] = []
+
+    const root = createRoot(() => {
+      registerErrorHandler(() => {
+        calls.push('parent')
+        return true
+      })
+
+      expect(() => {
+        createRoot(
+          () => {
+            registerErrorHandler(() => {
+              calls.push('child')
+              return true
+            })
+            createEffect(() => {
+              if (trigger()) {
+                throw new Error('child later')
+              }
+            })
+            throw new Error('child setup')
+          },
+          { inherit: true },
+        )
+      }).toThrow('child setup')
+
+      createEffect(() => {
+        if (trigger()) {
+          throw new Error('parent later')
+        }
+      })
+    })
+
+    trigger(1)
+    await tick()
+
+    expect(calls).toEqual(['parent'])
+    root.dispose()
+  })
+
   it('isolates createRoot by default', () => {
     const calls: string[] = []
     let caught: unknown

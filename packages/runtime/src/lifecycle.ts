@@ -197,15 +197,23 @@ export function createRoot<T>(
   const root = createRootContext(parent)
   const prev = pushRoot(root)
   let value: T
+  let completed = false
   try {
-    value = fn()
+    try {
+      value = fn()
+    } finally {
+      popRoot(prev)
+    }
+    flushOnMount(root)
+    completed = true
+    return {
+      dispose: () => destroyRoot(root),
+      value,
+    }
   } finally {
-    popRoot(prev)
-  }
-  flushOnMount(root)
-  return {
-    dispose: () => destroyRoot(root),
-    value,
+    if (!completed) {
+      destroyRoot(root)
+    }
   }
 }
 
