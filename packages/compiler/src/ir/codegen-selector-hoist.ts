@@ -38,7 +38,7 @@ function rewriteSelectorExpression(
     return false
   }
 
-  if (t.isBinaryExpression(expr) && (expr.operator === '===' || expr.operator === '==')) {
+  if (t.isBinaryExpression(expr) && expr.operator === '===') {
     const leftTracked = getTrackedCallIdentifier(
       expr.left as BabelCore.types.Expression,
       ctx,

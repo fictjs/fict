@@ -3211,6 +3211,50 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('preserves loose equality in selector-shaped list classes', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export function App() {
+        let selected = $state('1')
+        const items = [{ id: 1, name: 'a' }]
+
+        return (
+          <ul>
+            {items.map(item => (
+              <li data-id="loose" key={'loose-' + item.id} class={item.id == selected ? 'on' : ''}>
+                {item.name}
+              </li>
+            ))}
+            {items.map(item => (
+              <li data-id="strict" key={'strict-' + item.id} class={item.id === selected ? 'on' : ''}>
+                {item.name}
+              </li>
+            ))}
+          </ul>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(container.querySelector('[data-id="loose"]')?.className).toBe('on')
+    expect(container.querySelector('[data-id="strict"]')?.className).toBe('')
+
+    teardown()
+    container.remove()
+  })
+
   it('preserves map callback arguments semantics by falling back from list specialization', async () => {
     const source = `
       import { render } from 'fict'

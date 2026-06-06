@@ -66,6 +66,31 @@ describe('P1: Selector Hoist Optimization', () => {
     expect(output).toMatch(/__sel_\d+\(__key\)/)
   })
 
+  it('should not hoist selector for loose equality', () => {
+    const source = `
+      import { $state, render } from "fict";
+
+      function App() {
+        let data = $state([{ id: 1, name: 'Alice' }]);
+        let selected = $state('1');
+
+        return (
+          <ul>
+            {data.map((item) => (
+              <li key={item.id} class={item.id == selected ? "active" : ""}>
+                {item.name}
+              </li>
+            ))}
+          </ul>
+        );
+      }
+    `
+    const output = transform(source)
+
+    expect(output).not.toContain('createSelector')
+    expect(output).toContain(' == selected()')
+  })
+
   it('should not hoist selector for non-keyed list', () => {
     const source = `
       import { $state, render } from "fict";
