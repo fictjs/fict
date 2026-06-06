@@ -178,6 +178,48 @@ describe('semantic validation', () => {
     }
   })
 
+  it('throws when imported macros are used as values', () => {
+    const cases = [
+      `
+        import { $state, $effect } from 'fict'
+        function App() {
+          console.log($state, $effect)
+          return <div>ok</div>
+        }
+      `,
+      `
+        import { $state as stateMacro } from 'fict'
+        function App() {
+          return <div>{typeof stateMacro}</div>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function App() {
+          const macros = { $state }
+          return <div>{Object.keys(macros).length}</div>
+        }
+      `,
+    ]
+
+    for (const source of cases) {
+      expect(() => transform(source)).toThrow(/compiler macro and cannot be used as a value/)
+    }
+  })
+
+  it('allows imported macros in supported call positions', () => {
+    const source = `
+      import { $state, $effect } from 'fict'
+      function App() {
+        let count = $state(0)
+        $effect(() => count)
+        return <div>{count}</div>
+      }
+    `
+
+    expect(() => transform(source)).not.toThrow(/compiler macro and cannot be used as a value/)
+  })
+
   it('throws when reactive scope is invoked via alias (not supported)', () => {
     const source = `
       import { $state } from 'fict'

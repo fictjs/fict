@@ -2490,6 +2490,34 @@ function createHIREntrypointVisitor(
           if (callee.name === '$effect') return 'effect'
           return null
         }
+        const getImportedValueOnlyMacroName = (
+          idPath: BabelCore.NodePath<BabelCore.types.Identifier>,
+        ): '$state' | '$effect' | null => {
+          const binding = idPath.scope.getBinding(idPath.node.name)
+          if (!binding) return null
+          const bindingId = binding.identifier as BabelCore.types.Identifier
+          if (macroBindingIds.state.has(bindingId)) return '$state'
+          if (macroBindingIds.effect.has(bindingId)) return '$effect'
+          return null
+        }
+        const isMacroCallCallee = (
+          idPath: BabelCore.NodePath<BabelCore.types.Identifier>,
+        ): boolean =>
+          idPath.parentPath.isCallExpression() && idPath.parentPath.node.callee === idPath.node
+        path.traverse({
+          Identifier(idPath) {
+            if (!idPath.isReferencedIdentifier()) return
+            if (isMacroCallCallee(idPath)) return
+            const macroName = getImportedValueOnlyMacroName(idPath)
+            if (!macroName) return
+            const displayName =
+              idPath.node.name === macroName ? macroName : `${idPath.node.name} (${macroName})`
+            throw idPath.buildCodeFrameError(
+              `${displayName} is a compiler macro and cannot be used as a value. ` +
+                `Call it only in a supported macro declaration or effect statement.`,
+            )
+          },
+        })
         const getStaticMemberPropertyName = (
           member: BabelCore.types.MemberExpression | BabelCore.types.OptionalMemberExpression,
         ): string | null => {
