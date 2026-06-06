@@ -1841,6 +1841,9 @@ function lowerNodeWithRegionContext(
             regionCtx,
           )
           const controlFlowRegion = directEmitCandidate?.region ?? controlFlowState.region
+          if (controlFlowRegion && regionRequiresEagerDerivedLowering(controlFlowRegion, ctx)) {
+            regionCtx?.disabledRegions.add(controlFlowRegion.id)
+          }
           const canDirectlyEmitRegion =
             !!directEmitCandidate &&
             !!controlFlowRegion &&
@@ -1968,6 +1971,9 @@ function lowerNodeWithRegionContext(
     case 'instruction': {
       // Single instruction - check if it belongs to a region
       const region = findRegionForInstruction(node.instruction, regionCtx)
+      if (region && regionRequiresEagerDerivedLowering(region, ctx)) {
+        regionCtx?.disabledRegions.add(region.id)
+      }
       if (
         !regionCtx?.hoistedInstructions.has(node.instruction) &&
         region &&
@@ -3202,6 +3208,9 @@ function flushInstructionBuffer(
     if (deferredInstructions?.has(item.instr)) {
       continue
     }
+    if (item.region && regionRequiresEagerDerivedLowering(item.region, ctx)) {
+      regionCtx?.disabledRegions.add(item.region.id)
+    }
     if (item.region && deferredRegionIds?.has(item.region.id)) {
       continue
     }
@@ -4037,6 +4046,139 @@ function collectMutableNonReactiveDependencies(
   return Array.from(names)
 }
 
+function isReactiveAccessorReadCall(expr: Expression, ctx: CodegenContext): boolean {
+  if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
+  if (expr.arguments.length !== 0) return false
+  const callee = expr.callee
+  if (callee.kind === 'Identifier') {
+    const name = deSSAVarName(callee.name)
+    return (
+      ctx.trackedVars.has(name) ||
+      (ctx.externalTracked?.has(name) ?? false) ||
+      (ctx.memoVars?.has(name) ?? false) ||
+      (ctx.aliasVars?.has(name) ?? false) ||
+      (ctx.signalVars?.has(name) ?? false)
+    )
+  }
+  return getNamespaceReactiveMemberKind(callee, ctx) !== null
+}
+
+function expressionIsLazyMemoSafe(expr: Expression, ctx: CodegenContext): boolean {
+  switch (expr.kind) {
+    case 'Identifier':
+    case 'Literal':
+    case 'MetaProperty':
+    case 'ThisExpression':
+    case 'SuperExpression':
+    case 'ArrowFunction':
+    case 'FunctionExpression':
+      return true
+    case 'CallExpression':
+    case 'OptionalCallExpression':
+      if (isReactiveAccessorReadCall(expr, ctx)) return true
+      if (
+        expr.callee.kind === 'MemberExpression' ||
+        expr.callee.kind === 'OptionalMemberExpression'
+      ) {
+        return (
+          expressionUsesTracked(expr.callee.object, ctx) &&
+          expressionIsLazyMemoSafe(expr.callee, ctx) &&
+          expr.arguments.every(arg => expressionIsLazyMemoSafe(arg, ctx))
+        )
+      }
+      return false
+    case 'BinaryExpression':
+    case 'LogicalExpression':
+      return expressionIsLazyMemoSafe(expr.left, ctx) && expressionIsLazyMemoSafe(expr.right, ctx)
+    case 'UnaryExpression':
+      return expr.operator !== 'delete' && expressionIsLazyMemoSafe(expr.argument, ctx)
+    case 'ConditionalExpression':
+      return (
+        expressionIsLazyMemoSafe(expr.test, ctx) &&
+        expressionIsLazyMemoSafe(expr.consequent, ctx) &&
+        expressionIsLazyMemoSafe(expr.alternate, ctx)
+      )
+    case 'ArrayExpression':
+      return expr.elements.every(element => !element || expressionIsLazyMemoSafe(element, ctx))
+    case 'ObjectExpression':
+      return expr.properties.every(prop => {
+        if (prop.kind === 'SpreadElement') return expressionIsLazyMemoSafe(prop.argument, ctx)
+        return (
+          (!prop.computed || expressionIsLazyMemoSafe(prop.key, ctx)) &&
+          (prop.propertyKind === 'method' ||
+            prop.propertyKind === 'get' ||
+            prop.propertyKind === 'set' ||
+            expressionIsLazyMemoSafe(prop.value, ctx))
+        )
+      })
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+      if (resolveHookMemberValue(expr, ctx)) return true
+      if (getNamespaceReactiveMemberKind(expr, ctx)) return true
+      if (!expressionUsesTracked(expr, ctx)) return false
+      return (
+        expressionIsLazyMemoSafe(expr.object, ctx) &&
+        (!expr.computed || expressionIsLazyMemoSafe(expr.property, ctx))
+      )
+    case 'JSXElement':
+      return (
+        (typeof expr.tagName === 'string' || expressionIsLazyMemoSafe(expr.tagName, ctx)) &&
+        expr.attributes.every(attr =>
+          attr.isSpread
+            ? !attr.spreadExpr || expressionIsLazyMemoSafe(attr.spreadExpr, ctx)
+            : !attr.value || expressionIsLazyMemoSafe(attr.value, ctx),
+        ) &&
+        expr.children.every(child => {
+          if (child.kind === 'text') return true
+          return expressionIsLazyMemoSafe(child.value, ctx)
+        })
+      )
+    case 'TemplateLiteral':
+      return expr.expressions.every(item => expressionIsLazyMemoSafe(item, ctx))
+    case 'SequenceExpression':
+      return expr.expressions.every(item => expressionIsLazyMemoSafe(item, ctx))
+    case 'SpreadElement':
+      return expressionIsLazyMemoSafe(expr.argument, ctx)
+    case 'TaggedTemplateExpression':
+    case 'AssignmentExpression':
+    case 'UpdateExpression':
+    case 'AwaitExpression':
+    case 'NewExpression':
+    case 'YieldExpression':
+    case 'ImportExpression':
+    case 'ClassExpression':
+      return false
+  }
+}
+
+function expressionReturnsAccessorOrReactiveObject(expr: Expression, ctx: CodegenContext): boolean {
+  const callKind = getReactiveCallKind(expr, ctx)
+  return (
+    callKind === 'memo' ||
+    (expr.kind === 'CallExpression' &&
+      expr.callee.kind === 'Identifier' &&
+      (expr.callee.name === 'prop' || expr.callee.name === 'mergeProps'))
+  )
+}
+
+function instructionRequiresEagerDerivedLowering(instr: Instruction, ctx: CodegenContext): boolean {
+  if (instr.kind !== 'Assign') return false
+  const baseName = deSSAVarName(instr.target.name)
+  if (baseName.startsWith('__destruct_')) return false
+  if (!expressionUsesTracked(instr.value, ctx) && !(ctx.memoVars?.has(baseName) ?? false)) {
+    return false
+  }
+  if (resolveHookMemberValue(instr.value, ctx)) return false
+  if (getNamespaceReactiveMemberKind(instr.value, ctx)) return false
+  if (expressionNeedsAsyncContext(instr.value)) return false
+  if (expressionReturnsAccessorOrReactiveObject(instr.value, ctx)) return false
+  return !expressionIsLazyMemoSafe(instr.value, ctx)
+}
+
+function regionRequiresEagerDerivedLowering(region: Region, ctx: CodegenContext): boolean {
+  return region.instructions.some(instr => instructionRequiresEagerDerivedLowering(instr, ctx))
+}
+
 function replaceMutableSnapshotIdentifiers(
   expr: Expression,
   replacements: Map<string, string>,
@@ -4544,11 +4686,25 @@ function instructionToStatement(
       ['mergeProps'].includes(instr.value.callee.name)
     // Combined check for skipping memo wrapping
     const isMemoReturningCall = isAccessorReturningCall || isReactiveObjectCall
+    const canLazyMemoizeDerived = expressionIsLazyMemoSafe(instr.value, ctx)
     // fix: Check if variable will be mutated (assigned to later without declaration)
     const needsMutable = ctx.mutatedVars?.has(baseName) ?? false
     const lowerAssignedValue = (forceAssigned = false) =>
       lowerExpressionWithDeSSA(instr.value, ctx, forceAssigned || isFunctionValue)
     const needsAsyncContext = expressionNeedsAsyncContext(instr.value)
+    const shouldEagerDerivedValue =
+      !needsAsyncContext && !isMemoReturningCall && !canLazyMemoizeDerived
+    const lowerEagerDerivedValue = (): BabelCore.types.Expression => {
+      ctx.memoVars?.add(baseName)
+      const valueName = reserveFunctionLocalName(ctx, `__eager_${baseName}`)
+      return t.callExpression(
+        t.arrowFunctionExpression(
+          [t.identifier(valueName)],
+          t.arrowFunctionExpression([], t.identifier(valueName)),
+        ),
+        [lowerAssignedValue(true)],
+      )
+    }
     const throwAliasReassignment = (): never => {
       const loc = instr.loc?.start
       throw new HIRError(
@@ -4652,6 +4808,9 @@ function instructionToStatement(
           ctx.memoVars?.delete(baseName)
           return lowerAssignedValue(true)
         }
+        if (shouldEagerDerivedValue) {
+          return lowerEagerDerivedValue()
+        }
         const { expr: derivedExpr, snapshots } = lowerDerivedAssignedValue()
         trackDerivedMemoVar()
         if (ctx.noMemo) {
@@ -4731,6 +4890,11 @@ function instructionToStatement(
               t.variableDeclarator(t.identifier(baseName), derivedExpr),
             ])
           }
+          if (shouldEagerDerivedValue) {
+            return t.variableDeclaration(normalizedDecl, [
+              t.variableDeclarator(t.identifier(baseName), lowerEagerDerivedValue()),
+            ])
+          }
           const { expr: derivedExpr, snapshots } = lowerDerivedAssignedValue()
           // Track as memo only for accessor-returning calls - reactive objects shouldn't be treated as accessors
           trackDerivedMemoVar()
@@ -4763,6 +4927,11 @@ function instructionToStatement(
           const derivedExpr = lowerAssignedValue(true)
           return t.variableDeclaration('let', [
             t.variableDeclarator(t.identifier(baseName), derivedExpr),
+          ])
+        }
+        if (shouldEagerDerivedValue) {
+          return t.variableDeclaration(normalizedDecl, [
+            t.variableDeclarator(t.identifier(baseName), lowerEagerDerivedValue()),
           ])
         }
         const { expr: derivedExpr, snapshots } = lowerDerivedAssignedValue()
@@ -4820,6 +4989,12 @@ function instructionToStatement(
         const derivedExpr = lowerAssignedValue(true)
         return t.expressionStatement(
           t.assignmentExpression('=', t.identifier(baseName), derivedExpr),
+        )
+      }
+
+      if (shouldEagerDerivedValue) {
+        return t.expressionStatement(
+          t.assignmentExpression('=', t.identifier(baseName), lowerEagerDerivedValue()),
         )
       }
 
@@ -4899,6 +5074,11 @@ function instructionToStatement(
             t.variableDeclarator(t.identifier(baseName), derivedExpr),
           ])
         }
+        if (shouldEagerDerivedValue) {
+          return t.variableDeclaration('const', [
+            t.variableDeclarator(t.identifier(baseName), lowerEagerDerivedValue()),
+          ])
+        }
         const { expr: derivedExpr, snapshots } = lowerDerivedAssignedValue()
         // Track as memo only for accessor-returning calls - reactive objects shouldn't be treated as accessors
         trackDerivedMemoVar()
@@ -4931,6 +5111,11 @@ function instructionToStatement(
         const derivedExpr = lowerAssignedValue(true)
         return t.variableDeclaration('let', [
           t.variableDeclarator(t.identifier(baseName), derivedExpr),
+        ])
+      }
+      if (shouldEagerDerivedValue) {
+        return t.variableDeclaration('const', [
+          t.variableDeclarator(t.identifier(baseName), lowerEagerDerivedValue()),
         ])
       }
       const { expr: derivedExpr, snapshots } = lowerDerivedAssignedValue()

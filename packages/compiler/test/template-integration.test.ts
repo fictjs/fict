@@ -139,6 +139,113 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('evaluates impure reactive derived declaration initializers eagerly', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export const log: unknown[] = []
+      export let api: { set(value: number): void }
+
+      function side(value: unknown) {
+        log.push(value)
+        return value
+      }
+
+      const obj = {
+        get value() {
+          log.push('get')
+          return 4
+        },
+      }
+
+      function App() {
+        const a = $state(1)
+        api = { set: (value: number) => a(value) }
+
+        const unused = side(a())
+        const delayed = side(a() + 1)
+        log.push('after-delayed')
+
+        const getterValue = obj.value + a()
+
+        let assigned = 0
+        const assignedValue = (assigned = a() + 2)
+        log.push(['assigned', assigned])
+
+        const pure = a() + 10
+
+        return (
+          <div>
+            <span data-testid="delayed">{delayed}</span>
+            <span data-testid="getter">{getterValue}</span>
+            <span data-testid="assigned">{assignedValue}</span>
+            <span data-testid="pure">{pure}</span>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { set(value: number): void }
+      log: unknown[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(mod.log).toEqual([1, 2, 'after-delayed', 'get', ['assigned', 3]])
+    expect(container.querySelector('[data-testid="delayed"]')?.textContent).toBe('2')
+    expect(container.querySelector('[data-testid="getter"]')?.textContent).toBe('5')
+    expect(container.querySelector('[data-testid="assigned"]')?.textContent).toBe('3')
+    expect(container.querySelector('[data-testid="pure"]')?.textContent).toBe('11')
+
+    mod.api.set(5)
+    await flushUpdates()
+    expect(mod.log).toEqual([1, 2, 'after-delayed', 'get', ['assigned', 3]])
+    expect(container.querySelector('[data-testid="pure"]')?.textContent).toBe('15')
+    expect(container.querySelector('[data-testid="delayed"]')?.textContent).toBe('2')
+    expect(container.querySelector('[data-testid="getter"]')?.textContent).toBe('5')
+    expect(container.querySelector('[data-testid="assigned"]')?.textContent).toBe('3')
+
+    teardown()
+    container.remove()
+  })
+
+  it('throws impure reactive derived declaration initializers at declaration time', () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function fail(value: number) {
+        throw new Error('boom:' + value)
+      }
+
+      function App() {
+        const a = $state(1)
+        const unused = fail(a())
+        return <span>unused</span>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+
+    expect(() => mod.mount(container)).toThrow('boom:1')
+
+    container.remove()
+  })
+
   it('preserves object literal getter/setter semantics at runtime', () => {
     const source = `
       export function run() {
@@ -3841,13 +3948,7 @@ describe('compiled templates DOM integration', () => {
       const source = `
       import { $state, render } from 'fict'
 
-      export const computeLog: string[] = []
       export let setCount: (value: number) => void
-
-      function record(label: string, value: number) {
-        computeLog.push(label + ':' + value)
-        return label + '=' + value
-      }
 
       export function App() {
         let count = $state(0)
@@ -3855,9 +3956,9 @@ describe('compiled templates DOM integration', () => {
           count = value
         }
 
-        const fallbackSummary = record('fallback', count)
-        const richStats = record('rich-stats', count * 10)
-        const richBadge = record('rich-badge', count + 1000)
+        const fallbackSummary = 'fallback=' + count
+        const richStats = 'rich-stats=' + count * 10
+        const richBadge = 'rich-badge=' + (count + 1000)
 
         return (
           <section data-mode={count > 1 ? 'rich' : 'fallback'}>
@@ -3874,14 +3975,12 @@ describe('compiled templates DOM integration', () => {
       }
 
       export function mount(el: HTMLElement) {
-        computeLog.length = 0
         return render(() => <App />, el)
       }
     `
 
       const mod = compileAndLoad<{
         mount: (el: HTMLElement) => () => void
-        computeLog: string[]
         setCount: (value: number) => void
       }>(source, { lazyConditional: true, fineGrainedDom: true })
       const container = document.createElement('div')
@@ -3895,25 +3994,15 @@ describe('compiled templates DOM integration', () => {
         stats: container.querySelector('[data-id="stats"]')?.textContent?.trim() ?? '',
         badge: container.querySelector('[data-id="badge"]')?.textContent?.trim() ?? '',
       })
-      const clearLog = () => {
-        mod.computeLog.length = 0
-      }
 
       await flushMicrotasks()
-      // Debugging output to inspect fallback rendering
-      // eslint-disable-next-line no-console
       expect(activeBranch()).toBe('fallback')
       expect(fallbackText()).toContain('fallback=0')
-      expect(mod.computeLog.length).toBeGreaterThan(0)
-      expect(mod.computeLog.some(entry => entry.startsWith('fallback'))).toBe(true)
-      clearLog()
 
       mod.setCount(1)
       await flushMicrotasks()
       expect(activeBranch()).toBe('fallback')
-      expect(mod.computeLog.some(entry => entry.startsWith('rich'))).toBe(false)
-      expect(mod.computeLog.every(entry => entry.startsWith('fallback'))).toBe(true)
-      clearLog()
+      expect(fallbackText()).toContain('fallback=1')
 
       mod.setCount(2)
       await flushMicrotasks()
@@ -3921,11 +4010,6 @@ describe('compiled templates DOM integration', () => {
       const rich = richText()
       expect(rich.stats).toContain('rich-stats=20')
       expect(rich.badge).toContain('rich-badge')
-      expect(mod.computeLog.length).toBeGreaterThan(0)
-      expect(mod.computeLog.some(entry => entry.startsWith('rich'))).toBe(true)
-      expect(mod.computeLog.some(entry => entry.startsWith('rich-stats'))).toBe(true)
-      expect(mod.computeLog.some(entry => entry.startsWith('rich-badge'))).toBe(true)
-      clearLog()
 
       mod.setCount(0)
       await flushMicrotasks()
