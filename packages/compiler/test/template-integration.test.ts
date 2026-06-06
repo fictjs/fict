@@ -3718,6 +3718,64 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps reactive computed spread keys live for component props', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { flip(): void }
+      function Child(props) {
+        return (
+          <span
+            data-testid="value"
+            data-keys={Object.keys(props).join(',')}
+            data-has-b={'b' in props ? 'yes' : 'no'}
+          >
+            {String(props[props.k])}
+          </span>
+        )
+      }
+
+      export function App() {
+        let key = $state('a')
+        let value = $state('A')
+        api = {
+          flip() {
+            key = 'b'
+            value = 'B'
+          },
+        }
+        return <Child {...{ [key]: value }} k={key} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      api: { flip(): void }
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const value = container.querySelector('[data-testid="value"]') as HTMLSpanElement
+
+    expect(value.textContent).toBe('A')
+    expect(value.getAttribute('data-keys')).toBe('a,k')
+    expect(value.getAttribute('data-has-b')).toBe('no')
+
+    mod.api.flip()
+    await flushUpdates()
+
+    expect(value.textContent).toBe('B')
+    expect(value.getAttribute('data-keys')).toBe('b,k')
+    expect(value.getAttribute('data-has-b')).toBe('yes')
+
+    teardown()
+    container.remove()
+  })
+
   it('does not invoke function-valued component spread sources', async () => {
     const source = `
       import { render } from 'fict'

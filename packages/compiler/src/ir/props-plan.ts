@@ -213,6 +213,13 @@ export function buildPropsPlan(
       return false
     }
 
+    const objectSpreadHasTrackedComputedKey = (expr: Expression): boolean =>
+      expr.kind === 'ObjectExpression' &&
+      (!ctx.nonReactiveScopeDepth || ctx.nonReactiveScopeDepth === 0) &&
+      expr.properties.some(
+        p => p.kind === 'Property' && !!p.computed && helpers.expressionUsesTracked(p.key, ctx),
+      )
+
     const getStaticPropertyName = (property: Expression, computed: boolean): string | null => {
       if (!computed && property.kind === 'Identifier') return property.name
       if (property.kind === 'Literal') {
@@ -293,6 +300,7 @@ export function buildPropsPlan(
         if (isDynamicPropsSpread(attr.spreadExpr)) {
           reportDiagnostic(ctx, DiagnosticCode.FICT_P005, attr.spreadExpr)
         }
+        const needsLazyObjectSource = objectSpreadHasTrackedComputedKey(attr.spreadExpr)
         let spreadExpr = helpers.lowerDomExpression(attr.spreadExpr, ctx)
         if (
           t.isCallExpression(spreadExpr) &&
@@ -331,7 +339,9 @@ export function buildPropsPlan(
             continue
           }
         }
-        spreadExpr = wrapAccessorSource(spreadExpr)
+        spreadExpr = needsLazyObjectSource
+          ? markLazySource(t.arrowFunctionExpression([], spreadExpr))
+          : wrapAccessorSource(spreadExpr)
         pushSpread(spreadExpr)
         continue
       }
