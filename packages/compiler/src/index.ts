@@ -2052,7 +2052,7 @@ function createHIREntrypointVisitor(
           ): string | null => {
             if (t.isIdentifier(callee)) return callee.name
             if (
-              t.isMemberExpression(callee) &&
+              (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
               !callee.computed &&
               t.isIdentifier(callee.property) &&
               t.isIdentifier(callee.object)
@@ -2081,7 +2081,9 @@ function createHIREntrypointVisitor(
             'replaceChildren',
             'replaceWith',
           ])
-          const isEffectfulCall = (node: BabelCore.types.CallExpression): boolean => {
+          const isEffectfulCall = (
+            node: BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression,
+          ): boolean => {
             const name = getCalleeName(node.callee)
             if (!name) return true
             if (pureCalls.has(name)) return false
@@ -2094,7 +2096,7 @@ function createHIREntrypointVisitor(
               return true
             }
             if (
-              t.isMemberExpression(node.callee) &&
+              (t.isMemberExpression(node.callee) || t.isOptionalMemberExpression(node.callee)) &&
               !node.callee.computed &&
               t.isIdentifier(node.callee.property)
             ) {
@@ -2119,7 +2121,7 @@ function createHIREntrypointVisitor(
             ) {
               return true
             }
-            if (t.isCallExpression(node)) {
+            if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
               if (t.isArrowFunctionExpression(node.callee) || t.isFunctionExpression(node.callee)) {
                 return checkNode(node.callee.body)
               }

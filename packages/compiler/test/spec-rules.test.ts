@@ -458,6 +458,48 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
   })
 
+  it('warns when memo contains side-effectful optional calls (FICT-M003)', () => {
+    const cases = [
+      "fetch?.('/api')",
+      "console.log?.('side')",
+      'items.push?.(1)',
+      'document.querySelector?.("main")',
+      'window.dispatchEvent?.(new Event("ready"))',
+    ]
+
+    for (const statement of cases) {
+      const { warnings } = transformWithWarnings(`
+        import { $memo } from 'fict'
+        const items: number[] = []
+        const value = $memo(() => {
+          ${statement}
+          return 1
+        })
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
+      expect(warnings.some(w => w.code === 'FICT-M001')).toBe(false)
+    }
+  })
+
+  it('does not mark pure or unknown optional memo calls as side effects', () => {
+    const cases = ['Math.abs?.(-1)', 'maybe?.()']
+
+    for (const statement of cases) {
+      const { warnings } = transformWithWarnings(`
+        import { $memo } from 'fict'
+        declare const maybe: (() => number) | undefined
+        const value = $memo(() => {
+          ${statement}
+          return 1
+        })
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-M003')).toBe(false)
+      expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
+    }
+  })
+
   it('does not warn when memo returns lazy closures with side effects', () => {
     const cases = [
       'return () => console.log("later")',
