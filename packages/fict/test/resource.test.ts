@@ -483,6 +483,62 @@ describe('resource', () => {
     expect(fetcher).toHaveBeenCalledTimes(1)
   })
 
+  it('uses explicit falsy key overrides for prefetch and mutate', async () => {
+    const fetcher = vi.fn((_, arg: unknown) => Promise.resolve(`value:${String(arg)}`))
+    const r = resource<string, unknown>(fetcher)
+    const objectKey = { id: 1 }
+    const cases: Array<{ label: string; key: unknown; prefetchArg: string }> = [
+      { label: 'null', key: null, prefetchArg: 'prefetched:null' },
+      { label: 'undefined', key: undefined, prefetchArg: 'prefetched:undefined' },
+      { label: 'zero', key: 0, prefetchArg: 'prefetched:zero' },
+      { label: 'false', key: false, prefetchArg: 'prefetched:false' },
+      { label: 'empty', key: '', prefetchArg: 'prefetched:empty' },
+      { label: 'object', key: objectKey, prefetchArg: 'prefetched:object' },
+    ]
+
+    for (const item of cases) {
+      r.prefetch(item.prefetchArg, item.key)
+      await vi.runAllTimersAsync()
+      await tick()
+
+      let result: any
+      const { dispose } = createRoot(() => {
+        result = r.read(item.key)
+      })
+
+      await tick()
+      expect(result.data).toBe(`value:${item.prefetchArg}`)
+
+      r.mutate('ignored', `optimistic:${item.label}`, { key: item.key })
+      expect(result.data).toBe(`optimistic:${item.label}`)
+
+      dispose()
+    }
+  })
+
+  it('invalidates null as a specific resource key', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce('null:first').mockResolvedValueOnce('null:second')
+    const r = resource<string, null>({ fetch: fetcher })
+    let result: any
+
+    createRoot(() => {
+      result = r.read(null)
+    })
+
+    await vi.runAllTimersAsync()
+    await tick()
+    expect(result.data).toBe('null:first')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    r.invalidate(null)
+    await tick()
+    await vi.runAllTimersAsync()
+    await tick()
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(result.data).toBe('null:second')
+  })
+
   it('dedupes concurrent reads for the same key', async () => {
     const fetcher = vi.fn().mockResolvedValue('ok')
     const r = resource(fetcher)

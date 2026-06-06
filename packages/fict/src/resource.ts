@@ -418,12 +418,13 @@ export function resource<T, Args = void>(
     }
   }
 
-  const prefetch = (args: Args, keyOverride?: unknown) => {
-    const key = keyOverride ?? computeKey(args)
+  function prefetch(args: Args, keyOverride?: unknown) {
+    const hasKeyOverride = arguments.length >= 2
+    const key = hasKeyOverride ? keyOverride : computeKey(args)
     const entry = ensureEntry(key)
     const usableData = entry.hasValue && !isExpired(entry)
     if (!usableData) {
-      entry.lastArgs = args
+      entry.lastArgs = hasKeyOverride ? (key as Args) : args
       entry.lastVersion = entry.version()
       startFetch(entry, key, args, { createToken: false })
     }
@@ -435,7 +436,8 @@ export function resource<T, Args = void>(
     options?: { key?: unknown; revalidate?: boolean },
   ) => {
     const args = readArgs(argsAccessor)
-    const key = options?.key ?? computeKey(args)
+    const hasKeyOverride = !!options && Object.prototype.hasOwnProperty.call(options, 'key')
+    const key = hasKeyOverride ? options.key : computeKey(args)
     const entry = ensureEntry(key)
     const prevValue = entry.data()
     const nextValue =
@@ -452,7 +454,7 @@ export function resource<T, Args = void>(
     entry.loading(false)
     entry.error(undefined)
     markExpiry(entry)
-    entry.lastArgs = args
+    entry.lastArgs = hasKeyOverride ? (key as Args) : args
     entry.lastVersion = entry.version()
 
     if (entry.pendingToken) {
