@@ -28,6 +28,48 @@ function getOwnRecordValue<T>(record: Record<string, T> | undefined, key: string
   return record[key]
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isCanonicalArrayPropIndex(value: string): boolean {
+  const index = Number(value)
+  return Number.isSafeInteger(index) && index >= 0 && String(index) === value
+}
+
+function isHookReturnInfoSerializable(value: unknown): value is HookReturnInfoSerializable {
+  if (!isPlainRecord(value)) return false
+  if (
+    Object.prototype.hasOwnProperty.call(value, 'directAccessor') &&
+    value.directAccessor !== undefined &&
+    !isReactiveExportKind(value.directAccessor)
+  ) {
+    return false
+  }
+  if (Object.prototype.hasOwnProperty.call(value, 'objectProps')) {
+    if (value.objectProps !== undefined) {
+      if (!isPlainRecord(value.objectProps)) return false
+      if (!Object.values(value.objectProps).every(isReactiveExportKind)) return false
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(value, 'arrayProps')) {
+    if (value.arrayProps !== undefined) {
+      if (!isPlainRecord(value.arrayProps)) return false
+      if (!Object.keys(value.arrayProps).every(isCanonicalArrayPropIndex)) return false
+      if (!Object.values(value.arrayProps).every(isReactiveExportKind)) return false
+    }
+  }
+  return true
+}
+
+function getOwnHookReturnInfo(
+  record: Record<string, HookReturnInfoSerializable> | undefined,
+  key: string,
+): HookReturnInfoSerializable | undefined {
+  const value = getOwnRecordValue(record, key)
+  return isHookReturnInfoSerializable(value) ? value : undefined
+}
+
 function getOwnReactiveExportKind(
   meta: ModuleReactiveMetadata,
   exportName: string,
@@ -554,7 +596,7 @@ export function buildModuleReactiveMetadata(
     if (kind) {
       setMetadataRecordValue(metadata.exports, exportName, kind)
     }
-    const hookInfo = sourceMeta.hooks?.[importedName]
+    const hookInfo = getOwnHookReturnInfo(sourceMeta.hooks, importedName)
     if (hookInfo) {
       setMetadataRecordValue(hookExports, exportName, hookInfo)
     }

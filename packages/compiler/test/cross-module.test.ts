@@ -2135,6 +2135,75 @@ describe('Cross-Module Reactivity', () => {
       expect(output).not.toContain('x()')
     })
 
+    it('does not publish Object.prototype-named hook re-export metadata from empty hooks', () => {
+      const emptyPath = path.join(baseDir, 'empty-hook-reexport-prototype-names.ts')
+      const realPath = path.join(baseDir, 'real-hook-reexport-control.ts')
+      const malformedPath = path.join(baseDir, 'malformed-hook-reexport-control.ts')
+      const barrelPath = path.join(baseDir, 'barrel-empty-hook-reexport-prototype-names.ts')
+      const appPath = path.join(baseDir, 'app-empty-hook-reexport-prototype-names.tsx')
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(emptyPath), {
+        version: MODULE_REACTIVE_METADATA_VERSION,
+        exports: {},
+        hooks: {},
+      })
+      moduleMetadata.set(path.resolve(realPath), {
+        version: MODULE_REACTIVE_METADATA_VERSION,
+        exports: {},
+        hooks: {
+          useReal: { objectProps: { count: 'signal' } },
+        },
+      })
+      moduleMetadata.set(path.resolve(malformedPath), {
+        version: MODULE_REACTIVE_METADATA_VERSION,
+        exports: {},
+        hooks: {
+          useMalformed: Object.prototype.toString,
+        },
+      })
+
+      transform(
+        `
+          export {
+            toString as useBad,
+            hasOwnProperty as useHas,
+            constructor as useCtor,
+            valueOf as useValue,
+          } from './empty-hook-reexport-prototype-names'
+          export { useReal } from './real-hook-reexport-control'
+          export { useMalformed } from './malformed-hook-reexport-control'
+        `,
+        { moduleMetadata },
+        barrelPath,
+      )
+
+      const meta = moduleMetadata.get(path.resolve(barrelPath))
+      expect(meta?.hooks).toEqual({
+        useReal: { objectProps: { count: 'signal' } },
+      })
+      for (const name of ['useBad', 'useHas', 'useCtor', 'useValue', 'useMalformed']) {
+        expect(Object.prototype.hasOwnProperty.call(meta?.hooks, name)).toBe(false)
+      }
+
+      const output = transform(
+        `
+          import { useBad, useReal } from './barrel-empty-hook-reexport-prototype-names'
+
+          export function App() {
+            const bad = useBad()
+            const real = useReal()
+            return <div>{bad.count}{real.count}</div>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        appPath,
+      )
+
+      expect(output).toContain('bad.count')
+      expect(output).not.toContain('bad.count()')
+      expect(output).toContain('real.count()')
+    })
+
     it('ignores type-only re-export declarations when propagating metadata', () => {
       const storeSource = `
         import { createSignal } from 'fict/advanced'
