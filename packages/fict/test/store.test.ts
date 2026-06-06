@@ -234,6 +234,107 @@ describe('$store', () => {
     expect(seen).toEqual([1, 2])
   })
 
+  it('assigns write-only accessors without reading them first', () => {
+    const setter = vi.fn()
+    const raw: { value?: number } = {}
+    Object.defineProperty(raw, 'value', {
+      enumerable: true,
+      configurable: true,
+      set(next: number) {
+        setter(next)
+      },
+    })
+    const state = $store(raw)
+
+    state.value = 1
+
+    expect(setter).toHaveBeenCalledWith(1)
+    expect(setter).toHaveBeenCalledTimes(1)
+  })
+
+  it('assigns accessors with throwing getters before reading the getter', () => {
+    const setter = vi.fn()
+    const raw: { value?: number } = {}
+    Object.defineProperty(raw, 'value', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        throw new Error('getter should not run')
+      },
+      set(next: number) {
+        setter(next)
+      },
+    })
+    const state = $store(raw)
+
+    expect(() => {
+      state.value = 1
+    }).not.toThrow()
+    expect(setter).toHaveBeenCalledWith(1)
+  })
+
+  it('assigns inherited setters without reading inherited throwing getters first', () => {
+    const setter = vi.fn()
+    const proto: { value?: number } = {}
+    Object.defineProperty(proto, 'value', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        throw new Error('getter should not run')
+      },
+      set(next: number) {
+        setter(next)
+      },
+    })
+    const raw = Object.create(proto) as { value: number }
+    const state = $store(raw)
+
+    expect(() => {
+      state.value = 1
+    }).not.toThrow()
+    expect(setter).toHaveBeenCalledWith(1)
+  })
+
+  it('does not run getter side effects before accessor setters', () => {
+    const setter = vi.fn()
+    let getterCalls = 0
+    const raw = {
+      get value() {
+        getterCalls += 1
+        return 0
+      },
+      set value(next: number) {
+        setter(next)
+      },
+    }
+    const state = $store(raw)
+
+    state.value = 1
+
+    expect(getterCalls).toBe(0)
+    expect(setter).toHaveBeenCalledWith(1)
+  })
+
+  it('does not run getters before setter errors', () => {
+    const error = new Error('setter failed')
+    let getterCalls = 0
+    const raw = {
+      get value() {
+        getterCalls += 1
+        return 0
+      },
+      set value(_next: number) {
+        throw error
+      },
+    }
+    const state = $store(raw)
+
+    expect(() => {
+      state.value = 1
+    }).toThrow(error)
+    expect(getterCalls).toBe(0)
+  })
+
   it('does not notify subscribers after failed non-writable own property writes', async () => {
     const raw: { value?: number } = {}
     Object.defineProperty(raw, 'value', {

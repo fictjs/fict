@@ -307,13 +307,15 @@ export function $store<T extends object>(initialValue: T): T {
 
     set(target, prop, newValue, receiver) {
       const oldLength = Array.isArray(target) && prop === 'length' ? target.length : undefined
-      const oldValue = Reflect.get(target, prop, receiver)
       const hadKey = Object.prototype.hasOwnProperty.call(target, prop)
       const descriptor = getPropertyDescriptor(target, prop)
 
       // Same-value assignment is only inert for own writable data properties.
-      if (oldValue === newValue && hadKey && canSkipSameValueSet(target, prop, descriptor)) {
-        return true
+      if (canSkipSameValueSet(target, prop, descriptor)) {
+        const oldValue = Reflect.get(target, prop, receiver)
+        if (oldValue === newValue && hadKey) {
+          return true
+        }
       }
 
       const releaseDefineSuppression = suppressDefineNotification(target, prop)
@@ -326,9 +328,6 @@ export function $store<T extends object>(initialValue: T): T {
       if (!result) {
         return false
       }
-
-      const nextValue =
-        descriptor && !('value' in descriptor) ? Reflect.get(target, prop, receiver) : newValue
 
       // IMPORTANT: Clear bound method cache BEFORE updating the signal
       const boundMethods = BOUND_METHOD_CACHE.get(target)
@@ -343,6 +342,14 @@ export function $store<T extends object>(initialValue: T): T {
       const signals = SIGNAL_CACHE.get(target)
       const signal = getCachedSignal(signals, prop)
       if (signal) {
+        let nextValue = newValue
+        if (descriptor && !('value' in descriptor)) {
+          try {
+            nextValue = Reflect.get(target, prop, receiver)
+          } catch {
+            nextValue = newValue
+          }
+        }
         signal(nextValue)
       }
 
