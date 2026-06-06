@@ -77,8 +77,16 @@ export function replaceIdentifiersWithOverrides(
   const isWriteTarget =
     (parentKind === 'AssignmentExpression' && parentKey === 'left') ||
     (parentKind === 'UpdateExpression' && parentKey === 'argument')
+  const isLabelPosition =
+    parentKey === 'label' &&
+    (parentKind === 'BreakStatement' ||
+      parentKind === 'ContinueStatement' ||
+      parentKind === 'LabeledStatement')
 
   if (parentKind === 'VariableDeclarator' && parentKey === 'id') {
+    return
+  }
+  if (isLabelPosition) {
     return
   }
   if (isWriteTarget) {

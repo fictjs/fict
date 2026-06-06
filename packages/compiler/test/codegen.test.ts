@@ -841,6 +841,32 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).not.toContain('import.meta().url')
   })
 
+  it('preserves break and continue labels from reactive overrides', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      export function App() {
+        const count = $state(0)
+        const stop = () => {
+          count: for (let i = 0; i < 1; i++) {
+            break count
+          }
+        }
+        const next = () => {
+          count: for (let i = 0; i < 1; i++) {
+            continue count
+          }
+        }
+        return <span>{count}</span>
+      }
+    `)
+
+    expect(output).toContain('break count;')
+    expect(output).toContain('continue count;')
+    expect(output).not.toContain('break count();')
+    expect(output).not.toContain('continue count();')
+  })
+
   it('preserves object shorthand __proto__ as an own data property', () => {
     const output = transform(`
       export function f() {
