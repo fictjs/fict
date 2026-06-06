@@ -925,7 +925,8 @@ export function buildListCallExpression(
     isKeyed && keyExpr
       ? hasUnresolvedCallbackLocalKeyDependencies(keyExpr, mapCallback, keyAliasDeclarations)
       : false
-  const canReuseComputedKey = !!(isKeyed && keyExpr && !hasUnresolvedLocalKeyDeps)
+  if (hasUnresolvedLocalKeyDeps) return null
+  const canReuseComputedKey = !!(isKeyed && keyExpr)
   const canConstifyKey = canReuseComputedKey && !hasRestParam
   const generatedNameReservations = collectCallbackVisibleNames(mapCallback, ctx, t)
   const generatedItemParamName = reserveFreshName('__item', generatedNameReservations)
@@ -1105,11 +1106,6 @@ export function buildListCallExpression(
       t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)
         ? callbackExpr.params[1]
         : null
-    if (hasUnresolvedLocalKeyDeps) {
-      keyExprAst = t.identifier(
-        t.isIdentifier(indexParamName) ? indexParamName.name : generatedIndexParamName,
-      )
-    }
     const keyFn = t.arrowFunctionExpression(
       [
         t.isIdentifier(itemParamName) ? itemParamName : t.identifier(generatedItemParamName),

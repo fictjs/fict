@@ -1482,6 +1482,32 @@ describe('event handler transformation', () => {
     expect(code).toContain('items.map')
   })
 
+  it('falls back for unresolved callback-local list key aliases', () => {
+    const ast = parseFile(`
+      function List() {
+        const items = [{ a: 'A', b: 'B' }]
+        return (
+          <ul>
+            {items.map(item => {
+              const k = item.a
+              {
+                const k = item.b
+              }
+              return <li key={k}>{k}</li>
+            })}
+          </ul>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).not.toContain('createKeyedList')
+    expect(code).toContain('items.map')
+    expect(code).not.toMatch(/=>\s*__index/)
+  })
+
   it('keeps throwing inline list keys only in the extracted key function', () => {
     const ast = parseFile(`
       function List() {
