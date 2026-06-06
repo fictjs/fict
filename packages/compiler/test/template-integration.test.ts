@@ -4588,6 +4588,54 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('does not constify nested function parameters that shadow list items', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export function App() {
+        let items = $state([{ id: 1, label: 'one' }])
+        let selected = $state(1)
+
+        return (
+          <ul>
+            {items.map(item => (
+              <li key={item.id}>
+                {(() => {
+                  const renderInner = item => (
+                    <span data-id="inner" class={item.id === selected ? 'on' : ''}>
+                      {item.label}
+                    </span>
+                  )
+                  return renderInner({ id: 99, label: 'inner' })
+                })()}
+              </li>
+            ))}
+          </ul>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    const inner = container.querySelector('[data-id="inner"]') as HTMLSpanElement
+    expect(inner.textContent).toBe('inner')
+    expect(inner.getAttribute('class')).toBe('')
+
+    teardown()
+    container.remove()
+  })
+
   it('preserves loose equality in selector-shaped list classes', async () => {
     const source = `
       import { $state, render } from 'fict'

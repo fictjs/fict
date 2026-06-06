@@ -970,7 +970,11 @@ export function buildListCallExpression(
 
   const prevInListRender = ctx.inListRender
   const prevListItemAccessorParamNames = ctx.listItemAccessorParamNames
+  const prevListKeyConstificationDepth = ctx.listKeyConstificationDepth
+  const prevListKeyConstificationDisabled = ctx.listKeyConstificationDisabled
   ctx.inListRender = true
+  ctx.listKeyConstificationDepth = canConstifyKey ? 0 : undefined
+  ctx.listKeyConstificationDisabled = false
   if (mapCallback.params[0]) {
     ctx.listItemAccessorParamNames = new Set(prevListItemAccessorParamNames ?? [])
     ctx.listItemAccessorParamNames.add(deSSAVarName(mapCallback.params[0].name))
@@ -981,6 +985,8 @@ export function buildListCallExpression(
   } finally {
     ctx.inListRender = prevInListRender
     ctx.listItemAccessorParamNames = prevListItemAccessorParamNames
+    ctx.listKeyConstificationDepth = prevListKeyConstificationDepth
+    ctx.listKeyConstificationDisabled = prevListKeyConstificationDisabled
   }
 
   const shouldDeferOptionalCallbackEvaluation =
