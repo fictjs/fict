@@ -51,6 +51,201 @@ describe('Suspense', () => {
     dispose()
   })
 
+  it('routes resolved child onMount errors to ErrorBoundary', async () => {
+    const { token, resolve } = createSuspenseToken()
+    const container = document.createElement('div')
+    const error = new Error('resolved mount boom')
+    let first = true
+    let captured: unknown = null
+
+    const Child = () => {
+      if (first) {
+        first = false
+        throw token
+      }
+      onMount(() => {
+        throw error
+      })
+      return { type: 'span', props: { children: 'ready' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'error',
+          onError: err => {
+            captured = err
+          },
+          children: {
+            type: Suspense,
+            props: { fallback: 'loading', children: { type: Child, props: {} } },
+          },
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    await tick()
+    expect(container.textContent).toBe('loading')
+
+    resolve()
+    await tick()
+    await tick()
+
+    expect(captured).toBe(error)
+    expect(container.textContent).toBe('error')
+
+    dispose()
+  })
+
+  it('routes Suspense fallback onMount errors to ErrorBoundary', async () => {
+    const { token } = createSuspenseToken()
+    const container = document.createElement('div')
+    const error = new Error('fallback mount boom')
+    let captured: unknown = null
+
+    const BadFallback = () => {
+      onMount(() => {
+        throw error
+      })
+      return { type: 'span', props: { children: 'loading' } }
+    }
+
+    const Child = () => {
+      throw token
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'error',
+          onError: err => {
+            captured = err
+          },
+          children: {
+            type: Suspense,
+            props: {
+              fallback: { type: BadFallback, props: {} },
+              children: { type: Child, props: {} },
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    expect(captured).toBe(error)
+    expect(container.textContent).toBe('error')
+
+    dispose()
+  })
+
+  it('keeps resolved child onMount errors inside nested ErrorBoundary', async () => {
+    const { token, resolve } = createSuspenseToken()
+    const container = document.createElement('div')
+    let first = true
+    let outerError: unknown = null
+
+    const BadMount = () => {
+      onMount(() => {
+        throw new Error('inner mount boom')
+      })
+      return { type: 'span', props: { children: 'ready' } }
+    }
+
+    const Child = () => {
+      if (first) {
+        first = false
+        throw token
+      }
+      return {
+        type: ErrorBoundary,
+        props: {
+          fallback: 'inner',
+          children: { type: BadMount, props: {} },
+        },
+      }
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'outer',
+          onError: err => {
+            outerError = err
+          },
+          children: {
+            type: Suspense,
+            props: {
+              fallback: 'loading',
+              children: { type: Child, props: {} },
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    await tick()
+    expect(container.textContent).toBe('loading')
+
+    resolve()
+    await tick()
+    await tick()
+
+    expect(outerError).toBe(null)
+    expect(container.textContent).toBe('inner')
+
+    dispose()
+  })
+
+  it('runs onMount once after Suspense resolves successfully', async () => {
+    const { token, resolve } = createSuspenseToken()
+    const container = document.createElement('div')
+    let first = true
+    let mounted = 0
+
+    const Child = () => {
+      if (first) {
+        first = false
+        throw token
+      }
+      onMount(() => {
+        mounted += 1
+      })
+      return { type: 'span', props: { children: 'ready' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: 'loading',
+          children: { type: Child, props: {} },
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    expect(container.textContent).toBe('loading')
+
+    resolve()
+    await tick()
+    await tick()
+
+    expect(container.textContent).toBe('ready')
+    expect(mounted).toBe(1)
+
+    dispose()
+  })
+
   it('does not run onMount when render fails inside Suspense', async () => {
     const container = document.createElement('div')
     let mounted = 0

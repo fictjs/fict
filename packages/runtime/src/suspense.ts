@@ -88,6 +88,12 @@ export function Suspense(props: SuspenseProps): FictNode {
     const prev = pushRoot(root)
     let nodes: Node[] = []
     let boundaryPushed = false
+    let didPopRoot = false
+    const restoreRoot = () => {
+      if (didPopRoot) return
+      popRoot(prev)
+      didPopRoot = true
+    }
     try {
       if (streamBoundaryId) {
         __fictPushSSRBoundary(streamBoundaryId)
@@ -104,7 +110,7 @@ export function Suspense(props: SuspenseProps): FictNode {
             node => isCommentLike(node, markerOwnerDocument) && node.data === 'fict:suspend',
           ))
       if (suspendedAttempt) {
-        popRoot(prev)
+        restoreRoot()
         destroyRoot(root)
         return
       }
@@ -112,9 +118,12 @@ export function Suspense(props: SuspenseProps): FictNode {
       if (parentNode) {
         nodes = insertNodesBefore(parentNode, nodes, endMarker)
       }
+      restoreRoot()
+      flushOnMount(root)
     } catch (err) {
-      popRoot(prev)
+      restoreRoot()
       destroyRoot(root)
+      removeNodes(nodes)
       if (!handleError(err, { source: 'render' }, hostRoot)) {
         throw err
       }
@@ -124,8 +133,6 @@ export function Suspense(props: SuspenseProps): FictNode {
         __fictPopSSRBoundary(streamBoundaryId ?? undefined)
       }
     }
-    popRoot(prev)
-    flushOnMount(root)
 
     cleanup = () => {
       destroyRoot(root)
