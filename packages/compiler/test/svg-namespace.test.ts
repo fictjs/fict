@@ -2,13 +2,18 @@ import { describe, expect, it } from 'vitest'
 import { transform } from './test-utils'
 
 describe('SVG/MathML Namespace Support ()', () => {
-  it('throws for unsupported JSX namespaced tags', () => {
+  it('preserves JSX namespaced intrinsic tags', () => {
     const source = `
       export function App() {
-        return <svg:rect />
+        return <svg:path d="M0 0" xlink:href="#a"><svg:title /></svg:path>
       }
     `
-    expect(() => transform(source)).toThrow(/Unsupported JSX tag syntax/)
+    const output = transform(source)
+    expect(output).toContain('<svg:path')
+    expect(output).toContain('d=\\"M0 0\\"')
+    expect(output).toContain('xlink:href=\\"#a\\"')
+    expect(output).toContain('<svg:title></svg:title>')
+    expect(output).toContain('</svg:path>')
   })
 
   describe('SVG elements', () => {

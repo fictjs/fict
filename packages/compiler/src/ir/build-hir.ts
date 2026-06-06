@@ -3974,10 +3974,13 @@ function convertJSXElement(node: BabelCore.types.JSXElement): HJSXElementExpress
     // Component.SubComponent
     tagName = convertJSXMemberExpr(opening.name)
     isComponent = true
+  } else if (t.isJSXNamespacedName(opening.name)) {
+    tagName = `${opening.name.namespace.name}:${opening.name.name.name}`
   } else {
+    const unsupportedName = opening.name as BabelCore.types.Node
     return reportUnsupportedExpression(
-      opening.name,
-      `Unsupported JSX tag syntax '${opening.name.type}' in HIR conversion`,
+      unsupportedName,
+      `Unsupported JSX tag syntax '${unsupportedName.type}' in HIR conversion`,
     )
   }
 

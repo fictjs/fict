@@ -727,6 +727,36 @@ describe('buildHIR - Advanced Patterns', () => {
     expect(xmlAttr.value.value).toBe('preserve')
   })
 
+  it('preserves JSX namespaced tags as intrinsic names', () => {
+    const ast = parseFile(`
+      function App() {
+        return <svg:path d="M0 0" xlink:href="#a"><svg:title /></svg:path>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const fn = namedFunction(hir, 'App', 0)
+    const returnTerm = assertDefined(findReturnWithArgument(fn), 'expected jsx return')
+    const jsx = returnTerm.argument
+    expect(jsx.kind).toBe('JSXElement')
+    if (jsx.kind !== 'JSXElement') {
+      throw new Error('expected jsx element')
+    }
+    expect(jsx.tagName).toBe('svg:path')
+    expect(jsx.isComponent).toBe(false)
+    expect(jsx.attributes.find(a => a.name === 'xlink:href')).toBeDefined()
+
+    const child = assertDefined(
+      jsx.children.find(item => item.kind === 'element'),
+      'expected namespaced child',
+    )
+    expect(child.kind).toBe('element')
+    if (child.kind !== 'element') {
+      throw new Error('expected element child')
+    }
+    expect(child.value.tagName).toBe('svg:title')
+    expect(child.value.isComponent).toBe(false)
+  })
+
   it('throws on JSX spread children', () => {
     const ast = parseFile(`
       function App(items) {
