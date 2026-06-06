@@ -3652,6 +3652,87 @@ describe('tracked reads/writes in HIR codegen', () => {
     ).toBeGreaterThan(0)
   })
 
+  it('keeps runtime creator imports visible after branch-local shadows', () => {
+    const directOutput = transform(`
+      import { createSignal } from '@fictjs/runtime'
+
+      export function App() {
+        if (false) {
+          const createSignal = () => 0
+          console.log(createSignal)
+        }
+        const count = createSignal(1)
+        return <span>{count}</span>
+      }
+    `)
+
+    expect(directOutput.match(/\(\) => count\(\), createElement/g)?.length ?? 0).toBeGreaterThan(0)
+    expect(directOutput).not.toMatch(/\(\) => count, createElement/)
+
+    const aliasOutput = transform(`
+      import { createSignal as makeSignal } from '@fictjs/runtime'
+
+      export function App() {
+        if (false) {
+          const makeSignal = () => 0
+          console.log(makeSignal)
+        }
+        const count = makeSignal(1)
+        return <span>{count}</span>
+      }
+    `)
+
+    expect(aliasOutput.match(/\(\) => count\(\), createElement/g)?.length ?? 0).toBeGreaterThan(0)
+    expect(aliasOutput).not.toMatch(/\(\) => count, createElement/)
+
+    const memoOutput = transform(`
+      import { createMemo } from '@fictjs/runtime'
+
+      export function App() {
+        if (false) {
+          const createMemo = () => 0
+          console.log(createMemo)
+        }
+        const count = createMemo(() => 1)
+        return <span>{count}</span>
+      }
+    `)
+
+    expect(memoOutput.match(/\(\) => count\(\), createElement/g)?.length ?? 0).toBeGreaterThan(0)
+    expect(memoOutput).not.toMatch(/\(\) => count, createElement/)
+
+    const namespaceOutput = transform(`
+      import * as R from '@fictjs/runtime'
+
+      export function App() {
+        if (false) {
+          const R = { createSignal: value => value }
+          console.log(R)
+        }
+        const count = R.createSignal(1)
+        return <span>{count}</span>
+      }
+    `)
+
+    expect(namespaceOutput.match(/\(\) => count\(\), createElement/g)?.length ?? 0).toBeGreaterThan(
+      0,
+    )
+    expect(namespaceOutput).not.toMatch(/\(\) => count, createElement/)
+
+    const trueShadowOutput = transform(`
+      import { createSignal } from '@fictjs/runtime'
+
+      export function App() {
+        const createSignal = value => value
+        const count = createSignal(1)
+        return <span>{count}</span>
+      }
+    `)
+
+    expect(trueShadowOutput).toMatch(/\(\) => count, createElement/)
+    expect(trueShadowOutput).not.toMatch(/\(\) => count\(\), createElement/)
+  })
+
   it('keeps value props reactive when unreachable prop calls exist', () => {
     const ast = parseFile(`
       function Returned({ value }) {

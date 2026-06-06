@@ -38,8 +38,12 @@ function isNameShadowed(name: string, ctx: CodegenContext): boolean {
   return !!(ctx.shadowedNames?.has(name) || ctx.localDeclaredNames?.has(name))
 }
 
+function isRuntimeImportShadowed(name: string, ctx: CodegenContext): boolean {
+  return ctx.shadowedNames?.has(deSSAVarName(name)) ?? false
+}
+
 function getRuntimeImportedKind(name: string, ctx: CodegenContext): ReactiveExportKind | null {
-  if (isNameShadowed(name, ctx)) return null
+  if (isRuntimeImportShadowed(name, ctx)) return null
   const imported = ctx.moduleRuntimeImportMap?.get(name)
   if (!imported) return null
   return getRuntimeReactiveCreatorKind(imported, ctx.moduleRuntimeImportSources?.get(name))
@@ -48,8 +52,8 @@ function getRuntimeImportedKind(name: string, ctx: CodegenContext): ReactiveExpo
 function getRuntimeMemberKind(expr: Expression, ctx: CodegenContext): ReactiveExportKind | null {
   if (expr.kind !== 'MemberExpression' && expr.kind !== 'OptionalMemberExpression') return null
   if (expr.object.kind !== 'Identifier') return null
-  const objectName = deSSAVarName(expr.object.name)
-  if (isNameShadowed(objectName, ctx)) return null
+  const objectName = expr.object.name
+  if (isRuntimeImportShadowed(objectName, ctx)) return null
   if (!ctx.moduleRuntimeNamespaceImports?.has(objectName)) return null
   const propName = getStaticPropName(expr.property as Expression, expr.computed)
   if (typeof propName !== 'string') return null
@@ -123,7 +127,8 @@ export function getReactiveCallKind(
   if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return null
   const callee = normalizeReactiveCallee(expr.callee)
   if (callee.kind === 'Identifier') {
-    const name = deSSAVarName(callee.name)
+    const rawName = callee.name
+    const name = deSSAVarName(rawName)
     if (expr.macro === 'state') return 'signal'
     if (expr.macro === 'memo') return 'memo'
     if (!ctx.strictMacroBindings && ctx.stateMacroNames?.has(name)) return 'signal'
@@ -131,7 +136,7 @@ export function getReactiveCallKind(
       return 'store'
     }
     if (!ctx.strictMacroBindings && ctx.memoMacroNames?.has(name)) return 'memo'
-    return getRuntimeImportedKind(name, ctx)
+    return getRuntimeImportedKind(rawName, ctx)
   }
   return getRuntimeMemberKind(callee, ctx)
 }
@@ -158,7 +163,7 @@ export function getReactiveCallKindFromBabel(
     const memberCallee = callee
     if (!t.isIdentifier(memberCallee.object)) return null
     const objectName = memberCallee.object.name
-    if (isNameShadowed(objectName, ctx)) return null
+    if (isRuntimeImportShadowed(objectName, ctx)) return null
     if (!ctx.moduleRuntimeNamespaceImports?.has(objectName)) return null
     const propName = getStaticBabelPropName(memberCallee.property, memberCallee.computed, t)
     if (typeof propName !== 'string') return null
