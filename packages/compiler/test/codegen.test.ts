@@ -1478,6 +1478,83 @@ describe('resumable event handler transformation', () => {
     expect(code).toContain('__result !== __handler')
   })
 
+  it('throws for explicit resumable member handler references', () => {
+    const cases = [
+      {
+        name: 'getter',
+        source: `
+          const holder = {
+            get handler() {
+              return () => 1
+            },
+          }
+          function Comp() {
+            return <button onClick$={holder.handler}>Click</button>
+          }
+        `,
+      },
+      {
+        name: 'throwing getter',
+        source: `
+          const holder = {
+            get handler() {
+              throw new Error('handler')
+            },
+          }
+          function Comp() {
+            return <button onClick$={holder.handler}>Click</button>
+          }
+        `,
+      },
+      {
+        name: 'proxy',
+        source: `
+          const holder = new Proxy({ handler: () => 1 }, {})
+          function Comp() {
+            return <button onClick$={holder.handler}>Click</button>
+          }
+        `,
+      },
+      {
+        name: 'function-valued data member',
+        source: `
+          const holder = { handler: () => 1 }
+          function Comp() {
+            return <button onClick$={holder.handler}>Click</button>
+          }
+        `,
+      },
+      {
+        name: 'module member',
+        source: `
+          export const holder = { handler: () => 1 }
+          export function Comp() {
+            return <button onClick$={holder.handler}>Click</button>
+          }
+        `,
+      },
+      {
+        name: 'component-local member',
+        source: `
+          function Comp() {
+            const holder = { handler: () => 1 }
+            return <button onClick$={holder.handler}>Click</button>
+          }
+        `,
+      },
+    ]
+
+    for (const testCase of cases) {
+      const ast = parseFile(testCase.source)
+      const hir = buildHIR(ast)
+
+      expect(
+        () => lowerHIRWithRegions(hir, t, { resumable: true, filename: `${testCase.name}.tsx` }),
+        testCase.name,
+      ).toThrow(/member-expression handler values/i)
+    }
+  })
+
   it('captures function deps used in nested returned closures (resumable)', () => {
     const ast = parseFile(`
       function Comp() {

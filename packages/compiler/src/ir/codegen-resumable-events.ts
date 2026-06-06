@@ -232,6 +232,22 @@ export function emitResumableEventBinding(
   })
   ctx.wrapTrackedExpressions = prevWrapTracked
 
+  if (t.isMemberExpression(valueExpr) || t.isOptionalMemberExpression(valueExpr)) {
+    if (options?.explicit) {
+      const loc = expr.loc?.start
+      throw new HIRError(
+        `Resumable event handlers cannot use member-expression handler values because member reads must be evaluated during render. Store the handler in a stable function binding or remove '$' suffix.`,
+        'BUILD_ERROR',
+        {
+          file: ctx.options?.filename ?? '<unknown>',
+          line: loc?.line,
+          variable: eventName,
+        },
+      )
+    }
+    return false
+  }
+
   const ensureHandlerParam = (fn: BabelCore.types.Expression): BabelCore.types.Expression => {
     if (t.isArrowFunctionExpression(fn)) {
       return fn
