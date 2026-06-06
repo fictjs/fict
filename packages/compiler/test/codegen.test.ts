@@ -1008,6 +1008,88 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).not.toContain('__fictUseSignal(__fictCtx, 1')
   })
 
+  it('keeps object-property JSX member component props reactive', () => {
+    const ast = parseFile(`
+      import { $state } from 'fict'
+
+      const UI = {
+        Label: ({ value }: { value: number }) => <span>{value}</span>,
+      }
+
+      export function App() {
+        const count = $state(1)
+        return <UI.Label value={count} />
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('const value = prop(() => __props.value)')
+    expect(code).toContain('() => value()')
+    expect(code).toContain('value: __fictProp(() => count())')
+    expect(code).toContain('type: UI.Label')
+    expect(code).not.toContain('({ value })')
+    expect(code).not.toContain('const value = __props.value')
+  })
+
+  it('keeps object-method JSX member component props reactive', () => {
+    const ast = parseFile(`
+      import { $state } from 'fict'
+
+      const UI = {
+        Label({ value }: { value: number }) {
+          return <span>{value}</span>
+        },
+      }
+
+      export function App() {
+        const count = $state(1)
+        return <UI.Label value={count} />
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('Label(__props) {')
+    expect(code).toContain('const value = prop(() => __props.value)')
+    expect(code).toContain('() => value()')
+    expect(code).toContain('value: __fictProp(() => count())')
+    expect(code).not.toContain('const value = __props.value')
+  })
+
+  it('keeps nested JSX member component aliased default and rest props reactive', () => {
+    const ast = parseFile(`
+      import { $state } from 'fict'
+
+      const UI = {
+        Nav: {
+          Item: ({ value: label = "fallback", ...rest }: { value?: number; extra?: number }) => (
+            <span>{label}{rest.extra}</span>
+          ),
+        },
+      }
+
+      export function App() {
+        const count = $state(1)
+        return <UI.Nav.Item value={count} extra={count} />
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('const label = prop(() =>')
+    expect(code).toContain('__props.value === void 0')
+    expect(code).toContain('__fictPropsRest(__props, ["value"])')
+    expect(code).toContain('() => label()')
+    expect(code).toContain('value: __fictProp(() => count())')
+    expect(code).toContain('extra: __fictProp(() => count())')
+    expect(code).toContain('type: UI.Nav.Item')
+    expect(code).not.toContain('({ value: label = "fallback", ...rest })')
+  })
+
   it('lowers array-literal component spreads to index props', () => {
     const output = transform(`
       import { $state } from 'fict'
