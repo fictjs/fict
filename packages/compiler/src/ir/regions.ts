@@ -21,6 +21,7 @@ import type {
   Expression,
   Instruction,
   JSXElementExpression as HJSXElementExpression,
+  TemplateLiteral,
   TemplateQuasi,
   Terminator,
 } from './hir'
@@ -725,6 +726,19 @@ function compareInstructionSourceOrder(
   return (instructionOrder.get(a) ?? 0) - (instructionOrder.get(b) ?? 0)
 }
 
+function compareInstructionLoc(a: Instruction, b: Instruction): number | null {
+  const aLoc = a.loc?.start
+  const bLoc = b.loc?.start
+  if (!aLoc || !bLoc) return null
+  if (aLoc.line !== bLoc.line) return aLoc.line - bLoc.line
+  return aLoc.column - bLoc.column
+}
+
+function instructionSourceBefore(a: Instruction, b: Instruction): boolean {
+  const order = compareInstructionLoc(a, b)
+  return order !== null && order < 0
+}
+
 function isClassEvaluationBarrier(instr: Instruction): boolean {
   return (
     instr.kind === 'Assign' &&
@@ -1059,6 +1073,7 @@ interface RegionEmitContext {
   regionResult: RegionResult
   emittedRegions: Set<number>
   disabledRegions: Set<number>
+  hoistedInstructions: Set<Instruction>
   pendingInstructions: Map<number, Instruction[]>
   rootNode: StructuredNode
   inlineUnownedInRegionBody?: boolean | undefined
@@ -1103,6 +1118,7 @@ function lowerStructuredNodeInternal(
         regionResult,
         emittedRegions: new Set<number>(),
         disabledRegions: new Set<number>(),
+        hoistedInstructions: new Set<Instruction>(),
         pendingInstructions: new Map<number, Instruction[]>(),
         rootNode: node,
       }
@@ -1953,6 +1969,7 @@ function lowerNodeWithRegionContext(
       // Single instruction - check if it belongs to a region
       const region = findRegionForInstruction(node.instruction, regionCtx)
       if (
+        !regionCtx?.hoistedInstructions.has(node.instruction) &&
         region &&
         region.shouldMemoize &&
         !regionCtx?.disabledRegions.has(region.id) &&
@@ -1962,6 +1979,7 @@ function lowerNodeWithRegionContext(
         regionCtx?.emittedRegions.add(region.id)
         return generateRegionStatements(region, t, declaredVars, ctx, regionCtx)
       }
+      if (regionCtx?.hoistedInstructions.has(node.instruction)) return []
       // Not in a memoized region or region already emitted
       const stmt = instructionToStatement(node.instruction, t, declaredVars, ctx)
       return stmt ? [stmt] : []
@@ -2658,6 +2676,7 @@ function lowerStructuredNodeForRegion(
 
     case 'instruction': {
       if (skipInstructions?.has(node.instruction)) return []
+      if (regionCtx?.hoistedInstructions.has(node.instruction)) return []
       const owner = findRegionForInstruction(node.instruction, regionCtx)
       if (!owner) {
         if (!regionCtx?.inlineUnownedInRegionBody) return []
@@ -3177,6 +3196,9 @@ function flushInstructionBuffer(
   const stmts: BabelCore.types.Statement[] = []
 
   for (const item of buffer) {
+    if (regionCtx?.hoistedInstructions.has(item.instr)) {
+      continue
+    }
     if (deferredInstructions?.has(item.instr)) {
       continue
     }
@@ -3490,6 +3512,7 @@ function generateRegionStatements(
   const instructionIndexes = new Map<Instruction, number>()
   const declarationByName = new Map<string, Instruction>()
   region.instructions.forEach((instr, index) => {
+    if (regionCtx?.hoistedInstructions.has(instr)) return
     instructionIndexes.set(instr, index)
     if (instr.kind === 'Assign' && instr.declarationKind) {
       declarationByName.set(deSSAVarName(instr.target.name), instr)
@@ -3497,11 +3520,22 @@ function generateRegionStatements(
   })
   const emitHoistedInstruction = (instr: Instruction): void => {
     if (hoistedInstructionSet.has(instr)) return
+    if (regionCtx?.hoistedInstructions.has(instr)) return
     const stmt = instructionToStatement(instr, t, declaredVars, ctx)
     if (stmt) hoistedStatements.push(stmt)
     hoistedInstructionSet.add(instr)
+    regionCtx?.hoistedInstructions.add(instr)
     if (instr.kind === 'Assign') {
       memoDeclarations.delete(instr.target.name)
+    }
+  }
+  const hoistMutableSnapshotDeclarations = (instr: AssignInstruction, deps: string[]): void => {
+    if (!regionCtx) return
+    for (const dep of deps) {
+      if (declaredVars.has(dep)) continue
+      const declaration = findPriorDeclarationInstruction(regionCtx.rootNode, dep, instr)
+      if (!declaration || declaration === instr) continue
+      emitHoistedInstruction(declaration)
     }
   }
   const hoistPriorLocalDependencies = (
@@ -3524,6 +3558,16 @@ function generateRegionStatements(
   }
 
   for (const instr of region.instructions) {
+    if (regionCtx?.hoistedInstructions.has(instr)) {
+      continue
+    }
+    if (instr.kind === 'Assign') {
+      const baseName = deSSAVarName(instr.target.name)
+      const mutableSnapshotDeps = collectMutableNonReactiveDependencies(instr.value, ctx, baseName)
+      if (mutableSnapshotDeps.length > 0) {
+        hoistMutableSnapshotDeclarations(instr, mutableSnapshotDeps)
+      }
+    }
     if (hoistedInstructionSet.has(instr)) {
       continue
     }
@@ -3545,6 +3589,7 @@ function generateRegionStatements(
     const prefixStatements =
       prefixInstructions?.flatMap(instr => {
         if (hoistedInstructionSet.has(instr)) return []
+        if (regionCtx?.hoistedInstructions.has(instr)) return []
         const stmt = instructionToStatement(instr, t, localDeclared, ctx)
         return stmt ? [stmt] : []
       }) ?? []
@@ -3963,6 +4008,212 @@ function collectExprDependencies(expr: Expression): Set<string> {
   return deps
 }
 
+function isReactiveSnapshotExcludedName(name: string, ctx: CodegenContext): boolean {
+  return (
+    ctx.trackedVars.has(name) ||
+    (ctx.externalTracked?.has(name) ?? false) ||
+    (ctx.memoVars?.has(name) ?? false) ||
+    (ctx.aliasVars?.has(name) ?? false) ||
+    (ctx.signalVars?.has(name) ?? false) ||
+    (ctx.storeVars?.has(name) ?? false) ||
+    (ctx.namespaceStoreAliasVars?.has(name) ?? false) ||
+    (ctx.importedNamespaces?.has(name) ?? false)
+  )
+}
+
+function collectMutableNonReactiveDependencies(
+  expr: Expression,
+  ctx: CodegenContext,
+  targetName?: string,
+): string[] {
+  const names = new Set<string>()
+  for (const dep of collectExprDependencies(expr)) {
+    const name = deSSAVarName(dep)
+    if (name === targetName) continue
+    if (!(ctx.mutatedVars?.has(name) ?? false)) continue
+    if (isReactiveSnapshotExcludedName(name, ctx)) continue
+    names.add(name)
+  }
+  return Array.from(names)
+}
+
+function replaceMutableSnapshotIdentifiers(
+  expr: Expression,
+  replacements: Map<string, string>,
+): Expression {
+  const replace = (current: Expression): Expression => {
+    switch (current.kind) {
+      case 'Identifier': {
+        const replacement = replacements.get(deSSAVarName(current.name))
+        return replacement ? { ...current, name: replacement } : current
+      }
+      case 'Literal':
+      case 'MetaProperty':
+      case 'ThisExpression':
+      case 'SuperExpression':
+        return current
+      case 'ImportExpression':
+        return {
+          ...current,
+          source: replace(current.source),
+          options: current.options ? replace(current.options) : undefined,
+        }
+      case 'MemberExpression':
+      case 'OptionalMemberExpression':
+        return {
+          ...current,
+          object: replace(current.object),
+          property: current.computed ? replace(current.property) : current.property,
+        }
+      case 'CallExpression':
+      case 'OptionalCallExpression':
+        return {
+          ...current,
+          callee: replace(current.callee),
+          arguments: current.arguments.map(arg => replace(arg)),
+        }
+      case 'BinaryExpression':
+      case 'LogicalExpression':
+        return { ...current, left: replace(current.left), right: replace(current.right) }
+      case 'UnaryExpression':
+      case 'SpreadElement':
+      case 'AwaitExpression':
+        return { ...current, argument: replace(current.argument) }
+      case 'ConditionalExpression':
+        return {
+          ...current,
+          test: replace(current.test),
+          consequent: replace(current.consequent),
+          alternate: replace(current.alternate),
+        }
+      case 'ArrayExpression':
+        return {
+          ...current,
+          elements: current.elements.map(element => (element ? replace(element) : null)),
+        }
+      case 'ObjectExpression':
+        return {
+          ...current,
+          properties: current.properties.map(prop =>
+            prop.kind === 'SpreadElement'
+              ? { ...prop, argument: replace(prop.argument) }
+              : {
+                  ...prop,
+                  key: prop.computed ? replace(prop.key) : prop.key,
+                  value: replace(prop.value),
+                },
+          ),
+        }
+      case 'JSXElement':
+        return {
+          ...current,
+          tagName: typeof current.tagName === 'string' ? current.tagName : replace(current.tagName),
+          attributes: current.attributes.map(attr =>
+            attr.isSpread
+              ? {
+                  ...attr,
+                  spreadExpr: attr.spreadExpr ? replace(attr.spreadExpr) : undefined,
+                }
+              : { ...attr, value: attr.value ? replace(attr.value) : null },
+          ),
+          children: current.children.map(child => {
+            if (child.kind === 'text') return child
+            if (child.kind === 'expression') return { ...child, value: replace(child.value) }
+            return { ...child, value: replace(child.value) as HJSXElementExpression }
+          }),
+        }
+      case 'TemplateLiteral':
+        return { ...current, expressions: current.expressions.map(expr => replace(expr)) }
+      case 'AssignmentExpression':
+        return { ...current, left: replace(current.left), right: replace(current.right) }
+      case 'UpdateExpression':
+        return { ...current, argument: replace(current.argument) }
+      case 'NewExpression':
+        return {
+          ...current,
+          callee: replace(current.callee),
+          arguments: current.arguments.map(arg => replace(arg)),
+        }
+      case 'SequenceExpression':
+        return { ...current, expressions: current.expressions.map(expr => replace(expr)) }
+      case 'YieldExpression':
+        return { ...current, argument: current.argument ? replace(current.argument) : null }
+      case 'TaggedTemplateExpression':
+        return {
+          ...current,
+          tag: replace(current.tag),
+          quasi: replace(current.quasi) as TemplateLiteral,
+        }
+      case 'ArrowFunction':
+      case 'FunctionExpression':
+      case 'ClassExpression':
+        return current
+    }
+  }
+
+  return replace(expr)
+}
+
+function collectStructuredAssignDeclarations(
+  node: StructuredNode,
+  into: AssignInstruction[] = [],
+): AssignInstruction[] {
+  switch (node.kind) {
+    case 'instruction':
+      if (node.instruction.kind === 'Assign' && node.instruction.declarationKind) {
+        into.push(node.instruction)
+      }
+      break
+    case 'sequence':
+      node.nodes.forEach(child => collectStructuredAssignDeclarations(child, into))
+      break
+    case 'block':
+      node.statements.forEach(child => collectStructuredAssignDeclarations(child, into))
+      break
+    case 'labeled':
+      collectStructuredAssignDeclarations(node.statement, into)
+      break
+    case 'if':
+      collectStructuredAssignDeclarations(node.consequent, into)
+      if (node.alternate) collectStructuredAssignDeclarations(node.alternate, into)
+      break
+    case 'while':
+    case 'doWhile':
+    case 'for':
+    case 'forOf':
+    case 'forIn':
+      collectStructuredAssignDeclarations(node.body, into)
+      break
+    case 'switch':
+      node.cases.forEach(item => collectStructuredAssignDeclarations(item.body, into))
+      break
+    case 'try':
+      collectStructuredAssignDeclarations(node.block, into)
+      if (node.handler) collectStructuredAssignDeclarations(node.handler.body, into)
+      if (node.finalizer) collectStructuredAssignDeclarations(node.finalizer, into)
+      break
+    default:
+      break
+  }
+  return into
+}
+
+function findPriorDeclarationInstruction(
+  rootNode: StructuredNode,
+  name: string,
+  before: Instruction,
+): AssignInstruction | null {
+  let best: AssignInstruction | null = null
+  for (const declaration of collectStructuredAssignDeclarations(rootNode)) {
+    if (deSSAVarName(declaration.target.name) !== name) continue
+    if (!instructionSourceBefore(declaration, before)) continue
+    if (!best || instructionSourceBefore(best, declaration)) {
+      best = declaration
+    }
+  }
+  return best
+}
+
 /**
  * Generate a lazy conditional memo that defers evaluation of branch-specific derived values
  */
@@ -4314,27 +4565,77 @@ function instructionToStatement(
         },
       )
     }
-    const buildDerivedMemoCall = (expr: BabelCore.types.Expression) => {
+    type DerivedSnapshot = { sourceName: string; paramName: string }
+    const createDerivedSnapshotPlan = (): DerivedSnapshot[] => {
+      const deps = collectMutableNonReactiveDependencies(instr.value, ctx, baseName)
+      return deps.map(sourceName => ({
+        sourceName,
+        paramName: reserveFunctionLocalName(ctx, `__snapshot_${sourceName}`),
+      }))
+    }
+    const lowerDerivedAssignedValue = (): {
+      expr: BabelCore.types.Expression
+      snapshots: DerivedSnapshot[]
+    } => {
+      const snapshots = createDerivedSnapshotPlan()
+      if (snapshots.length === 0) {
+        return { expr: lowerAssignedValue(true), snapshots }
+      }
+      const replacements = new Map(
+        snapshots.map(snapshot => [snapshot.sourceName, snapshot.paramName]),
+      )
+      const snapshotExpr = replaceMutableSnapshotIdentifiers(instr.value, replacements)
+      return {
+        expr: lowerExpressionWithDeSSA(snapshotExpr, ctx, true),
+        snapshots,
+      }
+    }
+    const wrapDerivedWithSnapshots = (
+      value: BabelCore.types.Expression,
+      snapshots: DerivedSnapshot[],
+    ): BabelCore.types.Expression => {
+      if (snapshots.length === 0) return value
+      return t.callExpression(
+        t.arrowFunctionExpression(
+          snapshots.map(snapshot => t.identifier(snapshot.paramName)),
+          value,
+        ),
+        snapshots.map(snapshot => t.identifier(snapshot.sourceName)),
+      )
+    }
+    const buildDerivedMemoCall = (
+      expr: BabelCore.types.Expression,
+      snapshots: DerivedSnapshot[] = [],
+    ) => {
       const slot = !ctx.inModule && inRegionMemo ? reserveHookSlot(ctx) : undefined
       const source =
         ctx.options?.dev !== false && instr.loc
           ? `${ctx.options?.filename ?? ''}:${instr.loc.start.line}:${instr.loc.start.column}`
           : undefined
-      return buildMemoCall(ctx, t, t.arrowFunctionExpression([], expr), {
-        slot,
-        name: baseName,
-        source,
-      })
+      return wrapDerivedWithSnapshots(
+        buildMemoCall(ctx, t, t.arrowFunctionExpression([], expr), {
+          slot,
+          name: baseName,
+          source,
+        }),
+        snapshots,
+      )
     }
     const trackDerivedMemoVar = (): void => {
       if (!needsAsyncContext && !isReactiveObjectCall) ctx.memoVars?.add(baseName)
     }
-    const buildDerivedValue = (expr: BabelCore.types.Expression): BabelCore.types.Expression =>
-      needsAsyncContext || isMemoReturningCall ? expr : buildDerivedMemoCall(expr)
+    const buildDerivedValue = (
+      expr: BabelCore.types.Expression,
+      snapshots: DerivedSnapshot[] = [],
+    ): BabelCore.types.Expression =>
+      needsAsyncContext || isMemoReturningCall ? expr : buildDerivedMemoCall(expr, snapshots)
     const buildNoMemoDerivedValue = (
       expr: BabelCore.types.Expression,
+      snapshots: DerivedSnapshot[] = [],
     ): BabelCore.types.Expression =>
-      needsAsyncContext ? expr : t.arrowFunctionExpression([], expr)
+      needsAsyncContext
+        ? expr
+        : wrapDerivedWithSnapshots(t.arrowFunctionExpression([], expr), snapshots)
     const buildHoistedInitializer = (): BabelCore.types.Expression => {
       if (isStateCall) {
         ctx.currentAssignmentName = baseName
@@ -4347,16 +4648,16 @@ function instructionToStatement(
 
       if (dependsOnTracked && !isDestructuringTemp) {
         markReactiveAliasIfNeeded()
-        const derivedExpr = lowerAssignedValue(true)
         if (needsMutable) {
           ctx.memoVars?.delete(baseName)
-          return derivedExpr
+          return lowerAssignedValue(true)
         }
+        const { expr: derivedExpr, snapshots } = lowerDerivedAssignedValue()
         trackDerivedMemoVar()
         if (ctx.noMemo) {
-          return buildNoMemoDerivedValue(derivedExpr)
+          return buildNoMemoDerivedValue(derivedExpr, snapshots)
         }
-        return buildDerivedValue(derivedExpr)
+        return buildDerivedValue(derivedExpr, snapshots)
       }
 
       return lowerAssignedValue(true)
@@ -4416,8 +4717,8 @@ function instructionToStatement(
 
         if (dependsOnTracked) {
           markReactiveAliasIfNeeded()
-          const derivedExpr = lowerAssignedValue(true)
           if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
+            const derivedExpr = lowerAssignedValue(true)
             return createNonReactiveVarDecl(baseName, derivedExpr, ctx, t)
           }
           // fix: Don't wrap mutable variables in memo - they will be reassigned later
@@ -4425,28 +4726,33 @@ function instructionToStatement(
           // Also remove from memoVars so wrapInMemo treats this as a getter output, not direct output
           if (needsMutable) {
             ctx.memoVars?.delete(baseName)
+            const derivedExpr = lowerAssignedValue(true)
             return t.variableDeclaration('let', [
               t.variableDeclarator(t.identifier(baseName), derivedExpr),
             ])
           }
+          const { expr: derivedExpr, snapshots } = lowerDerivedAssignedValue()
           // Track as memo only for accessor-returning calls - reactive objects shouldn't be treated as accessors
           trackDerivedMemoVar()
           if (ctx.noMemo) {
             return t.variableDeclaration(normalizedDecl, [
-              t.variableDeclarator(t.identifier(baseName), buildNoMemoDerivedValue(derivedExpr)),
+              t.variableDeclarator(
+                t.identifier(baseName),
+                buildNoMemoDerivedValue(derivedExpr, snapshots),
+              ),
             ])
           }
           // Skip memo wrapping if expression already returns an accessor
           return t.variableDeclaration(normalizedDecl, [
-            t.variableDeclarator(t.identifier(baseName), buildDerivedValue(derivedExpr)),
+            t.variableDeclarator(t.identifier(baseName), buildDerivedValue(derivedExpr, snapshots)),
           ])
         }
       }
 
       if (dependsOnTracked && !isDestructuringTemp) {
         markReactiveAliasIfNeeded()
-        const derivedExpr = lowerAssignedValue(true)
         if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
+          const derivedExpr = lowerAssignedValue(true)
           return createNonReactiveVarDecl(baseName, derivedExpr, ctx, t)
         }
         // fix: Don't wrap mutable variables in memo - they will be reassigned later
@@ -4454,20 +4760,25 @@ function instructionToStatement(
         // Also remove from memoVars so wrapInMemo treats this as a getter output, not direct output
         if (needsMutable) {
           ctx.memoVars?.delete(baseName)
+          const derivedExpr = lowerAssignedValue(true)
           return t.variableDeclaration('let', [
             t.variableDeclarator(t.identifier(baseName), derivedExpr),
           ])
         }
+        const { expr: derivedExpr, snapshots } = lowerDerivedAssignedValue()
         // Track as memo only for accessor-returning calls - reactive objects shouldn't be treated as accessors
         trackDerivedMemoVar()
         if (ctx.noMemo) {
           return t.variableDeclaration(normalizedDecl, [
-            t.variableDeclarator(t.identifier(baseName), buildNoMemoDerivedValue(derivedExpr)),
+            t.variableDeclarator(
+              t.identifier(baseName),
+              buildNoMemoDerivedValue(derivedExpr, snapshots),
+            ),
           ])
         }
         // Skip memo wrapping if expression already returns an accessor
         return t.variableDeclaration(normalizedDecl, [
-          t.variableDeclarator(t.identifier(baseName), buildDerivedValue(derivedExpr)),
+          t.variableDeclarator(t.identifier(baseName), buildDerivedValue(derivedExpr, snapshots)),
         ])
       }
 
@@ -4503,24 +4814,33 @@ function instructionToStatement(
       (isNamespaceAccessorAlias ||
         (instr.value.kind === 'Identifier' && ctx.trackedVars.has(deSSAVarName(instr.value.name))))
     ) {
-      const derivedExpr = lowerAssignedValue(true)
       markReactiveAliasIfNeeded()
 
       if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
+        const derivedExpr = lowerAssignedValue(true)
         return t.expressionStatement(
           t.assignmentExpression('=', t.identifier(baseName), derivedExpr),
         )
       }
 
+      const { expr: derivedExpr, snapshots } = lowerDerivedAssignedValue()
       trackDerivedMemoVar()
       if (ctx.noMemo) {
         return t.expressionStatement(
-          t.assignmentExpression('=', t.identifier(baseName), buildNoMemoDerivedValue(derivedExpr)),
+          t.assignmentExpression(
+            '=',
+            t.identifier(baseName),
+            buildNoMemoDerivedValue(derivedExpr, snapshots),
+          ),
         )
       }
 
       return t.expressionStatement(
-        t.assignmentExpression('=', t.identifier(baseName), buildDerivedValue(derivedExpr)),
+        t.assignmentExpression(
+          '=',
+          t.identifier(baseName),
+          buildDerivedValue(derivedExpr, snapshots),
+        ),
       )
     }
 
@@ -4568,26 +4888,31 @@ function instructionToStatement(
       }
 
       if (dependsOnTracked) {
-        const derivedExpr = lowerAssignedValue(true)
         if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
+          const derivedExpr = lowerAssignedValue(true)
           return createNonReactiveVarDecl(baseName, derivedExpr, ctx, t)
         }
         // fix: Don't wrap mutable variables in memo - they will be reassigned later
         if (needsMutable) {
+          const derivedExpr = lowerAssignedValue(true)
           return t.variableDeclaration('let', [
             t.variableDeclarator(t.identifier(baseName), derivedExpr),
           ])
         }
+        const { expr: derivedExpr, snapshots } = lowerDerivedAssignedValue()
         // Track as memo only for accessor-returning calls - reactive objects shouldn't be treated as accessors
         trackDerivedMemoVar()
         if (ctx.noMemo) {
           return t.variableDeclaration('const', [
-            t.variableDeclarator(t.identifier(baseName), buildNoMemoDerivedValue(derivedExpr)),
+            t.variableDeclarator(
+              t.identifier(baseName),
+              buildNoMemoDerivedValue(derivedExpr, snapshots),
+            ),
           ])
         }
         // Skip memo wrapping if expression already returns an accessor
         return t.variableDeclaration('const', [
-          t.variableDeclarator(t.identifier(baseName), buildDerivedValue(derivedExpr)),
+          t.variableDeclarator(t.identifier(baseName), buildDerivedValue(derivedExpr, snapshots)),
         ])
       }
 
@@ -4597,26 +4922,31 @@ function instructionToStatement(
     }
 
     if (dependsOnTracked) {
-      const derivedExpr = lowerAssignedValue(true)
       if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
+        const derivedExpr = lowerAssignedValue(true)
         return createNonReactiveVarDecl(baseName, derivedExpr, ctx, t)
       }
       // fix: Don't wrap mutable variables in memo - they will be reassigned later
       if (needsMutable) {
+        const derivedExpr = lowerAssignedValue(true)
         return t.variableDeclaration('let', [
           t.variableDeclarator(t.identifier(baseName), derivedExpr),
         ])
       }
+      const { expr: derivedExpr, snapshots } = lowerDerivedAssignedValue()
       // Track as memo only for accessor-returning calls - reactive objects shouldn't be treated as accessors
       trackDerivedMemoVar()
       if (ctx.noMemo) {
         return t.variableDeclaration('const', [
-          t.variableDeclarator(t.identifier(baseName), buildNoMemoDerivedValue(derivedExpr)),
+          t.variableDeclarator(
+            t.identifier(baseName),
+            buildNoMemoDerivedValue(derivedExpr, snapshots),
+          ),
         ])
       }
       // Skip memo wrapping if expression already returns an accessor
       return t.variableDeclaration('const', [
-        t.variableDeclarator(t.identifier(baseName), buildDerivedValue(derivedExpr)),
+        t.variableDeclarator(t.identifier(baseName), buildDerivedValue(derivedExpr, snapshots)),
       ])
     }
 

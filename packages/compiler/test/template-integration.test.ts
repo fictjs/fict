@@ -82,6 +82,63 @@ describe('compiled templates DOM integration', () => {
     __fictResetContext()
   })
 
+  it('snapshots mutable non-reactive locals read by derived memo declarations', () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function App() {
+        const a = $state(1)
+        let assigned = 0
+        const assignedValue = assigned + a()
+        assigned = 2
+
+        let updated = 3
+        const updatedValue = updated + a()
+        updated++
+
+        let destructured = 5
+        const destructuredValue = destructured + a()
+        ;({ value: destructured } = { value: 7 })
+
+        const stable = 11
+        const stableValue = stable + a()
+
+        let neverMutated = 13
+        const neverMutatedValue = neverMutated + a()
+
+        return (
+          <div>
+            <span data-testid="assigned">{assignedValue}</span>
+            <span data-testid="updated">{updatedValue}</span>
+            <span data-testid="destructured">{destructuredValue}</span>
+            <span data-testid="stable">{stableValue}</span>
+            <span data-testid="never-mutated">{neverMutatedValue}</span>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-testid="assigned"]')?.textContent).toBe('1')
+    expect(container.querySelector('[data-testid="updated"]')?.textContent).toBe('4')
+    expect(container.querySelector('[data-testid="destructured"]')?.textContent).toBe('6')
+    expect(container.querySelector('[data-testid="stable"]')?.textContent).toBe('12')
+    expect(container.querySelector('[data-testid="never-mutated"]')?.textContent).toBe('14')
+
+    teardown()
+    container.remove()
+  })
+
   it('preserves object literal getter/setter semantics at runtime', () => {
     const source = `
       export function run() {
