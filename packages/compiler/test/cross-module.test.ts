@@ -1483,6 +1483,125 @@ describe('Cross-Module Reactivity', () => {
       expect(moduleMetadata.get(path.resolve(wrapperPath))?.hooks).toBeUndefined()
     })
 
+    it('publishes hook-call object and array slot metadata', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        export function useCounter() {
+          const count = $state(0)
+          return count
+        }
+
+        export function useObjectCounter() {
+          const count = $state(0)
+          return { count }
+        }
+
+        export function useObjectWrapped() {
+          return {
+            count: useCounter(),
+            opaque: useObjectCounter(),
+          }
+        }
+
+        export function useArrayWrapped() {
+          return [useCounter(), useObjectCounter()]
+        }
+      `
+      const appSource = `
+        import { useArrayWrapped, useObjectWrapped } from './hook-call-slot-source'
+
+        export function App() {
+          const { count, opaque } = useObjectWrapped()
+          const [first, second] = useArrayWrapped()
+          return <div>{count}{opaque.count}{first}{second.count}</div>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      const hookPath = path.join(baseDir, 'hook-call-slot-source.tsx')
+      transform(hookSource, { moduleMetadata }, hookPath)
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-hook-call-slot-source.tsx'),
+      )
+
+      expect(moduleMetadata.get(path.resolve(hookPath))?.hooks).toMatchObject({
+        useObjectWrapped: { objectProps: { count: 'signal' } },
+        useArrayWrapped: { arrayProps: { 0: 'signal' } },
+      })
+      expect(moduleMetadata.get(path.resolve(hookPath))?.hooks?.useObjectWrapped).not.toEqual(
+        expect.objectContaining({ objectProps: expect.objectContaining({ opaque: 'signal' }) }),
+      )
+      expect(moduleMetadata.get(path.resolve(hookPath))?.hooks?.useArrayWrapped).not.toEqual(
+        expect.objectContaining({ arrayProps: expect.objectContaining({ 1: 'signal' }) }),
+      )
+      expect(output).toMatch(/count\(\)/)
+      expect(output).toMatch(/first\(\)/)
+      expect(output).not.toMatch(/opaque\(\)/)
+      expect(output).not.toMatch(/second\(\)/)
+    })
+
+    it('publishes namespace and default hook-call slot metadata', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        export function useCounter() {
+          const count = $state(0)
+          return count
+        }
+
+        export default function useDefaultCounter() {
+          const count = $state(1)
+          return count
+        }
+      `
+      const wrapperSource = `
+        import useDefaultCounter, * as hooks from './hook-call-slot-import-source'
+
+        export function useWrapped() {
+          return {
+            named: hooks.useCounter(),
+            optional: hooks.useCounter?.(),
+            defaulted: useDefaultCounter(),
+          }
+        }
+      `
+      const appSource = `
+        import { useWrapped } from './hook-call-slot-import-wrapper'
+
+        export function App() {
+          const { named, optional, defaulted } = useWrapped()
+          return <div>{named}{optional}{defaulted}</div>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      const hookPath = path.join(baseDir, 'hook-call-slot-import-source.tsx')
+      const wrapperPath = path.join(baseDir, 'hook-call-slot-import-wrapper.tsx')
+      transform(hookSource, { moduleMetadata }, hookPath)
+      transform(wrapperSource, { moduleMetadata }, wrapperPath)
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-hook-call-slot-import-wrapper.tsx'),
+      )
+
+      expect(moduleMetadata.get(path.resolve(wrapperPath))?.hooks).toMatchObject({
+        useWrapped: {
+          objectProps: {
+            defaulted: 'signal',
+            named: 'signal',
+            optional: 'signal',
+          },
+        },
+      })
+      expect(output).toMatch(/named\(\)/)
+      expect(output).toMatch(/optional\(\)/)
+      expect(output).toMatch(/defaulted\(\)/)
+    })
+
     it('propagates hook return metadata through namespace wrapper imports', () => {
       const hookSource = `
         import { $state } from 'fict'

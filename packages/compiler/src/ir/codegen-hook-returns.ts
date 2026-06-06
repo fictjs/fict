@@ -205,6 +205,14 @@ export function analyzeHookReturnInfo(
     const hookInfo = nsMeta.hooks[propName]
     return hookInfo ? deserializeHookReturnInfo(hookInfo) : null
   }
+  const hookCallDirectAccessorKind = (expr: Expression): HookAccessorKind | undefined => {
+    if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return undefined
+    const info =
+      namespaceHookCallInfo(expr) ??
+      (expr.callee.kind === 'Identifier' ? getHookReturnInfo(expr.callee.name, ctx, ops) : null)
+    const kind = info?.directAccessor
+    return kind === 'signal' || kind === 'memo' ? kind : undefined
+  }
   const compatibleAccessorKind = (
     left: HookAccessorKind | undefined,
     right: HookAccessorKind | undefined,
@@ -277,6 +285,8 @@ export function analyzeHookReturnInfo(
     if (expr.kind === 'Identifier') return exprAccessorKind(expr.name)
     const namespaceKind = namespaceMemberAccessorKind(expr)
     if (namespaceKind) return namespaceKind
+    const hookCallKind = hookCallDirectAccessorKind(expr)
+    if (hookCallKind) return hookCallKind
     if (expr.kind === 'ConditionalExpression') {
       return compatibleAccessorKind(
         returnExprAccessorKind(expr.consequent),
