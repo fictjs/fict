@@ -475,6 +475,107 @@ describe('resumable loader snapshot validation', () => {
     expect(dispatchResult).toBe(true)
   })
 
+  it('parses bracketed QRL module URLs before the export hash', async () => {
+    ;(globalThis as { __FICT_MANIFEST__?: Record<string, string> }).__FICT_MANIFEST__ = {
+      '/assets/page-[id].js':
+        'data:text/javascript,export function route(){globalThis.__fictBracketQrlCalls.push("route")}',
+      '/assets/chunk.js?route=[id]':
+        'data:text/javascript,export function query(){globalThis.__fictBracketQrlCalls.push("query")}',
+    }
+    ;(globalThis as { __fictBracketQrlCalls?: string[] }).__fictBracketQrlCalls = []
+
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    const routeButton = doc.createElement('button')
+    routeButton.setAttribute('on:click', '/assets/page-[id].js#route')
+    const queryButton = doc.createElement('button')
+    queryButton.setAttribute('on:click', '/assets/chunk.js?route=[id]#query')
+    host.append(routeButton, queryButton)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+    routeButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    queryButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    await waitForPendingHandlers()
+
+    expect((globalThis as { __fictBracketQrlCalls?: string[] }).__fictBracketQrlCalls).toEqual([
+      'route',
+      'query',
+    ])
+
+    delete (globalThis as { __fictBracketQrlCalls?: string[] }).__fictBracketQrlCalls
+  })
+
+  it('parses data QRL URLs with brackets before the export hash', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    const button = doc.createElement('button')
+    button.setAttribute(
+      'on:click',
+      'data:text/javascript,const xs=[1];export function h(){globalThis.__fictBracketDataQrl=xs[0]}#h',
+    )
+    host.appendChild(button)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    await waitForPendingHandlers()
+
+    expect((globalThis as { __fictBracketDataQrl?: number }).__fictBracketDataQrl).toBe(1)
+
+    delete (globalThis as { __fictBracketDataQrl?: number }).__fictBracketDataQrl
+  })
+
+  it('parses QRL metadata suffixes after the export name', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    const button = doc.createElement('button')
+    button.setAttribute(
+      'on:click',
+      'data:text/javascript,export function h(){globalThis.__fictSuffixQrl="hit"}#h[0]',
+    )
+    host.appendChild(button)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    await waitForPendingHandlers()
+
+    expect((globalThis as { __fictSuffixQrl?: string }).__fictSuffixQrl).toBe('hit')
+
+    delete (globalThis as { __fictSuffixQrl?: string }).__fictSuffixQrl
+  })
+
   it('prevents submit button click defaults for flagged child handlers', async () => {
     const doc = createDocumentWithSnapshots(
       JSON.stringify({
