@@ -18,7 +18,7 @@ import { createStore, isStoreProxy, unwrapStore } from './store'
  * These allow us to preserve type information through JSON serialization.
  */
 type SerializedMarker =
-  | { __t: 'd'; v: number } // Date (as timestamp)
+  | { __t: 'd'; v: number | 'invalid' } // Date (as timestamp or invalid marker)
   | { __t: 'm'; v: [unknown, unknown][] } // Map (as entries array)
   | { __t: 's'; v: unknown[] } // Set (as array)
   | { __t: 'r'; v: { s: string; f: string } } // RegExp (source + flags)
@@ -557,7 +557,8 @@ export function serializeValue(
 
     // Date
     if (value instanceof Date) {
-      return { __t: 'd', v: value.getTime() } as SerializedMarker
+      const time = value.getTime()
+      return { __t: 'd', v: Number.isNaN(time) ? 'invalid' : time } as SerializedMarker
     }
 
     // RegExp
@@ -672,7 +673,7 @@ export function deserializeValue(
       case 'b':
         return BigInt(value.v)
       case 'd':
-        return new Date(value.v)
+        return value.v === 'invalid' ? new Date(NaN) : new Date(value.v)
       case 'r':
         return new RegExp(value.v.s, value.v.f)
       case 'sym':

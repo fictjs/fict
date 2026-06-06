@@ -79,6 +79,23 @@ describe('serializeValue / deserializeValue', () => {
         expect(result.getTime()).toBe(date.getTime())
       }
     })
+
+    it('should preserve invalid Date through JSON', () => {
+      const date = new Date(NaN)
+      const result = deserializeValue(JSON.parse(JSON.stringify(serializeValue(date)))) as Date
+
+      expect(result).toBeInstanceOf(Date)
+      expect(Number.isNaN(result.getTime())).toBe(true)
+    })
+
+    it('should preserve invalid Date inside arrays through JSON', () => {
+      const result = deserializeValue(
+        JSON.parse(JSON.stringify(serializeValue([new Date(NaN)]))),
+      ) as Date[]
+
+      expect(result[0]).toBeInstanceOf(Date)
+      expect(Number.isNaN(result[0]!.getTime())).toBe(true)
+    })
   })
 
   describe('RegExp', () => {
