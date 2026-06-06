@@ -484,7 +484,7 @@ function findFirstMacroCallInContext(
 
     if (context === 'loop-or-conditional' && (hasLoop || hasConditional)) {
       return {
-        code: macroName === '$state' ? (hasLoop ? 'FICT-C002' : 'FICT-C001') : null,
+        code: hasLoop ? 'FICT-C002' : 'FICT-C001',
         location: {
           line: node.loc.start.line,
           column: node.loc.start.column,
@@ -588,7 +588,8 @@ function inferDirectCompilerDiagnosticCode(
   fileName: string,
   error: Error & { loc?: { line: number; column: number } },
 ): string | null {
-  if (!/\$state\(\) cannot be declared inside loops or conditionals\./.test(error.message)) {
+  const classification = classifyCompilerPlacementError(error.message)
+  if (!classification || classification.context !== 'loop-or-conditional') {
     return null
   }
 

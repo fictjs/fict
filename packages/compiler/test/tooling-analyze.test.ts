@@ -460,6 +460,58 @@ describe('analyzeFictFile', () => {
     expect(result.diagnostics.some(diagnostic => diagnostic.code === 'FICT-COMPILE')).toBe(false)
   })
 
+  it('preserves FICT-C001 for conditional $effect placement errors', () => {
+    const result = analyzeFictFile(
+      `
+        import { $effect } from 'fict'
+
+        export function App({ ready }) {
+          if (ready) {
+            $effect(() => console.log('ready'))
+          }
+          return <div />
+        }
+      `,
+      'conditional-effect.tsx',
+      {
+        includeRegions: true,
+        includeDiagnostics: true,
+      },
+    )
+
+    expect(result.components.length).toBeGreaterThan(0)
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'FICT-C001', severity: 'error' })]),
+    )
+    expect(result.diagnostics.some(diagnostic => diagnostic.code === 'FICT-COMPILE')).toBe(false)
+  })
+
+  it('preserves FICT-C002 for loop $effect placement errors', () => {
+    const result = analyzeFictFile(
+      `
+        import { $effect } from 'fict'
+
+        export function App({ items }) {
+          for (const item of items) {
+            $effect(() => console.log(item))
+          }
+          return <div />
+        }
+      `,
+      'loop-effect.tsx',
+      {
+        includeRegions: true,
+        includeDiagnostics: true,
+      },
+    )
+
+    expect(result.components.length).toBeGreaterThan(0)
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'FICT-C002', severity: 'error' })]),
+    )
+    expect(result.diagnostics.some(diagnostic => diagnostic.code === 'FICT-COMPILE')).toBe(false)
+  })
+
   it('infers direct hook placement codes from summary-only compiler messages', () => {
     const inferred = inferCompilerDiagnosticFromSource(
       `
@@ -486,6 +538,32 @@ describe('analyzeFictFile', () => {
       }),
     )
     expect(inferred?.location.column ?? 0).toBeGreaterThan(0)
+  })
+
+  it('infers effect placement codes from summary-only compiler messages', () => {
+    const inferred = inferCompilerDiagnosticFromSource(
+      `
+        import { $effect } from 'fict'
+
+        export function App({ ready }) {
+          if (ready) {
+            $effect(() => console.log('ready'))
+          }
+          return <div />
+        }
+      `,
+      'conditional-effect.tsx',
+      '/home/runner/work/fict/fict/packages/compiler/conditional-effect.tsx: $effect() cannot be called inside loops or conditionals.',
+    )
+
+    expect(inferred).toEqual(
+      expect.objectContaining({
+        code: 'FICT-C001',
+        location: expect.objectContaining({
+          line: 6,
+        }),
+      }),
+    )
   })
 
   it('infers nested hook locations from summary-only compiler messages', () => {
