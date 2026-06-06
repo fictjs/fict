@@ -53,6 +53,49 @@ function expressionCanReturnNonJSX(expression: Expression): boolean {
   return true
 }
 
+function expressionContainsBranching(expression: Expression): boolean {
+  if (expression.kind === 'ConditionalExpression' || expression.kind === 'LogicalExpression') {
+    return true
+  }
+  if (expression.kind === 'SequenceExpression') {
+    return expression.expressions.some(expressionContainsBranching)
+  }
+  return false
+}
+
+function isSafeToDuplicateForKeyExtraction(expression: Expression): boolean {
+  switch (expression.kind) {
+    case 'Literal':
+    case 'Identifier':
+    case 'ThisExpression':
+      return true
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+      return (
+        isSafeToDuplicateForKeyExtraction(expression.object) &&
+        (!expression.computed || isSafeToDuplicateForKeyExtraction(expression.property))
+      )
+    case 'BinaryExpression':
+    case 'LogicalExpression':
+      return (
+        isSafeToDuplicateForKeyExtraction(expression.left) &&
+        isSafeToDuplicateForKeyExtraction(expression.right)
+      )
+    case 'ConditionalExpression':
+      return (
+        isSafeToDuplicateForKeyExtraction(expression.test) &&
+        isSafeToDuplicateForKeyExtraction(expression.consequent) &&
+        isSafeToDuplicateForKeyExtraction(expression.alternate)
+      )
+    case 'UnaryExpression':
+      return isSafeToDuplicateForKeyExtraction(expression.argument)
+    case 'TemplateLiteral':
+      return expression.expressions.every(isSafeToDuplicateForKeyExtraction)
+    default:
+      return false
+  }
+}
+
 function extractKeyExpressionFromReturnedExpression(
   expression: Expression,
 ): Expression | undefined {
@@ -63,6 +106,13 @@ function extractKeyExpressionFromReturnedExpression(
     const consequentKey = extractKeyExpressionFromReturnedExpression(expression.consequent)
     const alternateKey = extractKeyExpressionFromReturnedExpression(expression.alternate)
     if (!consequentKey || !alternateKey) return undefined
+    if (
+      !isSafeToDuplicateForKeyExtraction(expression.test) ||
+      !isSafeToDuplicateForKeyExtraction(consequentKey) ||
+      !isSafeToDuplicateForKeyExtraction(alternateKey)
+    ) {
+      return undefined
+    }
     return {
       kind: 'ConditionalExpression',
       test: expression.test,
@@ -218,7 +268,11 @@ export function extractKeyFromMapCallback(callback: Expression): Expression | un
   }
 
   const returnedExpressions = getReturnedExpressionsFromCallback(callback)
-  if (returnedExpressions.length === 0 || returnedExpressions.some(expressionCanReturnNonJSX)) {
+  if (
+    returnedExpressions.length === 0 ||
+    returnedExpressions.some(expressionCanReturnNonJSX) ||
+    returnedExpressions.some(expressionContainsBranching)
+  ) {
     return undefined
   }
 

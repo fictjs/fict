@@ -276,6 +276,30 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).toMatch(/createKeyedList\([\s\S]*?\?\s*user\.aId\s*:\s*user\.bId/)
     })
 
+    it('does not extract conditional keys with side-effectful branch tests', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let users = $state([
+            { id: 1, left: true },
+            { id: 2, left: false },
+          ])
+          return (
+            <ul>
+              {users.map(user =>
+                (log.push('test ' + user.id), user.left)
+                  ? <li key={'L' + user.id}>L</li>
+                  : <li key={'R' + user.id}>R</li>
+              )}
+            </ul>
+          )
+        }
+      `
+
+      const output = runTransform(input)
+      expect(output).not.toMatch(/createKeyedList\([\s\S]*log\.push/)
+    })
+
     it('does not extract keys from ternary callbacks with non-JSX branches', () => {
       const input = `
         import { $state } from 'fict'

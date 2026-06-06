@@ -3045,6 +3045,68 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('does not duplicate branch tests when conditional list keys are impure', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      type Item = { id: number; left: boolean }
+
+      export const log: string[] = []
+
+      function pickLeft(item: Item) {
+        log.push('test ' + item.id)
+        return item.left
+      }
+
+      function leftKey(item: Item) {
+        log.push('left ' + item.id)
+        return 'L' + item.id
+      }
+
+      function rightKey(item: Item) {
+        log.push('right ' + item.id)
+        return 'R' + item.id
+      }
+
+      export function App() {
+        const items: Item[] = [
+          { id: 1, left: true },
+          { id: 2, left: false },
+        ]
+
+        return (
+          <div>
+            {items.map(item =>
+              pickLeft(item)
+                ? <span key={leftKey(item)}>L</span>
+                : <span key={rightKey(item)}>R</span>
+            )}
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        log.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      log: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(container.textContent).toBe('LR')
+    expect(mod.log.filter(entry => entry.startsWith('test '))).toEqual(['test 1', 'test 2'])
+
+    teardown()
+    container.remove()
+  })
+
   it('preserves map callback arguments semantics by falling back from list specialization', async () => {
     const source = `
       import { render } from 'fict'
