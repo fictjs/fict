@@ -873,6 +873,49 @@ describe('tracked reads/writes in HIR codegen', () => {
     }
   })
 
+  it('preserves user-authored createPortal child calls', () => {
+    const cases = [
+      `
+        function createPortal(value) {
+          return value
+        }
+
+        export function App() {
+          return <div>{createPortal('child')}</div>
+        }
+      `,
+      `
+        import { createPortal } from './portal'
+
+        export function App() {
+          return <div>{createPortal('child')}</div>
+        }
+      `,
+    ]
+
+    for (const source of cases) {
+      const output = transform(source)
+
+      expect(output).toContain('createPortal("child")')
+      expect(output).toContain('insertBetween')
+      expect(output).not.toContain('onDestroy')
+    }
+  })
+
+  it('registers cleanup for imported Fict createPortal child calls', () => {
+    const output = transform(`
+      import { createPortal, createElement } from 'fict'
+
+      export function App() {
+        return <div>{createPortal(document.body, () => <span>child</span>, createElement)}</div>
+      }
+    `)
+
+    expect(output).toContain('createPortal(document.body')
+    expect(output).toContain('onDestroy')
+    expect(output).not.toMatch(/insertBetween\([^,]+,\s*[^,]+,\s*\(\)\s*=>\s*createPortal/)
+  })
+
   it('lowers array-literal component spreads to index props', () => {
     const output = transform(`
       import { $state } from 'fict'

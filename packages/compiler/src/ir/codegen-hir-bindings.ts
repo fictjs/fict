@@ -30,6 +30,16 @@ export interface HIRChildBindingOps {
   lowerJSXElement: (expr: Expression, ctx: CodegenContext) => BabelCore.types.Expression
 }
 
+function isRuntimeCreatePortalCall(expr: Expression, ctx: CodegenContext): boolean {
+  if (expr.kind !== 'CallExpression') return false
+  if (expr.callee.kind !== 'Identifier') return false
+  const name = expr.callee.name
+  if (ctx.shadowedNames?.has(name) || ctx.localDeclaredNames?.has(name)) {
+    return false
+  }
+  return ctx.moduleRuntimeImportMap?.get(name) === 'createPortal'
+}
+
 /**
  * Resolve a path to a DOM node using firstChild/nextSibling navigation.
  * Caches intermediate nodes for efficiency.
@@ -116,11 +126,7 @@ export function emitHIRChildBinding(
   }
 
   // createPortal call inside JSX child: register cleanup but don't insert marker into parent
-  if (
-    expr.kind === 'CallExpression' &&
-    expr.callee.kind === 'Identifier' &&
-    expr.callee.name === 'createPortal'
-  ) {
+  if (isRuntimeCreatePortalCall(expr, ctx)) {
     ctx.helpersUsed.add('onDestroy')
     const portalId = ops.genTemp(ctx, 'portal')
     const portalExpr = ops.lowerExpression(expr, ctx)
