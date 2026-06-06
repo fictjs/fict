@@ -391,6 +391,82 @@ describe('serializeValue / deserializeValue', () => {
       expect(result.c[1]).toBe(result.a)
       expect(result.a.value).toBe(42)
     })
+
+    it('should keep references distinct for dotted object keys', () => {
+      const shared1 = { id: 'one' }
+      const shared2 = { id: 'two' }
+      const obj = {
+        'a.b': shared1,
+        a: { b: shared2 },
+        x: shared1,
+        y: shared2,
+      }
+
+      const result = deserializeValue(JSON.parse(JSON.stringify(serializeValue(obj)))) as {
+        'a.b': { id: string }
+        a: { b: { id: string } }
+        x: { id: string }
+        y: { id: string }
+      }
+
+      expect(result.x).toBe(result['a.b'])
+      expect(result.y).toBe(result.a.b)
+      expect(result.x).not.toBe(result.a.b)
+      expect(result.x.id).toBe('one')
+      expect(result.y.id).toBe('two')
+    })
+
+    it('should keep references distinct for bracket-like and empty object keys', () => {
+      const empty = { id: 'empty' }
+      const bracket = { id: 'bracket' }
+      const indexed = { id: 'indexed' }
+      const obj = {
+        '': empty,
+        '[0]': bracket,
+        'items[0]': indexed,
+        empty,
+        bracket,
+        indexed,
+      }
+
+      const result = deserializeValue(JSON.parse(JSON.stringify(serializeValue(obj)))) as {
+        '': { id: string }
+        '[0]': { id: string }
+        'items[0]': { id: string }
+        empty: { id: string }
+        bracket: { id: string }
+        indexed: { id: string }
+      }
+
+      expect(result.empty).toBe(result[''])
+      expect(result.bracket).toBe(result['[0]'])
+      expect(result.indexed).toBe(result['items[0]'])
+      expect(result.empty).not.toBe(result.bracket)
+      expect(result.bracket).not.toBe(result.indexed)
+    })
+
+    it('should restore self-references under dotted object keys', () => {
+      const dotted: Record<string, unknown> = { name: 'dotted' }
+      dotted.self = dotted
+      const nested = { name: 'nested' }
+      const obj = {
+        'a.b': dotted,
+        a: { b: nested },
+        x: dotted,
+      }
+
+      const result = deserializeValue(JSON.parse(JSON.stringify(serializeValue(obj)))) as {
+        'a.b': { name: string; self: unknown }
+        a: { b: { name: string } }
+        x: { name: string; self: unknown }
+      }
+
+      expect(result.x).toBe(result['a.b'])
+      expect(result.x.self).toBe(result['a.b'])
+      expect(result.x).not.toBe(result.a.b)
+      expect(result.x.name).toBe('dotted')
+      expect(result.a.b.name).toBe('nested')
+    })
   })
 
   describe('functions', () => {

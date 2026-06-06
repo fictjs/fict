@@ -468,6 +468,10 @@ function hasOwnMarkerKey(value: object): boolean {
   return Object.prototype.hasOwnProperty.call(value, '__t')
 }
 
+function objectChildPath(path: string, key: string): string {
+  return `${path}.${JSON.stringify(key)}`
+}
+
 function unsupportedObjectName(value: object): string {
   const ctor = (value as { constructor?: { name?: string } }).constructor
   if (ctor?.name) return ctor.name
@@ -485,20 +489,17 @@ function serializeObjectEntries(
     const serialized = serializeValue(
       (value as Record<string, unknown>)[key],
       seen,
-      `${path}.${key}`,
+      objectChildPath(path, key),
     )
     if (serialized !== undefined) {
       entries.push([key, serialized])
     }
   }
   for (const key of symbolKeys) {
-    const serialized = serializeValue(
-      (value as Record<symbol, unknown>)[key],
-      seen,
-      `${path}.${String(key)}`,
-    )
+    const keyPath = objectChildPath(path, String(key))
+    const serialized = serializeValue((value as Record<symbol, unknown>)[key], seen, keyPath)
     if (serialized !== undefined) {
-      entries.push([serializeSymbol(key, `${path}.${String(key)}`), serialized])
+      entries.push([serializeSymbol(key, keyPath), serialized])
     }
   }
   return entries
@@ -636,7 +637,7 @@ export function serializeValue(
       const serialized = serializeValue(
         (value as Record<string, unknown>)[key],
         seen,
-        `${path}.${key}`,
+        objectChildPath(path, key),
       )
       if (serialized !== undefined) {
         result[key] = serialized
@@ -704,7 +705,7 @@ export function deserializeValue(
           const [rawKey, rawValue] = entry
           const key = deserializeValue(rawKey, refs, `${path}.key${i}`)
           if (typeof key !== 'string' && typeof key !== 'symbol') continue
-          obj[key] = deserializeValue(rawValue, refs, `${path}.${String(key)}`)
+          obj[key] = deserializeValue(rawValue, refs, objectChildPath(path, String(key)))
         }
         return obj
       }
@@ -751,7 +752,11 @@ export function deserializeValue(
   const obj: Record<string, unknown> = {}
   refs.set(path, obj)
   for (const key of Object.keys(value)) {
-    obj[key] = deserializeValue((value as Record<string, unknown>)[key], refs, `${path}.${key}`)
+    obj[key] = deserializeValue(
+      (value as Record<string, unknown>)[key],
+      refs,
+      objectChildPath(path, key),
+    )
   }
   return obj
 }
