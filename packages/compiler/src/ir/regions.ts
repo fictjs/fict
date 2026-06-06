@@ -337,6 +337,38 @@ function buildEffectCall(
   return t.callExpression(runtimeIdentifier(ctx, 'useEffect'), args)
 }
 
+function shouldWrapTrackedControlInEffect(test: Expression, ctx: CodegenContext): boolean {
+  const inNonReactiveScope = !!(ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0)
+  return (
+    ctx.wrapTrackedExpressions !== false &&
+    !ctx.inRegionMemo &&
+    !inNonReactiveScope &&
+    expressionUsesTracked(test, ctx)
+  )
+}
+
+function withTrackedControlEffectScope<T>(ctx: CodegenContext, enabled: boolean, fn: () => T): T {
+  if (!enabled) return fn()
+  const prevDepth = ctx.nonReactiveScopeDepth ?? 0
+  ctx.nonReactiveScopeDepth = prevDepth + 1
+  try {
+    return fn()
+  } finally {
+    ctx.nonReactiveScopeDepth = prevDepth
+  }
+}
+
+function wrapTrackedControlStatement(
+  stmt: BabelCore.types.Statement,
+  shouldWrap: boolean,
+  ctx: CodegenContext,
+  t: typeof BabelCore.types,
+): BabelCore.types.Statement[] {
+  if (!shouldWrap || statementHasEarlyExit(stmt, t)) return [stmt]
+  const effectFn = t.arrowFunctionExpression([], t.blockStatement([stmt]))
+  return [t.expressionStatement(buildEffectCall(ctx, t, effectFn))]
+}
+
 function buildMemoCall(
   ctx: CodegenContext,
   t: typeof BabelCore.types,
@@ -2410,17 +2442,25 @@ function lowerNodeWithRegionContext(
     }
 
     case 'while': {
+      const shouldWrap = shouldWrapTrackedControlInEffect(node.test, ctx)
       const body = t.blockStatement(
-        lowerNodeWithRegionContext(node.body, t, ctx, declaredVars, regionCtx),
+        withTrackedControlEffectScope(ctx, shouldWrap, () =>
+          lowerNodeWithRegionContext(node.body, t, ctx, declaredVars, regionCtx),
+        ),
       )
-      return [t.whileStatement(lowerExpressionWithDeSSA(node.test, ctx), body)]
+      const stmt = t.whileStatement(lowerExpressionWithDeSSA(node.test, ctx), body)
+      return wrapTrackedControlStatement(stmt, shouldWrap, ctx, t)
     }
 
     case 'doWhile': {
+      const shouldWrap = shouldWrapTrackedControlInEffect(node.test, ctx)
       const body = t.blockStatement(
-        lowerNodeWithRegionContext(node.body, t, ctx, declaredVars, regionCtx),
+        withTrackedControlEffectScope(ctx, shouldWrap, () =>
+          lowerNodeWithRegionContext(node.body, t, ctx, declaredVars, regionCtx),
+        ),
       )
-      return [t.doWhileStatement(lowerExpressionWithDeSSA(node.test, ctx), body)]
+      const stmt = t.doWhileStatement(lowerExpressionWithDeSSA(node.test, ctx), body)
+      return wrapTrackedControlStatement(stmt, shouldWrap, ctx, t)
     }
 
     case 'for': {
@@ -3048,31 +3088,45 @@ function lowerStructuredNodeForRegion(
     }
 
     case 'while': {
-      const body = lowerStructuredNodeForRegion(
-        node.body,
-        region,
-        t,
-        ctx,
-        declaredVars,
-        regionCtx,
-        skipInstructions,
+      const shouldWrap = shouldWrapTrackedControlInEffect(node.test, ctx)
+      const body = withTrackedControlEffectScope(ctx, shouldWrap, () =>
+        lowerStructuredNodeForRegion(
+          node.body,
+          region,
+          t,
+          ctx,
+          declaredVars,
+          regionCtx,
+          skipInstructions,
+        ),
       )
       if (body.length === 0) return []
-      return [t.whileStatement(lowerExpressionWithDeSSA(node.test, ctx), t.blockStatement(body))]
+      const stmt = t.whileStatement(
+        lowerExpressionWithDeSSA(node.test, ctx),
+        t.blockStatement(body),
+      )
+      return wrapTrackedControlStatement(stmt, shouldWrap, ctx, t)
     }
 
     case 'doWhile': {
-      const body = lowerStructuredNodeForRegion(
-        node.body,
-        region,
-        t,
-        ctx,
-        declaredVars,
-        regionCtx,
-        skipInstructions,
+      const shouldWrap = shouldWrapTrackedControlInEffect(node.test, ctx)
+      const body = withTrackedControlEffectScope(ctx, shouldWrap, () =>
+        lowerStructuredNodeForRegion(
+          node.body,
+          region,
+          t,
+          ctx,
+          declaredVars,
+          regionCtx,
+          skipInstructions,
+        ),
       )
       if (body.length === 0) return []
-      return [t.doWhileStatement(lowerExpressionWithDeSSA(node.test, ctx), t.blockStatement(body))]
+      const stmt = t.doWhileStatement(
+        lowerExpressionWithDeSSA(node.test, ctx),
+        t.blockStatement(body),
+      )
+      return wrapTrackedControlStatement(stmt, shouldWrap, ctx, t)
     }
 
     case 'for': {

@@ -609,6 +609,60 @@ describe('tracked reads/writes in HIR codegen', () => {
     )
   })
 
+  it('wraps hook-return accessor setup control flow in effects', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        function useBucket() {
+          const count = $state(1)
+          return { count }
+        }
+
+        export function App() {
+          const bucket = useBucket()
+          const seen = []
+          if (bucket.count) {
+            seen.push('yes')
+          }
+          while (bucket.count && seen.length < 2) {
+            seen.push('loop')
+          }
+          seen.push(bucket.count)
+          return <span>{seen.length}:{bucket.count}</span>
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(output).toMatch(/__fictUseEffect\(__fictCtx, \(\) => \{\s*if \(bucket\.count\(\)\)/)
+    expect(output).toMatch(
+      /__fictUseEffect\(__fictCtx, \(\) => \{\s*while \(bucket\.count\(\) && seen\.length < 2\)/,
+    )
+    expect(output).toMatch(/__fictUseEffect\(__fictCtx, \(\) => seen\.push\(bucket\.count\(\)\)/)
+
+    const plain = transform(
+      `
+        function usePlain() {
+          return { count: 1 }
+        }
+
+        export function App() {
+          const bucket = usePlain()
+          const seen = []
+          if (bucket.count) {
+            seen.push('yes')
+          }
+          return <span>{seen.length}:{bucket.count}</span>
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(plain).toContain('if (bucket.count)')
+    expect(plain).not.toMatch(/__fictUseEffect\(__fictCtx, \(\) => \{\s*if \(bucket\.count\)/)
+  })
+
   it('handles hook return object without destructuring by treating properties as accessors', () => {
     const ast = parseFile(`
       const useCounter = () => {
