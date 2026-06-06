@@ -51,6 +51,21 @@ describe('Cross-Module Reactivity', () => {
       // ensure no signal/memo is created for alias
       expect(output).not.toMatch(/__fictUseSignal\(|__fictUseMemo\(/)
     })
+
+    it('publishes namespace $store calls as store metadata', () => {
+      const source = `
+        import * as F from 'fict'
+        export const user = F.$store({ name: 'Ada' })
+      `
+      const moduleMetadata = new Map()
+      const storePath = path.join(baseDir, 'namespace-store.ts')
+
+      transform(source, { moduleMetadata }, storePath)
+
+      expect(moduleMetadata.get(path.resolve(storePath))?.exports).toEqual({
+        user: 'store',
+      })
+    })
   })
 
   describe('Component Module (Imports)', () => {

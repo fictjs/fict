@@ -12,6 +12,7 @@ const RUNTIME_REACTIVE_CREATORS = new Map<string, ReactiveExportKind>([
   ['createStore', 'store'],
   ['createMemo', 'memo'],
   ['$memo', 'memo'],
+  ['$store', 'store'],
 ])
 
 function isNameShadowed(name: string, ctx: CodegenContext): boolean {
