@@ -278,6 +278,20 @@ describe('Props proxy', () => {
     expect(keys.length).toBe(3)
   })
 
+  it('mergeProps orders numeric and symbol keys like object spread', () => {
+    const sym = Symbol('s')
+    const a = { 2: 'two', [sym]: 'sym', a: 'a' }
+    const b = { 1: 'one', b: 'b' }
+    const merged = mergeProps(a, b)
+    const native = { ...a, ...b }
+
+    expect(Object.keys(merged)).toEqual(Object.keys(native))
+    expect(Reflect.ownKeys(merged)).toEqual(Reflect.ownKeys(native))
+    expect((merged as Record<string, unknown>)[2]).toBe('two')
+    expect((merged as Record<string, unknown>)[1]).toBe('one')
+    expect((merged as Record<symbol, unknown>)[sym]).toBe('sym')
+  })
+
   it('mergeProps exposes spread props as data descriptors', () => {
     let reads = 0
     const source = {
@@ -310,7 +324,7 @@ describe('Props proxy', () => {
     const merged = mergeProps(hidden, { visible: 'y' })
 
     expect(Object.keys(merged)).toEqual(['visible'])
-    expect(Reflect.ownKeys(merged)).toEqual([visibleSymbol, 'visible'])
+    expect(Reflect.ownKeys(merged)).toEqual(['visible', visibleSymbol])
     expect('secret' in merged).toBe(false)
     expect(hiddenSymbol in merged).toBe(false)
     expect((merged as Record<string, unknown>).secret).toBeUndefined()

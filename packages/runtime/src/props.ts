@@ -221,6 +221,32 @@ type MergeSource<T extends Record<string, unknown>> =
   | bigint
   | symbol
 
+const ARRAY_INDEX_LIMIT = 2 ** 32 - 1
+
+function isArrayIndexKey(key: string): boolean {
+  const index = Number(key)
+  return Number.isInteger(index) && index >= 0 && index < ARRAY_INDEX_LIMIT && String(index) === key
+}
+
+function orderOwnKeys(keys: (string | symbol)[]): (string | symbol)[] {
+  const indexKeys: string[] = []
+  const stringKeys: string[] = []
+  const symbolKeys: symbol[] = []
+
+  for (const key of keys) {
+    if (typeof key === 'symbol') {
+      symbolKeys.push(key)
+    } else if (isArrayIndexKey(key)) {
+      indexKeys.push(key)
+    } else {
+      stringKeys.push(key)
+    }
+  }
+
+  indexKeys.sort((a, b) => Number(a) - Number(b))
+  return [...indexKeys, ...stringKeys, ...symbolKeys]
+}
+
 export function mergeProps<T extends Record<string, unknown>>(
   ...sources: (MergeSource<T> | null | undefined)[]
 ): Record<string, unknown> {
@@ -311,7 +337,7 @@ export function mergeProps<T extends Record<string, unknown>>(
           }
         }
       }
-      return Array.from(keys)
+      return orderOwnKeys(Array.from(keys))
     },
 
     getOwnPropertyDescriptor(_, prop) {
