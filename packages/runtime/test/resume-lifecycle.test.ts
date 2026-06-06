@@ -11,6 +11,7 @@ import {
   __fictRegisterScope,
   __fictSetSSRState,
   __fictUseLexicalScope,
+  serializeValue,
 } from '../src/internal'
 
 describe('SSR lifecycle state cleanup', () => {
@@ -50,5 +51,29 @@ describe('SSR lifecycle state cleanup', () => {
     expect(() => __fictUseLexicalScope('s-resume', ['value'])).toThrow(
       '[fict] Missing resumed scope for s-resume',
     )
+  })
+
+  it('restores cross-slot references with shared refs', () => {
+    const seen = new Map<object, string>()
+    const shared = { value: 1 }
+    const slot0 = serializeValue(shared, seen, '$[0]')
+    const slot1 = serializeValue({ shared }, seen, '$[1]')
+    const scopeSnapshot = {
+      id: 's-cross-slot',
+      slots: [
+        [0, 'raw' as const, slot0],
+        [1, 'raw' as const, slot1],
+      ],
+      vars: { first: 0, second: 1 },
+    }
+
+    __fictEnsureScope('s-cross-slot', document.createElement('div'), scopeSnapshot)
+
+    const [first, second] = __fictUseLexicalScope('s-cross-slot', ['first', 'second']) as [
+      { value: number },
+      { shared: { value: number } },
+    ]
+    expect(second.shared).toBe(first)
+    expect(second.shared.value).toBe(1)
   })
 })

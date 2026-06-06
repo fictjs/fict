@@ -405,14 +405,17 @@ function createContextFromSnapshot(snapshot?: ScopeSnapshot): HookContext {
   const ctx: HookContext = { slots: [], cursor: 0 }
   if (!snapshot) return ctx
 
+  const refs = new Map<string, unknown>()
   for (const slot of snapshot.slots) {
     const [index, type, value] = slot
+    const path = `$[${index}]`
+    const restored = deserializeValue(value, refs, path)
     if (type === 'sig') {
-      ctx.slots[index] = createSignal(deserializeValue(value))
+      ctx.slots[index] = createSignal(restored)
     } else if (type === 'store') {
-      ctx.slots[index] = createStore(deserializeValue(value) as object)[0]
+      ctx.slots[index] = createStore(restored as object)[0]
     } else {
-      ctx.slots[index] = deserializeValue(value)
+      ctx.slots[index] = restored
     }
   }
   if (snapshot.vars) {
