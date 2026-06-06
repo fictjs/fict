@@ -658,6 +658,30 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-E001')).toBe(true)
   })
 
+  it('warns when wrapped $effect callbacks have no reactive reads', () => {
+    const cases = [
+      '(0, () => { console.log("once") })',
+      'ok ? () => { console.log("once") } : () => { console.log("also") }',
+      'ok && (() => { console.log("once") })',
+      '((() => { console.log("once") }) as any)',
+    ]
+
+    for (const callback of cases) {
+      const { warnings } = transformWithWarnings(`
+        import { $state, $effect } from 'fict'
+
+        function Demo() {
+          const ok = true
+          const count = $state(0)
+          $effect(${callback})
+          return <button onClick={() => count++}>{count}</button>
+        }
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-E001')).toBe(true)
+    }
+  })
+
   it('warns when mapping a list without key', () => {
     const warnings: CompilerWarning[] = []
     const input = `
@@ -931,6 +955,31 @@ describe('Spec rule coverage', () => {
     `
     transform(input, { onWarn: w => warnings.push(w) })
     expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
+  })
+
+  it('warns when wrapped memo callbacks contain side effects (FICT-M003)', () => {
+    const cases = [
+      '(0, () => { fetch("/api"); return count })',
+      'ok ? () => { fetch("/api"); return count } : () => count',
+      'ok && (() => { fetch("/api"); return count })',
+      '((() => { fetch("/api"); return count }) as any)',
+    ]
+
+    for (const callback of cases) {
+      const { warnings } = transformWithWarnings(`
+        import { $state, $memo } from 'fict'
+
+        function Demo() {
+          const ok = true
+          const count = $state(0)
+          const value = $memo(${callback})
+          return <div>{value}</div>
+        }
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
+      expect(warnings.some(w => w.code === 'FICT-M001')).toBe(false)
+    }
   })
 
   it('warns when memo contains side-effectful calls (FICT-M003)', () => {
@@ -1662,6 +1711,29 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
   })
 
+  it('warns when wrapped memo callbacks have no reactive dependencies (FICT-M001)', () => {
+    const cases = [
+      '(0, () => 1)',
+      'ok ? () => 1 : () => 2',
+      'ok && (() => 1)',
+      '((() => 1) as any)',
+    ]
+
+    for (const callback of cases) {
+      const { warnings } = transformWithWarnings(`
+        import { $memo } from 'fict'
+
+        function Demo() {
+          const ok = true
+          const value = $memo(${callback})
+          return <div>{value}</div>
+        }
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
+    }
+  })
+
   it('warns when runtime createMemo has no reactive dependencies (FICT-M001)', () => {
     const { warnings } = transformWithWarnings(`
       import { createMemo } from '@fictjs/runtime'
@@ -1681,6 +1753,24 @@ describe('Spec rule coverage', () => {
       }
     `)
 
+    expect(warnings.some(w => w.code === 'FICT-M001')).toBe(false)
+  })
+
+  it('does not warn when wrapped effect and memo callbacks read reactive values', () => {
+    const { warnings } = transformWithWarnings(`
+      import { $state, $effect, $memo } from 'fict'
+
+      function Demo() {
+        const count = $state(0)
+        $effect((0, () => {
+          count
+        }))
+        const value = $memo((0, () => count + 1))
+        return <div>{value}</div>
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-E001')).toBe(false)
     expect(warnings.some(w => w.code === 'FICT-M001')).toBe(false)
   })
 

@@ -794,6 +794,46 @@ function functionHasReturn(node: BabelCore.types.Function): boolean {
   return false
 }
 
+type CallbackFunctionPath = BabelCore.NodePath<
+  BabelCore.types.ArrowFunctionExpression | BabelCore.types.FunctionExpression
+>
+
+function collectCallbackFunctionPaths(
+  argPath: BabelCore.NodePath | null | undefined,
+): CallbackFunctionPath[] {
+  if (!argPath) return []
+  if (argPath.isArrowFunctionExpression() || argPath.isFunctionExpression()) {
+    return [argPath as CallbackFunctionPath]
+  }
+  if (argPath.isSequenceExpression()) {
+    const expressions = argPath.get('expressions')
+    return collectCallbackFunctionPaths(expressions[expressions.length - 1])
+  }
+  if (argPath.isConditionalExpression()) {
+    return [
+      ...collectCallbackFunctionPaths(argPath.get('consequent')),
+      ...collectCallbackFunctionPaths(argPath.get('alternate')),
+    ]
+  }
+  if (argPath.isLogicalExpression()) {
+    return [
+      ...collectCallbackFunctionPaths(argPath.get('left')),
+      ...collectCallbackFunctionPaths(argPath.get('right')),
+    ]
+  }
+  if (
+    argPath.isParenthesizedExpression() ||
+    argPath.isTSAsExpression() ||
+    argPath.isTSTypeAssertion() ||
+    argPath.isTSNonNullExpression() ||
+    argPath.isTSSatisfiesExpression() ||
+    argPath.isTypeCastExpression()
+  ) {
+    return collectCallbackFunctionPaths(argPath.get('expression') as BabelCore.NodePath)
+  }
+  return []
+}
+
 function functionHasJSX<T extends BabelCore.types.Function>(
   fnPath: BabelCore.NodePath<T>,
 ): boolean {
@@ -2030,8 +2070,8 @@ function runWarningPass(
         (!strictMacroBindings && isEffectCall(callNode, t, effectMacroNames))
       if (isEffect) {
         const argPath = path.get('arguments.0')
-        if (argPath?.isFunctionExpression() || argPath?.isArrowFunctionExpression()) {
-          if (!callbackHasReactiveDependency(argPath)) {
+        for (const callbackPath of collectCallbackFunctionPaths(argPath)) {
+          if (!callbackHasReactiveDependency(callbackPath)) {
             emitWarning(
               callNode,
               'FICT-E001',
@@ -2039,6 +2079,7 @@ function runWarningPass(
               warn,
               fileName,
             )
+            break
           }
         }
         return
@@ -4130,86 +4171,90 @@ function createHIREntrypointVisitor(
               (fictImports.has('$memo') || fictImports.has('createMemo'))
             ) {
               const firstArgPath = callPath.get('arguments.0')
-              if (
-                firstArgPath?.isArrowFunctionExpression() ||
-                firstArgPath?.isFunctionExpression()
-              ) {
-                const firstArg = firstArgPath.node
+              const callbackPaths = collectCallbackFunctionPaths(firstArgPath)
+              if (callbackPaths.length > 0) {
                 let hasReactiveDependency = false
-                firstArgPath.traverse({
-                  Function(fnPath) {
-                    const parent = fnPath.parentPath
-                    if (
-                      (parent.isCallExpression() || parent.isOptionalCallExpression()) &&
-                      parent.node.callee === fnPath.node
-                    ) {
-                      return
-                    }
-                    fnPath.skip()
-                  },
-                  MemberExpression(memberPath) {
-                    if (
-                      pathReadsHookReturnAccessor(
-                        memberPath,
-                        hookReturnBindingInfo,
-                        firstArgPath.scope,
-                        t,
-                      )
-                    ) {
-                      hasReactiveDependency = true
-                      memberPath.stop()
-                    }
-                  },
-                  OptionalMemberExpression(memberPath) {
-                    if (
-                      pathReadsHookReturnAccessor(
-                        memberPath,
-                        hookReturnBindingInfo,
-                        firstArgPath.scope,
-                        t,
-                      )
-                    ) {
-                      hasReactiveDependency = true
-                      memberPath.stop()
-                    }
-                  },
-                  Identifier(idPath) {
-                    if (
-                      idPath.parentPath.isMemberExpression({ property: idPath.node }) &&
-                      !(idPath.parent as BabelCore.types.MemberExpression).computed
-                    ) {
-                      return
-                    }
-                    if (
-                      idPath.parentPath.isObjectProperty({ key: idPath.node }) &&
-                      !(idPath.parent as BabelCore.types.ObjectProperty).computed
-                    ) {
-                      return
-                    }
-                    const binding = idPath.scope.getBinding(idPath.node.name)
-                    if (binding && binding.scope === firstArgPath.scope) return
+                let firstSideEffectPath: CallbackFunctionPath | null = null
+                for (const callbackPath of callbackPaths) {
+                  let callbackHasReactiveDependency = false
+                  callbackPath.traverse({
+                    Function(fnPath) {
+                      const parent = fnPath.parentPath
+                      if (
+                        (parent.isCallExpression() || parent.isOptionalCallExpression()) &&
+                        parent.node.callee === fnPath.node
+                      ) {
+                        return
+                      }
+                      fnPath.skip()
+                    },
+                    MemberExpression(memberPath) {
+                      if (
+                        pathReadsHookReturnAccessor(
+                          memberPath,
+                          hookReturnBindingInfo,
+                          callbackPath.scope,
+                          t,
+                        )
+                      ) {
+                        callbackHasReactiveDependency = true
+                        memberPath.stop()
+                      }
+                    },
+                    OptionalMemberExpression(memberPath) {
+                      if (
+                        pathReadsHookReturnAccessor(
+                          memberPath,
+                          hookReturnBindingInfo,
+                          callbackPath.scope,
+                          t,
+                        )
+                      ) {
+                        callbackHasReactiveDependency = true
+                        memberPath.stop()
+                      }
+                    },
+                    Identifier(idPath) {
+                      if (
+                        idPath.parentPath.isMemberExpression({ property: idPath.node }) &&
+                        !(idPath.parent as BabelCore.types.MemberExpression).computed
+                      ) {
+                        return
+                      }
+                      if (
+                        idPath.parentPath.isObjectProperty({ key: idPath.node }) &&
+                        !(idPath.parent as BabelCore.types.ObjectProperty).computed
+                      ) {
+                        return
+                      }
+                      const binding = idPath.scope.getBinding(idPath.node.name)
+                      if (binding && binding.scope === callbackPath.scope) return
 
-                    if (
-                      pathReadsHookReturnAccessor(
-                        idPath,
-                        hookReturnBindingInfo,
-                        firstArgPath.scope,
-                        t,
-                      )
-                    ) {
-                      hasReactiveDependency = true
-                      idPath.stop()
-                      return
-                    }
+                      if (
+                        pathReadsHookReturnAccessor(
+                          idPath,
+                          hookReturnBindingInfo,
+                          callbackPath.scope,
+                          t,
+                        )
+                      ) {
+                        callbackHasReactiveDependency = true
+                        idPath.stop()
+                        return
+                      }
 
-                    if (binding && hasReactiveAliasSourceBinding(idPath, idPath.node.name)) {
-                      hasReactiveDependency = true
-                      idPath.stop()
-                    }
-                  },
-                })
-                const hasSideEffects = memoHasSideEffects(firstArgPath)
-                if (!hasReactiveDependency && !hasSideEffects) {
+                      if (binding && hasReactiveAliasSourceBinding(idPath, idPath.node.name)) {
+                        callbackHasReactiveDependency = true
+                        idPath.stop()
+                      }
+                    },
+                  })
+                  hasReactiveDependency ||= callbackHasReactiveDependency
+                  if (!firstSideEffectPath && memoHasSideEffects(callbackPath)) {
+                    firstSideEffectPath = callbackPath
+                  }
+                }
+                if (!hasReactiveDependency && !firstSideEffectPath) {
                   emitWarning(
                     callPath,
                     'FICT-M001',
@@ -4218,8 +4263,8 @@ function createHIREntrypointVisitor(
                     fileName,
                   )
                 }
-                if (!hasSideEffects) return
-                const loc = firstArg.loc?.start ?? callPath.node.loc?.start
+                if (!firstSideEffectPath) return
+                const loc = firstSideEffectPath.node.loc?.start ?? callPath.node.loc?.start
                 warn({
                   code: 'FICT-M003',
                   message: 'Memo should not contain side effects.',
