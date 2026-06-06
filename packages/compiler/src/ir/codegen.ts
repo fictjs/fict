@@ -4,7 +4,12 @@ import { DelegatedEvents } from '../constants'
 import { debugLog } from '../debug'
 import { applyRegionMetadata, shouldMemoizeRegion, type RegionMetadata } from '../fine-grained-dom'
 import { setModuleMetadata } from '../module-metadata'
-import type { FictCompilerOptions, ModuleReactiveMetadata, ReactiveExportKind } from '../types'
+import type {
+  FictCompilerOptions,
+  HookReturnInfoSerializable,
+  ModuleReactiveMetadata,
+  ReactiveExportKind,
+} from '../types'
 import { isLogicalAssignmentOperator } from '../utils'
 import { DiagnosticCode, reportDiagnostic } from '../validation'
 
@@ -1021,8 +1026,9 @@ function resolveNamespaceHookCallInfo(
   const propName = getStaticPropName(callee.property as Expression, callee.computed)
   if (typeof propName !== 'string') return null
 
+  if (!Object.prototype.hasOwnProperty.call(nsMeta.hooks, propName)) return null
   const serialized = nsMeta.hooks[propName]
-  if (!serialized) return null
+  if (!isSerializedHookReturnInfo(serialized)) return null
 
   const hookName = `${namespaceName}.${propName}`
   const info = deserializeHookReturnInfo(serialized)
@@ -1079,10 +1085,48 @@ function getCanonicalNumericKey(key: string): number | null {
   return numeric
 }
 
+function isHookAccessorKind(value: unknown): value is HookAccessorKind {
+  return value === 'signal' || value === 'memo' || value === 'store'
+}
+
 function isCallableHookAccessorKind(
   kind: HookAccessorKind | null | undefined,
 ): kind is Extract<HookAccessorKind, 'signal' | 'memo'> {
   return kind === 'signal' || kind === 'memo'
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isCanonicalArrayPropIndex(value: string): boolean {
+  const index = Number(value)
+  return Number.isSafeInteger(index) && index >= 0 && String(index) === value
+}
+
+function isSerializedHookReturnInfo(value: unknown): value is HookReturnInfoSerializable {
+  if (!isPlainRecord(value)) return false
+  if (
+    Object.prototype.hasOwnProperty.call(value, 'directAccessor') &&
+    value.directAccessor !== undefined &&
+    !isHookAccessorKind(value.directAccessor)
+  ) {
+    return false
+  }
+  if (Object.prototype.hasOwnProperty.call(value, 'objectProps')) {
+    if (value.objectProps !== undefined) {
+      if (!isPlainRecord(value.objectProps)) return false
+      if (!Object.values(value.objectProps).every(isHookAccessorKind)) return false
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(value, 'arrayProps')) {
+    if (value.arrayProps !== undefined) {
+      if (!isPlainRecord(value.arrayProps)) return false
+      if (!Object.keys(value.arrayProps).every(isCanonicalArrayPropIndex)) return false
+      if (!Object.values(value.arrayProps).every(isHookAccessorKind)) return false
+    }
+  }
+  return true
 }
 
 function markHookReactiveLocal(

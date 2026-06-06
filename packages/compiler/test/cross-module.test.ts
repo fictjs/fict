@@ -957,6 +957,103 @@ describe('Cross-Module Reactivity', () => {
       expect(output).not.toMatch(/=> count[,)]/)
     })
 
+    it('keeps Object.prototype namespace hook metadata opaque', () => {
+      const emptyPath = path.join(baseDir, 'namespace-empty-hook-prototype.ts')
+      const inheritedPath = path.join(baseDir, 'namespace-inherited-hook-prototype.ts')
+      const missingPath = path.join(baseDir, 'namespace-missing-hooks-prototype.ts')
+      const validPath = path.join(baseDir, 'namespace-valid-hook-control.ts')
+      const malformedPath = path.join(baseDir, 'namespace-malformed-hook-control.ts')
+      const appPath = path.join(baseDir, 'app-namespace-empty-hook-prototype.tsx')
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(emptyPath), {
+        version: 1,
+        exports: {},
+        hooks: {},
+      })
+      moduleMetadata.set(path.resolve(inheritedPath), {
+        version: 1,
+        exports: {},
+        hooks: Object.create({
+          toString: { objectProps: { foo: 'signal' } },
+        }),
+      })
+      moduleMetadata.set(path.resolve(missingPath), {
+        version: 1,
+        exports: {},
+      })
+      moduleMetadata.set(path.resolve(validPath), {
+        version: 1,
+        exports: {},
+        hooks: {
+          useCounter: { objectProps: { count: 'signal' } },
+        },
+      })
+      const malformedHook = Object.assign(
+        function malformedHook() {
+          return ''
+        },
+        {
+          objectProps: { foo: 'signal' },
+        },
+      )
+      moduleMetadata.set(path.resolve(malformedPath), {
+        version: 1,
+        exports: {},
+        hooks: {
+          useBad: malformedHook,
+        },
+      })
+
+      const output = transform(
+        `
+          import * as empty from './namespace-empty-hook-prototype'
+          import * as inherited from './namespace-inherited-hook-prototype'
+          import * as missing from './namespace-missing-hooks-prototype'
+          import * as valid from './namespace-valid-hook-control'
+          import * as malformed from './namespace-malformed-hook-control'
+
+          export function App() {
+            const bad = empty.toString()
+            const inheritedResult = inherited.toString()
+            const ctor = empty.constructor()
+            const has = empty.hasOwnProperty()
+            const val = empty.valueOf()
+            const missingResult = missing.toString()
+            const real = valid.useCounter()
+            const malformedResult = malformed.useBad()
+            return (
+              <div>
+                {bad.foo}
+                {inheritedResult.foo}
+                {ctor.foo}
+                {has.foo}
+                {val.foo}
+                {missingResult.foo}
+                {real.count}
+                {malformedResult.foo}
+              </div>
+            )
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        appPath,
+      )
+
+      for (const name of [
+        'bad',
+        'inheritedResult',
+        'ctor',
+        'has',
+        'val',
+        'missingResult',
+        'malformedResult',
+      ]) {
+        expect(output).toContain(`${name}.foo`)
+        expect(output).not.toContain(`${name}.foo()`)
+      }
+      expect(output).toContain('real.count()')
+    })
+
     it('unwraps namespace direct hook-call member reads across modules', () => {
       const hookSource = `
         import { $state } from 'fict'
