@@ -354,6 +354,39 @@ function collectClassComponentPaths(
   return paths
 }
 
+function collectStaticRestExclusionKeys(
+  statements: BabelCore.types.Statement[],
+  t: typeof BabelCore.types,
+): Map<string, Set<string>> {
+  const result = new Map<string, Set<string>>()
+
+  for (const stmt of statements) {
+    if (!t.isVariableDeclaration(stmt)) continue
+    for (const decl of stmt.declarations) {
+      if (!t.isIdentifier(decl.id) || !t.isArrayExpression(decl.init)) continue
+      const keys = new Set<string>()
+      let staticKeys = true
+      for (const element of decl.init.elements) {
+        if (!element || !t.isExpression(element)) {
+          staticKeys = false
+          break
+        }
+        if (t.isStringLiteral(element) || t.isNumericLiteral(element)) {
+          keys.add(String(element.value))
+          continue
+        }
+        staticKeys = false
+        break
+      }
+      if (staticKeys) {
+        result.set(decl.id.name, keys)
+      }
+    }
+  }
+
+  return result
+}
+
 function isComponentContextPrimitiveCall(expr: Expression): boolean {
   if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
   if (expr.callee.kind !== 'Identifier') return false
@@ -908,18 +941,28 @@ export function propagateHookResultAlias(
   value: Expression,
   ctx: CodegenContext,
 ): void {
-  const hookResultPassthroughCalls = new Set([
-    '__fictPropsRest',
-    '__fictObjectRest',
-    '_slicedToArray',
-    '_toArray',
-  ])
+  const hookResultPassthroughCalls = new Set(['_slicedToArray', '_toArray'])
+  const hookResultRestCalls = new Set(['__fictPropsRest', '__fictObjectRest'])
   const mapSource = (source: string) => {
     const hookName = getHookResultNameForLocal(source, ctx)
     if (!hookName) return
     ctx.hookResultVarMap?.set(targetBase, hookName)
     const info = getHookReturnInfo(hookName, ctx)
     markHookReactiveLocal(targetBase, info?.directAccessor, ctx)
+  }
+  const mapRestSource = (source: string, excludedArg: Expression | undefined) => {
+    const hookName = getHookResultNameForLocal(source, ctx)
+    if (!hookName) return
+    const excludedKeys = getStaticRestExcludedKeys(excludedArg, ctx)
+    if (!excludedKeys) return
+    const info = getHookReturnInfo(hookName, ctx)
+    const narrowed = narrowHookReturnInfoForObjectRest(info, excludedKeys)
+    if (!narrowed) return
+    const restHookName = `${hookName}.__rest_${targetBase}_${ctx.tempCounter++}`
+    ctx.hookReturnInfo = ctx.hookReturnInfo ?? new Map()
+    ctx.hookReturnInfo.set(restHookName, narrowed)
+    ctx.hookResultVarMap?.set(targetBase, restHookName)
+    markHookReactiveLocal(targetBase, narrowed.directAccessor, ctx)
   }
 
   if (value.kind === 'Identifier') {
@@ -937,6 +980,16 @@ export function propagateHookResultAlias(
       mapSource(deSSAVarName(firstArg.name))
     }
   }
+  if (
+    value.kind === 'CallExpression' &&
+    value.callee.kind === 'Identifier' &&
+    hookResultRestCalls.has(value.callee.name)
+  ) {
+    const firstArg = value.arguments[0]
+    if (firstArg && firstArg.kind === 'Identifier') {
+      mapRestSource(deSSAVarName(firstArg.name), value.arguments[1] as Expression | undefined)
+    }
+  }
 
   if (value.kind === 'SequenceExpression' && value.expressions.length > 0) {
     const last = value.expressions[value.expressions.length - 1]
@@ -951,7 +1004,65 @@ export function propagateHookResultAlias(
         mapSource(deSSAVarName(firstArg.name))
       }
     }
+    if (
+      last &&
+      last.kind === 'CallExpression' &&
+      last.callee.kind === 'Identifier' &&
+      hookResultRestCalls.has(last.callee.name)
+    ) {
+      const firstArg = last.arguments[0]
+      if (firstArg && firstArg.kind === 'Identifier') {
+        mapRestSource(deSSAVarName(firstArg.name), last.arguments[1] as Expression | undefined)
+      }
+    }
   }
+}
+
+function getStaticRestExcludedKeys(
+  expr: Expression | undefined,
+  ctx: CodegenContext,
+): Set<string> | null {
+  if (expr?.kind === 'Identifier') {
+    const keys = ctx.staticRestExclusionKeys?.get(deSSAVarName(expr.name))
+    return keys ? new Set(keys) : null
+  }
+  if (!expr || expr.kind !== 'ArrayExpression') return null
+  const keys = new Set<string>()
+  for (const element of expr.elements) {
+    if (!element || element.kind !== 'Literal') return null
+    if (typeof element.value !== 'string' && typeof element.value !== 'number') return null
+    keys.add(String(element.value))
+  }
+  return keys
+}
+
+function canonicalArrayRestKey(key: string): number | null {
+  const index = Number(key)
+  if (!Number.isSafeInteger(index) || index < 0 || String(index) !== key) return null
+  return index
+}
+
+function narrowHookReturnInfoForObjectRest(
+  info: HookReturnInfo | null,
+  excludedKeys: Set<string>,
+): HookReturnInfo | null {
+  if (!info) return null
+  const objectProps = info.objectProps ? new Map(info.objectProps) : undefined
+  const arrayProps = info.arrayProps ? new Map(info.arrayProps) : undefined
+
+  for (const key of excludedKeys) {
+    objectProps?.delete(key)
+    const arrayKey = canonicalArrayRestKey(key)
+    if (arrayKey !== null) {
+      arrayProps?.delete(arrayKey)
+    }
+  }
+
+  const narrowed: HookReturnInfo = {}
+  if (objectProps && objectProps.size > 0) narrowed.objectProps = objectProps
+  if (arrayProps && arrayProps.size > 0) narrowed.arrayProps = arrayProps
+
+  return narrowed.objectProps || narrowed.arrayProps || narrowed.directAccessor ? narrowed : null
 }
 
 function getHookResultNameForLocal(name: string, ctx: CodegenContext): string | null {
@@ -1132,6 +1243,8 @@ export interface CodegenContext {
   namespaceStoreAliasVars?: Set<string> | undefined
   /** Namespace import metadata for reactive exports (used for obj.signal access) */
   importedNamespaces?: Map<string, ModuleReactiveMetadata> | undefined
+  /** Static object-rest exclusion arrays emitted by syntax lowering. */
+  staticRestExclusionKeys?: Map<string, Set<string>> | undefined
   /** Variables initialized with $state (signal accessors) */
   signalVars?: Set<string> | undefined
   /** Variables initialized directly from array literals and still trusted as arrays. */
@@ -1316,6 +1429,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     storeVars: new Set(),
     namespaceStoreAliasVars: new Set(),
     importedNamespaces: new Map(),
+    staticRestExclusionKeys: new Map(),
     signalVars: new Set(),
     knownArrayVars: new Set(),
     callableSignalVars: new Set(),
@@ -1742,6 +1856,7 @@ export function lowerHIRToBabel(
   }
   ctx.jsxMemberComponentPaths = collectJSXMemberComponentPaths(originalBody, t)
   ctx.classComponentPaths = collectClassComponentPaths(originalBody, t)
+  ctx.staticRestExclusionKeys = collectStaticRestExclusionKeys(originalBody, t)
   addDestructuredJSXComponentSourcePaths(program, ctx)
   const body: BabelCore.types.Statement[] = []
   const emittedFunctionNames = new Set<string>()
@@ -6564,6 +6679,7 @@ export function codegenWithScopes(
   }
   ctx.jsxMemberComponentPaths = collectJSXMemberComponentPaths(originalBody, t)
   ctx.classComponentPaths = collectClassComponentPaths(originalBody, t)
+  ctx.staticRestExclusionKeys = collectStaticRestExclusionKeys(originalBody, t)
   addDestructuredJSXComponentSourcePaths(program, ctx)
   ctx.scopes = scopes
 
@@ -6881,6 +6997,7 @@ export function lowerHIRWithRegions(
   }
   ctx.jsxMemberComponentPaths = collectJSXMemberComponentPaths(originalBody, t)
   ctx.classComponentPaths = collectClassComponentPaths(originalBody, t)
+  ctx.staticRestExclusionKeys = collectStaticRestExclusionKeys(originalBody, t)
   addDestructuredJSXComponentSourcePaths(program, ctx)
   ctx.resumableEnabled = options?.resumable === true
   // Auto-extract defaults to true when resumable is enabled, unless explicitly disabled

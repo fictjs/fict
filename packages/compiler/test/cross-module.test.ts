@@ -2170,6 +2170,227 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toContain('["count"]')
     })
 
+    it('narrows hook-result metadata for object rest exclusions', () => {
+      const hookSource = `
+        import { $memo, $state } from 'fict'
+
+        /** @fictReturn { count: 'signal', other: 'signal', doubled: 'memo' } */
+        export function useCounter() {
+          const count = $state(0)
+          const other = $state(2)
+          const doubled = $memo(() => count * 2)
+          return { count, other, doubled }
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-rest-narrow'
+
+        export function App() {
+          const state = useCounter()
+          const { count, doubled, ...rest } = state
+          return <span>{String(rest.count)}:{String(rest.doubled)}:{rest.other}</span>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(hookSource, { moduleMetadata }, path.join(baseDir, 'use-counter-rest-narrow.tsx'))
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-hook-rest-narrow.tsx'),
+      )
+
+      expect(output).toContain('__fictObjectRest')
+      expect(output).toContain('["count", "doubled"]')
+      expect(output).toMatch(/String\(rest\.count\)/)
+      expect(output).toMatch(/String\(rest\.doubled\)/)
+      expect(output).toMatch(/rest\.other\(\)/)
+      expect(output).not.toMatch(/rest\.count\(\)/)
+      expect(output).not.toMatch(/rest\.doubled\(\)/)
+    })
+
+    it('keeps retained hook-result rest properties reactive while preserving excluded writes', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal', other: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          const other = $state(2)
+          return { count, other }
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-rest-write'
+
+        export function App() {
+          const state = useCounter()
+          const { count, ...rest } = state
+          rest.count = 1
+          rest.count++
+          rest.other = 2
+          return <span>{rest.count}:{rest.other}</span>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(hookSource, { moduleMetadata }, path.join(baseDir, 'use-counter-rest-write.tsx'))
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-hook-rest-write.tsx'),
+      )
+
+      expect(output).toContain('rest.count = 1')
+      expect(output).toContain('rest.count++')
+      expect(output).toContain('rest.other(2)')
+      expect(output).toMatch(/rest\.other\(\)/)
+      expect(output).not.toContain('rest.count(1)')
+      expect(output).not.toMatch(/rest\.count\(\+\+/)
+    })
+
+    it('narrows array-like hook-result rest metadata for numeric exclusions', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn [0: 'signal', 1: 'signal'] */
+        export function usePair() {
+          const first = $state(1)
+          const second = $state(2)
+          return [first, second]
+        }
+      `
+      const appSource = `
+        import { usePair } from './use-pair-object-rest-numeric'
+
+        export function App() {
+          const pair = usePair()
+          const { 0: first, ...rest } = pair
+          return <span>{String(rest[0])}:{rest[1]}</span>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-pair-object-rest-numeric.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-hook-rest-numeric.tsx'),
+      )
+
+      expect(output).toMatch(/String\(rest\[0\]\)/)
+      expect(output).toMatch(/rest\[1\]\(\)/)
+      expect(output).not.toMatch(/rest\[0\]\(\)/)
+    })
+
+    it('narrows hook-result rest metadata for computed static exclusions', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal', other: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          const other = $state(2)
+          return { count, other }
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-rest-computed'
+
+        export function App() {
+          const state = useCounter()
+          const { ["count"]: count, ...rest } = state
+          return <span>{String(rest.count)}:{rest.other}</span>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(hookSource, { moduleMetadata }, path.join(baseDir, 'use-counter-rest-computed.tsx'))
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-hook-rest-computed.tsx'),
+      )
+
+      expect(output).toMatch(/String\(rest\.count\)/)
+      expect(output).toMatch(/rest\.other\(\)/)
+      expect(output).not.toMatch(/rest\.count\(\)/)
+    })
+
+    it('drops hook-result rest metadata for dynamic exclusions', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal', other: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          const other = $state(2)
+          return { count, other }
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-rest-dynamic'
+
+        export function App() {
+          const state = useCounter()
+          const key = 'count'
+          const { [key]: removed, ...rest } = state
+          return <span>{rest.other}</span>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(hookSource, { moduleMetadata }, path.join(baseDir, 'use-counter-rest-dynamic.tsx'))
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-hook-rest-dynamic.tsx'),
+      )
+
+      expect(output).toContain('__fictObjectRest')
+      expect(output).toMatch(/rest\.other/)
+      expect(output).not.toMatch(/rest\.other\(\)/)
+    })
+
+    it('preserves hook-result metadata for plain aliases', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-rest-alias-control'
+
+        export function App() {
+          const state = useCounter()
+          const rest = state
+          return <span>{rest.count}</span>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-rest-alias-control.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-hook-rest-alias-control.tsx'),
+      )
+
+      expect(output).toMatch(/rest\.count\(\)/)
+    })
+
     it('preserves hook-return destructuring defaults', () => {
       const hookSource = `
         import { $state } from 'fict'
