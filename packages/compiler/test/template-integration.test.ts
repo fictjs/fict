@@ -658,6 +658,8 @@ describe('compiled templates DOM integration', () => {
         c: renamed,
         d = renamed,
         e = b,
+        nested: { value: nestedValue = a },
+        combined = a + ':' + renamed,
         fn,
         fnResult = fn(),
       }: any) {
@@ -666,6 +668,8 @@ describe('compiled templates DOM integration', () => {
             {typeof b}:{String(b)}:
             {typeof d}:{String(d)}:
             {typeof e}:{String(e)}:
+            {typeof nestedValue}:{String(nestedValue)}:
+            {typeof combined}:{String(combined)}:
             {fnResult}
           </span>
         )
@@ -673,7 +677,7 @@ describe('compiled templates DOM integration', () => {
 
       export function mount(el: HTMLElement) {
         return render(() => (
-          <Pair a="first" c="alias" fn={() => 'called'} />
+          <Pair a="first" c="alias" nested={{}} fn={() => 'called'} />
         ), el)
       }
     `
@@ -688,7 +692,7 @@ describe('compiled templates DOM integration', () => {
     await flushUpdates()
 
     expect(container.querySelector('[data-id="pair"]')?.textContent?.replace(/\s+/g, '')).toBe(
-      'string:first:string:alias:string:first:called',
+      'string:first:string:alias:string:first:string:first:string:first:alias:called',
     )
 
     teardown()
