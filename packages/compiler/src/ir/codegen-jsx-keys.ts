@@ -33,6 +33,26 @@ function collectReturnedJSXFromExpression(
   }
 }
 
+function expressionCanReturnNonJSX(expression: Expression): boolean {
+  if (expression.kind === 'JSXElement') {
+    return false
+  }
+  if (expression.kind === 'SequenceExpression') {
+    const tail = expression.expressions[expression.expressions.length - 1]
+    return tail ? expressionCanReturnNonJSX(tail) : true
+  }
+  if (expression.kind === 'ConditionalExpression') {
+    return (
+      expressionCanReturnNonJSX(expression.consequent) ||
+      expressionCanReturnNonJSX(expression.alternate)
+    )
+  }
+  if (expression.kind === 'LogicalExpression') {
+    return true
+  }
+  return true
+}
+
 function extractKeyExpressionFromReturnedExpression(
   expression: Expression,
 ): Expression | undefined {
@@ -121,6 +141,37 @@ function getReturnedJSXFromCallback(callback: Expression): JSXElementExpression[
   return returned
 }
 
+function getReturnedExpressionsFromCallback(callback: Expression): Expression[] {
+  const returned: Expression[] = []
+
+  if (callback.kind === 'ArrowFunction') {
+    if (callback.isExpression && !Array.isArray(callback.body)) {
+      returned.push(callback.body)
+      return returned
+    }
+    if (Array.isArray(callback.body)) {
+      for (const block of callback.body) {
+        const term = block.terminator
+        if (term.kind === 'Return' && term.argument) {
+          returned.push(term.argument)
+        }
+      }
+    }
+    return returned
+  }
+
+  if (callback.kind === 'FunctionExpression') {
+    for (const block of callback.body ?? []) {
+      const term = block.terminator
+      if (term.kind === 'Return' && term.argument) {
+        returned.push(term.argument)
+      }
+    }
+  }
+
+  return returned
+}
+
 export function getReturnedJSXElementsFromMapCallback(
   callback: Expression,
 ): JSXElementExpression[] {
@@ -164,6 +215,11 @@ export function extractKeyFromMapCallback(callback: Expression): Expression | un
     ) {
       return firstKey
     }
+  }
+
+  const returnedExpressions = getReturnedExpressionsFromCallback(callback)
+  if (returnedExpressions.length === 0 || returnedExpressions.some(expressionCanReturnNonJSX)) {
+    return undefined
   }
 
   const returned = getReturnedJSXFromCallback(callback)

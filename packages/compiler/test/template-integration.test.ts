@@ -2990,6 +2990,61 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('does not evaluate keyed JSX branch keys for skipped non-JSX map branches', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      type Item = { id: number; show: boolean }
+
+      export const log: string[] = []
+
+      function keyFor(item: Item) {
+        log.push('key ' + item.id)
+        if (!item.show) {
+          throw new Error('key for hidden item ' + item.id)
+        }
+        return item.id
+      }
+
+      export function App() {
+        const items: Item[] = [
+          { id: 1, show: false },
+          { id: 2, show: true },
+        ]
+
+        return (
+          <div>
+            {items.map(item =>
+              item.show
+                ? <span key={keyFor(item)}>{item.id}</span>
+                : null
+            )}
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        log.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      log: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(container.textContent).toBe('2')
+    expect(mod.log).not.toContain('key 1')
+
+    teardown()
+    container.remove()
+  })
+
   it('preserves map callback arguments semantics by falling back from list specialization', async () => {
     const source = `
       import { render } from 'fict'

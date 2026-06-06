@@ -276,6 +276,68 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).toMatch(/createKeyedList\([\s\S]*?\?\s*user\.aId\s*:\s*user\.bId/)
     })
 
+    it('does not extract keys from ternary callbacks with non-JSX branches', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let users = $state([{ id: 1, show: false }, { id: 2, show: true }])
+          return (
+            <ul>
+              {users.map(user =>
+                user.show ? <li key={user.id}>{user.id}</li> : null
+              )}
+            </ul>
+          )
+        }
+      `
+
+      const output = runTransform(input)
+      expect(output).toContain('createKeyedList')
+      expect(output).toMatch(/createKeyedList\([\s\S]*?=>\s*__index\b/)
+    })
+
+    it('does not extract keys from logical callbacks with falsey branches', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let users = $state([{ id: 1, show: false }, { id: 2, show: true }])
+          return (
+            <ul>
+              {users.map(user =>
+                user.show && <li key={user.id}>{user.id}</li>
+              )}
+            </ul>
+          )
+        }
+      `
+
+      const output = runTransform(input)
+      expect(output).toContain('createKeyedList')
+      expect(output).toMatch(/createKeyedList\([\s\S]*?=>\s*__index\b/)
+    })
+
+    it('does not extract keys when a conditional branch returns unkeyed JSX', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let users = $state([{ id: 1, show: false }, { id: 2, show: true }])
+          return (
+            <ul>
+              {users.map(user =>
+                user.show
+                  ? <li key={user.id}>{user.id}</li>
+                  : <li>{user.id}</li>
+              )}
+            </ul>
+          )
+        }
+      `
+
+      const output = runTransform(input)
+      expect(output).toContain('createKeyedList')
+      expect(output).toMatch(/createKeyedList\([\s\S]*?=>\s*__index\b/)
+    })
+
     it('uses returned sequence tail for key extraction', () => {
       const input = `
         import { $state } from 'fict'
