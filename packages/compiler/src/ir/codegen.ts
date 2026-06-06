@@ -1342,6 +1342,8 @@ export interface CodegenContext {
   preserveHookReturnAccessors?: boolean | undefined
   /** Cache of hook return accessor metadata keyed by hook name */
   hookReturnInfo?: Map<string, HookReturnInfo> | undefined
+  /** Hook metadata cache keys that came from imported module metadata. */
+  importedHookReturnInfoNames?: Set<string> | undefined
   /** Map of local variables bound to hook results (per function) */
   hookResultVarMap?: Map<string, string> | undefined
   /** Imported hook bindings that did not publish hook-return metadata */
@@ -1464,6 +1466,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     resumablePropAccessors: new Map(),
     resumablePropRests: new Map(),
     hookReturnInfo: new Map(),
+    importedHookReturnInfoNames: new Set(),
     opaqueImportedHookNames: new Set(),
     hoistedTemplates: new Map(),
     hoistedTemplateStatements: [],
@@ -1494,7 +1497,28 @@ function analyzeHookReturnInfo(fn: HIRFunction, ctx: CodegenContext): HookReturn
   return analyzeHookReturnInfoWithOps(fn, ctx, hookReturnInfoAnalysisOps)
 }
 
+function markImportedHookReturnInfoName(name: string, ctx: CodegenContext): void {
+  const baseName = deSSAVarName(name)
+  ctx.importedHookReturnInfoNames = ctx.importedHookReturnInfoNames ?? new Set()
+  ctx.importedHookReturnInfoNames.add(baseName)
+}
+
+function hasShadowedImportedHookReturnInfo(name: string, ctx: CodegenContext): boolean {
+  const baseName = deSSAVarName(name)
+  if (!(ctx.importedHookReturnInfoNames?.has(baseName) ?? false)) return false
+  return (
+    (ctx.shadowedNames?.has(baseName) ?? false) ||
+    (ctx.currentFunctionDeclaredNames?.has(baseName) ?? false)
+  )
+}
+
+function getCachedHookReturnInfo(name: string, ctx: CodegenContext): HookReturnInfo | null {
+  if (hasShadowedImportedHookReturnInfo(name, ctx)) return null
+  return ctx.hookReturnInfo?.get(deSSAVarName(name)) ?? null
+}
+
 function getHookReturnInfo(name: string, ctx: CodegenContext): HookReturnInfo | null {
+  if (hasShadowedImportedHookReturnInfo(name, ctx)) return null
   return getHookReturnInfoWithOps(name, ctx, hookReturnInfoAnalysisOps)
 }
 
@@ -1556,7 +1580,7 @@ function resolveDirectHookCallInfo(
   if (expr.callee.kind !== 'Identifier') return null
 
   const hookName = deSSAVarName(expr.callee.name)
-  const cached = ctx.hookReturnInfo?.get(hookName)
+  const cached = getCachedHookReturnInfo(hookName, ctx)
   if (cached) return { hookName, info: cached }
   if (!isHookName(hookName)) return null
   if (ctx.opaqueImportedHookNames?.has(hookName)) return null
@@ -5441,6 +5465,9 @@ function propagateLocalHookAliasMetadata(
       const sourceInfo = ctx.hookReturnInfo.get(source)
       if (!sourceInfo) continue
       ctx.hookReturnInfo.set(target, sourceInfo)
+      if (ctx.importedHookReturnInfoNames?.has(source)) {
+        markImportedHookReturnInfoName(target, ctx)
+      }
       changed = true
     }
   }
@@ -7026,8 +7053,10 @@ export function lowerHIRWithRegions(
       }
     },
     setImportedHookInfo(localName, info) {
+      const baseName = deSSAVarName(localName)
       ctx.hookReturnInfo = ctx.hookReturnInfo ?? new Map()
-      ctx.hookReturnInfo.set(localName, deserializeHookReturnInfo(info))
+      ctx.hookReturnInfo.set(baseName, deserializeHookReturnInfo(info))
+      markImportedHookReturnInfoName(baseName, ctx)
     },
   })
   const stateMacroNames = new Set<string>(['$state', ...(macroAliases?.state ?? [])])

@@ -882,6 +882,173 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toMatch(/state\.count\(\)/)
     })
 
+    it('does not apply imported hook metadata to local hook shadows', () => {
+      const moduleMetadata = new Map()
+      transform(
+        `
+          import { $state } from 'fict'
+
+          /** @fictReturn { count: 'signal' } */
+          export function useCounter() {
+            const count = $state(0)
+            return { count }
+          }
+        `,
+        { moduleMetadata },
+        path.join(baseDir, 'shadowed-hook-source.tsx'),
+      )
+
+      const importedControl = transform(
+        `
+          import { useCounter } from './shadowed-hook-source'
+
+          export function App() {
+            const state = useCounter()
+            return <span>{state.count}</span>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-imported-hook-control.tsx'),
+      )
+
+      expect(importedControl).toMatch(/state\.count\(\)/)
+
+      const functionShadow = transform(
+        `
+          import { useCounter } from './shadowed-hook-source'
+
+          export function App() {
+            function useCounter() {
+              return { count: 1 }
+            }
+            const state = useCounter()
+            return <span>{state.count}</span>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-shadowed-hook-function.tsx'),
+      )
+
+      expect(functionShadow).toContain('state.count')
+      expect(functionShadow).not.toMatch(/state\.count\(\)/)
+
+      const constShadow = transform(
+        `
+          import { useCounter } from './shadowed-hook-source'
+
+          export function App() {
+            const useCounter = () => ({ count: 1 })
+            const state = useCounter()
+            return <span>{state.count}</span>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-shadowed-hook-const.tsx'),
+      )
+
+      expect(constShadow).toContain('state.count')
+      expect(constShadow).not.toMatch(/state\.count\(\)/)
+
+      const blockShadow = transform(
+        `
+          import { useCounter } from './shadowed-hook-source'
+
+          export function App() {
+            {
+              const useCounter = () => ({ count: 1 })
+              return <span>{useCounter().count}</span>
+            }
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-shadowed-hook-block.tsx'),
+      )
+
+      expect(blockShadow).toContain('useCounter().count')
+      expect(blockShadow).not.toMatch(/useCounter\(\)\.count\(\)/)
+
+      const nestedShadow = transform(
+        `
+          import { useCounter as counter } from './shadowed-hook-source'
+
+          export function App() {
+            function useRead() {
+              const counter = () => ({ count: 1 })
+              const state = counter()
+              return state.count
+            }
+            return <span>{useRead()}</span>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-shadowed-hook-nested.tsx'),
+      )
+
+      expect(nestedShadow).toContain('state.count')
+      expect(nestedShadow).not.toMatch(/state\.count\(\)/)
+    })
+
+    it('keeps shadowed imported hook result writes as plain object writes', () => {
+      const moduleMetadata = new Map()
+      transform(
+        `
+          import { $state } from 'fict'
+
+          /** @fictReturn { count: 'signal' } */
+          export function useCounter() {
+            const count = $state(0)
+            return { count }
+          }
+        `,
+        { moduleMetadata },
+        path.join(baseDir, 'shadowed-hook-write-source.tsx'),
+      )
+
+      const output = transform(
+        `
+          import { useCounter } from './shadowed-hook-write-source'
+
+          export function App() {
+            const useCounter = () => ({ count: 1 })
+            const state = useCounter()
+            state.count = 2
+            state.count++
+            return <span>{state.count}</span>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-shadowed-hook-write.tsx'),
+      )
+
+      expect(output).toContain('state.count = 2')
+      expect(output).toContain('state.count++')
+      expect(output).not.toContain('state.count(2)')
+      expect(output).not.toMatch(/state\.count\([+-]{2}__prev_/)
+      expect(output).not.toMatch(/state\.count\(\)/)
+    })
+
+    it('keeps same-file hook metadata when no local binding shadows the hook', () => {
+      const output = transform(
+        `
+          import { $state } from 'fict'
+
+          function useCounter() {
+            const count = $state(0)
+            return { count }
+          }
+
+          export function App() {
+            const state = useCounter()
+            return <span>{state.count}</span>
+          }
+        `,
+        { fineGrainedDom: true },
+        path.join(baseDir, 'app-same-file-hook-control.tsx'),
+      )
+
+      expect(output).toMatch(/state\.count\(\)/)
+    })
+
     it('propagates object-style direct accessor annotations for opaque hooks', () => {
       const hookSource = `
         import { readCount } from './external'
