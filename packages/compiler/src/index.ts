@@ -2106,12 +2106,28 @@ function createHIREntrypointVisitor(
             if (t.isExpressionStatement(node)) return checkNode(node.expression)
             if (t.isBlockStatement(node)) return node.body.some(stmt => checkNode(stmt))
             if (t.isReturnStatement(node)) return checkNode(node.argument)
+            if (t.isVariableDeclaration(node)) {
+              return node.declarations.some(decl => checkPattern(decl.id) || checkNode(decl.init))
+            }
             if (t.isSequenceExpression(node)) return node.expressions.some(expr => checkNode(expr))
             if (t.isConditionalExpression(node))
               return checkNode(node.test) || checkNode(node.consequent) || checkNode(node.alternate)
             if (t.isArrowFunctionExpression(node) || t.isFunctionExpression(node)) {
               return false
             }
+            return false
+          }
+          const checkPattern = (node: BabelCore.types.Node | null | undefined): boolean => {
+            if (!node) return false
+            if (t.isAssignmentPattern(node)) return checkPattern(node.left) || checkNode(node.right)
+            if (t.isArrayPattern(node)) return node.elements.some(element => checkPattern(element))
+            if (t.isObjectPattern(node)) {
+              return node.properties.some(prop => {
+                if (t.isRestElement(prop)) return checkPattern(prop.argument)
+                return t.isObjectProperty(prop) && checkPattern(prop.value as BabelCore.types.Node)
+              })
+            }
+            if (t.isRestElement(node)) return checkPattern(node.argument)
             return false
           }
           return checkNode(fn.body)

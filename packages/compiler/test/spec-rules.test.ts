@@ -380,6 +380,49 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
   })
 
+  it('warns when memo variable initializers contain side effects', () => {
+    const cases = [
+      'const x = fetch("/api")',
+      'const x = new Date()',
+      'const { value = fetch("/api") } = {}',
+      'const x = await fetch("/api")',
+      'let x = 0; const y = (x = 1)',
+    ]
+
+    for (const statement of cases) {
+      const { warnings } = transformWithWarnings(`
+        import { $memo } from 'fict'
+        function Demo() {
+          const value = $memo(async () => {
+            ${statement}
+            return 1
+          })
+          return <div>{value}</div>
+        }
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
+      expect(warnings.some(w => w.code === 'FICT-M001')).toBe(false)
+    }
+  })
+
+  it('does not warn when memo variable initializers are pure', () => {
+    const { warnings } = transformWithWarnings(`
+      import { $memo } from 'fict'
+      function Demo() {
+        const value = $memo(() => {
+          const x = 1
+          const { y = 2 } = {}
+          return x + y
+        })
+        return <div>{value}</div>
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-M003')).toBe(false)
+    expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
+  })
+
   it('warns on non-event inline JSX function props (FICT-X003)', () => {
     const { warnings } = transformWithWarnings(`
       function Panel({ label }) {
