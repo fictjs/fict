@@ -183,6 +183,56 @@ describe('analyzeFictFile', () => {
     )
   })
 
+  it('does not mark local effect helpers as reactive effects', () => {
+    const source = `
+      function effect(cb) {
+        cb()
+      }
+
+      export function App() {
+        effect(() => {
+          console.log('plain helper')
+        })
+        return <span>ok</span>
+      }
+    `
+    const result = analyzeFictFile(source, 'local-effect-helper.tsx', {
+      includeRegions: true,
+      includeDiagnostics: true,
+      verbosity: 'verbose',
+    })
+
+    const app = result.components.find(component => component.name === 'App')
+    const effectLine = sourceLine(source, 'effect(()')
+    const markers = app?.trace.find(entry => entry.line === effectLine)?.markers ?? []
+
+    expect(markers.some(marker => marker.kind === 'effect')).toBe(false)
+  })
+
+  it('does not mark non-Fict imported effect helpers as reactive effects', () => {
+    const source = `
+      import { effect } from './plain-effect'
+
+      export function App() {
+        effect(() => {
+          console.log('plain helper')
+        })
+        return <span>ok</span>
+      }
+    `
+    const result = analyzeFictFile(source, 'imported-effect-helper.tsx', {
+      includeRegions: true,
+      includeDiagnostics: true,
+      verbosity: 'verbose',
+    })
+
+    const app = result.components.find(component => component.name === 'App')
+    const effectLine = sourceLine(source, 'effect(()')
+    const markers = app?.trace.find(entry => entry.line === effectLine)?.markers ?? []
+
+    expect(markers.some(marker => marker.kind === 'effect')).toBe(false)
+  })
+
   it('includes components with JSX hidden inside expression containers', () => {
     const source = `
       export function Direct() {

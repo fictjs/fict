@@ -190,7 +190,6 @@ export function inferTraceMarkersForComponent(input: InferTraceInput): LineTrace
   const markersByLine = new Map<number, TraceMarker[]>()
   const effectTraceNames = new Set(input.effectMacroNames ?? ['$effect'])
   effectTraceNames.add('$effect')
-  effectTraceNames.add('effect')
 
   pushTraceMarker(markersByLine, startLine, {
     kind: 'once',
