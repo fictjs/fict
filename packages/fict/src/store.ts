@@ -78,14 +78,24 @@ const ITERATE_KEY = Symbol('iterate')
  * Get or create a signal for a specific property on a target object.
  * @internal
  */
-function getSignal(target: object, prop: string | symbol): Signal<unknown> {
+function getSignal(
+  target: object,
+  prop: string | symbol,
+  initialValue?: unknown,
+  useProvidedInitial = false,
+): Signal<unknown> {
   let signals = SIGNAL_CACHE.get(target)
   if (!signals) {
     signals = Object.create(null) as SignalBucket
     SIGNAL_CACHE.set(target, signals)
   }
   if (!Object.prototype.hasOwnProperty.call(signals, prop)) {
-    const initial = prop === ITERATE_KEY ? 0 : (target as IndexableObject)[prop]
+    const initial =
+      prop === ITERATE_KEY
+        ? 0
+        : useProvidedInitial
+          ? initialValue
+          : (target as IndexableObject)[prop]
     signals[prop] = createSignal(initial)
   }
   return signals[prop]!
@@ -235,12 +245,11 @@ export function $store<T extends object>(initialValue: T): T {
         return true
       }
 
+      const currentValue = Reflect.get(target, prop, receiver ?? proxy)
       // Always touch the signal so reference changes to this property are tracked,
       // even if the value is an object we proxy further.
-      const signal = getSignal(target, prop)
+      const signal = getSignal(target, prop, currentValue, true)
       const trackedValue = signal()
-
-      const currentValue = Reflect.get(target, prop, receiver ?? proxy)
 
       // Remove "read-time write" - direct mutation is now undefined behavior
       // In dev mode, warn once per object if we detect the underlying object was mutated directly

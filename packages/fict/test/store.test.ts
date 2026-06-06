@@ -714,6 +714,83 @@ describe('$store', () => {
     expect(seen).toEqual([1])
   })
 
+  it('evaluates own getters once on first read', () => {
+    let calls = 0
+    const state = $store({
+      get value() {
+        calls += 1
+        return calls
+      },
+    })
+
+    expect(state.value).toBe(1)
+    expect(calls).toBe(1)
+  })
+
+  it('evaluates inherited getters once on first read', () => {
+    let calls = 0
+    const raw = Object.create({
+      get value() {
+        calls += 1
+        return calls
+      },
+    }) as { value: number }
+    const state = $store(raw)
+
+    expect(state.value).toBe(1)
+    expect(calls).toBe(1)
+  })
+
+  it('evaluates getters with the proxy receiver on first read', () => {
+    let state: { value: string }
+    let calls = 0
+    const raw = {
+      get value() {
+        calls += 1
+        return this === state ? 'proxy' : 'raw'
+      },
+    }
+    state = $store(raw)
+
+    expect(state.value).toBe('proxy')
+    expect(calls).toBe(1)
+  })
+
+  it('does not retry throwing getters during first read', () => {
+    const error = new Error('getter failed')
+    let calls = 0
+    const state = $store({
+      get value() {
+        calls += 1
+        throw error
+      },
+    })
+
+    expect(() => state.value).toThrow(error)
+    expect(calls).toBe(1)
+  })
+
+  it('continues to read data properties normally', () => {
+    const state = $store({ value: 1 })
+
+    expect(state.value).toBe(1)
+  })
+
+  it('does not warn on first reads of getters with changing values', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    let calls = 0
+    const state = $store({
+      get value() {
+        calls += 1
+        return calls
+      },
+    })
+
+    expect(state.value).toBe(1)
+    expect(calls).toBe(1)
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+
   describe('Method binding and cache invalidation', () => {
     it('returns frozen function properties without binding', () => {
       const fn = () => 'ok'
