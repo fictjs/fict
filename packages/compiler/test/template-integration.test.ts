@@ -387,6 +387,128 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('tracks state reads inside synchronous control-flow callbacks', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      const setters: Array<((value: number) => void) | undefined> = []
+      export const api = {
+        set(value: number) {
+          setters.forEach(set => set?.(value))
+        },
+      }
+      export const callbacks: Array<() => unknown> = []
+
+      function IfProbe() {
+        const selected = $state(1)
+        setters[0] = (value: number) => selected(value)
+
+        const items = [1, 2, 3]
+        let ifLabel = 'if:no'
+        if (items.some(item => item === selected())) {
+          ifLabel = 'if:yes'
+        }
+        return <span>{ifLabel}</span>
+      }
+
+      function LoopProbe() {
+        const selected = $state(1)
+        setters[1] = (value: number) => selected(value)
+
+        const items = [1, 2, 3]
+
+        let loopLabel = 'loop:no'
+        for (let i = 0; i < 1 && items.every(item => item <= selected()); i++) {
+          loopLabel = 'loop:yes'
+        }
+        return <span>{loopLabel}</span>
+      }
+
+      function SwitchProbe() {
+        const selected = $state(1)
+        setters[2] = (value: number) => selected(value)
+
+        const items = [1, 2, 3]
+
+        let switchLabel = 'switch:none'
+        switch (items.find(item => item === selected())) {
+          case 1:
+            switchLabel = 'switch:one'
+            break
+          case 2:
+            switchLabel = 'switch:two'
+            break
+        }
+        return <span>{switchLabel}</span>
+      }
+
+      function ShadowProbe() {
+        let shadowLabel = 'shadow:no'
+        if ([0].some(() => {
+          const selected = 0
+          return selected === 0
+        })) {
+          shadowLabel = 'shadow:yes'
+        }
+        return <span>{shadowLabel}</span>
+      }
+
+      function InertProbe() {
+        const selected = $state(1)
+        setters[3] = (value: number) => selected(value)
+
+        const ignore = (fn: () => unknown) => {
+          callbacks.push(fn)
+          return false
+        }
+        let inertLabel = 'inert:no'
+        if (ignore(() => selected())) {
+          inertLabel = 'inert:yes'
+        }
+        return <span>{inertLabel}</span>
+      }
+
+      function App() {
+        return <span data-testid="value"><IfProbe />|<LoopProbe />|<SwitchProbe />|<ShadowProbe />|<InertProbe /></span>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { set(value: number): void }
+      callbacks: Array<() => unknown>
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-testid="value"]')?.textContent).toBe(
+      'if:yes|loop:no|switch:one|shadow:yes|inert:no',
+    )
+    expect(mod.callbacks).toHaveLength(1)
+
+    mod.api.set(2)
+    await flushUpdates()
+    expect(container.querySelector('[data-testid="value"]')?.textContent).toBe(
+      'if:yes|loop:no|switch:two|shadow:yes|inert:no',
+    )
+    expect(mod.callbacks).toHaveLength(1)
+
+    mod.api.set(3)
+    await flushUpdates()
+    expect(container.querySelector('[data-testid="value"]')?.textContent).toBe(
+      'if:yes|loop:yes|switch:none|shadow:yes|inert:no',
+    )
+    expect(mod.callbacks).toHaveLength(1)
+
+    teardown()
+    container.remove()
+  })
+
   it('evaluates impure reactive derived declaration initializers eagerly', async () => {
     const source = `
       import { $state, render } from 'fict'

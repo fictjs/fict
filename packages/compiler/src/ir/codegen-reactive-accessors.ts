@@ -881,6 +881,14 @@ function getExpressionIdentifiersDeep(expr?: Expression | null): Set<string> {
   return deps
 }
 
+function getControlExpressionIdentifiers(expr?: Expression | null): Set<string> {
+  const deps = new Set<string>()
+  if (expr) {
+    collectExecutedExpressionIdentifiers(expr, deps, new Set(), false, true)
+  }
+  return deps
+}
+
 function buildControlDependencyMap(fn: HIRFunction): Map<Instruction, Set<string>> {
   const depsByInstruction = new Map<Instruction, Set<string>>()
   let structured: StructuredNode
@@ -920,20 +928,20 @@ function buildControlDependencyMap(fn: HIRFunction): Map<Instruction, Set<string
         registerInstruction(node.instruction, activeDeps)
         return
       case 'if': {
-        const condDeps = getExpressionIdentifiers(node.test)
+        const condDeps = getControlExpressionIdentifiers(node.test)
         const nextDeps = mergeDeps(activeDeps, condDeps)
         walk(node.consequent, nextDeps)
         if (node.alternate) walk(node.alternate, nextDeps)
         return
       }
       case 'while': {
-        const condDeps = getExpressionIdentifiers(node.test)
+        const condDeps = getControlExpressionIdentifiers(node.test)
         const nextDeps = mergeDeps(activeDeps, condDeps)
         walk(node.body, nextDeps)
         return
       }
       case 'doWhile': {
-        const condDeps = getExpressionIdentifiers(node.test)
+        const condDeps = getControlExpressionIdentifiers(node.test)
         const nextDeps = mergeDeps(activeDeps, condDeps)
         walk(node.body, nextDeps)
         return
@@ -941,26 +949,26 @@ function buildControlDependencyMap(fn: HIRFunction): Map<Instruction, Set<string
       case 'for': {
         const initDeps = activeDeps
         node.init?.forEach(instr => registerInstruction(instr, initDeps))
-        const condDeps = node.test ? getExpressionIdentifiers(node.test) : new Set<string>()
+        const condDeps = node.test ? getControlExpressionIdentifiers(node.test) : new Set<string>()
         const loopDeps = mergeDeps(activeDeps, condDeps)
         node.update?.forEach(instr => registerInstruction(instr, loopDeps))
         walk(node.body, loopDeps)
         return
       }
       case 'forOf': {
-        const iterDeps = getExpressionIdentifiers(node.iterable)
+        const iterDeps = getControlExpressionIdentifiers(node.iterable)
         const loopDeps = mergeDeps(activeDeps, iterDeps)
         walk(node.body, loopDeps)
         return
       }
       case 'forIn': {
-        const iterDeps = getExpressionIdentifiers(node.object)
+        const iterDeps = getControlExpressionIdentifiers(node.object)
         const loopDeps = mergeDeps(activeDeps, iterDeps)
         walk(node.body, loopDeps)
         return
       }
       case 'switch': {
-        const discDeps = getExpressionIdentifiers(node.discriminant)
+        const discDeps = getControlExpressionIdentifiers(node.discriminant)
         const nextDeps = mergeDeps(activeDeps, discDeps)
         node.cases.forEach(c => walk(c.body, nextDeps))
         return
