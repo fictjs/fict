@@ -508,6 +508,133 @@ describe('$store', () => {
     expect(seen).toEqual(['a', 'b'])
   })
 
+  it('reacts when Object.defineProperty adds a new store property', async () => {
+    const state = $store<{ value?: number }>({})
+    const seen: Array<number | undefined> = []
+
+    createEffect(() => {
+      seen.push(state.value)
+    })
+
+    expect(seen).toEqual([undefined])
+
+    Object.defineProperty(state, 'value', {
+      value: 1,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    })
+    await tick()
+
+    expect(seen).toEqual([undefined, 1])
+  })
+
+  it('reacts when Object.defineProperty redefines a store value', async () => {
+    const state = $store({ value: 1 })
+    const seen: number[] = []
+
+    createEffect(() => {
+      seen.push(state.value)
+    })
+
+    Object.defineProperty(state, 'value', {
+      value: 2,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    })
+    await tick()
+
+    expect(seen).toEqual([1, 2])
+  })
+
+  it('reacts when Object.defineProperty installs an accessor descriptor', async () => {
+    const state = $store<{ value: number }>({ value: 1 })
+    const seen: number[] = []
+
+    createEffect(() => {
+      seen.push(state.value)
+    })
+
+    Object.defineProperty(state, 'value', {
+      get() {
+        return 2
+      },
+      enumerable: true,
+      configurable: true,
+    })
+    await tick()
+
+    expect(seen).toEqual([1, 2])
+  })
+
+  it('reacts to Object.defineProperty enumerability changes', async () => {
+    const state = $store({ value: 1 })
+    const seen: string[] = []
+
+    createEffect(() => {
+      seen.push(Object.keys(state).join(','))
+    })
+
+    expect(seen).toEqual(['value'])
+
+    Object.defineProperty(state, 'value', {
+      value: 1,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    })
+    await tick()
+
+    expect(seen).toEqual(['value', ''])
+  })
+
+  it('does not notify after failed Object.defineProperty mutations', async () => {
+    const raw = Object.preventExtensions({}) as { value?: number }
+    const state = $store(raw)
+    const values: Array<number | undefined> = []
+    const keys: string[] = []
+
+    createEffect(() => {
+      values.push(state.value)
+    })
+    createEffect(() => {
+      keys.push(Object.keys(state).join(','))
+    })
+
+    expect(() => {
+      Object.defineProperty(state, 'value', {
+        value: 1,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      })
+    }).toThrow(TypeError)
+    await tick()
+
+    expect(values).toEqual([undefined])
+    expect(keys).toEqual([''])
+  })
+
+  it('reacts to Object.defineProperty array length truncation', async () => {
+    const state = $store({ items: [1, 2, 3] })
+    const seen: string[] = []
+
+    createEffect(() => {
+      seen.push(`${state.items.length}:${String(state.items[2])}`)
+    })
+
+    expect(seen).toEqual(['3:3'])
+
+    Object.defineProperty(state.items, 'length', {
+      value: 1,
+      writable: true,
+    })
+    await tick()
+
+    expect(seen).toEqual(['3:3', '1:undefined'])
+  })
+
   describe('Method binding and cache invalidation', () => {
     it('returns frozen function properties without binding', () => {
       const fn = () => 'ok'

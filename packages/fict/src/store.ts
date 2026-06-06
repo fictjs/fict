@@ -68,6 +68,9 @@ const SIGNAL_CACHE = new WeakMap<object, SignalBucket>()
 /** Cache of bound methods to preserve function identity across reads */
 const BOUND_METHOD_CACHE = new WeakMap<object, Map<string | symbol, BoundMethodEntry>>()
 
+/** Suppress defineProperty notifications caused by the set trap's Reflect.set receiver path. */
+const DEFINE_NOTIFICATION_SUPPRESSIONS = new WeakMap<object, Set<string | symbol>>()
+
 /** Special key for tracking iteration (Object.keys, for-in, etc.) */
 const ITERATE_KEY = Symbol('iterate')
 
@@ -138,6 +141,43 @@ function canSkipSameValueSet(
 function mustReturnExactDataValue(target: object, prop: string | symbol): boolean {
   const descriptor = Object.getOwnPropertyDescriptor(target, prop)
   return !!descriptor && 'value' in descriptor && !descriptor.configurable && !descriptor.writable
+}
+
+function suppressDefineNotification(target: object, prop: string | symbol): () => void {
+  let suppressions = DEFINE_NOTIFICATION_SUPPRESSIONS.get(target)
+  if (!suppressions) {
+    suppressions = new Set()
+    DEFINE_NOTIFICATION_SUPPRESSIONS.set(target, suppressions)
+  }
+  suppressions.add(prop)
+  return () => {
+    const current = DEFINE_NOTIFICATION_SUPPRESSIONS.get(target)
+    if (!current) return
+    current.delete(prop)
+    if (current.size === 0) {
+      DEFINE_NOTIFICATION_SUPPRESSIONS.delete(target)
+    }
+  }
+}
+
+function isDefineNotificationSuppressed(target: object, prop: string | symbol): boolean {
+  return DEFINE_NOTIFICATION_SUPPRESSIONS.get(target)?.has(prop) ?? false
+}
+
+function descriptorShapeChanged(
+  before: PropertyDescriptor | undefined,
+  after: PropertyDescriptor | undefined,
+): boolean {
+  if (!before || !after) return before !== after
+  if (before.enumerable !== after.enumerable || before.configurable !== after.configurable) {
+    return true
+  }
+
+  const beforeIsData = 'value' in before
+  const afterIsData = 'value' in after
+  if (beforeIsData !== afterIsData) return true
+  if (beforeIsData && afterIsData) return before.writable !== after.writable
+  return before.get !== after.get || before.set !== after.set
 }
 
 /**
@@ -263,7 +303,13 @@ export function $store<T extends object>(initialValue: T): T {
         return true
       }
 
-      const result = Reflect.set(target, prop, newValue, receiver)
+      const releaseDefineSuppression = suppressDefineNotification(target, prop)
+      let result: boolean
+      try {
+        result = Reflect.set(target, prop, newValue, receiver)
+      } finally {
+        releaseDefineSuppression()
+      }
       if (!result) {
         return false
       }
@@ -361,6 +407,61 @@ export function $store<T extends object>(initialValue: T): T {
       getSignal(target, prop)()
       getSignal(target, ITERATE_KEY)()
       return Reflect.getOwnPropertyDescriptor(target, prop)
+    },
+
+    defineProperty(target, prop, descriptor) {
+      const hadKey = Object.prototype.hasOwnProperty.call(target, prop)
+      const oldLength = Array.isArray(target) ? target.length : undefined
+      const oldDescriptor = Reflect.getOwnPropertyDescriptor(target, prop)
+      const result = Reflect.defineProperty(target, prop, descriptor)
+
+      if (!result || isDefineNotificationSuppressed(target, prop)) {
+        return result
+      }
+
+      const nextDescriptor = Reflect.getOwnPropertyDescriptor(target, prop)
+      const hasKey = Object.prototype.hasOwnProperty.call(target, prop)
+      const signals = SIGNAL_CACHE.get(target)
+      const signal = getCachedSignal(signals, prop)
+      if (signal) {
+        const nextValue =
+          nextDescriptor && !('value' in nextDescriptor)
+            ? Reflect.get(target, prop, proxy)
+            : (target as IndexableObject)[prop]
+        signal(nextValue)
+      }
+
+      const shapeChanged = descriptorShapeChanged(oldDescriptor, nextDescriptor)
+      if (hadKey !== hasKey || shapeChanged) {
+        triggerIteration(target)
+      }
+
+      if (Array.isArray(target)) {
+        const lengthSignal = getCachedSignal(signals, 'length')
+        if (lengthSignal && target.length !== oldLength) {
+          lengthSignal(target.length)
+        }
+
+        if (prop === 'length' && typeof oldLength === 'number' && target.length < oldLength) {
+          for (let i = target.length; i < oldLength; i += 1) {
+            const indexSignal = getCachedSignal(signals, String(i))
+            if (indexSignal) {
+              indexSignal(undefined)
+            }
+          }
+          triggerIteration(target)
+        }
+      }
+
+      const boundMethods = BOUND_METHOD_CACHE.get(target)
+      if (boundMethods && boundMethods.has(prop)) {
+        boundMethods.delete(prop)
+        if (boundMethods.size === 0) {
+          BOUND_METHOD_CACHE.delete(target)
+        }
+      }
+
+      return result
     },
   })
 
