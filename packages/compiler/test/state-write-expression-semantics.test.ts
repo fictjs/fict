@@ -1086,6 +1086,54 @@ describe('state write expression semantics', () => {
     expect(raw).toEqual(['function', 2])
   })
 
+  it('invalidates hook-return object metadata before later spreads', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function useObj() {
+        let count = $state(1)
+        const override = { count: 9 }
+        return { count, ...override }
+      }
+
+      export function useSpreadOverrideHookObject() {
+        const obj = useObj()
+        return obj.count
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).not.toContain('obj.count()')
+
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useSpreadOverrideHookObject')()
+    expect(raw).toBe(9)
+  })
+
+  it('preserves hook-return object metadata for props after spreads', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function useObj() {
+        let count = $state(1)
+        let other = $state(2)
+        const override = { count: 9, other: 8 }
+        return { count, ...override, other }
+      }
+
+      export function usePostSpreadHookObjectProp() {
+        const obj = useObj()
+        return [obj.count, obj.other]
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).not.toContain('obj.count()')
+    expect(output).toContain('obj.other()')
+
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'usePostSpreadHookObjectProp')() as unknown[]
+    expect(raw).toEqual([9, 2])
+  })
+
   it('preserves bigint update semantics for $state', () => {
     const source = `
       import { $state } from 'fict'

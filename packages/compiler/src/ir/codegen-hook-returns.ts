@@ -281,6 +281,10 @@ export function analyzeHookReturnInfo(
   const visitReturnExpr = (expr: Expression) => {
     if (expr.kind === 'ObjectExpression') {
       expr.properties.forEach(prop => {
+        if (prop.kind === 'SpreadElement') {
+          info.objectProps?.clear()
+          return
+        }
         if (prop.kind !== 'Property') return
         const propName = getStaticPropName(prop.key as Expression, prop.computed === true)
         if (propName === null) return
