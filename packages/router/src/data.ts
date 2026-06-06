@@ -464,6 +464,7 @@ export function createResource<T, S = unknown>(
   const latestSignal = createSignal<T | undefined>(undefined)
 
   let currentSource: S
+  let hasCurrentSource = false
   let fetchId = 0 // Used to prevent race conditions
 
   /**
@@ -509,8 +510,9 @@ export function createResource<T, S = unknown>(
     const s = source()
 
     // Only refetch if source changed
-    if (s !== currentSource) {
+    if (!hasCurrentSource || s !== currentSource) {
       currentSource = s
+      hasCurrentSource = true
       // Increment fetchId to invalidate any pending fetches
       const currentFetchId = ++fetchId
       doFetch(s, currentFetchId)

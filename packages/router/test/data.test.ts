@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
+import { createSignal } from '@fictjs/runtime/advanced'
 import {
   query,
   revalidate,
@@ -223,6 +224,53 @@ describe('createResource', () => {
 
     expect(resource.loading()).toBe(false)
     expect(resource()?.id).toBe('123')
+  })
+
+  it('should fetch when initial source is undefined', async () => {
+    const fetcher = vi.fn(async (source: undefined) => `loaded:${String(source)}`)
+    const resource = createResource(() => undefined, fetcher)
+
+    await new Promise(resolve => setTimeout(resolve, 50))
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(resource.loading()).toBe(false)
+    expect(resource()).toBe('loaded:undefined')
+  })
+
+  it('should fetch for initial falsy source values', async () => {
+    const cases = [
+      { label: 'null', source: null },
+      { label: 'false', source: false },
+      { label: 'zero', source: 0 },
+      { label: 'empty', source: '' },
+    ] as const
+
+    for (const item of cases) {
+      const fetcher = vi.fn(async (source: unknown) => `${item.label}:${String(source)}`)
+      const resource = createResource(() => item.source, fetcher)
+
+      await new Promise(resolve => setTimeout(resolve, 50))
+
+      expect(fetcher).toHaveBeenCalledTimes(1)
+      expect(resource.loading()).toBe(false)
+      expect(resource()).toBe(`${item.label}:${String(item.source)}`)
+    }
+  })
+
+  it('should refetch when source changes back to undefined', async () => {
+    const source = createSignal<string | undefined>('first')
+    const fetcher = vi.fn(async (value: string | undefined) => `loaded:${String(value)}`)
+    const resource = createResource(source, fetcher)
+
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(resource()).toBe('loaded:first')
+
+    source(undefined)
+    await new Promise(resolve => setTimeout(resolve, 50))
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(resource.loading()).toBe(false)
+    expect(resource()).toBe('loaded:undefined')
   })
 
   it('should handle errors', async () => {
