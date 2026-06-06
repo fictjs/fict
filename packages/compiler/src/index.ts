@@ -2421,6 +2421,7 @@ function createHIREntrypointVisitor(
           memo: new Set(),
         }
         const macroNamespaceBindingSources = new Map<BabelCore.types.Identifier, string>()
+        const dollarMemoMacroBindingIds = new Set<BabelCore.types.Identifier>()
         const reactiveCreationBindingIds = new Set<BabelCore.types.Identifier>()
         const stateArgumentAllowedBindingIds = new Set<BabelCore.types.Identifier>()
         const importedReactiveBindingIds = new Set<BabelCore.types.Identifier>()
@@ -2470,6 +2471,9 @@ function createHIREntrypointVisitor(
                   if (t.isIdentifier(spec.local)) {
                     memoMacroNames.add(spec.local.name)
                     addImportBinding(macroBindingIds.memo, spec.local.name)
+                    if (importedName === '$memo') {
+                      addImportBinding(dollarMemoMacroBindingIds, spec.local.name)
+                    }
                   }
                 }
                 if (source === 'fict/plus' && importedName === '$store') {
@@ -2999,6 +3003,17 @@ function createHIREntrypointVisitor(
             reactiveCreationBindingIds.has(binding.identifier as BabelCore.types.Identifier)
           )
         }
+        const isImportedDollarMemoCall = (
+          callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
+        ): boolean => {
+          const callee = callPath.node.callee
+          if (!t.isIdentifier(callee)) return false
+          const binding = callPath.scope.getBinding(callee.name)
+          return !!(
+            binding &&
+            dollarMemoMacroBindingIds.has(binding.identifier as BabelCore.types.Identifier)
+          )
+        }
         const isImportedStateArgumentAllowedCall = (
           callPath: BabelCore.NodePath<
             BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
@@ -3311,6 +3326,16 @@ function createHIREntrypointVisitor(
                     `  $effect(() => { if (condition) { /* ... */ } })`,
                 )
               }
+            }
+            if (
+              isImportedDollarMemoCall(callPath) &&
+              (isInsideLoop(callPath) || isInsideConditional(callPath))
+            ) {
+              throw callPath.buildCodeFrameError(
+                `$memo() cannot be called inside loops or conditionals.\n\n` +
+                  `Memos must be created at the top level of their component or module scope.\n` +
+                  `Move the $memo() call before the nested block.`,
+              )
             }
             if (
               isImportedReactiveCreationCall(callPath) &&

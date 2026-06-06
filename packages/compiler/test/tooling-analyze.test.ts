@@ -512,6 +512,60 @@ describe('analyzeFictFile', () => {
     expect(result.diagnostics.some(diagnostic => diagnostic.code === 'FICT-COMPILE')).toBe(false)
   })
 
+  it('preserves FICT-C001 for conditional $memo placement errors', () => {
+    const result = analyzeFictFile(
+      `
+        import { $memo } from 'fict'
+
+        export function App({ ready }) {
+          if (ready) {
+            const doubled = $memo(() => 2)
+            return <div>{doubled}</div>
+          }
+          return <div />
+        }
+      `,
+      'conditional-memo.tsx',
+      {
+        includeRegions: true,
+        includeDiagnostics: true,
+      },
+    )
+
+    expect(result.components.length).toBeGreaterThan(0)
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'FICT-C001', severity: 'error' })]),
+    )
+    expect(result.diagnostics.some(diagnostic => diagnostic.code === 'FICT-COMPILE')).toBe(false)
+  })
+
+  it('preserves FICT-C002 for loop $memo placement errors', () => {
+    const result = analyzeFictFile(
+      `
+        import { $memo } from 'fict'
+
+        export function App({ items }) {
+          for (const item of items) {
+            const value = $memo(() => item)
+            return <div>{value}</div>
+          }
+          return <div />
+        }
+      `,
+      'loop-memo.tsx',
+      {
+        includeRegions: true,
+        includeDiagnostics: true,
+      },
+    )
+
+    expect(result.components.length).toBeGreaterThan(0)
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'FICT-C002', severity: 'error' })]),
+    )
+    expect(result.diagnostics.some(diagnostic => diagnostic.code === 'FICT-COMPILE')).toBe(false)
+  })
+
   it('infers direct hook placement codes from summary-only compiler messages', () => {
     const inferred = inferCompilerDiagnosticFromSource(
       `
@@ -554,6 +608,33 @@ describe('analyzeFictFile', () => {
       `,
       'conditional-effect.tsx',
       '/home/runner/work/fict/fict/packages/compiler/conditional-effect.tsx: $effect() cannot be called inside loops or conditionals.',
+    )
+
+    expect(inferred).toEqual(
+      expect.objectContaining({
+        code: 'FICT-C001',
+        location: expect.objectContaining({
+          line: 6,
+        }),
+      }),
+    )
+  })
+
+  it('infers memo placement codes from summary-only compiler messages', () => {
+    const inferred = inferCompilerDiagnosticFromSource(
+      `
+        import { $memo } from 'fict'
+
+        export function App({ ready }) {
+          if (ready) {
+            const doubled = $memo(() => 2)
+            return <div>{doubled}</div>
+          }
+          return <div />
+        }
+      `,
+      'conditional-memo.tsx',
+      '/home/runner/work/fict/fict/packages/compiler/conditional-memo.tsx: $memo() cannot be called inside loops or conditionals.',
     )
 
     expect(inferred).toEqual(

@@ -363,7 +363,7 @@ function isConditionalNode(node: BabelCore.types.Node): boolean {
 }
 
 type CompilerErrorContext = 'loop-or-conditional' | 'nested-function'
-type CompilerMacroName = '$effect' | '$state'
+type CompilerMacroName = '$effect' | '$memo' | '$state'
 
 interface InferredCompilerDiagnostic {
   code: string | null
@@ -440,6 +440,13 @@ function classifyCompilerPlacementError(
     return {
       context: 'nested-function',
       macroName: '$effect',
+    }
+  }
+
+  if (/\$memo\(\) cannot be called inside loops or conditionals\./.test(message)) {
+    return {
+      context: 'loop-or-conditional',
+      macroName: '$memo',
     }
   }
 

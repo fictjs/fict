@@ -1260,6 +1260,85 @@ describe('Spec rule coverage', () => {
     ).toThrow(/FICT-R004/)
   })
 
+  it('throws when $memo is created inside loops or conditionals', () => {
+    const cases = [
+      `
+        import { $memo } from 'fict'
+        function Demo({ ready }) {
+          if (ready) {
+            const value = $memo(() => 2)
+            return <div>{value}</div>
+          }
+          return <div />
+        }
+      `,
+      `
+        import { $memo } from 'fict'
+        function Demo({ items }) {
+          for (const item of items) {
+            const value = $memo(() => item)
+            return <div>{value}</div>
+          }
+          return <div />
+        }
+      `,
+      `
+        import { $memo } from 'fict'
+        function Demo({ ready }) {
+          const value = ready && $memo(() => 2)
+          return <div>{value}</div>
+        }
+      `,
+      `
+        import { $memo } from 'fict'
+        function Demo({ ready }) {
+          switch (ready) {
+            case true:
+              const value = $memo(() => 2)
+              return <div>{value}</div>
+            default:
+              return <div />
+          }
+        }
+      `,
+      `
+        import { $memo as memo } from 'fict'
+        function Demo({ ready }) {
+          if (ready) {
+            const value = memo(() => 2)
+            return <div>{value}</div>
+          }
+          return <div />
+        }
+      `,
+    ]
+
+    for (const input of cases) {
+      expect(() => transform(input)).toThrow(
+        '$memo() cannot be called inside loops or conditionals',
+      )
+    }
+  })
+
+  it('allows top-level $memo and does not reject local $memo shadows in control flow', () => {
+    expect(() =>
+      transform(`
+        import { $memo as importedMemo } from 'fict'
+
+        const topLevel = importedMemo(() => 1)
+
+        function Demo({ ready }) {
+          const $memo = (fn: () => number) => fn()
+          if (ready) {
+            const value = $memo(() => 2)
+            return <div>{value + topLevel}</div>
+          }
+          return <div>{topLevel}</div>
+        }
+      `),
+    ).not.toThrow()
+  })
+
   it('can downgrade FICT-R004 to warning via warningLevels', () => {
     const { warnings } = transformWithWarnings(
       `
