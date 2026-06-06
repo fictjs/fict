@@ -662,6 +662,59 @@ describe('serializeValue / deserializeValue', () => {
       expect(result.a.value).toBe(42)
     })
 
+    it('should preserve shared Date and RegExp references', () => {
+      const date = new Date(0)
+      const invalidDate = new Date(NaN)
+      const regex = /a/g
+      regex.lastIndex = 1
+      const obj = {
+        dateA: date,
+        dateB: date,
+        invalidA: invalidDate,
+        invalidB: invalidDate,
+        regexA: regex,
+        regexB: regex,
+        nested: { date, regex },
+        array: [date, regex],
+        map: new Map<string, Date | RegExp>([
+          ['date', date],
+          ['regex', regex],
+        ]),
+        set: new Set([regex]),
+      }
+
+      const result = deserializeValue(JSON.parse(JSON.stringify(serializeValue(obj)))) as {
+        dateA: Date
+        dateB: Date
+        invalidA: Date
+        invalidB: Date
+        regexA: RegExp
+        regexB: RegExp
+        nested: { date: Date; regex: RegExp }
+        array: [Date, RegExp]
+        map: Map<string, Date | RegExp>
+        set: Set<RegExp>
+      }
+
+      expect(result.dateB).toBe(result.dateA)
+      expect(result.nested.date).toBe(result.dateA)
+      expect(result.array[0]).toBe(result.dateA)
+      expect(result.map.get('date')).toBe(result.dateA)
+      expect(result.dateA.getTime()).toBe(0)
+
+      expect(result.invalidB).toBe(result.invalidA)
+      expect(Number.isNaN(result.invalidA.getTime())).toBe(true)
+
+      expect(result.regexB).toBe(result.regexA)
+      expect(result.nested.regex).toBe(result.regexA)
+      expect(result.array[1]).toBe(result.regexA)
+      expect(result.map.get('regex')).toBe(result.regexA)
+      expect(Array.from(result.set)[0]).toBe(result.regexA)
+      expect(result.regexA.source).toBe('a')
+      expect(result.regexA.flags).toBe('g')
+      expect(result.regexA.lastIndex).toBe(1)
+    })
+
     it('should keep references distinct for dotted object keys', () => {
       const shared1 = { id: 'one' }
       const shared2 = { id: 'two' }

@@ -641,6 +641,7 @@ export function serializeValue(
     // Date
     if (value instanceof Date) {
       assertNoEnumerableOwnExtras(value, path, 'Date')
+      seen.set(value, path)
       const time = value.getTime()
       return { __t: 'd', v: Number.isNaN(time) ? 'invalid' : time } as SerializedMarker
     }
@@ -648,6 +649,7 @@ export function serializeValue(
     // RegExp
     if (value instanceof RegExp) {
       assertNoEnumerableOwnExtras(value, path, 'RegExp')
+      seen.set(value, path)
       return {
         __t: 'r',
         v: { s: value.source, f: value.flags, l: value.lastIndex },
@@ -776,13 +778,17 @@ export function deserializeValue(
         return -Infinity
       case 'b':
         return BigInt(value.v)
-      case 'd':
-        return value.v === 'invalid' ? new Date(NaN) : new Date(value.v)
+      case 'd': {
+        const date = value.v === 'invalid' ? new Date(NaN) : new Date(value.v)
+        refs.set(path, date)
+        return date
+      }
       case 'r': {
         const regex = new RegExp(value.v.s, value.v.f)
         if (typeof value.v.l === 'number') {
           regex.lastIndex = value.v.l
         }
+        refs.set(path, regex)
         return regex
       }
       case 'sym':
