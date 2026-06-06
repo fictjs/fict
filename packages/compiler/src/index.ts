@@ -188,7 +188,7 @@ function parseSuppressions(
   if (!comments) return []
   const suppressions: SuppressionDirective[] = []
   for (const comment of comments) {
-    const match = comment.value.match(/fict-ignore(-next-line)?(?:\s+(.+))?/i)
+    const match = comment.value.trim().match(/^fict-ignore(-next-line)?(?:\s+(.+))?$/i)
     if (!match || !comment.loc) continue
     suppressions.push({
       line: comment.loc.start.line,

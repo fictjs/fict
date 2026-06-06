@@ -35,4 +35,37 @@ describe('diagnostic suppression directives', () => {
 
     expect(warnings.some(w => w.code === 'FICT-M003')).toBe(false)
   })
+
+  it('does not suppress warnings from prose that mentions fict-ignore-next-line', () => {
+    const warnings: CompilerWarning[] = []
+    transform(
+      `
+        import { $memo } from 'fict'
+        // documentation says do not use fict-ignore-next-line FICT-M003 here
+        const value = $memo(() => {
+          console.log('side')
+        })
+      `,
+      { onWarn: w => warnings.push(w) },
+    )
+
+    expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
+  })
+
+  it('does not reject strictGuarantee for prose that mentions fict-ignore', () => {
+    expect(() =>
+      transform(
+        `
+          // documentation says do not use fict-ignore-next-line FICT-R006 here
+          import { $state } from 'fict'
+
+          function App() {
+            const count = $state(0)
+            return <div>{count}</div>
+          }
+        `,
+        { strictGuarantee: true },
+      ),
+    ).not.toThrow(/strictGuarantee does not allow fict-ignore/)
+  })
 })
