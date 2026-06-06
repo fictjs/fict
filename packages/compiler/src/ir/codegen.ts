@@ -260,6 +260,151 @@ function functionUsesComponentContextPrimitives(fn: HIRFunction): boolean {
   return false
 }
 
+function expressionContainsJSX(expr: Expression): boolean {
+  let found = false
+  walkExpression(
+    expr,
+    node => {
+      if (!found && node.kind === 'JSXElement') found = true
+    },
+    { includeFunctionBodies: false },
+  )
+  return found
+}
+
+function expressionUsesRenderHookPrimitive(expr: Expression, ctx: CodegenContext): boolean {
+  let found = false
+  walkExpression(
+    expr,
+    node => {
+      if (found) return
+      if (node.kind === 'JSXElement') {
+        found = true
+        return
+      }
+      if (
+        (node.kind === 'CallExpression' || node.kind === 'OptionalCallExpression') &&
+        (isComponentContextPrimitiveCall(node) || getReactiveCallKind(node, ctx) !== null)
+      ) {
+        found = true
+      }
+    },
+    { includeFunctionBodies: false },
+  )
+  return found
+}
+
+function instructionCreatesRenderHook(instr: Instruction, ctx: CodegenContext): boolean {
+  if (instr.kind !== 'Assign' && instr.kind !== 'Expression') return false
+  if (expressionUsesRenderHookPrimitive(instr.value, ctx)) return true
+  if (instr.kind !== 'Assign' || !instr.declarationKind) return false
+  if (expressionNeedsAsyncContext(instr.value)) return false
+  return expressionUsesTracked(instr.value, ctx)
+}
+
+function terminatorCreatesRenderHook(term: Terminator, ctx: CodegenContext): boolean {
+  switch (term.kind) {
+    case 'Return':
+      return !!term.argument && expressionContainsJSX(term.argument)
+    case 'Throw':
+      return expressionUsesRenderHookPrimitive(term.argument, ctx)
+    case 'Branch':
+      return expressionUsesRenderHookPrimitive(term.test, ctx)
+    case 'Switch':
+      return (
+        expressionUsesRenderHookPrimitive(term.discriminant, ctx) ||
+        term.cases.some(item => !!item.test && expressionUsesRenderHookPrimitive(item.test, ctx))
+      )
+    case 'ForOf':
+      return (
+        expressionUsesRenderHookPrimitive(term.iterable, ctx) ||
+        (!!term.assignmentTarget && expressionUsesRenderHookPrimitive(term.assignmentTarget, ctx))
+      )
+    case 'ForIn':
+      return (
+        expressionUsesRenderHookPrimitive(term.object, ctx) ||
+        (!!term.assignmentTarget && expressionUsesRenderHookPrimitive(term.assignmentTarget, ctx))
+      )
+    case 'Break':
+    case 'Continue':
+    case 'Jump':
+    case 'Try':
+    case 'Unreachable':
+      return false
+  }
+}
+
+function terminatorNeedsAsyncContext(term: Terminator): boolean {
+  switch (term.kind) {
+    case 'Return':
+      return !!term.argument && expressionNeedsAsyncContext(term.argument)
+    case 'Throw':
+      return expressionNeedsAsyncContext(term.argument)
+    case 'Branch':
+      return expressionNeedsAsyncContext(term.test)
+    case 'Switch':
+      return (
+        expressionNeedsAsyncContext(term.discriminant) ||
+        term.cases.some(item => !!item.test && expressionNeedsAsyncContext(item.test))
+      )
+    case 'ForOf':
+      return (
+        expressionNeedsAsyncContext(term.iterable) ||
+        (!!term.assignmentTarget && expressionNeedsAsyncContext(term.assignmentTarget))
+      )
+    case 'ForIn':
+      return (
+        expressionNeedsAsyncContext(term.object) ||
+        (!!term.assignmentTarget && expressionNeedsAsyncContext(term.assignmentTarget))
+      )
+    case 'Break':
+    case 'Continue':
+    case 'Jump':
+    case 'Try':
+    case 'Unreachable':
+      return false
+  }
+}
+
+function asyncFunctionCreatesRenderHookAfterAwait(fn: HIRFunction, ctx: CodegenContext): boolean {
+  let seenAwait = false
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (seenAwait && instructionCreatesRenderHook(instr, ctx)) return true
+      if (
+        (instr.kind === 'Assign' || instr.kind === 'Expression') &&
+        expressionNeedsAsyncContext(instr.value)
+      ) {
+        if (instructionCreatesRenderHook(instr, ctx)) return true
+        seenAwait = true
+      }
+    }
+    if (seenAwait && terminatorCreatesRenderHook(block.terminator, ctx)) return true
+    if (terminatorNeedsAsyncContext(block.terminator)) {
+      if (terminatorCreatesRenderHook(block.terminator, ctx)) return true
+      seenAwait = true
+    }
+  }
+  return false
+}
+
+function throwAsyncRenderHookAfterAwait(
+  fn: HIRFunction,
+  ctx: CodegenContext,
+  kind: 'component' | 'hook',
+): never {
+  const name = fn.name ?? '<anonymous>'
+  throw new HIRError(
+    `Async ${kind} "${name}" cannot create JSX or reactive render hooks after await. Move hook/JSX setup before the await or use a non-async helper.`,
+    'BUILD_ERROR',
+    {
+      file: ctx.options?.filename,
+      line: fn.loc?.start.line,
+      variable: name,
+    },
+  )
+}
+
 function eventHandlerExpressionNeedsReactiveGetter(expr: Expression, ctx: CodegenContext): boolean {
   const deps = new Set<string>()
   collectExpressionDependencies(expr, deps)
@@ -8849,6 +8994,13 @@ function lowerFunctionWithRegions(
     (ctx.aliasVars?.size ?? 0) > 0
   const isAsync = !!fn.meta?.isAsync || functionHasAsyncAwait(fn)
   const isGenerator = !!fn.meta?.isGenerator || functionHasYield(fn)
+  if (
+    isAsync &&
+    (isComponent || inferredHook) &&
+    asyncFunctionCreatesRenderHookAfterAwait(fn, ctx)
+  ) {
+    throwAsyncRenderHookAfterAwait(fn, ctx, isComponent ? 'component' : 'hook')
+  }
   if (!hasJSX && !hasTrackedValues) {
     // For pure functions without JSX or tracked values, check if we can safely lower from HIR.
     // We skip functions with complex control flow (loops, async) as the simple lowering

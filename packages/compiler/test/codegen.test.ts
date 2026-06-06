@@ -1308,6 +1308,102 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output.match(/__fictUseMemo\(__fictCtx/g)?.length ?? 0).toBe(1)
   })
 
+  it.each([
+    {
+      name: 'JSX after await',
+      source: `
+        import { $state } from 'fict'
+
+        export async function App() {
+          const count = $state(1)
+          await Promise.resolve()
+          return <div>{count}</div>
+        }
+      `,
+    },
+    {
+      name: '$state after await',
+      source: `
+        import { $state } from 'fict'
+
+        export async function App() {
+          await Promise.resolve()
+          const count = $state(1)
+          return count
+        }
+      `,
+    },
+    {
+      name: 'tracked derived declaration after await',
+      source: `
+        import { $state } from 'fict'
+
+        export async function App() {
+          const count = $state(1)
+          await Promise.resolve()
+          const doubled = count + 1
+          return doubled
+        }
+      `,
+    },
+  ])('rejects async components that create render hooks after await: $name', testCase => {
+    expect(() => transform(testCase.source)).toThrow(/Async component "App".*after await/)
+  })
+
+  it('rejects async hooks that create render hooks after await', () => {
+    expect(() =>
+      transform(`
+        export async function useView() {
+          await Promise.resolve()
+          return <div>ready</div>
+        }
+      `),
+    ).toThrow(/Async hook "useView".*after await/)
+  })
+
+  it('allows async components when render hook setup finishes before await', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      export async function App() {
+        const count = $state(1)
+        const view = <div>{count}</div>
+        await Promise.resolve()
+        return view
+      }
+    `)
+
+    expect(output).toContain('export async function App()')
+    expect(output).toContain('await Promise.resolve()')
+  })
+
+  it('allows async hooks that only read existing accessors after await', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      export async function useProbe() {
+        const count = $state(1)
+        await Promise.resolve()
+        return count
+      }
+    `)
+
+    expect(output).toContain('export async function useProbe()')
+    expect(output).toContain('return count;')
+  })
+
+  it('allows async helper functions outside component and hook contexts', () => {
+    const output = transform(`
+      export async function loadView() {
+        await Promise.resolve()
+        return <div>ready</div>
+      }
+    `)
+
+    expect(output).toContain('export async function loadView()')
+    expect(output).toContain('await Promise.resolve()')
+  })
+
   it('preserves meta-property identifiers from reactive overrides', () => {
     const output = transform(`
       import { $state } from 'fict'
@@ -1425,8 +1521,9 @@ describe('tracked reads/writes in HIR codegen', () => {
         new Ctor(cb('new-arg'))
         let assigned
         assigned = cb('assignment')
+        const view = <div>{label}{assigned}</div>
         await cb('await')
-        return <div>{label}{assigned}</div>
+        return view
       }
 
       function* GenChild({ cb }) {
