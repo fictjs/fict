@@ -4206,6 +4206,44 @@ describe('Cross-Module Reactivity', () => {
       expect(consumerOutput).not.toMatch(/value\(\)/)
     })
 
+    it('does not publish runtime creator metadata from default imports', () => {
+      const fictPath = path.join(baseDir, 'runtime-default-import-fict.ts')
+      const standalonePath = path.join(baseDir, 'runtime-default-import-standalone.ts')
+      const namespacePath = path.join(baseDir, 'runtime-namespace-import-control.ts')
+      const moduleMetadata = new Map()
+
+      transform(
+        `
+          import R from 'fict'
+          export const count = R.createSignal(1)
+        `,
+        { moduleMetadata },
+        fictPath,
+      )
+      transform(
+        `
+          import R from '@fictjs/runtime'
+          export const doubled = R.createMemo(() => 1)
+        `,
+        { moduleMetadata },
+        standalonePath,
+      )
+      transform(
+        `
+          import * as R from 'fict'
+          export const count = R.createSignal(1)
+        `,
+        { moduleMetadata },
+        namespacePath,
+      )
+
+      expect(moduleMetadata.get(path.resolve(fictPath))?.exports).toEqual({})
+      expect(moduleMetadata.get(path.resolve(standalonePath))?.exports).toEqual({})
+      expect(moduleMetadata.get(path.resolve(namespacePath))?.exports).toEqual({
+        count: 'signal',
+      })
+    })
+
     it('publishes direct default namespace hook metadata', () => {
       const sourcePath = path.join(baseDir, 'reactive-namespace-default-hook-source.ts')
       const forwardPath = path.join(baseDir, 'reactive-namespace-default-hook.ts')

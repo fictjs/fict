@@ -35,7 +35,7 @@ export function collectRuntimeImports(
           : spec.imported.value
         importMap.set(spec.local.name, importedName)
         importSources.set(spec.local.name, stmt.source.value)
-      } else if (t.isImportNamespaceSpecifier(spec) || t.isImportDefaultSpecifier(spec)) {
+      } else if (t.isImportNamespaceSpecifier(spec)) {
         namespaces.add(spec.local.name)
         namespaceSources.set(spec.local.name, stmt.source.value)
       }

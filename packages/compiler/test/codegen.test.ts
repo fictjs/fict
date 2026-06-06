@@ -3883,6 +3883,18 @@ describe('tracked reads/writes in HIR codegen', () => {
     )
     expect(namespaceOutput).not.toMatch(/\(\) => count, createElement/)
 
+    const defaultOutput = transform(`
+      import R from '@fictjs/runtime'
+
+      export function App() {
+        const count = R.createSignal(1)
+        return <span>{count}</span>
+      }
+    `)
+
+    expect(defaultOutput).toMatch(/\(\) => count, createElement/)
+    expect(defaultOutput).not.toMatch(/\(\) => count\(\), createElement/)
+
     const trueShadowOutput = transform(`
       import { createSignal } from '@fictjs/runtime'
 
