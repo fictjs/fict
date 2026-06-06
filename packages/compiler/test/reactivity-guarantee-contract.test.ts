@@ -159,6 +159,32 @@ describe('reactivity guarantee contract', () => {
         error: /FICT-P005/,
       },
       {
+        name: 'template-literal props spread fallback',
+        source: `
+          import { $state } from 'fict'
+          function Parent() {
+            let count = $state(1)
+            return <Child {...\`\${count}\`} />
+          }
+          function Child(allProps) {
+            return <div>{allProps[0]}</div>
+          }
+        `,
+        error: /FICT-P005/,
+      },
+      {
+        name: 'plain template-literal props spread fallback',
+        source: `
+          function Parent() {
+            return <Child {...\`value\`} />
+          }
+          function Child(allProps) {
+            return <div>{allProps[0]}</div>
+          }
+        `,
+        error: /FICT-P005/,
+      },
+      {
         name: 'dynamic import props spread fallback',
         source: `
           function Parent() {
@@ -603,6 +629,22 @@ describe('reactivity guarantee contract', () => {
           }
           function Child(allProps) {
             return <div>{allProps.value}</div>
+          }
+        `,
+      )
+      expect(warningCodes).toContain('FICT-P005')
+    })
+
+    it('warns FICT-P005 for template-literal spread sources with signal substitutions', () => {
+      const warningCodes = collectWarningCodes(
+        `
+          import { $state } from 'fict'
+          function Parent() {
+            let count = $state(1)
+            return <Child {...\`\${count}\`} />
+          }
+          function Child(allProps) {
+            return <div>{allProps[0]}</div>
           }
         `,
       )

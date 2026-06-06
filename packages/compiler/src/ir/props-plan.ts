@@ -189,6 +189,7 @@ export function buildPropsPlan(
           obj.kind === 'ImportExpression' ||
           obj.kind === 'NewExpression' ||
           obj.kind === 'YieldExpression' ||
+          obj.kind === 'TemplateLiteral' ||
           obj.kind === 'TaggedTemplateExpression' ||
           obj.kind === 'ClassExpression'
         ) {
@@ -219,6 +220,7 @@ export function buildPropsPlan(
         expr.kind === 'ImportExpression' ||
         expr.kind === 'NewExpression' ||
         expr.kind === 'YieldExpression' ||
+        expr.kind === 'TemplateLiteral' ||
         expr.kind === 'TaggedTemplateExpression' ||
         expr.kind === 'ClassExpression'
       ) {
