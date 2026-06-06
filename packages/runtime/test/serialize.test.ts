@@ -473,6 +473,64 @@ describe('serializeValue / deserializeValue', () => {
       expect(result).toEqual(obj)
     })
 
+    it('should preserve own __proto__ data properties during serialization', () => {
+      const obj = JSON.parse('{"__proto__":{"polluted":true},"a":1}') as Record<string, unknown>
+
+      const serialized = serializeValue(obj) as Record<string, unknown>
+      const result = deserializeValue(JSON.parse(JSON.stringify(serialized))) as Record<
+        string,
+        unknown
+      >
+
+      expect(Object.prototype.hasOwnProperty.call(serialized, '__proto__')).toBe(true)
+      expect(Object.getPrototypeOf(serialized)).toBe(Object.prototype)
+      expect(
+        (Object.getPrototypeOf(serialized) as Record<string, unknown>).polluted,
+      ).toBeUndefined()
+      expect(Object.prototype.hasOwnProperty.call(result, '__proto__')).toBe(true)
+      expect(Object.getPrototypeOf(result)).toBe(Object.prototype)
+      expect((Object.getPrototypeOf(result) as Record<string, unknown>).polluted).toBeUndefined()
+      expect((result.__proto__ as Record<string, unknown>).polluted).toBe(true)
+      expect(result.a).toBe(1)
+    })
+
+    it('should preserve own __proto__ keys from parsed snapshots', () => {
+      const snapshot = JSON.parse('{"__proto__":{"polluted":true},"a":1}')
+      const result = deserializeValue(snapshot) as Record<string, unknown>
+
+      expect(Object.prototype.hasOwnProperty.call(result, '__proto__')).toBe(true)
+      expect(Object.getPrototypeOf(result)).toBe(Object.prototype)
+      expect((Object.getPrototypeOf(result) as Record<string, unknown>).polluted).toBeUndefined()
+      expect((result.__proto__ as Record<string, unknown>).polluted).toBe(true)
+      expect((result as Record<string, unknown>).polluted).toBeUndefined()
+      expect(result.a).toBe(1)
+    })
+
+    it('should preserve nested __proto__ keys from parsed snapshots', () => {
+      const snapshot = JSON.parse('{"nested":{"__proto__":{"polluted":true},"a":1}}')
+      const result = deserializeValue(snapshot) as {
+        nested: Record<string, unknown>
+      }
+
+      expect(Object.prototype.hasOwnProperty.call(result.nested, '__proto__')).toBe(true)
+      expect(Object.getPrototypeOf(result.nested)).toBe(Object.prototype)
+      expect(
+        (Object.getPrototypeOf(result.nested) as Record<string, unknown>).polluted,
+      ).toBeUndefined()
+      expect((result.nested.__proto__ as Record<string, unknown>).polluted).toBe(true)
+      expect(result.nested.a).toBe(1)
+    })
+
+    it('should preserve primitive __proto__ values and constructor controls', () => {
+      const snapshot = JSON.parse('{"__proto__":"value","constructor":{"safe":true}}')
+      const result = deserializeValue(snapshot) as Record<string, unknown>
+
+      expect(Object.prototype.hasOwnProperty.call(result, '__proto__')).toBe(true)
+      expect(result.__proto__).toBe('value')
+      expect(result.constructor).toEqual({ safe: true })
+      expect(Object.getPrototypeOf(result)).toBe(Object.prototype)
+    })
+
     it('should preserve null-prototype objects', () => {
       const obj = Object.create(null) as Record<string, unknown>
       obj.a = 1

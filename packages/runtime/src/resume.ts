@@ -468,6 +468,15 @@ function hasOwnMarkerKey(value: object): boolean {
   return Object.prototype.hasOwnProperty.call(value, '__t')
 }
 
+function defineEnumerableDataProperty(target: object, key: string | symbol, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  })
+}
+
 function objectChildPath(path: string, key: string): string {
   return `${path}.${JSON.stringify(key)}`
 }
@@ -695,7 +704,7 @@ export function serializeValue(
         objectChildPath(path, key),
       )
       if (serialized !== undefined) {
-        result[key] = serialized
+        defineEnumerableDataProperty(result, key, serialized)
       }
     }
     return result
@@ -760,7 +769,11 @@ export function deserializeValue(
           const [rawKey, rawValue] = entry
           const key = deserializeValue(rawKey, refs, `${path}.key${i}`)
           if (typeof key !== 'string' && typeof key !== 'symbol') continue
-          obj[key] = deserializeValue(rawValue, refs, objectChildPath(path, String(key)))
+          defineEnumerableDataProperty(
+            obj,
+            key,
+            deserializeValue(rawValue, refs, objectChildPath(path, String(key))),
+          )
         }
         return obj
       }
@@ -807,10 +820,10 @@ export function deserializeValue(
   const obj: Record<string, unknown> = {}
   refs.set(path, obj)
   for (const key of Object.keys(value)) {
-    obj[key] = deserializeValue(
-      (value as Record<string, unknown>)[key],
-      refs,
-      objectChildPath(path, key),
+    defineEnumerableDataProperty(
+      obj,
+      key,
+      deserializeValue((value as Record<string, unknown>)[key], refs, objectChildPath(path, key)),
     )
   }
   return obj
