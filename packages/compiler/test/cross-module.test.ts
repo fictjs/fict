@@ -369,6 +369,49 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toMatch(/count\(\)/)
     })
 
+    it('unwraps same-module top-level runtime creator accessors in components', () => {
+      const source = `
+        import { createMemo, createSignal, createStore } from 'fict/advanced'
+        import * as runtime from 'fict/advanced'
+
+        const localSignal = createSignal(1)
+        export const exportedSignal = createSignal(2)
+        const localMemo = createMemo(() => 3)
+        export const exportedMemo = createMemo(() => 4)
+        const localStore = createStore({ name: 'Ada' })
+        const namespaceSignal = runtime.createSignal(5)
+
+        function createSignalLocal(value: number) {
+          return () => value
+        }
+        const shadowed = createSignalLocal(6)
+
+        export function App() {
+          return (
+            <div>
+              {localSignal}
+              {exportedSignal}
+              {localMemo}
+              {exportedMemo}
+              {localStore.name}
+              {namespaceSignal}
+              {shadowed}
+            </div>
+          )
+        }
+      `
+      const output = transform(source, { fineGrainedDom: true })
+
+      expect(output).toMatch(/localSignal\(\)/)
+      expect(output).toMatch(/exportedSignal\(\)/)
+      expect(output).toMatch(/localMemo\(\)/)
+      expect(output).toMatch(/exportedMemo\(\)/)
+      expect(output).toMatch(/localStore\.name/)
+      expect(output).not.toMatch(/localStore\(\)\.name/)
+      expect(output).toMatch(/namespaceSignal\(\)/)
+      expect(output).not.toMatch(/shadowed\(\)/)
+    })
+
     it('compiles component using imported signal as function call', () => {
       const source = `
         import { count } from './store'

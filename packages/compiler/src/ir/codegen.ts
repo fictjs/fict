@@ -6111,21 +6111,22 @@ export function lowerHIRWithRegions(
 
   // Pre-mark top-level tracked variables so nested functions can treat captured signals as reactive
   for (const stmt of originalBody) {
-    if (t.isVariableDeclaration(stmt)) {
-      for (const decl of stmt.declarations) {
-        if (
-          t.isIdentifier(decl.id) &&
-          decl.init &&
-          (t.isCallExpression(decl.init) || t.isOptionalCallExpression(decl.init))
-        ) {
-          const callKind = getReactiveCallKindFromBabel(decl.init, ctx, t)
-          if (callKind === 'signal') {
-            ctx.trackedVars.add(decl.id.name)
-          } else if (callKind === 'store') {
-            ctx.trackedVars.add(decl.id.name)
-            ctx.storeVars?.add(decl.id.name)
-          }
-        }
+    const declaration = t.isVariableDeclaration(stmt)
+      ? stmt
+      : t.isExportNamedDeclaration(stmt) &&
+          stmt.declaration &&
+          t.isVariableDeclaration(stmt.declaration)
+        ? stmt.declaration
+        : null
+    if (!declaration) continue
+    for (const decl of declaration.declarations) {
+      if (
+        t.isIdentifier(decl.id) &&
+        decl.init &&
+        (t.isCallExpression(decl.init) || t.isOptionalCallExpression(decl.init))
+      ) {
+        const callKind = getReactiveCallKindFromBabel(decl.init, ctx, t)
+        markHookReactiveLocal(decl.id.name, callKind, ctx)
       }
     }
   }
