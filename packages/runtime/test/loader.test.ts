@@ -384,6 +384,127 @@ describe('resumable loader snapshot validation', () => {
     delete (globalThis as { __fictStoppedBubbleCalls?: string[] }).__fictStoppedBubbleCalls
   })
 
+  it('prevents checkbox click defaults when the handler calls preventDefault', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    const input = doc.createElement('input')
+    input.type = 'checkbox'
+    input.setAttribute(
+      'on:click',
+      'data:text/javascript,export function h(scopeId,event){event.preventDefault()}#h',
+    )
+    host.appendChild(input)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+    input.click()
+    await waitForPendingHandlers()
+
+    expect(input.checked).toBe(false)
+  })
+
+  it('replays checkbox click defaults when the handler does not call preventDefault', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    const input = doc.createElement('input')
+    input.type = 'checkbox'
+    input.setAttribute('on:click', 'data:text/javascript,export function h(){}#h')
+    host.appendChild(input)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+    input.click()
+    await waitForPendingHandlers()
+
+    expect(input.checked).toBe(true)
+  })
+
+  it('prevents radio click defaults when the handler calls preventDefault', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    const first = doc.createElement('input')
+    first.type = 'radio'
+    first.name = 'choice'
+    first.checked = true
+    const second = doc.createElement('input')
+    second.type = 'radio'
+    second.name = 'choice'
+    second.setAttribute(
+      'on:click',
+      'data:text/javascript,export function h(scopeId,event){event.preventDefault()}#h',
+    )
+    host.append(first, second)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+    second.click()
+    await waitForPendingHandlers()
+
+    expect(second.checked).toBe(false)
+  })
+
+  it('replays radio click defaults when the handler does not call preventDefault', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    const first = doc.createElement('input')
+    first.type = 'radio'
+    first.name = 'choice'
+    first.checked = true
+    const second = doc.createElement('input')
+    second.type = 'radio'
+    second.name = 'choice'
+    second.setAttribute('on:click', 'data:text/javascript,export function h(){}#h')
+    host.append(first, second)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+    second.click()
+    await waitForPendingHandlers()
+
+    expect(first.checked).toBe(false)
+    expect(second.checked).toBe(true)
+  })
+
   it('handles resumable handler failures without unhandled promise rejections', async () => {
     const issues: SnapshotIssue[] = []
     const doc = createDocumentWithSnapshots(

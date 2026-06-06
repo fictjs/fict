@@ -160,6 +160,66 @@ function restoreControlState(node: Element, state: PreservedControlState | null)
   }
 }
 
+interface PreemptiveDefaultControl {
+  replayIfNeeded(): void
+  restore(): void
+}
+
+const noopPreemptiveDefaultControl: PreemptiveDefaultControl = {
+  replayIfNeeded() {},
+  restore() {},
+}
+
+function preemptivelyPreventDefault(node: Element, event: Event): PreemptiveDefaultControl {
+  if (!event.cancelable || (event.type !== 'click' && event.type !== 'submit')) {
+    return noopPreemptiveDefaultControl
+  }
+
+  const tag = getControlTagName(node)
+  if (tag === 'a' || tag === 'form') {
+    event.preventDefault()
+    return noopPreemptiveDefaultControl
+  }
+
+  if (event.type !== 'click' || tag !== 'input') {
+    return noopPreemptiveDefaultControl
+  }
+
+  const input = node as HTMLInputElement
+  if (input.type !== 'checkbox' && input.type !== 'radio') {
+    return noopPreemptiveDefaultControl
+  }
+
+  const checkedAfterDefault = input.checked
+  const originalPreventDefault = event.preventDefault.bind(event)
+  const ownPreventDefault = Object.getOwnPropertyDescriptor(event, 'preventDefault')
+  let userPreventedDefault = false
+
+  Object.defineProperty(event, 'preventDefault', {
+    configurable: true,
+    value() {
+      userPreventedDefault = true
+      originalPreventDefault()
+    },
+  })
+  originalPreventDefault()
+
+  return {
+    replayIfNeeded() {
+      if (!userPreventedDefault) {
+        input.checked = checkedAfterDefault
+      }
+    },
+    restore() {
+      if (ownPreventDefault) {
+        Object.defineProperty(event, 'preventDefault', ownPreventDefault)
+      } else {
+        delete (event as { preventDefault?: Event['preventDefault'] }).preventDefault
+      }
+    },
+  }
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -800,13 +860,7 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
 
     const { url, exportName } = parseQrl(qrl)
 
-    // Pre-emptively prevent default on navigations/forms while we await modules
-    if (event.cancelable && (event.type === 'click' || event.type === 'submit')) {
-      const tag = node.tagName.toLowerCase()
-      if (tag === 'a' || tag === 'form') {
-        event.preventDefault()
-      }
-    }
+    const preemptiveDefault = preemptivelyPreventDefault(node, event)
 
     const preservedControlState = captureControlState(node, event)
     let resumedDuringEvent = false
@@ -840,6 +894,7 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
             eventType: event.type,
             error,
           })
+          preemptiveDefault.restore()
           continue
         }
         // Get resume function from registry (not module exports)
@@ -864,6 +919,7 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
               eventType: event.type,
               error,
             })
+            preemptiveDefault.restore()
             continue
           }
           hydratedScopes.add(scopeId)
@@ -880,6 +936,7 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
             exportName: resumeExport,
             eventType: event.type,
           })
+          preemptiveDefault.restore()
           continue
         }
       }
@@ -908,6 +965,7 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
         eventType: event.type,
         error,
       })
+      preemptiveDefault.restore()
       continue
     }
     const handler = (mod as Record<string, unknown>)[exportName]
@@ -949,6 +1007,7 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
         })
       }
       if (handlerFailed) {
+        preemptiveDefault.restore()
         continue
       }
     } else {
@@ -963,9 +1022,12 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
         exportName,
         eventType: event.type,
       })
+      preemptiveDefault.restore()
       continue
     }
 
+    preemptiveDefault.replayIfNeeded()
+    preemptiveDefault.restore()
     if (event.cancelBubble) {
       return
     }
