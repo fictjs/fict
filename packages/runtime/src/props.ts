@@ -141,7 +141,11 @@ export function createPropsProxy<T extends Record<string, unknown>>(props: T): T
       return Reflect.ownKeys(target)
     },
     getOwnPropertyDescriptor(target, prop) {
-      return Object.getOwnPropertyDescriptor(target, prop)
+      const descriptor = Object.getOwnPropertyDescriptor(target, prop)
+      if (descriptor && 'value' in descriptor && isPropGetter(descriptor.value)) {
+        return { ...descriptor, value: descriptor.value() }
+      }
+      return descriptor
     },
   })
 

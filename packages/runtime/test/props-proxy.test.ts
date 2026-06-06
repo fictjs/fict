@@ -96,6 +96,27 @@ describe('Props proxy', () => {
     expect((resolved as () => number)()).toBe(42)
   })
 
+  it('exposes prop getter descriptor values through props proxy', () => {
+    const count = createSignal(1)
+    const proxied = createPropsProxy({ value: __fictProp(() => count()) })
+
+    expect(Object.getOwnPropertyDescriptor(proxied, 'value')).toEqual({
+      value: 1,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    })
+
+    count(2)
+
+    expect(Object.getOwnPropertyDescriptors(proxied).value).toEqual({
+      value: 2,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    })
+  })
+
   it('marks callback props without adding own symbols', () => {
     const callback = () => 42
     const proxied = createPropsProxy({ callback })
