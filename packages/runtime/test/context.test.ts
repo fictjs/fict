@@ -1,6 +1,15 @@
 import { describe, it, expect } from 'vitest'
 
-import { createContext, useContext, hasContext, render, Fragment } from '../src/index'
+import {
+  createContext,
+  useContext,
+  hasContext,
+  render,
+  Fragment,
+  ErrorBoundary,
+  createEffect,
+  onDestroy,
+} from '../src/index'
 import { createSignal, reactive } from '../src/advanced'
 
 const tick = () => Promise.resolve()
@@ -344,6 +353,177 @@ describe('Context', () => {
 
       // The span content is reactive because it uses a getter
       expect(container.textContent).toBe('dark')
+
+      dispose()
+    })
+
+    it('disposes provider child effects on host root dispose', async () => {
+      const ThemeContext = createContext('light')
+      const trigger = createSignal(0)
+      const container = document.createElement('div')
+      let runs = 0
+
+      const Child = () => {
+        useContext(ThemeContext)
+        createEffect(() => {
+          trigger()
+          runs += 1
+        })
+        return { type: 'span', props: { children: 'child' } }
+      }
+
+      const dispose = render(
+        () => ({
+          type: ThemeContext.Provider,
+          props: {
+            value: 'dark',
+            children: { type: Child, props: {} },
+          },
+        }),
+        container,
+      )
+
+      expect(runs).toBe(1)
+      expect(container.textContent).toBe('child')
+
+      dispose()
+      trigger(1)
+      await tick()
+
+      expect(runs).toBe(1)
+      expect(container.textContent).toBe('')
+    })
+
+    it('disposes provider child effects on conditional provider unmount', async () => {
+      const ThemeContext = createContext('light')
+      const show = createSignal(true)
+      const trigger = createSignal(0)
+      const container = document.createElement('div')
+      let runs = 0
+
+      const Child = () => {
+        useContext(ThemeContext)
+        createEffect(() => {
+          trigger()
+          runs += 1
+        })
+        return { type: 'span', props: { children: 'child' } }
+      }
+
+      const dispose = render(
+        () => ({
+          type: Fragment,
+          props: {
+            children: reactive(() =>
+              show()
+                ? {
+                    type: ThemeContext.Provider,
+                    props: {
+                      value: 'dark',
+                      children: { type: Child, props: {} },
+                    },
+                  }
+                : null,
+            ),
+          },
+        }),
+        container,
+      )
+
+      expect(runs).toBe(1)
+      expect(container.textContent).toBe('child')
+
+      show(false)
+      await tick()
+      expect(container.textContent).toBe('')
+
+      trigger(1)
+      await tick()
+      expect(runs).toBe(1)
+
+      dispose()
+    })
+
+    it('runs provider child onDestroy callbacks on host root dispose', () => {
+      const ThemeContext = createContext('light')
+      const container = document.createElement('div')
+      let destroyed = 0
+
+      const Child = () => {
+        useContext(ThemeContext)
+        onDestroy(() => {
+          destroyed += 1
+        })
+        return { type: 'span', props: { children: 'child' } }
+      }
+
+      const dispose = render(
+        () => ({
+          type: ThemeContext.Provider,
+          props: {
+            value: 'dark',
+            children: { type: Child, props: {} },
+          },
+        }),
+        container,
+      )
+
+      expect(destroyed).toBe(0)
+
+      dispose()
+
+      expect(destroyed).toBe(1)
+    })
+
+    it('routes provider child cleanup errors to ancestor boundaries', async () => {
+      const ThemeContext = createContext('light')
+      const trigger = createSignal(0)
+      const container = document.createElement('div')
+      let captured: unknown = null
+      let shouldThrow = false
+
+      const Child = () => {
+        useContext(ThemeContext)
+        createEffect(() => {
+          trigger()
+          return () => {
+            if (shouldThrow) {
+              throw new Error('provider cleanup boom')
+            }
+          }
+        })
+        return { type: 'span', props: { children: 'child' } }
+      }
+
+      const dispose = render(
+        () => ({
+          type: ErrorBoundary,
+          props: {
+            fallback: 'cleanup-fallback',
+            onError: err => {
+              captured = err
+            },
+            children: {
+              type: ThemeContext.Provider,
+              props: {
+                value: 'dark',
+                children: { type: Child, props: {} },
+              },
+            },
+          },
+        }),
+        container,
+      )
+
+      expect(container.textContent).toBe('child')
+
+      shouldThrow = true
+      trigger(1)
+      await tick()
+
+      expect(captured).toBeInstanceOf(Error)
+      expect((captured as Error).message).toBe('provider cleanup boom')
+      expect(container.textContent).toBe('cleanup-fallback')
 
       dispose()
     })

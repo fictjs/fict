@@ -166,16 +166,8 @@ export function createContext<T>(defaultValue: T): Context<T> {
   context.Provider = function Provider(props: ProviderProps<T>): FictNode {
     const hostRoot = getCurrentRoot()
 
-    // Create a child root for the provider's subtree
-    // This establishes the provider boundary - children will look up from here
-    const providerRoot = createRootContext(hostRoot)
-
-    // Store the context value on this root
-    const contextMap = getContextMap(providerRoot)
-    contextMap.set(id, props.value)
-
     // Create DOM structure
-    const markerOwnerDocument = providerRoot.ownerDocument ?? hostRoot?.ownerDocument ?? document
+    const markerOwnerDocument = hostRoot?.ownerDocument ?? document
     const fragment = markerOwnerDocument.createDocumentFragment()
     const marker = markerOwnerDocument.createComment('fict:ctx')
     fragment.appendChild(marker)
@@ -183,23 +175,41 @@ export function createContext<T>(defaultValue: T): Context<T> {
     let cleanup: (() => void) | undefined
     let activeNodes: Node[] = []
 
+    const cleanupActive = () => {
+      const currentCleanup = cleanup
+      cleanup = undefined
+      try {
+        currentCleanup?.()
+      } finally {
+        if (activeNodes.length) {
+          removeNodes(activeNodes)
+          activeNodes = []
+        }
+      }
+    }
+
     const renderChildren = (children: FictNode) => {
       // Cleanup previous render
-      if (cleanup) {
-        cleanup()
-        cleanup = undefined
-      }
-      if (activeNodes.length) {
-        removeNodes(activeNodes)
-        activeNodes = []
-      }
+      cleanupActive()
 
       if (children == null || children === false) {
         return
       }
 
+      // Create a child root for this provider render. This establishes the
+      // provider boundary; children will look up from here.
+      const providerRoot = createRootContext(hostRoot)
+      const contextMap = getContextMap(providerRoot)
+      contextMap.set(id, props.value)
+
       const prev = pushRoot(providerRoot)
       let nodes: Node[] = []
+      let didPopRoot = false
+      const restoreRoot = () => {
+        if (didPopRoot) return
+        popRoot(prev)
+        didPopRoot = true
+      }
       try {
         const output = createElement(children)
         nodes = toNodeArray(output, markerOwnerDocument)
@@ -207,29 +217,38 @@ export function createContext<T>(defaultValue: T): Context<T> {
         if (parentNode) {
           nodes = insertNodesBefore(parentNode, nodes, marker)
         }
-      } finally {
-        popRoot(prev)
+        restoreRoot()
         flushOnMount(providerRoot)
+      } catch (err) {
+        restoreRoot()
+        try {
+          destroyRoot(providerRoot)
+        } finally {
+          removeNodes(nodes)
+        }
+        throw err
       }
 
       cleanup = () => {
-        destroyRoot(providerRoot)
-        removeNodes(nodes)
+        try {
+          destroyRoot(providerRoot)
+        } finally {
+          removeNodes(nodes)
+        }
       }
       activeNodes = nodes
     }
 
     // Initial render
     createRenderEffect(() => {
-      // Update context value on re-render (if value prop changes reactively)
-      contextMap.set(id, props.value)
-
       // Provider value updates should not subscribe this effect to arbitrary
       // signal reads that happen while rendering descendants. Child trees own
       // their own reactivity; the provider only needs to react to its props.
       untrack(() => {
         renderChildren(props.children)
       })
+
+      return cleanupActive
     })
 
     return fragment
