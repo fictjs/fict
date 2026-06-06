@@ -176,11 +176,6 @@ function preemptivelyPreventDefault(node: Element, event: Event): PreemptiveDefa
   }
 
   const tag = getControlTagName(node)
-  if (tag === 'a' || tag === 'form') {
-    event.preventDefault()
-    return noopPreemptiveDefaultControl
-  }
-
   if (event.type !== 'click' || tag !== 'input') {
     return noopPreemptiveDefaultControl
   }

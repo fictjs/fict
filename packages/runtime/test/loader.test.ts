@@ -384,6 +384,61 @@ describe('resumable loader snapshot validation', () => {
     delete (globalThis as { __fictStoppedBubbleCalls?: string[] }).__fictStoppedBubbleCalls
   })
 
+  it('does not cancel inert link click handlers', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    const link = doc.createElement('a')
+    link.href = '/next'
+    link.setAttribute('on:click', 'data:text/javascript,export function h(){}#h')
+    host.appendChild(link)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+    const dispatchResult = link.dispatchEvent(event)
+    await waitForPendingHandlers()
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(dispatchResult).toBe(true)
+  })
+
+  it('does not cancel inert form submit handlers', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    const form = doc.createElement('form')
+    form.setAttribute('on:submit', 'data:text/javascript,export function h(){}#h')
+    host.appendChild(form)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['submit'], prefetch: false })
+
+    const event = new Event('submit', { bubbles: true, cancelable: true })
+    const dispatchResult = form.dispatchEvent(event)
+    await waitForPendingHandlers()
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(dispatchResult).toBe(true)
+  })
+
   it('prevents checkbox click defaults when the handler calls preventDefault', async () => {
     const doc = createDocumentWithSnapshots(
       JSON.stringify({
