@@ -1,5 +1,6 @@
 import type * as BabelCore from '@babel/core'
 import { declare } from '@babel/helper-plugin-utils'
+import traverseModule from '@babel/traverse'
 
 import { createCompilerCacheFingerprint } from './cache-fingerprint'
 import { SAFE_FUNCTIONS } from './constants'
@@ -53,6 +54,28 @@ function stripMacroImports(
     nextBody.push(stmt)
   }
   path.node.body = nextBody
+}
+
+function expressionHasFreeIdentifier(
+  expr: BabelCore.types.Expression,
+  name: string,
+  t: typeof BabelCore.types,
+): boolean {
+  const traverse = ((traverseModule as unknown as { default?: typeof traverseModule }).default ??
+    traverseModule) as typeof traverseModule
+  const file = t.file(t.program([t.expressionStatement(t.cloneNode(expr, true))]))
+  let found = false
+
+  traverse(file, {
+    ReferencedIdentifier(idPath) {
+      if (idPath.node.name !== name) return
+      if (idPath.scope.getBinding(name)) return
+      found = true
+      idPath.stop()
+    },
+  })
+
+  return found
 }
 
 function unsupportedTypeScriptRuntimeDeclarationMessage(
@@ -2458,7 +2481,8 @@ function createHIREntrypointVisitor(
                   t.isJSXAttribute(attr) &&
                   t.isJSXIdentifier(attr.name, { name: 'key' }) &&
                   t.isJSXExpressionContainer(attr.value) &&
-                  t.isIdentifier(attr.value.expression, { name: indexParamName })
+                  t.isExpression(attr.value.expression) &&
+                  expressionHasFreeIdentifier(attr.value.expression, indexParamName, t)
                 ) {
                   return attr
                 }

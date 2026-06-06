@@ -259,10 +259,47 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-J001')).toBe(true)
   })
 
+  it('warns when list keys derive from the map index', () => {
+    const cases = [
+      'String(index)',
+      '`row-${index}`',
+      'index + 1',
+      'index > 0 ? item.id : index',
+      '(item.id, index)',
+      'item.ids[index]',
+    ]
+
+    for (const keyExpr of cases) {
+      const { warnings } = transformWithWarnings(`
+        export function List({ items }) {
+          return <ul>{items.map((item, index) => <li key={${keyExpr}}>{item.name}</li>)}</ul>
+        }
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-J001')).toBe(true)
+    }
+  })
+
   it('does not warn when list items use a stable property key', () => {
     const { warnings } = transformWithWarnings(`
       export function List({ items }) {
         return <ul>{items.map((item, index) => <li key={item.id}>{item.name}</li>)}</ul>
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-J001')).toBe(false)
+  })
+
+  it('does not warn when nested key expressions shadow the map index', () => {
+    const { warnings } = transformWithWarnings(`
+      export function List({ items }) {
+        return (
+          <ul>
+            {items.map((item, index) => (
+              <li key={((index) => index)(item.id)}>{item.name}</li>
+            ))}
+          </ul>
+        )
       }
     `)
 
