@@ -68,6 +68,43 @@ describe('analyzeFictFile', () => {
     expect(markerKinds.has('effect')).toBe(true)
   })
 
+  it('marks state initialization declarations on their source lines', () => {
+    const source = `
+      import { $state, $state as s } from 'fict'
+
+      export function App() {
+        const count = $state(0)
+        let total = s(1)
+        return <div>{count + total}</div>
+      }
+    `
+    const result = analyzeFictFile(source, 'state-trace.tsx', {
+      includeRegions: true,
+      includeDiagnostics: true,
+      verbosity: 'verbose',
+    })
+
+    const app = result.components.find(component => component.name === 'App')
+    expect(app).toBeDefined()
+
+    for (const needle of ['const count', 'let total']) {
+      const line = sourceLine(source, needle)
+      expect(app?.trace.find(entry => entry.line === line)?.markers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'once',
+            label: 'Signal initialization runs once',
+          }),
+        ]),
+      )
+    }
+
+    const jsxLine = sourceLine(source, 'return <div>')
+    expect(app?.trace.find(entry => entry.line === jsxLine)?.markers).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: 'reactive' })]),
+    )
+  })
+
   it('marks JSX reads of dollar-prefixed state identifiers as reactive', () => {
     const source = `
       import { $state } from 'fict'

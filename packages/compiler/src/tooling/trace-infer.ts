@@ -1,4 +1,4 @@
-import type { HIRFunction, Identifier, Instruction } from '../ir/hir'
+import type { AssignInstruction, HIRFunction, Instruction } from '../ir/hir'
 import { deSSAVarName } from '../ir/regions'
 import { walkExpression } from '../ir/walk-expression'
 
@@ -89,7 +89,7 @@ function inferReactiveLocalNames(
   return reactiveNames
 }
 
-function isStateCallInstruction(instr: Instruction): instr is Instruction & { target: Identifier } {
+function isStateCallInstruction(instr: Instruction): instr is AssignInstruction {
   if (instr.kind !== 'Assign') return false
   const value = instr.value
   return (
@@ -103,10 +103,12 @@ function collectStateDeclNames(fn: HIRFunction): { name: string; line: number }[
   const result: { name: string; line: number }[] = []
   for (const block of fn.blocks) {
     for (const instr of block.instructions) {
-      if (!isStateCallInstruction(instr) || !instr.loc) continue
+      if (!isStateCallInstruction(instr)) continue
+      const loc = instr.loc ?? instr.value.loc
+      if (!loc) continue
       const name = deSSAVarName(instr.target.name)
       if (!isIdentifierName(name)) continue
-      result.push({ name, line: instr.loc.start.line })
+      result.push({ name, line: loc.start.line })
     }
   }
   return result
