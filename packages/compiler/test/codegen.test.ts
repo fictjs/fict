@@ -169,6 +169,44 @@ describe('lowerHIRWithRegions', () => {
     expect(code).not.toContain('() => props.choose ? a() : b()')
   })
 
+  it('preserves empty loop headers inside emitted reactive regions', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      function items() {
+        return [1, 2]
+      }
+      function object() {
+        return { a: 1 }
+      }
+      function test() {
+        return false
+      }
+      function side() {
+        return false
+      }
+
+      export function App() {
+        let count = $state(1)
+        let out = 0
+        if (count) {
+          while (test()) {}
+          for (; side();) {}
+          for (const x of items()) {}
+          for (const key in object()) {}
+          out = 1
+        }
+        return <span>{out}:{count}</span>
+      }
+    `)
+
+    expect(output).toMatch(/while \(test\(\)\) \{\s*\}/)
+    expect(output).toMatch(/for \(; side\(\);\) \{\s*\}/)
+    expect(output).toMatch(/for \(const x of items\(\)\) \{\s*\}/)
+    expect(output).toMatch(/for \(const key in object\(\)\) \{\s*\}/)
+    expect(output).toContain('out = 1')
+  })
+
   it('omits type-only imports and declarations from emitted modules', () => {
     const ast = parseFile(`
       import type { Foo } from './types'

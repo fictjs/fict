@@ -3100,7 +3100,6 @@ function lowerStructuredNodeForRegion(
           skipInstructions,
         ),
       )
-      if (body.length === 0) return []
       const stmt = t.whileStatement(
         lowerExpressionWithDeSSA(node.test, ctx),
         t.blockStatement(body),
@@ -3121,7 +3120,6 @@ function lowerStructuredNodeForRegion(
           skipInstructions,
         ),
       )
-      if (body.length === 0) return []
       const stmt = t.doWhileStatement(
         lowerExpressionWithDeSSA(node.test, ctx),
         t.blockStatement(body),
@@ -3158,7 +3156,6 @@ function lowerStructuredNodeForRegion(
             ? lowerInstructionsToUpdateExpr(node.update, t, ctx)
             : null
       })
-      if (body.length === 0) return []
       return [t.forStatement(init, test, update, t.blockStatement(body))]
     }
 
@@ -3219,7 +3216,6 @@ function lowerStructuredNodeForRegion(
           t.forOfStatement(t.identifier(targetName), right, t.blockStatement(body), !!node.await),
         ]
       }
-      if (body.length === 0) return []
       const left = t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
       return [t.forOfStatement(left, right, t.blockStatement(body), !!node.await)]
     }
@@ -3277,7 +3273,6 @@ function lowerStructuredNodeForRegion(
       if (isAssignmentTarget) {
         return [t.forInStatement(t.identifier(targetName), right, t.blockStatement(body))]
       }
-      if (body.length === 0) return []
       const left = t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
       return [t.forInStatement(left, right, t.blockStatement(body))]
     }
