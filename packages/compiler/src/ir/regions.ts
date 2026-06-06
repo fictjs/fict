@@ -4470,6 +4470,27 @@ function functionExpressionBodyIsLazyMemoSafe(expr: Expression, ctx: CodegenCont
   return false
 }
 
+function classExpressionDefinitionIsLazyMemoSafe(
+  expr: Extract<Expression, { kind: 'ClassExpression' }>,
+  t: typeof BabelCore.types,
+): boolean {
+  if ((expr.decorators?.length ?? 0) > 0) return false
+  return (expr.body ?? []).every(member => {
+    if (((member as { decorators?: unknown[] }).decorators?.length ?? 0) > 0) return false
+    if ((member as { computed?: boolean }).computed) return false
+    if (t.isStaticBlock(member)) return false
+    if (
+      (member as { static?: boolean }).static === true &&
+      (t.isClassProperty(member) ||
+        t.isClassPrivateProperty(member) ||
+        t.isClassAccessorProperty(member))
+    ) {
+      return !member.value
+    }
+    return true
+  })
+}
+
 function expressionIsLazyMemoSafe(expr: Expression, ctx: CodegenContext): boolean {
   switch (expr.kind) {
     case 'Identifier':
@@ -4563,8 +4584,12 @@ function expressionIsLazyMemoSafe(expr: Expression, ctx: CodegenContext): boolea
     case 'AwaitExpression':
     case 'NewExpression':
     case 'YieldExpression':
-    case 'ClassExpression':
       return false
+    case 'ClassExpression':
+      return (
+        (!expr.superClass || expressionIsLazyMemoSafe(expr.superClass, ctx)) &&
+        classExpressionDefinitionIsLazyMemoSafe(expr, ctx.t)
+      )
   }
 }
 

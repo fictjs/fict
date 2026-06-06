@@ -219,6 +219,9 @@ function collectExpressionIdentifiers(expr: Expression, into: Set<string>): void
       collectExpressionIdentifiers(expr.tag as Expression, into)
       expr.quasi.expressions.forEach(ex => collectExpressionIdentifiers(ex as Expression, into))
       return
+    case 'ClassExpression':
+      if (expr.superClass) collectExpressionIdentifiers(expr.superClass as Expression, into)
+      return
     case 'SpreadElement':
       collectExpressionIdentifiers(expr.argument as Expression, into)
       return
@@ -820,6 +823,17 @@ export function collectExpressionIdentifiersDeep(
           includeReturnedFunctionBodies,
         ),
       )
+      return
+    case 'ClassExpression':
+      if (expr.superClass) {
+        collectExpressionIdentifiersDeep(
+          expr.superClass as Expression,
+          into,
+          bound,
+          scopeFunctionLocals,
+          includeReturnedFunctionBodies,
+        )
+      }
       return
     case 'SpreadElement':
       collectExpressionIdentifiersDeep(

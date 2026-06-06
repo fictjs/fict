@@ -265,6 +265,79 @@ describe('Fict Compiler - Basic Transforms', () => {
       expect(output).toContain('return name() + String(mod)')
       expect(output).not.toContain('String(mod())')
     })
+
+    it('memoizes class expression bases that read state', () => {
+      const input = `
+        import { $state } from 'fict'
+        class A { label = 'a' }
+        class B { label = 'b' }
+        function Component() {
+          let Base = $state(A)
+          const C = class extends Base {}
+          return new C().label
+        }
+      `
+      const output = transform(input)
+
+      expect(output).toMatch(/const C = __fictUseMemo\(__fictCtx, \(\) => class extends Base\(\)/)
+      expect(output).toContain('return new (C())().label')
+    })
+
+    it('memoizes conditional class expression bases that read state', () => {
+      const input = `
+        import { $state } from 'fict'
+        class A { label = 'a' }
+        class B { label = 'b' }
+        function Component() {
+          let useA = $state(true)
+          const C = class extends (useA ? A : B) {}
+          return new C().label
+        }
+      `
+      const output = transform(input)
+
+      expect(output).toMatch(
+        /const C = __fictUseMemo\(__fictCtx, \(\) => class extends \(useA\(\) \? A : B\)/,
+      )
+      expect(output).toContain('return new (C())().label')
+    })
+
+    it('memoizes member class expression bases that read state', () => {
+      const input = `
+        import { $state } from 'fict'
+        class A { label = 'a' }
+        class B { label = 'b' }
+        const bases = { a: A, b: B }
+        function Component() {
+          let key = $state('a')
+          const C = class extends bases[key] {}
+          return new C().label
+        }
+      `
+      const output = transform(input)
+
+      expect(output).toMatch(
+        /const C = __fictUseMemo\(__fictCtx, \(\) => class extends bases\[key\(\)\]/,
+      )
+      expect(output).toContain('return new (C())().label')
+    })
+
+    it('keeps static class expression bases as ordinary values', () => {
+      const input = `
+        import { $state } from 'fict'
+        class A { label = 'a' }
+        function Component() {
+          let suffix = $state('!')
+          const C = class extends A {}
+          return new C().label + suffix
+        }
+      `
+      const output = transform(input)
+
+      expect(output).toContain('const C = class extends A')
+      expect(output).toContain('return new C().label + suffix()')
+      expect(output).not.toContain('new (C())()')
+    })
   })
 
   describe('Event handler safety', () => {
