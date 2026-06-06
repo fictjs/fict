@@ -320,6 +320,7 @@ export function analyzeHookReturnInfo(
         if (prop.kind !== 'Property') return
         const propName = getStaticPropName(prop.key as Expression, prop.computed === true)
         if (propName === null) return
+        if (prop.computed !== true && propName === '__proto__') return
         const keyName = String(propName)
         const kind = returnExprAccessorKind(prop.value)
         if (!kind) {

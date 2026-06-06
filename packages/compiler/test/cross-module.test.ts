@@ -872,6 +872,84 @@ describe('Cross-Module Reactivity', () => {
       expect(output).not.toContain('return state?.["count"];')
     })
 
+    it('does not treat non-computed __proto__ hook returns as own props', () => {
+      const hookPath = path.join(baseDir, 'hook-return-proto-object.tsx')
+      const appPath = path.join(baseDir, 'app-hook-return-proto-object.tsx')
+      const moduleMetadata = new Map()
+      const hookSource = `
+        import { $state } from 'fict'
+
+        export function useThing() {
+          const count = $state(1)
+          return { __proto__: count, normal: count, constructor: count }
+        }
+
+        export function useComputedThing() {
+          const count = $state(2)
+          return { ["__proto__"]: count }
+        }
+
+        export function SameFileApp() {
+          const thing = useThing()
+          thing.__proto__ = { marker: true }
+          thing.normal = 2
+          thing.constructor++
+          const computed = useComputedThing()
+          computed.__proto__ = 3
+          return <div>{thing.__proto__}{thing.normal}{thing.constructor}{computed.__proto__}</div>
+        }
+      `
+      const hookOutput = transform(hookSource, { fineGrainedDom: true, moduleMetadata }, hookPath)
+      const hookInfo = moduleMetadata.get(path.resolve(hookPath))?.hooks
+
+      expect(hookInfo?.useThing?.objectProps).toEqual({
+        normal: 'signal',
+        constructor: 'signal',
+      })
+      expect(
+        Object.prototype.hasOwnProperty.call(hookInfo?.useThing?.objectProps, '__proto__'),
+      ).toBe(false)
+      expect(hookInfo?.useComputedThing?.objectProps).toEqual({ ['__proto__']: 'signal' })
+
+      expect(hookOutput).toContain('thing.__proto__ = {')
+      expect(hookOutput).not.toContain('thing.__proto__({')
+      expect(hookOutput).not.toContain('thing.__proto__()')
+      expect(hookOutput).toContain('thing.normal(2)')
+      expect(hookOutput).toContain('thing.normal()')
+      expect(hookOutput).toContain('thing.constructor(')
+      expect(hookOutput).toContain('thing.constructor()')
+      expect(hookOutput).toContain('computed.__proto__(3)')
+      expect(hookOutput).toContain('computed.__proto__()')
+
+      const consumerOutput = transform(
+        `
+          import { useComputedThing, useThing } from './hook-return-proto-object'
+
+          export function App() {
+            const thing = useThing()
+            thing.__proto__ = { marker: true }
+            thing.normal = 2
+            thing.constructor++
+            const computed = useComputedThing()
+            computed.__proto__ = 3
+            return <div>{thing.__proto__}{thing.normal}{thing.constructor}{computed.__proto__}</div>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        appPath,
+      )
+
+      expect(consumerOutput).toContain('thing.__proto__ = {')
+      expect(consumerOutput).not.toContain('thing.__proto__({')
+      expect(consumerOutput).not.toContain('thing.__proto__()')
+      expect(consumerOutput).toContain('thing.normal(2)')
+      expect(consumerOutput).toContain('thing.normal()')
+      expect(consumerOutput).toContain('thing.constructor(')
+      expect(consumerOutput).toContain('thing.constructor()')
+      expect(consumerOutput).toContain('computed.__proto__(3)')
+      expect(consumerOutput).toContain('computed.__proto__()')
+    })
+
     it('unwraps direct hook-call signal member reads across modules', () => {
       const hookSource = `
         import { $state, $memo } from 'fict'
