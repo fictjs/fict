@@ -5947,4 +5947,49 @@ describe('compiled templates DOM integration', () => {
     teardown()
     container.remove()
   })
+
+  it('keeps switch discriminants from generated temp shadowing', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const source = (globalThis as any).__fictSwitchValue ?? 'b'
+        const __switchDisc_0 = source
+        const __switchDisc_1 = source
+        const __switchDisc_2 = source
+        const __switchDisc_3 = source
+        const __switchDisc_4 = source
+        const __switchDisc_5 = source
+        const __switchDisc_6 = source
+        const __switchDisc_7 = source
+        const __switchDisc_8 = source
+
+        switch (__switchDisc_6) {
+          case 'a':
+            return <span>A</span>
+          case 'b':
+            return <span>B</span>
+          default:
+            return <span>C</span>
+        }
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: true,
+      lazyConditional: true,
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.textContent).toBe('B')
+
+    teardown()
+    container.remove()
+  })
 })
