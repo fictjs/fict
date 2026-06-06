@@ -279,6 +279,84 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-C004')).toBe(false)
   })
 
+  it('does not warn when a labeled block always returns', () => {
+    expect(
+      hasWarning(
+        `
+          import { render } from 'fict'
+          function Counter() {
+            done: {
+              return <div>ready</div>
+            }
+          }
+          export function mount(el) {
+            return render(() => <Counter />, el)
+          }
+        `,
+        'FICT-C004',
+      ),
+    ).toBe(false)
+  })
+
+  it('warns when a labeled block can break before returning', () => {
+    expect(
+      hasWarning(
+        `
+          import { $state } from 'fict'
+          function Counter({ done }) {
+            const count = $state(0)
+            label: {
+              if (done) break label
+              return count
+            }
+          }
+        `,
+        'FICT-C004',
+        { lazyConditional: false },
+      ),
+    ).toBe(true)
+  })
+
+  it('does not warn when nested labeled blocks always return', () => {
+    expect(
+      hasWarning(
+        `
+          import { render } from 'fict'
+          function Counter() {
+            outer: {
+              inner: {
+                return <div>ready</div>
+              }
+            }
+          }
+          export function mount(el) {
+            return render(() => <Counter />, el)
+          }
+        `,
+        'FICT-C004',
+      ),
+    ).toBe(false)
+  })
+
+  it('does not warn when a variable component returns through a labeled block', () => {
+    expect(
+      hasWarning(
+        `
+          import { render } from 'fict'
+          const Counter = () => {
+            done: {
+              return <div>ready</div>
+            }
+          }
+          export function mount(el) {
+            return render(() => <Counter />, el)
+          }
+        `,
+        'FICT-C004',
+      ),
+    ).toBe(false)
+  })
+
   it('does not warn when while true loop body always returns', () => {
     expect(
       hasWarning(

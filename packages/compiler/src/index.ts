@@ -521,6 +521,18 @@ function loopCompletions(
   return new Set<CompletionKind>(['normal'])
 }
 
+function labeledStatementCompletions(stmt: BabelCore.types.LabeledStatement): Set<CompletionKind> {
+  const caseOutcomes = caseStatementPathCompletions(stmt.body)
+  const outcomes = new Set<CompletionKind>()
+  if (caseOutcomes.has('break') || caseOutcomes.has('fallthrough')) {
+    outcomes.add('normal')
+  }
+  if (caseOutcomes.has('abrupt')) {
+    outcomes.add('abrupt')
+  }
+  return outcomes
+}
+
 function statementCompletions(stmt: BabelCore.types.Statement): Set<CompletionKind> {
   if (stmt.type === 'ReturnStatement' || stmt.type === 'ThrowStatement') {
     return new Set<CompletionKind>(['abrupt'])
@@ -554,7 +566,7 @@ function statementCompletions(stmt: BabelCore.types.Statement): Set<CompletionKi
   }
 
   if (stmt.type === 'LabeledStatement') {
-    return statementCompletions(stmt.body)
+    return labeledStatementCompletions(stmt)
   }
 
   if (stmt.type === 'TryStatement') {
