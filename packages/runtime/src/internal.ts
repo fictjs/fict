@@ -63,6 +63,8 @@ export {
   __fictEnsureScope,
   __fictUseLexicalScope,
   __fictGetScopeProps,
+  __fictSetComponentMeta,
+  __fictGetComponentMeta,
   __fictQrl,
   __fictRegisterResume,
   __fictGetResume,

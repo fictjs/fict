@@ -2517,7 +2517,24 @@ describe('resumable event handler transformation', () => {
       '__fictRegisterResume(__fictQrl(import.meta.url, "__fict_r1"), __fict_r1)',
     )
     expect(code).toContain('const __fict_meta_App_1 =')
-    expect(code).toContain('App.__fictMeta = __fict_meta_App_1')
+    expect(code).toContain('__fictSetComponentMeta(App, __fict_meta_App_1)')
+  })
+
+  it('registers resumable component metadata through a helper after user freezes', () => {
+    const ast = parseFile(`
+      export function App() {
+        return <button>ok</button>
+      }
+
+      Object.freeze(App)
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('Object.freeze(App)')
+    expect(code).toContain('__fictSetComponentMeta(App, __fict_meta_App)')
+    expect(code).not.toContain('App.__fictMeta =')
   })
 
   it('allocates handler body names around restored signal captures', () => {

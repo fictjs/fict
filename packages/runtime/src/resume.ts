@@ -67,6 +67,11 @@ export interface ScopeRecord {
   props?: Record<string, unknown>
 }
 
+export interface ComponentMeta {
+  id?: string
+  resume?: string
+}
+
 let resumableEnabled = false
 let hydrating = false
 const defaultSSRSession = __fictCreateSSRSession()
@@ -74,6 +79,7 @@ const resumedScopes = new Map<
   string,
   { ctx: HookContext; host: Element; props?: Record<string, unknown> }
 >()
+const componentMetaRegistry = new WeakMap<object, ComponentMeta>()
 
 const WELL_KNOWN_SYMBOLS = new Map<symbol, string>([
   [Symbol.asyncIterator, 'asyncIterator'],
@@ -290,6 +296,27 @@ export function __fictUseLexicalScope(scopeId: string, names: string[]): unknown
 
 export function __fictGetScopeProps(scopeId: string): Record<string, unknown> | undefined {
   return resumedScopes.get(scopeId)?.props
+}
+
+function isComponentMetaTarget(value: unknown): value is object {
+  return (typeof value === 'object' && value !== null) || typeof value === 'function'
+}
+
+export function __fictSetComponentMeta(component: unknown, meta: ComponentMeta): void {
+  if (!isComponentMetaTarget(component)) return
+  componentMetaRegistry.set(component, meta)
+  try {
+    ;(component as { __fictMeta?: ComponentMeta }).__fictMeta = meta
+  } catch {
+    // Non-extensible user functions cannot accept compiler metadata properties.
+  }
+}
+
+export function __fictGetComponentMeta(component: unknown): ComponentMeta | undefined {
+  if (!isComponentMetaTarget(component)) return undefined
+  return (
+    componentMetaRegistry.get(component) ?? (component as { __fictMeta?: ComponentMeta }).__fictMeta
+  )
 }
 
 function appendQrlFlags(qrl: string, flags?: string | string[]): string {

@@ -36,6 +36,7 @@ export function registerResumableComponent(componentName: string, ctx: CodegenCo
   ctx.helpersUsed.add('popContext')
   ctx.helpersUsed.add('hydrateComponent')
   ctx.helpersUsed.add('qrl')
+  ctx.helpersUsed.add('setComponentMeta')
 
   const snapshotDecl = t.variableDeclaration('const', [
     t.variableDeclarator(
@@ -127,11 +128,10 @@ export function registerResumableComponent(componentName: string, ctx: CodegenCo
     ),
   ])
   const assignMeta = t.expressionStatement(
-    t.assignmentExpression(
-      '=',
-      t.memberExpression(t.identifier(componentName), t.identifier('__fictMeta')),
+    t.callExpression(runtimeIdentifier(ctx, 'setComponentMeta'), [
+      t.identifier(componentName),
       metaId,
-    ),
+    ]),
   )
 
   ctx.hoistedResumableStatements.push(resumeFn, registerCall, metaDecl, assignMeta)

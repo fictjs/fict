@@ -7,9 +7,11 @@ import {
   __fictEnableSSR,
   __fictEnsureScope,
   __fictGetScopeProps,
+  __fictGetComponentMeta,
   __fictGetScopeRegistry,
   __fictGetSSRScope,
   __fictRegisterScope,
+  __fictSetComponentMeta,
   __fictSerializeSSRState,
   __fictSerializeSSRStateForScopes,
   __fictSetSSRState,
@@ -54,6 +56,17 @@ describe('SSR lifecycle state cleanup', () => {
     expect(() => __fictUseLexicalScope('s-resume', ['value'])).toThrow(
       '[fict] Missing resumed scope for s-resume',
     )
+  })
+
+  it('stores component metadata for frozen functions without throwing', () => {
+    function App() {}
+    const meta = { id: 'App@module', resume: '/module.js#__fict_r0' }
+
+    Object.freeze(App)
+
+    expect(() => __fictSetComponentMeta(App, meta)).not.toThrow()
+    expect(__fictGetComponentMeta(App)).toBe(meta)
+    expect(Object.prototype.hasOwnProperty.call(App, '__fictMeta')).toBe(false)
   })
 
   it('restores cross-slot references with shared refs', () => {

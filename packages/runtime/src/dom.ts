@@ -68,6 +68,7 @@ import {
   __fictRegisterScope,
   __fictEnterHydration,
   __fictExitHydration,
+  __fictGetComponentMeta,
 } from './resume'
 import { untrack } from './scheduler'
 import type { DOMElement, FictNode, FictVNode } from './types'
@@ -423,8 +424,7 @@ function createElementWithContext(
         if (namespace === null && (host as HTMLElement).style) {
           ;(host as HTMLElement).style.display = 'contents'
         }
-        const meta = (vnode.type as unknown as { __fictMeta?: { id?: string; resume?: string } })
-          .__fictMeta
+        const meta = __fictGetComponentMeta(vnode.type)
         const typeKey = (meta?.id ?? vnode.type.name) || 'Anonymous'
         __fictRegisterScope(ctx, host, typeKey, rawProps)
         if (meta?.resume) {
