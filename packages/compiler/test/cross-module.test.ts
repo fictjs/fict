@@ -1677,6 +1677,101 @@ describe('Cross-Module Reactivity', () => {
       expect(controlOutput).not.toContain('pair[0]()()')
     })
 
+    it('rejects delete on hook-return accessor members', () => {
+      const hookPath = path.join(baseDir, 'delete-hook-accessor.tsx')
+      const appPath = path.join(baseDir, 'app-delete-hook-accessor.tsx')
+      const moduleMetadata = new Map()
+      const hookSource = `
+        import { $memo, $state } from 'fict'
+
+        export function useThing() {
+          const count = $state(1)
+          const doubled = $memo(() => count * 2)
+          return { count, doubled, plain: 1 }
+        }
+
+        export function usePair() {
+          const count = $state(1)
+          const doubled = $memo(() => count * 2)
+          return [count, doubled, 1]
+        }
+      `
+
+      expect(() =>
+        transform(
+          `
+            import { $memo, $state } from 'fict'
+
+            function useThing() {
+              const count = $state(1)
+              const doubled = $memo(() => count * 2)
+              return { count, doubled, plain: 1 }
+            }
+
+            export function App() {
+              const thing = useThing()
+              return delete thing.count
+            }
+          `,
+          { fineGrainedDom: true },
+          path.join(baseDir, 'same-file-delete-hook-accessor.tsx'),
+        ),
+      ).toThrow('Cannot delete hook-return accessor member')
+
+      transform(hookSource, { moduleMetadata }, hookPath)
+
+      for (const statement of [
+        'delete thing.count',
+        'delete thing.doubled',
+        'delete thing?.count',
+        'delete pair[0]',
+        'delete pair[1]',
+      ]) {
+        expect(() =>
+          transform(
+            `
+              import { usePair, useThing } from './delete-hook-accessor'
+
+              export function App() {
+                const thing = useThing()
+                const pair = usePair()
+                return ${statement}
+              }
+            `,
+            { fineGrainedDom: true, moduleMetadata },
+            appPath,
+          ),
+        ).toThrow('Cannot delete hook-return accessor member')
+      }
+
+      const controlOutput = transform(
+        `
+          import { usePair, useThing } from './delete-hook-accessor'
+
+          export function App() {
+            const thing = useThing()
+            const pair = usePair()
+            const removed = delete thing.plain
+            const optionalRemoved = delete thing?.plain
+            const slotRemoved = delete pair[2]
+            return <div>{removed}{optionalRemoved}{slotRemoved}{thing.count}{thing.doubled}{pair[0]}{pair[1]}</div>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-delete-hook-accessor-control.tsx'),
+      )
+
+      expect(controlOutput).toContain('delete thing.plain')
+      expect(controlOutput).toContain('delete thing?.plain')
+      expect(controlOutput).toContain('delete pair[2]')
+      expect(controlOutput).not.toContain('delete thing.plain()')
+      expect(controlOutput).not.toContain('delete pair[2]()')
+      expect(controlOutput).toContain('thing.count()')
+      expect(controlOutput).toContain('thing.doubled()')
+      expect(controlOutput).toContain('pair[0]()')
+      expect(controlOutput).toContain('pair[1]()')
+    })
+
     it('preserves hook-return object destructuring aliases', () => {
       const hookSource = `
         import { $state } from 'fict'

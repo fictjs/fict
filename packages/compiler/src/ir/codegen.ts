@@ -3074,6 +3074,33 @@ function lowerExpressionImpl(
     )
   }
 
+  const throwHookReturnAccessorMemberDelete = (
+    member: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
+  ): never => {
+    throw new HIRError(
+      'Cannot delete hook-return accessor member. Hook-return accessor members are compiler-managed accessors.',
+      'BUILD_ERROR',
+      {
+        file: ctx.options?.filename,
+        line: member.loc?.start.line,
+      },
+    )
+  }
+
+  const lowerDeleteArgument = (argument: Expression): BabelCore.types.Expression => {
+    if (argument.kind === 'MemberExpression' || argument.kind === 'OptionalMemberExpression') {
+      const hookMemberInfo = resolveHookReturnMemberInfo(argument, ctx)
+      if (hookMemberInfo) {
+        const accessorKind = resolveHookReturnMemberAccessorKind(argument, ctx)
+        if (isCallableHookAccessorKind(accessorKind)) {
+          throwHookReturnAccessorMemberDelete(argument)
+        }
+        return lowerMemberExpressionWithoutAccessorCall(argument)
+      }
+    }
+    return lowerExpression(argument, ctx)
+  }
+
   const lowerHookReturnSignalMemberAssignment = (
     expr: HIRAssignmentExpression,
   ): BabelCore.types.Expression | null => {
@@ -3473,7 +3500,9 @@ function lowerExpressionImpl(
     case 'UnaryExpression':
       return t.unaryExpression(
         expr.operator as BabelCore.types.UnaryExpression['operator'],
-        lowerExpression(expr.argument, ctx),
+        expr.operator === 'delete'
+          ? lowerDeleteArgument(expr.argument)
+          : lowerExpression(expr.argument, ctx),
         expr.prefix,
       )
 
