@@ -941,8 +941,16 @@ export function propagateHookResultAlias(
   value: Expression,
   ctx: CodegenContext,
 ): void {
+  targetBase = deSSAVarName(targetBase)
+  clearHookResultAlias(targetBase, ctx)
   const hookResultPassthroughCalls = new Set(['_slicedToArray', '_toArray'])
   const hookResultRestCalls = new Set(['__fictPropsRest', '__fictObjectRest'])
+  const hookCall = resolveDirectHookCallInfo(value, ctx)
+  if (hookCall) {
+    ctx.hookResultVarMap?.set(targetBase, hookCall.hookName)
+    markHookReactiveLocal(targetBase, hookCall.info?.directAccessor, ctx)
+    return
+  }
   const mapSource = (source: string) => {
     const hookName = getHookResultNameForLocal(source, ctx)
     if (!hookName) return
@@ -1699,6 +1707,32 @@ function markHookReactiveLocal(
     ctx.storeVars?.add(name)
     ctx.trackedVars.add(name)
   }
+}
+
+function unmarkHookReactiveLocal(
+  name: string,
+  kind: HookAccessorKind | null | undefined,
+  ctx: CodegenContext,
+): void {
+  if (kind === 'signal') {
+    ctx.signalVars?.delete(name)
+    ctx.trackedVars.delete(name)
+  } else if (kind === 'memo') {
+    ctx.memoVars?.delete(name)
+  } else if (kind === 'store') {
+    ctx.storeVars?.delete(name)
+    ctx.trackedVars.delete(name)
+  }
+  ctx.aliasVars?.delete(name)
+}
+
+function clearHookResultAlias(targetBase: string, ctx: CodegenContext): void {
+  const baseName = deSSAVarName(targetBase)
+  const hookName = ctx.hookResultVarMap?.get(baseName)
+  if (!hookName) return
+  ctx.hookResultVarMap?.delete(baseName)
+  const info = getHookReturnInfo(hookName, ctx)
+  unmarkHookReactiveLocal(baseName, info?.directAccessor, ctx)
 }
 
 type ReadOnlyImportedReactiveKind = Extract<ReactiveExportKind, 'memo' | 'store'>
@@ -8972,6 +9006,8 @@ function lowerFunctionWithRegions(
         propagateHookResultAlias(target, instr.value, ctx)
         if (ctx.hookResultVarMap?.has(target)) {
           hookResultVars.add(target)
+        } else {
+          hookResultVars.delete(target)
         }
         if (instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression') {
           ctx.functionVars?.add(target)

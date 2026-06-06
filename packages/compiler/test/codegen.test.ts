@@ -633,6 +633,148 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(code).toContain('props.double()')
   })
 
+  it('drops hook-result metadata when an alias is reassigned', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+
+        export function App() {
+          const state = useCounter()
+          let alias = state
+          alias = { count: 1 }
+          alias.count = 2
+          alias.count++
+          return <span>{alias.count}</span>
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(output).toContain('alias = {')
+    expect(output).toContain('alias.count = 2')
+    expect(output).toContain('alias.count++')
+    expect(output).toContain('alias.count')
+    expect(output).not.toMatch(/alias\.count\(\)/)
+    expect(output).not.toContain('alias.count(2)')
+    expect(output).not.toMatch(/alias\.count\([+-]{2}__prev_/)
+  })
+
+  it('drops hook-result metadata when the original result is reassigned', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+
+        export function App() {
+          let state = useCounter()
+          state = { count: 1 }
+          return <span>{state.count}</span>
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(output).toContain('state = {')
+    expect(output).toContain('state.count')
+    expect(output).not.toMatch(/state(?:\(\))?\.count\(\)/)
+  })
+
+  it('drops hook-result metadata after conditional plain reassignment', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+
+        export function App({ flag }: { flag: boolean }) {
+          let state = useCounter()
+          if (flag) {
+            state = { count: 1 }
+          }
+          return <span>{state.count}</span>
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(output).toContain('state = {')
+    expect(output).toMatch(/state\(\)\.count/)
+    expect(output).not.toMatch(/state(?:\(\))?\.count\(\)/)
+  })
+
+  it('keeps hook-result metadata when reassigned to another hook result', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+
+        function useOtherCounter() {
+          const count = $state(1)
+          return { count }
+        }
+
+        export function App() {
+          let state = useCounter()
+          const other = useOtherCounter()
+          state = other
+          return <span>{state.count}</span>
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(output).toMatch(/state\.count\(\)/)
+  })
+
+  it('drops array and direct accessor hook-result metadata after reassignment', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        function usePair() {
+          const count = $state(0)
+          return [count]
+        }
+
+        function useCount() {
+          const count = $state(1)
+          return count
+        }
+
+        export function App() {
+          let pair = usePair()
+          pair = [1]
+          let count = useCount()
+          count = 2
+          return <span>{pair[0]}:{count}</span>
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(output).toContain('pair = [1]')
+    expect(output).toContain('count = 2')
+    expect(output).toContain('pair[0]')
+    expect(output).not.toMatch(/pair\[0\]\(\)/)
+    expect(output).not.toMatch(/count\(\)/)
+  })
+
   it('preserves explicit calls to hook return accessor members', () => {
     const ast = parseFile(`
       const useCounter = () => {
