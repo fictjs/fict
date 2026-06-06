@@ -67,6 +67,45 @@ describe('Cross-Module Reactivity', () => {
       })
     })
 
+    it('preserves special string-named reactive export metadata keys', () => {
+      const source = `
+        import { createMemo } from 'fict'
+        const value = createMemo(() => 1)
+        export { value as "__proto__", value as "constructor", value as "toString" }
+      `
+      const moduleMetadata = new Map()
+      const sourcePath = path.join(baseDir, 'special-string-export.ts')
+
+      transform(source, { moduleMetadata }, sourcePath)
+
+      const exports = moduleMetadata.get(path.resolve(sourcePath))?.exports
+      for (const key of ['__proto__', 'constructor', 'toString']) {
+        expect(Object.prototype.hasOwnProperty.call(exports, key)).toBe(true)
+        expect(exports?.[key]).toBe('memo')
+      }
+    })
+
+    it('preserves special string-named reactive metadata through star exports', () => {
+      const source = `
+        import { createMemo } from 'fict'
+        const value = createMemo(() => 1)
+        export { value as "__proto__" }
+      `
+      const barrel = `
+        export * from './special-source'
+      `
+      const moduleMetadata = new Map()
+      const sourcePath = path.join(baseDir, 'special-source.ts')
+      const barrelPath = path.join(baseDir, 'special-barrel.ts')
+
+      transform(source, { moduleMetadata }, sourcePath)
+      transform(barrel, { moduleMetadata }, barrelPath)
+
+      const exports = moduleMetadata.get(path.resolve(barrelPath))?.exports
+      expect(Object.prototype.hasOwnProperty.call(exports, '__proto__')).toBe(true)
+      expect(exports?.['__proto__']).toBe('memo')
+    })
+
     it('publishes metadata for destructured runtime reactive creator exports', () => {
       const signalSource = `
         import { createSignal } from 'fict/advanced'

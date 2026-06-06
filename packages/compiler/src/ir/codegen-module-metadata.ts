@@ -46,6 +46,15 @@ function classifyReactiveExport(name: string, ctx: CodegenContext): ReactiveExpo
   return null
 }
 
+function setMetadataRecordValue<T>(record: Record<string, T>, key: string, value: T): void {
+  Object.defineProperty(record, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  })
+}
+
 function isTypeOnlyKind(kind: string | null | undefined): boolean {
   return kind === 'type' || kind === 'typeof'
 }
@@ -197,10 +206,10 @@ export function buildModuleReactiveMetadata(
     }
     starExportNames.add(exportName)
     if (kind) {
-      metadata.exports[exportName] = kind
+      setMetadataRecordValue(metadata.exports, exportName, kind)
     }
     if (hookInfo) {
-      hookExports[exportName] = hookInfo
+      setMetadataRecordValue(hookExports, exportName, hookInfo)
     }
   }
   const getSpecifierName = (
@@ -498,11 +507,11 @@ export function buildModuleReactiveMetadata(
     const kind =
       classifyReactiveExport(localName, ctx) ?? localReactiveKinds.get(deSSAVarName(localName))
     if (kind) {
-      metadata.exports[exportName] = kind
+      setMetadataRecordValue(metadata.exports, exportName, kind)
     }
     const hookInfo = hooks?.getLocalHookInfo?.(localName)
     if (hookInfo) {
-      hookExports[exportName] = hookInfo
+      setMetadataRecordValue(hookExports, exportName, hookInfo)
     }
   }
   const addDestructuredExport = (
@@ -513,14 +522,14 @@ export function buildModuleReactiveMetadata(
       markExplicitExport(name)
       const kind = classifyStaticValue(source) ?? localReactiveKinds.get(deSSAVarName(name))
       if (kind) {
-        metadata.exports[name] = kind
+        setMetadataRecordValue(metadata.exports, name, kind)
       }
     })
   }
   const addNamespaceExportFromSource = (source: string, exportName: string) => {
     const sourceMeta = resolveModuleMetadata(source, options?.filename, options)
     if (sourceMeta) {
-      namespaceExports[exportName] = sourceMeta
+      setMetadataRecordValue(namespaceExports, exportName, sourceMeta)
     }
   }
   const addExportFromSource = (source: string, importedName: string, exportName: string) => {
@@ -529,17 +538,17 @@ export function buildModuleReactiveMetadata(
     if (!sourceMeta) return
     const kind = sourceMeta.exports[importedName]
     if (kind) {
-      metadata.exports[exportName] = kind
+      setMetadataRecordValue(metadata.exports, exportName, kind)
     }
     const hookInfo = sourceMeta.hooks?.[importedName]
     if (hookInfo) {
-      hookExports[exportName] = hookInfo
+      setMetadataRecordValue(hookExports, exportName, hookInfo)
     }
   }
   const addDefaultExportKind = (kind: ReactiveExportKind | null) => {
     markExplicitExport('default')
     if (kind) {
-      metadata.exports.default = kind
+      setMetadataRecordValue(metadata.exports, 'default', kind)
     }
   }
   const addDefaultExportFromNamespaceMember = (
@@ -555,11 +564,11 @@ export function buildModuleReactiveMetadata(
     const key = String(memberName)
     const kind = namespaceMeta.exports[key]
     if (kind) {
-      metadata.exports.default = kind
+      setMetadataRecordValue(metadata.exports, 'default', kind)
     }
     const hookInfo = namespaceMeta.hooks?.[key]
     if (hookInfo) {
-      hookExports.default = hookInfo
+      setMetadataRecordValue(hookExports, 'default', hookInfo)
     }
     return true
   }
