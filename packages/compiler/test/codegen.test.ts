@@ -2554,6 +2554,32 @@ describe('spread operator in JSX', () => {
     expect(code).not.toContain('<textarea> ')
   })
 
+  it('routes raw-text and RCDATA expression children through textContent', () => {
+    const ast = parseFile(`
+      function RawTextChildren() {
+        let show = $state(true)
+        let css = $state('body { color: red; }')
+        return (
+          <section>
+            <script type="application/json">{show && <span>code</span>}</script>
+            <style>{css}</style>
+            <title>{show && <span>title</span>}</title>
+            <script type="application/json" children={show && <span>child</span>} />
+          </section>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('bindTextContent')
+    expect(code).not.toContain('<script><!--fict:slot:start--><!--fict:slot:end--></script>')
+    expect(code).not.toContain('<style><!--fict:slot:start--><!--fict:slot:end--></style>')
+    expect(code).not.toContain('<title><!--fict:slot:start--><!--fict:slot:end--></title>')
+    expect(code).not.toContain('getSlotEnd')
+  })
+
   it('routes custom element JSX props through DOM properties', () => {
     const ast = parseFile(`
       function CustomElementProps() {

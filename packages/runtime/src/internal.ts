@@ -97,10 +97,12 @@ export {
 
 export {
   bindText,
+  bindTextContent,
   bindAttribute,
   bindStyle,
   bindClass,
   setText,
+  setTextContent,
   setAttr,
   setProp,
   setStyle,

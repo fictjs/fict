@@ -1847,6 +1847,72 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('does not leak slot markers into raw-text and RCDATA expression children', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { hide(): void; setCss(value: string): void }
+
+      export function App() {
+        let show = $state(true)
+        let css = $state('body { color: red; }')
+        api = {
+          hide: () => (show = false),
+          setCss: value => (css = value),
+        }
+        return (
+          <section>
+            <script type="application/json" data-testid="script">{show && <span>code</span>}</script>
+            <style data-testid="style">{css}</style>
+            <title data-testid="title">{show && <span>title</span>}</title>
+            <script
+              type="application/json"
+              data-testid="children-prop"
+              children={show && <span>child</span>}
+            />
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { hide(): void; setCss(value: string): void }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const script = container.querySelector('[data-testid="script"]') as HTMLScriptElement
+    const style = container.querySelector('[data-testid="style"]') as HTMLStyleElement
+    const title = container.querySelector('[data-testid="title"]') as HTMLTitleElement
+    const childrenProp = container.querySelector(
+      '[data-testid="children-prop"]',
+    ) as HTMLScriptElement
+
+    expect(script.textContent).not.toContain('fict:slot')
+    expect(style.textContent).toBe('body { color: red; }')
+    expect(title.textContent).not.toContain('fict:slot')
+    expect(childrenProp.textContent).not.toContain('fict:slot')
+
+    mod.api.setCss('body { color: blue; }')
+    await flushUpdates()
+    expect(style.textContent).toBe('body { color: blue; }')
+
+    mod.api.hide()
+    await flushUpdates()
+    expect(script.textContent).toBe('')
+    expect(title.textContent).toBe('')
+    expect(childrenProp.textContent).toBe('')
+
+    teardown()
+    container.remove()
+  })
+
   it('renders intrinsic children props as child content in fine-grained output', async () => {
     const source = `
       import { $state, render } from 'fict'

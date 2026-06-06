@@ -9,7 +9,7 @@ import {
 import type { Expression, JSXChild, JSXElementExpression } from './hir'
 
 export interface HIRBinding {
-  type: 'attr' | 'child' | 'event' | 'key' | 'spread' | 'text'
+  type: 'attr' | 'child' | 'event' | 'key' | 'spread' | 'text' | 'textContent'
   path: number[] // path to navigate from root to target node
   name?: string | undefined // for attributes/events
   expr?: Expression | undefined // the dynamic expression
@@ -183,6 +183,7 @@ function isHtmlAnnotationXmlEncoding(value: string | null): boolean {
 const MATHML_TEXT_INTEGRATION_POINTS = new Set(['mi', 'mo', 'mn', 'ms', 'mtext'])
 const MATHML_TEXT_INTEGRATION_EXCEPTIONS = new Set(['mglyph', 'malignmark'])
 const SVG_HTML_INTEGRATION_POINTS = new Set(['foreignObject', 'title', 'desc'])
+const HTML_RAW_TEXT_CONTENT_ELEMENTS = new Set(['script', 'style', 'title'])
 
 /**
  * Resolve namespace context based on tag name and parent context.
@@ -222,6 +223,18 @@ function isStaticValue(expr: Expression | null): expr is Expression & { kind: 'L
   if (expr.kind !== 'Literal') return false
   const { value } = expr
   return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+}
+
+function shouldBindRawTextContent(
+  tagName: string,
+  parentNamespace: NamespaceContext,
+  resolvedNamespace: NamespaceContext,
+): boolean {
+  return (
+    parentNamespace === null &&
+    resolvedNamespace === null &&
+    HTML_RAW_TEXT_CONTENT_ELEMENTS.has(tagName)
+  )
 }
 
 function escapeHtmlAttributeValue(value: string): string {
@@ -623,6 +636,12 @@ export function extractHIRStaticHtml(
     children[0]?.kind === 'expression'
       ? children[0].value
       : null
+  const rawTextContentChild =
+    shouldBindRawTextContent(tagName, namespace, resolvedNamespace) &&
+    children.length === 1 &&
+    children[0]?.kind === 'expression'
+      ? children[0].value
+      : null
   const isNonEmptyText = (node: JSXChild): boolean => node.kind === 'text' && node.value.length > 0
   const isImplicitTableRow = (node: JSXChild | undefined): boolean =>
     tagName === 'table' &&
@@ -647,18 +666,32 @@ export function extractHIRStaticHtml(
       expr: textareaValueChild,
       bindingTarget: 'property',
     })
-  } else if (childrenPropExpr && !hasRenderableChildren) {
-    html += '<!--fict:slot:start--><!--fict:slot:end-->'
+  } else if (rawTextContentChild) {
     bindings.push({
-      type: 'child',
-      path: [...parentPath, childIndex],
-      expr: childrenPropExpr,
-      namespace: resolvedNamespace,
+      type: 'textContent',
+      path: [...parentPath],
+      expr: rawTextContentChild,
     })
-    childIndex++
+  } else if (childrenPropExpr && !hasRenderableChildren) {
+    if (shouldBindRawTextContent(tagName, namespace, resolvedNamespace)) {
+      bindings.push({
+        type: 'textContent',
+        path: [...parentPath],
+        expr: childrenPropExpr,
+      })
+    } else {
+      html += '<!--fict:slot:start--><!--fict:slot:end-->'
+      bindings.push({
+        type: 'child',
+        path: [...parentPath, childIndex],
+        expr: childrenPropExpr,
+        namespace: resolvedNamespace,
+      })
+      childIndex++
+    }
   }
 
-  if (!textareaValueChild) {
+  if (!textareaValueChild && !rawTextContentChild) {
     let previousStaticTextChild = false
     for (let i = 0; i < children.length; i++) {
       const child = children[i]!

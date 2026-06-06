@@ -13,11 +13,13 @@ import {
   bindRef,
   bindEvent,
   bindText,
+  bindTextContent,
   bindAttribute,
   bindProperty,
   bindStyle,
   setStyle,
   bindClass,
+  setTextContent,
   classList,
   spread,
   assign,
@@ -431,6 +433,28 @@ describe('Binding Edge Cases', () => {
       await tick()
 
       expect(text.data).toBe('hello')
+    })
+
+    it('formats element textContent with text binding semantics', async () => {
+      const el = document.createElement('script')
+      const value = createSignal<string | boolean | null>('hello')
+
+      setTextContent(el, value())
+      expect(el.textContent).toBe('hello')
+
+      bindTextContent(el, () => value())
+
+      value(false)
+      await tick()
+      expect(el.textContent).toBe('')
+
+      value(null)
+      await tick()
+      expect(el.textContent).toBe('')
+
+      value('updated')
+      await tick()
+      expect(el.textContent).toBe('updated')
     })
   })
 

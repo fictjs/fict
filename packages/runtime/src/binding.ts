@@ -432,6 +432,14 @@ export function bindText(textNode: Text, getValue: () => unknown): Cleanup {
 }
 
 /**
+ * Bind a reactive value to an element's textContent.
+ * Used for raw-text/RCDATA elements where parser comment slots become text.
+ */
+export function bindTextContent(el: Element, getValue: () => unknown): Cleanup {
+  return createRenderEffect(() => setTextContent(el, getValue()))
+}
+
+/**
  * Patch text node content with per-node value caching.
  * This is the low-level primitive used by compiled render effects.
  */
@@ -443,6 +451,20 @@ export function setText(textNode: Text, value: unknown): void {
   cache[TEXT_CACHE] = next
   if (textNode.data !== next) {
     textNode.data = next
+  }
+}
+
+/**
+ * Patch element textContent with the same formatting semantics as text nodes.
+ */
+export function setTextContent(el: Element, value: unknown): void {
+  const next = formatTextValue(value)
+  const cache = el as unknown as Record<PropertyKey, unknown>
+  const prev = cache[TEXT_CACHE]
+  if (prev === next && el.textContent === next) return
+  cache[TEXT_CACHE] = next
+  if (el.textContent !== next) {
+    el.textContent = next
   }
 }
 

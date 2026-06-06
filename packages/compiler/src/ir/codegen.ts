@@ -4271,8 +4271,14 @@ function lowerIntrinsicElement(
   interface FusedPatchEntry {
     patch: BabelCore.types.Statement
     fallback: BabelCore.types.Statement
-    patchHelper: 'setText' | 'setAttr' | 'setProp' | 'setClass' | 'setStyle'
-    fallbackHelper: 'bindText' | 'bindAttribute' | 'bindProperty' | 'bindClass' | 'bindStyle'
+    patchHelper: 'setText' | 'setTextContent' | 'setAttr' | 'setProp' | 'setClass' | 'setStyle'
+    fallbackHelper:
+      | 'bindText'
+      | 'bindTextContent'
+      | 'bindAttribute'
+      | 'bindProperty'
+      | 'bindClass'
+      | 'bindStyle'
   }
 
   const fusedPatchGroups = new Map<string, FusedPatchEntry[]>()
@@ -5224,6 +5230,37 @@ function lowerIntrinsicElement(
         statements.push(
           t.expressionStatement(
             t.callExpression(runtimeIdentifier(ctx, 'setText'), [targetId, valueExpr]),
+          ),
+        )
+      }
+    } else if (binding.type === 'textContent' && binding.expr) {
+      const valueExpr = lowerDomExpression(binding.expr, ctx, containingRegion)
+      if (!isListKeyConstExpression(binding.expr, ctx) && isExpressionReactive(binding.expr, ctx)) {
+        const patch = t.expressionStatement(
+          t.callExpression(runtimeIdentifier(ctx, 'setTextContent'), [targetId, valueExpr]),
+        )
+        const fallback = t.expressionStatement(
+          t.callExpression(runtimeIdentifier(ctx, 'bindTextContent'), [
+            targetId,
+            t.arrowFunctionExpression([], valueExpr),
+          ]),
+        )
+        if (
+          !queueFusedPatch(binding.expr, {
+            patch,
+            fallback,
+            patchHelper: 'setTextContent',
+            fallbackHelper: 'bindTextContent',
+          })
+        ) {
+          ctx.helpersUsed.add('bindTextContent')
+          statements.push(fallback)
+        }
+      } else {
+        ctx.helpersUsed.add('setTextContent')
+        statements.push(
+          t.expressionStatement(
+            t.callExpression(runtimeIdentifier(ctx, 'setTextContent'), [targetId, valueExpr]),
           ),
         )
       }
