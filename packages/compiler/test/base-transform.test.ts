@@ -653,6 +653,17 @@ describe('createFictPlugin (HIR)', () => {
       expect(output).not.toContain('return <span')
     })
 
+    it('lowers JSX in parameter default expressions', () => {
+      const output = transform(`
+        export function make(fallback = <span>Default</span>) {
+          return fallback
+        }
+      `)
+
+      expect(output).toContain('template("<span>Default</span>")')
+      expect(output).not.toContain('fallback = <span')
+    })
+
     it('lowers direct default-exported JSX expressions', () => {
       const output = transform(`
         export default <div />

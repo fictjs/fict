@@ -489,6 +489,43 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('lowers JSX in destructured prop defaults', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      function App({ fallback = <span data-id="fallback">Default</span> } = {}) {
+        return <div data-id="host">{fallback}</div>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => (
+          <>
+            <App />
+            <App fallback={<em data-id="custom">Custom</em>} />
+          </>
+        ), el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: true,
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    expect(container.querySelector('[data-id="fallback"]')?.textContent).toBe('Default')
+    expect(container.querySelector('[data-id="custom"]')?.textContent).toBe('Custom')
+    expect(
+      Array.from(container.querySelectorAll('[data-id="host"]')).map(el => el.textContent),
+    ).toEqual(['Default', 'Custom'])
+
+    teardown()
+    container.remove()
+  })
+
   it('evaluates destructured prop defaults against prior prop values', async () => {
     const source = `
       import { render } from 'fict'

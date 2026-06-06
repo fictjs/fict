@@ -1237,11 +1237,11 @@ function lowerParameterExpression(
   paramNames.forEach(name => shadowed.add(name))
   ctx.shadowedNames = shadowed
   try {
-    return applyRegionMetadataToExpression(
+    const lowered = lowerRawJSXInBabelNode(
       ctx.t.cloneNode(expr, true) as BabelCore.types.Expression,
       ctx,
-      parameterRegionOverride(ctx) ?? undefined,
     )
+    return applyRegionMetadataToExpression(lowered, ctx, parameterRegionOverride(ctx) ?? undefined)
   } finally {
     ctx.shadowedNames = prevShadowed
   }
@@ -7747,8 +7747,17 @@ function lowerFunctionWithRegions(
           overrides[name] = () => ensurePropAccessorSnapshot(name)
         }
         const lowered = t.cloneNode(defaultExpr, true) as BabelCore.types.Expression
-        replaceIdentifiersWithOverrides(lowered, overrides, t, undefined, undefined, false, true)
-        return lowered
+        const loweredDefault = lowerRawJSXInBabelNode(lowered, ctx)
+        replaceIdentifiersWithOverrides(
+          loweredDefault,
+          overrides,
+          t,
+          undefined,
+          undefined,
+          false,
+          true,
+        )
+        return loweredDefault
       }
       const buildEagerDefaultedPropAccessor = (
         valueExpr: BabelCore.types.Expression,
