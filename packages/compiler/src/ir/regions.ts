@@ -4735,12 +4735,20 @@ function expressionIsLazyMemoSafe(expr: Expression, ctx: CodegenContext): boolea
 
 function expressionReturnsAccessorOrReactiveObject(expr: Expression, ctx: CodegenContext): boolean {
   const callKind = getReactiveCallKind(expr, ctx)
-  return (
-    callKind === 'memo' ||
-    (expr.kind === 'CallExpression' &&
-      expr.callee.kind === 'Identifier' &&
-      expr.callee.name === 'prop')
-  )
+  return callKind === 'memo' || isRuntimePropCall(expr, ctx)
+}
+
+function isRuntimePropCall(expr: Expression, ctx: CodegenContext): boolean {
+  if (expr.kind !== 'CallExpression') return false
+  if (expr.callee.kind !== 'Identifier') return false
+  const calleeName = deSSAVarName(expr.callee.name)
+  if (
+    (ctx.shadowedNames?.has(calleeName) ?? false) ||
+    (ctx.localDeclaredNames?.has(calleeName) ?? false)
+  ) {
+    return false
+  }
+  return ctx.moduleRuntimeImportMap?.get(calleeName) === 'prop'
 }
 
 function classExpressionNeedsReactiveMemo(instr: Instruction, ctx: CodegenContext): boolean {
@@ -5354,12 +5362,8 @@ function instructionToStatement(
       const localValueVars = ctx.localValueVars ?? (ctx.localValueVars = new Set())
       localValueVars.add(baseName)
     }
-    // Detect accessor-returning calls ($memo, createMemo, prop) - these return accessors and should be added to memoVars
-    const isAccessorReturningCall =
-      callKind === 'memo' ||
-      (instr.value.kind === 'CallExpression' &&
-        instr.value.callee.kind === 'Identifier' &&
-        instr.value.callee.name === 'prop')
+    // Detect accessor-returning calls ($memo, createMemo, runtime prop).
+    const isAccessorReturningCall = callKind === 'memo' || isRuntimePropCall(instr.value, ctx)
     // Combined check for skipping memo wrapping
     const isMemoReturningCall = isAccessorReturningCall
     const canLazyMemoizeDerived = expressionIsLazyMemoSafe(instr.value, ctx)

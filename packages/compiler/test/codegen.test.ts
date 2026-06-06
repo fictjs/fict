@@ -737,6 +737,111 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(code).toContain('prop(() => count() * 2 + count())')
   })
 
+  it('does not classify user-authored prop calls as accessor-returning region outputs', () => {
+    const cases = [
+      {
+        name: 'local function declaration',
+        source: `
+          import { $state } from 'fict'
+
+          export function App() {
+            const count = $state(1)
+            function prop(x: number) {
+              return x + 1
+            }
+            const value = prop(count)
+            return <span>{value}</span>
+          }
+        `,
+      },
+      {
+        name: 'local const function',
+        source: `
+          import { $state } from 'fict'
+
+          export function App() {
+            const count = $state(1)
+            const prop = (x: number) => x + 1
+            const value = prop(count)
+            return <span>{value}</span>
+          }
+        `,
+      },
+      {
+        name: 'non-runtime import',
+        source: `
+          import { $state } from 'fict'
+          import { prop } from './user'
+
+          export function App() {
+            const count = $state(1)
+            const value = prop(count)
+            return <span>{value}</span>
+          }
+        `,
+      },
+      {
+        name: 'conditional region output',
+        source: `
+          import { $state } from 'fict'
+
+          export function App() {
+            const count = $state(1)
+            function prop(x: number) {
+              return x + 1
+            }
+            const value = count > 0 ? prop(count) : prop(0)
+            return <span>{value}</span>
+          }
+        `,
+      },
+    ] as const
+
+    for (const testCase of cases) {
+      const output = transform(testCase.source)
+
+      expect(output, testCase.name).toMatch(/prop\(count\(\)\)/)
+      expect(output, testCase.name).toMatch(
+        /const value = \(__eager_value => \(\) => __eager_value\)\(/,
+      )
+      expect(output, testCase.name).not.toContain('const value = prop(count())')
+      expect(output, testCase.name).toContain('() => value()')
+    }
+  })
+
+  it('keeps proven runtime prop calls as accessor-returning region outputs', () => {
+    const output = transform(`
+      import { $state, prop } from 'fict'
+
+      export function App() {
+        const count = $state(1)
+        const value = prop(count)
+        return <span>{value}</span>
+      }
+    `)
+
+    expect(output).toContain('const value = prop(count())')
+    expect(output).toContain('() => value()')
+  })
+
+  it('keeps compiler-generated prop accessors callable in JSX text', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      function Child({ value }: { value: number }) {
+        return <span>{value}</span>
+      }
+
+      export function App() {
+        const count = $state(1)
+        return <Child value={count} />
+      }
+    `)
+
+    expect(output).toContain('const value = prop(() => __props.value)')
+    expect(output).toContain('() => value()')
+  })
+
   it('keeps optional-called destructured function props unwrapped', () => {
     const ast = parseFile(`
       function Child({ cb, value }) {
