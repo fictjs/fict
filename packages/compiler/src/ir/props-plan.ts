@@ -66,6 +66,10 @@ export function buildPropsPlan(
 
     const toPropKey = (name: string) =>
       /^[a-zA-Z_$][\w$]*$/.test(name) ? t.identifier(name) : t.stringLiteral(name)
+    const toPropObjectProperty = (name: string, value: BabelCore.types.Expression) =>
+      name === '__proto__'
+        ? t.objectProperty(t.stringLiteral(name), value, true)
+        : t.objectProperty(toPropKey(name), value)
     const isAccessorName = (name: string): boolean =>
       (ctx.memoVars?.has(name) ?? false) ||
       (ctx.signalVars?.has(name) ?? false) ||
@@ -440,8 +444,8 @@ export function buildPropsPlan(
                 })()
               : lowered
         bucket.push(
-          t.objectProperty(
-            toPropKey(attr.name),
+          toPropObjectProperty(
+            attr.name,
             isFunctionLike ? wrapNonReactiveFunction(valueExpr) : valueExpr,
           ),
         )
@@ -449,7 +453,7 @@ export function buildPropsPlan(
       }
 
       // Boolean attribute
-      bucket.push(t.objectProperty(toPropKey(attr.name), t.booleanLiteral(true)))
+      bucket.push(toPropObjectProperty(attr.name, t.booleanLiteral(true)))
     }
 
     const childrenUseTracked = children.some(

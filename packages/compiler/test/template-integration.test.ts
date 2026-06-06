@@ -3416,6 +3416,83 @@ describe('compiled templates DOM integration', () => {
     })
   })
 
+  it('keeps JSX __proto__ attributes as own VNode props', () => {
+    const source = `
+      export function make() {
+        const payload = { polluted: true }
+        function Child() {
+          return null
+        }
+        const componentVNode = (
+          <Child __proto__={payload} constructor="componentCtor" toString="componentString" />
+        ) as any
+        const intrinsicVNode = (
+          <div __proto__={payload} constructor="hostCtor" toString="hostString" />
+        ) as any
+        const booleanVNode = <span __proto__ /> as any
+        const inspect = (props: any) => ({
+          keys: Object.keys(props),
+          ownProto: Object.prototype.hasOwnProperty.call(props, '__proto__'),
+          protoIsPayload: Object.getPrototypeOf(props) === payload,
+          protoValueIsPayload: props.__proto__ === payload,
+          constructorValue: props.constructor,
+          toStringValue: props.toString,
+        })
+
+        return {
+          component: inspect(componentVNode.props),
+          intrinsic: inspect(intrinsicVNode.props),
+          booleanOwnProto: Object.prototype.hasOwnProperty.call(booleanVNode.props, '__proto__'),
+          booleanProtoValue: booleanVNode.props.__proto__,
+        }
+      }
+    `
+
+    const mod = compileAndLoad<{
+      make: () => {
+        component: {
+          keys: string[]
+          ownProto: boolean
+          protoIsPayload: boolean
+          protoValueIsPayload: boolean
+          constructorValue: string
+          toStringValue: string
+        }
+        intrinsic: {
+          keys: string[]
+          ownProto: boolean
+          protoIsPayload: boolean
+          protoValueIsPayload: boolean
+          constructorValue: string
+          toStringValue: string
+        }
+        booleanOwnProto: boolean
+        booleanProtoValue: boolean
+      }
+    }>(source, { fineGrainedDom: false })
+
+    expect(mod.make()).toEqual({
+      component: {
+        keys: ['__proto__', 'constructor', 'toString'],
+        ownProto: true,
+        protoIsPayload: false,
+        protoValueIsPayload: true,
+        constructorValue: 'componentCtor',
+        toStringValue: 'componentString',
+      },
+      intrinsic: {
+        keys: ['__proto__', 'constructor', 'toString'],
+        ownProto: true,
+        protoIsPayload: false,
+        protoValueIsPayload: false,
+        constructorValue: 'hostCtor',
+        toStringValue: 'hostString',
+      },
+      booleanOwnProto: true,
+      booleanProtoValue: true,
+    })
+  })
+
   it('rejects dangerouslySetInnerHTML with explicit JSX children', () => {
     const source = `
       import { render } from 'fict'

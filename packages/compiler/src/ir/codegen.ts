@@ -3916,6 +3916,10 @@ function lowerIntrinsicElementAsVNode(
   let keyExpr: BabelCore.types.Expression | null = null
   const toPropKey = (name: string) =>
     /^[a-zA-Z_$][\w$]*$/.test(name) ? t.identifier(name) : t.stringLiteral(name)
+  const toPropObjectProperty = (name: string, value: BabelCore.types.Expression) =>
+    name === '__proto__'
+      ? t.objectProperty(t.stringLiteral(name), value, true)
+      : t.objectProperty(toPropKey(name), value)
 
   for (const attr of jsx.attributes) {
     if (attr.isSpread && attr.spreadExpr) {
@@ -3951,7 +3955,7 @@ function lowerIntrinsicElementAsVNode(
       }
     }
 
-    props.push(t.objectProperty(toPropKey(name), valueExpr))
+    props.push(toPropObjectProperty(name, valueExpr))
   }
 
   const children = jsx.children.map(child => lowerJSXChildNonFineGrained(child, ctx))
