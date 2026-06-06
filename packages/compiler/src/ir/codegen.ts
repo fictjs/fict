@@ -951,12 +951,55 @@ export function propagateHookResultAlias(
     markHookReactiveLocal(targetBase, hookCall.info?.directAccessor, ctx)
     return
   }
-  const mapSource = (source: string) => {
-    const hookName = getHookResultNameForLocal(source, ctx)
-    if (!hookName) return
+  const mapHookName = (hookName: string) => {
     ctx.hookResultVarMap?.set(targetBase, hookName)
     const info = getHookReturnInfo(hookName, ctx)
     markHookReactiveLocal(targetBase, info?.directAccessor, ctx)
+  }
+  const hookInfoMatches = (leftName: string, rightName: string): boolean => {
+    if (leftName === rightName) return true
+    const left = getHookReturnInfo(leftName, ctx)
+    const right = getHookReturnInfo(rightName, ctx)
+    return !!left && !!right && hookReturnInfoMatches(left, right)
+  }
+  const mergeHookNames = (left: string | null, right: string | null): string | null => {
+    if (!left || !right) return null
+    return hookInfoMatches(left, right) ? left : null
+  }
+  const resolveTransparentHookName = (expr: Expression): string | null => {
+    const direct = resolveDirectHookCallInfo(expr, ctx)
+    if (direct) return direct.hookName
+    if (expr.kind === 'Identifier') return getHookResultNameForLocal(expr.name, ctx)
+    if (
+      expr.kind === 'CallExpression' &&
+      expr.callee.kind === 'Identifier' &&
+      hookResultPassthroughCalls.has(expr.callee.name)
+    ) {
+      const firstArg = expr.arguments[0]
+      return firstArg?.kind === 'Identifier' ? getHookResultNameForLocal(firstArg.name, ctx) : null
+    }
+    if (expr.kind === 'SequenceExpression') {
+      const last = expr.expressions[expr.expressions.length - 1]
+      return last ? resolveTransparentHookName(last) : null
+    }
+    if (expr.kind === 'ConditionalExpression') {
+      return mergeHookNames(
+        resolveTransparentHookName(expr.consequent as Expression),
+        resolveTransparentHookName(expr.alternate as Expression),
+      )
+    }
+    if (expr.kind === 'LogicalExpression') {
+      return mergeHookNames(
+        resolveTransparentHookName(expr.left as Expression),
+        resolveTransparentHookName(expr.right as Expression),
+      )
+    }
+    return null
+  }
+  const mapSource = (source: string) => {
+    const hookName = getHookResultNameForLocal(source, ctx)
+    if (!hookName) return
+    mapHookName(hookName)
   }
   const mapRestSource = (source: string, excludedArg: Expression | undefined) => {
     const hookName = getHookResultNameForLocal(source, ctx)
@@ -973,8 +1016,9 @@ export function propagateHookResultAlias(
     markHookReactiveLocal(targetBase, narrowed.directAccessor, ctx)
   }
 
-  if (value.kind === 'Identifier') {
-    mapSource(deSSAVarName(value.name))
+  const transparentHookName = resolveTransparentHookName(value)
+  if (transparentHookName) {
+    mapHookName(transparentHookName)
     return
   }
 
@@ -1617,6 +1661,26 @@ function getHookReturnAccessorKind(
     }
   }
   return null
+}
+
+function hookAccessorMapsMatch<K>(
+  left: Map<K, HookAccessorKind> | undefined,
+  right: Map<K, HookAccessorKind> | undefined,
+): boolean {
+  if (!left || left.size === 0) return !right || right.size === 0
+  if (!right || left.size !== right.size) return false
+  for (const [key, kind] of left) {
+    if (right.get(key) !== kind) return false
+  }
+  return true
+}
+
+function hookReturnInfoMatches(left: HookReturnInfo, right: HookReturnInfo): boolean {
+  return (
+    left.directAccessor === right.directAccessor &&
+    hookAccessorMapsMatch(left.objectProps, right.objectProps) &&
+    hookAccessorMapsMatch(left.arrayProps, right.arrayProps)
+  )
 }
 
 function getStaticMetadataPropertyKey(propName: string | number | null): string | null {

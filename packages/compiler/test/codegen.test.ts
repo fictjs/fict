@@ -775,6 +775,108 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).not.toMatch(/count\(\)/)
   })
 
+  it('preserves transparent hook-result alias metadata', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+
+        function useOtherCounter() {
+          const count = $state(1)
+          return { count }
+        }
+
+        export function App({ flag }: { flag: boolean }) {
+          const state = useCounter()
+          const other = useOtherCounter()
+          const sequence = (0, state)
+          const logical = state || state
+          const conditional = flag ? state : state
+          const nested = flag ? (0, state) : state || state
+          const compatible = flag ? state : other
+          return (
+            <span>
+              {sequence.count}
+              {logical.count}
+              {conditional.count}
+              {nested.count}
+              {compatible.count}
+            </span>
+          )
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    for (const name of ['sequence', 'logical', 'conditional', 'nested', 'compatible']) {
+      expect(output).toMatch(new RegExp(`${name}(?:\\(\\))?\\.count\\(\\)`))
+    }
+  })
+
+  it('drops transparent hook-result alias metadata for mixed or incompatible branches', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+
+        function useOtherCounter() {
+          const total = $state(1)
+          return { total }
+        }
+
+        export function App({ flag }: { flag: boolean }) {
+          const state = useCounter()
+          const other = useOtherCounter()
+          const mixed = flag ? state : { count: 1 }
+          const incompatible = flag ? state : other
+          return <span>{mixed.count}:{incompatible.count}</span>
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(output).toMatch(/mixed(?:\(\))?\.count/)
+    expect(output).toMatch(/incompatible(?:\(\))?\.count/)
+    expect(output).not.toMatch(/mixed(?:\(\))?\.count\(\)/)
+    expect(output).not.toMatch(/incompatible(?:\(\))?\.count\(\)/)
+  })
+
+  it('routes transparent hook-result alias writes through accessors', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+
+        export function App() {
+          const state = useCounter()
+          const alias = (0, state)
+          alias.count = 2
+          alias.count++
+          return <span>{alias.count}</span>
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(output).toContain('alias.count(2)')
+    expect(output).toMatch(/alias\.count\([+-]{2}__prev_/)
+    expect(output).toMatch(/alias\.count\(\)/)
+    expect(output).not.toContain('alias.count = 2')
+    expect(output).not.toContain('alias.count++')
+  })
+
   it('preserves explicit calls to hook return accessor members', () => {
     const ast = parseFile(`
       const useCounter = () => {
