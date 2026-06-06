@@ -203,16 +203,30 @@ export function __fictPropsRest<T extends Record<string, unknown>>(
   exclude: (string | number | symbol)[],
 ): Record<string, unknown> {
   const raw = unwrapProps(props)
-  const out: Record<string, unknown> = {}
+  const out: Record<string | symbol, unknown> = {}
   const excludeSet = new Set(exclude)
 
   for (const key of Reflect.ownKeys(raw)) {
     if (excludeSet.has(key)) continue
-    out[key as string] = (raw as Record<string | symbol, unknown>)[key]
+    if (!Object.prototype.propertyIsEnumerable.call(raw, key)) continue
+    defineRestDataProperty(out, key, (raw as Record<string | symbol, unknown>)[key])
   }
 
   // Wrap in props proxy so getters remain lazy when accessed via rest
-  return createPropsProxy(out)
+  return createPropsProxy(out as Record<string, unknown>)
+}
+
+function defineRestDataProperty(
+  target: Record<string | symbol, unknown>,
+  key: string | symbol,
+  value: unknown,
+): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  })
 }
 
 export function __fictObjectRest<T extends object>(
@@ -229,13 +243,13 @@ export function __fictObjectRest<T extends object>(
 
   for (const key of Object.keys(raw)) {
     if (excludeSet.has(key)) continue
-    out[key] = raw[key]
+    defineRestDataProperty(out, key, raw[key])
   }
 
   for (const key of Object.getOwnPropertySymbols(raw)) {
     if (excludeSet.has(key)) continue
     if (!Object.prototype.propertyIsEnumerable.call(raw, key)) continue
-    out[key] = raw[key]
+    defineRestDataProperty(out, key, raw[key])
   }
 
   return out

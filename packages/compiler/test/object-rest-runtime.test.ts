@@ -160,6 +160,35 @@ describe('object rest runtime regressions', () => {
     expect(result).toBe('false:false:true:2:3:4:1:0')
   })
 
+  it('preserves enumerable __proto__ data keys for ordinary object rest', () => {
+    const exports = compileModule(
+      `
+        export function useProbe() {
+          const payload = { polluted: true }
+          const source = { ["__proto__"]: payload, keep: 1, constructor: "ctor", toString: "text" }
+          const { keep, ...rest } = source
+          return [
+            Object.prototype.hasOwnProperty.call(rest, "__proto__"),
+            Object.getPrototypeOf(rest) === payload,
+            rest.__proto__ === payload,
+            rest.constructor,
+            rest.toString,
+            Object.keys(rest).join(","),
+          ]
+        }
+      `,
+    )
+
+    expect((exports.useProbe as () => unknown[])()).toEqual([
+      true,
+      false,
+      true,
+      'ctor',
+      'text',
+      '__proto__,constructor,toString',
+    ])
+  })
+
   it('does not hookify Babel helpers for computed object rest keys', () => {
     const { output, exports } = compileModuleWithOutput(
       `

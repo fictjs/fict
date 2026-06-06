@@ -810,6 +810,39 @@ describe('__fictPropsRest advanced', () => {
     expect(rest.visible).toBe('public')
   })
 
+  it('copies enumerable __proto__ as an own data prop without changing rest prototype', () => {
+    const payload = { polluted: true }
+    const base = { ['__proto__']: payload, keep: 1, constructor: 'ctor', toString: 'text' }
+
+    const rest = __fictPropsRest(base, ['keep'])
+
+    expect(Object.prototype.hasOwnProperty.call(rest, '__proto__')).toBe(true)
+    expect(Object.getPrototypeOf(rest)).toBe(Object.prototype)
+    expect((rest as Record<string, unknown>).__proto__).toBe(payload)
+    expect(rest.constructor).toBe('ctor')
+    expect(rest.toString).toBe('text')
+    expect(Object.keys(rest)).toEqual(['__proto__', 'constructor', 'toString'])
+  })
+
+  it('skips non-enumerable keys for props rest', () => {
+    const visibleSymbol = Symbol('visible')
+    const hiddenSymbol = Symbol('hidden')
+    const base = Object.defineProperties(
+      { visible: 1, [visibleSymbol]: 2 },
+      {
+        hidden: { value: 3, enumerable: false },
+        [hiddenSymbol]: { value: 4, enumerable: false },
+      },
+    )
+
+    const rest = __fictPropsRest(base, [])
+
+    expect(Object.prototype.hasOwnProperty.call(rest, 'hidden')).toBe(false)
+    expect(Object.prototype.hasOwnProperty.call(rest, hiddenSymbol)).toBe(false)
+    expect(rest.visible).toBe(1)
+    expect((rest as Record<symbol, unknown>)[visibleSymbol]).toBe(2)
+  })
+
   it('handles empty exclusion list', () => {
     const base = { a: 1, b: 2 }
     const rest = __fictPropsRest(base, [])
