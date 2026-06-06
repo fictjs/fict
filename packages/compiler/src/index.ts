@@ -3083,6 +3083,56 @@ function createHIREntrypointVisitor(
             )
           )
         }
+        const getImmediateFunctionInvocationPath = (
+          fnPath: BabelCore.NodePath<BabelCore.types.Function>,
+        ):
+          | BabelCore.NodePath<BabelCore.types.CallExpression>
+          | BabelCore.NodePath<BabelCore.types.OptionalCallExpression>
+          | null => {
+          const parentPath = fnPath.parentPath
+          if (
+            (parentPath.isCallExpression() || parentPath.isOptionalCallExpression()) &&
+            parentPath.node.callee === fnPath.node
+          ) {
+            return parentPath
+          }
+          return null
+        }
+        const isInsideRuntimeCreatorControlFlow = (
+          callPath: BabelCore.NodePath<
+            BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
+          >,
+        ): boolean => {
+          let current: BabelCore.NodePath | null = callPath
+          while (current?.parentPath) {
+            const parentPath: BabelCore.NodePath = current.parentPath
+            if (parentPath.isFunction()) {
+              const invocationPath = getImmediateFunctionInvocationPath(
+                parentPath as BabelCore.NodePath<BabelCore.types.Function>,
+              )
+              if (!invocationPath) return false
+              current = invocationPath
+              continue
+            }
+            if (
+              parentPath.isForStatement?.() ||
+              parentPath.isWhileStatement?.() ||
+              parentPath.isDoWhileStatement?.() ||
+              parentPath.isForInStatement?.() ||
+              parentPath.isForOfStatement?.() ||
+              parentPath.isIfStatement?.() ||
+              parentPath.isConditionalExpression?.() ||
+              parentPath.isSwitchCase?.()
+            ) {
+              return true
+            }
+            if (parentPath.isLogicalExpression?.() && current.key === 'right') {
+              return true
+            }
+            current = parentPath
+          }
+          return false
+        }
         const emitReactiveCreationPlacementWarning = (
           callPath: BabelCore.NodePath<
             BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
@@ -3090,7 +3140,7 @@ function createHIREntrypointVisitor(
         ): void => {
           if (
             isImportedReactiveCreationCall(callPath) &&
-            (isInsideLoop(callPath) || isInsideConditional(callPath)) &&
+            isInsideRuntimeCreatorControlFlow(callPath) &&
             !isInsideJSX(callPath)
           ) {
             emitWarning(

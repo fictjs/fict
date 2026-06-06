@@ -1403,6 +1403,58 @@ describe('Spec rule coverage', () => {
     ).toThrow(/FICT-R004/)
   })
 
+  it('does not inherit FICT-R004 control flow into nested helper bodies', () => {
+    const cases = [
+      `
+        import { $state, createEffect } from 'fict'
+        function Demo({ ready }) {
+          const count = $state(0)
+          if (ready) {
+            const setup = () => {
+              createEffect(() => console.log(count))
+            }
+            console.log(setup)
+          }
+          return <button>{count}</button>
+        }
+      `,
+      `
+        import { $state, createMemo } from 'fict'
+        function Demo({ items }) {
+          const count = $state(0)
+          for (const item of items) {
+            function setup() {
+              createMemo(() => count + item)
+            }
+            console.log(setup)
+          }
+          return <button>{count}</button>
+        }
+      `,
+    ]
+
+    for (const input of cases) {
+      expect(() => transform(input)).not.toThrow(/FICT-R004/)
+    }
+  })
+
+  it('still flags FICT-R004 for runtime creators inside control-flow IIFEs', () => {
+    expect(() =>
+      transform(`
+        import { $state, createEffect } from 'fict'
+        function Demo({ ready }) {
+          const count = $state(0)
+          if (ready) {
+            ;(() => {
+              createEffect(() => console.log(count))
+            })()
+          }
+          return <button>{count}</button>
+        }
+      `),
+    ).toThrow(/FICT-R004/)
+  })
+
   it('throws when aliased reactive creators are created inside non-JSX control flow (FICT-R004)', () => {
     const cases = [
       `
