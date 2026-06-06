@@ -173,6 +173,18 @@ describe('reactivity guarantee contract', () => {
         error: /FICT-P005/,
       },
       {
+        name: 'array-literal props spread with spread element fallback',
+        source: `
+          function Parent(items) {
+            return <Child {...[...items]} />
+          }
+          function Child(allProps) {
+            return <div>{allProps[0]}</div>
+          }
+        `,
+        error: /FICT-P005/,
+      },
+      {
         name: 'plain template-literal props spread fallback',
         source: `
           function Parent() {
@@ -642,6 +654,20 @@ describe('reactivity guarantee contract', () => {
           function Parent() {
             let count = $state(1)
             return <Child {...\`\${count}\`} />
+          }
+          function Child(allProps) {
+            return <div>{allProps[0]}</div>
+          }
+        `,
+      )
+      expect(warningCodes).toContain('FICT-P005')
+    })
+
+    it('warns FICT-P005 for array-literal spread sources with spread elements', () => {
+      const warningCodes = collectWarningCodes(
+        `
+          function Parent(items) {
+            return <Child {...[...items]} />
           }
           function Child(allProps) {
             return <div>{allProps[0]}</div>

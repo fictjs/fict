@@ -232,6 +232,9 @@ export function buildPropsPlan(
       if (expr.kind === 'ObjectExpression') {
         return expr.properties.some(p => p.kind === 'SpreadElement')
       }
+      if (expr.kind === 'ArrayExpression') {
+        return expr.elements.some(element => element?.kind === 'SpreadElement')
+      }
       return false
     }
 
@@ -302,6 +305,107 @@ export function buildPropsPlan(
       return { base: expr.object as Expression, key: expr.property as Expression }
     }
 
+    const lowerPropValue = (value: Expression): BabelCore.types.Expression => {
+      const isFunctionLike = value.kind === 'ArrowFunction' || value.kind === 'FunctionExpression'
+      const isCompositeValue = value.kind === 'ObjectExpression' || value.kind === 'ArrayExpression'
+      const baseIdent = value.kind === 'Identifier' ? helpers.deSSAVarName(value.name) : undefined
+      const keyedCandidate = getKeyedCandidate(value)
+      const keyedBaseIdent =
+        keyedCandidate && keyedCandidate.base.kind === 'Identifier'
+          ? helpers.deSSAVarName(keyedCandidate.base.name)
+          : undefined
+      const isAccessorBase =
+        baseIdent &&
+        ((ctx.memoVars?.has(baseIdent) ?? false) ||
+          (ctx.signalVars?.has(baseIdent) ?? false) ||
+          (ctx.aliasVars?.has(baseIdent) ?? false))
+      const isStoreBase = baseIdent ? (ctx.storeVars?.has(baseIdent) ?? false) : false
+      const alreadyGetter =
+        isFunctionLike ||
+        isKeyedCall(value) ||
+        (baseIdent
+          ? isStoreBase ||
+            (ctx.memoVars?.has(baseIdent) ?? false) ||
+            (ctx.aliasVars?.has(baseIdent) ?? false)
+          : false)
+      const usesTracked =
+        (!ctx.nonReactiveScopeDepth || ctx.nonReactiveScopeDepth === 0) &&
+        helpers.expressionUsesTracked(value, ctx) &&
+        !alreadyGetter
+      const lowered = withPropsContextDisabled(
+        isFunctionLike || (usesTracked && isCompositeValue),
+        () => helpers.lowerDomExpression(value, ctx),
+      )
+      const trackedExpr = usesTracked
+        ? (withPropsContextDisabled(usesTracked && isCompositeValue, () =>
+            helpers.lowerTrackedExpression(value, ctx),
+          ) as BabelCore.types.Expression)
+        : null
+      const useMemoProp =
+        usesTracked &&
+        trackedExpr &&
+        t.isExpression(trackedExpr) &&
+        !t.isIdentifier(trackedExpr) &&
+        !t.isMemberExpression(trackedExpr) &&
+        !t.isLiteral(trackedExpr)
+      const forceMemoProp = usesTracked && isDynamicStoreMember(value)
+      const shouldMemoProp = useMemoProp || forceMemoProp
+      const canKeyed =
+        usesTracked &&
+        keyedCandidate &&
+        keyedBaseIdent &&
+        !(ctx.signalVars?.has(keyedBaseIdent) ?? false) &&
+        !(ctx.memoVars?.has(keyedBaseIdent) ?? false) &&
+        !(ctx.aliasVars?.has(keyedBaseIdent) ?? false) &&
+        !(ctx.functionVars?.has(keyedBaseIdent) ?? false)
+      const valueExpr =
+        !isFunctionLike && isAccessorBase && baseIdent
+          ? (() => {
+              // Preserve accessor laziness for signals/memos passed as props
+              ctx.helpersUsed.add('propGetter')
+              return t.callExpression(runtimeIdentifier(ctx, 'propGetter'), [
+                t.arrowFunctionExpression([], t.callExpression(t.identifier(baseIdent), [])),
+              ])
+            })()
+          : usesTracked && t.isExpression(lowered)
+            ? (() => {
+                if (canKeyed && keyedCandidate) {
+                  ctx.helpersUsed.add('keyed')
+                  const keyExpr = helpers.lowerDomExpression(keyedCandidate.key, ctx)
+                  return t.callExpression(runtimeIdentifier(ctx, 'keyed'), [
+                    t.identifier(keyedBaseIdent!),
+                    t.arrowFunctionExpression([], keyExpr),
+                  ])
+                }
+                if (shouldMemoProp) {
+                  ctx.helpersUsed.add('prop')
+                  return t.callExpression(runtimeIdentifier(ctx, 'prop'), [
+                    t.arrowFunctionExpression([], trackedExpr ?? lowered),
+                  ])
+                }
+                ctx.helpersUsed.add('propGetter')
+                return t.callExpression(runtimeIdentifier(ctx, 'propGetter'), [
+                  t.arrowFunctionExpression([], trackedExpr ?? lowered),
+                ])
+              })()
+            : lowered
+      return isFunctionLike ? wrapNonReactiveFunction(valueExpr) : valueExpr
+    }
+
+    const pushArrayLiteralSpread = (expr: Expression): boolean => {
+      if (expr.kind !== 'ArrayExpression') return false
+      if (expr.elements.some(element => element?.kind === 'SpreadElement')) return false
+
+      flags.needsMergeProps = true
+      segments.push({
+        kind: 'object',
+        properties: expr.elements.flatMap((element, index) =>
+          element ? [toPropObjectProperty(String(index), lowerPropValue(element))] : [],
+        ),
+      })
+      return true
+    }
+
     const flushBucket = () => {
       if (bucket.length === 0) return
       segments.push({ kind: 'object', properties: bucket })
@@ -321,6 +425,9 @@ export function buildPropsPlan(
         flushBucket()
         if (isDynamicPropsSpread(attr.spreadExpr)) {
           reportDiagnostic(ctx, DiagnosticCode.FICT_P005, attr.spreadExpr)
+        }
+        if (pushArrayLiteralSpread(attr.spreadExpr)) {
+          continue
         }
         const needsLazyObjectSource = objectSpreadHasTrackedComputedKey(attr.spreadExpr)
         let spreadExpr = helpers.lowerDomExpression(attr.spreadExpr, ctx)
@@ -369,98 +476,7 @@ export function buildPropsPlan(
       }
 
       if (attr.value) {
-        const isFunctionLike =
-          attr.value.kind === 'ArrowFunction' || attr.value.kind === 'FunctionExpression'
-        const isCompositeValue =
-          attr.value.kind === 'ObjectExpression' || attr.value.kind === 'ArrayExpression'
-        const baseIdent =
-          attr.value.kind === 'Identifier' ? helpers.deSSAVarName(attr.value.name) : undefined
-        const keyedCandidate = getKeyedCandidate(attr.value)
-        const keyedBaseIdent =
-          keyedCandidate && keyedCandidate.base.kind === 'Identifier'
-            ? helpers.deSSAVarName(keyedCandidate.base.name)
-            : undefined
-        const isAccessorBase =
-          baseIdent &&
-          ((ctx.memoVars?.has(baseIdent) ?? false) ||
-            (ctx.signalVars?.has(baseIdent) ?? false) ||
-            (ctx.aliasVars?.has(baseIdent) ?? false))
-        const isStoreBase = baseIdent ? (ctx.storeVars?.has(baseIdent) ?? false) : false
-        const alreadyGetter =
-          isFunctionLike ||
-          isKeyedCall(attr.value) ||
-          (baseIdent
-            ? isStoreBase ||
-              (ctx.memoVars?.has(baseIdent) ?? false) ||
-              (ctx.aliasVars?.has(baseIdent) ?? false)
-            : false)
-        const usesTracked =
-          (!ctx.nonReactiveScopeDepth || ctx.nonReactiveScopeDepth === 0) &&
-          helpers.expressionUsesTracked(attr.value, ctx) &&
-          !alreadyGetter
-        const lowered = withPropsContextDisabled(
-          isFunctionLike || (usesTracked && isCompositeValue),
-          () => helpers.lowerDomExpression(attr.value!, ctx),
-        )
-        const trackedExpr = usesTracked
-          ? (withPropsContextDisabled(usesTracked && isCompositeValue, () =>
-              helpers.lowerTrackedExpression(attr.value as Expression, ctx),
-            ) as BabelCore.types.Expression)
-          : null
-        const useMemoProp =
-          usesTracked &&
-          trackedExpr &&
-          t.isExpression(trackedExpr) &&
-          !t.isIdentifier(trackedExpr) &&
-          !t.isMemberExpression(trackedExpr) &&
-          !t.isLiteral(trackedExpr)
-        const forceMemoProp = usesTracked && isDynamicStoreMember(attr.value)
-        const shouldMemoProp = useMemoProp || forceMemoProp
-        const canKeyed =
-          usesTracked &&
-          keyedCandidate &&
-          keyedBaseIdent &&
-          !(ctx.signalVars?.has(keyedBaseIdent) ?? false) &&
-          !(ctx.memoVars?.has(keyedBaseIdent) ?? false) &&
-          !(ctx.aliasVars?.has(keyedBaseIdent) ?? false) &&
-          !(ctx.functionVars?.has(keyedBaseIdent) ?? false)
-        const valueExpr =
-          !isFunctionLike && isAccessorBase && baseIdent
-            ? (() => {
-                // Preserve accessor laziness for signals/memos passed as props
-                ctx.helpersUsed.add('propGetter')
-                return t.callExpression(runtimeIdentifier(ctx, 'propGetter'), [
-                  t.arrowFunctionExpression([], t.callExpression(t.identifier(baseIdent), [])),
-                ])
-              })()
-            : usesTracked && t.isExpression(lowered)
-              ? (() => {
-                  if (canKeyed && keyedCandidate) {
-                    ctx.helpersUsed.add('keyed')
-                    const keyExpr = helpers.lowerDomExpression(keyedCandidate.key, ctx)
-                    return t.callExpression(runtimeIdentifier(ctx, 'keyed'), [
-                      t.identifier(keyedBaseIdent!),
-                      t.arrowFunctionExpression([], keyExpr),
-                    ])
-                  }
-                  if (shouldMemoProp) {
-                    ctx.helpersUsed.add('prop')
-                    return t.callExpression(runtimeIdentifier(ctx, 'prop'), [
-                      t.arrowFunctionExpression([], trackedExpr ?? lowered),
-                    ])
-                  }
-                  ctx.helpersUsed.add('propGetter')
-                  return t.callExpression(runtimeIdentifier(ctx, 'propGetter'), [
-                    t.arrowFunctionExpression([], trackedExpr ?? lowered),
-                  ])
-                })()
-              : lowered
-        bucket.push(
-          toPropObjectProperty(
-            attr.name,
-            isFunctionLike ? wrapNonReactiveFunction(valueExpr) : valueExpr,
-          ),
-        )
+        bucket.push(toPropObjectProperty(attr.name, lowerPropValue(attr.value)))
         continue
       }
 
@@ -541,7 +557,9 @@ export function lowerPropsPlan(
     )
   }
 
-  if (args.length === 0) return null
+  if (args.length === 0) {
+    return plan.flags.needsMergeProps ? t.objectExpression([]) : null
+  }
 
   if (!plan.flags.needsMergeProps) {
     return args[0] ?? null

@@ -774,6 +774,43 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).not.toContain('mergeProps(props?.()')
   })
 
+  it('lowers array-literal component spreads to index props', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      function Child(props: { 0?: number; 2?: number; label?: string }) {
+        return <span>{props[0]}{props[2]}{props.label}</span>
+      }
+
+      export function App() {
+        const count = $state(1)
+        return <Child {...[count, , 3]} label="next" />
+      }
+    `)
+
+    expect(output).toMatch(/["']0["']:\s*(?:propGetter|__fictProp)\(\(\) => count\(\)\)/)
+    expect(output).toMatch(/["']2["']:\s*3/)
+    expect(output).toContain('label: "next"')
+    expect(output).not.toContain('props: [')
+    expect(output).not.toContain('...[')
+  })
+
+  it('lowers sparse array-literal component spreads to objects', () => {
+    const output = transform(`
+      function Child(props: { 2?: number }) {
+        return <span>{props[2]}</span>
+      }
+
+      export function App() {
+        return <Child {...[, , 5]} />
+      }
+    `)
+
+    expect(output).toMatch(/["']2["']:\s*5/)
+    expect(output).not.toContain('props: [')
+    expect(output).not.toContain('...[')
+  })
+
   it('keeps named function expression self bindings shadowed from reactive overrides', () => {
     const output = transform(`
       import { $state } from 'fict'
