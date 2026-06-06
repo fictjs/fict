@@ -34,6 +34,7 @@ function countExpressionNodes(expr: Expression | undefined): number {
       return count
 
     case 'CallExpression':
+    case 'OptionalCallExpression':
       count += countExpressionNodes(expr.callee)
       for (const arg of expr.arguments) {
         count += countExpressionNodes(arg)
@@ -41,6 +42,7 @@ function countExpressionNodes(expr: Expression | undefined): number {
       return count
 
     case 'MemberExpression':
+    case 'OptionalMemberExpression':
       count += countExpressionNodes(expr.object)
       if (expr.computed && expr.property) {
         count += countExpressionNodes(expr.property)
@@ -118,6 +120,11 @@ function countExpressionNodes(expr: Expression | undefined): number {
       }
       return count
 
+    case 'TaggedTemplateExpression':
+      count += countExpressionNodes(expr.tag)
+      count += countExpressionNodes(expr.quasi)
+      return count
+
     default:
       return count
   }
@@ -161,7 +168,8 @@ function hasExternalCalls(expr: Expression | undefined): boolean {
   if (!expr) return false
 
   switch (expr.kind) {
-    case 'CallExpression': {
+    case 'CallExpression':
+    case 'OptionalCallExpression': {
       // Check if callee is a simple identifier (potential external function)
       if (expr.callee.kind === 'Identifier') {
         const name = expr.callee.name
@@ -174,6 +182,9 @@ function hasExternalCalls(expr: Expression | undefined): boolean {
       // Check if callee is a member expression (method call)
       if (expr.callee.kind === 'MemberExpression') {
         // foo.bar() - could be external
+        return true
+      }
+      if (expr.callee.kind === 'OptionalMemberExpression') {
         return true
       }
       // Also check arguments for external calls
@@ -218,7 +229,10 @@ function hasExternalCalls(expr: Expression | undefined): boolean {
       )
 
     case 'MemberExpression':
-      return hasExternalCalls(expr.object)
+    case 'OptionalMemberExpression':
+      return (
+        hasExternalCalls(expr.object) || (expr.computed ? hasExternalCalls(expr.property) : false)
+      )
 
     case 'AssignmentExpression':
       return hasExternalCalls(expr.right)
@@ -231,6 +245,21 @@ function hasExternalCalls(expr: Expression | undefined): boolean {
 
     case 'NewExpression':
       return true // Constructor calls are external
+
+    case 'TemplateLiteral':
+      return expr.expressions.some(e => hasExternalCalls(e))
+
+    case 'TaggedTemplateExpression':
+      if (expr.tag.kind === 'Identifier') {
+        const name = expr.tag.name
+        if (!['console', 'Math', 'JSON', 'Object', 'Array'].includes(name)) {
+          return true
+        }
+      }
+      if (expr.tag.kind === 'MemberExpression' || expr.tag.kind === 'OptionalMemberExpression') {
+        return true
+      }
+      return hasExternalCalls(expr.tag) || hasExternalCalls(expr.quasi)
 
     default:
       return false
@@ -294,8 +323,13 @@ function hasAsyncAwait(expr: Expression | undefined): boolean {
       return false
 
     case 'CallExpression':
+    case 'OptionalCallExpression':
       if (hasAsyncAwait(expr.callee)) return true
       return expr.arguments.some(arg => hasAsyncAwait(arg))
+
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+      return hasAsyncAwait(expr.object) || (expr.computed ? hasAsyncAwait(expr.property) : false)
 
     case 'BinaryExpression':
     case 'LogicalExpression':
@@ -308,6 +342,12 @@ function hasAsyncAwait(expr: Expression | undefined): boolean {
 
     case 'SequenceExpression':
       return expr.expressions.some(e => hasAsyncAwait(e))
+
+    case 'TemplateLiteral':
+      return expr.expressions.some(e => hasAsyncAwait(e))
+
+    case 'TaggedTemplateExpression':
+      return hasAsyncAwait(expr.tag) || hasAsyncAwait(expr.quasi)
 
     default:
       return false

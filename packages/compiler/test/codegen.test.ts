@@ -3354,6 +3354,39 @@ describe('resumable event handler transformation', () => {
     expect(code).not.toContain('export const __fict_e')
   })
 
+  it('auto-extracts optional and tagged calls in inline handlers', () => {
+    const ast = parseFile(`
+      const logger = () => console.log('optional')
+      const service = {
+        run() {
+          console.log('member')
+        }
+      }
+      function tag(strings) {
+        console.log(strings)
+      }
+
+      export function App() {
+        return (
+          <div>
+            <button onClick={() => logger?.()}>optional</button>
+            <button onClick={() => service.run?.()}>member</button>
+            <button onClick={() => tag\`clicked\`}>tagged</button>
+          </div>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code.match(/setAttribute\("on:click"/g)).toHaveLength(3)
+    expect(code).toContain('export const __fict_e0')
+    expect(code).toContain('export const __fict_e1')
+    expect(code).toContain('export const __fict_e2')
+    expect(code).not.toMatch(/addEventListener\([^,]+,\s*"click"/)
+  })
+
   it('auto-extracts stable bare handler identifiers', () => {
     const ast = parseFile(`
       export const moduleConstHandler = () => console.log('module const')
