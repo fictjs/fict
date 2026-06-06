@@ -4988,7 +4988,7 @@ function generateLazyConditionalMemo(
   }
 
   // Build memo body with conditional evaluation
-  const memoBody: BabelCore.types.Statement[] = [conditionDecl, ...alwaysBeforeLazy]
+  const memoBody: BabelCore.types.Statement[] = [...alwaysBeforeLazy, conditionDecl]
 
   if (
     lazyTrueStatements.length > 0 ||
