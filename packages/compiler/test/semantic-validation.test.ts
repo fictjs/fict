@@ -1536,6 +1536,47 @@ describe('semantic validation', () => {
     expect(warnings.some(w => w.code === 'FICT-E001')).toBe(false)
   })
 
+  it('warns effects when reactive reads are only inside nested closures', () => {
+    const cases = [
+      'const f = () => count',
+      'function f() { return count }',
+      'const obj = { read() { return count } }',
+      'class Box { read() { return count } }',
+    ]
+
+    for (const statement of cases) {
+      const source = `
+        import { $state, $effect } from 'fict'
+        function App() {
+          let count = $state(0)
+          $effect(() => {
+            ${statement}
+          })
+          return <div>{count}</div>
+        }
+      `
+      const warnings: Array<{ code: string }> = []
+      transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+      expect(warnings.some(w => w.code === 'FICT-E001')).toBe(true)
+    }
+  })
+
+  it('does not warn effects when an IIFE reads reactive values', () => {
+    const source = `
+      import { $state, $effect } from 'fict'
+      function App() {
+        let count = $state(0)
+        $effect(() => {
+          return (() => count)()
+        })
+        return <div>{count}</div>
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-E001')).toBe(false)
+  })
+
   it('warns empty effects when $effect is aliased', () => {
     const source = `
       import { $effect as fx } from 'fict'

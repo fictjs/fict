@@ -1596,6 +1596,16 @@ function runWarningPass(
       ): boolean => {
         let hasReactiveDependency = false
         callbackPath.traverse({
+          Function(fnPath) {
+            const parent = fnPath.parentPath
+            if (
+              (parent.isCallExpression() || parent.isOptionalCallExpression()) &&
+              parent.node.callee === fnPath.node
+            ) {
+              return
+            }
+            fnPath.skip()
+          },
           Identifier(idPath) {
             if (
               idPath.parentPath.isMemberExpression({ property: idPath.node }) &&
