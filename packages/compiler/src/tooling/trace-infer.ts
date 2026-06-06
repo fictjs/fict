@@ -15,13 +15,17 @@ interface InferTraceInput {
 
 const TRACE_REGEX_ESCAPES = /[.*+?^${}()|[\]\\]/g
 const IDENTIFIER_NAME = /^[A-Za-z_$][\w$]*$/
+const IDENTIFIER_BOUNDARY_CHARS = 'A-Za-z0-9_$'
 
 function isIdentifierName(name: string): boolean {
   return IDENTIFIER_NAME.test(name)
 }
 
 function lineContainsIdentifier(lineText: string, identifier: string): boolean {
-  const pattern = new RegExp(`\\b${identifier.replace(TRACE_REGEX_ESCAPES, '\\$&')}\\b`)
+  const escaped = identifier.replace(TRACE_REGEX_ESCAPES, '\\$&')
+  const pattern = new RegExp(
+    `(^|[^${IDENTIFIER_BOUNDARY_CHARS}])${escaped}(?![${IDENTIFIER_BOUNDARY_CHARS}])`,
+  )
   return pattern.test(lineText)
 }
 

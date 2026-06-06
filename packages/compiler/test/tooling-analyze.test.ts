@@ -18,6 +18,32 @@ export function Counter() {
 }
 `
 
+function sourceLine(source: string, needle: string): number {
+  const line = source.split(/\r?\n/).findIndex(text => text.includes(needle))
+  expect(line).toBeGreaterThanOrEqual(0)
+  return line + 1
+}
+
+function hasTraceMarker(
+  source: string,
+  identifier: string,
+  lineNeedle: string,
+  kind: 'once' | 'reactive' | 'effect',
+): boolean {
+  const result = analyzeFictFile(source, `${identifier}.tsx`, {
+    includeRegions: true,
+    includeDiagnostics: true,
+    verbosity: 'verbose',
+  })
+  const component = result.components.find(entry => entry.name === identifier)
+  const line = sourceLine(source, lineNeedle)
+  return (
+    component?.trace
+      .find(entry => entry.line === line)
+      ?.markers.some(marker => marker.kind === kind) ?? false
+  )
+}
+
 describe('analyzeFictFile', () => {
   it('returns component analysis with trace markers and regions', () => {
     const result = analyzeFictFile(SAMPLE_COMPONENT, 'counter.tsx', {
@@ -40,6 +66,53 @@ describe('analyzeFictFile', () => {
 
     expect(markerKinds.has('once')).toBe(true)
     expect(markerKinds.has('effect')).toBe(true)
+  })
+
+  it('marks JSX reads of dollar-prefixed state identifiers as reactive', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function Counter() {
+        let $count = $state(0)
+        return <button>{$count}</button>
+      }
+    `
+
+    expect(hasTraceMarker(source, 'Counter', 'return <button>{$count}</button>', 'reactive')).toBe(
+      true,
+    )
+  })
+
+  it('marks derived JSX reads from dollar-suffixed state identifiers as reactive', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function Counter() {
+        let count$ = $state(0)
+        const doubled$ = count$ * 2
+        return <button>{doubled$}</button>
+      }
+    `
+
+    expect(
+      hasTraceMarker(source, 'Counter', 'return <button>{doubled$}</button>', 'reactive'),
+    ).toBe(true)
+  })
+
+  it('does not match dollar-prefixed state identifiers inside longer identifiers', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function Counter() {
+        let $count = $state(0)
+        const $counter = 1
+        return <button>{$counter}</button>
+      }
+    `
+
+    expect(
+      hasTraceMarker(source, 'Counter', 'return <button>{$counter}</button>', 'reactive'),
+    ).toBe(false)
   })
 
   it('can skip diagnostics and regions when configured', () => {
