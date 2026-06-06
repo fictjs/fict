@@ -70,15 +70,21 @@ export function applyRegionMetadata(state: RegionApplyState, options: RegionCode
   const dependencyGetter = options.dependencyGetter
   if (!dependencyGetter) return
 
-  state.identifierOverrides = state.identifierOverrides ?? {}
+  if (!state.identifierOverrides) {
+    state.identifierOverrides = Object.create(null) as Record<
+      string,
+      () => BabelCore.types.Expression
+    >
+  }
+  const identifierOverrides = state.identifierOverrides
 
   for (const dep of region.dependencies) {
     const key = normalizeDependencyKey(dep)
-    state.identifierOverrides[key] = () => dependencyGetter(dep)
+    identifierOverrides[key] = () => dependencyGetter(dep)
 
     const base = key.split('.')[0]
-    if (base && !state.identifierOverrides[base]) {
-      state.identifierOverrides[base] = () => dependencyGetter(base)
+    if (base && !Object.prototype.hasOwnProperty.call(identifierOverrides, base)) {
+      identifierOverrides[base] = () => dependencyGetter(base)
     }
   }
 }

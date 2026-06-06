@@ -67,4 +67,27 @@ describe('applyRegionMetadata', () => {
     expect(state.identifierOverrides?.['foo$$ssa1']).toBeTypeOf('function')
     expect(state.identifierOverrides?.foo).toBeUndefined()
   })
+
+  it('stores __proto__ dependency overrides as own entries', () => {
+    const state: { identifierOverrides?: Record<string, () => t.Expression> } = {}
+    const region: RegionMetadata = {
+      id: 4,
+      dependencies: new Set(['__proto__']),
+      declarations: new Set(),
+      hasControlFlow: false,
+      hasReactiveWrites: false,
+    }
+
+    applyRegionMetadata(state, {
+      region,
+      dependencyGetter: name => t.callExpression(t.identifier(name), []),
+    })
+
+    expect(Object.prototype.hasOwnProperty.call(state.identifierOverrides, '__proto__')).toBe(true)
+    const protoOverride = state.identifierOverrides?.__proto__
+    expect(protoOverride).toBeTypeOf('function')
+    expect(protoOverride!()).toMatchObject({
+      type: 'CallExpression',
+    })
+  })
 })

@@ -462,6 +462,45 @@ describe('Cross-Module Reactivity', () => {
       expect(output).not.toContain('combined()')
     })
 
+    it('unwraps reactive bindings named __proto__', () => {
+      const moduleMetadata = new Map()
+      const depPath = path.join(baseDir, 'reactive-proto-binding-source.ts')
+      const appPath = path.join(baseDir, 'app-reactive-proto-binding.tsx')
+      moduleMetadata.set(path.resolve(depPath), {
+        version: MODULE_REACTIVE_METADATA_VERSION,
+        exports: {
+          value: 'signal',
+        },
+      })
+
+      const output = transform(
+        `
+          import { $memo, $state } from 'fict'
+          import { value as __proto__ } from './reactive-proto-binding-source'
+
+          export function StateApp() {
+            const __proto__ = $state(1)
+            return <div>{__proto__}</div>
+          }
+
+          export function MemoApp() {
+            const __proto__ = $memo(() => 2)
+            return <div>{__proto__}</div>
+          }
+
+          export function ImportedApp() {
+            return <div>{__proto__}</div>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        appPath,
+      )
+
+      expect(output.match(/__proto__\(\)/g)?.length ?? 0).toBeGreaterThanOrEqual(3)
+      expect(output).not.toContain('() => __proto__,')
+      expect(output).not.toContain('() => __proto__)')
+    })
+
     it('keeps resumable handlers using imported accessors at module scope', () => {
       const moduleMetadata = new Map()
       const storePath = path.join(baseDir, 'resumable-store.ts')

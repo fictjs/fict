@@ -4134,8 +4134,9 @@ export function applyRegionMetadataToExpression(
     dependencyGetter: name => buildDependencyGetter(name, ctx),
   })
 
-  const overrides = state.identifierOverrides ?? {}
+  const overrides = state.identifierOverrides ?? (Object.create(null) as RegionOverrideMap)
   state.identifierOverrides = overrides
+  const hasOverride = (key: string): boolean => Object.prototype.hasOwnProperty.call(overrides, key)
 
   const shadowed = ctx.shadowedNames
   const _isReactiveAccessor = (name: string): boolean =>
@@ -4182,7 +4183,7 @@ export function applyRegionMetadataToExpression(
     if (shadowed && shadowed.has(base)) continue
     if (isNonReactiveFunction(base)) continue
     if (ctx.inReturn && ctx.currentFnIsHook) continue
-    if (!overrides[key]) {
+    if (!hasOverride(key)) {
       overrides[key] = () => buildDependencyGetter(dep, ctx)
     }
   }
@@ -4193,7 +4194,11 @@ export function applyRegionMetadataToExpression(
 
   if (!skipRootOverride && ctx.t.isIdentifier(expr)) {
     const key = normalizeDependencyKey(expr.name)
-    const direct = overrides[key] ?? overrides[expr.name]
+    const direct = hasOverride(key)
+      ? overrides[key]
+      : hasOverride(expr.name)
+        ? overrides[expr.name]
+        : undefined
     if (direct) {
       return direct()
     }
