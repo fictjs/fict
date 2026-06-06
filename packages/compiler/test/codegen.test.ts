@@ -1080,6 +1080,72 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).not.toMatch(/data-count[^]*bucket\.count(?!\(\))/)
   })
 
+  it('keeps derived declarations from hook-return accessors live', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        function useBucket() {
+          const count = $state(1)
+          return { count, plain: 7 }
+        }
+
+        export function App({ flag }: { flag: boolean }) {
+          const bucket = useBucket()
+          const doubled = bucket.count * 2
+          const label = \`count:\${bucket.count}\`
+          const choice = flag ? bucket.count : 0
+          const obj = { value: bucket.count }
+          const arr = [bucket.count]
+          const plain = bucket.plain * 2
+          return <span>{doubled}:{label}:{choice}:{obj.value}:{arr[0]}:{plain}:{bucket.count}</span>
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(output).toMatch(/bucket\.count\(\) \* 2/)
+    expect(output).toMatch(/`count:\$\{bucket\.count\(\)\}`/)
+    expect(output).toMatch(/\? bucket\.count\(\) : 0/)
+    expect(output).toMatch(/value: bucket\.count\(\)/)
+    expect(output).toMatch(/\[bucket\.count\(\)\]/)
+    expect(output).toMatch(/doubled\(\)/)
+    expect(output).toMatch(/label\(\)/)
+    expect(output).toMatch(/choice\(\)/)
+    expect(output).toMatch(/obj\(\)\.value/)
+    expect(output).toMatch(/arr\(\)\[0\]/)
+    expect(output).toMatch(/plain/)
+    expect(output).not.toMatch(/plain\(\)/)
+  })
+
+  it('keeps derived declarations from hook-return array accessors live', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        function usePair() {
+          const count = $state(1)
+          return [count, 7]
+        }
+
+        export function App() {
+          const pair = usePair()
+          const doubled = pair[0] * 2
+          const plain = pair[1] * 2
+          return <span>{doubled}:{plain}:{pair[0]}</span>
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(output).toMatch(/pair\[0\]\(\) \* 2/)
+    expect(output).toMatch(/doubled\(\)/)
+    expect(output).toMatch(/pair\[0\]\(\)/)
+    expect(output).toMatch(/plain/)
+    expect(output).not.toMatch(/pair\[1\]\(\)/)
+    expect(output).not.toMatch(/plain\(\)/)
+  })
+
   it('preserves explicit calls to hook return accessor members', () => {
     const ast = parseFile(`
       const useCounter = () => {
