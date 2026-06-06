@@ -3821,7 +3821,10 @@ function lowerJSXElement(
 
     // Component - create VNode {type, props} for runtime createElement
     ctx.helpersUsed.add('createElement')
-    const children = jsx.children.map(c => lowerJSXChild(c, ctx))
+    const children = jsx.children.map(c => ({
+      value: lowerJSXChild(c, ctx),
+      ...(c.kind === 'expression' ? { source: c.value } : null),
+    }))
     const propsExpr = buildPropsExpression(jsx.attributes, children, ctx, {
       lowerDomExpression,
       lowerTrackedExpression,

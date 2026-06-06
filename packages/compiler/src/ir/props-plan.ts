@@ -26,6 +26,11 @@ export interface PropsPlanHelpers {
   deSSAVarName: (name: string) => string
 }
 
+export interface PropsChild {
+  value: BabelCore.types.Expression
+  source?: Expression | undefined
+}
+
 function isMarkedLazySourceExpression(
   expr: BabelCore.types.Expression,
   ctx: CodegenContext,
@@ -41,7 +46,7 @@ function isMarkedLazySourceExpression(
 
 export function buildPropsPlan(
   attributes: JSXAttribute[],
-  children: BabelCore.types.Expression[],
+  children: PropsChild[],
   ctx: CodegenContext,
   helpers: PropsPlanHelpers,
 ): PropsPlan | null {
@@ -431,15 +436,35 @@ export function buildPropsPlan(
       bucket.push(t.objectProperty(toPropKey(attr.name), t.booleanLiteral(true)))
     }
 
-    if (children.length === 1 && children[0]) {
-      bucket.push(t.objectProperty(t.identifier('children'), wrapNonReactiveFunction(children[0])))
+    const childrenUseTracked = children.some(
+      child =>
+        child.source &&
+        !(t.isArrowFunctionExpression(child.value) || t.isFunctionExpression(child.value)) &&
+        (!ctx.nonReactiveScopeDepth || ctx.nonReactiveScopeDepth === 0) &&
+        helpers.expressionUsesTracked(child.source, ctx),
+    )
+    const childValues = children.map(child => wrapNonReactiveFunction(child.value))
+    if (children.length === 1 && childValues[0]) {
+      const childValue = childrenUseTracked
+        ? (() => {
+            ctx.helpersUsed.add('prop')
+            return t.callExpression(runtimeIdentifier(ctx, 'prop'), [
+              t.arrowFunctionExpression([], childValues[0]!),
+            ])
+          })()
+        : childValues[0]
+      bucket.push(t.objectProperty(t.identifier('children'), childValue))
     } else if (children.length > 1) {
-      bucket.push(
-        t.objectProperty(
-          t.identifier('children'),
-          t.arrayExpression(children.map(child => wrapNonReactiveFunction(child))),
-        ),
-      )
+      const childrenArray = t.arrayExpression(childValues)
+      const childrenValue = childrenUseTracked
+        ? (() => {
+            ctx.helpersUsed.add('prop')
+            return t.callExpression(runtimeIdentifier(ctx, 'prop'), [
+              t.arrowFunctionExpression([], childrenArray),
+            ])
+          })()
+        : childrenArray
+      bucket.push(t.objectProperty(t.identifier('children'), childrenValue))
     }
 
     flushBucket()
@@ -500,7 +525,7 @@ export function lowerPropsPlan(
 
 export function buildPropsExpression(
   attributes: JSXAttribute[],
-  children: BabelCore.types.Expression[],
+  children: PropsChild[],
   ctx: CodegenContext,
   helpers: PropsPlanHelpers,
 ): BabelCore.types.Expression | null {

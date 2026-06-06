@@ -744,6 +744,53 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps reactive component children live through props.children', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { inc(): void }
+
+      function Child(props: { id: string; children?: unknown }) {
+        return <section data-id={props.id}>{props.children}</section>
+      }
+
+      export function App() {
+        let count = $state(1)
+        api = { inc: () => (count = count + 1) }
+        return (
+          <>
+            <Child id="single">{count}</Child>
+            <Child id="mixed">before {count}</Child>
+          </>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      api: { inc(): void }
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const text = (id: string) => container.querySelector(`[data-id="${id}"]`)?.textContent
+    expect(text('single')).toBe('1')
+    expect(text('mixed')).toBe('before 1')
+
+    mod.api.inc()
+    await flushUpdates()
+    expect(text('single')).toBe('2')
+    expect(text('mixed')).toBe('before 2')
+
+    teardown()
+    container.remove()
+  })
+
   it('does not expose non-reactive markers before function prop reflection', async () => {
     const source = `
       import { render } from 'fict'
