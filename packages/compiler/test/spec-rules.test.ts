@@ -1818,6 +1818,105 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-R004')).toBe(true)
   })
 
+  it('throws when createRenderEffect is created inside non-JSX control flow (FICT-R004)', () => {
+    const cases = [
+      `
+        import { $state } from 'fict'
+        import { createRenderEffect } from 'fict/advanced'
+        function Demo({ ready }) {
+          const count = $state(0)
+          if (ready) {
+            createRenderEffect(() => console.log(count))
+          }
+          return <button>{count}</button>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        import { createRenderEffect as renderEffect } from 'fict/advanced'
+        function Demo({ ready }) {
+          const count = $state(0)
+          if (ready) {
+            renderEffect(() => console.log(count))
+          }
+          return <button>{count}</button>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        import * as Advanced from 'fict/advanced'
+        function Demo({ ready }) {
+          const count = $state(0)
+          if (ready) {
+            Advanced.createRenderEffect(() => console.log(count))
+          }
+          return <button>{count}</button>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        import { createRenderEffect } from '@fictjs/runtime/advanced'
+        function Demo({ ready }) {
+          const count = $state(0)
+          if (ready) {
+            createRenderEffect(() => console.log(count))
+          }
+          return <button>{count}</button>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        import * as RuntimeAdvanced from '@fictjs/runtime/advanced'
+        function Demo({ items }) {
+          const count = $state(0)
+          for (const item of items) {
+            RuntimeAdvanced.createRenderEffect?.(() => console.log(count, item))
+          }
+          return <button>{count}</button>
+        }
+      `,
+    ]
+
+    for (const input of cases) {
+      expect(() => transform(input)).toThrow(/FICT-R004/)
+    }
+  })
+
+  it('does not treat local createRenderEffect shadows as FICT-R004', () => {
+    expect(() =>
+      transform(`
+        import { $state } from 'fict'
+        function Demo({ ready }) {
+          const count = $state(0)
+          const createRenderEffect = (fn: () => void) => fn()
+          if (ready) {
+            createRenderEffect(() => console.log(count))
+          }
+          return <button>{count}</button>
+        }
+      `),
+    ).not.toThrow(/FICT-R004/)
+  })
+
+  it('can downgrade createRenderEffect FICT-R004 diagnostics to warnings', () => {
+    const { warnings } = transformWithWarnings(
+      `
+        import { $state } from 'fict'
+        import { createRenderEffect } from 'fict/advanced'
+        function Demo({ ready }) {
+          const count = $state(0)
+          if (ready) {
+            createRenderEffect(() => console.log(count))
+          }
+          return <button>{count}</button>
+        }
+      `,
+      { warningLevels: { 'FICT-R004': 'warn' } },
+    )
+
+    expect(warnings.some(w => w.code === 'FICT-R004')).toBe(true)
+  })
+
   it('throws when runtime-package reactive creators are created inside non-JSX control flow (FICT-R004)', () => {
     const cases = [
       `

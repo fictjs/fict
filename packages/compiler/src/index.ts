@@ -2664,7 +2664,10 @@ function createHIREntrypointVisitor(
         const stateArgumentAllowedBindingIds = new Set<BabelCore.types.Identifier>()
         const importedReactiveBindingIds = new Set<BabelCore.types.Identifier>()
         const isReactiveCreationName = (name: string): boolean =>
-          name === 'createEffect' || name === 'createMemo' || name === 'createSelector'
+          name === 'createEffect' ||
+          name === 'createMemo' ||
+          name === 'createSelector' ||
+          name === 'createRenderEffect'
         path.traverse({
           ImportDeclaration(importPath) {
             const source = importPath.node.source.value
