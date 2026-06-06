@@ -121,6 +121,137 @@ export function expressionUsesIdentifier(
   return found
 }
 
+function expressionCapturesIdentifiersInNestedFunctions(
+  expr: BabelCore.types.Node,
+  names: Set<string>,
+  t: typeof BabelCore.types,
+): boolean {
+  let found = false
+  const visit = (node?: BabelCore.types.Node | null, inFunctionBody = false): void => {
+    if (!node || found) return
+    if (t.isIdentifier(node)) {
+      if (inFunctionBody && names.has(node.name)) found = true
+      return
+    }
+    if (t.isFunctionExpression(node) || t.isArrowFunctionExpression(node)) {
+      visit(node.body, true)
+      return
+    }
+    if (t.isObjectMethod(node)) {
+      if (node.computed) visit(node.key, inFunctionBody)
+      visit(node.body, true)
+      return
+    }
+    if (t.isClassExpression(node)) {
+      return
+    }
+    if (t.isBlockStatement(node)) {
+      node.body.forEach(stmt => visit(stmt, inFunctionBody))
+      return
+    }
+    if (t.isExpressionStatement(node)) {
+      visit(node.expression, inFunctionBody)
+      return
+    }
+    if (t.isReturnStatement(node)) {
+      visit(node.argument, inFunctionBody)
+      return
+    }
+    if (t.isVariableDeclaration(node)) {
+      node.declarations.forEach(decl => visit(decl.init, inFunctionBody))
+      return
+    }
+    if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+      visit(node.object, inFunctionBody)
+      if (node.computed) visit(node.property, inFunctionBody)
+      return
+    }
+    if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+      visit(node.callee, inFunctionBody)
+      node.arguments.forEach(arg => visit(arg, inFunctionBody))
+      return
+    }
+    if (t.isBinaryExpression(node) || t.isLogicalExpression(node)) {
+      visit(node.left, inFunctionBody)
+      visit(node.right, inFunctionBody)
+      return
+    }
+    if (t.isConditionalExpression(node)) {
+      visit(node.test, inFunctionBody)
+      visit(node.consequent, inFunctionBody)
+      visit(node.alternate, inFunctionBody)
+      return
+    }
+    if (t.isUnaryExpression(node) || t.isUpdateExpression(node)) {
+      visit(node.argument, inFunctionBody)
+      return
+    }
+    if (t.isAssignmentExpression(node)) {
+      visit(node.left, inFunctionBody)
+      visit(node.right, inFunctionBody)
+      return
+    }
+    if (t.isSequenceExpression(node)) {
+      node.expressions.forEach(item => visit(item, inFunctionBody))
+      return
+    }
+    if (t.isTemplateLiteral(node)) {
+      node.expressions.forEach(item => visit(item, inFunctionBody))
+      return
+    }
+    if (t.isTaggedTemplateExpression(node)) {
+      visit(node.tag, inFunctionBody)
+      node.quasi.expressions.forEach(item => visit(item, inFunctionBody))
+      return
+    }
+    if (t.isNewExpression(node)) {
+      visit(node.callee, inFunctionBody)
+      node.arguments.forEach(arg => visit(arg, inFunctionBody))
+      return
+    }
+    if (t.isArrayExpression(node)) {
+      node.elements.forEach(item => visit(item, inFunctionBody))
+      return
+    }
+    if (t.isObjectExpression(node)) {
+      node.properties.forEach(prop => {
+        if (t.isObjectProperty(prop)) {
+          if (prop.computed) visit(prop.key, inFunctionBody)
+          visit(prop.value, inFunctionBody)
+        } else if (t.isSpreadElement(prop)) {
+          visit(prop.argument, inFunctionBody)
+        } else {
+          visit(prop, inFunctionBody)
+        }
+      })
+      return
+    }
+    if (t.isParenthesizedExpression(node)) {
+      visit(node.expression, inFunctionBody)
+      return
+    }
+    if (t.isAwaitExpression(node)) {
+      visit(node.argument, inFunctionBody)
+      return
+    }
+    if (t.isYieldExpression(node)) {
+      visit(node.argument, inFunctionBody)
+      return
+    }
+    if (t.isImportExpression(node)) {
+      visit(node.source, inFunctionBody)
+      visit(node.options, inFunctionBody)
+      return
+    }
+    if (t.isTSAsExpression(node) || t.isTSTypeAssertion(node) || t.isTSNonNullExpression(node)) {
+      visit(node.expression, inFunctionBody)
+    }
+  }
+
+  visit(expr)
+  return found
+}
+
 export function extractDelegatedEventData(
   expr: BabelCore.types.Expression,
   t: typeof BabelCore.types,
@@ -149,6 +280,7 @@ export function extractDelegatedEventData(
 
   if (!bodyExpr || !t.isCallExpression(bodyExpr)) return null
   if (paramNames.some(name => expressionUsesIdentifier(bodyExpr, name, t))) return null
+  if (expressionCapturesIdentifiersInNestedFunctions(bodyExpr, new Set(paramNames), t)) return null
   if (!t.isIdentifier(bodyExpr.callee)) return null
   if (
     options?.isKnownHandlerIdentifier &&
@@ -175,6 +307,22 @@ export function hirExpressionUsesIdentifiers(expr: Expression, names: Set<string
       found = names.has(deSSAVarName(node.name))
     },
     { includeFunctionBodies: false },
+  )
+  return found
+}
+
+function hirExpressionCapturesIdentifiersInNestedFunctions(
+  expr: Expression,
+  names: Set<string>,
+): boolean {
+  let found = false
+  walkExpression(
+    expr,
+    (node, state) => {
+      if (found || !state.inFunctionBody || node.kind !== 'Identifier') return
+      found = names.has(deSSAVarName(node.name))
+    },
+    { includeFunctionBodies: true },
   )
   return found
 }
@@ -250,6 +398,9 @@ export function extractDelegatedEventDataFromHIR(
     return null
   }
   if (hirExpressionUsesIdentifiers(dataExpr, paramNames)) {
+    return null
+  }
+  if (hirExpressionCapturesIdentifiersInNestedFunctions(dataExpr, paramNames)) {
     return null
   }
 

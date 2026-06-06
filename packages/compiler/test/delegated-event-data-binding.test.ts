@@ -131,6 +131,45 @@ describe('Delegated event data binding', () => {
     expect(output).not.toMatch(/addEventListener\([^,]+,\s*"click",\s*\[select,/)
   })
 
+  it.each([
+    ['arrow closure', 'select(() => event.type)'],
+    ['function closure', 'select(function read() { return event.type })'],
+    ['object closure property', 'select({ read: () => event.type })'],
+    ['object method closure', 'select({ read() { return event.type } })'],
+    ['array closure element', 'select([() => event.type])'],
+    ['iife returned closure', 'select((() => () => event.type)())'],
+  ])('does not extract data that captures the event param through %s', (_name, expression) => {
+    const source = `
+      export function App() {
+        function select(value) {
+          return value
+        }
+        return <button onClick={(event) => ${expression}}>Click</button>
+      }
+    `
+    const output = transform(source)
+
+    expect(output).toMatch(/addEventListener\([^,]+,\s*"click",/)
+    expect(output).not.toContain('__fictDataOnly')
+    expect(output).not.toMatch(/addEventListener\([^,]+,\s*"click",\s*\[select,/)
+  })
+
+  it('still extracts closure data when it does not capture the event param', () => {
+    const source = `
+      export function App() {
+        const label = 'safe'
+        function select(read) {
+          return read()
+        }
+        return <button onClick={(event) => select(() => label)}>Click</button>
+      }
+    `
+    const output = transform(source)
+
+    expect(output).toMatch(/addEventListener\([^,]+,\s*"click",\s*\[select,/)
+    expect(output).toContain('__fictDataOnly')
+  })
+
   it('keeps delegated $state handler accessors swappable', () => {
     const source = `
       import { $state } from 'fict'
