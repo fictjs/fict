@@ -116,4 +116,24 @@ describe('region output runtime regressions', () => {
 
     expect(result).toBe('undefined:undefined:shadow')
   })
+
+  it('snapshots mutable region outputs before later writes', () => {
+    const exports = compileModule(`
+      import { $state } from 'fict'
+
+      export function useProbe() {
+        const a = $state(1)
+        let y = a()
+        const z = y
+        y = 2
+        return String(z) + ':' + String(y)
+      }
+    `)
+
+    const result = runtimeInternal.__fictRender({ slots: [], cursor: 0 }, () =>
+      (exports.useProbe as () => string)(),
+    )
+
+    expect(result).toBe('1:2')
+  })
 })

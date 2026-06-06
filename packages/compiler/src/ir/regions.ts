@@ -3207,6 +3207,7 @@ function flushInstructionBuffer(
   deferredInstructions?: Set<Instruction>,
 ): BabelCore.types.Statement[] {
   const stmts: BabelCore.types.Statement[] = []
+  collectSnapshotInterruptedRegionIds(buffer).forEach(id => regionCtx?.disabledRegions.add(id))
 
   for (const item of buffer) {
     if (regionCtx?.hoistedInstructions.has(item.instr)) {
@@ -3239,6 +3240,40 @@ function flushInstructionBuffer(
   }
 
   return stmts
+}
+
+function collectSnapshotInterruptedRegionIds(
+  buffer: { instr: Instruction; region?: Region | undefined }[],
+): Set<number> {
+  const disabled = new Set<number>()
+
+  for (let start = 0; start < buffer.length; start++) {
+    const startItem = buffer[start]
+    const region = startItem?.region
+    const instr = startItem?.instr
+    if (!region || !instr || instr.kind !== 'Assign' || !instr.declarationKind) continue
+
+    const name = deSSAVarName(instr.target.name)
+    const regionDeclarations = new Set(Array.from(region.declarations, dep => deSSAVarName(dep)))
+    if (!regionDeclarations.has(name)) continue
+
+    for (let end = start + 1; end < buffer.length; end++) {
+      const endItem = buffer[end]
+      if (endItem?.region?.id !== region.id || !endItem.instr) continue
+      if (!collectInstructionWrites(endItem.instr).has(name)) continue
+
+      for (let between = start + 1; between < end; between++) {
+        const betweenItem = buffer[between]
+        if (!betweenItem?.instr || betweenItem.region?.id === region.id) continue
+        if (!collectInstructionDependencies(betweenItem.instr).has(name)) continue
+
+        disabled.add(region.id)
+        if (betweenItem.region) disabled.add(betweenItem.region.id)
+      }
+    }
+  }
+
+  return disabled
 }
 
 /**
@@ -4024,10 +4059,8 @@ function collectExprDependencies(expr: Expression): Set<string> {
   return deps
 }
 
-function isReactiveSnapshotExcludedName(name: string, ctx: CodegenContext): boolean {
+function isAccessorSnapshotSource(name: string, ctx: CodegenContext): boolean {
   return (
-    ctx.trackedVars.has(name) ||
-    (ctx.externalTracked?.has(name) ?? false) ||
     (ctx.memoVars?.has(name) ?? false) ||
     (ctx.aliasVars?.has(name) ?? false) ||
     (ctx.signalVars?.has(name) ?? false) ||
@@ -4037,17 +4070,33 @@ function isReactiveSnapshotExcludedName(name: string, ctx: CodegenContext): bool
   )
 }
 
+function isReactiveSnapshotExcludedName(
+  name: string,
+  ctx: CodegenContext,
+  localValueNames?: Set<string>,
+): boolean {
+  if (localValueNames?.has(name) && !isAccessorSnapshotSource(name, ctx)) {
+    return false
+  }
+  return (
+    ctx.trackedVars.has(name) ||
+    (ctx.externalTracked?.has(name) ?? false) ||
+    isAccessorSnapshotSource(name, ctx)
+  )
+}
+
 function collectMutableNonReactiveDependencies(
   expr: Expression,
   ctx: CodegenContext,
   targetName?: string,
+  localValueNames?: Set<string>,
 ): string[] {
   const names = new Set<string>()
   for (const dep of collectExprDependencies(expr)) {
     const name = deSSAVarName(dep)
     if (name === targetName) continue
     if (!(ctx.mutatedVars?.has(name) ?? false)) continue
-    if (isReactiveSnapshotExcludedName(name, ctx)) continue
+    if (isReactiveSnapshotExcludedName(name, ctx, localValueNames)) continue
     names.add(name)
   }
   return Array.from(names)
@@ -4730,7 +4779,7 @@ function instructionToStatement(
     }
     type DerivedSnapshot = { sourceName: string; paramName: string }
     const createDerivedSnapshotPlan = (): DerivedSnapshot[] => {
-      const deps = collectMutableNonReactiveDependencies(instr.value, ctx, baseName)
+      const deps = collectMutableNonReactiveDependencies(instr.value, ctx, baseName, declaredVars)
       return deps.map(sourceName => ({
         sourceName,
         paramName: reserveFunctionLocalName(ctx, `__snapshot_${sourceName}`),
