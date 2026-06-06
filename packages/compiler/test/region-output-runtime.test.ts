@@ -250,6 +250,33 @@ describe('region output runtime regressions', () => {
     expect(render('useStaticAndAssignmentControls')).toBe('static:assign')
   })
 
+  it('preserves __proto__ region outputs as own result fields', () => {
+    const exports = compileModule(`
+      import { $state } from 'fict'
+
+      export function useProbe() {
+        const enabled = $state(true)
+        let __proto__
+        let constructor
+        let toString
+
+        if (enabled) {
+          __proto__ = 'proto'
+          constructor = 'ctor'
+          toString = 'str'
+        }
+
+        return [__proto__, constructor, toString].map(value => String(value)).join(':')
+      }
+    `)
+
+    const result = runtimeInternal.__fictRender({ slots: [], cursor: 0 }, () =>
+      (exports.useProbe as () => string)(),
+    )
+
+    expect(result).toBe('proto:ctor:str')
+  })
+
   it('assigns region output accessors through mutable cells', () => {
     const exports = compileModule(`
       import { $state } from 'fict'

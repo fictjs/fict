@@ -40,6 +40,27 @@ function voidZero(t: typeof BabelCore.types): BabelCore.types.UnaryExpression {
   return t.unaryExpression('void', t.numericLiteral(0), true)
 }
 
+function regionOutputProperty(
+  t: typeof BabelCore.types,
+  name: string,
+  value: BabelCore.types.Expression | BabelCore.types.PatternLike,
+  shorthand = false,
+): BabelCore.types.ObjectProperty {
+  const computed = name === '__proto__'
+  const key = computed ? t.stringLiteral(name) : t.identifier(name)
+  return t.objectProperty(key, value, computed, shorthand && !computed)
+}
+
+function regionOutputMember(
+  t: typeof BabelCore.types,
+  object: BabelCore.types.Expression,
+  name: string,
+): BabelCore.types.MemberExpression {
+  return name === '__proto__'
+    ? t.memberExpression(object, t.stringLiteral(name), true)
+    : t.memberExpression(object, t.identifier(name))
+}
+
 function numericValueExpression(
   value: number,
   t: typeof BabelCore.types,
@@ -4054,11 +4075,11 @@ function wrapInMemo(
     // Has outputs - memo with destructuring
     const buildOutputProperty = (name: string): BabelCore.types.ObjectProperty => {
       if (!region.hasControlFlow) {
-        return t.objectProperty(t.identifier(name), t.identifier(name), false, true)
+        return regionOutputProperty(t, name, t.identifier(name), true)
       }
       const guard = t.binaryExpression('!==', t.identifier(name), voidZero(t))
       const valueExpr = t.conditionalExpression(guard, t.identifier(name), voidZero(t))
-      return t.objectProperty(t.identifier(name), valueExpr)
+      return regionOutputProperty(t, name, valueExpr)
     }
     const returnObj = t.objectExpression(uniqueOutputNames.map(name => buildOutputProperty(name)))
 
@@ -4121,9 +4142,7 @@ function wrapInMemo(
         t.variableDeclaration('const', [
           t.variableDeclarator(
             t.objectPattern(
-              directOutputs.map(name =>
-                t.objectProperty(t.identifier(name), t.identifier(name), false, true),
-              ),
+              directOutputs.map(name => regionOutputProperty(t, name, t.identifier(name), true)),
             ),
             directOutputSource,
           ),
@@ -4137,11 +4156,12 @@ function wrapInMemo(
           t.assignmentExpression(
             '=',
             t.identifier(name),
-            t.memberExpression(
+            regionOutputMember(
+              t,
               regionResultName
                 ? t.identifier(regionResultName)
                 : t.callExpression(t.identifier(regionVarName), []),
-              t.identifier(name),
+              name,
             ),
           ),
         ),
@@ -4153,7 +4173,7 @@ function wrapInMemo(
     for (const name of getterOutputs) {
       declaredVars.add(name)
       const callRegion = t.callExpression(t.identifier(regionVarName), [])
-      const baseAccess = t.memberExpression(callRegion, t.identifier(name))
+      const baseAccess = regionOutputMember(t, callRegion, name)
       const accessorExpr = (() => {
         if (!mutableGetterOutputs?.has(name)) {
           return t.arrowFunctionExpression([], baseAccess)
@@ -4927,9 +4947,9 @@ function generateLazyConditionalMemo(
       t.objectExpression(
         orderedOutputs.map(name => {
           if (nullFields.has(name)) {
-            return t.objectProperty(t.identifier(name), t.nullLiteral())
+            return regionOutputProperty(t, name, t.nullLiteral())
           }
-          return t.objectProperty(t.identifier(name), t.identifier(name), false, true)
+          return regionOutputProperty(t, name, t.identifier(name), true)
         }),
       ),
     )
@@ -4982,9 +5002,7 @@ function generateLazyConditionalMemo(
     t.variableDeclaration('const', [
       t.variableDeclarator(
         t.objectPattern(
-          orderedOutputs.map(name =>
-            t.objectProperty(t.identifier(name), t.identifier(name), false, true),
-          ),
+          orderedOutputs.map(name => regionOutputProperty(t, name, t.identifier(name), true)),
         ),
         t.identifier(regionVarName),
       ),
