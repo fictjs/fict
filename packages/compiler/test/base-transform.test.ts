@@ -31,6 +31,20 @@ describe('createFictPlugin (HIR)', () => {
       expect(output).not.toContain('s(')
     })
 
+    it('rewrites quoted $state import aliases to useSignal', () => {
+      const output = transform(`
+        import { "$state" as s } from 'fict'
+        function Component() {
+          let count = s(0)
+          return count
+        }
+      `)
+
+      expect(output).toContain('__fictUseSignal(__fictCtx, 0')
+      expect(output).not.toContain('"$state"')
+      expect(output).not.toContain('s(')
+    })
+
     it('memoizes derived const by default', () => {
       const output = transform(`
         import { $state } from 'fict'
@@ -873,11 +887,43 @@ describe('createFictPlugin (HIR)', () => {
       expect(output).not.toContain('fx(')
     })
 
+    it('rewrites quoted $effect import aliases to useEffect', () => {
+      const output = transform(`
+        import { "$state" as s, "$effect" as fx } from 'fict'
+        function Component() {
+          let count = s(0)
+          fx(() => {
+            console.log(count)
+          })
+          return null
+        }
+      `)
+
+      expect(output).toContain(`__fictUseEffect(__fictCtx`)
+      expect(output).not.toContain('"$effect"')
+      expect(output).not.toContain('fx(')
+    })
+
     it('treats aliased $memo as memo accessor', () => {
       const output = transform(`
         import { $state, $memo as m } from 'fict'
         function Component() {
           let count = $state(0)
+          const doubled = m(() => count * 2)
+          return <div>{doubled}</div>
+        }
+      `)
+
+      expect(output).toMatch(/const\s+doubled\s*=\s*m/)
+      expect(output).toContain('doubled()')
+      expect(output).not.toContain('__fictUseMemo(__fictCtx, () => m')
+    })
+
+    it('treats quoted $memo import aliases as memo accessors', () => {
+      const output = transform(`
+        import { "$state" as s, "$memo" as m } from 'fict'
+        function Component() {
+          let count = s(0)
           const doubled = m(() => count * 2)
           return <div>{doubled}</div>
         }

@@ -269,6 +269,28 @@ describe('analyzeFictFile', () => {
     expect(result.components.some(component => component.name === 'Counter')).toBe(true)
   })
 
+  it('includes no-JSX components that use quoted macro import aliases', () => {
+    const result = analyzeFictFile(
+      `
+        import { "$state" as s, "$effect" as fx } from 'fict'
+
+        export function Counter() {
+          let count = s(0)
+          fx(() => console.log(count))
+          return count
+        }
+      `,
+      'quoted-macro-aliases.tsx',
+      {
+        includeRegions: true,
+        includeDiagnostics: true,
+        verbosity: 'minimal',
+      },
+    )
+
+    expect(result.components.some(component => component.name === 'Counter')).toBe(true)
+  })
+
   it('returns diagnostics instead of throwing for unsupported HIR input', () => {
     const result = analyzeFictFile(
       `

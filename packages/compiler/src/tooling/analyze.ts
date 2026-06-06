@@ -51,6 +51,10 @@ interface AnalyzeMacroNames {
   effect: Set<string>
 }
 
+function importSpecifierImportedName(spec: BabelCore.types.ImportSpecifier): string {
+  return BabelTypes.isIdentifier(spec.imported) ? spec.imported.name : String(spec.imported.value)
+}
+
 function collectAnalyzeMacroNames(ast: BabelCore.types.File): AnalyzeMacroNames {
   const names: AnalyzeMacroNames = {
     state: new Set(['$state']),
@@ -62,13 +66,14 @@ function collectAnalyzeMacroNames(ast: BabelCore.types.File): AnalyzeMacroNames 
     const source = statement.source.value
     if (source !== 'fict' && source !== 'fict/slim') continue
     for (const spec of statement.specifiers) {
-      if (!BabelTypes.isImportSpecifier(spec) || !BabelTypes.isIdentifier(spec.imported)) {
+      if (!BabelTypes.isImportSpecifier(spec)) {
         continue
       }
-      if (spec.imported.name === '$state') {
+      const importedName = importSpecifierImportedName(spec)
+      if (importedName === '$state') {
         names.state.add(spec.local.name)
       }
-      if (spec.imported.name === '$effect') {
+      if (importedName === '$effect') {
         names.effect.add(spec.local.name)
       }
     }

@@ -25,6 +25,13 @@ import { matchesAnyDiagnosticCode, matchesDiagnosticCode } from './validation'
 
 export type { FictCompilerOptions, CompilerWarning } from './types'
 
+function importSpecifierImportedName(
+  spec: BabelCore.types.ImportSpecifier,
+  t: typeof BabelCore.types,
+): string {
+  return t.isIdentifier(spec.imported) ? spec.imported.name : String(spec.imported.value)
+}
+
 function stripMacroImports(
   path: BabelCore.NodePath<BabelCore.types.Program>,
   t: typeof BabelCore.types,
@@ -40,8 +47,8 @@ function stripMacroImports(
       continue
     }
     const filtered = stmt.specifiers.filter(spec => {
-      if (t.isImportSpecifier(spec) && t.isIdentifier(spec.imported)) {
-        return !['$state', '$effect'].includes(spec.imported.name)
+      if (t.isImportSpecifier(spec)) {
+        return !['$state', '$effect'].includes(importSpecifierImportedName(spec, t))
       }
       return true
     })
@@ -688,15 +695,11 @@ function functionUsesStateLike<T extends BabelCore.types.Function>(
     }
     const bindingNode = binding.path.node
     const importDecl = binding.path.parentPath?.node
-    if (
-      !t.isImportSpecifier(bindingNode) ||
-      !t.isIdentifier(bindingNode.imported) ||
-      !t.isImportDeclaration(importDecl)
-    ) {
+    if (!t.isImportSpecifier(bindingNode) || !t.isImportDeclaration(importDecl)) {
       return false
     }
 
-    const importedName = bindingNode.imported.name
+    const importedName = importSpecifierImportedName(bindingNode, t)
     const source = importDecl.source.value
     if ((importedName === '$state' || importedName === '$effect') && isFictMacroSource(source)) {
       return true
@@ -2500,8 +2503,8 @@ function createHIREntrypointVisitor(
                 }
                 continue
               }
-              if (t.isImportSpecifier(spec) && t.isIdentifier(spec.imported)) {
-                const importedName = spec.imported.name
+              if (t.isImportSpecifier(spec)) {
+                const importedName = importSpecifierImportedName(spec, t)
                 if (isFictMacroSource) {
                   fictImports.add(importedName)
                   if (importedName === '$state' && t.isIdentifier(spec.local)) {
