@@ -217,6 +217,50 @@ describe('serializeValue / deserializeValue', () => {
       expect(result[key]).toBe(1)
       expect(Reflect.ownKeys(result)).toEqual(['a', key])
     })
+
+    it('should preserve null-prototype objects', () => {
+      const obj = Object.create(null) as Record<string, unknown>
+      obj.a = 1
+
+      const result = deserializeValue(JSON.parse(JSON.stringify(serializeValue(obj)))) as Record<
+        string,
+        unknown
+      >
+
+      expect(Object.getPrototypeOf(result)).toBe(null)
+      expect(result.a).toBe(1)
+    })
+
+    it('should serialize plain accessor objects as current values', () => {
+      const obj = {
+        get value() {
+          return 2
+        },
+      }
+      const result = deserializeValue(JSON.parse(JSON.stringify(serializeValue(obj)))) as Record<
+        string,
+        unknown
+      >
+
+      expect(result).toEqual({ value: 2 })
+    })
+
+    it('should reject unsupported object prototypes', () => {
+      class Box {
+        v = 3
+      }
+
+      const values = [
+        new Box(),
+        new URL('https://example.com/a?b=1'),
+        new Error('boom'),
+        new Uint8Array([1, 2]),
+      ]
+
+      for (const value of values) {
+        expect(() => serializeValue(value)).toThrow(/Cannot serialize unsupported object/)
+      }
+    })
   })
 
   describe('circular references', () => {

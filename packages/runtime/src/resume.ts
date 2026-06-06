@@ -23,7 +23,7 @@ type SerializedMarker =
   | { __t: 's'; v: unknown[] } // Set (as array)
   | { __t: 'r'; v: { s: string; f: string } } // RegExp (source + flags)
   | { __t: 'sym'; v: { k: 'g' | 'w'; n: string } } // Symbol.for / well-known Symbol
-  | { __t: 'o'; v: [unknown, unknown][] } // Object with symbol keys
+  | { __t: 'o'; v: [unknown, unknown][]; p?: 'n' } // Object with symbol keys/null prototype
   | { __t: 'h' } // Array hole
   | { __t: 'u' } // undefined
   | { __t: 'n' } // NaN
@@ -460,6 +460,42 @@ function enumerableOwnSymbols(value: object): symbol[] {
   )
 }
 
+function unsupportedObjectName(value: object): string {
+  const ctor = (value as { constructor?: { name?: string } }).constructor
+  if (ctor?.name) return ctor.name
+  return Object.prototype.toString.call(value)
+}
+
+function serializeObjectEntries(
+  value: object,
+  seen: Map<object, string>,
+  path: string,
+  symbolKeys: symbol[],
+): [unknown, unknown][] {
+  const entries: [unknown, unknown][] = []
+  for (const key of Object.keys(value)) {
+    const serialized = serializeValue(
+      (value as Record<string, unknown>)[key],
+      seen,
+      `${path}.${key}`,
+    )
+    if (serialized !== undefined) {
+      entries.push([key, serialized])
+    }
+  }
+  for (const key of symbolKeys) {
+    const serialized = serializeValue(
+      (value as Record<symbol, unknown>)[key],
+      seen,
+      `${path}.${String(key)}`,
+    )
+    if (serialized !== undefined) {
+      entries.push([serializeSymbol(key, `${path}.${String(key)}`), serialized])
+    }
+  }
+  return entries
+}
+
 /**
  * Serialize a value with support for complex types.
  * Handles: Date, Map, Set, RegExp, Symbol.for/well-known Symbol, undefined, NaN, Infinity, -Infinity, BigInt, circular references
@@ -561,30 +597,23 @@ export function serializeValue(
 
     // Plain object
     seen.set(value, path)
+    const proto = Object.getPrototypeOf(value)
+    if (proto !== Object.prototype && proto !== null) {
+      throw new Error(
+        `[Fict] Cannot serialize unsupported object at ${path}: ${unsupportedObjectName(
+          value,
+        )}. Use a plain object or a supported built-in resumable type.`,
+      )
+    }
+
     const symbolKeys = enumerableOwnSymbols(value)
-    if (symbolKeys.length > 0) {
-      const entries: [unknown, unknown][] = []
-      for (const key of Object.keys(value)) {
-        const serialized = serializeValue(
-          (value as Record<string, unknown>)[key],
-          seen,
-          `${path}.${key}`,
-        )
-        if (serialized !== undefined) {
-          entries.push([key, serialized])
-        }
+    if (symbolKeys.length > 0 || proto === null) {
+      const marker: Extract<SerializedMarker, { __t: 'o' }> = {
+        __t: 'o',
+        v: serializeObjectEntries(value, seen, path, symbolKeys),
       }
-      for (const key of symbolKeys) {
-        const serialized = serializeValue(
-          (value as Record<symbol, unknown>)[key],
-          seen,
-          `${path}.${String(key)}`,
-        )
-        if (serialized !== undefined) {
-          entries.push([serializeSymbol(key, `${path}.${String(key)}`), serialized])
-        }
-      }
-      return { __t: 'o', v: entries } as SerializedMarker
+      if (proto === null) marker.p = 'n'
+      return marker
     }
 
     const result: Record<string, unknown> = {}
@@ -645,7 +674,7 @@ export function deserializeValue(
         }
         return WELL_KNOWN_SYMBOL_BY_NAME.get(value.v.n)
       case 'o': {
-        const obj: Record<string | symbol, unknown> = {}
+        const obj: Record<string | symbol, unknown> = value.p === 'n' ? Object.create(null) : {}
         refs.set(path, obj)
         for (let i = 0; i < value.v.length; i++) {
           const entry = value.v[i]
