@@ -3061,6 +3061,19 @@ function lowerExpressionImpl(
     return signalKeys
   }
 
+  const throwHookReturnMemoMemberWrite = (
+    member: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
+  ): never => {
+    throw new HIRError(
+      'Cannot write to hook-return memo member. Hook-return memo members are read-only accessors.',
+      'BUILD_ERROR',
+      {
+        file: ctx.options?.filename,
+        line: member.loc?.start.line,
+      },
+    )
+  }
+
   const lowerHookReturnSignalMemberAssignment = (
     expr: HIRAssignmentExpression,
   ): BabelCore.types.Expression | null => {
@@ -3082,6 +3095,9 @@ function lowerExpressionImpl(
           right,
         )
       })
+    }
+    if (accessorKind === 'memo') {
+      throwHookReturnMemoMemberWrite(left)
     }
 
     if (left.computed) {
@@ -3115,6 +3131,9 @@ function lowerExpressionImpl(
         const member = lowerMemberExpressionWithoutAccessorCall(argument, object)
         return lowerTrackedUpdateCall(member, expr.operator, expr.prefix)
       })
+    }
+    if (accessorKind === 'memo') {
+      throwHookReturnMemoMemberWrite(argument)
     }
 
     if (argument.computed) {

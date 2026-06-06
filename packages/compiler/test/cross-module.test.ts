@@ -1514,6 +1514,169 @@ describe('Cross-Module Reactivity', () => {
       expect(output).not.toContain('useCounter().count = 3')
     })
 
+    it('rejects writes to memo hook-return object members', () => {
+      const hookPath = path.join(baseDir, 'memo-hook-object-write.tsx')
+      const appPath = path.join(baseDir, 'app-memo-hook-object-write.tsx')
+      const moduleMetadata = new Map()
+      const hookSource = `
+        import { $memo, $state } from 'fict'
+
+        export function useThing() {
+          const count = $state(1)
+          const doubled = $memo(() => count * 2)
+          return { count, doubled, plain: 1 }
+        }
+      `
+
+      expect(() =>
+        transform(
+          `
+            import { $memo, $state } from 'fict'
+
+            function useThing() {
+              const count = $state(1)
+              const doubled = $memo(() => count * 2)
+              return { count, doubled, plain: 1 }
+            }
+
+            export function App() {
+              const thing = useThing()
+              thing.doubled = 5
+              return <div>{thing.doubled}</div>
+            }
+          `,
+          { fineGrainedDom: true },
+          path.join(baseDir, 'same-file-memo-hook-object-write.tsx'),
+        ),
+      ).toThrow('Cannot write to hook-return memo member')
+
+      transform(hookSource, { moduleMetadata }, hookPath)
+
+      for (const statement of [
+        'thing.doubled = 5',
+        'thing.doubled += 5',
+        'thing.doubled++',
+        '++thing.doubled',
+        'thing["doubled"] = 5',
+      ]) {
+        expect(() =>
+          transform(
+            `
+              import { useThing } from './memo-hook-object-write'
+
+              export function App() {
+                const thing = useThing()
+                ${statement}
+                return <div>{thing.doubled}</div>
+              }
+            `,
+            { fineGrainedDom: true, moduleMetadata },
+            appPath,
+          ),
+        ).toThrow('Cannot write to hook-return memo member')
+      }
+
+      const controlOutput = transform(
+        `
+          import { useThing } from './memo-hook-object-write'
+
+          export function App() {
+            const thing = useThing()
+            thing.count = 2
+            thing.plain = 3
+            const called = thing.doubled()
+            return <div>{thing.count}{thing.plain}{called}</div>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-memo-hook-object-write-control.tsx'),
+      )
+
+      expect(controlOutput).toContain('thing.count(2)')
+      expect(controlOutput).toContain('thing.plain = 3')
+      expect(controlOutput).toContain('thing.doubled()')
+      expect(controlOutput).not.toContain('thing.doubled()()')
+    })
+
+    it('rejects writes to memo hook-return array members', () => {
+      const hookPath = path.join(baseDir, 'memo-hook-array-write.tsx')
+      const appPath = path.join(baseDir, 'app-memo-hook-array-write.tsx')
+      const moduleMetadata = new Map()
+      const hookSource = `
+        import { $memo, $state } from 'fict'
+
+        export function usePair() {
+          const count = $state(1)
+          const doubled = $memo(() => count * 2)
+          return [doubled, count, 1]
+        }
+      `
+
+      expect(() =>
+        transform(
+          `
+            import { $memo, $state } from 'fict'
+
+            function usePair() {
+              const count = $state(1)
+              const doubled = $memo(() => count * 2)
+              return [doubled, count, 1]
+            }
+
+            export function App() {
+              const pair = usePair()
+              pair[0] = 5
+              return <div>{pair[0]}</div>
+            }
+          `,
+          { fineGrainedDom: true },
+          path.join(baseDir, 'same-file-memo-hook-array-write.tsx'),
+        ),
+      ).toThrow('Cannot write to hook-return memo member')
+
+      transform(hookSource, { moduleMetadata }, hookPath)
+
+      for (const statement of ['pair[0] = 5', 'pair[0] += 5', 'pair[0]++', '++pair[0]']) {
+        expect(() =>
+          transform(
+            `
+              import { usePair } from './memo-hook-array-write'
+
+              export function App() {
+                const pair = usePair()
+                ${statement}
+                return <div>{pair[0]}</div>
+              }
+            `,
+            { fineGrainedDom: true, moduleMetadata },
+            appPath,
+          ),
+        ).toThrow('Cannot write to hook-return memo member')
+      }
+
+      const controlOutput = transform(
+        `
+          import { usePair } from './memo-hook-array-write'
+
+          export function App() {
+            const pair = usePair()
+            pair[1] = 2
+            pair[2] = 3
+            const called = pair[0]()
+            return <div>{pair[1]}{pair[2]}{called}</div>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-memo-hook-array-write-control.tsx'),
+      )
+
+      expect(controlOutput).toContain('pair[1](2)')
+      expect(controlOutput).toMatch(/: pair\[__key_\d+\] = 3/)
+      expect(controlOutput).not.toContain('pair[2](3)')
+      expect(controlOutput).toContain('pair[0]()')
+      expect(controlOutput).not.toContain('pair[0]()()')
+    })
+
     it('preserves hook-return object destructuring aliases', () => {
       const hookSource = `
         import { $state } from 'fict'
