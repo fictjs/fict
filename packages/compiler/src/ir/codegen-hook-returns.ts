@@ -213,10 +213,31 @@ export function analyzeHookReturnInfo(
     const hookInfo = nsMeta.hooks[propName]
     return hookInfo ? deserializeHookReturnInfo(hookInfo) : null
   }
+  const staticMemberPath = (expr: Expression): string[] | null => {
+    if (expr.kind === 'Identifier') return [deSSAVarName(expr.name)]
+    if (expr.kind !== 'MemberExpression' && expr.kind !== 'OptionalMemberExpression') return null
+    const objectPath = staticMemberPath(expr.object as Expression)
+    if (!objectPath) return null
+    const propName = getStaticPropName(expr.property as Expression, expr.computed)
+    if (propName === null) return null
+    return [...objectPath, String(propName)]
+  }
+  const localHookMemberCallInfo = (expr: Expression): HookReturnInfo | null => {
+    if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return null
+    const callee = expr.callee
+    if (callee.kind !== 'MemberExpression' && callee.kind !== 'OptionalMemberExpression') {
+      return null
+    }
+    const path = staticMemberPath(callee)
+    if (!path || path.length < 2) return null
+    const hookName = ctx.hookFunctionMemberAliases?.get(path.join('.'))
+    return hookName ? getHookReturnInfo(hookName, ctx, ops) : null
+  }
   const hookCallDirectAccessorKind = (expr: Expression): HookAccessorKind | undefined => {
     if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return undefined
     const info =
       namespaceHookCallInfo(expr) ??
+      localHookMemberCallInfo(expr) ??
       (expr.callee.kind === 'Identifier' ? getHookReturnInfo(expr.callee.name, ctx, ops) : null)
     const kind = info?.directAccessor
     return kind
@@ -348,9 +369,9 @@ export function analyzeHookReturnInfo(
         })
       })
     } else if (expr.kind === 'CallExpression' || expr.kind === 'OptionalCallExpression') {
-      const namespaceInfo = namespaceHookCallInfo(expr)
-      if (namespaceInfo) {
-        copyHookInfo(namespaceInfo)
+      const memberInfo = namespaceHookCallInfo(expr) ?? localHookMemberCallInfo(expr)
+      if (memberInfo) {
+        copyHookInfo(memberInfo)
       } else if (expr.callee.kind === 'Identifier') {
         copyHookInfo(getHookReturnInfo(expr.callee.name, ctx, ops))
       } else {

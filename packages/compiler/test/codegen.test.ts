@@ -949,6 +949,86 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(directAccessor).toMatch(/=> count\(\)/)
   })
 
+  it('preserves local object-member hook return metadata', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+
+        const api = { useCounter, nested: { useCounter } }
+
+        export function App() {
+          const state = api.useCounter()
+          const computed = api['useCounter']()
+          const nested = api.nested.useCounter()
+          const { useCounter: counter } = api
+          const destructured = counter()
+          state.count = 2
+          computed.count++
+          return <span>{state.count}:{computed.count}:{nested.count}:{destructured.count}</span>
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    for (const name of ['state', 'computed', 'nested', 'destructured']) {
+      expect(output).toMatch(new RegExp(`${name}(?:\\(\\))?\\.count\\(\\)`))
+    }
+    expect(output).toContain('state.count(2)')
+    expect(output).toMatch(/computed\.count\([+-]{2}__prev_/)
+    expect(output).not.toContain('state.count = 2')
+    expect(output).not.toContain('computed.count++')
+
+    const invalidated = transform(
+      `
+        import { $state } from 'fict'
+
+        function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+
+        const api = { useCounter }
+
+        export function App() {
+          api.useCounter = () => ({ count: 1 })
+          const state = api.useCounter()
+          return <span>{state.count}</span>
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(invalidated).toContain('api.useCounter = () =>')
+    expect(invalidated).toMatch(/state(?:\(\))?\.count/)
+    expect(invalidated).not.toMatch(/state(?:\(\))?\.count\(\)/)
+
+    const directAccessor = transform(
+      `
+        import { $state } from 'fict'
+
+        function useCount() {
+          const count = $state(0)
+          return count
+        }
+
+        const api = { useCount }
+
+        export function App() {
+          const count = api.useCount()
+          return <span>{count}</span>
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(directAccessor).toMatch(/=> count\(\)/)
+  })
+
   it('preserves static plain hook-return object properties in DOM bindings', () => {
     const output = transform(
       `

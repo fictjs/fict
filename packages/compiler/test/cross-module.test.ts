@@ -4464,6 +4464,78 @@ describe('Cross-Module Reactivity', () => {
       )
     })
 
+    it('publishes hook metadata through local object-member hook calls', () => {
+      const wrapperPath = path.join(baseDir, 'local-object-hook-wrapper.tsx')
+      const consumerPath = path.join(baseDir, 'local-object-hook-consumer.tsx')
+      const invalidatedPath = path.join(baseDir, 'local-object-hook-invalidated.tsx')
+      const moduleMetadata = new Map()
+      const wrapperSource = `
+        import { $state } from 'fict'
+
+        function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+
+        const api = { useCounter }
+
+        export function useWrapped() {
+          return api.useCounter()
+        }
+
+        export function App() {
+          const state = api.useCounter()
+          return <span>{state.count}</span>
+        }
+      `
+
+      const wrapperOutput = transform(wrapperSource, { moduleMetadata }, wrapperPath)
+
+      expect(wrapperOutput).toMatch(/state(?:\(\))?\.count\(\)/)
+      expect(moduleMetadata.get(path.resolve(wrapperPath))?.hooks).toMatchObject({
+        useWrapped: { objectProps: { count: 'signal' } },
+      })
+
+      const consumerOutput = transform(
+        `
+          import { useWrapped } from './local-object-hook-wrapper'
+
+          export function App() {
+            const state = useWrapped()
+            return <span>{state.count}</span>
+          }
+        `,
+        { moduleMetadata },
+        consumerPath,
+      )
+
+      expect(consumerOutput).toMatch(/state(?:\(\))?\.count\(\)/)
+
+      transform(
+        `
+          import { $state } from 'fict'
+
+          function useCounter() {
+            const count = $state(0)
+            return { count }
+          }
+
+          const api = { useCounter }
+          api.useCounter = () => ({ count: 1 })
+
+          export function useWrapped() {
+            return api.useCounter()
+          }
+        `,
+        { moduleMetadata },
+        invalidatedPath,
+      )
+
+      expect(moduleMetadata.get(path.resolve(invalidatedPath))?.hooks ?? {}).not.toHaveProperty(
+        'useWrapped',
+      )
+    })
+
     it('preserves hook return accessors inside branch returns before publishing metadata', () => {
       const hookPath = path.join(baseDir, 'branch-hook-returns.tsx')
       const moduleMetadata = new Map()

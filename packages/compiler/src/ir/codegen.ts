@@ -944,6 +944,7 @@ export function propagateHookResultAlias(
 ): void {
   targetBase = deSSAVarName(targetBase)
   propagateHookFunctionAlias(targetBase, value, ctx)
+  propagateHookFunctionMemberAliases([targetBase], value, ctx)
   clearHookResultAlias(targetBase, ctx)
   const hookResultPassthroughCalls = new Set(['_slicedToArray', '_toArray'])
   const hookResultRestCalls = new Set(['__fictPropsRest', '__fictObjectRest'])
@@ -1401,6 +1402,8 @@ export interface CodegenContext {
   importedHookReturnInfoNames?: Set<string> | undefined
   /** Local function aliases that point at hook functions with known return metadata. */
   hookFunctionAliases?: Map<string, string> | undefined
+  /** Local object member paths that point at hook functions with known return metadata. */
+  hookFunctionMemberAliases?: Map<string, string> | undefined
   /** Map of local variables bound to hook results (per function) */
   hookResultVarMap?: Map<string, string> | undefined
   /** Imported hook bindings that did not publish hook-return metadata */
@@ -1525,6 +1528,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     hookReturnInfo: new Map(),
     importedHookReturnInfoNames: new Set(),
     hookFunctionAliases: new Map(),
+    hookFunctionMemberAliases: new Map(),
     opaqueImportedHookNames: new Set(),
     hoistedTemplates: new Map(),
     hoistedTemplateStatements: [],
@@ -1586,11 +1590,38 @@ function getHookFunctionAliasName(name: string, ctx: CodegenContext): string | n
   return ctx.hookFunctionAliases?.get(baseName) ?? null
 }
 
+function hookFunctionMemberAliasKey(path: string[]): string {
+  return path.join('.')
+}
+
+function getHookFunctionMemberAliasName(
+  expr: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
+  ctx: CodegenContext,
+): string | null {
+  const path = getStaticMemberPath(expr)
+  if (!path || path.length < 2) return null
+  const root = path[0]
+  if (root && (ctx.shadowedNames?.has(root) ?? false)) return null
+  return ctx.hookFunctionMemberAliases?.get(hookFunctionMemberAliasKey(path)) ?? null
+}
+
 function resolveHookFunctionNameForAliasSource(name: string, ctx: CodegenContext): string | null {
   const baseName = deSSAVarName(name)
   const aliased = getHookFunctionAliasName(baseName, ctx)
   if (aliased) return aliased
   return getHookReturnInfo(baseName, ctx) ? baseName : null
+}
+
+function resolveHookFunctionAliasSource(expr: Expression, ctx: CodegenContext): string | null {
+  if (expr.kind === 'Identifier') return resolveHookFunctionNameForAliasSource(expr.name, ctx)
+  if (expr.kind === 'MemberExpression' || expr.kind === 'OptionalMemberExpression') {
+    return getHookFunctionMemberAliasName(expr, ctx)
+  }
+  if (expr.kind === 'SequenceExpression') {
+    const last = expr.expressions[expr.expressions.length - 1]
+    return last ? resolveHookFunctionAliasSource(last, ctx) : null
+  }
+  return null
 }
 
 function clearHookFunctionAlias(targetBase: string, ctx: CodegenContext): void {
@@ -1604,18 +1635,97 @@ function propagateHookFunctionAlias(
 ): void {
   const target = deSSAVarName(targetBase)
   clearHookFunctionAlias(target, ctx)
-  const resolveSource = (expr: Expression): string | null => {
-    if (expr.kind === 'Identifier') return resolveHookFunctionNameForAliasSource(expr.name, ctx)
-    if (expr.kind === 'SequenceExpression') {
-      const last = expr.expressions[expr.expressions.length - 1]
-      return last ? resolveSource(last) : null
-    }
-    return null
-  }
-  const source = resolveSource(value)
+  const source = resolveHookFunctionAliasSource(value, ctx)
   if (!source) return
   ctx.hookFunctionAliases = ctx.hookFunctionAliases ?? new Map()
   ctx.hookFunctionAliases.set(target, source)
+}
+
+function clearHookFunctionMemberAliasesForPath(path: string[], ctx: CodegenContext): void {
+  const key = hookFunctionMemberAliasKey(path)
+  const aliases = ctx.hookFunctionMemberAliases
+  if (!aliases) return
+  for (const existing of Array.from(aliases.keys())) {
+    if (existing === key || existing.startsWith(`${key}.`)) {
+      aliases.delete(existing)
+    }
+  }
+}
+
+function copyHookFunctionMemberAliases(
+  sourcePath: string[],
+  targetPath: string[],
+  ctx: CodegenContext,
+): void {
+  const aliases = ctx.hookFunctionMemberAliases
+  if (!aliases) return
+  const sourceKey = hookFunctionMemberAliasKey(sourcePath)
+  const targetKey = hookFunctionMemberAliasKey(targetPath)
+  for (const [key, hookName] of Array.from(aliases.entries())) {
+    if (key === sourceKey) {
+      aliases.set(targetKey, hookName)
+      continue
+    }
+    if (key.startsWith(`${sourceKey}.`)) {
+      aliases.set(`${targetKey}${key.slice(sourceKey.length)}`, hookName)
+    }
+  }
+}
+
+function copyHookFunctionMemberAliasesFromExpression(
+  targetPath: string[],
+  value: Expression,
+  ctx: CodegenContext,
+): void {
+  const sourcePath = getStaticMemberPath(value)
+  if (!sourcePath) return
+  copyHookFunctionMemberAliases(sourcePath, targetPath, ctx)
+}
+
+function setHookFunctionMemberAlias(path: string[], hookName: string, ctx: CodegenContext): void {
+  ctx.hookFunctionMemberAliases = ctx.hookFunctionMemberAliases ?? new Map()
+  ctx.hookFunctionMemberAliases.set(hookFunctionMemberAliasKey(path), hookName)
+}
+
+function propagateHookFunctionMemberAliases(
+  targetPath: string[],
+  value: Expression,
+  ctx: CodegenContext,
+): void {
+  clearHookFunctionMemberAliasesForPath(targetPath, ctx)
+  copyHookFunctionMemberAliasesFromExpression(targetPath, value, ctx)
+
+  if (value.kind !== 'ObjectExpression') return
+  for (const prop of value.properties) {
+    if (prop.kind === 'SpreadElement') continue
+    const segment = getStaticObjectPropertySegment(prop)
+    if (!segment) continue
+    const propertyPath = [...targetPath, segment]
+    const sourceHookName = resolveHookFunctionAliasSource(prop.value, ctx)
+    if (sourceHookName) {
+      setHookFunctionMemberAlias(propertyPath, sourceHookName, ctx)
+    }
+    if (prop.value.kind === 'ObjectExpression') {
+      propagateHookFunctionMemberAliases(propertyPath, prop.value, ctx)
+    } else {
+      copyHookFunctionMemberAliasesFromExpression(propertyPath, prop.value, ctx)
+    }
+  }
+}
+
+function propagateHookFunctionMemberAssignment(expr: Expression, ctx: CodegenContext): void {
+  if (expr.kind !== 'AssignmentExpression') return
+  if (expr.left.kind !== 'MemberExpression' && expr.left.kind !== 'OptionalMemberExpression') {
+    return
+  }
+  const path = getStaticMemberPath(expr.left)
+  if (!path || path.length < 2) return
+  clearHookFunctionMemberAliasesForPath(path, ctx)
+  if (expr.operator !== '=') return
+  const sourceHookName = resolveHookFunctionAliasSource(expr.right, ctx)
+  if (sourceHookName) {
+    setHookFunctionMemberAlias(path, sourceHookName, ctx)
+  }
 }
 
 export function resolveHookMemberValue(
@@ -1665,12 +1775,28 @@ function resolveNamespaceHookCallInfo(
   return { hookName, info }
 }
 
+function resolveLocalHookMemberCallInfo(
+  expr: Expression,
+  ctx: CodegenContext,
+): { hookName: string; info: HookReturnInfo | null } | null {
+  if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return null
+  const callee = expr.callee
+  if (callee.kind !== 'MemberExpression' && callee.kind !== 'OptionalMemberExpression') {
+    return null
+  }
+  const hookName = getHookFunctionMemberAliasName(callee, ctx)
+  if (!hookName) return null
+  return { hookName, info: getHookReturnInfo(hookName, ctx) }
+}
+
 function resolveDirectHookCallInfo(
   expr: Expression,
   ctx: CodegenContext,
 ): { hookName: string; info: HookReturnInfo | null } | null {
   const namespaceHookCall = resolveNamespaceHookCallInfo(expr, ctx)
   if (namespaceHookCall) return namespaceHookCall
+  const localHookMemberCall = resolveLocalHookMemberCallInfo(expr, ctx)
+  if (localHookMemberCall) return localHookMemberCall
 
   if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return null
   if (expr.callee.kind !== 'Identifier') return null
@@ -2314,6 +2440,7 @@ function lowerFunction(
   const prevImportedReactiveKinds = ctx.importedReactiveKinds
   const prevContextLocalName = ctx.contextLocalName
   const prevHookFunctionAliases = ctx.hookFunctionAliases
+  const prevHookFunctionMemberAliases = ctx.hookFunctionMemberAliases
   const scopedTracked = new Set(ctx.trackedVars)
   const scopedImportedReactiveKinds = new Map(prevImportedReactiveKinds ?? [])
   fn.params.forEach(p => scopedTracked.delete(deSSAVarName(p.name)))
@@ -2333,6 +2460,7 @@ function lowerFunction(
   }
   ctx.localDeclaredNames = localDeclared
   ctx.hookFunctionAliases = new Map(prevHookFunctionAliases ?? [])
+  ctx.hookFunctionMemberAliases = new Map(prevHookFunctionMemberAliases ?? [])
   ctx.contextLocalName = undefined
   ctx.needsCtx = false
   const prevHookFlag = ctx.currentFnIsHook
@@ -2378,6 +2506,7 @@ function lowerFunction(
   ctx.localDeclaredNames = prevLocalDeclared
   ctx.importedReactiveKinds = prevImportedReactiveKinds
   ctx.hookFunctionAliases = prevHookFunctionAliases
+  ctx.hookFunctionMemberAliases = prevHookFunctionMemberAliases
   ctx.contextLocalName = prevContextLocalName
   ctx.currentFnIsHook = prevHookFlag
   return result
@@ -2653,6 +2782,7 @@ function lowerInstruction(
     )
   }
   if (instr.kind === 'Expression') {
+    propagateHookFunctionMemberAssignment(instr.value, ctx)
     return applyLoc(t.expressionStatement(lowerTrackedExpression(instr.value, ctx, false)))
   }
   if (instr.kind === 'Debugger') {
@@ -3232,6 +3362,7 @@ function lowerExpressionImpl(
     const prevLocalDeclared = ctx.localDeclaredNames
     const prevCurrentFunctionDeclared = ctx.currentFunctionDeclaredNames
     const prevHookFunctionAliases = ctx.hookFunctionAliases
+    const prevHookFunctionMemberAliases = ctx.hookFunctionMemberAliases
     const scoped = new Set(ctx.trackedVars)
     paramNames.forEach(n => scoped.delete(deSSAVarName(n)))
     if (localDeclared) {
@@ -3270,6 +3401,7 @@ function lowerExpressionImpl(
     }
     ctx.aliasVars = new Set(ctx.aliasVars)
     ctx.hookFunctionAliases = new Map(prevHookFunctionAliases ?? [])
+    ctx.hookFunctionMemberAliases = new Map(prevHookFunctionMemberAliases ?? [])
     ctx.externalTracked = new Set(prevTracked)
     const shadowed = new Set(prevShadowed ?? [])
     paramNames.forEach(n => shadowed.add(deSSAVarName(n)))
@@ -3303,6 +3435,7 @@ function lowerExpressionImpl(
     ctx.localDeclaredNames = prevLocalDeclared
     ctx.currentFunctionDeclaredNames = prevCurrentFunctionDeclared
     ctx.hookFunctionAliases = prevHookFunctionAliases
+    ctx.hookFunctionMemberAliases = prevHookFunctionMemberAliases
     return result
   }
   const withListKeyConstificationScope = <T>(
@@ -4679,6 +4812,7 @@ function lowerExpressionImpl(
     }
 
     case 'AssignmentExpression':
+      propagateHookFunctionMemberAssignment(expr, ctx)
       {
         const hookMemberAssignment = lowerHookReturnSignalMemberAssignment(expr)
         if (hookMemberAssignment) return hookMemberAssignment
@@ -5587,16 +5721,146 @@ function collectModuleBindingKinds(
   return bindings
 }
 
+function getStaticBabelPropertyName(
+  node: BabelCore.types.Node,
+  computed: boolean | undefined,
+  t: typeof BabelCore.types,
+): string | null {
+  if (!computed && t.isIdentifier(node)) return node.name
+  if (t.isStringLiteral(node)) return node.value
+  if (t.isNumericLiteral(node)) return String(node.value)
+  return null
+}
+
+function getStaticBabelMemberPath(
+  node: BabelCore.types.Expression,
+  t: typeof BabelCore.types,
+): string[] | null {
+  if (t.isIdentifier(node)) return [deSSAVarName(node.name)]
+  if (!t.isMemberExpression(node) && !t.isOptionalMemberExpression(node)) return null
+  const objectPath = getStaticBabelMemberPath(node.object as BabelCore.types.Expression, t)
+  if (!objectPath) return null
+  const propName = getStaticBabelPropertyName(node.property, node.computed, t)
+  if (propName === null) return null
+  return [...objectPath, propName]
+}
+
+function getStaticBabelObjectPropertySegment(
+  prop: BabelCore.types.ObjectProperty | BabelCore.types.ObjectMethod,
+  t: typeof BabelCore.types,
+): string | null {
+  return getStaticBabelPropertyName(prop.key, prop.computed, t)
+}
+
+function resolveBabelHookFunctionAliasSource(
+  expr: BabelCore.types.Expression,
+  ctx: CodegenContext,
+  t: typeof BabelCore.types,
+): string | null {
+  if (t.isIdentifier(expr)) return resolveHookFunctionNameForAliasSource(expr.name, ctx)
+  if (t.isMemberExpression(expr) || t.isOptionalMemberExpression(expr)) {
+    const path = getStaticBabelMemberPath(expr, t)
+    return path
+      ? (ctx.hookFunctionMemberAliases?.get(hookFunctionMemberAliasKey(path)) ?? null)
+      : null
+  }
+  if (t.isSequenceExpression(expr) && expr.expressions.length > 0) {
+    const last = expr.expressions[expr.expressions.length - 1]
+    return t.isExpression(last) ? resolveBabelHookFunctionAliasSource(last, ctx, t) : null
+  }
+  return null
+}
+
+function copyHookFunctionMemberAliasesFromBabelExpression(
+  targetPath: string[],
+  value: BabelCore.types.Expression,
+  ctx: CodegenContext,
+  t: typeof BabelCore.types,
+): void {
+  const sourcePath = getStaticBabelMemberPath(value, t)
+  if (!sourcePath) return
+  copyHookFunctionMemberAliases(sourcePath, targetPath, ctx)
+}
+
+function propagateBabelHookFunctionMemberAliases(
+  targetPath: string[],
+  value: BabelCore.types.Expression | null | undefined,
+  ctx: CodegenContext,
+  t: typeof BabelCore.types,
+): void {
+  clearHookFunctionMemberAliasesForPath(targetPath, ctx)
+  if (!value) return
+  copyHookFunctionMemberAliasesFromBabelExpression(targetPath, value, ctx, t)
+
+  if (!t.isObjectExpression(value)) return
+  for (const prop of value.properties) {
+    if (t.isSpreadElement(prop)) continue
+    if (!t.isObjectProperty(prop) && !t.isObjectMethod(prop)) continue
+    const segment = getStaticBabelObjectPropertySegment(prop, t)
+    if (!segment) continue
+    const propertyPath = [...targetPath, segment]
+    if (t.isObjectMethod(prop)) {
+      clearHookFunctionMemberAliasesForPath(propertyPath, ctx)
+      continue
+    }
+    const sourceHookName = resolveBabelHookFunctionAliasSource(
+      prop.value as BabelCore.types.Expression,
+      ctx,
+      t,
+    )
+    if (sourceHookName) {
+      setHookFunctionMemberAlias(propertyPath, sourceHookName, ctx)
+    }
+    if (t.isObjectExpression(prop.value)) {
+      propagateBabelHookFunctionMemberAliases(propertyPath, prop.value, ctx, t)
+    } else {
+      copyHookFunctionMemberAliasesFromBabelExpression(
+        propertyPath,
+        prop.value as BabelCore.types.Expression,
+        ctx,
+        t,
+      )
+    }
+  }
+}
+
+function propagateBabelHookFunctionMemberAssignment(
+  expr: BabelCore.types.Expression,
+  ctx: CodegenContext,
+  t: typeof BabelCore.types,
+): void {
+  if (!t.isAssignmentExpression(expr)) return
+  if (!t.isMemberExpression(expr.left) && !t.isOptionalMemberExpression(expr.left)) return
+  const path = getStaticBabelMemberPath(expr.left, t)
+  if (!path || path.length < 2) return
+  clearHookFunctionMemberAliasesForPath(path, ctx)
+  if (expr.operator !== '=') return
+  const sourceHookName = resolveBabelHookFunctionAliasSource(expr.right, ctx, t)
+  if (sourceHookName) {
+    setHookFunctionMemberAlias(path, sourceHookName, ctx)
+  }
+}
+
 function propagateLocalHookAliasMetadata(
   body: BabelCore.types.Statement[],
   ctx: CodegenContext,
   t: typeof BabelCore.types,
 ): void {
   const aliasPairs: { target: string; source: string }[] = []
+  const objectAliasOps: (
+    | { kind: 'assign'; targetPath: string[]; value: BabelCore.types.Expression | null | undefined }
+    | { kind: 'memberAssign'; expr: BabelCore.types.Expression }
+  )[] = []
   const reassignedAliases = new Set<string>()
   const collectDeclaration = (decl: BabelCore.types.VariableDeclaration): void => {
     for (const item of decl.declarations) {
-      if (!t.isIdentifier(item.id) || !item.init || !t.isIdentifier(item.init)) continue
+      if (!t.isIdentifier(item.id)) continue
+      objectAliasOps.push({
+        kind: 'assign',
+        targetPath: [deSSAVarName(item.id.name)],
+        value: item.init,
+      })
+      if (!item.init || !t.isIdentifier(item.init)) continue
       aliasPairs.push({
         target: deSSAVarName(item.id.name),
         source: deSSAVarName(item.init.name),
@@ -5610,6 +5874,11 @@ function propagateLocalHookAliasMetadata(
       return
     }
     reassignedAliases.add(deSSAVarName(expr.left.name))
+    objectAliasOps.push({
+      kind: 'assign',
+      targetPath: [deSSAVarName(expr.left.name)],
+      value: expr.right,
+    })
   }
 
   for (const stmt of body) {
@@ -5626,10 +5895,13 @@ function propagateLocalHookAliasMetadata(
       continue
     }
     collectReassignment(stmt)
+    if (t.isExpressionStatement(stmt) && t.isAssignmentExpression(stmt.expression)) {
+      objectAliasOps.push({ kind: 'memberAssign', expr: stmt.expression })
+    }
   }
 
-  if (aliasPairs.length === 0) return
   ctx.hookReturnInfo = ctx.hookReturnInfo ?? new Map()
+  reassignedAliases.forEach(name => clearHookFunctionAlias(name, ctx))
   let changed = true
   while (changed) {
     changed = false
@@ -5647,6 +5919,14 @@ function propagateLocalHookAliasMetadata(
       changed = true
     }
   }
+
+  for (const op of objectAliasOps) {
+    if (op.kind === 'assign') {
+      propagateBabelHookFunctionMemberAliases(op.targetPath, op.value, ctx, t)
+    } else {
+      propagateBabelHookFunctionMemberAssignment(op.expr, ctx, t)
+    }
+  }
 }
 
 function seedSameFileHookAliasMetadata(
@@ -5655,6 +5935,7 @@ function seedSameFileHookAliasMetadata(
   ctx: CodegenContext,
   t: typeof BabelCore.types,
 ): void {
+  propagateLocalHookAliasMetadata(originalBody, ctx, t)
   for (const fn of program.functions) {
     if (!fn.name || !isHookName(fn.name)) continue
     getHookReturnInfo(fn.name, ctx)
@@ -6934,9 +7215,11 @@ function lowerFunctionWithScopes(
   const prevKnownArrayVars = ctx.knownArrayVars
   const prevImportedReactiveKinds = ctx.importedReactiveKinds
   const prevHookFunctionAliases = ctx.hookFunctionAliases
+  const prevHookFunctionMemberAliases = ctx.hookFunctionMemberAliases
   ctx.knownArrayVars = new Set(prevKnownArrayVars ?? [])
   ctx.importedReactiveKinds = new Map(prevImportedReactiveKinds ?? [])
   ctx.hookFunctionAliases = new Map(prevHookFunctionAliases ?? [])
+  ctx.hookFunctionMemberAliases = new Map(prevHookFunctionMemberAliases ?? [])
   fn.params.forEach(p => ctx.knownArrayVars?.delete(deSSAVarName(p.name)))
   fn.params.forEach(p => ctx.importedReactiveKinds?.delete(deSSAVarName(p.name)))
   for (const name of collectLocalDeclaredNames(fn.params, fn.blocks, t)) {
@@ -6967,6 +7250,7 @@ function lowerFunctionWithScopes(
   ctx.knownArrayVars = prevKnownArrayVars
   ctx.importedReactiveKinds = prevImportedReactiveKinds
   ctx.hookFunctionAliases = prevHookFunctionAliases
+  ctx.hookFunctionMemberAliases = prevHookFunctionMemberAliases
   return result
 }
 
@@ -8900,6 +9184,7 @@ function lowerFunctionWithRegions(
   const prevIsComponent = ctx.isComponentFn
   const prevHookResultVarMap = ctx.hookResultVarMap
   const prevHookFunctionAliases = ctx.hookFunctionAliases
+  const prevHookFunctionMemberAliases = ctx.hookFunctionMemberAliases
   const prevInModule = ctx.inModule
   const prevContextLocalName = ctx.contextLocalName
   const prevLocalValueVars = ctx.localValueVars
@@ -8959,6 +9244,7 @@ function lowerFunctionWithRegions(
   ctx.noMemo = !!(prevNoMemo || fn.meta?.noMemo)
   ctx.hookResultVarMap = new Map()
   ctx.hookFunctionAliases = new Map(prevHookFunctionAliases ?? [])
+  ctx.hookFunctionMemberAliases = new Map(prevHookFunctionMemberAliases ?? [])
   // Save and initialize componentFunctionDefs for this function scope
   const prevComponentFunctionDefs = ctx.componentFunctionDefs
   const prevComponentFunctionMutations = ctx.componentFunctionMutations
@@ -9802,6 +10088,7 @@ function lowerFunctionWithRegions(
       ctx.wrapTrackedExpressions = prevWrapTracked
       ctx.hookResultVarMap = prevHookResultVarMap
       ctx.hookFunctionAliases = prevHookFunctionAliases
+      ctx.hookFunctionMemberAliases = prevHookFunctionMemberAliases
       ctx.inModule = prevInModule
       ctx.contextLocalName = prevContextLocalName
       ctx.resumablePropAccessors = prevResumablePropAccessors
@@ -9836,6 +10123,7 @@ function lowerFunctionWithRegions(
     ctx.wrapTrackedExpressions = prevWrapTracked
     ctx.hookResultVarMap = prevHookResultVarMap
     ctx.hookFunctionAliases = prevHookFunctionAliases
+    ctx.hookFunctionMemberAliases = prevHookFunctionMemberAliases
     ctx.inModule = prevInModule
     ctx.contextLocalName = prevContextLocalName
     ctx.resumablePropAccessors = prevResumablePropAccessors
@@ -9974,6 +10262,7 @@ function lowerFunctionWithRegions(
   ctx.isComponentFn = prevIsComponent
   ctx.hookResultVarMap = prevHookResultVarMap
   ctx.hookFunctionAliases = prevHookFunctionAliases
+  ctx.hookFunctionMemberAliases = prevHookFunctionMemberAliases
   ctx.propsParamName = prevPropsParam
   ctx.propAccessorDecls = prevPropAccessors
   ctx.resumablePropAccessors = prevResumablePropAccessors
