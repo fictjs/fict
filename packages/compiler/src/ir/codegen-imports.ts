@@ -78,7 +78,7 @@ export function collectDeclaredNames(
         if (t.isVariableDeclaration(decl)) {
           for (const d of decl.declarations) addPatternNames(d.id)
         }
-      } else {
+      } else if (!stmt.source) {
         for (const spec of stmt.specifiers) {
           if ((spec as { exportKind?: string | null }).exportKind === 'type') continue
           if (t.isExportSpecifier(spec)) {

@@ -119,6 +119,95 @@ describe('runtime helper name collisions', () => {
     expect(output).toMatch(/const count = __fictUseSignal\(__fictCtx, 1/)
   })
 
+  it('imports runtime helpers when helper names are only re-exported from another module', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        export { __fictUseSignal } from './runtime-alias'
+
+        export function App() {
+          let count = $state(1)
+          return <span>{count}</span>
+        }
+      `,
+      { dev: false, optimize: true },
+    )
+
+    expect(output).toMatch(/import \{[^}]*__fictUseSignal[^}]*\} from ["']fict\/internal["']/)
+    expect(output).toMatch(/import \{[^}]*__fictUseMemo[^}]*\} from ["']fict\/internal["']/)
+    expect(output).toMatch(/import \{[^}]*template[^}]*\} from ["']fict\/internal["']/)
+    expect(output).toMatch(/import \{[^}]*insertBetween[^}]*\} from ["']fict\/internal["']/)
+    expect(output).toMatch(/export \{ __fictUseSignal \} from ["']\.\/runtime-alias["'];/)
+    expect(output).toMatch(/const count = __fictUseSignal\(__fictCtx, 1/)
+  })
+
+  it('keeps local export specifiers in the declared-name set', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        const __fictUseSignal = () => 'local signal'
+        export { __fictUseSignal }
+
+        export function useProbe() {
+          let count = $state(1)
+          return count
+        }
+      `,
+      { dev: false, optimize: true },
+    )
+
+    expect(output).toMatch(/__fictUseSignal as __fictUseSignal_1/)
+    expect(output).toContain('const __fictUseSignal = () => "local signal";')
+    expect(output).toContain('export { __fictUseSignal };')
+    expect(output).toMatch(/const count = __fictUseSignal_1\(__fictCtx, 1/)
+  })
+
+  it('imports helpers for renamed re-exported helper names', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        export { __fictUseSignal as forwardedSignal } from './runtime-alias'
+
+        export function useProbe() {
+          let count = $state(1)
+          return count
+        }
+      `,
+      { dev: false, optimize: true },
+    )
+
+    expect(output).toMatch(/import \{[^}]*__fictUseSignal[^}]*\} from ["']fict\/internal["']/)
+    expect(output).toMatch(
+      /export \{ __fictUseSignal as forwardedSignal \} from ["']\.\/runtime-alias["'];/,
+    )
+    expect(output).toMatch(/const count = __fictUseSignal\(__fictCtx, 1/)
+  })
+
+  it('imports helpers for string-literal re-exported helper names', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        export { __fictUseSignal as "helper-signal" } from './runtime-alias'
+
+        export function useProbe() {
+          let count = $state(1)
+          return count
+        }
+      `,
+      { dev: false, optimize: true },
+    )
+
+    expect(output).toMatch(/import \{[^}]*__fictUseSignal[^}]*\} from ["']fict\/internal["']/)
+    expect(output).toMatch(
+      /export \{ __fictUseSignal as "helper-signal" \} from ["']\.\/runtime-alias["'];/,
+    )
+    expect(output).toMatch(/const count = __fictUseSignal\(__fictCtx, 1/)
+  })
+
   it('renames inlined for-of and for-in helpers when source declares their names', () => {
     const output = transform(
       `
