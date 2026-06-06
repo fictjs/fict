@@ -80,8 +80,8 @@ describe('Fict Compiler - Basic Transforms', () => {
         }
       `
       const output = transform(input)
-      expect(output).toMatch(/count\(__prev_\d+ \+ \(typeof __prev_\d+ === "bigint" \? 1n : 1\)\)/)
-      expect(output).toMatch(/count\(__prev_\d+ - \(typeof __prev_\d+ === "bigint" \? 1n : 1\)\)/)
+      expect(output).toMatch(/count\(\+\+__prev_\d+\)/)
+      expect(output).toMatch(/count\(--__prev_\d+\)/)
     })
 
     it('preserves computed object properties instead of dropping them', () => {
@@ -460,7 +460,7 @@ describe('Fict Compiler - Basic Transforms', () => {
       // Event handler should not be wrapped in an additional arrow function
       // Non fine-grained path keeps handlers as direct props.
       expect(output).toMatch(
-        /onClick:\s*\(\)\s*=>\s*\(__prev_\d+\s*=>\s*\(count\(__prev_\d+\s*\+\s*\(typeof __prev_\d+ === "bigint" \? 1n : 1\)\),\s*__prev_\d+\)\)\(count\(\)\)/,
+        /onClick:\s*\(\)\s*=>\s*\(__prev_\d+\s*=>\s*\(__old_\d+\s*=>\s*\(count\(__prev_\d+\),\s*__old_\d+\)\)\(__prev_\d+\+\+\)\)\(count\(\)\)/,
       )
       expect(output).not.toContain('onClick: () => () =>')
     })

@@ -518,9 +518,7 @@ describe('tracked reads/writes in HIR codegen', () => {
 
     expect(code).toContain('const props = useCounter()')
     expect(code).toContain('props.count()')
-    expect(code).toMatch(
-      /props\.count\(__prev_\d+ \+ \(typeof __prev_\d+ === "bigint" \? 1n : 1\)\)/,
-    )
+    expect(code).toMatch(/props\.count\(\+\+__prev_\d+\)/)
     expect(code).toContain('props.double()')
   })
 
@@ -586,7 +584,7 @@ describe('tracked reads/writes in HIR codegen', () => {
 
     expect(code).toContain('const count = useCount()')
     expect(code).toMatch(/count\(\)/)
-    expect(code).toMatch(/count\(__prev_\d+ \+ \(typeof __prev_\d+ === "bigint" \? 1n : 1\)\)/)
+    expect(code).toMatch(/count\(\+\+__prev_\d+\)/)
   })
 
   it('handles hook return spread into rest binding', () => {
@@ -610,9 +608,7 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(code).toMatch(/useCounter\(\)/)
     expect(code).toMatch(/__fictObjectRest\([^,]+, \[\]\)/)
     expect(code).toContain('props.count()')
-    expect(code).toMatch(
-      /props\.count\(__prev_\d+ \+ \(typeof __prev_\d+ === "bigint" \? 1n : 1\)\)/,
-    )
+    expect(code).toMatch(/props\.count\(\+\+__prev_\d+\)/)
     expect(code).toContain('props.double()')
   })
 

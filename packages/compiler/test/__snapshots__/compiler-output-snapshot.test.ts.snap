@@ -8,29 +8,29 @@ export function Branch() {
     name: "count"
   });
   return (() => {
-    const __cond_10 = createConditional(() => count() > 1, () => {
+    const __cond_12 = createConditional(() => count() > 1, () => {
       return (() => {
         const __tmpl_1 = template("<button>High <!--fict:slot:start--><!--fict:slot:end--></button>");
         const __root_0 = __tmpl_1();
         const __el_2 = resolvePath(__root_0, [1]);
-        addEventListener(__root_0, "click", () => (__prev_3 => (count(__prev_3 + (typeof __prev_3 === "bigint" ? 1n : 1)), __prev_3))(count()), true);
-        const __end_4 = getSlotEnd(__el_2);
-        insertBetween(__el_2, __end_4, () => count(), createElement);
+        addEventListener(__root_0, "click", () => (__prev_3 => (__old_4 => (count(__prev_3), __old_4))(__prev_3++))(count()), true);
+        const __end_5 = getSlotEnd(__el_2);
+        insertBetween(__el_2, __end_5, () => count(), createElement);
         return __root_0;
       })();
     }, createElement, () => {
       return (() => {
-        const __tmpl_6 = template("<button>Low <!--fict:slot:start--><!--fict:slot:end--></button>");
-        const __root_5 = __tmpl_6();
-        const __el_7 = resolvePath(__root_5, [1]);
-        addEventListener(__root_5, "click", () => (__prev_8 => (count(__prev_8 + (typeof __prev_8 === "bigint" ? 1n : 1)), __prev_8))(count()), true);
-        const __end_9 = getSlotEnd(__el_7);
-        insertBetween(__el_7, __end_9, () => count(), createElement);
-        return __root_5;
+        const __tmpl_7 = template("<button>Low <!--fict:slot:start--><!--fict:slot:end--></button>");
+        const __root_6 = __tmpl_7();
+        const __el_8 = resolvePath(__root_6, [1]);
+        addEventListener(__root_6, "click", () => (__prev_9 => (__old_10 => (count(__prev_9), __old_10))(__prev_9++))(count()), true);
+        const __end_11 = getSlotEnd(__el_8);
+        insertBetween(__el_8, __end_11, () => count(), createElement);
+        return __root_6;
       })();
     });
-    onDestroy(__cond_10.dispose);
-    return __cond_10;
+    onDestroy(__cond_12.dispose);
+    return __cond_12;
   })();
 }"
 `;

@@ -2592,40 +2592,48 @@ function lowerExpressionImpl(
     operator: '++' | '--',
     prefix: boolean,
   ): BabelCore.types.Expression => {
-    const op = operator === '++' ? '+' : '-'
     const current = t.callExpression(t.cloneNode(callee, true), [])
     const prevId = genTemp(ctx, 'prev')
-    const buildDelta = (valueExpr: BabelCore.types.Expression): BabelCore.types.Expression =>
-      t.conditionalExpression(
-        t.binaryExpression(
-          '===',
-          t.unaryExpression('typeof', valueExpr),
-          t.stringLiteral('bigint'),
-        ),
-        t.bigIntLiteral('1'),
-        t.numericLiteral(1),
-      )
-    const buildNext = (valueExpr: BabelCore.types.Expression): BabelCore.types.BinaryExpression =>
-      t.binaryExpression(op, valueExpr, buildDelta(valueExpr))
+    const prevRef = (): BabelCore.types.Identifier => t.identifier(prevId.name)
+    const buildUpdate = (isPrefix: boolean): BabelCore.types.UpdateExpression =>
+      t.updateExpression(operator, prevRef(), isPrefix)
     if (!valueUsed) {
       return t.callExpression(
         t.arrowFunctionExpression(
           [t.cloneNode(prevId, true)],
-          t.callExpression(t.cloneNode(callee, true), [buildNext(t.identifier(prevId.name))]),
+          t.callExpression(t.cloneNode(callee, true), [buildUpdate(true)]),
         ),
         [current],
       )
     }
 
-    const prevForSet = t.identifier(prevId.name)
-    const prevForResult = t.identifier(prevId.name)
+    if (prefix) {
+      return t.callExpression(
+        t.arrowFunctionExpression(
+          [t.cloneNode(prevId, true)],
+          t.sequenceExpression([
+            t.callExpression(t.cloneNode(callee, true), [buildUpdate(true)]),
+            prevRef(),
+          ]),
+        ),
+        [current],
+      )
+    }
+
+    const oldId = genTemp(ctx, 'old')
     return t.callExpression(
       t.arrowFunctionExpression(
         [t.cloneNode(prevId, true)],
-        t.sequenceExpression([
-          t.callExpression(t.cloneNode(callee, true), [buildNext(prevForSet)]),
-          prefix ? buildNext(prevForResult) : prevForResult,
-        ]),
+        t.callExpression(
+          t.arrowFunctionExpression(
+            [t.cloneNode(oldId, true)],
+            t.sequenceExpression([
+              t.callExpression(t.cloneNode(callee, true), [prevRef()]),
+              t.identifier(oldId.name),
+            ]),
+          ),
+          [buildUpdate(false)],
+        ),
       ),
       [current],
     )

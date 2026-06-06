@@ -1005,8 +1005,8 @@ describe('createFictPlugin (HIR)', () => {
         }
       `)
 
-      expect(output).toMatch(/count\(__prev_\d+ \+ \(typeof __prev_\d+ === "bigint" \? 1n : 1\)\)/)
-      expect(output).toMatch(/count\(__prev_\d+ - \(typeof __prev_\d+ === "bigint" \? 1n : 1\)\)/)
+      expect(output).toMatch(/count\(\+\+__prev_\d+\)/)
+      expect(output).toMatch(/count\(--__prev_\d+\)/)
     })
   })
 

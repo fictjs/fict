@@ -382,6 +382,69 @@ describe('state write expression semantics', () => {
     expect(values).toEqual([1, 3, 5, 7, 7])
   })
 
+  it('preserves ToNumeric coercion for update expressions on $state', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useUpdateCoercionSemantics() {
+        let a = $state('1')
+        const aPost = a++
+
+        let b = $state(true)
+        const bPre = ++b
+
+        let c = $state(null)
+        const cPost = c++
+
+        let d = $state('')
+        const dPre = ++d
+
+        let e = $state({
+          valueOf() {
+            return 4
+          },
+        })
+        const ePost = e--
+
+        let f = $state({
+          toString() {
+            return '5'
+          },
+        })
+        const fPre = --f
+
+        let g = $state(Object(6n))
+        const gPost = g++
+
+        return [aPost, a, bPre, b, cPost, c, dPre, d, ePost, e, fPre, f, gPost, g]
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useUpdateCoercionSemantics')() as unknown[]
+    const values = raw.map(value =>
+      typeof value === 'function' ? (value as () => unknown)() : value,
+    )
+    expect(values).toEqual([1, 2, 2, 2, 0, 1, 1, 1, 4, 3, 4, 4, 6n, 7n])
+  })
+
+  it('does not write $state update expressions when ToNumeric throws', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useThrowingUpdateCoercion() {
+        let value = $state(Symbol('bad'))
+        return value++
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    expect(output).toMatch(/value\(\+\+__prev_\d+\)/)
+    expect(() => compiledFunction(mod, 'useThrowingUpdateCoercion')()).toThrow(
+      /Cannot convert a Symbol value/,
+    )
+  })
+
   it('preserves full compound/logical assignment semantics on $state', () => {
     const source = `
       import { $state } from 'fict'
