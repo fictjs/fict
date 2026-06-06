@@ -495,36 +495,156 @@ function collectFunctionMutationExpression(
   expr: Expression | null | undefined,
   ownerByName: Map<string, string>,
   mutations: Map<string, Set<string>>,
+  shadowed: Set<string> = new Set(),
 ): void {
   if (!expr) return
-  const recordTarget = (target: Expression, detail: string): void => {
-    const root = getIdentifierRootName(target)
-    if (!root) return
-    const owner = ownerByName.get(root)
+  const recordNameMutation = (
+    name: string,
+    detail: string,
+    activeShadowed: Set<string> = shadowed,
+  ): void => {
+    const normalized = deSSAVarName(name)
+    if (activeShadowed.has(normalized)) return
+    const owner = ownerByName.get(normalized)
     if (!owner) return
     const details = mutations.get(owner) ?? new Set<string>()
     details.add(detail)
     mutations.set(owner, details)
   }
-  const recordMemberMutation = (target: Expression, kind: string): void => {
-    if (target.kind !== 'MemberExpression' && target.kind !== 'OptionalMemberExpression') return
+  const recordTarget = (target: Expression, detail: string): void => {
+    const root = getIdentifierRootName(target)
+    if (!root) return
+    recordNameMutation(root, detail)
+  }
+  const recordMutationTarget = (target: Expression, kind: string): void => {
     const path = formatMemberMutationPath(target) ?? getIdentifierRootName(target) ?? '*'
     recordTarget(target, `${kind} ${path}`)
+  }
+  const collectBlockMutations = (blocks: BasicBlock[], inheritedShadowed: Set<string>): void => {
+    const localShadowed = new Set(inheritedShadowed)
+    for (const block of blocks) {
+      for (const instr of block.instructions) {
+        if (instr.kind === 'Assign' && instr.declarationKind) {
+          localShadowed.add(deSSAVarName(instr.target.name))
+        }
+      }
+    }
+
+    for (const block of blocks) {
+      for (const instr of block.instructions) {
+        if (instr.kind === 'Assign' && !instr.declarationKind) {
+          const targetName = deSSAVarName(instr.target.name)
+          recordNameMutation(targetName, `= ${targetName}`, localShadowed)
+        }
+        if (instr.kind === 'Assign' || instr.kind === 'Expression') {
+          collectFunctionMutationExpression(instr.value, ownerByName, mutations, localShadowed)
+        }
+      }
+      switch (block.terminator.kind) {
+        case 'Return':
+          collectFunctionMutationExpression(
+            block.terminator.argument ?? null,
+            ownerByName,
+            mutations,
+            localShadowed,
+          )
+          break
+        case 'Throw':
+          collectFunctionMutationExpression(
+            block.terminator.argument,
+            ownerByName,
+            mutations,
+            localShadowed,
+          )
+          break
+        case 'Branch':
+          collectFunctionMutationExpression(
+            block.terminator.test,
+            ownerByName,
+            mutations,
+            localShadowed,
+          )
+          break
+        case 'Switch':
+          collectFunctionMutationExpression(
+            block.terminator.discriminant,
+            ownerByName,
+            mutations,
+            localShadowed,
+          )
+          block.terminator.cases.forEach(item =>
+            collectFunctionMutationExpression(
+              item.test ?? null,
+              ownerByName,
+              mutations,
+              localShadowed,
+            ),
+          )
+          break
+        case 'ForOf':
+          collectFunctionMutationExpression(
+            block.terminator.iterable,
+            ownerByName,
+            mutations,
+            localShadowed,
+          )
+          collectFunctionMutationExpression(
+            block.terminator.assignmentTarget ?? null,
+            ownerByName,
+            mutations,
+            localShadowed,
+          )
+          break
+        case 'ForIn':
+          collectFunctionMutationExpression(
+            block.terminator.object,
+            ownerByName,
+            mutations,
+            localShadowed,
+          )
+          collectFunctionMutationExpression(
+            block.terminator.assignmentTarget ?? null,
+            ownerByName,
+            mutations,
+            localShadowed,
+          )
+          break
+        default:
+          break
+      }
+    }
   }
 
   walkExpression(
     expr,
     node => {
+      if (node.kind === 'ArrowFunction') {
+        const nextShadowed = new Set(shadowed)
+        node.params.forEach(param => nextShadowed.add(deSSAVarName(param.name)))
+        if (node.isExpression && !Array.isArray(node.body)) {
+          collectFunctionMutationExpression(node.body, ownerByName, mutations, nextShadowed)
+        } else if (Array.isArray(node.body)) {
+          collectBlockMutations(node.body, nextShadowed)
+        }
+        return
+      }
+      if (node.kind === 'FunctionExpression') {
+        const nextShadowed = new Set(shadowed)
+        if (node.name) nextShadowed.add(deSSAVarName(node.name))
+        node.params.forEach(param => nextShadowed.add(deSSAVarName(param.name)))
+        collectBlockMutations(node.body, nextShadowed)
+        return
+      }
       if (node.kind === 'AssignmentExpression') {
-        recordMemberMutation(node.left, node.operator)
+        recordMutationTarget(node.left, node.operator)
         return
       }
       if (node.kind === 'UpdateExpression') {
-        recordMemberMutation(node.argument, node.operator)
+        recordMutationTarget(node.argument, node.operator)
         return
       }
       if (node.kind === 'UnaryExpression' && node.operator === 'delete') {
-        recordMemberMutation(node.argument, 'delete')
+        recordMutationTarget(node.argument, 'delete')
         return
       }
       if (node.kind !== 'CallExpression' && node.kind !== 'OptionalCallExpression') return

@@ -213,6 +213,12 @@ export function extractDelegatedEventDataFromHIR(
   if (!ctx.functionVars?.has(normalizedHandlerName)) {
     return null
   }
+  if (ctx.mutatedVars?.has(normalizedHandlerName)) {
+    return null
+  }
+  if (ctx.componentFunctionMutations?.has(normalizedHandlerName)) {
+    return null
+  }
   if (
     ctx.signalVars?.has(handlerName) ||
     ctx.memoVars?.has(handlerName) ||

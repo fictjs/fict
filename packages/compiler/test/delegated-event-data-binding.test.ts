@@ -18,6 +18,25 @@ describe('Delegated event data binding', () => {
     )
   })
 
+  it('does not extract data binding for reassigned handlers', () => {
+    const source = `
+      export function App() {
+        let handleClick = function (id) {
+          return id
+        }
+        handleClick = function (id) {
+          return id + 1
+        }
+        return <button onClick={() => handleClick(1)}>Click</button>
+      }
+    `
+    const output = transform(source)
+
+    expect(output).toMatch(/addEventListener\([^,]+,\s*"click",/)
+    expect(output).toContain('handleClick(1)')
+    expect(output).not.toMatch(/addEventListener\([^,]+,\s*"click",\s*\[handleClick,\s*1/)
+  })
+
   it('preserves explicit delegated event handler tuples', () => {
     const source = `
       export function App() {

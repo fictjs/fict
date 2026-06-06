@@ -4915,8 +4915,14 @@ function lowerIntrinsicElement(
         let dataBinding =
           isDelegated && !shouldTreatAsReactiveHandler
             ? extractDelegatedEventData(handlerValueExpr, t, {
-                isKnownHandlerIdentifier: name =>
-                  ctx.functionVars?.has(deSSAVarName(name)) ?? false,
+                isKnownHandlerIdentifier: name => {
+                  const normalized = deSSAVarName(name)
+                  return (
+                    (ctx.functionVars?.has(normalized) ?? false) &&
+                    !(ctx.mutatedVars?.has(normalized) ?? false) &&
+                    !(ctx.componentFunctionMutations?.has(normalized) ?? false)
+                  )
+                },
               })
             : null
         if (dataBinding && t.isIdentifier(dataBinding.handler)) {

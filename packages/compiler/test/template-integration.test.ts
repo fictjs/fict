@@ -5652,6 +5652,50 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps reassigned delegated data handlers live', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const log: string[] = []
+      export let api: { swap(): void }
+
+      export function App() {
+        let handle = (id: number) => log.push('a:' + id)
+        api = {
+          swap() {
+            handle = (id: number) => log.push('b:' + id)
+          },
+        }
+        return <button data-id="btn" onClick={() => handle(1)}>go</button>
+      }
+
+      export function mount(el: HTMLElement) {
+        log.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      api: { swap(): void }
+      log: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const button = container.querySelector('[data-id="btn"]') as HTMLButtonElement
+
+    button.click()
+    mod.api.swap()
+    button.click()
+    await flushUpdates()
+
+    expect(mod.log).toEqual(['a:1', 'b:1'])
+
+    teardown()
+    container.remove()
+  })
+
   it('wires namespaced on: event handlers in fine-grained mode', async () => {
     const source = `
       import { render } from 'fict'
