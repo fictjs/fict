@@ -484,6 +484,48 @@ describe('serializeValue / deserializeValue', () => {
 
       expect(Object.getPrototypeOf(result)).toBe(null)
       expect(result.a).toBe(1)
+      expect('toString' in result).toBe(false)
+    })
+
+    it('should preserve nested null-prototype objects', () => {
+      const child = Object.create(null) as Record<string, unknown>
+      child.a = 1
+      const obj = { child }
+
+      const result = deserializeValue(JSON.parse(JSON.stringify(serializeValue(obj)))) as {
+        child: Record<string, unknown>
+      }
+
+      expect(Object.getPrototypeOf(result)).toBe(Object.prototype)
+      expect(Object.getPrototypeOf(result.child)).toBe(null)
+      expect(result.child.a).toBe(1)
+      expect('toString' in result.child).toBe(false)
+    })
+
+    it('should preserve marker-like keys on null-prototype objects', () => {
+      const obj = Object.create(null) as Record<string, unknown>
+      obj.__t = 'u'
+      obj.value = 1
+
+      const result = deserializeValue(JSON.parse(JSON.stringify(serializeValue(obj)))) as Record<
+        string,
+        unknown
+      >
+
+      expect(Object.getPrototypeOf(result)).toBe(null)
+      expect(result.__t).toBe('u')
+      expect(result.value).toBe(1)
+      expect('toString' in result).toBe(false)
+    })
+
+    it('should keep ordinary objects on Object.prototype', () => {
+      const result = deserializeValue(
+        JSON.parse(JSON.stringify(serializeValue({ a: 1 }))),
+      ) as Record<string, unknown>
+
+      expect(Object.getPrototypeOf(result)).toBe(Object.prototype)
+      expect(result.a).toBe(1)
+      expect('toString' in result).toBe(true)
     })
 
     it('should serialize plain accessor objects as current values', () => {
