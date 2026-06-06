@@ -405,6 +405,23 @@ function throwAsyncRenderHookAfterAwait(
   )
 }
 
+function throwGeneratorComponentOrHook(
+  fn: HIRFunction,
+  ctx: CodegenContext,
+  kind: 'component' | 'hook',
+): never {
+  const name = fn.name ?? '<anonymous>'
+  throw new HIRError(
+    `Generator ${kind} "${name}" is not supported by the current synchronous render ABI. Use a normal function or move generator logic into a non-component helper.`,
+    'BUILD_ERROR',
+    {
+      file: ctx.options?.filename,
+      line: fn.loc?.start.line,
+      variable: name,
+    },
+  )
+}
+
 function eventHandlerExpressionNeedsReactiveGetter(expr: Expression, ctx: CodegenContext): boolean {
   const deps = new Set<string>()
   collectExpressionDependencies(expr, deps)
@@ -8994,6 +9011,9 @@ function lowerFunctionWithRegions(
     (ctx.aliasVars?.size ?? 0) > 0
   const isAsync = !!fn.meta?.isAsync || functionHasAsyncAwait(fn)
   const isGenerator = !!fn.meta?.isGenerator || functionHasYield(fn)
+  if (isGenerator && (isComponent || inferredHook)) {
+    throwGeneratorComponentOrHook(fn, ctx, isComponent ? 'component' : 'hook')
+  }
   if (
     isAsync &&
     (isComponent || inferredHook) &&

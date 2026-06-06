@@ -1404,6 +1404,72 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).toContain('await Promise.resolve()')
   })
 
+  it.each([
+    {
+      name: 'local declaration',
+      source: `
+        import { $state } from 'fict'
+
+        function* App() {
+          const count = $state(1)
+          return <div>{count}</div>
+        }
+      `,
+    },
+    {
+      name: 'exported declaration',
+      source: `
+        import { $state } from 'fict'
+
+        export function* App() {
+          const count = $state(1)
+          return <div>{count}</div>
+        }
+      `,
+    },
+  ])('rejects generator components: $name', testCase => {
+    expect(() => transform(testCase.source)).toThrow(/Generator component "App"/)
+  })
+
+  it('rejects generator hooks', () => {
+    expect(() =>
+      transform(`
+        export function* useItems() {
+          yield 1
+        }
+      `),
+    ).toThrow(/Generator hook "useItems"/)
+  })
+
+  it('allows ordinary generator helper functions', () => {
+    const output = transform(`
+      export function* values() {
+        yield 1
+      }
+    `)
+
+    expect(output).toContain('export function* values()')
+    expect(output).toContain('yield 1')
+  })
+
+  it('allows generator functions passed as ordinary values', () => {
+    const output = transform(`
+      function Child(props) {
+        return <div>{props.make}</div>
+      }
+
+      export function App() {
+        const make = function* () {
+          yield 1
+        }
+        return <Child make={make} />
+      }
+    `)
+
+    expect(output).toContain('function* ()')
+    expect(output).toContain('make')
+  })
+
   it('preserves meta-property identifiers from reactive overrides', () => {
     const output = transform(`
       import { $state } from 'fict'

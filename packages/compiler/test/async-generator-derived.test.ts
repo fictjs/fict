@@ -49,8 +49,9 @@ describe('async and generator derived initializers', () => {
     expect(output).not.toContain('() => await')
   })
 
-  it('does not wrap reactive yield initializers in sync memo getters', () => {
-    const output = transform(`
+  it('rejects generator hooks with reactive yield initializers', () => {
+    expect(() =>
+      transform(`
       import { $state } from 'fict'
 
       export function* useF() {
@@ -58,14 +59,13 @@ describe('async and generator derived initializers', () => {
         const v = yield count
         return v
       }
-    `)
-
-    expect(output).toContain('const v = yield count()')
-    expect(output).not.toContain('() => yield')
+    `),
+    ).toThrow(/Generator hook "useF"/)
   })
 
-  it('does not wrap reactive yield delegates in sync memo getters', () => {
-    const output = transform(`
+  it('rejects generator hooks with reactive yield delegates', () => {
+    expect(() =>
+      transform(`
       import { $state } from 'fict'
 
       export function* useF() {
@@ -73,9 +73,7 @@ describe('async and generator derived initializers', () => {
         const v = yield* items
         return v
       }
-    `)
-
-    expect(output).toContain('const v = yield* items()')
-    expect(output).not.toContain('() => yield')
+    `),
+    ).toThrow(/Generator hook "useF"/)
   })
 })
