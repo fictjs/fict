@@ -872,6 +872,264 @@ describe('Cross-Module Reactivity', () => {
       expect(output).not.toContain('return state?.["count"];')
     })
 
+    it('does not unwrap hook-result members when nested bindings shadow hook results', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const moduleMetadata = new Map()
+      transform(hookSource, { moduleMetadata }, path.join(baseDir, 'use-counter-shadow.tsx'))
+
+      const cases = [
+        {
+          name: 'arrow param',
+          source: `
+            export function App() {
+              const counter = useCounter()
+              const read = counter => counter.count
+              return read({ count: 1 }) + counter.count
+            }
+          `,
+          inner: /\(counter => counter\.count\)\(\{/,
+          forbidden: /counter => counter\.count\(\)/,
+          outer: /counter\.count\(\)/,
+        },
+        {
+          name: 'function expression param',
+          source: `
+            export function App() {
+              const counter = useCounter()
+              const read = function (counter) {
+                return counter.count
+              }
+              return read({ count: 2 }) + counter.count
+            }
+          `,
+          inner: /function \(counter\) {\s*return counter\.count;\s*}/s,
+          forbidden: /function \(counter\) {\s*return counter\.count\(\);/s,
+          outer: /counter\.count\(\)/,
+        },
+        {
+          name: 'function declaration param',
+          source: `
+            export function App() {
+              const counter = useCounter()
+              function read(counter) {
+                return counter.count
+              }
+              return read({ count: 3 }) + counter.count
+            }
+          `,
+          inner: /function read\(counter\) {\s*return counter\.count;\s*}/s,
+          forbidden: /function read\(counter\) {\s*return counter\.count\(\);/s,
+          outer: /counter\.count\(\)/,
+        },
+        {
+          name: 'destructured param',
+          source: `
+            export function App() {
+              const counter = useCounter()
+              const read = ({ counter }) => counter.count
+              return read({ counter: { count: 4 } }) + counter.count
+            }
+          `,
+          inner: /\(\{\s*counter\s*\}\) => counter\.count/,
+          forbidden: /\(\{\s*counter\s*\}\) => counter\.count\(\)/,
+          outer: /counter\.count\(\)/,
+        },
+        {
+          name: 'catch param',
+          source: `
+            export function App() {
+              const counter = useCounter()
+              const read = input => {
+                try {
+                  throw input
+                } catch (counter) {
+                  return counter.count
+                }
+              }
+              return read({ count: 5 }) + counter.count
+            }
+          `,
+          inner: /catch \(counter\) {\s*return counter\.count;\s*}/s,
+          forbidden: /catch \(counter\) {\s*return counter\.count\(\);/s,
+          outer: /counter\.count\(\)/,
+        },
+        {
+          name: 'block local',
+          source: `
+            export function App() {
+              const counter = useCounter()
+              const read = () => {
+                {
+                  const counter = { count: 6 }
+                  return counter.count
+                }
+              }
+              return read() + counter.count
+            }
+          `,
+          inner: /const counter = {\s*count: 6\s*};\s*return counter\.count;/s,
+          forbidden: /const counter = {\s*count: 6\s*};\s*return counter\.count\(\);/s,
+          outer: /counter\.count\(\)/,
+        },
+        {
+          name: 'shadow alias',
+          source: `
+            export function App() {
+              const counter = useCounter()
+              const read = counter => {
+                const alias = counter
+                return alias.count
+              }
+              return read({ count: 7 }) + counter.count
+            }
+          `,
+          inner: /(?:const|let) alias = counter;\s*return alias\.count;/s,
+          forbidden: /alias\.count\(\)/,
+          outer: /counter\.count\(\)/,
+        },
+        {
+          name: 'shadow writes and updates',
+          source: `
+            export function App() {
+              const counter = useCounter()
+              const mutate = counter => {
+                counter.count = 8
+                counter.count++
+                return counter.count
+              }
+              return mutate({ count: 7 }) + counter.count
+            }
+          `,
+          inner: /counter\.count = 8;\s*counter\.count\+\+;\s*return counter\.count;/s,
+          forbidden: /counter\.count\(8\)|counter\.count\(\+\+/,
+          outer: /counter\.count\(\)/,
+        },
+      ] as const
+
+      for (const scenario of cases) {
+        const output = transform(
+          `
+            import { useCounter } from './use-counter-shadow'
+            ${scenario.source}
+          `,
+          { moduleMetadata },
+          path.join(baseDir, `app-hook-result-shadow-${scenario.name.replace(/ /g, '-')}.tsx`),
+        )
+
+        expect(output, scenario.name).toMatch(scenario.inner)
+        expect(output, scenario.name).not.toMatch(scenario.forbidden)
+        expect(output, scenario.name).toMatch(scenario.outer)
+      }
+    })
+
+    it('does not unwrap shadowed hook-result members in JSX text expressions', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-shadow-jsx'
+
+        export function App() {
+          const counter = useCounter()
+          const read = counter => counter.count
+          return <span>{read({ count: 1 })}:{counter.count}</span>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(hookSource, { moduleMetadata }, path.join(baseDir, 'use-counter-shadow-jsx.tsx'))
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-hook-result-shadow-jsx.tsx'),
+      )
+
+      expect(output).toMatch(/const read = counter => counter\.count;/)
+      expect(output).not.toMatch(/counter => counter\.count\(\)/)
+      expect(output).toMatch(/counter\.count\(\)/)
+    })
+
+    it('does not unwrap direct hook results when nested bindings shadow them', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { directAccessor: 'signal' } */
+        export function useCount() {
+          const count = $state(0)
+          return count
+        }
+      `
+      const appSource = `
+        import { useCount } from './use-count-shadow-direct'
+
+        export function App() {
+          const count = useCount()
+          const read = count => count
+          return read(1) + count
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(hookSource, { moduleMetadata }, path.join(baseDir, 'use-count-shadow-direct.tsx'))
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-use-count-shadow-direct.tsx'),
+      )
+
+      expect(output).toMatch(/\(count => count\)\(1\) \+ count\(\)/)
+      expect(output).not.toMatch(/count => count\(\)/)
+    })
+
+    it('still unwraps unshadowed hook-result members inside nested functions', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-unshadowed-nested'
+
+        export function App() {
+          const counter = useCounter()
+          const read = () => counter.count
+          return read() + counter["count"]
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-unshadowed-nested.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-result-unshadowed-nested.tsx'),
+      )
+
+      expect(output).toMatch(/return \(\(\) => counter\.count\(\)\)\(\) \+ counter\["count"\]\(\);/)
+    })
+
     it('does not treat non-computed __proto__ hook returns as own props', () => {
       const hookPath = path.join(baseDir, 'hook-return-proto-object.tsx')
       const appPath = path.join(baseDir, 'app-hook-return-proto-object.tsx')

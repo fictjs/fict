@@ -915,7 +915,7 @@ export function propagateHookResultAlias(
     '_toArray',
   ])
   const mapSource = (source: string) => {
-    const hookName = ctx.hookResultVarMap?.get(source)
+    const hookName = getHookResultNameForLocal(source, ctx)
     if (!hookName) return
     ctx.hookResultVarMap?.set(targetBase, hookName)
     const info = getHookReturnInfo(hookName, ctx)
@@ -952,6 +952,12 @@ export function propagateHookResultAlias(
       }
     }
   }
+}
+
+function getHookResultNameForLocal(name: string, ctx: CodegenContext): string | null {
+  const baseName = deSSAVarName(name)
+  if (ctx.shadowedNames?.has(baseName) ?? false) return null
+  return ctx.hookResultVarMap?.get(baseName) ?? null
 }
 
 /**
@@ -1613,7 +1619,7 @@ function resolveHookReturnMemberInfo(
 ): { info: HookReturnInfo | null } | null {
   let info: HookReturnInfo | null | undefined
   if (expr.object.kind === 'Identifier') {
-    const hookName = ctx.hookResultVarMap?.get(deSSAVarName(expr.object.name))
+    const hookName = getHookResultNameForLocal(expr.object.name, ctx)
     if (!hookName) return null
     info = getHookReturnInfo(hookName, ctx)
   } else if (
@@ -4629,7 +4635,7 @@ function lowerDomExpression(
   ) {
     lowered = ctx.t.callExpression(lowered, [])
   } else if (!skipHookAccessors && ctx.t.isIdentifier(lowered)) {
-    const hookName = ctx.hookResultVarMap?.get(deSSAVarName(lowered.name))
+    const hookName = getHookResultNameForLocal(lowered.name, ctx)
     if (hookName) {
       const info = getHookReturnInfo(hookName, ctx)
       if (isCallableHookAccessorKind(info?.directAccessor)) {
