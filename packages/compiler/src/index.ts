@@ -1041,6 +1041,31 @@ function runWarningPass(
     if (firstArg !== argPath.node) return false
     return !!resolveReactiveScopeName(callPath.node.callee)
   }
+  const isStoreCreatorCall = (
+    callPath: BabelCore.NodePath<
+      BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
+    >,
+  ): boolean => {
+    const callee = unwrapTransparentCallCallee(callPath.node.callee, t)
+    const isStoreSource = (source: string | undefined) =>
+      source === 'fict' || source === 'fict/plus'
+    if (t.isIdentifier(callee)) {
+      const binding = callPath.scope.getBinding(callee.name)
+      if (!binding?.path.isImportSpecifier()) return false
+      const importDecl = binding.path.parentPath?.node
+      if (!t.isImportDeclaration(importDecl)) return false
+      const importedName = importSpecifierImportedName(binding.path.node, t)
+      return importedName === '$store' && isStoreSource(importDecl.source.value)
+    }
+    if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee)) return false
+    const propertyName = getStaticPropertyName(callee.property, callee.computed)
+    if (propertyName !== '$store') return false
+    if (!t.isIdentifier(callee.object)) return false
+    const binding = callPath.scope.getBinding(callee.object.name)
+    if (!binding?.path.isImportNamespaceSpecifier()) return false
+    const importDecl = binding.path.parentPath?.node
+    return t.isImportDeclaration(importDecl) && isStoreSource(importDecl.source.value)
+  }
   const capturedClosureByBinding = new Map<BabelCore.types.Identifier, Set<string>>()
   const capturedClosureByObjectProperty = new Map<
     BabelCore.types.Identifier,
@@ -2151,6 +2176,7 @@ function runWarningPass(
         }
         return
       }
+      if (isStoreCreatorCall(path)) return
 
       // Re-extract callee to reset TypeScript type narrowing from the $effect check above
       const callee = (path.node as unknown as BabelCore.types.CallExpression)
@@ -2936,6 +2962,8 @@ function createHIREntrypointVisitor(
         }
         const macroNamespaceBindingSources = new Map<BabelCore.types.Identifier, string>()
         const dollarMemoMacroBindingIds = new Set<BabelCore.types.Identifier>()
+        const storeCreatorBindingIds = new Set<BabelCore.types.Identifier>()
+        const storeCreatorNamespaceBindingIds = new Set<BabelCore.types.Identifier>()
         const reactiveCreationBindingIds = new Set<BabelCore.types.Identifier>()
         const reactiveCreationNamespaceBindingIds = new Set<BabelCore.types.Identifier>()
         const stateArgumentAllowedBindingIds = new Set<BabelCore.types.Identifier>()
@@ -2980,10 +3008,21 @@ function createHIREntrypointVisitor(
                 )
               }
             }
+            const addStoreNamespaceBinding = (localName: string): void => {
+              const binding = importPath.scope.getBinding(localName)
+              if (binding) {
+                storeCreatorNamespaceBindingIds.add(
+                  binding.identifier as BabelCore.types.Identifier,
+                )
+              }
+            }
             for (const spec of importPath.node.specifiers) {
               if (t.isImportNamespaceSpecifier(spec)) {
                 if (isFictMacroSource) {
                   addNamespaceBinding(spec.local.name)
+                }
+                if (source === 'fict' || source === 'fict/plus') {
+                  addStoreNamespaceBinding(spec.local.name)
                 }
                 if (isRuntimeSource) {
                   addImportBinding(reactiveCreationNamespaceBindingIds, spec.local.name)
@@ -3023,10 +3062,11 @@ function createHIREntrypointVisitor(
                     addImportBinding(macroBindingIds.memo, spec.local.name)
                   }
                 }
-                if (source === 'fict/plus' && importedName === '$store') {
+                if ((source === 'fict' || source === 'fict/plus') && importedName === '$store') {
                   fictImports.add(importedName)
                   if (t.isIdentifier(spec.local)) {
                     storeMacroNames.add(spec.local.name)
+                    addImportBinding(storeCreatorBindingIds, spec.local.name)
                   }
                 }
                 if (isReactiveCreationName(importedName)) {
@@ -3895,6 +3935,29 @@ function createHIREntrypointVisitor(
             dollarMemoMacroBindingIds.has(binding.identifier as BabelCore.types.Identifier)
           )
         }
+        const isImportedStoreCall = (
+          callPath: BabelCore.NodePath<
+            BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
+          >,
+        ): boolean => {
+          const callee = unwrapTransparentCallCallee(callPath.node.callee, t)
+          if (t.isIdentifier(callee)) {
+            const binding = callPath.scope.getBinding(callee.name)
+            return !!(
+              binding &&
+              storeCreatorBindingIds.has(binding.identifier as BabelCore.types.Identifier)
+            )
+          }
+          if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee)) return false
+          if (!t.isIdentifier(callee.object)) return false
+          const propertyName = getStaticMemberPropertyName(callee)
+          if (propertyName !== '$store') return false
+          const binding = callPath.scope.getBinding(callee.object.name)
+          return !!(
+            binding &&
+            storeCreatorNamespaceBindingIds.has(binding.identifier as BabelCore.types.Identifier)
+          )
+        }
         const isImportedStateArgumentAllowedCall = (
           callPath: BabelCore.NodePath<
             BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
@@ -4225,6 +4288,7 @@ function createHIREntrypointVisitor(
                   `Move the $memo() call before the nested block.`,
               )
             }
+            if (isImportedStoreCall(callPath)) return
             emitReactiveCreationPlacementWarning(callPath)
             validateMemberHookPlacement(callPath)
             validateDirectHookPlacement(callPath)
