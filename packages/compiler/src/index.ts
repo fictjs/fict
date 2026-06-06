@@ -663,6 +663,9 @@ function functionUsesStateLike<T extends BabelCore.types.Function>(
   t: typeof BabelCore.types,
 ): boolean {
   let found = false
+  const isFictMacroSource = (source: string): boolean => source === 'fict' || source === 'fict/slim'
+  const isSupportedMemoMacroSource = (source: string): boolean =>
+    isFictMacroSource(source) || source === 'fict/plus'
   const isStateLikeMacroBinding = (
     callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
   ) => {
@@ -670,17 +673,27 @@ function functionUsesStateLike<T extends BabelCore.types.Function>(
     const calleeName = callPath.node.callee.name
     const binding = callPath.scope.getBinding(calleeName)
     if (!binding) {
-      return calleeName === '$state' || calleeName === '$effect'
+      return calleeName === '$state' || calleeName === '$effect' || calleeName === '$memo'
     }
     const bindingNode = binding.path.node
     const importDecl = binding.path.parentPath?.node
-    return (
-      t.isImportSpecifier(bindingNode) &&
-      t.isIdentifier(bindingNode.imported) &&
-      (bindingNode.imported.name === '$state' || bindingNode.imported.name === '$effect') &&
-      t.isImportDeclaration(importDecl) &&
-      (importDecl.source.value === 'fict' || importDecl.source.value === 'fict/slim')
-    )
+    if (
+      !t.isImportSpecifier(bindingNode) ||
+      !t.isIdentifier(bindingNode.imported) ||
+      !t.isImportDeclaration(importDecl)
+    ) {
+      return false
+    }
+
+    const importedName = bindingNode.imported.name
+    const source = importDecl.source.value
+    if ((importedName === '$state' || importedName === '$effect') && isFictMacroSource(source)) {
+      return true
+    }
+    if (importedName === '$memo' && isSupportedMemoMacroSource(source)) {
+      return true
+    }
+    return importedName === 'createMemo' && isRuntimeImportModule(source)
   }
   fnPath.traverse({
     CallExpression(callPath) {

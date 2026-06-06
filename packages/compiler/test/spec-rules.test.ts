@@ -209,6 +209,85 @@ describe('Spec rule coverage', () => {
     ).toBe(true)
   })
 
+  it('warns when a no-return component only uses memo primitives', () => {
+    const cases = [
+      `
+        import { $memo } from 'fict'
+        function Counter() {
+          const value = $memo(() => 1)
+        }
+      `,
+      `
+        import { createMemo } from 'fict'
+        function Counter() {
+          const value = createMemo(() => 1)
+        }
+      `,
+      `
+        import { $memo as memo } from 'fict'
+        function Counter() {
+          const value = memo(() => 1)
+        }
+      `,
+      `
+        import { createMemo as memo } from 'fict'
+        function Counter() {
+          const value = memo(() => 1)
+        }
+      `,
+      `
+        import { $memo } from 'fict/plus'
+        function Counter() {
+          const value = $memo(() => 1)
+        }
+      `,
+    ]
+
+    for (const input of cases) {
+      expect(hasWarning(input, 'FICT-C004')).toBe(true)
+    }
+  })
+
+  it('does not warn for returning memo-only components, local memo shadows, or lowercase functions', () => {
+    expect(
+      hasWarning(
+        `
+          import { $memo } from 'fict'
+          function Counter() {
+            const value = $memo(() => 1)
+            return value
+          }
+        `,
+        'FICT-C004',
+      ),
+    ).toBe(false)
+
+    expect(
+      hasWarning(
+        `
+          import { $memo as memo } from 'fict'
+          function Counter() {
+            const memo = (fn: () => number) => fn()
+            const value = memo(() => 1)
+          }
+        `,
+        'FICT-C004',
+      ),
+    ).toBe(false)
+
+    expect(
+      hasWarning(
+        `
+          import { createMemo } from 'fict'
+          function counter() {
+            const value = createMemo(() => 1)
+          }
+        `,
+        'FICT-C004',
+      ),
+    ).toBe(false)
+  })
+
   it('does not classify local shadows of macro aliases as state-like usage', () => {
     expect(
       hasWarning(
