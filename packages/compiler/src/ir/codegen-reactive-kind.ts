@@ -41,6 +41,29 @@ function getRuntimeMemberKind(expr: Expression, ctx: CodegenContext): ReactiveEx
   return RUNTIME_REACTIVE_CREATORS.get(propName) ?? null
 }
 
+function normalizeReactiveCallee(expr: Expression): Expression {
+  if (expr.kind === 'SequenceExpression' && expr.expressions.length > 0) {
+    return normalizeReactiveCallee(expr.expressions[expr.expressions.length - 1]!)
+  }
+  return expr
+}
+
+function normalizeBabelReactiveCallee(
+  expr: BabelCore.types.CallExpression['callee'] | BabelCore.types.OptionalCallExpression['callee'],
+  t: typeof BabelCore.types,
+): BabelCore.types.CallExpression['callee'] | BabelCore.types.OptionalCallExpression['callee'] {
+  if (t.isSequenceExpression(expr) && expr.expressions.length > 0) {
+    return normalizeBabelReactiveCallee(expr.expressions[expr.expressions.length - 1]!, t)
+  }
+  if (t.isParenthesizedExpression(expr)) {
+    return normalizeBabelReactiveCallee(expr.expression, t)
+  }
+  if (t.isTSAsExpression(expr) || t.isTSTypeAssertion(expr) || t.isTSNonNullExpression(expr)) {
+    return normalizeBabelReactiveCallee(expr.expression, t)
+  }
+  return expr
+}
+
 export function getStaticPropName(expr: Expression, computed: boolean): string | number | null {
   if (!computed) {
     if (expr.kind === 'Identifier') {
@@ -62,7 +85,7 @@ export function getReactiveCallKind(
   ctx: CodegenContext,
 ): ReactiveExportKind | null {
   if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return null
-  const callee = expr.callee
+  const callee = normalizeReactiveCallee(expr.callee)
   if (callee.kind === 'Identifier') {
     const name = deSSAVarName(callee.name)
     if (expr.macro === 'state') return 'signal'
@@ -82,7 +105,7 @@ export function getReactiveCallKindFromBabel(
   ctx: CodegenContext,
   t: typeof BabelCore.types,
 ): ReactiveExportKind | null {
-  const callee = callExpr.callee
+  const callee = normalizeBabelReactiveCallee(callExpr.callee, t)
   if (t.isIdentifier(callee)) {
     const name = callee.name
     const macroKind = getFictMacroKind(callExpr)

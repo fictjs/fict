@@ -124,6 +124,81 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toMatch(/count\(\)/)
     })
 
+    it('publishes metadata for sequence-wrapped runtime reactive creator exports', () => {
+      const signalSource = `
+        import { createSignal } from 'fict/advanced'
+        export const count = (0, createSignal)(0)
+      `
+      const storeSource = `
+        import { createStore } from 'fict/advanced'
+        export const user = (0, createStore)({ name: 'Ada' })
+      `
+      const memoSource = `
+        import { createMemo } from 'fict/advanced'
+        const readDoubled = () => 2
+        export const doubled = (0, createMemo)(readDoubled)
+      `
+      const namespaceSource = `
+        import * as runtime from 'fict/advanced'
+        export const nsCount = (0, runtime.createSignal)(1)
+      `
+      const defaultSource = `
+        import { createSignal } from 'fict/advanced'
+        export default (0, createSignal)(0)
+      `
+      const nonRuntimeSource = `
+        function createSignal(value: number) {
+          return value
+        }
+
+        export const plain = (0, createSignal)(0)
+      `
+      const appSource = `
+        import { count } from './sequence-signal-export'
+
+        export function App() {
+          return <div>{count}</div>
+        }
+      `
+      const moduleMetadata = new Map()
+      const signalPath = path.join(baseDir, 'sequence-signal-export.ts')
+      const storePath = path.join(baseDir, 'sequence-store-export.ts')
+      const memoPath = path.join(baseDir, 'sequence-memo-export.ts')
+      const namespacePath = path.join(baseDir, 'sequence-namespace-export.ts')
+      const defaultPath = path.join(baseDir, 'sequence-default-export.ts')
+      const nonRuntimePath = path.join(baseDir, 'sequence-non-runtime-export.ts')
+
+      transform(signalSource, { moduleMetadata }, signalPath)
+      transform(storeSource, { moduleMetadata }, storePath)
+      transform(memoSource, { moduleMetadata }, memoPath)
+      transform(namespaceSource, { moduleMetadata }, namespacePath)
+      transform(defaultSource, { moduleMetadata }, defaultPath)
+      transform(nonRuntimeSource, { moduleMetadata }, nonRuntimePath)
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-sequence-signal-export.tsx'),
+      )
+
+      expect(moduleMetadata.get(path.resolve(signalPath))?.exports).toEqual({
+        count: 'signal',
+      })
+      expect(moduleMetadata.get(path.resolve(storePath))?.exports).toEqual({
+        user: 'store',
+      })
+      expect(moduleMetadata.get(path.resolve(memoPath))?.exports).toEqual({
+        doubled: 'memo',
+      })
+      expect(moduleMetadata.get(path.resolve(namespacePath))?.exports).toEqual({
+        nsCount: 'signal',
+      })
+      expect(moduleMetadata.get(path.resolve(defaultPath))?.exports).toEqual({
+        default: 'signal',
+      })
+      expect(moduleMetadata.get(path.resolve(nonRuntimePath))?.exports).toEqual({})
+      expect(output).toMatch(/count\(\)/)
+    })
+
     it('keeps destructured metadata conservative for defaults rest and non-reactive values', () => {
       const arrayDefaultSource = `
         import { createSignal } from 'fict/advanced'
@@ -183,6 +258,20 @@ describe('Cross-Module Reactivity', () => {
   })
 
   describe('Component Module (Imports)', () => {
+    it('tracks sequence-wrapped local runtime creator calls', () => {
+      const source = `
+        import { createSignal } from 'fict/advanced'
+
+        export function App() {
+          const count = (0, createSignal)(0)
+          return <div>{count}</div>
+        }
+      `
+      const output = transform(source, { fineGrainedDom: true })
+
+      expect(output).toMatch(/count\(\)/)
+    })
+
     it('compiles component using imported signal as function call', () => {
       const source = `
         import { count } from './store'
