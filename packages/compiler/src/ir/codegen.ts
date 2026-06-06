@@ -3695,6 +3695,9 @@ function lowerExpressionImpl(
       if (reactiveLowered) return reactiveLowered
       const paramIds = buildFunctionParams(expr.params, expr.rawParams, ctx)
       const shadowed = new Set(expr.params.map(p => deSSAVarName(p.name)))
+      if (expr.name) {
+        shadowed.add(deSSAVarName(expr.name))
+      }
       const localDeclared = collectLocalDeclaredNames(expr.params, expr.body as BasicBlock[], t)
       return withNonReactiveScope(ctx, () =>
         withFunctionScope(

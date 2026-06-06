@@ -737,6 +737,26 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).not.toContain('mergeProps(props?.()')
   })
 
+  it('keeps named function expression self bindings shadowed from reactive overrides', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      export function App() {
+        const count = $state(1)
+        const fn = function count() {
+          return count
+        }
+        const anon = function () {
+          return count
+        }
+        return <span>{fn()}{anon()}</span>
+      }
+    `)
+
+    expect(output).toMatch(/function count\(\) \{\s+return count;\s+\}/)
+    expect(output).toMatch(/const anon = function \(\) \{\s+return count\(\);\s+\}/)
+  })
+
   it('keeps call/apply destructured function props unwrapped', () => {
     const ast = parseFile(`
       function Child({ cb }) {

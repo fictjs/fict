@@ -433,6 +433,9 @@ export function replaceIdentifiersWithOverrides(
 
   if (t.isFunctionExpression(node) || t.isArrowFunctionExpression(node)) {
     const paramNames = collectParamNames(node.params)
+    if (t.isFunctionExpression(node) && node.id) {
+      paramNames.add(normalizeDependencyKey(node.id.name).split('.')[0] ?? node.id.name)
+    }
     const localNames = collectFunctionLocalNames(node.body)
     localNames.forEach(name => paramNames.add(name))
     const scopedOverrides = scopeOverrides(paramNames)
