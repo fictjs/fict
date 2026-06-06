@@ -341,6 +341,45 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
   })
 
+  it('does not warn when memo returns lazy closures with side effects', () => {
+    const cases = [
+      'return () => console.log("later")',
+      'const f = () => fetch("/api"); return f',
+      'return { run() { console.log("later") } }',
+      'return async () => { await fetch("/api") }',
+    ]
+
+    for (const body of cases) {
+      const { warnings } = transformWithWarnings(`
+        import { $memo } from 'fict'
+        function Demo() {
+          const value = $memo(() => {
+            ${body}
+          })
+          return <div>{value}</div>
+        }
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-M003')).toBe(false)
+      expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
+    }
+  })
+
+  it('warns when memo IIFEs contain side effects', () => {
+    const { warnings } = transformWithWarnings(`
+      import { $memo } from 'fict'
+      function Demo() {
+        const value = $memo(() => (() => {
+          console.log('now')
+          return 1
+        })())
+        return <div>{value}</div>
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
+  })
+
   it('warns on non-event inline JSX function props (FICT-X003)', () => {
     const { warnings } = transformWithWarnings(`
       function Panel({ label }) {

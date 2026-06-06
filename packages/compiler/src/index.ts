@@ -2096,8 +2096,11 @@ function createHIREntrypointVisitor(
             ) {
               return true
             }
-            if (t.isCallExpression(node) && isEffectfulCall(node)) {
-              return true
+            if (t.isCallExpression(node)) {
+              if (t.isArrowFunctionExpression(node.callee) || t.isFunctionExpression(node.callee)) {
+                return checkNode(node.callee.body)
+              }
+              if (isEffectfulCall(node)) return true
             }
             if (t.isAwaitExpression(node)) return true
             if (t.isExpressionStatement(node)) return checkNode(node.expression)
@@ -2107,7 +2110,7 @@ function createHIREntrypointVisitor(
             if (t.isConditionalExpression(node))
               return checkNode(node.test) || checkNode(node.consequent) || checkNode(node.alternate)
             if (t.isArrowFunctionExpression(node) || t.isFunctionExpression(node)) {
-              return checkNode(node.body)
+              return false
             }
             return false
           }
