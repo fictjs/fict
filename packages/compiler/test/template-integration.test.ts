@@ -776,6 +776,84 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps lazy function entries out of container initializer dependencies', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export const log: string[] = []
+      export const api = { set(value: number) {} }
+
+      function App() {
+        let count = $state(1)
+        api.set = value => {
+          count = value
+        }
+
+        let source = 1
+        const read = (label: string) => {
+          log.push(label + source)
+          return source
+        }
+
+        const objectOut = {
+          method() {
+            return count
+          },
+          get current() {
+            return count
+          },
+          set current(value) {
+            count = value
+          },
+          arrow: () => count,
+          fn: function() {
+            return count
+          },
+          data: read('object:'),
+        }
+        const arrayOut = [() => count, function() { return count }, read('array:')]
+        const iifeOut = { data: (() => count)() }
+        source = 2
+
+        return (
+          <div>
+            <span data-testid="object">{objectOut.data}</span>
+            <span data-testid="array">{arrayOut[2]}</span>
+            <span data-testid="iife">{iifeOut.data}</span>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { set(value: number): void }
+      log: string[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(mod.log).toEqual(['object:1', 'array:1'])
+    expect(container.querySelector('[data-testid="object"]')?.textContent).toBe('1')
+    expect(container.querySelector('[data-testid="array"]')?.textContent).toBe('1')
+    expect(container.querySelector('[data-testid="iife"]')?.textContent).toBe('1')
+
+    mod.api.set(5)
+    await flushUpdates()
+    expect(mod.log).toEqual(['object:1', 'array:1'])
+    expect(container.querySelector('[data-testid="object"]')?.textContent).toBe('1')
+    expect(container.querySelector('[data-testid="array"]')?.textContent).toBe('1')
+    expect(container.querySelector('[data-testid="iife"]')?.textContent).toBe('5')
+
+    teardown()
+    container.remove()
+  })
+
   it('throws impure reactive derived declaration initializers at declaration time', () => {
     const source = `
       import { $state, render } from 'fict'

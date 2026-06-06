@@ -201,6 +201,74 @@ describe('state write expression semantics', () => {
     expect(compiledFunction(mod, 'callOptionalPlain')()).toBe('p?')
   })
 
+  it('keeps function entries from making container initializers lazy', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export const log: string[] = []
+
+      export function useObjectContainerTiming() {
+        log.length = 0
+        let count = $state(1)
+        let source = 1
+        const read = () => {
+          log.push('object:' + source)
+          return source
+        }
+        const out = {
+          method() {
+            return count
+          },
+          get current() {
+            return count
+          },
+          set current(value) {
+            count = value
+          },
+          arrow: () => count,
+          fn: function() {
+            return count
+          },
+          data: read(),
+        }
+        source = 2
+        return [out.data, log.slice(), out.method(), out.current, out.arrow(), out.fn()]
+      }
+
+      export function useArrayContainerTiming() {
+        log.length = 0
+        let count = $state(1)
+        let source = 1
+        const read = () => {
+          log.push('array:' + source)
+          return source
+        }
+        const out = [() => count, function() { return count }, read()]
+        source = 2
+        return [out[2], log.slice(), out[0](), out[1]()]
+      }
+
+      export function useIifeContainerControl() {
+        let count = $state(1)
+        const out = { data: (() => count)() }
+        return out.data
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+
+    expect(compiledFunction(mod, 'useObjectContainerTiming')()).toEqual([
+      1,
+      ['object:1'],
+      1,
+      1,
+      1,
+      1,
+    ])
+    expect(compiledFunction(mod, 'useArrayContainerTiming')()).toEqual([1, ['array:1'], 1, 1])
+    expect(compiledFunction(mod, 'useIifeContainerControl')()).toBe(1)
+  })
+
   it('preserves unused identifier assignment statements', () => {
     const source = `
       let value = 0

@@ -408,6 +408,7 @@ export function collectExpressionIdentifiersDeep(
     case 'ArrayExpression':
       expr.elements.forEach(el => {
         if (el) {
+          if (isFunctionExpressionValue(el as Expression)) return
           collectExpressionIdentifiersDeep(
             el as Expression,
             into,
@@ -439,6 +440,7 @@ export function collectExpressionIdentifiersDeep(
             includeReturnedFunctionBodies,
           )
         }
+        if (isFunctionExpressionValue(prop.value as Expression)) return
         collectExpressionIdentifiersDeep(
           prop.value as Expression,
           into,
