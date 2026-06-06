@@ -914,6 +914,121 @@ describe('Spec rule coverage', () => {
     }
   })
 
+  it('warns when memo built-ins can invoke user code (FICT-M003)', () => {
+    const cases = [
+      `JSON.stringify({
+        get value() {
+          fetch('/api')
+          return 1
+        },
+      })`,
+      `JSON.stringify({
+        toJSON() {
+          fetch('/api')
+          return 1
+        },
+      })`,
+      `Object.values({
+        get value() {
+          fetch('/api')
+          return 1
+        },
+      })`,
+      `Object.entries({
+        get value() {
+          fetch('/api')
+          return 1
+        },
+      })`,
+      `Array.from({
+        [Symbol.iterator]() {
+          fetch('/api')
+          return [][Symbol.iterator]()
+        },
+      })`,
+      `Array.from([1], value => {
+        fetch('/api')
+        return value
+      })`,
+      `String({
+        toString() {
+          fetch('/api')
+          return 'x'
+        },
+      })`,
+      `Number({
+        valueOf() {
+          fetch('/api')
+          return 1
+        },
+      })`,
+      `parseInt({
+        toString() {
+          fetch('/api')
+          return '10'
+        },
+      })`,
+      `parseFloat({
+        toString() {
+          fetch('/api')
+          return '1.5'
+        },
+      })`,
+      `isNaN({
+        valueOf() {
+          fetch('/api')
+          return 1
+        },
+      })`,
+      `isFinite({
+        valueOf() {
+          fetch('/api')
+          return 1
+        },
+      })`,
+    ]
+
+    for (const expression of cases) {
+      const { warnings } = transformWithWarnings(`
+        import { $memo } from 'fict'
+        const value = $memo(() => {
+          return ${expression}
+        })
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
+      expect(warnings.some(w => w.code === 'FICT-M001')).toBe(false)
+    }
+  })
+
+  it('does not warn when memo built-ins receive statically plain data', () => {
+    const cases = [
+      `JSON.parse('{"value":1}')`,
+      `JSON.stringify({ value: [1, 'x'] })`,
+      `Object.values({ value: 1 })`,
+      `Object.entries({ value: 1 })`,
+      `Array.from([1, 2])`,
+      `String('x')`,
+      `Number(1)`,
+      `parseInt('10')`,
+      `parseFloat('1.5')`,
+      `isNaN(1)`,
+      `isFinite(1)`,
+    ]
+
+    for (const expression of cases) {
+      const { warnings } = transformWithWarnings(`
+        import { $memo } from 'fict'
+        const value = $memo(() => {
+          return ${expression}
+        })
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-M003')).toBe(false)
+      expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
+    }
+  })
+
   it('does not mark pure or unknown optional memo calls as side effects', () => {
     const cases = ['Math.abs?.(-1)', 'maybe?.()']
 

@@ -2199,6 +2199,19 @@ function createHIREntrypointVisitor(
             'requestAnimationFrame',
             'cancelAnimationFrame',
           ])
+          const userCodeInvokingBuiltins = new Set([
+            'JSON.parse',
+            'JSON.stringify',
+            'Object.values',
+            'Object.entries',
+            'Array.from',
+            'String',
+            'Number',
+            'parseInt',
+            'parseFloat',
+            'isNaN',
+            'isFinite',
+          ])
           const getCalleeName = (
             callee: BabelCore.types.Expression | BabelCore.types.V8IntrinsicIdentifier,
           ): string | null => {
@@ -2233,11 +2246,102 @@ function createHIREntrypointVisitor(
             'replaceChildren',
             'replaceWith',
           ])
+          const unwrapStaticMemoValue = (node: BabelCore.types.Node): BabelCore.types.Node => {
+            let current = node
+            while (
+              t.isParenthesizedExpression(current) ||
+              t.isTSAsExpression(current) ||
+              t.isTSTypeAssertion(current) ||
+              t.isTSNonNullExpression(current)
+            ) {
+              current = current.expression
+            }
+            return current
+          }
+          const isPlainPrimitiveMemoValue = (node: BabelCore.types.Node): boolean => {
+            const value = unwrapStaticMemoValue(node)
+            if (
+              t.isStringLiteral(value) ||
+              t.isNumericLiteral(value) ||
+              t.isBooleanLiteral(value) ||
+              t.isNullLiteral(value) ||
+              t.isBigIntLiteral(value)
+            ) {
+              return true
+            }
+            return (
+              t.isUnaryExpression(value) &&
+              ['+', '-', '!', '~', 'void'].includes(value.operator) &&
+              isPlainPrimitiveMemoValue(value.argument)
+            )
+          }
+          const isPlainMemoDataValue = (node: BabelCore.types.Node): boolean => {
+            const value = unwrapStaticMemoValue(node)
+            if (isPlainPrimitiveMemoValue(value)) return true
+            if (t.isArrayExpression(value)) {
+              return value.elements.every(element => {
+                if (!element) return true
+                return !t.isSpreadElement(element) && isPlainMemoDataValue(element)
+              })
+            }
+            if (t.isObjectExpression(value)) {
+              return value.properties.every(prop => {
+                if (!t.isObjectProperty(prop) || prop.computed) return false
+                return isPlainMemoDataValue(prop.value)
+              })
+            }
+            return false
+          }
+          const isPlainArrayFromSource = (node: BabelCore.types.Node): boolean => {
+            const value = unwrapStaticMemoValue(node)
+            if (t.isStringLiteral(value)) return true
+            if (t.isArrayExpression(value)) {
+              return value.elements.every(element => {
+                if (!element) return true
+                return !t.isSpreadElement(element) && isPlainMemoDataValue(element)
+              })
+            }
+            return false
+          }
+          const isUserCodeInvokingBuiltinCall = (
+            name: string,
+            node: BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression,
+          ): boolean => {
+            if (!userCodeInvokingBuiltins.has(name)) return false
+            if (node.arguments.some(arg => t.isSpreadElement(arg))) return true
+
+            const args = node.arguments as BabelCore.types.Expression[]
+            switch (name) {
+              case 'JSON.parse':
+                return !!args[1]
+              case 'JSON.stringify':
+                return args.some(arg => !isPlainMemoDataValue(arg))
+              case 'Object.values':
+              case 'Object.entries': {
+                const source = args[0]
+                return !!source && !isPlainMemoDataValue(source)
+              }
+              case 'Array.from': {
+                const source = args[0]
+                return !!args[1] || (!!source && !isPlainArrayFromSource(source))
+              }
+              case 'String':
+              case 'Number':
+              case 'parseInt':
+              case 'parseFloat':
+              case 'isNaN':
+              case 'isFinite':
+                return args.some(arg => !isPlainPrimitiveMemoValue(arg))
+              default:
+                return false
+            }
+          }
           const isEffectfulCall = (
             node: BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression,
           ): boolean => {
             const name = getCalleeName(node.callee)
             if (!name) return true
+            if (isUserCodeInvokingBuiltinCall(name, node)) return true
             if (pureCalls.has(name)) return false
             if (effectfulCalls.has(name)) return true
             if (
