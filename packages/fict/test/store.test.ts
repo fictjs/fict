@@ -456,6 +456,58 @@ describe('$store', () => {
     expect(seen).toEqual([false, true])
   })
 
+  it.each(['toString', 'valueOf', 'constructor', 'hasOwnProperty', 'propertyIsEnumerable'])(
+    'tracks Object.prototype-colliding store key %s',
+    async key => {
+      const state = $store<Record<string, string>>({ [key]: 'a' })
+      const seen: string[] = []
+
+      createEffect(() => {
+        seen.push(state[key]!)
+      })
+
+      expect(seen).toEqual(['a'])
+
+      state[key] = 'b'
+      await tick()
+
+      expect(seen).toEqual(['a', 'b'])
+    },
+  )
+
+  it('tracks symbol store keys through the signal cache', async () => {
+    const key = Symbol('value')
+    const state = $store({ [key]: 'a' } as Record<typeof key, string>)
+    const seen: string[] = []
+
+    createEffect(() => {
+      seen.push(state[key])
+    })
+
+    expect(seen).toEqual(['a'])
+
+    state[key] = 'b'
+    await tick()
+
+    expect(seen).toEqual(['a', 'b'])
+  })
+
+  it('continues to track ordinary store keys through the signal cache', async () => {
+    const state = $store({ label: 'a' })
+    const seen: string[] = []
+
+    createEffect(() => {
+      seen.push(state.label)
+    })
+
+    expect(seen).toEqual(['a'])
+
+    state.label = 'b'
+    await tick()
+
+    expect(seen).toEqual(['a', 'b'])
+  })
+
   describe('Method binding and cache invalidation', () => {
     it('should invalidate bound method cache when method is reassigned', () => {
       const state = $store({

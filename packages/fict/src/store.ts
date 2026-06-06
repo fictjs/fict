@@ -60,8 +60,10 @@ const SKIP_MUTATION_WARNING_PROPS: (string | symbol)[] = [
   Symbol.toPrimitive,
 ]
 
+type SignalBucket = Record<string | symbol, Signal<unknown>>
+
 /** Cache of signals per object property */
-const SIGNAL_CACHE = new WeakMap<object, Record<string | symbol, Signal<unknown>>>()
+const SIGNAL_CACHE = new WeakMap<object, SignalBucket>()
 
 /** Cache of bound methods to preserve function identity across reads */
 const BOUND_METHOD_CACHE = new WeakMap<object, Map<string | symbol, BoundMethodEntry>>()
@@ -76,14 +78,22 @@ const ITERATE_KEY = Symbol('iterate')
 function getSignal(target: object, prop: string | symbol): Signal<unknown> {
   let signals = SIGNAL_CACHE.get(target)
   if (!signals) {
-    signals = {}
+    signals = Object.create(null) as SignalBucket
     SIGNAL_CACHE.set(target, signals)
   }
-  if (!signals[prop]) {
+  if (!Object.prototype.hasOwnProperty.call(signals, prop)) {
     const initial = prop === ITERATE_KEY ? 0 : (target as IndexableObject)[prop]
     signals[prop] = createSignal(initial)
   }
-  return signals[prop]
+  return signals[prop]!
+}
+
+function getCachedSignal(
+  signals: SignalBucket | undefined,
+  prop: string | symbol,
+): Signal<unknown> | undefined {
+  if (!signals || !Object.prototype.hasOwnProperty.call(signals, prop)) return undefined
+  return signals[prop]!
 }
 
 /**
@@ -92,9 +102,10 @@ function getSignal(target: object, prop: string | symbol): Signal<unknown> {
  */
 function triggerIteration(target: object): void {
   const signals = SIGNAL_CACHE.get(target)
-  if (signals && signals[ITERATE_KEY]) {
-    const current = signals[ITERATE_KEY]() as number
-    signals[ITERATE_KEY](current + 1)
+  const signal = getCachedSignal(signals, ITERATE_KEY)
+  if (signal) {
+    const current = signal() as number
+    signal(current + 1)
   }
 }
 
@@ -262,8 +273,9 @@ export function $store<T extends object>(initialValue: T): T {
 
       // Update the signal if it exists
       const signals = SIGNAL_CACHE.get(target)
-      if (signals && signals[prop]) {
-        signals[prop](nextValue)
+      const signal = getCachedSignal(signals, prop)
+      if (signal) {
+        signal(nextValue)
       }
 
       // If new property, trigger iteration update
@@ -274,8 +286,9 @@ export function $store<T extends object>(initialValue: T): T {
       // Ensure array length subscribers are notified even if the native push/pop
       // doesn't trigger a separate set trap for "length" (defensive).
       if (Array.isArray(target) && prop !== 'length') {
-        if (signals && signals.length) {
-          signals.length(target.length)
+        const lengthSignal = getCachedSignal(signals, 'length')
+        if (lengthSignal) {
+          lengthSignal(target.length)
         }
       }
 
@@ -286,8 +299,9 @@ export function $store<T extends object>(initialValue: T): T {
           if (signals) {
             for (let i = nextLength; i < oldLength; i += 1) {
               const key = String(i)
-              if (signals[key]) {
-                signals[key](undefined)
+              const signal = getCachedSignal(signals, key)
+              if (signal) {
+                signal(undefined)
               }
             }
           }
@@ -304,8 +318,9 @@ export function $store<T extends object>(initialValue: T): T {
 
       if (result && hadKey) {
         const signals = SIGNAL_CACHE.get(target)
-        if (signals && signals[prop]) {
-          signals[prop](undefined)
+        const signal = getCachedSignal(signals, prop)
+        if (signal) {
+          signal(undefined)
         }
 
         // Clear bound method cache
