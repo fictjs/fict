@@ -1345,6 +1345,45 @@ describe('Rule L: Getter cache in same sync block', () => {
     expect(withCache).toMatch(/__cached_count_\d+/)
     expect(withoutCache).not.toContain('__cached_count_')
   })
+
+  it('allocates getter cache temporaries around user locals and parameters', () => {
+    const localCollision = transform(
+      `
+        import { $state } from 'fict'
+        function Component() {
+          let count = $state(0)
+          const click = () => {
+            const __cached_count_0 = 9
+            return count + count + __cached_count_0
+          }
+          return <button onClick={click}>x</button>
+        }
+      `,
+      { getterCache: true },
+    )
+
+    const localCacheName = localCollision.match(/let (__cached_count_\d+)/)?.[1]
+    expect(localCacheName).toBeDefined()
+    expect(localCacheName).not.toBe('__cached_count_0')
+    expect(localCollision).toContain('const __cached_count_0 = 9')
+
+    const paramCollision = transform(
+      `
+        import { $state } from 'fict'
+        function Component() {
+          let count = $state(0)
+          const click = (__cached_count_0: number) => count + count + __cached_count_0
+          return <button onClick={click}>x</button>
+        }
+      `,
+      { getterCache: true },
+    )
+
+    const paramCacheName = paramCollision.match(/let (__cached_count_\d+)/)?.[1]
+    expect(paramCacheName).toBeDefined()
+    expect(paramCacheName).not.toBe('__cached_count_0')
+    expect(paramCollision).toContain('__cached_count_0')
+  })
 })
 
 describe('Rule C: memoization + control-flow re-execution', () => {
