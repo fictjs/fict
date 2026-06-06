@@ -903,6 +903,89 @@ describe('state write expression semantics', () => {
     expect(values).toEqual([11, 11, 11, 11])
   })
 
+  it('coerces numeric string keys for computed hook-return array writes', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function usePair() {
+        let count = $state(1)
+        return [count]
+      }
+
+      export function useNumericStringHookArrayWrite() {
+        const pair = usePair()
+        const key = '0'
+        const assign = (pair[key] += 2)
+        const post = pair['0']++
+        return [assign, post, pair[0]]
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).toMatch(/__key_\d+ === 0[\s\S]*__key_\d+ === "0"/)
+
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useNumericStringHookArrayWrite')() as unknown[]
+    const values = raw.map(value =>
+      typeof value === 'function' ? (value as () => unknown)() : value,
+    )
+    expect(values).toEqual([3, 3, 4])
+  })
+
+  it('coerces numeric keys for computed hook-return object writes', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function useObj() {
+        let count = $state(1)
+        return { 0: count }
+      }
+
+      export function useNumericHookObjectWrite() {
+        const obj = useObj()
+        const key = 0
+        const assign = (obj[key] += 2)
+        const post = obj[0]++
+        return [assign, post, obj['0']]
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).toMatch(/__key_\d+ === "0"[\s\S]*__key_\d+ === 0/)
+
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useNumericHookObjectWrite')() as unknown[]
+    const values = raw.map(value =>
+      typeof value === 'function' ? (value as () => unknown)() : value,
+    )
+    expect(values).toEqual([3, 3, 4])
+  })
+
+  it('keeps non-canonical numeric strings on the computed hook fallback path', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function useObj() {
+        let count = $state(1)
+        return { 0: count, other: 10 }
+      }
+
+      export function useNonCanonicalHookKeyWrite() {
+        const obj = useObj()
+        const key = '00'
+        const assigned = (obj[key] = 5)
+        return [assigned, obj[0], obj['00']]
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).not.toMatch(/__key_\d+ === 00/)
+
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useNonCanonicalHookKeyWrite')() as unknown[]
+    const values = raw.map(value =>
+      typeof value === 'function' ? (value as () => unknown)() : value,
+    )
+    expect(values).toEqual([5, 1, 5])
+  })
+
   it('preserves bigint update semantics for $state', () => {
     const source = `
       import { $state } from 'fict'

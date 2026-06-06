@@ -2276,10 +2276,28 @@ function lowerExpressionImpl(
   ): BabelCore.types.Expression | null => {
     if (keys.length === 0) return null
     let test: BabelCore.types.Expression | null = null
-    for (const key of keys) {
+    const seen = new Set<string>()
+    const addKeyTest = (key: string | number): void => {
+      const seenKey = `${typeof key}:${String(key)}`
+      if (seen.has(seenKey)) return
+      seen.add(seenKey)
       const literal = typeof key === 'number' ? t.numericLiteral(key) : t.stringLiteral(String(key))
       const eq = t.binaryExpression('===', t.cloneNode(keyRef, true), literal)
       test = test ? t.logicalExpression('||', test, eq) : eq
+    }
+    const addNumericStringEquivalent = (key: string): void => {
+      const numeric = Number(key)
+      if (!Number.isFinite(numeric) || String(numeric) !== key) return
+      addKeyTest(numeric)
+    }
+
+    for (const key of keys) {
+      addKeyTest(key)
+      if (typeof key === 'number' && Number.isFinite(key)) {
+        addKeyTest(String(key))
+      } else if (typeof key === 'string') {
+        addNumericStringEquivalent(key)
+      }
     }
     return test
   }
