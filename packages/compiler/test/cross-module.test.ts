@@ -165,15 +165,15 @@ describe('Cross-Module Reactivity', () => {
       expect(output).not.toMatch(/=> count[,)]/)
     })
 
-    it('does not treat lowercase use-prefix utilities as hooks', () => {
-      const localPath = path.join(baseDir, 'app-useful-local.tsx')
+    it('does not treat lowercase non-use utilities as hooks', () => {
+      const localPath = path.join(baseDir, 'app-utility-local.tsx')
       const localSource = `
-        function useful() {
+        function utility() {
           return { label: 'ok' }
         }
 
         export function App() {
-          const value = useful()
+          const value = utility()
           return <div>{value.label}</div>
         }
       `
@@ -183,12 +183,12 @@ describe('Cross-Module Reactivity', () => {
       expect(localOutput).toMatch(/value\.label/)
       expect(localOutput).not.toMatch(/value\.label\(\)/)
 
-      const importedPath = path.join(baseDir, 'app-useful-imported.tsx')
+      const importedPath = path.join(baseDir, 'app-utility-imported.tsx')
       const importedSource = `
-        import { useful } from './lib'
+        import { utility } from './lib'
 
         export function App() {
-          const value = useful()
+          const value = utility()
           return <div>{value.label}</div>
         }
       `

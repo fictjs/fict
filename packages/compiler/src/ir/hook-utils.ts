@@ -1,6 +1,6 @@
 import type { Expression, HIRFunction } from './hir'
 
-export const HOOK_NAME_PATTERN = /^use[A-Z]/
+export const HOOK_NAME_PATTERN = /^use/
 export const COMPONENT_NAME_PATTERN = /^[A-Z]/
 
 export function isHookName(name: string | undefined): boolean {
