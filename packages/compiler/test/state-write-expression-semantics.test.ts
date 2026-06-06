@@ -1134,6 +1134,82 @@ describe('state write expression semantics', () => {
     expect(raw).toEqual([9, 2])
   })
 
+  it('invalidates hook-return metadata for later duplicate plain props', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function useObj() {
+        let count = $state(1)
+        return { count, count: 9, ['other']: count, ['other']: 8 }
+      }
+
+      export function useDuplicatePlainHookProps() {
+        const obj = useObj()
+        return [obj.count, obj.other]
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).not.toContain('obj.count()')
+    expect(output).not.toContain('obj.other()')
+
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useDuplicatePlainHookProps')() as unknown[]
+    expect(raw).toEqual([9, 8])
+  })
+
+  it('preserves hook-return metadata for later duplicate accessor props', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function useObj() {
+        let count = $state(1)
+        let other = $state(2)
+        return { count: 9, count, ['other']: 8, ['other']: other }
+      }
+
+      export function useDuplicateAccessorHookProps() {
+        const obj = useObj()
+        return [obj.count, obj.other]
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).toContain('obj.count()')
+    expect(output).toContain('obj.other()')
+
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useDuplicateAccessorHookProps')() as unknown[]
+    expect(raw).toEqual([1, 2])
+  })
+
+  it('applies duplicate hook-return metadata rules to numeric keys', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function usePlainLast() {
+        let count = $state(1)
+        return { [0]: count, 0: 9 }
+      }
+
+      function useAccessorLast() {
+        let count = $state(1)
+        return { 0: 9, [0]: count }
+      }
+
+      export function useDuplicateNumericHookProps() {
+        const plainLast = usePlainLast()
+        const accessorLast = useAccessorLast()
+        return [plainLast[0], accessorLast[0]]
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).not.toContain('plainLast[0]()')
+    expect(output).toContain('accessorLast[0]()')
+
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useDuplicateNumericHookProps')() as unknown[]
+    expect(raw).toEqual([9, 1])
+  })
+
   it('preserves bigint update semantics for $state', () => {
     const source = `
       import { $state } from 'fict'

@@ -290,6 +290,10 @@ export function analyzeHookReturnInfo(
         if (propName === null) return
         const keyName = String(propName)
         const kind = returnExprAccessorKind(prop.value)
+        if (!kind) {
+          info.objectProps?.delete(keyName)
+          return
+        }
         recordAccessor(kind, () => {
           if (!info.objectProps) info.objectProps = new Map()
           info.objectProps.set(keyName, kind!)
