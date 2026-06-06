@@ -385,6 +385,61 @@ describe('semantic validation', () => {
     expect(() => transform(source)).toThrow(/assigned directly to a variable/)
   })
 
+  it('rejects indirect $state and $effect macro calls before import stripping', () => {
+    const cases = [
+      `
+        import { $state } from 'fict'
+        function App() {
+          const count = (0, $state)(0)
+          return count
+        }
+      `,
+      `
+        import { $state as s } from 'fict'
+        function App() {
+          const count = (0, s)(0)
+          return count
+        }
+      `,
+      `
+        import { $effect } from 'fict'
+        function App() {
+          ;(0, $effect)(() => {})
+          return null
+        }
+      `,
+      `
+        import { $effect as fx } from 'fict'
+        function App() {
+          ;(0, fx)(() => {})
+          return null
+        }
+      `,
+    ]
+
+    for (const source of cases) {
+      expect(() => transform(source)).toThrow(/compiler macro|Call it only/)
+    }
+  })
+
+  it('supports parenthesized direct $state and $effect macro calls', () => {
+    const output = transform(`
+      import { $state, $effect } from 'fict'
+      function App() {
+        const count = ($state)(0)
+        ;($effect)(() => {
+          count
+        })
+        return <span>{count}</span>
+      }
+    `)
+
+    expect(output).toContain('__fictUseSignal')
+    expect(output).toContain('__fictUseEffect')
+    expect(output).not.toContain('$state')
+    expect(output).not.toContain('$effect')
+  })
+
   it('throws when $state is used in array literal', () => {
     const source = `
       import { $state } from 'fict'
