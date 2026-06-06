@@ -75,6 +75,103 @@ describe('Multi-Priority Scheduler', () => {
       expect(runs.some(r => r.type === 'high' && r.value === 1)).toBe(true)
       expect(runs.some(r => r.type === 'low' && r.value === 1)).toBe(true)
     })
+
+    it('promotes low-queued effects after a high-priority write', async () => {
+      const lowOnly = createSignal(0)
+      const shared = createSignal(0)
+      const order: string[] = []
+
+      createEffect(() => {
+        order.push(`low:${lowOnly()}`)
+      })
+
+      createEffect(() => {
+        order.push(`shared:${shared()}`)
+      })
+
+      order.length = 0
+
+      startTransition(() => {
+        lowOnly(1)
+        shared(1)
+      })
+
+      shared(2)
+
+      await tick()
+      await tick()
+
+      expect(order[0]).toBe('shared:2')
+      expect(order).toContain('low:1')
+      expect(order.filter(item => item.startsWith('shared:'))).toEqual(['shared:2'])
+    })
+
+    it('promotes all shared subscribers without promoting unrelated low work', async () => {
+      const lowOnly = createSignal(0)
+      const shared = createSignal(0)
+      const order: string[] = []
+
+      createEffect(() => {
+        order.push(`low:${lowOnly()}`)
+      })
+
+      createEffect(() => {
+        order.push(`shared-a:${shared()}`)
+      })
+
+      createEffect(() => {
+        order.push(`shared-b:${shared()}`)
+      })
+
+      order.length = 0
+
+      startTransition(() => {
+        lowOnly(1)
+        shared(1)
+      })
+
+      shared(2)
+
+      await tick()
+      await tick()
+
+      expect(order.slice(0, 2).sort()).toEqual(['shared-a:2', 'shared-b:2'])
+      expect(order[2]).toBe('low:1')
+    })
+
+    it('keeps transition-only work in the low-priority queue', async () => {
+      const lowA = createSignal(0)
+      const lowB = createSignal(0)
+      const high = createSignal(0)
+      const order: string[] = []
+
+      createEffect(() => {
+        order.push(`low-a:${lowA()}`)
+      })
+
+      createEffect(() => {
+        order.push(`low-b:${lowB()}`)
+      })
+
+      createEffect(() => {
+        order.push(`high:${high()}`)
+      })
+
+      order.length = 0
+
+      startTransition(() => {
+        lowA(1)
+        lowB(1)
+      })
+
+      high(1)
+
+      await tick()
+      await tick()
+
+      expect(order[0]).toBe('high:1')
+      expect(order.slice(1).sort()).toEqual(['low-a:1', 'low-b:1'])
+    })
   })
 
   describe('startTransition', () => {

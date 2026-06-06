@@ -182,6 +182,8 @@ export interface EffectNode extends BaseNode {
   devToolsSource?: string
   /** Devtools ID */
   __id?: number | undefined
+  /** Queue priority for a pending scheduler entry */
+  queuedPriority?: 1 | 2 | undefined
 }
 
 /**
@@ -283,6 +285,8 @@ let activeCleanupFlushId = 0
 // Dual-priority queue for scheduler
 const highPriorityQueue: EffectNode[] = []
 const lowPriorityQueue: EffectNode[] = []
+const QueuedLow = 1
+const QueuedHigh = 2
 let isInTransition = false
 const enqueueMicrotask =
   typeof queueMicrotask === 'function'
@@ -591,6 +595,9 @@ function propagate(firstLink: Link): void {
   top: for (;;) {
     const sub = link.sub
     let flags = sub.flags
+    if (flags & Pending) {
+      promoteQueuedEffect(sub)
+    }
 
     if (!(flags & 60)) {
       sub.flags = flags | Pending
@@ -744,6 +751,7 @@ function shallowPropagate(firstLink: Link): void {
     const sub = link.sub
     const flags = sub.flags
     if ((flags & 48) === Pending) {
+      promoteQueuedEffect(sub)
       sub.flags = flags | Dirty
       if ((flags & 6) === Watching) notify(sub)
     }
@@ -788,9 +796,30 @@ function notify(effect: ReactiveNode): void {
   }
 
   // Route effects to appropriate queue based on transition context
-  const targetQueue = isInTransition ? lowPriorityQueue : highPriorityQueue
+  const targetPriority = isInTransition ? QueuedLow : QueuedHigh
   for (let i = effects.length - 1; i >= 0; i--) {
-    targetQueue.push(effects[i]!)
+    queueEffect(effects[i]!, targetPriority)
+  }
+}
+
+function queueEffect(effect: EffectNode, priority: 1 | 2): void {
+  if (priority === QueuedHigh) {
+    if (effect.queuedPriority === QueuedHigh) return
+    effect.queuedPriority = QueuedHigh
+    highPriorityQueue.push(effect)
+    return
+  }
+
+  if (effect.queuedPriority !== undefined) return
+  effect.queuedPriority = QueuedLow
+  lowPriorityQueue.push(effect)
+}
+
+function promoteQueuedEffect(node: ReactiveNode): void {
+  if (isInTransition) return
+  const effect = node as EffectNode
+  if (effect.queuedPriority === QueuedLow) {
+    queueEffect(effect, QueuedHigh)
   }
 }
 /**
@@ -1016,6 +1045,10 @@ function flush(): void {
   let highIndex = 0
   while (highIndex < highPriorityQueue.length) {
     const e = highPriorityQueue[highIndex]!
+    if (e.queuedPriority !== QueuedHigh) {
+      highIndex++
+      continue
+    }
     if (!beforeEffectRunGuard()) {
       // fix: When cycle guard fails, drop the current queues to avoid microtask spin.
       // Dev mode will throw inside beforeEffectRunGuard; this branch is for prod warnings.
@@ -1023,12 +1056,14 @@ function flush(): void {
         const queued = highPriorityQueue[i]
         if (queued && queued.flags !== 0) {
           queued.flags = Watching
+          queued.queuedPriority = undefined
         }
       }
       for (let i = 0; i < lowPriorityQueue.length; i++) {
         const queued = lowPriorityQueue[i]
         if (queued && queued.flags !== 0) {
           queued.flags = Watching
+          queued.queuedPriority = undefined
         }
       }
       highPriorityQueue.length = 0
@@ -1038,6 +1073,7 @@ function flush(): void {
       return
     }
     highIndex++
+    e.queuedPriority = undefined
     runEffect(e)
   }
   highPriorityQueue.length = 0
@@ -1056,6 +1092,10 @@ function flush(): void {
       return
     }
     const e = lowPriorityQueue[lowIndex]!
+    if (e.queuedPriority !== QueuedLow) {
+      lowIndex++
+      continue
+    }
     if (!beforeEffectRunGuard()) {
       // fix: When cycle guard fails, drop the current queues to avoid microtask spin.
       // Dev mode will throw inside beforeEffectRunGuard; this branch is for prod warnings.
@@ -1063,12 +1103,14 @@ function flush(): void {
         const queued = highPriorityQueue[i]
         if (queued && queued.flags !== 0) {
           queued.flags = Watching
+          queued.queuedPriority = undefined
         }
       }
       for (let i = 0; i < lowPriorityQueue.length; i++) {
         const queued = lowPriorityQueue[i]
         if (queued && queued.flags !== 0) {
           queued.flags = Watching
+          queued.queuedPriority = undefined
         }
       }
       highPriorityQueue.length = 0
@@ -1078,6 +1120,7 @@ function flush(): void {
       return
     }
     lowIndex++
+    e.queuedPriority = undefined
     runEffect(e)
   }
   lowPriorityQueue.length = 0
@@ -1519,6 +1562,12 @@ export function getBatchDepth(): number {
  * This clears effect queues, resets batch depth, and clears pending flushes.
  */
 export function __resetReactiveState(): void {
+  for (const effect of highPriorityQueue) {
+    if (effect) effect.queuedPriority = undefined
+  }
+  for (const effect of lowPriorityQueue) {
+    if (effect) effect.queuedPriority = undefined
+  }
   highPriorityQueue.length = 0
   lowPriorityQueue.length = 0
   batchDepth = 0
