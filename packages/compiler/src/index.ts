@@ -485,6 +485,42 @@ function switchCompletions(stmt: BabelCore.types.SwitchStatement): Set<Completio
   return outcomes
 }
 
+function isStaticTrueExpression(
+  expr: BabelCore.types.Expression | null | undefined,
+  treatMissingAsTrue = false,
+): boolean {
+  if (!expr) return treatMissingAsTrue
+  return expr.type === 'BooleanLiteral' && expr.value === true
+}
+
+function loopCompletions(
+  stmt:
+    | BabelCore.types.WhileStatement
+    | BabelCore.types.ForStatement
+    | BabelCore.types.DoWhileStatement,
+): Set<CompletionKind> {
+  const bodyOutcomes = statementPathCompletions(stmt.body)
+  const caseOutcomes = caseStatementPathCompletions(stmt.body)
+  if (caseOutcomes.has('break')) {
+    return new Set<CompletionKind>(['normal'])
+  }
+
+  if (stmt.type === 'DoWhileStatement' && !bodyOutcomes.has('normal')) {
+    return new Set<CompletionKind>(['abrupt'])
+  }
+
+  const isInfinite =
+    stmt.type === 'ForStatement'
+      ? isStaticTrueExpression(stmt.test, true)
+      : isStaticTrueExpression(stmt.test)
+
+  if (isInfinite && !bodyOutcomes.has('normal')) {
+    return new Set<CompletionKind>(['abrupt'])
+  }
+
+  return new Set<CompletionKind>(['normal'])
+}
+
 function statementCompletions(stmt: BabelCore.types.Statement): Set<CompletionKind> {
   if (stmt.type === 'ReturnStatement' || stmt.type === 'ThrowStatement') {
     return new Set<CompletionKind>(['abrupt'])
@@ -507,6 +543,18 @@ function statementCompletions(stmt: BabelCore.types.Statement): Set<CompletionKi
 
   if (stmt.type === 'SwitchStatement') {
     return switchCompletions(stmt)
+  }
+
+  if (
+    stmt.type === 'WhileStatement' ||
+    stmt.type === 'ForStatement' ||
+    stmt.type === 'DoWhileStatement'
+  ) {
+    return loopCompletions(stmt)
+  }
+
+  if (stmt.type === 'LabeledStatement') {
+    return statementCompletions(stmt.body)
   }
 
   if (stmt.type === 'TryStatement') {

@@ -13,6 +13,10 @@ function transformWithWarnings(
   return { output, warnings }
 }
 
+function hasWarning(source: string, code: string, options: FictCompilerOptions = {}): boolean {
+  return transformWithWarnings(source, options).warnings.some(w => w.code === code)
+}
+
 describe('Spec rule coverage', () => {
   it('throws when $state is used without importing from fict', () => {
     const input = `
@@ -230,6 +234,119 @@ describe('Spec rule coverage', () => {
 
     transform(input, { onWarn: w => warnings.push(w) })
     expect(warnings.some(w => w.code === 'FICT-C004')).toBe(false)
+  })
+
+  it('does not warn when while true loop body always returns', () => {
+    expect(
+      hasWarning(
+        `
+          import { render } from 'fict'
+          function Counter() {
+            while (true) {
+              return <div>ready</div>
+            }
+          }
+          export function mount(el) {
+            return render(() => <Counter />, el)
+          }
+        `,
+        'FICT-C004',
+      ),
+    ).toBe(false)
+  })
+
+  it('does not warn when for-ever loop body always returns', () => {
+    expect(
+      hasWarning(
+        `
+          import { render } from 'fict'
+          function Counter() {
+            for (;;) {
+              return <div>ready</div>
+            }
+          }
+          export function mount(el) {
+            return render(() => <Counter />, el)
+          }
+        `,
+        'FICT-C004',
+      ),
+    ).toBe(false)
+  })
+
+  it('does not warn when do-while body always returns', () => {
+    expect(
+      hasWarning(
+        `
+          import { render } from 'fict'
+          function Counter() {
+            do {
+              return <div>ready</div>
+            } while (false)
+          }
+          export function mount(el) {
+            return render(() => <Counter />, el)
+          }
+        `,
+        'FICT-C004',
+      ),
+    ).toBe(false)
+  })
+
+  it('warns when an infinite loop can break before returning', () => {
+    expect(
+      hasWarning(
+        `
+          import { $state } from 'fict'
+          function Counter({ done }) {
+            const count = $state(0)
+            while (true) {
+              if (done) break
+              return count
+            }
+          }
+        `,
+        'FICT-C004',
+        { lazyConditional: false },
+      ),
+    ).toBe(true)
+  })
+
+  it('warns when a loop has only conditional returns', () => {
+    expect(
+      hasWarning(
+        `
+          import { $state } from 'fict'
+          function Counter({ ready }) {
+            const count = $state(0)
+            while (true) {
+              if (ready) return count
+            }
+          }
+        `,
+        'FICT-C004',
+        { lazyConditional: false },
+      ),
+    ).toBe(true)
+  })
+
+  it('warns when a labeled loop can break before returning', () => {
+    expect(
+      hasWarning(
+        `
+          import { $state } from 'fict'
+          function Counter({ done }) {
+            const count = $state(0)
+            outer: while (true) {
+              if (done) break outer
+              return count
+            }
+          }
+        `,
+        'FICT-C004',
+        { lazyConditional: false },
+      ),
+    ).toBe(true)
   })
 
   it('emits a warning when $effect has no reactive reads', () => {
