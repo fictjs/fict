@@ -561,6 +561,96 @@ describe('semantic validation', () => {
     expect(warnings.some(w => w.code === 'FICT-R002')).toBe(true)
   })
 
+  it('does not classify static object and class member names as reactive reads', () => {
+    const source = `
+      import { $state } from 'fict'
+      function sink(value) {
+        return value
+      }
+      function App() {
+        let count = $state(1)
+        const obj = { count: 10 }
+        const nested = { outer: { count: 11 } }
+        const methods = { count() { return 12 } }
+        const Box = class { count() { return 13 } }
+        const FieldBox = class { count = 14 }
+        sink(() => obj.count)
+        sink({ value: obj.count })
+        sink(() => nested.outer.count)
+        sink({ value: nested.outer.count })
+        sink(() => methods.count)
+        sink({ value: methods.count })
+        sink(() => Box.prototype.count)
+        sink({ value: Box.prototype.count })
+        sink(() => FieldBox.prototype.count)
+        sink({ value: FieldBox.prototype.count })
+        return <span>{count}</span>
+      }
+    `
+
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-R002')).toBe(false)
+    expect(warnings.some(w => w.code === 'FICT-R005')).toBe(false)
+    expect(() => transform(source, { strictGuarantee: true, dev: false })).not.toThrow(
+      /FICT-R002|FICT-R005/,
+    )
+  })
+
+  it('keeps shorthand computed and value object keys reactive in derived scans', () => {
+    const cases = [
+      `
+        import { $state } from 'fict'
+        function sink(value) {
+          return value
+        }
+        function App() {
+          let count = $state(1)
+          const obj = { count }
+          sink(() => obj.count)
+          sink({ value: obj.count })
+          return <span>{count}</span>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function sink(value) {
+          return value
+        }
+        function App() {
+          let count = $state(1)
+          const obj = { [count]: 10 }
+          sink(() => obj)
+          sink({ value: obj })
+          return <span>{count}</span>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function sink(value) {
+          return value
+        }
+        function App() {
+          let count = $state(1)
+          const obj = { value: count }
+          sink(() => obj.value)
+          sink({ value: obj.value })
+          return <span>{count}</span>
+        }
+      `,
+    ]
+
+    for (const source of cases) {
+      const warnings: Array<{ code: string }> = []
+      transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+      expect(warnings.some(w => w.code === 'FICT-R002')).toBe(true)
+      expect(warnings.some(w => w.code === 'FICT-R005')).toBe(true)
+      expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow(
+        /FICT-R002|FICT-R005/,
+      )
+    }
+  })
+
   it('warns when passing JSX with reactive values to unknown functions', () => {
     const cases = [
       `

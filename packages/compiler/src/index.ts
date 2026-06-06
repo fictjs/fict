@@ -76,6 +76,58 @@ function getStaticMemberKeyForDiagnostics(
   return null
 }
 
+function shouldIgnoreIdentifierReference(
+  idPath: BabelCore.NodePath<BabelCore.types.Identifier>,
+  t: typeof BabelCore.types,
+): boolean {
+  const parentPath = idPath.parentPath
+  if (
+    parentPath.isMemberExpression({ property: idPath.node }) &&
+    !(idPath.parent as BabelCore.types.MemberExpression).computed
+  ) {
+    return true
+  }
+  if (
+    parentPath.isOptionalMemberExpression({ property: idPath.node }) &&
+    !(idPath.parent as BabelCore.types.OptionalMemberExpression).computed
+  ) {
+    return true
+  }
+  if (
+    parentPath.isObjectProperty({ key: idPath.node }) &&
+    !(idPath.parent as BabelCore.types.ObjectProperty).computed &&
+    !(idPath.parent as BabelCore.types.ObjectProperty).shorthand
+  ) {
+    return true
+  }
+  if (
+    parentPath.isObjectMethod({ key: idPath.node }) &&
+    !(idPath.parent as BabelCore.types.ObjectMethod).computed
+  ) {
+    return true
+  }
+  if (parentPath.isPrivateName()) {
+    return true
+  }
+
+  const parent = parentPath.node
+  if (
+    (t.isClassMethod(parent) || t.isClassProperty(parent) || t.isClassAccessorProperty(parent)) &&
+    parent.key === idPath.node &&
+    !parent.computed
+  ) {
+    return true
+  }
+  if (
+    parentPath.isLabeledStatement({ label: idPath.node }) ||
+    parentPath.isBreakStatement({ label: idPath.node }) ||
+    parentPath.isContinueStatement({ label: idPath.node })
+  ) {
+    return true
+  }
+  return false
+}
+
 function hookReturnInfoHasAccessor(info: HookReturnInfoSerializable, key: string): boolean {
   if (info.objectProps && Object.prototype.hasOwnProperty.call(info.objectProps, key)) {
     return true
@@ -939,24 +991,6 @@ function runWarningPass(
   interface CaptureOptions {
     includeNestedFunctions?: boolean
   }
-  const shouldIgnoreIdentifierReference = (
-    idPath: BabelCore.NodePath<BabelCore.types.Identifier>,
-  ): boolean => {
-    if (
-      idPath.parentPath.isMemberExpression({ property: idPath.node }) &&
-      !(idPath.parent as BabelCore.types.MemberExpression).computed
-    ) {
-      return true
-    }
-    if (
-      idPath.parentPath.isObjectProperty({ key: idPath.node }) &&
-      !(idPath.parent as BabelCore.types.ObjectProperty).computed &&
-      !(idPath.parent as BabelCore.types.ObjectProperty).shorthand
-    ) {
-      return true
-    }
-    return false
-  }
   const collectCapturedReactiveNames = (
     fnPath: BabelCore.NodePath,
     options: CaptureOptions = {},
@@ -992,7 +1026,7 @@ function runWarningPass(
         if (addHookReturnAccessorCapture(memberPath)) memberPath.stop()
       },
       Identifier(idPath) {
-        if (shouldIgnoreIdentifierReference(idPath)) return
+        if (shouldIgnoreIdentifierReference(idPath, t)) return
         const name = idPath.node.name
         const binding = idPath.scope.getBinding(name)
         if (!binding) return
@@ -1693,7 +1727,7 @@ function runWarningPass(
         }
       },
       Identifier(idPath) {
-        if (shouldIgnoreIdentifierReference(idPath)) return
+        if (shouldIgnoreIdentifierReference(idPath, t)) return
         if (pathReadsHookReturnAccessor(idPath, hookReturnBindingInfo, undefined, t)) {
           found = true
           idPath.stop()
@@ -3895,6 +3929,7 @@ function createHIREntrypointVisitor(
                 let dependsOnState = false
                 varPath.get('init').traverse({
                   Identifier(idPath: BabelCore.NodePath<BabelCore.types.Identifier>) {
+                    if (shouldIgnoreIdentifierReference(idPath, t)) return
                     if (hasTrackedBinding(idPath, idPath.node.name, stateBindingIds)) {
                       dependsOnState = true
                       idPath.stop()
