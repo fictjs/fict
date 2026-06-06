@@ -2468,11 +2468,9 @@ function assignProp(
     return value
   }
 
-  // Skip if value unchanged
-  if (value === prev) return prev
-
   // Ref handling
   if (prop === 'ref') {
+    if (value === prev) return prev
     if (!skipRef) {
       updateAssignedRefBinding(node, value)
     }
@@ -2579,10 +2577,14 @@ function assignProp(
 
     if (propAlias || isProperty || isChildProp || isCE) {
       const propName = propAlias || prop
+      const target = node as unknown as Record<string, unknown>
+      const targetProp =
+        isCE && !isProperty && !isChildProp && !propAlias ? toPropertyName(propName) : propName
+      if (target[targetProp] === value) return value
       if (isCE && !isProperty && !isChildProp && !propAlias) {
-        ;(node as unknown as Record<string, unknown>)[toPropertyName(propName)] = value
+        target[targetProp] = value
       } else {
-        ;(node as unknown as Record<string, unknown>)[propName] = value
+        target[targetProp] = value
       }
       return value
     }
@@ -2590,15 +2592,27 @@ function assignProp(
 
   const namespaced = getNamespacedAttribute(prop)
   if (namespaced) {
-    if (value == null) node.removeAttributeNS(namespaced.namespace, namespaced.localName)
-    else node.setAttributeNS(namespaced.namespace, namespaced.localName, String(value))
+    if (value == null) {
+      if (node.hasAttributeNS(namespaced.namespace, namespaced.localName)) {
+        node.removeAttributeNS(namespaced.namespace, namespaced.localName)
+      }
+    } else {
+      const next = String(value)
+      if (node.getAttributeNS(namespaced.namespace, namespaced.localName) !== next) {
+        node.setAttributeNS(namespaced.namespace, namespaced.localName, next)
+      }
+    }
     return value
   }
 
   // Default: set as attribute
   const attrName = prop === 'htmlFor' ? 'for' : prop
-  if (value == null) node.removeAttribute(attrName)
-  else node.setAttribute(attrName, String(value))
+  if (value == null) {
+    if (node.hasAttribute(attrName)) node.removeAttribute(attrName)
+  } else {
+    const next = String(value)
+    if (node.getAttribute(attrName) !== next) node.setAttribute(attrName, next)
+  }
   return value
 }
 

@@ -1000,6 +1000,62 @@ describe('Binding Edge Cases', () => {
       expect(el.getAttribute('data-id')).toBe('123')
     })
 
+    it('repairs unchanged spread DOM state after external mutation', async () => {
+      const el = document.createElement('input') as HTMLInputElement
+      const trigger = createSignal(0)
+
+      const { dispose } = createRoot(() => {
+        spread(
+          el,
+          () => {
+            trigger()
+            return { 'data-x': 'a', value: 'owned', class: 'owned' }
+          },
+          false,
+          true,
+        )
+      })
+
+      expect(el.getAttribute('data-x')).toBe('a')
+      expect(el.value).toBe('owned')
+      expect(el.className).toBe('owned')
+
+      el.removeAttribute('data-x')
+      el.value = 'external'
+      el.className = 'external'
+
+      trigger(1)
+      await tick()
+
+      expect(el.getAttribute('data-x')).toBe('a')
+      expect(el.value).toBe('owned')
+      expect(el.className).toBe('owned')
+
+      dispose()
+    })
+
+    it('skips unchanged spread attribute writes when the DOM is already current', async () => {
+      const el = document.createElement('div')
+      const trigger = createSignal(0)
+
+      const { dispose } = createRoot(() => {
+        spread(el, () => {
+          trigger()
+          return { 'data-x': 'a' }
+        })
+      })
+
+      expect(el.getAttribute('data-x')).toBe('a')
+      const setAttribute = vi.spyOn(el, 'setAttribute')
+
+      trigger(1)
+      await tick()
+
+      expect(setAttribute).not.toHaveBeenCalled()
+      setAttribute.mockRestore()
+      dispose()
+    })
+
     it('ignores inherited enumerable props in spread sources', () => {
       const el = document.createElement('button')
       container.appendChild(el)
