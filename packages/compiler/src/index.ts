@@ -651,12 +651,28 @@ function functionUsesStateLike<T extends BabelCore.types.Function>(
   t: typeof BabelCore.types,
 ): boolean {
   let found = false
+  const isStateLikeMacroBinding = (
+    callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
+  ) => {
+    if (!t.isIdentifier(callPath.node.callee)) return false
+    const calleeName = callPath.node.callee.name
+    const binding = callPath.scope.getBinding(calleeName)
+    if (!binding) {
+      return calleeName === '$state' || calleeName === '$effect'
+    }
+    const bindingNode = binding.path.node
+    const importDecl = binding.path.parentPath?.node
+    return (
+      t.isImportSpecifier(bindingNode) &&
+      t.isIdentifier(bindingNode.imported) &&
+      (bindingNode.imported.name === '$state' || bindingNode.imported.name === '$effect') &&
+      t.isImportDeclaration(importDecl) &&
+      (importDecl.source.value === 'fict' || importDecl.source.value === 'fict/slim')
+    )
+  }
   fnPath.traverse({
     CallExpression(callPath) {
-      if (
-        t.isIdentifier(callPath.node.callee) &&
-        (callPath.node.callee.name === '$state' || callPath.node.callee.name === '$effect')
-      ) {
+      if (isStateLikeMacroBinding(callPath)) {
         found = true
         callPath.stop()
       }

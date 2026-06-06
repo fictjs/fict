@@ -181,6 +181,49 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-C004')).toBe(true)
   })
 
+  it('warns when a no-return component uses an aliased $state macro', () => {
+    expect(
+      hasWarning(
+        `
+          import { $state as s } from 'fict'
+          function Counter() {
+            const count = s(0)
+          }
+        `,
+        'FICT-C004',
+      ),
+    ).toBe(true)
+  })
+
+  it('warns when a no-return variable component uses an aliased $effect macro', () => {
+    expect(
+      hasWarning(
+        `
+          import { $effect as fx } from 'fict'
+          const Counter = () => {
+            fx(() => {})
+          }
+        `,
+        'FICT-C004',
+      ),
+    ).toBe(true)
+  })
+
+  it('does not classify local shadows of macro aliases as state-like usage', () => {
+    expect(
+      hasWarning(
+        `
+          import { $state as s } from 'fict'
+          function Counter() {
+            const s = (value: number) => value
+            const count = s(0)
+          }
+        `,
+        'FICT-C004',
+      ),
+    ).toBe(false)
+  })
+
   it('warns when a component may fall through without returning', () => {
     const warnings: CompilerWarning[] = []
     const input = `
