@@ -485,6 +485,43 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps JSX binding function declarations scoped from reactive accessors', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export function App() {
+        const count = $state(0)
+        return (
+          <div data-testid="value">
+            {(() => {
+              function f(count) {
+                return count
+              }
+              return f(2) + count
+            })()}
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(container.querySelector('[data-testid="value"]')?.textContent).toBe('2')
+
+    teardown()
+    container.remove()
+  })
+
   it('invokes optional-called destructured function props', async () => {
     const source = `
       import { render } from 'fict'

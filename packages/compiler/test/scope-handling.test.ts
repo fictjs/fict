@@ -135,6 +135,32 @@ describe('Scope Handling', () => {
   })
 
   describe('Name collision prevention', () => {
+    it('keeps JSX binding function declaration parameters shadowed from reactive accessors', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          const count = $state(0)
+          return (
+            <div>
+              {(() => {
+                function f(count) {
+                  return count
+                }
+                return f(2) + count
+              })()}
+            </div>
+          )
+        }
+      `
+      const output = transform(input)
+
+      expect(output).toContain('function f(count)')
+      expect(output).toContain('return count;')
+      expect(output).toContain('return f(2) + count()')
+      expect(output).not.toContain('function f(count())')
+      expect(output).not.toContain('return count();')
+    })
+
     it('should not conflict when same name exists in different scopes', () => {
       const input = `
         import { $state } from 'fict'
