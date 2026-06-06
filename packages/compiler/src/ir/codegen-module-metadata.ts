@@ -20,6 +20,7 @@ function addImportedReactiveBinding(
   ctx: CodegenContext,
 ): void {
   const base = deSSAVarName(name)
+  ctx.importedReactiveVars?.add(base)
   if (kind === 'signal') {
     ctx.signalVars?.add(base)
   } else if (kind === 'store') {

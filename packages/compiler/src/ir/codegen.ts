@@ -757,6 +757,8 @@ export interface CodegenContext {
   functionVars?: Set<string> | undefined
   /** Declaration kind for function-valued local bindings. */
   functionBindingKinds?: Map<string, ModuleBindingKind> | undefined
+  /** Imported reactive bindings tracked separately from component-local accessors. */
+  importedReactiveVars?: Set<string> | undefined
   /** Variables that are memos (derived values) - these shouldn't be cached by getter cache */
   memoVars?: Set<string> | undefined
   /** Memo call names (including aliases) that return accessors */
@@ -919,6 +921,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     nonSerializableSignalVars: new Set(),
     functionVars: new Set(),
     functionBindingKinds: new Map(),
+    importedReactiveVars: new Set(),
     memoVars: new Set(),
     memoMacroNames: new Set(['$memo', 'createMemo']),
     storeMacroNames: new Set(['$store']),

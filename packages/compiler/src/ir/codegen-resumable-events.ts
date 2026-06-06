@@ -325,7 +325,14 @@ export function emitResumableEventBinding(
     Array.from(ctx.resumablePropRests ?? []).filter(([name]) => captured.has(name)),
   )
 
-  const lexicalNameSet = new Set(Array.from(captured).filter(name => ctx.signalVars?.has(name)))
+  const isImportedReactiveCapture = (name: string): boolean =>
+    (ctx.importedReactiveVars?.has(name) ?? false) &&
+    !(ctx.currentFunctionDeclaredNames?.has(name) ?? false)
+  const lexicalNameSet = new Set(
+    Array.from(captured).filter(
+      name => ctx.signalVars?.has(name) && !isImportedReactiveCapture(name),
+    ),
+  )
   const propsName =
     ctx.propsParamName &&
     captured.has(ctx.propsParamName) &&

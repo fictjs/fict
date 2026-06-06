@@ -85,6 +85,100 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toMatch(/count\(\)/)
     })
 
+    it('keeps resumable handlers using imported accessors at module scope', () => {
+      const moduleMetadata = new Map()
+      const storePath = path.join(baseDir, 'resumable-store.ts')
+      const appPath = path.join(baseDir, 'app-resumable-imported-accessors.tsx')
+      moduleMetadata.set(path.resolve(storePath), {
+        exports: {
+          default: 'signal',
+          count: 'signal',
+          total: 'memo',
+          user: 'store',
+        },
+      })
+
+      const output = transform(
+        `
+          import defaultCount, { count, total, user } from './resumable-store'
+
+          export function App() {
+            return (
+              <button onClick$={() => {
+                count(count() + 1)
+                defaultCount(defaultCount() + 1)
+                console.log(total(), user.name)
+              }}>
+                Increment
+              </button>
+            )
+          }
+        `,
+        { resumable: true, moduleMetadata },
+        appPath,
+      )
+
+      expect(output).toContain('setAttribute("on:click"')
+      expect(output).not.toContain('useLexicalScope')
+      expect(output).toContain('count(count() + 1)')
+      expect(output).toContain('defaultCount(defaultCount() + 1)')
+    })
+
+    it('keeps local signal shadows restorable in resumable handlers', () => {
+      const moduleMetadata = new Map()
+      const storePath = path.join(baseDir, 'resumable-shadow-store.ts')
+      const appPath = path.join(baseDir, 'app-resumable-shadow.tsx')
+      moduleMetadata.set(path.resolve(storePath), {
+        exports: {
+          count: 'signal',
+        },
+      })
+
+      const output = transform(
+        `
+          import { count } from './resumable-shadow-store'
+          import { $state } from 'fict'
+
+          export function App() {
+            const count = $state(0)
+            return <button onClick$={() => count(count() + 1)}>Increment</button>
+          }
+        `,
+        { resumable: true, moduleMetadata },
+        appPath,
+      )
+
+      expect(output).toContain('setAttribute("on:click"')
+      expect(output).toContain('__fictUseLexicalScope(scopeId, ["count"])')
+    })
+
+    it('keeps namespace imported accessors out of resumable lexical scope', () => {
+      const moduleMetadata = new Map()
+      const storePath = path.join(baseDir, 'resumable-namespace-store.ts')
+      const appPath = path.join(baseDir, 'app-resumable-namespace.tsx')
+      moduleMetadata.set(path.resolve(storePath), {
+        exports: {
+          count: 'signal',
+        },
+      })
+
+      const output = transform(
+        `
+          import * as store from './resumable-namespace-store'
+
+          export function App() {
+            return <button onClick$={() => store.count(store.count() + 1)}>Increment</button>
+          }
+        `,
+        { resumable: true, moduleMetadata },
+        appPath,
+      )
+
+      expect(output).toContain('setAttribute("on:click"')
+      expect(output).not.toContain('useLexicalScope')
+      expect(output).toContain('store.count(store.count() + 1)')
+    })
+
     it('compiles usage of imported symbol in effect', () => {
       const source = `
         import { $effect } from 'fict'
