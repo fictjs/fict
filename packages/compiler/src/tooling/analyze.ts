@@ -46,7 +46,38 @@ function mergeLoc(
   }
 }
 
-function expressionContainsMacroCall(expr: Expression, macroName: '$state' | '$effect'): boolean {
+interface AnalyzeMacroNames {
+  state: Set<string>
+  effect: Set<string>
+}
+
+function collectAnalyzeMacroNames(ast: BabelCore.types.File): AnalyzeMacroNames {
+  const names: AnalyzeMacroNames = {
+    state: new Set(['$state']),
+    effect: new Set(['$effect']),
+  }
+
+  for (const statement of ast.program.body) {
+    if (!BabelTypes.isImportDeclaration(statement)) continue
+    const source = statement.source.value
+    if (source !== 'fict' && source !== 'fict/slim') continue
+    for (const spec of statement.specifiers) {
+      if (!BabelTypes.isImportSpecifier(spec) || !BabelTypes.isIdentifier(spec.imported)) {
+        continue
+      }
+      if (spec.imported.name === '$state') {
+        names.state.add(spec.local.name)
+      }
+      if (spec.imported.name === '$effect') {
+        names.effect.add(spec.local.name)
+      }
+    }
+  }
+
+  return names
+}
+
+function expressionContainsMacroCall(expr: Expression, macroNames: Set<string>): boolean {
   let found = false
 
   const visit = (value: Expression): void => {
@@ -55,7 +86,7 @@ function expressionContainsMacroCall(expr: Expression, macroName: '$state' | '$e
     if (
       value.kind === 'CallExpression' &&
       value.callee.kind === 'Identifier' &&
-      deSSAVarName(value.callee.name) === macroName
+      macroNames.has(deSSAVarName(value.callee.name))
     ) {
       found = true
       return
@@ -181,35 +212,32 @@ function expressionContainsMacroCall(expr: Expression, macroName: '$state' | '$e
   return found
 }
 
-function instructionContainsMacroCall(
-  instruction: Instruction,
-  macroName: '$state' | '$effect',
-): boolean {
+function instructionContainsMacroCall(instruction: Instruction, macroNames: Set<string>): boolean {
   if (instruction.kind !== 'Assign' && instruction.kind !== 'Expression') return false
-  return expressionContainsMacroCall(instruction.value, macroName)
+  return expressionContainsMacroCall(instruction.value, macroNames)
 }
 
-function functionUsesMacro(fn: HIRFunction, macroName: '$state' | '$effect'): boolean {
+function functionUsesMacro(fn: HIRFunction, macroNames: Set<string>): boolean {
   for (const block of fn.blocks) {
     for (const instruction of block.instructions) {
-      if (instructionContainsMacroCall(instruction, macroName)) return true
+      if (instructionContainsMacroCall(instruction, macroNames)) return true
     }
 
     const term = block.terminator
     if (
       'argument' in term &&
       term.argument &&
-      expressionContainsMacroCall(term.argument, macroName)
+      expressionContainsMacroCall(term.argument, macroNames)
     ) {
       return true
     }
-    if (term.kind === 'Branch' && expressionContainsMacroCall(term.test, macroName)) {
+    if (term.kind === 'Branch' && expressionContainsMacroCall(term.test, macroNames)) {
       return true
     }
     if (term.kind === 'Switch') {
-      if (expressionContainsMacroCall(term.discriminant, macroName)) return true
+      if (expressionContainsMacroCall(term.discriminant, macroNames)) return true
       if (
-        term.cases.some(entry => entry.test && expressionContainsMacroCall(entry.test, macroName))
+        term.cases.some(entry => entry.test && expressionContainsMacroCall(entry.test, macroNames))
       ) {
         return true
       }
@@ -683,9 +711,11 @@ function analyzeDiagnostics(
   return warnings.map(warning => normalizeWarningToDiagnostic(warning, options.compilerOptions))
 }
 
-function shouldIncludeFunction(fn: HIRFunction): boolean {
+function shouldIncludeFunction(fn: HIRFunction, macroNames: AnalyzeMacroNames): boolean {
   return (
-    functionContainsJSX(fn) || functionUsesMacro(fn, '$state') || functionUsesMacro(fn, '$effect')
+    functionContainsJSX(fn) ||
+    functionUsesMacro(fn, macroNames.state) ||
+    functionUsesMacro(fn, macroNames.effect)
   )
 }
 
@@ -716,19 +746,13 @@ export function analyzeFictFile(
   const verbosity = options.verbosity ?? 'minimal'
 
   const ast = parseFileAst(code, fileName)
+  const macroNames = collectAnalyzeMacroNames(ast)
   let hir
   try {
-    hir = buildHIR(
-      ast,
-      {
-        state: new Set(['$state']),
-        effect: new Set(['$effect']),
-      },
-      {
-        dev: true,
-        fileName,
-      },
-    )
+    hir = buildHIR(ast, macroNames, {
+      dev: true,
+      fileName,
+    })
   } catch (error) {
     if (!includeDiagnostics) throw error
     return {
@@ -742,7 +766,7 @@ export function analyzeFictFile(
   const components: ComponentAnalysis[] = []
 
   for (const fn of hir.functions) {
-    if (!fn.loc || !shouldIncludeFunction(fn)) continue
+    if (!fn.loc || !shouldIncludeFunction(fn, macroNames)) continue
 
     const startLine = fn.loc.start.line
     const endLine = fn.loc.end.line

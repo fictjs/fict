@@ -54,6 +54,48 @@ describe('analyzeFictFile', () => {
     expect(result.diagnostics).toEqual([])
   })
 
+  it('includes no-JSX components that use aliased $state imports', () => {
+    const result = analyzeFictFile(
+      `
+        import { $state as s } from 'fict'
+
+        export function Counter() {
+          let count = s(0)
+          return count
+        }
+      `,
+      'aliased-state.tsx',
+      {
+        includeRegions: true,
+        includeDiagnostics: true,
+        verbosity: 'minimal',
+      },
+    )
+
+    expect(result.components.some(component => component.name === 'Counter')).toBe(true)
+  })
+
+  it('includes no-JSX components that use aliased $effect imports', () => {
+    const result = analyzeFictFile(
+      `
+        import { $effect as fx } from 'fict'
+
+        export function Counter() {
+          fx(() => {})
+          return null
+        }
+      `,
+      'aliased-effect.tsx',
+      {
+        includeRegions: true,
+        includeDiagnostics: true,
+        verbosity: 'minimal',
+      },
+    )
+
+    expect(result.components.some(component => component.name === 'Counter')).toBe(true)
+  })
+
   it('returns diagnostics instead of throwing for unsupported HIR input', () => {
     const result = analyzeFictFile(
       `
