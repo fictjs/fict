@@ -3634,8 +3634,10 @@ function generateRegionStatements(
   if (region.hasControlFlow && regionCtx?.rootNode) {
     const localDeclared = new Set<string>()
     const prevInRegionMemo = ctx.inRegionMemo
+    const prevLocalValueVars = ctx.localValueVars
     if (!shouldInline) {
       ctx.inRegionMemo = true
+      ctx.localValueVars = new Set(prevLocalValueVars ?? [])
     }
     const prefixStatements =
       prefixInstructions?.flatMap(instr => {
@@ -3654,6 +3656,7 @@ function generateRegionStatements(
       hoistedInstructionSet.size > 0 ? hoistedInstructionSet : undefined,
     )
     ctx.inRegionMemo = prevInRegionMemo
+    ctx.localValueVars = prevLocalValueVars
     if (shouldInline) {
       statements.push(...hoistedStatements)
       statements.push(...prefixStatements)
@@ -3687,12 +3690,15 @@ function generateRegionStatements(
       const localDeclared = new Set<string>()
       bodyStatementsOverride = []
       const prevInRegionMemo = ctx.inRegionMemo
+      const prevLocalValueVars = ctx.localValueVars
       ctx.inRegionMemo = true
+      ctx.localValueVars = new Set(prevLocalValueVars ?? [])
       for (const instr of memoInstructions) {
         const stmt = instructionToStatement(instr, t, localDeclared, ctx)
         if (stmt) bodyStatementsOverride.push(stmt)
       }
       ctx.inRegionMemo = prevInRegionMemo
+      ctx.localValueVars = prevLocalValueVars
     }
     statements.push(...hoistedStatements)
     const memoStatements = wrapInMemo(
@@ -3729,12 +3735,15 @@ function wrapInMemo(
     const localDeclared = new Set<string>()
     // Convert instructions to statements
     const prevInRegionMemo = ctx.inRegionMemo
+    const prevLocalValueVars = ctx.localValueVars
     ctx.inRegionMemo = true
+    ctx.localValueVars = new Set(prevLocalValueVars ?? [])
     for (const instr of region.instructions) {
       const stmt = instructionToStatement(instr, t, localDeclared, ctx)
       if (stmt) bodyStatements.push(stmt)
     }
     ctx.inRegionMemo = prevInRegionMemo
+    ctx.localValueVars = prevLocalValueVars
   }
 
   // Build return object with declarations - de-version SSA names
@@ -4728,6 +4737,10 @@ function instructionToStatement(
       markCallableSignalIfFunctionValue(baseName, instr.value, ctx)
     }
     const isHoistedDeclarationInitializer = hoistedDeclarationInitializers?.has(baseName) ?? false
+    const markLocalValue = (): void => {
+      const localValueVars = ctx.localValueVars ?? (ctx.localValueVars = new Set())
+      localValueVars.add(baseName)
+    }
     // Detect accessor-returning calls ($memo, createMemo, prop) - these return accessors and should be added to memoVars
     const isAccessorReturningCall =
       callKind === 'memo' ||
@@ -4942,6 +4955,7 @@ function instructionToStatement(
           if (needsMutable) {
             ctx.memoVars?.delete(baseName)
             const derivedExpr = lowerAssignedValue(true)
+            markLocalValue()
             return t.variableDeclaration('let', [
               t.variableDeclarator(t.identifier(baseName), derivedExpr),
             ])
@@ -4981,6 +4995,7 @@ function instructionToStatement(
         if (needsMutable) {
           ctx.memoVars?.delete(baseName)
           const derivedExpr = lowerAssignedValue(true)
+          markLocalValue()
           return t.variableDeclaration('let', [
             t.variableDeclarator(t.identifier(baseName), derivedExpr),
           ])
@@ -5126,6 +5141,7 @@ function instructionToStatement(
         // fix: Don't wrap mutable variables in memo - they will be reassigned later
         if (needsMutable) {
           const derivedExpr = lowerAssignedValue(true)
+          markLocalValue()
           return t.variableDeclaration('let', [
             t.variableDeclarator(t.identifier(baseName), derivedExpr),
           ])
@@ -5165,6 +5181,7 @@ function instructionToStatement(
       // fix: Don't wrap mutable variables in memo - they will be reassigned later
       if (needsMutable) {
         const derivedExpr = lowerAssignedValue(true)
+        markLocalValue()
         return t.variableDeclaration('let', [
           t.variableDeclarator(t.identifier(baseName), derivedExpr),
         ])

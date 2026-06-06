@@ -136,4 +136,25 @@ describe('region output runtime regressions', () => {
 
     expect(result).toBe('1:2')
   })
+
+  it('updates region-local mutable derived values as plain locals', () => {
+    const exports = compileModule(`
+      import { $state } from 'fict'
+
+      export function useProbe() {
+        const a = $state(1)
+        let y = a()
+        const post = y++
+        const pre = ++y
+        y--
+        return String(post) + ':' + String(pre) + ':' + String(y)
+      }
+    `)
+
+    const result = runtimeInternal.__fictRender({ slots: [], cursor: 0 }, () =>
+      (exports.useProbe as () => string)(),
+    )
+
+    expect(result).toBe('1:3:2')
+  })
 })

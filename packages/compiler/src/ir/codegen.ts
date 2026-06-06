@@ -685,6 +685,8 @@ export interface CodegenContext {
   strictMacroBindings?: boolean | undefined
   /** Local (function-scope) declared names for helper shadowing checks. */
   localDeclaredNames?: Set<string> | undefined
+  /** Locals that should be treated as plain values even if reactive analysis tracks the name. */
+  localValueVars?: Set<string> | undefined
   /** Tracks which runtime helpers are used */
   helpersUsed: Set<string>
   /** Runtime helper local names chosen to avoid source declarations. */
@@ -2379,7 +2381,11 @@ function lowerExpressionImpl(
         astNode.right = visit(astNode.right, shadowed) as BabelCore.types.Expression
         if (t.isIdentifier(astNode.left)) {
           const baseName = deSSAVarName(astNode.left.name)
-          if (!shadowed.has(baseName) && ctx.trackedVars.has(baseName)) {
+          if (
+            !shadowed.has(baseName) &&
+            ctx.trackedVars.has(baseName) &&
+            !(ctx.localValueVars?.has(baseName) ?? false)
+          ) {
             const callee = t.identifier(baseName)
             const currentValue = t.callExpression(t.identifier(baseName), [])
             return lowerTrackedAssignmentWrite(
@@ -2394,7 +2400,11 @@ function lowerExpressionImpl(
 
       if (t.isUpdateExpression(astNode) && t.isIdentifier(astNode.argument)) {
         const baseName = deSSAVarName(astNode.argument.name)
-        if (!shadowed.has(baseName) && ctx.trackedVars.has(baseName)) {
+        if (
+          !shadowed.has(baseName) &&
+          ctx.trackedVars.has(baseName) &&
+          !(ctx.localValueVars?.has(baseName) ?? false)
+        ) {
           return lowerTrackedUpdateCall(t.identifier(baseName), astNode.operator, astNode.prefix)
         }
       }
@@ -3355,7 +3365,7 @@ function lowerExpressionImpl(
       }
       if (expr.left.kind === 'Identifier') {
         const baseName = deSSAVarName(expr.left.name)
-        if (ctx.trackedVars.has(baseName)) {
+        if (ctx.trackedVars.has(baseName) && !(ctx.localValueVars?.has(baseName) ?? false)) {
           const callee = t.identifier(baseName)
           const current = t.callExpression(t.identifier(baseName), [])
           const right = lowerExpression(expr.right, ctx)
@@ -3389,7 +3399,7 @@ function lowerExpressionImpl(
       }
       if (expr.argument.kind === 'Identifier') {
         const baseName = deSSAVarName(expr.argument.name)
-        if (ctx.trackedVars.has(baseName)) {
+        if (ctx.trackedVars.has(baseName) && !(ctx.localValueVars?.has(baseName) ?? false)) {
           return lowerTrackedUpdateCall(t.identifier(baseName), expr.operator, expr.prefix)
         }
       }
@@ -7042,10 +7052,12 @@ function lowerFunctionWithRegions(
   const prevHookResultVarMap = ctx.hookResultVarMap
   const prevInModule = ctx.inModule
   const prevContextLocalName = ctx.contextLocalName
+  const prevLocalValueVars = ctx.localValueVars
   const scopedTracked = new Set(ctx.trackedVars)
   const shadowedParams = new Set(fn.params.map(p => deSSAVarName(p.name)))
   fn.params.forEach(p => scopedTracked.delete(deSSAVarName(p.name)))
   ctx.trackedVars = scopedTracked
+  ctx.localValueVars = new Set(prevLocalValueVars ?? [])
   ctx.knownArrayVars = new Set(prevKnownArrayVars ?? [])
   fn.params.forEach(p => ctx.knownArrayVars?.delete(deSSAVarName(p.name)))
   const prevNeedsCtx = ctx.needsCtx
@@ -7659,6 +7671,7 @@ function lowerFunctionWithRegions(
       ctx.needsCtx = prevNeedsCtx
       ctx.shadowedNames = prevShadowed
       ctx.localDeclaredNames = prevLocalDeclared
+      ctx.localValueVars = prevLocalValueVars
       ctx.trackedVars = prevTracked
       ctx.externalTracked = prevExternalTracked
       ctx.signalVars = prevSignalVars
@@ -7684,6 +7697,7 @@ function lowerFunctionWithRegions(
     ctx.needsCtx = prevNeedsCtx
     ctx.shadowedNames = prevShadowed
     ctx.localDeclaredNames = prevLocalDeclared
+    ctx.localValueVars = prevLocalValueVars
     ctx.trackedVars = prevTracked
     ctx.externalTracked = prevExternalTracked
     ctx.signalVars = prevSignalVars
@@ -7808,6 +7822,7 @@ function lowerFunctionWithRegions(
   ctx.needsCtx = prevNeedsCtx
   ctx.shadowedNames = prevShadowed
   ctx.localDeclaredNames = prevLocalDeclared
+  ctx.localValueVars = prevLocalValueVars
   ctx.trackedVars = prevTracked
   ctx.externalTracked = prevExternalTracked
   ctx.signalVars = prevSignalVars
