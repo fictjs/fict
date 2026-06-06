@@ -2387,7 +2387,7 @@ function lowerNodeWithRegionContext(
 
       // Fallback: generate a switch-based state machine
       // This handles non-structurable CFGs by emulating goto with a state variable
-      const stateVar = t.identifier('__state')
+      const stateVar = t.identifier(reserveFunctionLocalName(ctx, '__state'))
       const stateDecl = t.variableDeclaration('let', [
         t.variableDeclarator(stateVar, t.numericLiteral(node.entryBlock)),
       ])
