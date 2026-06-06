@@ -854,6 +854,57 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('preserves computed hook member write ordering before template reads', () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function useThing() {
+        let count = $state(1)
+        return { count, plain: 0 }
+      }
+
+      function App() {
+        const assigned = useThing()
+        const assignKey = 'count'
+        assigned[assignKey] = 2
+
+        const compounded = useThing()
+        let compoundKey = 'count'
+        compounded[compoundKey] += 2
+
+        const updated = useThing()
+        var updateKey = 'count'
+        updated[updateKey]++
+
+        return (
+          <div>
+            <span data-testid="assigned">{assigned.count}</span>
+            <span data-testid="compounded">{compounded.count}</span>
+            <span data-testid="updated">{updated.count}</span>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-testid="assigned"]')?.textContent).toBe('2')
+    expect(container.querySelector('[data-testid="compounded"]')?.textContent).toBe('3')
+    expect(container.querySelector('[data-testid="updated"]')?.textContent).toBe('2')
+
+    teardown()
+    container.remove()
+  })
+
   it('throws impure reactive derived declaration initializers at declaration time', () => {
     const source = `
       import { $state, render } from 'fict'

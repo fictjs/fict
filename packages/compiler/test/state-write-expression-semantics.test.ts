@@ -1244,6 +1244,50 @@ describe('state write expression semantics', () => {
     expect(values).toEqual([11, 11, 11, 11])
   })
 
+  it('preserves declaration ordering before computed hook member writes', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function useThing() {
+        let count = $state(1)
+        return { count, plain: 0 }
+      }
+
+      export function useComputedHookAssignmentOrdering() {
+        const thing = useThing()
+        const key = 'count'
+        thing[key] = 2
+        return thing.count
+      }
+
+      export function useComputedHookCompoundOrdering() {
+        const thing = useThing()
+        let key = 'count'
+        thing[key] += 2
+        return thing.count
+      }
+
+      export function useComputedHookUpdateOrdering() {
+        const thing = useThing()
+        var key = 'count'
+        thing[key]++
+        return thing.count
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+
+    for (const [name, expected] of [
+      ['useComputedHookAssignmentOrdering', 2],
+      ['useComputedHookCompoundOrdering', 3],
+      ['useComputedHookUpdateOrdering', 2],
+    ] as const) {
+      const raw = compiledFunction(mod, name)()
+      const value = typeof raw === 'function' ? (raw as () => unknown)() : raw
+      expect(value).toBe(expected)
+    }
+  })
+
   it('coerces numeric string keys for computed hook-return array writes', () => {
     const source = `
       import { $state } from 'fict'

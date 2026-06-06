@@ -3493,6 +3493,17 @@ function collectSignalWriteDeclarationBarrierRegionIds(
       continue
     }
 
+    if (item.region && instr.kind === 'Expression' && isComputedMemberMutation(instr.value)) {
+      for (const dep of collectInstructionDependencies(instr)) {
+        const depName = deSSAVarName(dep)
+        const declaration = priorDeclarations.get(depName)
+        if (!declaration || declaration.index >= index) continue
+        if (declaration.region?.id === item.region.id) continue
+        disabled.add(item.region.id)
+      }
+      continue
+    }
+
     if (!item.region || instr.kind !== 'Assign' || instr.declarationKind) continue
 
     const targetName = deSSAVarName(instr.target.name)
@@ -3509,6 +3520,23 @@ function collectSignalWriteDeclarationBarrierRegionIds(
   }
 
   return disabled
+}
+
+function isComputedMemberMutation(expr: Expression): boolean {
+  if (expr.kind === 'AssignmentExpression') {
+    return (
+      (expr.left.kind === 'MemberExpression' || expr.left.kind === 'OptionalMemberExpression') &&
+      expr.left.computed === true
+    )
+  }
+  if (expr.kind === 'UpdateExpression') {
+    return (
+      (expr.argument.kind === 'MemberExpression' ||
+        expr.argument.kind === 'OptionalMemberExpression') &&
+      expr.argument.computed === true
+    )
+  }
+  return false
 }
 
 function collectSnapshotInterruptedRegionIds(
