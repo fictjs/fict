@@ -306,12 +306,25 @@ describe('serializeValue / deserializeValue', () => {
       expect(result.c).toBe(3)
     })
 
-    it('should preserve array holes as undefined', () => {
+    it('should preserve explicit array undefined entries', () => {
       const arr = [1, undefined, 3]
-      const result = deserializeValue(serializeValue(arr)) as number[]
+      const result = deserializeValue(JSON.parse(JSON.stringify(serializeValue(arr)))) as number[]
       expect(result[0]).toBe(1)
+      expect(1 in result).toBe(true)
       expect(result[1]).toBe(undefined)
       expect(result[2]).toBe(3)
+    })
+
+    it('should preserve sparse array holes through JSON', () => {
+      const arr = [1, , 3]
+      const result = deserializeValue(JSON.parse(JSON.stringify(serializeValue(arr)))) as number[]
+
+      expect(result).toHaveLength(3)
+      expect(0 in result).toBe(true)
+      expect(1 in result).toBe(false)
+      expect(2 in result).toBe(true)
+      expect(Object.keys(result)).toEqual(['0', '2'])
+      expect(result[1]).toBeUndefined()
     })
   })
 })

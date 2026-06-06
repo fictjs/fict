@@ -24,6 +24,7 @@ type SerializedMarker =
   | { __t: 'r'; v: { s: string; f: string } } // RegExp (source + flags)
   | { __t: 'sym'; v: { k: 'g' | 'w'; n: string } } // Symbol.for / well-known Symbol
   | { __t: 'o'; v: [unknown, unknown][] } // Object with symbol keys
+  | { __t: 'h' } // Array hole
   | { __t: 'u' } // undefined
   | { __t: 'n' } // NaN
   | { __t: '+i' } // Infinity
@@ -551,7 +552,11 @@ export function serializeValue(
     // Array
     if (Array.isArray(value)) {
       seen.set(value, path)
-      return value.map((item, i) => serializeValue(item, seen, `${path}[${i}]`))
+      return Array.from({ length: value.length }, (_, i) =>
+        Object.prototype.hasOwnProperty.call(value, i)
+          ? serializeValue(value[i], seen, `${path}[${i}]`)
+          : ({ __t: 'h' } as SerializedMarker),
+      )
     }
 
     // Plain object
@@ -681,10 +686,12 @@ export function deserializeValue(
 
   // Handle arrays
   if (Array.isArray(value)) {
-    const arr: unknown[] = []
+    const arr: unknown[] = new Array(value.length)
     refs.set(path, arr)
     for (let i = 0; i < value.length; i++) {
-      arr.push(deserializeValue(value[i], refs, `${path}[${i}]`))
+      const item = value[i]
+      if (isSerializedMarker(item) && item.__t === 'h') continue
+      arr[i] = deserializeValue(item, refs, `${path}[${i}]`)
     }
     return arr
   }
