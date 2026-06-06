@@ -172,8 +172,11 @@ export function buildPropsPlan(
           obj.kind === 'AssignmentExpression' ||
           obj.kind === 'UpdateExpression' ||
           obj.kind === 'AwaitExpression' ||
+          obj.kind === 'ImportExpression' ||
           obj.kind === 'NewExpression' ||
-          obj.kind === 'YieldExpression'
+          obj.kind === 'YieldExpression' ||
+          obj.kind === 'TaggedTemplateExpression' ||
+          obj.kind === 'ClassExpression'
         ) {
           return true
         }
@@ -199,8 +202,11 @@ export function buildPropsPlan(
         expr.kind === 'AssignmentExpression' ||
         expr.kind === 'UpdateExpression' ||
         expr.kind === 'AwaitExpression' ||
+        expr.kind === 'ImportExpression' ||
         expr.kind === 'NewExpression' ||
-        expr.kind === 'YieldExpression'
+        expr.kind === 'YieldExpression' ||
+        expr.kind === 'TaggedTemplateExpression' ||
+        expr.kind === 'ClassExpression'
       ) {
         return true
       }

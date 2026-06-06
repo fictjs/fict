@@ -144,6 +144,45 @@ describe('reactivity guarantee contract', () => {
         error: /FICT-P005/,
       },
       {
+        name: 'tagged-template props spread fallback',
+        source: `
+          function tag(strings) {
+            return { value: strings[0] }
+          }
+          function Parent() {
+            return <Child {...tag\`value\`} />
+          }
+          function Child(allProps) {
+            return <div>{allProps.value}</div>
+          }
+        `,
+        error: /FICT-P005/,
+      },
+      {
+        name: 'dynamic import props spread fallback',
+        source: `
+          function Parent() {
+            return <Child {...import('./props')} />
+          }
+          function Child(allProps) {
+            return <div>{allProps.value}</div>
+          }
+        `,
+        error: /FICT-P005/,
+      },
+      {
+        name: 'class expression props spread fallback',
+        source: `
+          function Parent() {
+            return <Child {...class Props {}} />
+          }
+          function Child(allProps) {
+            return <div>{allProps.value}</div>
+          }
+        `,
+        error: /FICT-P005/,
+      },
+      {
         name: 'direct state argument escape fallback',
         source: `
           import { $state } from 'fict'
@@ -530,6 +569,27 @@ describe('reactivity guarantee contract', () => {
         expect(() => transform(testCase.source, STRICT_GUARANTEE_OPTIONS)).toThrow(testCase.error)
       })
     }
+  })
+
+  describe('Non-strict props spread warnings', () => {
+    it('warns FICT-P005 for tagged-template spread sources with signal substitutions', () => {
+      const warningCodes = collectWarningCodes(
+        `
+          import { $state } from 'fict'
+          function tag(strings, value) {
+            return { value }
+          }
+          function Parent() {
+            let count = $state(1)
+            return <Child {...tag\`\${count}\`} />
+          }
+          function Child(allProps) {
+            return <div>{allProps.value}</div>
+          }
+        `,
+      )
+      expect(warningCodes).toContain('FICT-P005')
+    })
   })
 
   describe('Non-strict callback boundary warnings', () => {
