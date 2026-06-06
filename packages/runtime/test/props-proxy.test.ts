@@ -524,6 +524,35 @@ describe('mergeProps advanced', () => {
     expect(merged[sym]).toBe('updated')
   })
 
+  it('spreads function objects returned by dynamic sources', () => {
+    const sym = Symbol('fn')
+    const first = Object.assign(() => 'first', { x: 1, [sym]: 'one' })
+    const second = Object.assign(() => 'second', { x: 2, [sym]: 'two' })
+    const source = createSignal<Record<string | symbol, unknown> | (() => string)>({ x: 0 })
+    const merged = createPropsProxy(
+      mergeProps(
+        __fictProp(() => source()),
+        { y: 3 },
+      ),
+    )
+
+    expect(Object.keys(merged)).toEqual(['x', 'y'])
+    expect(merged.x).toBe(0)
+
+    source(first)
+
+    expect(Object.keys(merged)).toEqual(['x', 'y'])
+    expect(Reflect.ownKeys(merged)).toEqual(['x', 'y', sym])
+    expect(merged.x).toBe(1)
+    expect((merged as Record<symbol, unknown>)[sym]).toBe('one')
+
+    source(second)
+
+    expect(merged.x).toBe(2)
+    expect((merged as Record<symbol, unknown>)[sym]).toBe('two')
+    expect(merged.y).toBe(3)
+  })
+
   it('preserves null/undefined values correctly', () => {
     const merged = mergeProps({ a: null, b: undefined, c: 0, d: '' })
 
