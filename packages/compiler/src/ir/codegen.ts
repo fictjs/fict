@@ -3761,6 +3761,7 @@ function lowerIntrinsicElementAsVNode(
 ): BabelCore.types.Expression {
   const { t } = ctx
   const props: (BabelCore.types.ObjectProperty | BabelCore.types.SpreadElement)[] = []
+  let keyExpr: BabelCore.types.Expression | null = null
   const toPropKey = (name: string) =>
     /^[a-zA-Z_$][\w$]*$/.test(name) ? t.identifier(name) : t.stringLiteral(name)
 
@@ -3772,7 +3773,7 @@ function lowerIntrinsicElementAsVNode(
 
     const name = attr.name
     if (name === 'key') {
-      // Key is ignored in runtime VNode mode.
+      keyExpr = attr.value ? lowerDomExpression(attr.value, ctx) : t.booleanLiteral(true)
       continue
     }
 
@@ -3807,10 +3808,14 @@ function lowerIntrinsicElementAsVNode(
 
   const propsExpr = props.length > 0 ? t.objectExpression(props) : t.nullLiteral()
 
-  return t.objectExpression([
+  const vnodeProps: (BabelCore.types.ObjectProperty | BabelCore.types.SpreadElement)[] = [
     t.objectProperty(t.identifier('type'), t.stringLiteral(String(jsx.tagName))),
     t.objectProperty(t.identifier('props'), propsExpr),
-  ])
+  ]
+  if (keyExpr) {
+    vnodeProps.push(t.objectProperty(t.identifier('key'), keyExpr))
+  }
+  return t.objectExpression(vnodeProps)
 }
 
 /**

@@ -2872,6 +2872,44 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('stores intrinsic VNode fallback keys on the VNode', () => {
+    const source = `
+      export function make() {
+        const dynamicKey = 'row-2'
+        const staticVNode = <div key="row-1" id="x" /> as any
+        const dynamicVNode = <section key={dynamicKey} id="y" /> as any
+        return {
+          staticKey: staticVNode.key,
+          staticPropsKey: staticVNode.props && staticVNode.props.key,
+          staticPropsKeys: Object.keys(staticVNode.props || {}),
+          dynamicKey: dynamicVNode.key,
+          dynamicPropsKey: dynamicVNode.props && dynamicVNode.props.key,
+          dynamicPropsKeys: Object.keys(dynamicVNode.props || {}),
+        }
+      }
+    `
+
+    const mod = compileAndLoad<{
+      make: () => {
+        staticKey: string
+        staticPropsKey: unknown
+        staticPropsKeys: string[]
+        dynamicKey: string
+        dynamicPropsKey: unknown
+        dynamicPropsKeys: string[]
+      }
+    }>(source, { fineGrainedDom: false })
+
+    expect(mod.make()).toEqual({
+      staticKey: 'row-1',
+      staticPropsKey: undefined,
+      staticPropsKeys: ['id'],
+      dynamicKey: 'row-2',
+      dynamicPropsKey: undefined,
+      dynamicPropsKeys: ['id'],
+    })
+  })
+
   it('rejects dangerouslySetInnerHTML with explicit JSX children', () => {
     const source = `
       import { render } from 'fict'
