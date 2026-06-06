@@ -1578,6 +1578,25 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-X003')).toBe(true)
   })
 
+  it('warns on wrapped non-event inline JSX function props', () => {
+    const cases = [
+      'ok ? () => label : null',
+      'ok && (() => label)',
+      '(0, () => label)',
+      '((() => label) as any)',
+    ]
+
+    for (const expression of cases) {
+      const { warnings } = transformWithWarnings(`
+        function Panel({ label, ok }) {
+          return <MemoizedButton renderLabel={${expression}} />
+        }
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-X003')).toBe(true)
+    }
+  })
+
   it('does not warn on inline event handler props', () => {
     const { warnings } = transformWithWarnings(`
       import { $state } from 'fict'
@@ -1590,10 +1609,41 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-X003')).toBe(false)
   })
 
+  it('does not warn on wrapped inline event handlers or stable callback identifiers', () => {
+    const event = transformWithWarnings(`
+      import { $state } from 'fict'
+      function Panel({ ok }) {
+        const count = $state(0)
+        return <button onClick={ok ? () => count++ : undefined}>{count}</button>
+      }
+    `)
+
+    expect(event.warnings.some(w => w.code === 'FICT-X003')).toBe(false)
+
+    const stable = transformWithWarnings(`
+      function Panel({ label }) {
+        const renderLabel = () => label
+        return <MemoizedButton renderLabel={renderLabel} />
+      }
+    `)
+
+    expect(stable.warnings.some(w => w.code === 'FICT-X003')).toBe(false)
+  })
+
   it('does not warn on inline ref callback props', () => {
     const { warnings } = transformWithWarnings(`
       function Panel() {
         return <div ref={el => console.log(el)}>ok</div>
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-X003')).toBe(false)
+  })
+
+  it('does not warn on wrapped inline ref callback props', () => {
+    const { warnings } = transformWithWarnings(`
+      function Panel({ ok }) {
+        return <div ref={ok && ((el) => console.log(el))}>ok</div>
       }
     `)
 

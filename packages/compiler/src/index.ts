@@ -3192,12 +3192,46 @@ function createHIREntrypointVisitor(
         })
         path.traverse({
           JSXAttribute(attrPath) {
+            const expressionContainsInlineFunction = (
+              expr: BabelCore.types.Expression,
+            ): boolean => {
+              if (t.isArrowFunctionExpression(expr) || t.isFunctionExpression(expr)) return true
+              if (t.isConditionalExpression(expr)) {
+                return (
+                  expressionContainsInlineFunction(expr.consequent) ||
+                  expressionContainsInlineFunction(expr.alternate)
+                )
+              }
+              if (t.isLogicalExpression(expr)) {
+                return (
+                  expressionContainsInlineFunction(expr.left) ||
+                  expressionContainsInlineFunction(expr.right)
+                )
+              }
+              if (t.isSequenceExpression(expr)) {
+                const tail = expr.expressions[expr.expressions.length - 1]
+                return tail ? expressionContainsInlineFunction(tail) : false
+              }
+              if (t.isParenthesizedExpression(expr)) {
+                return expressionContainsInlineFunction(expr.expression)
+              }
+              if (
+                t.isTSAsExpression(expr) ||
+                t.isTSTypeAssertion(expr) ||
+                t.isTSNonNullExpression(expr) ||
+                t.isTSSatisfiesExpression(expr) ||
+                t.isTypeCastExpression(expr)
+              ) {
+                return expressionContainsInlineFunction(expr.expression)
+              }
+              return false
+            }
             if (!t.isJSXIdentifier(attrPath.node.name)) return
             const attrName = attrPath.node.name.name
             if (attrName === 'ref' || /^on[A-Z]/.test(attrName)) return
             if (!t.isJSXExpressionContainer(attrPath.node.value)) return
             const expr = attrPath.node.value.expression
-            if (!t.isArrowFunctionExpression(expr) && !t.isFunctionExpression(expr)) return
+            if (!t.isExpression(expr) || !expressionContainsInlineFunction(expr)) return
             emitWarning(
               attrPath,
               'FICT-X003',
