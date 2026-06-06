@@ -3,6 +3,40 @@ import type { BasicBlock, BabelParamNode, Expression, HIRFunction, Instruction }
 import { deSSAVarName } from './regions'
 import { structurizeCFG, type StructuredNode } from './structurize'
 
+const SYNC_CALLBACK_METHODS = new Set([
+  'every',
+  'filter',
+  'find',
+  'findIndex',
+  'findLast',
+  'findLastIndex',
+  'flatMap',
+  'forEach',
+  'map',
+  'reduce',
+  'reduceRight',
+  'some',
+  'sort',
+])
+
+function getStaticPropertyName(expr: Expression, computed: boolean): string | null {
+  if (!computed && expr.kind === 'Identifier') return deSSAVarName(expr.name)
+  if (expr.kind === 'Literal' && typeof expr.value === 'string') return expr.value
+  return null
+}
+
+function isKnownSynchronousCallbackHost(callee: Expression): boolean {
+  if (callee.kind !== 'MemberExpression' && callee.kind !== 'OptionalMemberExpression') {
+    return false
+  }
+  const propName = getStaticPropertyName(callee.property, callee.computed)
+  return !!propName && SYNC_CALLBACK_METHODS.has(propName)
+}
+
+function isFunctionExpressionValue(expr: Expression): boolean {
+  return expr.kind === 'ArrowFunction' || expr.kind === 'FunctionExpression'
+}
+
 function collectPatternBindingNames(pattern: BabelParamNode | null | undefined, into: Set<string>) {
   if (!pattern || typeof pattern !== 'object') return
   const node = pattern as { type?: string; [key: string]: unknown }
@@ -258,10 +292,17 @@ export function collectExpressionIdentifiersDeep(
           scopeFunctionLocals,
         )
       }
-      // Always traverse into arguments - this handles callbacks like array.find(n => n === target)
-      expr.arguments.forEach(arg =>
-        collectExpressionIdentifiersDeep(arg as Expression, into, bound, true),
-      )
+      const deepScanFunctionArgs = isKnownSynchronousCallbackHost(expr.callee)
+      expr.arguments.forEach(arg => {
+        const argExpr = arg as Expression
+        if (isFunctionExpressionValue(argExpr)) {
+          if (deepScanFunctionArgs) {
+            collectExpressionIdentifiersDeep(argExpr, into, bound, true)
+          }
+          return
+        }
+        collectExpressionIdentifiersDeep(argExpr, into, bound, scopeFunctionLocals)
+      })
       return
     }
     case 'BinaryExpression':

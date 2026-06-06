@@ -279,6 +279,46 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('does not treat inert callback arguments as reactive reads', () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export const callbacks: Array<() => unknown> = []
+
+      function App() {
+        let count = $state(0)
+        let source = 1
+        const ignore = fn => source
+        const store = fn => {
+          callbacks.push(fn)
+          return source
+        }
+        const ignored = ignore(() => count())
+        const stored = store(() => count())
+        source = 2
+        return <span data-testid="value">{ignored}:{stored}</span>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      callbacks: Array<() => unknown>
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-testid="value"]')?.textContent).toBe('1:1')
+    expect(mod.callbacks).toHaveLength(1)
+
+    teardown()
+    container.remove()
+  })
+
   it('evaluates impure reactive derived declaration initializers eagerly', async () => {
     const source = `
       import { $state, render } from 'fict'
