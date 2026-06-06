@@ -105,6 +105,37 @@ describe('analyzeFictFile', () => {
     )
   })
 
+  it('includes source spans for declaration-driven regions', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function App() {
+        const count = $state(0)
+        const doubled = count * 2
+        return <div>{doubled}</div>
+      }
+    `
+    const result = analyzeFictFile(source, 'region-span.tsx', {
+      includeRegions: true,
+      includeDiagnostics: true,
+      verbosity: 'verbose',
+    })
+
+    const app = result.components.find(component => component.name === 'App')
+    expect(app).toBeDefined()
+
+    const doubledLine = sourceLine(source, 'const doubled')
+    const region = app?.regions?.find(
+      entry => entry.dependencies.includes('count') && entry.declarations.includes('doubled'),
+    )
+
+    expect(region).toBeDefined()
+    expect(region?.startLine).toBeLessThanOrEqual(doubledLine)
+    expect(region?.endLine).toBeGreaterThanOrEqual(doubledLine)
+    expect(region?.startColumn).toBeGreaterThanOrEqual(0)
+    expect(region?.endColumn).toBeGreaterThanOrEqual(0)
+  })
+
   it('marks JSX reads of dollar-prefixed state identifiers as reactive', () => {
     const source = `
       import { $state } from 'fict'

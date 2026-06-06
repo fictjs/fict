@@ -251,6 +251,9 @@ function computeRegionLoc(region: Region, fn: HIRFunction): BabelCore.types.Sour
 
   for (const instruction of region.instructions) {
     loc = mergeLoc(loc, instruction.loc)
+    if (instruction.kind === 'Assign' || instruction.kind === 'Expression') {
+      loc = mergeLoc(loc, instruction.value.loc)
+    }
   }
 
   for (const blockId of region.blocks) {
