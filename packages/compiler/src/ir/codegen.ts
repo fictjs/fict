@@ -1408,7 +1408,7 @@ function resolveNamespaceHookCallInfo(
   if (callee.object.kind !== 'Identifier') return null
 
   const namespaceName = deSSAVarName(callee.object.name)
-  const nsMeta = ctx.importedNamespaces?.get(namespaceName)
+  const nsMeta = getImportedNamespaceMetadata(namespaceName, ctx)
   if (!nsMeta?.hooks) return null
 
   const propName = getStaticPropName(callee.property as Expression, callee.computed)
@@ -1517,6 +1517,20 @@ function isSerializedHookReturnInfo(value: unknown): value is HookReturnInfoSeri
   return true
 }
 
+function getImportedNamespaceMetadata(
+  name: string,
+  ctx: CodegenContext,
+): ModuleReactiveMetadata | undefined {
+  const baseName = deSSAVarName(name)
+  if (
+    (ctx.shadowedNames?.has(baseName) ?? false) ||
+    (ctx.localDeclaredNames?.has(baseName) ?? false)
+  ) {
+    return undefined
+  }
+  return ctx.importedNamespaces?.get(baseName)
+}
+
 function markHookReactiveLocal(
   name: string,
   kind: HookAccessorKind | null | undefined,
@@ -1580,7 +1594,7 @@ function assertWritableImportedNamespaceMember(
 ): void {
   if (expr.object.kind !== 'Identifier') return
   const namespaceName = deSSAVarName(expr.object.name)
-  const nsMeta = ctx.importedNamespaces?.get(namespaceName)
+  const nsMeta = getImportedNamespaceMetadata(namespaceName, ctx)
   if (!nsMeta) return
 
   const propName = getStaticPropName(expr.property as Expression, expr.computed)
@@ -3769,7 +3783,7 @@ function lowerExpressionImpl(
       return false
     }
     if (callee.object.kind !== 'Identifier') return false
-    const nsMeta = ctx.importedNamespaces?.get(deSSAVarName(callee.object.name))
+    const nsMeta = getImportedNamespaceMetadata(callee.object.name, ctx)
     if (!nsMeta) return false
     const propName = getStaticPropName(callee.property as Expression, callee.computed)
     if (typeof propName !== 'string') return false
@@ -4023,7 +4037,7 @@ function lowerExpressionImpl(
         return t.identifier(ctx.listKeyParamName!)
       }
       if (expr.object.kind === 'Identifier') {
-        const nsMeta = ctx.importedNamespaces?.get(deSSAVarName(expr.object.name))
+        const nsMeta = getImportedNamespaceMetadata(expr.object.name, ctx)
         if (nsMeta) {
           const propName = getStaticPropName(expr.property as Expression, expr.computed)
           if (typeof propName === 'string') {
@@ -4962,7 +4976,7 @@ function unwrapAccessorCalls(
     member: BabelCore.types.MemberExpression | BabelCore.types.OptionalMemberExpression,
   ): boolean => {
     if (!t.isIdentifier(member.object)) return false
-    const nsMeta = ctx.importedNamespaces?.get(deSSAVarName(member.object.name))
+    const nsMeta = getImportedNamespaceMetadata(member.object.name, ctx)
     if (!nsMeta) return false
     const propName = !member.computed
       ? t.isIdentifier(member.property)
@@ -7161,7 +7175,7 @@ export function lowerHIRWithRegions(
       const isStaticImportedNamespaceMemberDefault =
         t.isMemberExpression(defaultExpr) &&
         t.isIdentifier(defaultExpr.object) &&
-        (ctx.importedNamespaces?.has(defaultExpr.object.name) ?? false) &&
+        getImportedNamespaceMetadata(defaultExpr.object.name, ctx) !== undefined &&
         ((!defaultExpr.computed && t.isIdentifier(defaultExpr.property)) ||
           t.isStringLiteral(defaultExpr.property) ||
           t.isNumericLiteral(defaultExpr.property))
@@ -7540,7 +7554,7 @@ function transformControlFlowReturns(
     if (!expr) return false
     if (t.isMemberExpression(expr) || t.isOptionalMemberExpression(expr)) {
       if (t.isIdentifier(expr.object)) {
-        const nsMeta = ctx.importedNamespaces?.get(expr.object.name)
+        const nsMeta = getImportedNamespaceMetadata(expr.object.name, ctx)
         const propName = getStaticBabelPropertyName(expr.property, expr.computed)
         if (nsMeta && propName && nsMeta.exports[propName] === 'store') {
           return true

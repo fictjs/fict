@@ -3879,6 +3879,161 @@ describe('Cross-Module Reactivity', () => {
       expect(output).not.toContain('return store?.["count"];')
     })
 
+    it('does not unwrap namespace members when nested bindings shadow namespace imports', () => {
+      const storeSource = `
+        import { createSignal } from 'fict/advanced'
+        export const count = createSignal(1)
+      `
+      const moduleMetadata = new Map()
+      transform(storeSource, { moduleMetadata }, path.join(baseDir, 'store-ns-shadow.ts'))
+
+      const cases = [
+        {
+          name: 'arrow param',
+          source: `
+            export function App() {
+              const read = store => store.count
+              return read({ count: 1 }) + store.count
+            }
+          `,
+          inner: /\(store => store\.count\)\(\{/,
+          forbidden: /store => store\.count\(\)/,
+          outer: /store\.count\(\)/,
+        },
+        {
+          name: 'function expression param',
+          source: `
+            export function App() {
+              const read = function (store) {
+                return store.count
+              }
+              return read({ count: 2 }) + store.count
+            }
+          `,
+          inner: /function \(store\) {\s*return store\.count;\s*}/s,
+          forbidden: /function \(store\) {\s*return store\.count\(\);/s,
+          outer: /store\.count\(\)/,
+        },
+        {
+          name: 'function declaration param',
+          source: `
+            export function App() {
+              function read(store) {
+                return store.count
+              }
+              return read({ count: 3 }) + store.count
+            }
+          `,
+          inner: /function read\(store\) {\s*return store\.count;\s*}/s,
+          forbidden: /function read\(store\) {\s*return store\.count\(\);/s,
+          outer: /store\.count\(\)/,
+        },
+        {
+          name: 'destructured param',
+          source: `
+            export function App() {
+              const read = ({ store }) => store.count
+              return read({ store: { count: 4 } }) + store.count
+            }
+          `,
+          inner: /\(\{\s*store\s*\}\) => store\.count/,
+          forbidden: /\(\{\s*store\s*\}\) => store\.count\(\)/,
+          outer: /store\.count\(\)/,
+        },
+        {
+          name: 'computed static property',
+          source: `
+            export function App() {
+              const read = store => store["count"]
+              return read({ count: 5 }) + store["count"]
+            }
+          `,
+          inner: /store => store\["count"\]/,
+          forbidden: /store => store\["count"\]\(\)/,
+          outer: /store\["count"\]\(\)/,
+        },
+        {
+          name: 'catch param',
+          source: `
+            export function App() {
+              const read = input => {
+                try {
+                  throw input
+                } catch (store) {
+                  return store.count
+                }
+              }
+              return read({ count: 6 }) + store.count
+            }
+          `,
+          inner: /catch \(store\) {\s*return store\.count;\s*}/s,
+          forbidden: /catch \(store\) {\s*return store\.count\(\);/s,
+          outer: /store\.count\(\)/,
+        },
+        {
+          name: 'block local',
+          source: `
+            export function App() {
+              const read = () => {
+                {
+                  const store = { count: 7 }
+                  return store.count
+                }
+              }
+              return read() + store.count
+            }
+          `,
+          inner: /const store = {\s*count: 7\s*};\s*return store\.count;/s,
+          forbidden: /const store = {\s*count: 7\s*};\s*return store\.count\(\);/s,
+          outer: /store\.count\(\)/,
+        },
+      ] as const
+
+      for (const scenario of cases) {
+        const output = transform(
+          `
+            import * as store from './store-ns-shadow'
+            ${scenario.source}
+          `,
+          { moduleMetadata },
+          path.join(baseDir, `app-ns-shadow-${scenario.name.replace(/ /g, '-')}.tsx`),
+        )
+
+        expect(output, scenario.name).toMatch(scenario.inner)
+        expect(output, scenario.name).not.toMatch(scenario.forbidden)
+        expect(output, scenario.name).toMatch(scenario.outer)
+      }
+    })
+
+    it('still unwraps unshadowed namespace members inside nested functions', () => {
+      const storeSource = `
+        import { createSignal } from 'fict/advanced'
+        export const count = createSignal(1)
+      `
+      const appSource = `
+        import * as store from './store-ns-unshadowed-nested'
+
+        export function App() {
+          const read = () => store.count
+          return read() + store["count"]
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        storeSource,
+        { moduleMetadata },
+        path.join(baseDir, 'store-ns-unshadowed-nested.ts'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-ns-unshadowed-nested.tsx'),
+      )
+
+      expect(output).toMatch(/return \(\(\) => store\.count\(\)\)\(\) \+ store\["count"\]\(\);/)
+    })
+
     it('preserves delete targets for namespace reactive members', () => {
       const storeSource = `
         import { createMemo, createSignal } from 'fict/advanced'
