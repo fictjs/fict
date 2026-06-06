@@ -292,7 +292,13 @@ export function __fictGetScopeProps(scopeId: string): Record<string, unknown> | 
   return resumedScopes.get(scopeId)?.props
 }
 
-export function __fictQrl(moduleId: string, exportName: string): string {
+function appendQrlFlags(qrl: string, flags?: string | string[]): string {
+  const flagList = Array.isArray(flags) ? flags : flags ? [flags] : []
+  if (flagList.length === 0) return qrl
+  return `${qrl}[${flagList.join(',')}]`
+}
+
+export function __fictQrl(moduleId: string, exportName: string, flags?: string | string[]): string {
   const sessionManifest = __fictGetCurrentSSRSession()?.manifest
   const manifest =
     sessionManifest ??
@@ -302,7 +308,7 @@ export function __fictQrl(moduleId: string, exportName: string): string {
 
   // Check manifest first (production builds)
   if (manifest?.[moduleId]) {
-    return `${manifest[moduleId]}#${exportName}`
+    return appendQrlFlags(`${manifest[moduleId]}#${exportName}`, flags)
   }
 
   // Handle file:// URLs for Vite dev mode SSR
@@ -315,15 +321,15 @@ export function __fictQrl(moduleId: string, exportName: string): string {
       // Strip base to get relative path (e.g., /src/App.tsx)
       if (filePath.startsWith(ssrBase)) {
         const relativePath = filePath.slice(ssrBase.length)
-        return `${relativePath}#${exportName}`
+        return appendQrlFlags(`${relativePath}#${exportName}`, flags)
       }
     }
 
     // Fallback: use Vite's /@fs/ convention for direct file system access
-    return `/@fs${filePath}#${exportName}`
+    return appendQrlFlags(`/@fs${filePath}#${exportName}`, flags)
   }
 
-  return `${moduleId}#${exportName}`
+  return appendQrlFlags(`${moduleId}#${exportName}`, flags)
 }
 
 // Registry for resume functions to prevent tree-shaking.

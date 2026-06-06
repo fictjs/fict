@@ -9,6 +9,7 @@ import {
 } from './codegen-resumable-utils'
 import { runtimeIdentifier } from './codegen-runtime-helpers'
 import { HIRError, type Expression } from './hir'
+import { collectBindingNames } from '../utils'
 
 function voidZero(t: typeof BabelCore.types): BabelCore.types.UnaryExpression {
   return t.unaryExpression('void', t.numericLiteral(0), true)
@@ -120,6 +121,88 @@ function collectCalledPropMembers(
     paths.add(formatMemberPath(callee, t) ?? `${propsName}.*`)
   })
   return Array.from(paths).sort()
+}
+
+function getPreventDefaultParamName(
+  expr: BabelCore.types.Expression,
+  t: typeof BabelCore.types,
+): string | null {
+  if (!t.isArrowFunctionExpression(expr) && !t.isFunctionExpression(expr)) return null
+  const [param] = expr.params
+  return param && t.isIdentifier(param) ? param.name : null
+}
+
+function isPreventDefaultCallForName(
+  node: BabelCore.types.Node,
+  eventParamName: string,
+  shadowed: boolean,
+  t: typeof BabelCore.types,
+): boolean {
+  if (shadowed || (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))) return false
+  const callee = node.callee
+  if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee)) return false
+  if (!t.isIdentifier(callee.object) || callee.object.name !== eventParamName) return false
+  if (!callee.computed && t.isIdentifier(callee.property)) {
+    return callee.property.name === 'preventDefault'
+  }
+  return t.isStringLiteral(callee.property) && callee.property.value === 'preventDefault'
+}
+
+function functionOwnBindings(fn: BabelCore.types.Function, t: typeof BabelCore.types): Set<string> {
+  const names = new Set<string>()
+  for (const param of fn.params) {
+    if (t.isTSParameterProperty(param)) {
+      collectBindingNames(param.parameter as BabelCore.types.LVal, names, t)
+    } else {
+      collectBindingNames(param as BabelCore.types.LVal, names, t)
+    }
+  }
+  return names
+}
+
+function callsEventPreventDefault(
+  expr: BabelCore.types.Expression | undefined,
+  t: typeof BabelCore.types,
+): boolean {
+  if (!expr) return false
+  const eventParamName = getPreventDefaultParamName(expr, t)
+  if (!eventParamName) return false
+
+  let found = false
+  const visit = (node: BabelCore.types.Node, shadowed: boolean): void => {
+    if (found) return
+    if (node !== expr && t.isFunction(node)) {
+      const ownBindings = functionOwnBindings(node, t)
+      const nestedShadowed = shadowed || ownBindings.has(eventParamName)
+      if (node.body) visit(node.body, nestedShadowed)
+      return
+    }
+    if (isPreventDefaultCallForName(node, eventParamName, shadowed, t)) {
+      found = true
+      return
+    }
+
+    const visitorKeys = (t as unknown as { VISITOR_KEYS?: Record<string, string[]> }).VISITOR_KEYS
+    const keys = visitorKeys?.[node.type] ?? []
+    const record = node as unknown as Record<string, unknown>
+    for (const key of keys) {
+      if (found) return
+      const value = record[key]
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          if (isBabelNode(item)) visit(item, shadowed)
+          if (found) return
+        }
+        continue
+      }
+      if (isBabelNode(value)) {
+        visit(value, shadowed)
+      }
+    }
+  }
+
+  visit(expr, false)
+  return found
 }
 
 export function emitResumableEventBinding(
@@ -238,6 +321,12 @@ export function emitResumableEventBinding(
     }
     loweredFunctionDeps.set(name, loweredFn)
   }
+
+  const handlerMayPreventDefault =
+    callsEventPreventDefault(handlerExpr, t) ||
+    (t.isIdentifier(handlerExpr)
+      ? callsEventPreventDefault(loweredFunctionDeps.get(handlerExpr.name), t)
+      : false)
 
   if (
     unsupportedLocals.length > 0 ||
@@ -547,6 +636,7 @@ export function emitResumableEventBinding(
   const qrlExpr = t.callExpression(runtimeIdentifier(ctx, 'qrl'), [
     genModuleUrlExpr(ctx),
     t.stringLiteral(handlerId.name),
+    ...(handlerMayPreventDefault ? [t.stringLiteral('pd')] : []),
   ])
 
   statements.push(

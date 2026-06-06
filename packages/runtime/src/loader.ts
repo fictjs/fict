@@ -170,8 +170,46 @@ const noopPreemptiveDefaultControl: PreemptiveDefaultControl = {
   restore() {},
 }
 
-function preemptivelyPreventDefault(node: Element, event: Event): PreemptiveDefaultControl {
+interface PreemptiveDefaultOptions {
+  mayPreventDefault?: boolean
+}
+
+function isSubmitButton(node: Element): boolean {
+  const tag = getControlTagName(node)
+  if (tag === 'button') {
+    const type = (node as HTMLButtonElement).type || 'submit'
+    return type === 'submit'
+  }
+  if (tag !== 'input') return false
+  const type = ((node as HTMLInputElement).type || 'text').toLowerCase()
+  return type === 'submit' || type === 'image'
+}
+
+function hasPreemptiveDefaultOwner(node: Element, event: Event): boolean {
+  if (event.type === 'submit') {
+    return !!node.closest('form')
+  }
+  if (event.type !== 'click') {
+    return false
+  }
+  if (node.closest('a[href], area[href]')) {
+    return true
+  }
+  const submitControl = node.closest('button, input')
+  return !!submitControl && isSubmitButton(submitControl)
+}
+
+function preemptivelyPreventDefault(
+  node: Element,
+  event: Event,
+  options: PreemptiveDefaultOptions = {},
+): PreemptiveDefaultControl {
   if (!event.cancelable || (event.type !== 'click' && event.type !== 'submit')) {
+    return noopPreemptiveDefaultControl
+  }
+
+  if (options.mayPreventDefault && hasPreemptiveDefaultOwner(node, event)) {
+    event.preventDefault()
     return noopPreemptiveDefaultControl
   }
 
@@ -853,9 +891,11 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
     }
     __fictEnsureScope(scopeId, host, snapshot)
 
-    const { url, exportName } = parseQrl(qrl)
+    const { url, exportName, flags } = parseQrl(qrl)
 
-    const preemptiveDefault = preemptivelyPreventDefault(node, event)
+    const preemptiveDefault = preemptivelyPreventDefault(node, event, {
+      mayPreventDefault: flags.includes('pd'),
+    })
 
     const preservedControlState = captureControlState(node, event)
     let resumedDuringEvent = false
@@ -1029,16 +1069,27 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
   }
 }
 
-function parseQrl(qrl: string): { url: string; exportName: string } {
-  const [ref] = qrl.split('[')
-  if (!ref) {
-    return { url: '', exportName: 'default' }
+function parseQrl(qrl: string): { url: string; exportName: string; flags: string[] } {
+  if (!qrl) {
+    return { url: '', exportName: 'default', flags: [] }
   }
-  const hashIndex = ref.lastIndexOf('#')
+  const hashIndex = qrl.lastIndexOf('#')
   if (hashIndex === -1) {
-    return { url: ref, exportName: 'default' }
+    return { url: qrl, exportName: 'default', flags: [] }
   }
-  return { url: ref.slice(0, hashIndex), exportName: ref.slice(hashIndex + 1) }
+
+  let exportName = qrl.slice(hashIndex + 1)
+  const flags: string[] = []
+  const metadataStart = exportName.indexOf('[')
+  if (metadataStart !== -1 && exportName.endsWith(']')) {
+    const metadata = exportName.slice(metadataStart + 1, -1)
+    exportName = exportName.slice(0, metadataStart)
+    for (const flag of metadata.split(',')) {
+      if (flag) flags.push(flag)
+    }
+  }
+
+  return { url: qrl.slice(0, hashIndex), exportName, flags }
 }
 
 function buildEventPath(event: Event): EventTarget[] {

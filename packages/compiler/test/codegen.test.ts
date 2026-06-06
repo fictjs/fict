@@ -1539,6 +1539,37 @@ describe('resumable event handler transformation', () => {
     expect(code).toContain('export const __fict_e1')
   })
 
+  it('marks resumable handlers that call event preventDefault', () => {
+    const ast = parseFile(`
+      function Comp() {
+        return (
+          <a href="/next">
+            <span onClick$={(event) => event.preventDefault()}>Stop</span>
+          </a>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(/__fictQrl\(import\.meta\.url, "__fict_e\d+", "pd"\)/)
+  })
+
+  it('does not mark inert resumable handlers as default-preventing', () => {
+    const ast = parseFile(`
+      function Comp() {
+        return <a href="/next" onClick$={() => console.log("next")}>Next</a>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(/__fictQrl\(import\.meta\.url, "__fict_e\d+"\)/)
+    expect(code).not.toContain('"pd"')
+  })
+
   it('allocates resumable function dependency exports around existing module bindings', () => {
     const ast = parseFile(`
       export const __fict_fn_helper_0 = 'user'

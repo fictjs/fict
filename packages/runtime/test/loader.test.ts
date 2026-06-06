@@ -412,6 +412,104 @@ describe('resumable loader snapshot validation', () => {
     expect(dispatchResult).toBe(true)
   })
 
+  it('prevents ancestor link defaults for flagged child handlers', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    const link = doc.createElement('a')
+    link.href = '/next'
+    const child = doc.createElement('span')
+    child.setAttribute(
+      'on:click',
+      'data:text/javascript,export function h(scopeId,event){event.preventDefault()}#h[pd]',
+    )
+    link.appendChild(child)
+    host.appendChild(link)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+    const dispatchResult = child.dispatchEvent(event)
+    await waitForPendingHandlers()
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(dispatchResult).toBe(false)
+  })
+
+  it('does not cancel ancestor link defaults for unflagged child handlers', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    const link = doc.createElement('a')
+    link.href = '/next'
+    const child = doc.createElement('span')
+    child.setAttribute('on:click', 'data:text/javascript,export function h(){}#h')
+    link.appendChild(child)
+    host.appendChild(link)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+    const dispatchResult = child.dispatchEvent(event)
+    await waitForPendingHandlers()
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(dispatchResult).toBe(true)
+  })
+
+  it('prevents submit button click defaults for flagged child handlers', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    const form = doc.createElement('form')
+    const button = doc.createElement('button')
+    button.type = 'submit'
+    const child = doc.createElement('span')
+    child.setAttribute(
+      'on:click',
+      'data:text/javascript,export function h(scopeId,event){event.preventDefault()}#h[pd]',
+    )
+    button.appendChild(child)
+    form.appendChild(button)
+    host.appendChild(form)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+    const dispatchResult = child.dispatchEvent(event)
+    await waitForPendingHandlers()
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(dispatchResult).toBe(false)
+  })
+
   it('does not cancel inert form submit handlers', async () => {
     const doc = createDocumentWithSnapshots(
       JSON.stringify({
