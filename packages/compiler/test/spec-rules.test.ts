@@ -496,6 +496,16 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-X003')).toBe(false)
   })
 
+  it('does not warn on inline ref callback props', () => {
+    const { warnings } = transformWithWarnings(`
+      function Panel() {
+        return <div ref={el => console.log(el)}>ok</div>
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-X003')).toBe(false)
+  })
+
   it('warns when memo has no reactive dependencies (FICT-M001)', () => {
     const { warnings } = transformWithWarnings(`
       import { $memo } from 'fict'

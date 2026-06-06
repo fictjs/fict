@@ -2347,7 +2347,8 @@ function createHIREntrypointVisitor(
         path.traverse({
           JSXAttribute(attrPath) {
             if (!t.isJSXIdentifier(attrPath.node.name)) return
-            if (/^on[A-Z]/.test(attrPath.node.name.name)) return
+            const attrName = attrPath.node.name.name
+            if (attrName === 'ref' || /^on[A-Z]/.test(attrName)) return
             if (!t.isJSXExpressionContainer(attrPath.node.value)) return
             const expr = attrPath.node.value.expression
             if (!t.isArrowFunctionExpression(expr) && !t.isFunctionExpression(expr)) return
