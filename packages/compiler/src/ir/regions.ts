@@ -26,6 +26,7 @@ import type {
   Terminator,
 } from './hir'
 import { getSSABaseName, HIRError } from './hir'
+import { isComponentName } from './hook-utils'
 import type { ReactiveScope, ReactiveScopeResult } from './scopes'
 import { getScopeDependencies } from './scopes'
 import {
@@ -5378,8 +5379,12 @@ function instructionToStatement(
     }
     const lowerAssignedValue = (forceAssigned = false, noRenderMemo = false) => {
       const prevObjectLiteralPath = ctx.objectLiteralPath
+      const prevComponentWrapperName = ctx.componentWrapperName
       if (instr.value.kind === 'ObjectExpression') {
         ctx.objectLiteralPath = [baseName]
+      }
+      if (instr.value.kind === 'CallExpression' && isComponentName(baseName)) {
+        ctx.componentWrapperName = baseName
       }
       try {
         const lower = () =>
@@ -5387,6 +5392,7 @@ function instructionToStatement(
         return noRenderMemo ? lowerWithoutRenderMemo(lower) : lower()
       } finally {
         ctx.objectLiteralPath = prevObjectLiteralPath
+        ctx.componentWrapperName = prevComponentWrapperName
       }
     }
     const needsAsyncContext = expressionNeedsAsyncContext(instr.value)

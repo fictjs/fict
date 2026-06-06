@@ -1028,6 +1028,8 @@ export interface CodegenContext {
   nonReactiveScopeDepth?: number | undefined
   /** Current assignment target name (for devtools metadata) */
   currentAssignmentName?: string | undefined
+  /** Uppercase component binding currently being initialized through a wrapper call. */
+  componentWrapperName?: string | undefined
   /** Static JSX member component paths used in this module, e.g. "UI.Button". */
   jsxMemberComponentPaths?: Set<string> | undefined
   /** Static path of the object literal currently being lowered, e.g. ["UI", "Nav"]. */
@@ -2611,6 +2613,19 @@ function lowerJSXMemberComponentFunctionValue(
   return buildFunctionDeclaratorExpression({ fn, stmt: lowered }, ctx.t)
 }
 
+function lowerComponentWrapperFunctionArgument(
+  value: Expression,
+  ctx: CodegenContext,
+): BabelCore.types.Expression | null {
+  const componentName = ctx.componentWrapperName
+  if (!componentName) return null
+  if (value.kind !== 'ArrowFunction' && value.kind !== 'FunctionExpression') return null
+  const fn = functionValueToHIRFunction(value, componentName)
+  const lowered = lowerFunctionWithRegions(fn, ctx, { forceComponentContext: true })
+  if (!lowered) return null
+  return buildFunctionDeclaratorExpression({ fn, stmt: lowered }, ctx.t)
+}
+
 function lowerExpressionImpl(
   expr: Expression,
   ctx: CodegenContext,
@@ -3740,6 +3755,10 @@ function lowerExpressionImpl(
               String(expr.callee.property.value),
             )))
       const loweredArgs = lowerCallArguments(expr.arguments, (a, idx) => {
+        if (idx === 0) {
+          const componentArg = lowerComponentWrapperFunctionArgument(a, ctx)
+          if (componentArg) return componentArg
+        }
         if (
           idx === 0 &&
           isIteratingMethod &&
@@ -6369,6 +6388,17 @@ function lowerInstructionWithScopes(
     }
     markKnownArrayInitializer(targetBase, instr.value, ctx, !!declKind)
     let valueExpr: BabelCore.types.Expression
+    const lowerInitializerExpression = (): BabelCore.types.Expression => {
+      const prevComponentWrapperName = ctx.componentWrapperName
+      if (instr.value.kind === 'CallExpression' && isComponentName(targetBase)) {
+        ctx.componentWrapperName = targetBase
+      }
+      try {
+        return lowerExpression(instr.value, ctx)
+      } finally {
+        ctx.componentWrapperName = prevComponentWrapperName
+      }
+    }
     if (declKind && getReactiveCallKind(instr.value, ctx) === 'signal') {
       ctx.signalVars?.add(targetBase)
       ctx.trackedVars.add(targetBase)
@@ -6376,12 +6406,12 @@ function lowerInstructionWithScopes(
       markNonSerializableSignalIfFunctionValue(targetBase, instr.value, ctx)
       ctx.currentAssignmentName = targetBase
       try {
-        valueExpr = lowerExpression(instr.value, ctx)
+        valueExpr = lowerInitializerExpression()
       } finally {
         ctx.currentAssignmentName = undefined
       }
     } else {
-      valueExpr = lowerExpression(instr.value, ctx)
+      valueExpr = lowerInitializerExpression()
     }
 
     // Check if target is a tracked variable (use de-versioned name for lookup)

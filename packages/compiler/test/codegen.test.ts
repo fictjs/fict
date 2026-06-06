@@ -1202,6 +1202,123 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).not.toContain('UI.Button = function Button')
   })
 
+  it('lowers exported call-wrapped arrow components with component state semantics', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const wrap = (value: any) => value
+
+      export const App = wrap(() => {
+        const count = $state(1)
+        return <button>{count}</button>
+      })
+    `)
+
+    expect(output).toContain('export const App = wrap(')
+    expect(output).toContain('__fictUseSignal(__fictCtx, 1')
+    expect(output).toContain('() => count()')
+    expect(output).not.toContain('createSignal(1')
+    expect(output).not.toContain('() => count, createElement')
+  })
+
+  it('lowers call-wrapped local components used by JSX with component state semantics', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const wrap = (value: any) => value
+      const App = wrap(() => {
+        const count = $state(1)
+        return <button>{count}</button>
+      })
+
+      export function Parent() {
+        return <App />
+      }
+    `)
+
+    expect(output).toContain('const App = wrap(')
+    expect(output).toContain('__fictUseSignal(__fictCtx, 1')
+    expect(output).toContain('() => count()')
+    expect(output).toContain('type: App')
+    expect(output).not.toContain('createSignal(1')
+  })
+
+  it('lowers call-wrapped named function components with component state semantics', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const wrap = (value: any) => value
+
+      export const App = wrap(function App() {
+        const count = $state(1)
+        return <button>{count}</button>
+      })
+    `)
+
+    expect(output).toContain('export const App = wrap(function App')
+    expect(output).toContain('__fictUseSignal(__fictCtx, 1')
+    expect(output).toContain('() => count()')
+    expect(output).not.toContain('createSignal(1')
+  })
+
+  it('keeps call-wrapped component props reactive', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const wrap = (value: any) => value
+      const App = wrap(({ value }: { value: number }) => <span>{value}</span>)
+
+      export function Parent() {
+        const count = $state(1)
+        return <App value={count} />
+      }
+    `)
+
+    expect(output).toContain('const value = prop(() => __props.value)')
+    expect(output).toContain('() => value()')
+    expect(output).toContain('value: __fictProp(() => count())')
+    expect(output).toContain('type: App')
+    expect(output).not.toContain('({ value })')
+    expect(output).not.toContain('const value = __props.value')
+  })
+
+  it('lowers nested call-wrapped component functions with component semantics', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const wrap = (value: any) => value
+      const outer = (value: any) => value
+      const App = outer(wrap(() => {
+        const count = $state(1)
+        return <button>{count}</button>
+      }))
+
+      export function Parent() {
+        return <App />
+      }
+    `)
+
+    expect(output).toContain('const App = outer(wrap(')
+    expect(output).toContain('__fictUseSignal(__fictCtx, 1')
+    expect(output).toContain('() => count()')
+    expect(output).not.toContain('createSignal(1')
+  })
+
+  it('does not component-lower ordinary call-wrapped callbacks', () => {
+    const output = transform(`
+      const wrap = (value: any) => value
+      const view = wrap(() => <span>plain</span>)
+
+      export function App() {
+        return <div>ok</div>
+      }
+    `)
+
+    expect(output).toContain('const view = wrap(() =>')
+    expect(output).toContain('template("<span>plain</span>")')
+    expect(output).not.toContain('const view = wrap(function View')
+  })
+
   it('lowers array-literal component spreads to index props', () => {
     const output = transform(`
       import { $state } from 'fict'
