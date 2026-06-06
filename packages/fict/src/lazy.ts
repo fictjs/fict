@@ -40,7 +40,8 @@ export interface LazyComponent<TProps extends Record<string, unknown>> extends C
 
   /**
    * Preload the component without rendering it.
-   * Returns a promise that resolves when the component is loaded.
+   * Returns a promise that resolves when the component is loaded and rejects
+   * when the loader exhausts its retries.
    */
   preload: () => Promise<void>
 }
@@ -91,7 +92,7 @@ export function lazy<TProps extends Record<string, unknown> = Record<string, unk
 
   let loaded: Component<TProps> | null = null
   let loadError: unknown = null
-  let loadingPromise: Promise<unknown> | null = null
+  let loadingPromise: Promise<void> | null = null
   let pendingToken: ReturnType<typeof createSuspenseToken> | null = null
   let retryCount = 0
 
@@ -115,12 +116,21 @@ export function lazy<TProps extends Record<string, unknown> = Record<string, unk
         }
         loadError = err
         pendingToken?.reject(err)
-        return undefined
+        throw err
       })
       .finally(() => {
         loadingPromise = null
         pendingToken = null
       })
+  }
+
+  const startLoad = (): Promise<void> => {
+    loadingPromise = attemptLoad()
+    void loadingPromise.catch(() => {
+      // Render-driven loads are observed through the Suspense token. Keep the
+      // public promise rejected for preload callers without leaking internals.
+    })
+    return loadingPromise
   }
 
   const component = ((props: TProps) => {
@@ -130,9 +140,11 @@ export function lazy<TProps extends Record<string, unknown> = Record<string, unk
     if (loadError) {
       throw loadError
     }
-    if (!loadingPromise) {
+    if (!pendingToken) {
       pendingToken = createSuspenseToken()
-      loadingPromise = attemptLoad()
+    }
+    if (!loadingPromise) {
+      startLoad()
     }
     if (pendingToken) {
       throw pendingToken.token
@@ -162,11 +174,9 @@ export function lazy<TProps extends Record<string, unknown> = Record<string, unk
       return Promise.resolve()
     }
     if (loadingPromise) {
-      return loadingPromise as Promise<void>
+      return loadingPromise
     }
-    pendingToken = createSuspenseToken()
-    loadingPromise = attemptLoad()
-    return loadingPromise as Promise<void>
+    return startLoad()
   }
 
   return component
