@@ -4075,7 +4075,7 @@ function generateRegionStatements(
     if (hoistedInstructionSet.has(instr)) {
       continue
     }
-    if (instr.kind === 'Assign' && instr.preserveEagerEvaluation) {
+    if (instr.kind === 'Assign' && instr.preserveEagerEvaluation && !region.hasControlFlow) {
       const index = instructionIndexes.get(instr) ?? 0
       hoistPriorLocalDependencies(instr.value, index)
       emitHoistedInstruction(instr)

@@ -284,6 +284,32 @@ describe('lowerHIRWithRegions', () => {
     expect(output).toMatch(/switch \(choose\(\)\) \{\s+case "hit":\s+out = 2;/)
   })
 
+  it('keeps destructuring temps with branch region outputs', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      function side() {
+        return { x: 2 }
+      }
+
+      export function App() {
+        let count = $state(1)
+        let out = 0
+        if (count) {
+          const { x } = side()
+          out = x
+        }
+        return <span>{out}:{count}</span>
+      }
+    `)
+
+    expect(output).toMatch(
+      /if \(count\(\)\) \{\s+const _side = side\(\);\s+const x = _side\.x;\s+out = x;/,
+    )
+    expect(output).not.toMatch(/=> _side\.x/)
+    expect(output).not.toMatch(/const \{[^}]*x[^}]*\} = __region_/)
+  })
+
   it('omits type-only imports and declarations from emitted modules', () => {
     const ast = parseFile(`
       import type { Foo } from './types'
