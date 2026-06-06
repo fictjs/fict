@@ -3382,6 +3382,58 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('preserves nested lexical bindings inside list callbacks', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const items = [1]
+
+        return (
+          <div>
+            {items.map(item => {
+              function f(item) {
+                return item
+              }
+              return <span data-id="fn" key="fn">{f(2)}</span>
+            })}
+            {items.map(item => {
+              for (let item of [3]) {
+                return <span data-id="for-of" key="for-of">{item}</span>
+              }
+            })}
+            {items.map(item => {
+              try {
+                throw 4
+              } catch (item) {
+                return <span data-id="catch" key="catch">{item}</span>
+              }
+            })}
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(container.querySelector('[data-id="fn"]')?.textContent).toBe('2')
+    expect(container.querySelector('[data-id="for-of"]')?.textContent).toBe('3')
+    expect(container.querySelector('[data-id="catch"]')?.textContent).toBe('4')
+
+    teardown()
+    container.remove()
+  })
+
   it('renders repeated local JSX helper calls without collapsing DOM nodes', async () => {
     const source = `
       import { render } from 'fict'

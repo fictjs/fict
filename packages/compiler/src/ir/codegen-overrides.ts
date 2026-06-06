@@ -255,6 +255,147 @@ export function replaceIdentifiersWithOverrides(
     return scopedOverrides
   }
 
+  if (t.isFunctionDeclaration(node)) {
+    const names = collectParamNames(node.params)
+    collectFunctionLocalNames(node.body).forEach(name => names.add(name))
+    replaceIdentifiersWithOverrides(
+      node.body,
+      scopeOverrides(names),
+      t,
+      node.type,
+      'body',
+      false,
+      allowCallCalleeReplacement,
+    )
+    return
+  }
+
+  if (t.isCatchClause(node)) {
+    const names = new Set<string>()
+    if (node.param) {
+      collectPatternNames(node.param as BabelCore.types.PatternLike, names)
+    }
+    collectFunctionLocalNames(node.body).forEach(name => names.add(name))
+    replaceIdentifiersWithOverrides(
+      node.body,
+      scopeOverrides(names),
+      t,
+      node.type,
+      'body',
+      false,
+      allowCallCalleeReplacement,
+    )
+    return
+  }
+
+  if (t.isForOfStatement(node) || t.isForInStatement(node)) {
+    const names = new Set<string>()
+    if (t.isVariableDeclaration(node.left)) {
+      node.left.declarations.forEach(decl =>
+        collectPatternNames(decl.id as BabelCore.types.PatternLike, names),
+      )
+    }
+    const scopedOverrides = scopeOverrides(names)
+    replaceIdentifiersWithOverrides(
+      node.left as BabelCore.types.Node,
+      scopedOverrides,
+      t,
+      node.type,
+      'left',
+      false,
+      allowCallCalleeReplacement,
+    )
+    replaceIdentifiersWithOverrides(
+      node.right,
+      overrides,
+      t,
+      node.type,
+      'right',
+      false,
+      allowCallCalleeReplacement,
+    )
+    replaceIdentifiersWithOverrides(
+      node.body,
+      scopedOverrides,
+      t,
+      node.type,
+      'body',
+      false,
+      allowCallCalleeReplacement,
+    )
+    return
+  }
+
+  if (t.isForStatement(node)) {
+    const names = new Set<string>()
+    if (t.isVariableDeclaration(node.init)) {
+      node.init.declarations.forEach(decl =>
+        collectPatternNames(decl.id as BabelCore.types.PatternLike, names),
+      )
+    }
+    const scopedOverrides = scopeOverrides(names)
+    if (node.init) {
+      replaceIdentifiersWithOverrides(
+        node.init as BabelCore.types.Node,
+        scopedOverrides,
+        t,
+        node.type,
+        'init',
+        false,
+        allowCallCalleeReplacement,
+      )
+    }
+    if (node.test) {
+      replaceIdentifiersWithOverrides(
+        node.test,
+        scopedOverrides,
+        t,
+        node.type,
+        'test',
+        false,
+        allowCallCalleeReplacement,
+      )
+    }
+    if (node.update) {
+      replaceIdentifiersWithOverrides(
+        node.update,
+        scopedOverrides,
+        t,
+        node.type,
+        'update',
+        false,
+        allowCallCalleeReplacement,
+      )
+    }
+    replaceIdentifiersWithOverrides(
+      node.body,
+      scopedOverrides,
+      t,
+      node.type,
+      'body',
+      false,
+      allowCallCalleeReplacement,
+    )
+    return
+  }
+
+  if (t.isBlockStatement(node)) {
+    const names = collectFunctionLocalNames(node)
+    const scopedOverrides = scopeOverrides(names)
+    node.body.forEach(stmt =>
+      replaceIdentifiersWithOverrides(
+        stmt,
+        scopedOverrides,
+        t,
+        node.type,
+        'body',
+        false,
+        allowCallCalleeReplacement,
+      ),
+    )
+    return
+  }
+
   if (!skipCurrentNode && (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))) {
     const propertyNode = node.property as BabelCore.types.Node
     const isDynamicComputed =

@@ -260,6 +260,80 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).not.toContain('++index()')
     })
 
+    it('keeps function declaration parameters shadowed from list item accessors', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let items = $state([1])
+          return (
+            <div>
+              {items.map(item => {
+                function f(item) {
+                  return item
+                }
+                return <span key={item}>{f(2)}</span>
+              })}
+            </div>
+          )
+        }
+      `
+
+      const output = runTransform(input)
+      expect(output).toContain('createKeyedList')
+      expect(output).toContain('function f(item)')
+      expect(output).toContain('return item;')
+      expect(output).not.toContain('function f(item())')
+      expect(output).not.toContain('return item();')
+    })
+
+    it('keeps list callback loop bindings shadowed from item accessors', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let items = $state([1])
+          return (
+            <div>
+              {items.map(item => {
+                for (let item of [2]) {
+                  return <span key={item}>{item}</span>
+                }
+              })}
+            </div>
+          )
+        }
+      `
+
+      const output = runTransform(input)
+      expect(output).toContain('for (let item of [2])')
+      expect(output).not.toContain('for (let item() of [2])')
+      expect(output).not.toContain('() => item()')
+    })
+
+    it('keeps list callback catch parameters shadowed from item accessors', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let items = $state([1])
+          return (
+            <div>
+              {items.map(item => {
+                try {
+                  throw 2
+                } catch (item) {
+                  return <span key={item}>{item}</span>
+                }
+              })}
+            </div>
+          )
+        }
+      `
+
+      const output = runTransform(input)
+      expect(output).toContain('catch (item)')
+      expect(output).not.toContain('catch (item())')
+      expect(output).not.toContain('() => item()')
+    })
+
     it('handles list without key via keyed list with index keys', () => {
       const input = `
         import { $state } from 'fict'
