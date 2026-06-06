@@ -117,8 +117,12 @@ function collectFunctionScopeBindingNames(
         names.add(deSSAVarName(term.variable))
         collectPatternBindingNames(term.pattern, names)
       }
-    } else if (term.kind === 'Try' && term.catchParam) {
-      names.add(deSSAVarName(term.catchParam))
+    } else if (term.kind === 'Try') {
+      if (term.catchPattern) {
+        collectPatternBindingNames(term.catchPattern, names)
+      } else if (term.catchParam) {
+        names.add(deSSAVarName(term.catchParam))
+      }
     }
   }
 

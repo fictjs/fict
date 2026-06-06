@@ -1924,7 +1924,11 @@ function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.type
       const catchClause =
         term.catchBlock !== undefined
           ? t.catchClause(
-              term.catchParam ? t.identifier(term.catchParam) : null,
+              term.catchPattern
+                ? (t.cloneNode(term.catchPattern, true) as BabelCore.types.CatchClause['param'])
+                : term.catchParam
+                  ? t.identifier(term.catchParam)
+                  : null,
               t.blockStatement([
                 t.expressionStatement(t.stringLiteral(`catch ${term.catchBlock}`)),
               ]),
@@ -2014,8 +2018,12 @@ function collectLocalDeclaredNames(
       if (term.leftKind !== 'assignment' && term.pattern) {
         addPatternNames(term.pattern as BabelCore.types.PatternLike)
       }
-    } else if (term.kind === 'Try' && term.catchParam) {
-      declared.add(deSSAVarName(term.catchParam))
+    } else if (term.kind === 'Try') {
+      if (term.catchPattern) {
+        addPatternNames(term.catchPattern as BabelCore.types.PatternLike)
+      } else if (term.catchParam) {
+        declared.add(deSSAVarName(term.catchParam))
+      }
     }
   }
 

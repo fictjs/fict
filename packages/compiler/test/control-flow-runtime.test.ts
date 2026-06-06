@@ -4240,6 +4240,131 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe(2)
   })
 
+  it('preserves identifier catch parameters', () => {
+    const result = compileAndRunHook<string | (() => string)>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let enabled = $state(true)
+          let label = 'none'
+
+          try {
+            if (enabled) throw 'ok'
+          } catch (message) {
+            label = message
+          }
+
+          return label
+        }
+      `,
+      'useRun',
+    )
+
+    const resolved = typeof result === 'function' ? result() : result
+    expect(resolved).toBe('ok')
+  })
+
+  it('preserves object-pattern catch parameters', () => {
+    const result = compileAndRunHook<string | (() => string)>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let enabled = $state(true)
+          let label = 'none'
+
+          try {
+            if (enabled) throw { message: 'ok' }
+          } catch ({ message }) {
+            label = message
+          }
+
+          return label
+        }
+      `,
+      'useRun',
+    )
+
+    const resolved = typeof result === 'function' ? result() : result
+    expect(resolved).toBe('ok')
+  })
+
+  it('preserves array-pattern catch parameters', () => {
+    const result = compileAndRunHook<string | (() => string)>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let enabled = $state(true)
+          let label = 'none'
+
+          try {
+            if (enabled) throw ['ok', 'done']
+          } catch ([first, second]) {
+            label = first + ':' + second
+          }
+
+          return label
+        }
+      `,
+      'useRun',
+    )
+
+    const resolved = typeof result === 'function' ? result() : result
+    expect(resolved).toBe('ok:done')
+  })
+
+  it('preserves catch parameter defaults', () => {
+    const result = compileAndRunHook<string | (() => string)>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let enabled = $state(true)
+          let label = 'none'
+
+          try {
+            if (enabled) throw { message: undefined }
+          } catch ({ message = 'default' }) {
+            label = message
+          }
+
+          return label
+        }
+      `,
+      'useRun',
+    )
+
+    const resolved = typeof result === 'function' ? result() : result
+    expect(resolved).toBe('default')
+  })
+
+  it('preserves catch parameter rest bindings', () => {
+    const result = compileAndRunHook<string | (() => string)>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let enabled = $state(true)
+          let label = 'none'
+
+          try {
+            if (enabled) throw { skipped: 0, message: 'ok', code: 'done' }
+          } catch ({ skipped, ...rest }) {
+            label = rest.message + ':' + rest.code
+          }
+
+          return label
+        }
+      `,
+      'useRun',
+    )
+
+    const resolved = typeof result === 'function' ? result() : result
+    expect(resolved).toBe('ok:done')
+  })
+
   it('preserves labeled try-finally breaks that exit an outer label', () => {
     const result = compileAndRunHook<{ toggle: () => void; view: () => string }>(
       `

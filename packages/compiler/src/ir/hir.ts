@@ -231,6 +231,7 @@ export type Terminator =
       tryBlock: BlockId
       catchBlock?: BlockId | undefined
       catchParam?: string | undefined
+      catchPattern?: LVal | undefined
       finallyBlock?: BlockId | undefined
       exit: BlockId
     } & SourceInfo)

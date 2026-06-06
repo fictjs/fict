@@ -1,3 +1,5 @@
+import type { LVal } from '@babel/types'
+
 import type { BasicBlock, Expression, HIRFunction, Instruction, Terminator } from './hir'
 import { deSSAVarName } from './regions'
 import type { StructuredNode } from './structurize'
@@ -793,6 +795,57 @@ export function collectCalledIdentifiers(
     next.add(name)
     return next
   }
+  const collectPatternRootNames = (
+    pattern: LVal | null | undefined,
+    into = new Set<string>(),
+  ): Set<string> => {
+    if (!pattern || typeof pattern !== 'object') return into
+    const node = pattern as {
+      type?: string
+      name?: unknown
+      left?: unknown
+      argument?: unknown
+      properties?: unknown
+      value?: unknown
+      elements?: unknown
+    }
+    if (node.type === 'Identifier' && typeof node.name === 'string') {
+      into.add(deSSAVarName(node.name))
+      return into
+    }
+    if (node.type === 'AssignmentPattern') {
+      collectPatternRootNames(node.left as LVal, into)
+      return into
+    }
+    if (node.type === 'RestElement') {
+      collectPatternRootNames(node.argument as LVal, into)
+      return into
+    }
+    if (node.type === 'ObjectPattern' && Array.isArray(node.properties)) {
+      for (const prop of node.properties) {
+        if (!prop || typeof prop !== 'object') continue
+        const current = prop as { type?: string; value?: unknown; argument?: unknown }
+        collectPatternRootNames(
+          (current.type === 'RestElement' ? current.argument : current.value) as LVal,
+          into,
+        )
+      }
+      return into
+    }
+    if (node.type === 'ArrayPattern' && Array.isArray(node.elements)) {
+      for (const element of node.elements) {
+        collectPatternRootNames(element as LVal, into)
+      }
+    }
+    return into
+  }
+  const withRootShadows = (shadowed: Set<string>, names: Iterable<string>): Set<string> => {
+    let next = shadowed
+    for (const name of names) {
+      next = withRootShadow(next, name)
+    }
+    return next
+  }
 
   const staticTruthiness = (expr: Expression): boolean | null => {
     if (expr.kind !== 'Literal') return null
@@ -945,7 +998,11 @@ export function collectCalledIdentifiers(
         if (term.catchBlock !== undefined) {
           visitBlockById?.(
             term.catchBlock,
-            term.catchParam ? withRootShadow(shadowed, deSSAVarName(term.catchParam)) : shadowed,
+            term.catchPattern
+              ? withRootShadows(shadowed, collectPatternRootNames(term.catchPattern))
+              : term.catchParam
+                ? withRootShadow(shadowed, deSSAVarName(term.catchParam))
+                : shadowed,
           )
         }
         if (term.finallyBlock !== undefined) visitBlockById?.(term.finallyBlock, shadowed)

@@ -1913,8 +1913,14 @@ function collectFunctionShadowedBuiltins(fn: HIRFunction): Set<string> {
     const term = block.terminator
     if (term.kind === 'ForOf' || term.kind === 'ForIn') {
       if (term.leftKind !== 'assignment') add(term.variable)
-    } else if (term.kind === 'Try' && term.catchParam) {
-      add(term.catchParam)
+    } else if (term.kind === 'Try') {
+      if (term.catchPattern) {
+        const names = new Set<string>()
+        collectPatternNames(term.catchPattern as t.PatternLike, names)
+        names.forEach(add)
+      } else if (term.catchParam) {
+        add(term.catchParam)
+      }
     }
   }
   return shadowed
@@ -2778,8 +2784,14 @@ function collectDeclaredBasesInBlocks(blocks: BasicBlock[]): Set<string> {
       if (term.leftKind !== 'assignment') {
         declared.add(getSSABaseName(term.variable))
       }
-    } else if (term.kind === 'Try' && term.catchParam) {
-      declared.add(getSSABaseName(term.catchParam))
+    } else if (term.kind === 'Try') {
+      if (term.catchPattern) {
+        const names = new Set<string>()
+        collectPatternNames(term.catchPattern as t.PatternLike, names)
+        names.forEach(name => declared.add(getSSABaseName(name)))
+      } else if (term.catchParam) {
+        declared.add(getSSABaseName(term.catchParam))
+      }
     }
   }
   return declared
@@ -5068,8 +5080,14 @@ function buildIdentifierReadSafety(fn: HIRFunction, purity: PurityContext): Iden
       } else if (term.leftKind !== 'assignment') {
         lexicalBases.add(base)
       }
-    } else if (term.kind === 'Try' && term.catchParam) {
-      lexicalBases.add(getSSABaseName(term.catchParam))
+    } else if (term.kind === 'Try') {
+      if (term.catchPattern) {
+        const names = new Set<string>()
+        collectPatternNames(term.catchPattern as t.PatternLike, names)
+        names.forEach(name => lexicalBases.add(getSSABaseName(name)))
+      } else if (term.catchParam) {
+        lexicalBases.add(getSSABaseName(term.catchParam))
+      }
     }
   }
 
@@ -5409,8 +5427,12 @@ function collectFunctionLocalBindings(fn: HIRFunction): Set<string> {
     const term = block.terminator
     if (term.kind === 'ForOf' || term.kind === 'ForIn') {
       if (term.leftKind !== 'assignment') bindings.add(term.variable)
-    } else if (term.kind === 'Try' && term.catchParam) {
-      bindings.add(term.catchParam)
+    } else if (term.kind === 'Try') {
+      if (term.catchPattern) {
+        collectPatternNames(term.catchPattern as t.PatternLike, bindings)
+      } else if (term.catchParam) {
+        bindings.add(term.catchParam)
+      }
     }
   }
   return bindings
@@ -6972,7 +6994,15 @@ function functionBodyDeclaresName(blocks: BasicBlock[], targetBase: string): boo
         return true
       }
     } else if (term.kind === 'Try') {
-      if (term.catchParam && getSSABaseName(term.catchParam) === targetBase) return true
+      if (term.catchPattern) {
+        const names = new Set<string>()
+        collectPatternNames(term.catchPattern as t.PatternLike, names)
+        for (const name of names) {
+          if (getSSABaseName(name) === targetBase) return true
+        }
+      } else if (term.catchParam && getSSABaseName(term.catchParam) === targetBase) {
+        return true
+      }
     }
   }
   return false

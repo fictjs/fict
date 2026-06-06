@@ -130,7 +130,7 @@ export type StructuredNode =
   | {
       kind: 'try'
       block: StructuredNode
-      handler: { param: string | null; body: StructuredNode } | null
+      handler: { param: string | null; pattern?: LVal | undefined; body: StructuredNode } | null
       finalizer: StructuredNode | null
     }
   | { kind: 'return'; argument: Expression | null; trailingStatements?: BabelStatement[] }
@@ -1869,6 +1869,7 @@ function structurizeTry(
     tryBlock: BlockId
     catchBlock?: BlockId | undefined
     catchParam?: string | undefined
+    catchPattern?: LVal | undefined
     finallyBlock?: BlockId | undefined
     exit: BlockId
   },
@@ -1909,11 +1910,13 @@ function structurizeTry(
 
   const tryBody = structurizeBlock(ctx, term.tryBlock)
 
-  let handler: { param: string | null; body: StructuredNode } | null = null
+  let handler: { param: string | null; pattern?: LVal | undefined; body: StructuredNode } | null =
+    null
   if (term.catchBlock !== undefined) {
     const catchBody = structurizeBlock(ctx, term.catchBlock)
     handler = {
       param: term.catchParam ?? null,
+      ...(term.catchPattern ? { pattern: term.catchPattern } : null),
       body: catchBody,
     }
   }

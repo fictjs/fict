@@ -1868,6 +1868,29 @@ function collectPatternBindingNames(
   }
 }
 
+function collectStructuredCatchBindingNames(
+  handler: Extract<StructuredNode, { kind: 'try' }>['handler'],
+  t: typeof BabelCore.types,
+): string[] {
+  if (!handler) return []
+  if (handler.pattern) {
+    const names = new Set<string>()
+    collectPatternBindingNames(handler.pattern, t, names)
+    return Array.from(names)
+  }
+  return handler.param ? [deSSAVarName(handler.param)] : []
+}
+
+function lowerStructuredCatchParam(
+  handler: NonNullable<Extract<StructuredNode, { kind: 'try' }>['handler']>,
+  t: typeof BabelCore.types,
+): BabelCore.types.CatchClause['param'] {
+  if (handler.pattern) {
+    return t.cloneNode(handler.pattern, true) as BabelCore.types.CatchClause['param']
+  }
+  return handler.param ? t.identifier(deSSAVarName(handler.param)) : null
+}
+
 function collectDirectBlockBindingNames(
   statements: StructuredNode[],
   t: typeof BabelCore.types,
@@ -2508,9 +2531,9 @@ function lowerNodeWithRegionContext(
       const handlerNode = node.handler
       const handler = handlerNode
         ? t.catchClause(
-            handlerNode.param ? t.identifier(deSSAVarName(handlerNode.param)) : null,
+            lowerStructuredCatchParam(handlerNode, t),
             (() => {
-              const handlerBindings = handlerNode.param ? [handlerNode.param] : []
+              const handlerBindings = collectStructuredCatchBindingNames(handlerNode, t)
               let handlerBody = t.blockStatement([])
               withShadowedBindings(ctx, handlerBindings, () => {
                 handlerBody = t.blockStatement(
@@ -3186,7 +3209,7 @@ function lowerStructuredNodeForRegion(
       )
       let handlerStmts: BabelCore.types.Statement[] = []
       if (node.handler) {
-        const handlerBindings = node.handler.param ? [node.handler.param] : []
+        const handlerBindings = collectStructuredCatchBindingNames(node.handler, t)
         withShadowedBindings(ctx, handlerBindings, () => {
           handlerStmts = lowerStructuredNodeForRegion(
             node.handler!.body,
@@ -3214,10 +3237,7 @@ function lowerStructuredNodeForRegion(
         return []
       }
       const handler = node.handler
-        ? t.catchClause(
-            node.handler.param ? t.identifier(deSSAVarName(node.handler.param)) : null,
-            t.blockStatement(handlerStmts),
-          )
+        ? t.catchClause(lowerStructuredCatchParam(node.handler, t), t.blockStatement(handlerStmts))
         : null
       const finalizer = node.finalizer ? t.blockStatement(finalizerStmts) : null
       return [t.tryStatement(t.blockStatement(blockStmts), handler, finalizer)]

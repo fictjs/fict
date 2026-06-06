@@ -2130,17 +2130,15 @@ function convertFunction(
       if (finallyBlock) blocks.push(finallyBlock.block)
 
       // Get catch param name
-      let catchParamName: string | undefined
-      if (stmt.handler?.param && t.isIdentifier(stmt.handler.param)) {
-        catchParamName = stmt.handler.param.name
-      }
+      const catchParamInfo = getCatchParamInfo(stmt.handler)
 
       // Create Try terminator
       current.block.terminator = {
         kind: 'Try',
         tryBlock: tryBlock.block.id,
         catchBlock: catchBlock?.block.id,
-        catchParam: catchParamName,
+        catchParam: catchParamInfo.catchParam,
+        catchPattern: catchParamInfo.catchPattern,
         finallyBlock: finallyBlock?.block.id,
         exit: exitBlock.block.id,
       }
@@ -2379,6 +2377,18 @@ function findContinueContext(ctx: CFGBuildContext, label?: string): LoopContext 
     if (entry?.continueTarget !== undefined) return entry
   }
   return undefined
+}
+
+function getCatchParamInfo(handler: BabelCore.types.CatchClause | null | undefined): {
+  catchParam?: string | undefined
+  catchPattern?: BabelCore.types.LVal | undefined
+} {
+  const param = handler?.param
+  if (!param) return {}
+  return {
+    ...(t.isIdentifier(param) ? { catchParam: param.name } : null),
+    catchPattern: t.cloneNode(param, true) as BabelCore.types.LVal,
+  }
 }
 
 /**
@@ -3161,17 +3171,15 @@ function processStatement(
     if (finallyBlock) ctx.blocks.push(finallyBlock.block)
 
     // Get catch param name
-    let catchParamName: string | undefined
-    if (stmt.handler?.param && t.isIdentifier(stmt.handler.param)) {
-      catchParamName = stmt.handler.param.name
-    }
+    const catchParamInfo = getCatchParamInfo(stmt.handler)
 
     // Create Try terminator
     bb.block.terminator = {
       kind: 'Try',
       tryBlock: tryBlock.block.id,
       catchBlock: catchBlock?.block.id,
-      catchParam: catchParamName,
+      catchParam: catchParamInfo.catchParam,
+      catchPattern: catchParamInfo.catchPattern,
       finallyBlock: finallyBlock?.block.id,
       exit: exitBlock.block.id,
     }

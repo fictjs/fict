@@ -128,8 +128,12 @@ function collectCallbackVisibleNames(
       if (term.leftKind !== 'assignment' && term.pattern) {
         addPatternNames(term.pattern as BabelCore.types.PatternLike, names, t)
       }
-    } else if (term.kind === 'Try' && term.catchParam) {
-      names.add(deSSAVarName(term.catchParam))
+    } else if (term.kind === 'Try') {
+      if (term.catchPattern) {
+        addPatternNames(term.catchPattern as BabelCore.types.PatternLike, names, t)
+      } else if (term.catchParam) {
+        names.add(deSSAVarName(term.catchParam))
+      }
     }
   }
 
