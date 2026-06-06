@@ -1882,6 +1882,34 @@ function buildDirectRegionEmitCandidate(
   return null
 }
 
+function collectIncompleteBufferedRegionIds(
+  buffer: { instr: Instruction; region?: Region | undefined }[],
+): Set<number> {
+  const disabled = new Set<number>()
+  const instructionsByRegion = new Map<number, { region: Region; instructions: Instruction[] }>()
+
+  for (const item of buffer) {
+    if (!item.region) continue
+    const current = instructionsByRegion.get(item.region.id)
+    if (current) {
+      current.instructions.push(item.instr)
+    } else {
+      instructionsByRegion.set(item.region.id, {
+        region: item.region,
+        instructions: [item.instr],
+      })
+    }
+  }
+
+  for (const [id, item] of instructionsByRegion) {
+    if (!instructionListCoversRegion(item.region, item.instructions)) {
+      disabled.add(id)
+    }
+  }
+
+  return disabled
+}
+
 function structuredNodeUsesTrackedControlFlow(node: StructuredNode, ctx: CodegenContext): boolean {
   switch (node.kind) {
     case 'sequence':
@@ -2231,6 +2259,19 @@ function lowerNodeWithRegionContext(
             if (disableAbruptCompletionRegion && controlFlowState.region) {
               disabledRegionIdsForControlFlow.add(controlFlowState.region.id)
             }
+          }
+          if (structuredNodeUsesTrackedControlFlow(child, ctx)) {
+            const controlFlowOwnedRegionIds = new Set<number>()
+            if (controlFlowState.region) controlFlowOwnedRegionIds.add(controlFlowState.region.id)
+            controlFlowState.partialRegionIds.forEach(id => controlFlowOwnedRegionIds.add(id))
+            controlFlowState.ownedInstructionsByRegion?.forEach((_instructions, id) =>
+              controlFlowOwnedRegionIds.add(id),
+            )
+            collectIncompleteBufferedRegionIds(instructionBuffer).forEach(id => {
+              if (!controlFlowOwnedRegionIds.has(id)) {
+                regionCtx?.disabledRegions.add(id)
+              }
+            })
           }
           // Flush pending instructions before control flow
           stmts.push(

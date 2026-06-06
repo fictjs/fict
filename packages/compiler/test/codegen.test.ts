@@ -364,6 +364,90 @@ describe('lowerHIRWithRegions', () => {
     expectBefore(multipleOutput, 'second();', 'out = 2;')
   })
 
+  it('keeps assignments after reactive setup effects in source order once', () => {
+    const expectBefore = (output: string, earlier: string, later: string) => {
+      const earlierIndex = output.indexOf(earlier)
+      const laterIndex = output.indexOf(later)
+      expect(earlierIndex).toBeGreaterThanOrEqual(0)
+      expect(laterIndex).toBeGreaterThanOrEqual(0)
+      expect(earlierIndex).toBeLessThan(laterIndex)
+    }
+
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const log = []
+
+      export function App() {
+        let count = $state(1)
+        let out = 0
+        if (count) log.push(out)
+        out = 1
+        return <span>{out}:{log.join(',')}:{count}</span>
+      }
+    `)
+
+    expectBefore(output, '__fictUseEffect(__fictCtx', 'out = 1;')
+    expect(output.match(/out = 1;/g) ?? []).toHaveLength(1)
+
+    const capturedOnlyOutput = transform(`
+      import { $state } from 'fict'
+
+      const log = []
+
+      export function App() {
+        let count = $state(1)
+        let out = 0
+        if (count) log.push(out)
+        out = 1
+        return <span>{log.join(',')}:{count}</span>
+      }
+    `)
+
+    expectBefore(capturedOnlyOutput, '__fictUseEffect(__fictCtx', 'out = 1;')
+    expect(capturedOnlyOutput.match(/out = 1;/g) ?? []).toHaveLength(1)
+
+    const expressionOutput = transform(`
+      import { $state } from 'fict'
+
+      const log = []
+
+      export function App() {
+        let count = $state(1)
+        let out = 0
+        log.push(count)
+        out = 1
+        return <span>{out}:{log.join(',')}:{count}</span>
+      }
+    `)
+
+    expectBefore(expressionOutput, '__fictUseEffect(__fictCtx', 'out = 1;')
+    expect(expressionOutput.match(/out = 1;/g) ?? []).toHaveLength(1)
+
+    const rhsOutput = transform(`
+      import { $state } from 'fict'
+
+      const log = []
+
+      function next() {
+        log.push('next')
+        return 1
+      }
+
+      export function App() {
+        let count = $state(1)
+        let out = 0
+        if (count) log.push(out)
+        out = next()
+        return <span>{log.join(',')}:{count}</span>
+      }
+    `)
+
+    expectBefore(rhsOutput, '__fictUseEffect(__fictCtx', 'out = next();')
+    expect(rhsOutput.match(/out = next\(\);/g) ?? []).toHaveLength(1)
+    expect(rhsOutput).not.toContain('const { out }')
+  })
+
   it('keeps destructuring temps with branch region outputs', () => {
     const output = transform(`
       import { $state } from 'fict'
