@@ -590,21 +590,25 @@ export function parseFictReturnAnnotation(
         const propsStr = objectMatch[1]
         if (!propsStr) continue
         const directAccessorMatch = propsStr.match(
-          /^\s*directAccessor\s*:\s*['"]?(signal|memo)['"]?\s*,?\s*$/,
+          /^\s*directAccessor\s*:\s*(?:"(signal|memo)"|'(signal|memo)'|(signal|memo))\s*,?\s*$/,
         )
         if (directAccessorMatch) {
-          return { directAccessor: directAccessorMatch[1] as 'signal' | 'memo' }
+          return {
+            directAccessor: (directAccessorMatch[1] ??
+              directAccessorMatch[2] ??
+              directAccessorMatch[3]) as 'signal' | 'memo',
+          }
         }
         // Parse key: 'value' pairs. Keys may be identifiers, numeric keys, or quoted strings.
         const propPattern =
-          /(?:([A-Za-z_$][\w$]*|\d+)|"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')\s*:\s*['"]?(signal|memo)['"]?/g
+          /(?:([A-Za-z_$][\w$]*|\d+)|"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')\s*:\s*(?:"(signal|memo)"|'(signal|memo)'|(signal|memo))(?=\s*(?:,|$))/g
         let propMatch
         while ((propMatch = propPattern.exec(propsStr)) !== null) {
           const key =
             propMatch[1] ??
             propMatch[2]?.replace(/\\(['"\\])/g, '$1') ??
             propMatch[3]?.replace(/\\(['"\\])/g, '$1')
-          const value = propMatch[4]
+          const value = propMatch[4] ?? propMatch[5] ?? propMatch[6]
           if (!key || (value !== 'signal' && value !== 'memo')) continue
           objectProps.set(key, value)
         }
@@ -620,11 +624,12 @@ export function parseFictReturnAnnotation(
         const propsStr = arrayMatch[1]
         if (!propsStr) continue
         // Parse index: 'value' pairs
-        const propPattern = /(\d+)\s*:\s*['"]?(signal|memo)['"]?/g
+        const propPattern =
+          /(\d+)\s*:\s*(?:"(signal|memo)"|'(signal|memo)'|(signal|memo))(?=\s*(?:,|$))/g
         let propMatch
         while ((propMatch = propPattern.exec(propsStr)) !== null) {
           const index = propMatch[1]
-          const value = propMatch[2]
+          const value = propMatch[2] ?? propMatch[3] ?? propMatch[4]
           if (!index || (value !== 'signal' && value !== 'memo')) continue
           arrayProps.set(parseInt(index, 10), value)
         }

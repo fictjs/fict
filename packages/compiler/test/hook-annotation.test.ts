@@ -54,6 +54,34 @@ describe('Hook Return Annotation (@fictReturn)', () => {
       expect(result?.arrayProps?.get(1)).toBe('memo')
     })
 
+    it('ignores object annotation values that only prefix valid accessors', () => {
+      const cases = [
+        '* @fictReturn { count: "signalized" } ',
+        '* @fictReturn { count: signalized } ',
+        '* @fictReturn { count: "memoized" } ',
+        '* @fictReturn { count: memorandum } ',
+      ]
+
+      for (const source of cases) {
+        const result = parseFictReturnAnnotation(createAnnotatedNode(source))
+        expect(result).toBeNull()
+      }
+    })
+
+    it('ignores array annotation values that only prefix valid accessors', () => {
+      const cases = [
+        '* @fictReturn [0: "signalized"] ',
+        '* @fictReturn [0: signalized] ',
+        '* @fictReturn [0: "memoized"] ',
+        '* @fictReturn [0: memorandum] ',
+      ]
+
+      for (const source of cases) {
+        const result = parseFictReturnAnnotation(createAnnotatedNode(source))
+        expect(result).toBeNull()
+      }
+    })
+
     it('parses direct accessor annotation - signal', () => {
       const node = createAnnotatedNode("* @fictReturn 'signal' ")
 
