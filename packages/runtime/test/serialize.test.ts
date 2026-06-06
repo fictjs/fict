@@ -43,6 +43,35 @@ describe('serializeValue / deserializeValue', () => {
       expect(deserializeValue(serializeValue(-Infinity))).toBe(-Infinity)
     })
 
+    it('should preserve negative zero through JSON', () => {
+      const result = deserializeValue(JSON.parse(JSON.stringify(serializeValue(-0)))) as number
+      expect(Object.is(result, -0)).toBe(true)
+      expect(1 / result).toBe(-Infinity)
+    })
+
+    it('should keep positive zero distinct from negative zero', () => {
+      const result = deserializeValue(JSON.parse(JSON.stringify(serializeValue(0)))) as number
+      expect(Object.is(result, -0)).toBe(false)
+      expect(Object.is(result, 0)).toBe(true)
+    })
+
+    it('should preserve nested negative zero values through JSON', () => {
+      const value = {
+        object: -0,
+        array: [-0],
+        map: new Map([['zero', -0]]),
+      }
+      const result = deserializeValue(JSON.parse(JSON.stringify(serializeValue(value)))) as {
+        object: number
+        array: number[]
+        map: Map<string, number>
+      }
+
+      expect(Object.is(result.object, -0)).toBe(true)
+      expect(Object.is(result.array[0], -0)).toBe(true)
+      expect(Object.is(result.map.get('zero'), -0)).toBe(true)
+    })
+
     it('should handle BigInt', () => {
       expect(deserializeValue(serializeValue(BigInt(123)))).toBe(BigInt(123))
       expect(deserializeValue(serializeValue(BigInt('9007199254740993')))).toBe(

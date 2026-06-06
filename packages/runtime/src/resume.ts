@@ -27,6 +27,7 @@ type SerializedMarker =
   | { __t: 'h' } // Array hole
   | { __t: 'u' } // undefined
   | { __t: 'n' } // NaN
+  | { __t: '-0' } // Negative zero
   | { __t: '+i' } // Infinity
   | { __t: '-i' } // -Infinity
   | { __t: 'b'; v: string } // BigInt (as string)
@@ -518,6 +519,9 @@ export function serializeValue(
   }
 
   if (typeof value === 'number') {
+    if (Object.is(value, -0)) {
+      return { __t: '-0' } as SerializedMarker
+    }
     if (Number.isNaN(value)) {
       return { __t: 'n' } as SerializedMarker
     }
@@ -669,6 +673,8 @@ export function deserializeValue(
         return undefined
       case 'n':
         return NaN
+      case '-0':
+        return -0
       case '+i':
         return Infinity
       case '-i':
