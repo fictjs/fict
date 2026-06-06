@@ -133,4 +133,44 @@ describe('Error/Cycle Protection', () => {
     expect(output).toContain('const c =')
     expect(output).not.toContain('const c = c')
   })
+
+  it('ignores nested function parameters that shadow derived bindings', () => {
+    const cases = [
+      `
+        const wrap = (x) => x
+        const x = wrap(source)
+      `,
+      `
+        const wrap = function (x) {
+          return x
+        }
+        const x = wrap(source)
+      `,
+      `
+        const obj = {
+          m(x) {
+            return x
+          },
+        }
+        const x = obj.m(source)
+      `,
+      `
+        const wrap = ({ x }) => x
+        const x = wrap({ x: source })
+      `,
+    ]
+
+    for (const body of cases) {
+      const source = `
+        import { $state } from 'fict'
+        function Component() {
+          const source = $state(1)
+          ${body}
+          return <div>{x}</div>
+        }
+      `
+
+      expect(() => run(source)).not.toThrow(/Detected cyclic derived dependency/)
+    }
+  })
 })
