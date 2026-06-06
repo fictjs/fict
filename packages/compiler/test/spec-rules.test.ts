@@ -645,6 +645,52 @@ describe('Spec rule coverage', () => {
     }
   })
 
+  it('warns when memo class expressions contain eager side effects', () => {
+    const cases = [
+      "return class { static value = fetch('/api') }",
+      "return class extends fetch('/api') {}",
+      "return class { [fetch('/api')]() {} }",
+      "return class { static [fetch('/api')] = 1 }",
+      "return class { static { fetch('/api') } }",
+    ]
+
+    for (const body of cases) {
+      const { warnings } = transformWithWarnings(`
+        import { $memo } from 'fict'
+        const value = $memo(() => {
+          ${body}
+        })
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
+      expect(warnings.some(w => w.code === 'FICT-M001')).toBe(false)
+    }
+  })
+
+  it('does not warn when memo class side effects are lazy', () => {
+    const { warnings } = transformWithWarnings(`
+      import { $memo } from 'fict'
+      const value = $memo(() => {
+        return class {
+          field = fetch('/api')
+          method() {
+            fetch('/api')
+          }
+          static method() {
+            fetch('/api')
+          }
+          get value() {
+            fetch('/api')
+            return 1
+          }
+        }
+      })
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-M003')).toBe(false)
+    expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
+  })
+
   it('does not warn when memo returns lazy closures with side effects', () => {
     const cases = [
       'return () => console.log("later")',

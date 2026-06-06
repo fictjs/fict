@@ -2171,6 +2171,36 @@ function createHIREntrypointVisitor(
               )
             }
             if (t.isParenthesizedExpression(node)) return checkNode(node.expression)
+            if (t.isClassExpression(node) || t.isClassDeclaration(node)) {
+              const decorators = (node.decorators ?? []) as BabelCore.types.Decorator[]
+              if (decorators.some(decorator => checkNode(decorator.expression))) return true
+              if (checkNode(node.superClass)) return true
+              return node.body.body.some(member => {
+                const memberNode = member as BabelCore.types.Node & {
+                  computed?: boolean
+                  key?: BabelCore.types.Node
+                  static?: boolean
+                  value?: BabelCore.types.Node | null
+                }
+                const memberDecorators = ((
+                  memberNode as { decorators?: BabelCore.types.Decorator[] }
+                ).decorators ?? []) as BabelCore.types.Decorator[]
+                if (memberDecorators.some(decorator => checkNode(decorator.expression))) return true
+                if (memberNode.computed && checkNode(memberNode.key)) return true
+                if (t.isStaticBlock(member)) {
+                  return member.body.some(statement => checkNode(statement))
+                }
+                if (
+                  memberNode.static === true &&
+                  (t.isClassProperty(member) ||
+                    t.isClassPrivateProperty(member) ||
+                    t.isClassAccessorProperty(member))
+                ) {
+                  return checkNode(memberNode.value)
+                }
+                return false
+              })
+            }
             if (t.isConditionalExpression(node))
               return checkNode(node.test) || checkNode(node.consequent) || checkNode(node.alternate)
             if (t.isIfStatement(node)) {
