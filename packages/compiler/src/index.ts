@@ -2430,6 +2430,16 @@ function createHIREntrypointVisitor(
                   collectReturnedJsxFromExpression(node.right, returned)
                   return
                 }
+                if (t.isArrayExpression(node)) {
+                  for (const element of node.elements) {
+                    if (!element) continue
+                    collectReturnedJsxFromExpression(
+                      t.isSpreadElement(element) ? element.argument : element,
+                      returned,
+                    )
+                  }
+                  return
+                }
                 if (t.isSequenceExpression(node)) {
                   const tail = node.expressions[node.expressions.length - 1]
                   collectReturnedJsxFromExpression(tail, returned)

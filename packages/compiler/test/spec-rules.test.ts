@@ -237,6 +237,25 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-J002')).toBe(true)
   })
 
+  it('warns when map callbacks return arrays with unkeyed JSX', () => {
+    const cases = [
+      '[<li key={item.id}>{item.name}</li>, <li>{item.name}</li>]',
+      '[[<li key={item.id}>{item.name}</li>, <li>{item.name}</li>]]',
+      'item.visible ? [<li key={item.id}>{item.name}</li>, <li>{item.name}</li>] : <li key={item.id}>{item.name}</li>',
+      '[<>{item.name}</>]',
+    ]
+
+    for (const body of cases) {
+      const { warnings } = transformWithWarnings(`
+        export function List({ items }) {
+          return <ul>{items.map(item => ${body})}</ul>
+        }
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-J002')).toBe(true)
+    }
+  })
+
   it('does not warn when list items have keys', () => {
     const warnings: CompilerWarning[] = []
     const input = `
@@ -246,6 +265,23 @@ describe('Spec rule coverage', () => {
       }
     `
     transform(input, { onWarn: w => warnings.push(w) })
+    expect(warnings.some(w => w.code === 'FICT-J002')).toBe(false)
+  })
+
+  it('does not warn when map callbacks return arrays with keyed JSX', () => {
+    const { warnings } = transformWithWarnings(`
+      export function List({ items }) {
+        return (
+          <ul>
+            {items.map(item => [
+              <li key={item.id}>{item.name}</li>,
+              <li key={item.altId}>{item.name}</li>,
+            ])}
+          </ul>
+        )
+      }
+    `)
+
     expect(warnings.some(w => w.code === 'FICT-J002')).toBe(false)
   })
 
