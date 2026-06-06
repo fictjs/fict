@@ -3533,6 +3533,125 @@ describe('tracked reads/writes in HIR codegen', () => {
     )
   })
 
+  it('keeps branch-local signal shadows scoped to their control-flow branch', () => {
+    const siblingOutput = transform(`
+      import { $state } from 'fict'
+
+      export function App() {
+        const count = $state(1)
+        const flag = $state(false)
+        if (flag) {
+          const count = 2
+          return <span>{count}</span>
+        }
+        return <span>{count}:{flag}</span>
+      }
+    `)
+
+    expect(siblingOutput.match(/\(\) => count, createElement/g)).toHaveLength(1)
+    expect(siblingOutput.match(/\(\) => count\(\), createElement/g)?.length ?? 0).toBeGreaterThan(0)
+
+    const branchOutput = transform(`
+      import { $state } from 'fict'
+
+      export function App() {
+        const count = $state(1)
+        const flag = $state(false)
+        if (flag) {
+          const count = 2
+          console.log(count)
+        }
+        return <span>{count}:{flag}</span>
+      }
+    `)
+
+    expect(branchOutput).toContain('console.log(count);')
+    expect(branchOutput).not.toContain('console.log(count())')
+    expect(branchOutput.match(/\(\) => count\(\), createElement/g)?.length ?? 0).toBeGreaterThan(0)
+
+    const switchOutput = transform(`
+      import { $state } from 'fict'
+
+      export function App() {
+        const count = $state(1)
+        const mode = $state('outer')
+        switch (mode) {
+          case 'local': {
+            const count = 2
+            return <span>{count}</span>
+          }
+          default:
+            return <span>{count}:{mode}</span>
+        }
+      }
+    `)
+
+    expect(switchOutput.match(/\(\) => count, createElement/g)).toHaveLength(1)
+    expect(switchOutput.match(/\(\) => count\(\), createElement/g)?.length ?? 0).toBeGreaterThan(0)
+
+    const loopOutput = transform(`
+      import { $state } from 'fict'
+
+      export function App() {
+        const count = $state(1)
+        const flag = $state(false)
+        if (flag) {
+          while (flag) {
+            const count = 2
+            console.log(count)
+            break
+          }
+        }
+        return <span>{count}:{flag}</span>
+      }
+    `)
+
+    expect(loopOutput).toContain('console.log(count);')
+    expect(loopOutput).not.toContain('console.log(count())')
+    expect(loopOutput.match(/\(\) => count\(\), createElement/g)?.length ?? 0).toBeGreaterThan(0)
+
+    const catchOutput = transform(`
+      import { $state } from 'fict'
+
+      export function App() {
+        const count = $state(1)
+        const flag = $state(false)
+        if (flag) {
+          try {
+            throw 1
+          } catch (count) {
+            console.log(count)
+          }
+        }
+        return <span>{count}:{flag}</span>
+      }
+    `)
+
+    expect(catchOutput).toContain('console.log(count);')
+    expect(catchOutput).not.toContain('console.log(count())')
+    expect(catchOutput.match(/\(\) => count\(\), createElement/g)?.length ?? 0).toBeGreaterThan(0)
+
+    const destructuringOutput = transform(`
+      import { $state } from 'fict'
+
+      export function App() {
+        const count = $state(1)
+        const flag = $state(false)
+        if (flag) {
+          const { count } = { count: 2 }
+          console.log(count)
+        }
+        return <span>{count}:{flag}</span>
+      }
+    `)
+
+    expect(destructuringOutput).toContain('console.log(count);')
+    expect(destructuringOutput).not.toContain('console.log(count())')
+    expect(
+      destructuringOutput.match(/\(\) => count\(\), createElement/g)?.length ?? 0,
+    ).toBeGreaterThan(0)
+  })
+
   it('keeps value props reactive when unreachable prop calls exist', () => {
     const ast = parseFile(`
       function Returned({ value }) {

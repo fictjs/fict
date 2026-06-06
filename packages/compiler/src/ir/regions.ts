@@ -2011,35 +2011,77 @@ function collectDirectBlockBindingNames(
   t: typeof BabelCore.types,
 ): Set<string> {
   const names = new Set<string>()
-  const collectStatementBindings = (stmt: BabelCore.types.Statement): void => {
-    if (t.isVariableDeclaration(stmt)) {
-      for (const decl of stmt.declarations) {
-        collectPatternBindingNames(decl.id, t, names)
-      }
-      return
-    }
-    if (t.isClassDeclaration(stmt) && stmt.id) {
-      names.add(stmt.id.name)
-    }
-  }
   for (const statement of statements) {
     if (statement.kind === 'return' || statement.kind === 'throw') {
-      statement.trailingStatements?.forEach(collectStatementBindings)
+      statement.trailingStatements?.forEach(stmt =>
+        collectBabelStatementBindingNames(stmt, t, names),
+      )
       continue
     }
     if (statement.kind !== 'instruction') continue
-    const instruction = statement.instruction
-    if (instruction.kind !== 'Assign') continue
-    const isFunctionDecl =
-      instruction.value.kind === 'FunctionExpression' &&
-      !!instruction.value.name &&
-      !instruction.isMutation &&
-      deSSAVarName(instruction.value.name) === deSSAVarName(instruction.target.name)
-    if (instruction.declarationKind || isFunctionDecl) {
-      names.add(deSSAVarName(instruction.target.name))
-    }
+    collectInstructionBindingName(statement.instruction, names)
   }
   return names
+}
+
+function collectBabelStatementBindingNames(
+  stmt: BabelCore.types.Statement,
+  t: typeof BabelCore.types,
+  names: Set<string>,
+): void {
+  if (t.isVariableDeclaration(stmt)) {
+    for (const decl of stmt.declarations) {
+      collectPatternBindingNames(decl.id, t, names)
+    }
+    return
+  }
+  if (t.isClassDeclaration(stmt) && stmt.id) {
+    names.add(stmt.id.name)
+  }
+}
+
+function collectInstructionBindingName(instruction: Instruction, names: Set<string>): void {
+  if (instruction.kind !== 'Assign') return
+  const isFunctionDecl =
+    instruction.value.kind === 'FunctionExpression' &&
+    !!instruction.value.name &&
+    !instruction.isMutation &&
+    deSSAVarName(instruction.value.name) === deSSAVarName(instruction.target.name)
+  if (instruction.declarationKind || isFunctionDecl) {
+    names.add(deSSAVarName(instruction.target.name))
+  }
+}
+
+function collectDirectStructuredBindingNames(
+  node: StructuredNode | null | undefined,
+  t: typeof BabelCore.types,
+): Set<string> {
+  const names = new Set<string>()
+  if (!node) return names
+  switch (node.kind) {
+    case 'block':
+      return collectDirectBlockBindingNames(node.statements, t)
+    case 'sequence':
+      for (const child of node.nodes) {
+        if (child.kind === 'instruction') {
+          collectInstructionBindingName(child.instruction, names)
+        } else if (child.kind === 'return' || child.kind === 'throw') {
+          child.trailingStatements?.forEach(stmt =>
+            collectBabelStatementBindingNames(stmt, t, names),
+          )
+        }
+      }
+      return names
+    case 'instruction':
+      collectInstructionBindingName(node.instruction, names)
+      return names
+    case 'return':
+    case 'throw':
+      node.trailingStatements?.forEach(stmt => collectBabelStatementBindingNames(stmt, t, names))
+      return names
+    default:
+      return names
+  }
 }
 
 function withShadowedBindings<T>(ctx: CodegenContext, names: Iterable<string>, fn: () => T): T {
@@ -2383,16 +2425,15 @@ function lowerNodeWithRegionContext(
         ctx.nonReactiveScopeDepth = prevNonReactiveDepth + 1
       }
 
-      const conseqStmts = lowerNodeWithRegionContext(
-        node.consequent,
-        t,
-        ctx,
-        declaredVars,
-        regionCtx,
-      )
-      const altStmts = node.alternate
-        ? lowerNodeWithRegionContext(node.alternate, t, ctx, declaredVars, regionCtx)
-        : null
+      const lowerBranch = (child: StructuredNode): BabelCore.types.Statement[] => {
+        const scopedDeclared = new Set(declaredVars)
+        const branchBindings = collectDirectStructuredBindingNames(child, t)
+        return withShadowedBindings(ctx, branchBindings, () =>
+          lowerNodeWithRegionContext(child, t, ctx, scopedDeclared, regionCtx),
+        )
+      }
+      const conseqStmts = lowerBranch(node.consequent)
+      const altStmts = node.alternate ? lowerBranch(node.alternate) : null
 
       // Restore non-reactive depth
       if (mightWrapInEffect) {
@@ -2487,9 +2528,13 @@ function lowerNodeWithRegionContext(
 
     case 'while': {
       const shouldWrap = shouldWrapTrackedControlInEffect(node.test, ctx)
+      const scopedDeclared = new Set(declaredVars)
+      const bodyBindings = collectDirectStructuredBindingNames(node.body, t)
       const body = t.blockStatement(
-        withTrackedControlEffectScope(ctx, shouldWrap, () =>
-          lowerNodeWithRegionContext(node.body, t, ctx, declaredVars, regionCtx),
+        withShadowedBindings(ctx, bodyBindings, () =>
+          withTrackedControlEffectScope(ctx, shouldWrap, () =>
+            lowerNodeWithRegionContext(node.body, t, ctx, scopedDeclared, regionCtx),
+          ),
         ),
       )
       const stmt = t.whileStatement(lowerExpressionWithDeSSA(node.test, ctx), body)
@@ -2498,9 +2543,13 @@ function lowerNodeWithRegionContext(
 
     case 'doWhile': {
       const shouldWrap = shouldWrapTrackedControlInEffect(node.test, ctx)
+      const scopedDeclared = new Set(declaredVars)
+      const bodyBindings = collectDirectStructuredBindingNames(node.body, t)
       const body = t.blockStatement(
-        withTrackedControlEffectScope(ctx, shouldWrap, () =>
-          lowerNodeWithRegionContext(node.body, t, ctx, declaredVars, regionCtx),
+        withShadowedBindings(ctx, bodyBindings, () =>
+          withTrackedControlEffectScope(ctx, shouldWrap, () =>
+            lowerNodeWithRegionContext(node.body, t, ctx, scopedDeclared, regionCtx),
+          ),
         ),
       )
       const stmt = t.doWhileStatement(lowerExpressionWithDeSSA(node.test, ctx), body)
@@ -2526,8 +2575,12 @@ function lowerNodeWithRegionContext(
           node.update && node.update.length > 0
             ? lowerInstructionsToUpdateExpr(node.update, t, ctx)
             : null
+        const bodyDeclared = new Set(declaredVars)
+        const bodyBindings = collectDirectStructuredBindingNames(node.body, t)
         body = t.blockStatement(
-          lowerNodeWithRegionContext(node.body, t, ctx, declaredVars, regionCtx),
+          withShadowedBindings(ctx, bodyBindings, () =>
+            lowerNodeWithRegionContext(node.body, t, ctx, bodyDeclared, regionCtx),
+          ),
         )
       })
 
@@ -2546,8 +2599,15 @@ function lowerNodeWithRegionContext(
       const right = lowerExpressionWithDeSSA(node.iterable, ctx)
       const isAssignmentTarget = node.leftKind === 'assignment' && !node.pattern
       const targetName = deSSAVarName(node.variable)
+      const lowerLoopBody = (): BabelCore.types.Statement[] => {
+        const bodyDeclared = new Set(declaredVars)
+        const bodyBindings = collectDirectStructuredBindingNames(node.body, t)
+        return withShadowedBindings(ctx, bodyBindings, () =>
+          lowerNodeWithRegionContext(node.body, t, ctx, bodyDeclared, regionCtx),
+        )
+      }
       if (isAssignmentTarget && node.assignmentTarget) {
-        const bodyStmts = lowerNodeWithRegionContext(node.body, t, ctx, declaredVars, regionCtx)
+        const bodyStmts = lowerLoopBody()
         return [
           t.forOfStatement(
             lowerLoopAssignmentTargetWithDeSSA(node.assignmentTarget, ctx),
@@ -2558,7 +2618,7 @@ function lowerNodeWithRegionContext(
         ]
       }
       if (isAssignmentTarget) {
-        const bodyStmts = lowerNodeWithRegionContext(node.body, t, ctx, declaredVars, regionCtx)
+        const bodyStmts = lowerLoopBody()
         if (ctx.trackedVars.has(targetName)) {
           const valueId = t.identifier(`__forOf_${ctx.tempCounter++}`)
           return [
@@ -2589,9 +2649,7 @@ function lowerNodeWithRegionContext(
       collectPatternBindingNames(leftPattern, t, bindingNames)
       let body: BabelCore.types.BlockStatement = t.blockStatement([])
       withShadowedBindings(ctx, bindingNames, () => {
-        body = t.blockStatement(
-          lowerNodeWithRegionContext(node.body, t, ctx, declaredVars, regionCtx),
-        )
+        body = t.blockStatement(lowerLoopBody())
       })
 
       return [t.forOfStatement(left, right, body, !!node.await)]
@@ -2609,8 +2667,15 @@ function lowerNodeWithRegionContext(
       const right = lowerExpressionWithDeSSA(node.object, ctx)
       const isAssignmentTarget = node.leftKind === 'assignment' && !node.pattern
       const targetName = deSSAVarName(node.variable)
+      const lowerLoopBody = (): BabelCore.types.Statement[] => {
+        const bodyDeclared = new Set(declaredVars)
+        const bodyBindings = collectDirectStructuredBindingNames(node.body, t)
+        return withShadowedBindings(ctx, bodyBindings, () =>
+          lowerNodeWithRegionContext(node.body, t, ctx, bodyDeclared, regionCtx),
+        )
+      }
       if (isAssignmentTarget && node.assignmentTarget) {
-        const bodyStmts = lowerNodeWithRegionContext(node.body, t, ctx, declaredVars, regionCtx)
+        const bodyStmts = lowerLoopBody()
         return [
           t.forInStatement(
             lowerLoopAssignmentTargetWithDeSSA(node.assignmentTarget, ctx),
@@ -2620,7 +2685,7 @@ function lowerNodeWithRegionContext(
         ]
       }
       if (isAssignmentTarget) {
-        const bodyStmts = lowerNodeWithRegionContext(node.body, t, ctx, declaredVars, regionCtx)
+        const bodyStmts = lowerLoopBody()
         if (ctx.trackedVars.has(targetName)) {
           const valueId = t.identifier(`__forIn_${ctx.tempCounter++}`)
           return [
@@ -2643,9 +2708,7 @@ function lowerNodeWithRegionContext(
       collectPatternBindingNames(leftPattern, t, bindingNames)
       let body: BabelCore.types.BlockStatement = t.blockStatement([])
       withShadowedBindings(ctx, bindingNames, () => {
-        body = t.blockStatement(
-          lowerNodeWithRegionContext(node.body, t, ctx, declaredVars, regionCtx),
-        )
+        body = t.blockStatement(lowerLoopBody())
       })
 
       return [t.forInStatement(left, right, body)]
@@ -2657,8 +2720,12 @@ function lowerNodeWithRegionContext(
       let cases: BabelCore.types.SwitchCase[]
       try {
         cases = node.cases.map(c => {
+          const caseDeclared = new Set(declaredVars)
+          const caseBindings = collectDirectStructuredBindingNames(c.body, t)
           const stmts = ensureSwitchCaseBreak(
-            lowerNodeWithRegionContext(c.body, t, ctx, declaredVars, regionCtx),
+            withShadowedBindings(ctx, caseBindings, () =>
+              lowerNodeWithRegionContext(c.body, t, ctx, caseDeclared, regionCtx),
+            ),
             t,
             c.fallsThrough === true,
           )
@@ -2671,8 +2738,12 @@ function lowerNodeWithRegionContext(
     }
 
     case 'try': {
+      const blockDeclared = new Set(declaredVars)
+      const blockBindings = collectDirectStructuredBindingNames(node.block, t)
       const block = t.blockStatement(
-        lowerNodeWithRegionContext(node.block, t, ctx, declaredVars, regionCtx),
+        withShadowedBindings(ctx, blockBindings, () =>
+          lowerNodeWithRegionContext(node.block, t, ctx, blockDeclared, regionCtx),
+        ),
       )
       const handlerNode = node.handler
       const handler = handlerNode
@@ -2680,10 +2751,14 @@ function lowerNodeWithRegionContext(
             lowerStructuredCatchParam(handlerNode, t),
             (() => {
               const handlerBindings = collectStructuredCatchBindingNames(handlerNode, t)
+              collectDirectStructuredBindingNames(handlerNode.body, t).forEach(name =>
+                handlerBindings.push(name),
+              )
+              const handlerDeclared = new Set(declaredVars)
               let handlerBody = t.blockStatement([])
               withShadowedBindings(ctx, handlerBindings, () => {
                 handlerBody = t.blockStatement(
-                  lowerNodeWithRegionContext(handlerNode.body, t, ctx, declaredVars, regionCtx),
+                  lowerNodeWithRegionContext(handlerNode.body, t, ctx, handlerDeclared, regionCtx),
                 )
               })
               return handlerBody
@@ -2691,9 +2766,15 @@ function lowerNodeWithRegionContext(
           )
         : null
       const finalizer = node.finalizer
-        ? t.blockStatement(
-            lowerNodeWithRegionContext(node.finalizer, t, ctx, declaredVars, regionCtx),
-          )
+        ? (() => {
+            const finalizerDeclared = new Set(declaredVars)
+            const finalizerBindings = collectDirectStructuredBindingNames(node.finalizer, t)
+            return t.blockStatement(
+              withShadowedBindings(ctx, finalizerBindings, () =>
+                lowerNodeWithRegionContext(node.finalizer!, t, ctx, finalizerDeclared, regionCtx),
+              ),
+            )
+          })()
         : null
 
       return [t.tryStatement(block, handler, finalizer)]
@@ -3083,32 +3164,36 @@ function lowerStructuredNodeForRegion(
         forceNonReactive: boolean,
       ): BabelCore.types.Statement[] => {
         if (!child) return []
-        if (!forceNonReactive) {
-          return lowerStructuredNodeForRegion(
-            child,
-            region,
-            t,
-            ctx,
-            declaredVars,
-            childRegionCtx,
-            skipInstructions,
-          )
-        }
-        const prevDepth = ctx.nonReactiveScopeDepth ?? 0
-        ctx.nonReactiveScopeDepth = prevDepth + 1
-        try {
-          return lowerStructuredNodeForRegion(
-            child,
-            region,
-            t,
-            ctx,
-            declaredVars,
-            childRegionCtx,
-            skipInstructions,
-          )
-        } finally {
-          ctx.nonReactiveScopeDepth = prevDepth
-        }
+        const scopedDeclared = new Set(declaredVars)
+        const branchBindings = collectDirectStructuredBindingNames(child, t)
+        return withShadowedBindings(ctx, branchBindings, () => {
+          if (!forceNonReactive) {
+            return lowerStructuredNodeForRegion(
+              child,
+              region,
+              t,
+              ctx,
+              scopedDeclared,
+              childRegionCtx,
+              skipInstructions,
+            )
+          }
+          const prevDepth = ctx.nonReactiveScopeDepth ?? 0
+          ctx.nonReactiveScopeDepth = prevDepth + 1
+          try {
+            return lowerStructuredNodeForRegion(
+              child,
+              region,
+              t,
+              ctx,
+              scopedDeclared,
+              childRegionCtx,
+              skipInstructions,
+            )
+          } finally {
+            ctx.nonReactiveScopeDepth = prevDepth
+          }
+        })
       }
 
       // Lower children with forceNonReactive=true if we might wrap in effect
@@ -3158,15 +3243,19 @@ function lowerStructuredNodeForRegion(
 
     case 'while': {
       const shouldWrap = shouldWrapTrackedControlInEffect(node.test, ctx)
-      const body = withTrackedControlEffectScope(ctx, shouldWrap, () =>
-        lowerStructuredNodeForRegion(
-          node.body,
-          region,
-          t,
-          ctx,
-          declaredVars,
-          regionCtx,
-          skipInstructions,
+      const scopedDeclared = new Set(declaredVars)
+      const bodyBindings = collectDirectStructuredBindingNames(node.body, t)
+      const body = withShadowedBindings(ctx, bodyBindings, () =>
+        withTrackedControlEffectScope(ctx, shouldWrap, () =>
+          lowerStructuredNodeForRegion(
+            node.body,
+            region,
+            t,
+            ctx,
+            scopedDeclared,
+            regionCtx,
+            skipInstructions,
+          ),
         ),
       )
       const stmt = t.whileStatement(
@@ -3178,15 +3267,19 @@ function lowerStructuredNodeForRegion(
 
     case 'doWhile': {
       const shouldWrap = shouldWrapTrackedControlInEffect(node.test, ctx)
-      const body = withTrackedControlEffectScope(ctx, shouldWrap, () =>
-        lowerStructuredNodeForRegion(
-          node.body,
-          region,
-          t,
-          ctx,
-          declaredVars,
-          regionCtx,
-          skipInstructions,
+      const scopedDeclared = new Set(declaredVars)
+      const bodyBindings = collectDirectStructuredBindingNames(node.body, t)
+      const body = withShadowedBindings(ctx, bodyBindings, () =>
+        withTrackedControlEffectScope(ctx, shouldWrap, () =>
+          lowerStructuredNodeForRegion(
+            node.body,
+            region,
+            t,
+            ctx,
+            scopedDeclared,
+            regionCtx,
+            skipInstructions,
+          ),
         ),
       )
       const stmt = t.doWhileStatement(
@@ -3208,14 +3301,18 @@ function lowerStructuredNodeForRegion(
       let test: BabelCore.types.Expression | null = null
       let update: BabelCore.types.Expression | null = null
       withShadowedBindings(ctx, forBindings, () => {
-        body = lowerStructuredNodeForRegion(
-          node.body,
-          region,
-          t,
-          ctx,
-          declaredVars,
-          regionCtx,
-          skipInstructions,
+        const bodyDeclared = new Set(declaredVars)
+        const bodyBindings = collectDirectStructuredBindingNames(node.body, t)
+        body = withShadowedBindings(ctx, bodyBindings, () =>
+          lowerStructuredNodeForRegion(
+            node.body,
+            region,
+            t,
+            ctx,
+            bodyDeclared,
+            regionCtx,
+            skipInstructions,
+          ),
         )
         init =
           node.init && node.init.length > 0 ? lowerInstructionsToInitExpr(node.init, t, ctx) : null
@@ -3235,16 +3332,21 @@ function lowerStructuredNodeForRegion(
         : t.identifier(deSSAVarName(node.variable))
       const isAssignmentTarget = node.leftKind === 'assignment' && !node.pattern
       let body: BabelCore.types.Statement[] = []
-      const lowerBody = () =>
-        (body = lowerStructuredNodeForRegion(
-          node.body,
-          region,
-          t,
-          ctx,
-          declaredVars,
-          regionCtx,
-          skipInstructions,
-        ))
+      const lowerBody = () => {
+        const bodyDeclared = new Set(declaredVars)
+        const bodyBindings = collectDirectStructuredBindingNames(node.body, t)
+        body = withShadowedBindings(ctx, bodyBindings, () =>
+          lowerStructuredNodeForRegion(
+            node.body,
+            region,
+            t,
+            ctx,
+            bodyDeclared,
+            regionCtx,
+            skipInstructions,
+          ),
+        )
+      }
       if (isAssignmentTarget) {
         lowerBody()
       } else {
@@ -3296,16 +3398,21 @@ function lowerStructuredNodeForRegion(
       const bindingNames = new Set<string>()
       const isAssignmentTarget = node.leftKind === 'assignment' && !node.pattern
       let body: BabelCore.types.Statement[] = []
-      const lowerBody = () =>
-        (body = lowerStructuredNodeForRegion(
-          node.body,
-          region,
-          t,
-          ctx,
-          declaredVars,
-          regionCtx,
-          skipInstructions,
-        ))
+      const lowerBody = () => {
+        const bodyDeclared = new Set(declaredVars)
+        const bodyBindings = collectDirectStructuredBindingNames(node.body, t)
+        body = withShadowedBindings(ctx, bodyBindings, () =>
+          lowerStructuredNodeForRegion(
+            node.body,
+            region,
+            t,
+            ctx,
+            bodyDeclared,
+            regionCtx,
+            skipInstructions,
+          ),
+        )
+      }
       if (isAssignmentTarget) {
         lowerBody()
       } else {
@@ -3353,15 +3460,19 @@ function lowerStructuredNodeForRegion(
       try {
         cases = node.cases
           .map(c => {
+            const caseDeclared = new Set(declaredVars)
+            const caseBindings = collectDirectStructuredBindingNames(c.body, t)
             const stmts = ensureSwitchCaseBreak(
-              lowerStructuredNodeForRegion(
-                c.body,
-                region,
-                t,
-                ctx,
-                declaredVars,
-                regionCtx,
-                skipInstructions,
+              withShadowedBindings(ctx, caseBindings, () =>
+                lowerStructuredNodeForRegion(
+                  c.body,
+                  region,
+                  t,
+                  ctx,
+                  caseDeclared,
+                  regionCtx,
+                  skipInstructions,
+                ),
               ),
               t,
               c.fallsThrough === true,
@@ -3381,25 +3492,34 @@ function lowerStructuredNodeForRegion(
       const executableRegionCtx = regionCtx
         ? { ...regionCtx, inlineUnownedInRegionBody: true }
         : regionCtx
-      const lowerExecutableChild = (child: StructuredNode): BabelCore.types.Statement[] =>
-        withTrackedControlEffectScope(ctx, true, () =>
-          lowerStructuredNodeForRegion(
-            child,
-            region,
-            t,
-            ctx,
-            declaredVars,
-            executableRegionCtx,
-            skipInstructions,
+      const lowerExecutableChild = (
+        child: StructuredNode,
+        extraBindings: Iterable<string> = [],
+      ): BabelCore.types.Statement[] => {
+        const scopedDeclared = new Set(declaredVars)
+        const childBindings = collectDirectStructuredBindingNames(child, t)
+        for (const binding of extraBindings) {
+          childBindings.add(binding)
+        }
+        return withShadowedBindings(ctx, childBindings, () =>
+          withTrackedControlEffectScope(ctx, true, () =>
+            lowerStructuredNodeForRegion(
+              child,
+              region,
+              t,
+              ctx,
+              scopedDeclared,
+              executableRegionCtx,
+              skipInstructions,
+            ),
           ),
         )
+      }
       const blockStmts = lowerExecutableChild(node.block)
       let handlerStmts: BabelCore.types.Statement[] = []
       if (node.handler) {
         const handlerBindings = collectStructuredCatchBindingNames(node.handler, t)
-        withShadowedBindings(ctx, handlerBindings, () => {
-          handlerStmts = lowerExecutableChild(node.handler!.body)
-        })
+        handlerStmts = lowerExecutableChild(node.handler.body, handlerBindings)
       }
       const finalizerStmts = node.finalizer ? lowerExecutableChild(node.finalizer) : []
       const handler = node.handler
