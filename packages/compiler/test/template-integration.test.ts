@@ -6142,6 +6142,56 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('does not duplicate side-effecting mutable key alias assignments', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const log: string[] = []
+
+      function next(item: number) {
+        log.push('key ' + item)
+        return item
+      }
+
+      export function App() {
+        const items = [1, 2]
+        return (
+          <ul>
+            {items.map(item => {
+              let key = item
+              key = next(item)
+              log.push('body ' + item)
+              return <li key={key}>{key}</li>
+            })}
+          </ul>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      log: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    expect(mod.log).toEqual(['key 1', 'body 1', 'key 2', 'body 2'])
+    expect(Array.from(container.querySelectorAll('li')).map(li => li.textContent)).toEqual([
+      '1',
+      '2',
+    ])
+
+    teardown()
+    container.remove()
+  })
+
   it('renders mutable key aliases without leaking callback locals into key functions', async () => {
     const source = `
       import { render } from 'fict'
