@@ -509,6 +509,64 @@ describe('$store', () => {
   })
 
   describe('Method binding and cache invalidation', () => {
+    it('returns frozen function properties without binding', () => {
+      const fn = () => 'ok'
+      const raw = Object.freeze({ fn })
+      const state = $store(raw)
+
+      expect(state.fn).toBe(fn)
+      expect(state.fn()).toBe('ok')
+    })
+
+    it('returns frozen method shorthand properties without binding', () => {
+      const raw = {
+        fn() {
+          return 'ok'
+        },
+      }
+      Object.freeze(raw)
+      const state = $store(raw)
+
+      expect(state.fn).toBe(raw.fn)
+      expect(state.fn()).toBe('ok')
+    })
+
+    it('returns descriptor-defined read-only methods without binding', () => {
+      const fn = () => 'ok'
+      const raw: { fn?: () => string } = {}
+      Object.defineProperty(raw, 'fn', {
+        value: fn,
+        enumerable: true,
+        configurable: false,
+        writable: false,
+      })
+      const state = $store(raw as { fn: () => string })
+
+      expect(state.fn).toBe(fn)
+      expect(state.fn()).toBe('ok')
+    })
+
+    it('continues to bind and cache mutable methods', () => {
+      const raw = {
+        value: 'a',
+        getValue() {
+          return this.value
+        },
+      }
+      const state = $store(raw)
+
+      const first = state.getValue
+      const second = state.getValue
+
+      expect(first).toBe(second)
+      expect(first).not.toBe(raw.getValue)
+      expect(first()).toBe('a')
+
+      state.value = 'b'
+
+      expect(first()).toBe('b')
+    })
+
     it('should invalidate bound method cache when method is reassigned', () => {
       const state = $store({
         value: 'original',

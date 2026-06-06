@@ -135,6 +135,11 @@ function canSkipSameValueSet(
   )
 }
 
+function mustReturnExactDataValue(target: object, prop: string | symbol): boolean {
+  const descriptor = Object.getOwnPropertyDescriptor(target, prop)
+  return !!descriptor && 'value' in descriptor && !descriptor.configurable && !descriptor.writable
+}
+
 /**
  * Create a deep reactive store using Proxy.
  *
@@ -210,6 +215,10 @@ export function $store<T extends object>(initialValue: T): T {
       }
 
       if (typeof currentValue === 'function') {
+        if (mustReturnExactDataValue(target, prop)) {
+          return currentValue
+        }
+
         let boundMethods = BOUND_METHOD_CACHE.get(target)
         if (!boundMethods) {
           boundMethods = new Map()
