@@ -2807,6 +2807,71 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('stores component JSX keys on the VNode while preserving rendered props.key', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const seen: { key: string; keys: string[] } = { key: '', keys: [] }
+
+      function Child(props: any) {
+        seen.key = String(props.key)
+        seen.keys = Object.keys(props)
+        return <span data-testid="child">{props.key}</span>
+      }
+
+      export function make() {
+        const dynamicKey = 'row-2'
+        const staticVNode = <Child key="row-1" value="x" /> as any
+        const dynamicVNode = <Child key={dynamicKey} value="y" /> as any
+        return {
+          staticKey: staticVNode.key,
+          staticPropsKey: staticVNode.props && staticVNode.props.key,
+          staticPropsKeys: Object.keys(staticVNode.props || {}),
+          dynamicKey: dynamicVNode.key,
+          dynamicPropsKey: dynamicVNode.props && dynamicVNode.props.key,
+          dynamicPropsKeys: Object.keys(dynamicVNode.props || {}),
+        }
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <Child key="render-key" value="z" />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      make: () => {
+        staticKey: string
+        staticPropsKey: unknown
+        staticPropsKeys: string[]
+        dynamicKey: string
+        dynamicPropsKey: unknown
+        dynamicPropsKeys: string[]
+      }
+      mount: (el: HTMLElement) => () => void
+      seen: { key: string; keys: string[] }
+    }>(source)
+
+    expect(mod.make()).toEqual({
+      staticKey: 'row-1',
+      staticPropsKey: undefined,
+      staticPropsKeys: ['value'],
+      dynamicKey: 'row-2',
+      dynamicPropsKey: undefined,
+      dynamicPropsKeys: ['value'],
+    })
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-testid="child"]')?.textContent).toBe('render-key')
+    expect(mod.seen.key).toBe('render-key')
+    expect(mod.seen.keys).toEqual(expect.arrayContaining(['key', 'value']))
+
+    teardown()
+    container.remove()
+  })
+
   it('rejects dangerouslySetInnerHTML with explicit JSX children', () => {
     const source = `
       import { render } from 'fict'

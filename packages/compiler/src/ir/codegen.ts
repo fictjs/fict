@@ -3859,7 +3859,15 @@ function lowerJSXElement(
       value: lowerJSXChild(c, ctx),
       ...(c.kind === 'expression' ? { source: c.value } : null),
     }))
-    const propsExpr = buildPropsExpression(jsx.attributes, children, ctx, {
+    let keyExpr: BabelCore.types.Expression | null = null
+    const propsAttributes = jsx.attributes.filter(attr => {
+      if (!attr.isSpread && attr.name === 'key') {
+        keyExpr = attr.value ? lowerDomExpression(attr.value, ctx) : t.booleanLiteral(true)
+        return false
+      }
+      return true
+    })
+    const propsExpr = buildPropsExpression(propsAttributes, children, ctx, {
       lowerDomExpression,
       lowerTrackedExpression,
       expressionUsesTracked,
@@ -3873,10 +3881,14 @@ function lowerJSXElement(
 
     // Create VNode: { type: Component, props: {...} }
     // Return VNode object directly - runtime render()/insert() will call createElement on it
-    return t.objectExpression([
+    const vnodeProps: (BabelCore.types.ObjectProperty | BabelCore.types.SpreadElement)[] = [
       t.objectProperty(t.identifier('type'), componentRef),
       t.objectProperty(t.identifier('props'), propsExpr ?? t.nullLiteral()),
-    ])
+    ]
+    if (keyExpr) {
+      vnodeProps.push(t.objectProperty(t.identifier('key'), keyExpr))
+    }
+    return t.objectExpression(vnodeProps)
   }
 
   const useFineGrainedDom = (ctx.options?.fineGrainedDom ?? true) && !ctx.noMemo
