@@ -116,6 +116,63 @@ describe('semantic validation', () => {
     )
   })
 
+  it('allows strict reactive scope callbacks without escape warnings', () => {
+    const cases = [
+      `
+        import { $state } from 'fict'
+        import { renderHook } from '@fictjs/testing-library'
+        renderHook(() => {
+          const count = $state(1)
+          return count
+        })
+      `,
+      `
+        import { $state } from 'fict'
+        import * as utils from '@fictjs/testing-library'
+        utils.renderHook(() => {
+          const count = $state(1)
+          return count
+        })
+      `,
+    ]
+
+    for (const source of cases) {
+      const warnings: Array<{ code: string }> = []
+      expect(() =>
+        transform(source, {
+          reactiveScopes: ['renderHook'],
+          strictGuarantee: true,
+          dev: false,
+          onWarn: warning => warnings.push(warning as { code: string }),
+        }),
+      ).not.toThrow(/FICT-R002|FICT-R005/)
+      expect(warnings.some(w => w.code === 'FICT-R002' || w.code === 'FICT-R005')).toBe(false)
+    }
+  })
+
+  it('keeps strict escape checks inside reactive scope callbacks', () => {
+    const source = `
+      import { $state } from 'fict'
+      import { renderHook } from '@fictjs/testing-library'
+      function sink(fn) {
+        return fn
+      }
+      renderHook(() => {
+        const count = $state(1)
+        sink(() => count)
+        return count
+      })
+    `
+
+    expect(() =>
+      transform(source, {
+        reactiveScopes: ['renderHook'],
+        strictGuarantee: true,
+        dev: false,
+      }),
+    ).toThrow(/FICT-R002|FICT-R005/)
+  })
+
   it('throws when $effect is used in a loop inside reactive scope callback', () => {
     const source = `
       import { $state, $effect } from 'fict'

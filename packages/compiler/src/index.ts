@@ -769,6 +769,7 @@ function runWarningPass(
   memoMacroNames: Set<string>,
   effectMacroNames: Set<string>,
   strictMacroBindings: boolean,
+  options: FictCompilerOptions,
   warn: WarningSink,
   fileName: string,
   t: typeof BabelCore.types,
@@ -828,6 +829,35 @@ function runWarningPass(
     'createRenderEffect',
     'runInScope',
   ])
+  const reactiveScopesSet = new Set(options.reactiveScopes ?? [])
+  const resolveReactiveScopeName = (
+    callee: BabelCore.types.Expression | BabelCore.types.V8IntrinsicIdentifier,
+  ): string | null => {
+    if (reactiveScopesSet.size === 0) return null
+    if (t.isIdentifier(callee)) {
+      return reactiveScopesSet.has(callee.name) ? callee.name : null
+    }
+    if (
+      (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+      !callee.computed &&
+      t.isIdentifier(callee.property)
+    ) {
+      return reactiveScopesSet.has(callee.property.name) ? callee.property.name : null
+    }
+    return null
+  }
+  const isReactiveScopeBoundaryArgument = (
+    callPath: BabelCore.NodePath<
+      BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
+    >,
+    argPath: BabelCore.NodePath,
+  ): boolean => {
+    if (reactiveScopesSet.size === 0) return false
+    const firstArg = callPath.node.arguments[0]
+    if (!firstArg || !t.isExpression(firstArg)) return false
+    if (firstArg !== argPath.node) return false
+    return !!resolveReactiveScopeName(callPath.node.callee)
+  }
   const capturedClosureByBinding = new Map<BabelCore.types.Identifier, Set<string>>()
   const capturedClosureByObjectProperty = new Map<
     BabelCore.types.Identifier,
@@ -1603,8 +1633,8 @@ function runWarningPass(
     if (options.checkReactiveArguments) {
       for (const argPath of argPaths) {
         if (
-          argPath.isIdentifier() &&
-          hasTrackedBinding(argPath, argPath.node.name, stateBindingIds)
+          isReactiveScopeBoundaryArgument(callPath, argPath) ||
+          (argPath.isIdentifier() && hasTrackedBinding(argPath, argPath.node.name, stateBindingIds))
         ) {
           // Direct state bindings already warn via FICT-S002 elsewhere.
           continue
@@ -1622,6 +1652,7 @@ function runWarningPass(
       }
     }
     for (const argPath of argPaths) {
+      if (isReactiveScopeBoundaryArgument(callPath, argPath)) continue
       const captured = collectCapturedForArgument(argPath)
       if (!captured) continue
       emitClosureCaptureWarning(argPath, captured)
@@ -3952,6 +3983,7 @@ function createHIREntrypointVisitor(
             memoMacroNames,
             effectMacroNames,
             true,
+            options,
             warn,
             fileName,
             t,
