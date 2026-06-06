@@ -95,37 +95,54 @@ export function lazy<TProps extends Record<string, unknown> = Record<string, unk
   let loadingPromise: Promise<void> | null = null
   let pendingToken: ReturnType<typeof createSuspenseToken> | null = null
   let retryCount = 0
+  let loadGeneration = 0
 
-  const attemptLoad = (): Promise<void> => {
+  const isCurrentLoad = (generation: number): boolean => generation === loadGeneration
+
+  const attemptLoad = (generation: number): Promise<void> => {
     return loader()
       .then(mod => {
+        if (!isCurrentLoad(generation)) return
         loaded = (mod as LazyModule<TProps>).default
         loadError = null
         retryCount = 0
         pendingToken?.resolve()
       })
       .catch((err: unknown) => {
+        if (!isCurrentLoad(generation)) {
+          throw err
+        }
         if (retryCount < maxRetries) {
           retryCount++
           const delay = retryDelay * Math.pow(2, retryCount - 1)
-          return new Promise<void>(resolve => {
+          return new Promise<void>((resolve, reject) => {
             setTimeout(() => {
-              resolve(attemptLoad())
+              if (!isCurrentLoad(generation)) {
+                resolve()
+                return
+              }
+              attemptLoad(generation).then(resolve, reject)
             }, delay)
           })
+        }
+        if (!isCurrentLoad(generation)) {
+          throw err
         }
         loadError = err
         pendingToken?.reject(err)
         throw err
       })
       .finally(() => {
-        loadingPromise = null
-        pendingToken = null
+        if (isCurrentLoad(generation)) {
+          loadingPromise = null
+          pendingToken = null
+        }
       })
   }
 
   const startLoad = (): Promise<void> => {
-    loadingPromise = attemptLoad()
+    const generation = ++loadGeneration
+    loadingPromise = attemptLoad(generation)
     void loadingPromise.catch(() => {
       // Render-driven loads are observed through the Suspense token. Keep the
       // public promise rejected for preload callers without leaking internals.
@@ -158,6 +175,7 @@ export function lazy<TProps extends Record<string, unknown> = Record<string, unk
    * Call this before triggering a re-render to retry loading.
    */
   component.reset = () => {
+    loadGeneration++
     loadError = null
     loadingPromise = null
     pendingToken = null

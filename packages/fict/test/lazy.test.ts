@@ -4,6 +4,10 @@ import { describe, it, expect, vi } from 'vitest'
 import { lazy } from '../src/lazy'
 
 const tick = () => Promise.resolve()
+const flushPromises = async () => {
+  await tick()
+  await tick()
+}
 
 describe('lazy', () => {
   it('suspends while loading and renders when ready', async () => {
@@ -129,5 +133,154 @@ describe('lazy', () => {
 
     expect(container.textContent).toBe('ready')
     dispose()
+  })
+
+  it('ignores stale pending success after reset and newer success', async () => {
+    type TestModule = { default: () => string }
+    const pending: Array<{
+      resolve: (module: TestModule) => void
+      reject: (err: unknown) => void
+    }> = []
+    const loader = vi.fn(
+      () =>
+        new Promise<TestModule>((resolve, reject) => {
+          pending.push({ resolve, reject })
+        }),
+    )
+    const LazyComp = lazy(loader)
+
+    try {
+      LazyComp({})
+    } catch {}
+    LazyComp.reset()
+    try {
+      LazyComp({})
+    } catch {}
+
+    pending[1]!.resolve({ default: () => 'new' })
+    await flushPromises()
+    expect(LazyComp({})).toBe('new')
+
+    pending[0]!.resolve({ default: () => 'old' })
+    await flushPromises()
+
+    expect(LazyComp({})).toBe('new')
+    expect(loader).toHaveBeenCalledTimes(2)
+  })
+
+  it('ignores stale pending failure after reset and newer success', async () => {
+    type TestModule = { default: () => string }
+    const pending: Array<{
+      resolve: (module: TestModule) => void
+      reject: (err: unknown) => void
+    }> = []
+    const loader = vi.fn(
+      () =>
+        new Promise<TestModule>((resolve, reject) => {
+          pending.push({ resolve, reject })
+        }),
+    )
+    const LazyComp = lazy(loader)
+
+    try {
+      LazyComp({})
+    } catch {}
+    LazyComp.reset()
+    try {
+      LazyComp({})
+    } catch {}
+
+    pending[1]!.resolve({ default: () => 'new' })
+    await flushPromises()
+    expect(LazyComp({})).toBe('new')
+
+    pending[0]!.reject(new Error('old failed'))
+    await flushPromises()
+
+    expect(LazyComp({})).toBe('new')
+    expect(loader).toHaveBeenCalledTimes(2)
+  })
+
+  it('ignores stale preload success after reset and render load success', async () => {
+    type TestModule = { default: () => string }
+    const pending: Array<{
+      resolve: (module: TestModule) => void
+      reject: (err: unknown) => void
+    }> = []
+    const loader = vi.fn(
+      () =>
+        new Promise<TestModule>((resolve, reject) => {
+          pending.push({ resolve, reject })
+        }),
+    )
+    const LazyComp = lazy(loader)
+    const stalePreload = LazyComp.preload()
+
+    LazyComp.reset()
+    try {
+      LazyComp({})
+    } catch {}
+
+    pending[1]!.resolve({ default: () => 'render' })
+    await flushPromises()
+    expect(LazyComp({})).toBe('render')
+
+    pending[0]!.resolve({ default: () => 'preload' })
+    await stalePreload
+    await flushPromises()
+
+    expect(LazyComp({})).toBe('render')
+    expect(loader).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not let stale retry chains cross reset', async () => {
+    vi.useFakeTimers()
+    try {
+      type TestModule = { default: () => string }
+      const pending: Array<{
+        resolve: (module: TestModule) => void
+        reject: (err: unknown) => void
+      }> = []
+      const loader = vi.fn(
+        () =>
+          new Promise<TestModule>((resolve, reject) => {
+            pending.push({ resolve, reject })
+          }),
+      )
+      const LazyComp = lazy(loader, { maxRetries: 1, retryDelay: 10 })
+      const stalePreload = LazyComp.preload().catch(() => undefined)
+
+      expect(loader).toHaveBeenCalledTimes(1)
+      pending[0]!.reject(new Error('first failed'))
+      await tick()
+
+      LazyComp.reset()
+      const currentPreload = LazyComp.preload()
+
+      expect(loader).toHaveBeenCalledTimes(2)
+      pending[1]!.resolve({ default: () => 'new' })
+      await currentPreload
+      await vi.runAllTimersAsync()
+      await stalePreload
+
+      expect(loader).toHaveBeenCalledTimes(2)
+      expect(LazyComp({})).toBe('new')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps an already loaded component across reset', async () => {
+    const Loaded = () => 'ready'
+    const loader = vi.fn<() => Promise<{ default: () => string }>>().mockResolvedValue({
+      default: Loaded,
+    })
+    const LazyComp = lazy(loader)
+
+    await LazyComp.preload()
+    LazyComp.reset()
+
+    expect(LazyComp({})).toBe('ready')
+    expect(loader).toHaveBeenCalledTimes(1)
   })
 })
