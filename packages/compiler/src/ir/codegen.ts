@@ -3375,11 +3375,6 @@ function lowerExpressionImpl(
         ctx.helpersUsed.add('objectRest')
         return t.callExpression(runtimeIdentifier(ctx, 'objectRest'), args)
       }
-      if (expr.callee.kind === 'Identifier' && expr.callee.name === 'mergeProps') {
-        ctx.helpersUsed.add('mergeProps')
-        const args = lowerCallArguments(expr.arguments)
-        return t.callExpression(runtimeIdentifier(ctx, 'mergeProps'), args)
-      }
       const isIIFE =
         (expr.callee.kind === 'ArrowFunction' || expr.callee.kind === 'FunctionExpression') &&
         expr.arguments.length === 0 &&
@@ -3920,7 +3915,8 @@ function lowerExpressionImpl(
         ),
       )
 
-    case 'ClassExpression': { // Class bodies are stored as Babel AST, so patch tracked writes before read overrides run.
+    case 'ClassExpression': {
+      // Class bodies are stored as Babel AST, so patch tracked writes before read overrides run.
       const prevShadowed = ctx.shadowedNames
       if (expr.name) {
         const classShadowed = new Set(prevShadowed ?? [])

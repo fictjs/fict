@@ -774,6 +774,50 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).not.toContain('mergeProps(props?.()')
   })
 
+  it('preserves user-authored mergeProps calls', () => {
+    const cases = [
+      `
+        import { $state } from 'fict'
+
+        export function App() {
+          const count = $state(1)
+          const doubled = mergeProps(count)
+          return <div>{String(doubled)}</div>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+
+        function mergeProps(value) {
+          return value
+        }
+
+        export function App() {
+          const count = $state(1)
+          const doubled = mergeProps(count)
+          return <div>{String(doubled)}</div>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        import { mergeProps } from './user-helpers'
+
+        export function App() {
+          const count = $state(1)
+          const doubled = mergeProps(count)
+          return <div>{String(doubled)}</div>
+        }
+      `,
+    ]
+
+    for (const source of cases) {
+      const output = transform(source)
+
+      expect(output).toContain('mergeProps(count())')
+      expect(output).not.toMatch(/import \{[^}]*\bmergeProps\b[^}]*\} from "fict\/internal"/)
+    }
+  })
+
   it('lowers array-literal component spreads to index props', () => {
     const output = transform(`
       import { $state } from 'fict'

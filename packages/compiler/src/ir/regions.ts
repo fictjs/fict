@@ -4708,7 +4708,7 @@ function expressionReturnsAccessorOrReactiveObject(expr: Expression, ctx: Codege
     callKind === 'memo' ||
     (expr.kind === 'CallExpression' &&
       expr.callee.kind === 'Identifier' &&
-      (expr.callee.name === 'prop' || expr.callee.name === 'mergeProps'))
+      expr.callee.name === 'prop')
   )
 }
 
@@ -5320,14 +5320,8 @@ function instructionToStatement(
       (instr.value.kind === 'CallExpression' &&
         instr.value.callee.kind === 'Identifier' &&
         instr.value.callee.name === 'prop')
-    // Detect reactive object calls (mergeProps) - these return objects/getters, not accessors
-    // They should NOT be wrapped in __fictUseMemo AND should NOT be added to memoVars
-    const isReactiveObjectCall =
-      instr.value.kind === 'CallExpression' &&
-      instr.value.callee.kind === 'Identifier' &&
-      ['mergeProps'].includes(instr.value.callee.name)
     // Combined check for skipping memo wrapping
-    const isMemoReturningCall = isAccessorReturningCall || isReactiveObjectCall
+    const isMemoReturningCall = isAccessorReturningCall
     const canLazyMemoizeDerived = expressionIsLazyMemoSafe(instr.value, ctx)
     // fix: Check if variable will be mutated (assigned to later without declaration)
     const needsMutable = ctx.mutatedVars?.has(baseName) ?? false
@@ -5420,7 +5414,7 @@ function instructionToStatement(
       )
     }
     const trackDerivedMemoVar = (): void => {
-      if (!needsAsyncContext && !isReactiveObjectCall) ctx.memoVars?.add(baseName)
+      if (!needsAsyncContext) ctx.memoVars?.add(baseName)
     }
     const buildDerivedValue = (
       expr: BabelCore.types.Expression,

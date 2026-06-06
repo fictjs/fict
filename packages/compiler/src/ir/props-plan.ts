@@ -145,23 +145,11 @@ export function buildPropsPlan(
       return false
     }
 
-    const isRuntimeMergeProps = (): boolean =>
-      !ctx.shadowedNames?.has(RUNTIME_ALIASES.mergeProps) &&
-      !ctx.localDeclaredNames?.has(RUNTIME_ALIASES.mergeProps) &&
-      (!ctx.moduleDeclaredNames?.has(RUNTIME_ALIASES.mergeProps) ||
-        (ctx.moduleRuntimeNames?.has(RUNTIME_ALIASES.mergeProps) ?? false))
-
     const isRuntimeKeyed = (): boolean =>
       !ctx.shadowedNames?.has(RUNTIME_ALIASES.keyed) &&
       !ctx.localDeclaredNames?.has(RUNTIME_ALIASES.keyed) &&
       (!ctx.moduleDeclaredNames?.has(RUNTIME_ALIASES.keyed) ||
         (ctx.moduleRuntimeNames?.has(RUNTIME_ALIASES.keyed) ?? false))
-
-    const isMergePropsCall = (expr: Expression): boolean =>
-      expr.kind === 'CallExpression' &&
-      expr.callee.kind === 'Identifier' &&
-      expr.callee.name === RUNTIME_ALIASES.mergeProps &&
-      isRuntimeMergeProps()
 
     const isKeyedCall = (expr: Expression): boolean =>
       expr.kind === 'CallExpression' &&
@@ -207,7 +195,7 @@ export function buildPropsPlan(
     }
 
     const isDynamicPropsSpread = (expr: Expression): boolean => {
-      if (isAccessorSource(expr) || isMergePropsCall(expr)) return false
+      if (isAccessorSource(expr)) return false
       if (
         expr.kind === 'CallExpression' ||
         expr.kind === 'OptionalCallExpression' ||
@@ -431,43 +419,6 @@ export function buildPropsPlan(
         }
         const needsLazyObjectSource = objectSpreadHasTrackedComputedKey(attr.spreadExpr)
         let spreadExpr = helpers.lowerDomExpression(attr.spreadExpr, ctx)
-        if (
-          t.isCallExpression(spreadExpr) &&
-          t.isIdentifier(spreadExpr.callee) &&
-          spreadExpr.callee.name === RUNTIME_ALIASES.mergeProps &&
-          isRuntimeMergeProps()
-        ) {
-          const callExpr = spreadExpr
-          const rewrittenArgs = callExpr.arguments.map(arg =>
-            t.isExpression(arg) ? wrapAccessorSource(arg) : arg,
-          )
-          if (rewrittenArgs.some((arg, idx) => arg !== callExpr.arguments[idx])) {
-            spreadExpr = t.callExpression(
-              callExpr.callee,
-              rewrittenArgs as (
-                | BabelCore.types.Expression
-                | BabelCore.types.SpreadElement
-                | BabelCore.types.ArgumentPlaceholder
-              )[],
-            )
-          }
-          const flattenArgs: BabelCore.types.Expression[] = []
-          let canFlatten = true
-          for (const arg of rewrittenArgs) {
-            if (t.isExpression(arg)) {
-              flattenArgs.push(arg)
-            } else {
-              canFlatten = false
-              break
-            }
-          }
-          if (canFlatten) {
-            for (const arg of flattenArgs) {
-              pushSpread(arg)
-            }
-            continue
-          }
-        }
         spreadExpr = needsLazyObjectSource
           ? markLazySource(t.arrowFunctionExpression([], spreadExpr))
           : wrapAccessorSource(spreadExpr)

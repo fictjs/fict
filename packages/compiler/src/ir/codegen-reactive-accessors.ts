@@ -1189,18 +1189,11 @@ export function computeReactiveAccessors(
             tracked.add(target)
             changed = true
           }
-          // Check if this is a reactive object call (mergeProps) - should not be added to memo
-          // These return objects/getters, not accessor functions
-          const isReactiveObjectCall =
-            instr.value.kind === 'CallExpression' &&
-            instr.value.callee.kind === 'Identifier' &&
-            ['mergeProps'].includes(instr.value.callee.name)
           if (
             hasDataDep &&
             !instr.preserveEagerEvaluation &&
             !isSignal(target) &&
-            !isStore(target) &&
-            !isReactiveObjectCall
+            !isStore(target)
           ) {
             memo.add(target)
           }
