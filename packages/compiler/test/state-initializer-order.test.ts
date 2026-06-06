@@ -99,4 +99,64 @@ describe('$state initializer ordering', () => {
 
     expect(output).toContain('const count = __fictUseSignal(__fictCtx, 1')
   })
+
+  it('merges compiler state metadata into user options', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        export function App() {
+          const count = $state(1, { equals: false })
+          return <button>{count}</button>
+        }
+      `,
+      { dev: false },
+    )
+
+    expect(output).toContain('const count = __fictUseSignal(__fictCtx, 1, {')
+    expect(output).toContain('equals: false')
+    expect(output).toContain('name: "count"')
+    expect(output).not.toMatch(/equals: false\s*\},\s*\{\s*name: "count"/)
+  })
+
+  it('merges state devtools metadata into user options', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        export function App() {
+          const count = $state(1, { equals: false })
+          return <button>{count}</button>
+        }
+      `,
+      { dev: true },
+      'state-options.tsx',
+    )
+
+    expect(output).toContain('equals: false')
+    expect(output).toContain('name: "count"')
+    expect(output).toContain('devToolsSource: "')
+    expect(output).toContain('state-options.tsx:')
+    expect(output).not.toMatch(/equals: false\s*\},\s*\{\s*name: "count"/)
+  })
+
+  it('wraps dynamic state options before adding compiler metadata', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        export function App() {
+          const options = { equals: false }
+          const count = $state(1, options)
+          return <button>{count}</button>
+        }
+      `,
+      { dev: false },
+    )
+
+    expect(output).toContain('const count = __fictUseSignal(__fictCtx, 1, {')
+    expect(output).toContain('...options')
+    expect(output).toContain('name: "count"')
+    expect(output).not.toContain('__fictUseSignal(__fictCtx, 1, options, {')
+  })
 })

@@ -3336,6 +3336,39 @@ function lowerExpressionImpl(
       }
       return mapArg ? mapArg(arg, idx) : lowerExpression(arg, ctx)
     })
+  const appendCompilerOptionsArgument = (
+    args: (BabelCore.types.Expression | BabelCore.types.SpreadElement)[],
+    compilerOptions: BabelCore.types.ObjectProperty[],
+  ): void => {
+    if (compilerOptions.length === 0) return
+    if (args.length < 2) {
+      args.push(t.objectExpression(compilerOptions))
+      return
+    }
+
+    const sourceOptions = args[1]
+    if (t.isObjectExpression(sourceOptions)) {
+      const existingKeys = new Set<string>()
+      for (const property of sourceOptions.properties) {
+        if (t.isObjectProperty(property) && t.isIdentifier(property.key) && !property.computed) {
+          existingKeys.add(property.key.name)
+        }
+      }
+      sourceOptions.properties.push(
+        ...compilerOptions.filter(
+          property => t.isIdentifier(property.key) && !existingKeys.has(property.key.name),
+        ),
+      )
+      return
+    }
+
+    const spreadSource = t.isSpreadElement(sourceOptions) ? sourceOptions.argument : sourceOptions
+    if (!spreadSource) {
+      args[1] = t.objectExpression(compilerOptions)
+      return
+    }
+    args[1] = t.objectExpression([t.spreadElement(spreadSource), ...compilerOptions])
+  }
   const withCallCacheBarrier = <T extends BabelCore.types.Expression>(node: T): T => {
     clearCachedGetters(ctx)
     return node
@@ -4299,9 +4332,7 @@ function lowerExpressionImpl(
           const source = `${ctx.options?.filename ?? ''}:${expr.loc.start.line}:${expr.loc.start.column}`
           options.push(t.objectProperty(t.identifier('devToolsSource'), t.stringLiteral(source)))
         }
-        if (options.length > 0) {
-          args.push(t.objectExpression(options))
-        }
+        appendCompilerOptionsArgument(args, options)
 
         if (ctx.inModule) {
           ctx.helpersUsed.add('signal')
