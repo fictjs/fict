@@ -1705,6 +1705,15 @@ function markNonSerializableSignalIfFunctionValue(
   }
 }
 
+function markCallableSignalAssignmentValue(expr: Expression, ctx: CodegenContext): void {
+  if (expr.kind !== 'AssignmentExpression') return
+  if (expr.left.kind !== 'Identifier') return
+  const target = deSSAVarName(expr.left.name)
+  if (!(ctx.signalVars?.has(target) ?? false)) return
+  markCallableSignalIfFunctionValue(target, expr.right, ctx)
+  markNonSerializableSignalIfFunctionValue(target, expr.right, ctx)
+}
+
 function markKnownArrayInitializer(
   name: string,
   value: Expression,
@@ -3658,6 +3667,7 @@ function lowerExpressionImpl(
         const baseName = deSSAVarName(expr.left.name)
         if (ctx.trackedVars.has(baseName) && !(ctx.localValueVars?.has(baseName) ?? false)) {
           assertWritableImportedReactiveIdentifier(baseName, ctx, expr.loc)
+          markCallableSignalAssignmentValue(expr, ctx)
           const callee = t.identifier(baseName)
           const current = t.callExpression(t.identifier(baseName), [])
           const right = lowerExpression(expr.right, ctx)
@@ -6560,6 +6570,8 @@ function lowerTopLevelStatementBlock(
         if (!instr.declarationKind) {
           mutatedVars.add(target)
         }
+      } else if (instr.kind === 'Expression') {
+        markCallableSignalAssignmentValue(instr.value, ctx)
       } else if (instr.kind === 'Phi') {
         mutatedVars.add(deSSAVarName(instr.target.name))
       }
@@ -8031,6 +8043,8 @@ function lowerFunctionWithRegions(
         if (!instr.declarationKind) {
           ctx.mutatedVars?.add(target)
         }
+      } else if (instr.kind === 'Expression') {
+        markCallableSignalAssignmentValue(instr.value, ctx)
       } else if (instr.kind === 'Phi') {
         ctx.mutatedVars?.add(deSSAVarName(instr.target.name))
       }

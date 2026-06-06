@@ -242,6 +242,8 @@ export interface AssignInstruction extends SourceInfo {
   target: Identifier
   value: Expression
   declarationKind?: 'const' | 'let' | 'var' | 'function' | undefined
+  /** Assignment came from a source mutation statement and must remain observable. */
+  isMutation?: boolean | undefined
   /** Function declaration came from a lexical block and must not flow outside it. */
   blockScopedFunction?: boolean | undefined
 }

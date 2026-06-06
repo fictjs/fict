@@ -79,6 +79,120 @@ function compiledFunction(
 }
 
 describe('state write expression semantics', () => {
+  it('preserves module-local identifier assignment side effects', () => {
+    const source = `
+      let value = 0
+
+      export function set() {
+        value = 1
+        return value
+      }
+
+      export function get() {
+        return value
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+
+    expect(compiledFunction(mod, 'set')()).toBe(1)
+    expect(compiledFunction(mod, 'get')()).toBe(1)
+  })
+
+  it('preserves closure-local identifier assignment side effects', () => {
+    const source = `
+      export function makeCounter() {
+        let value = 0
+        return {
+          set() {
+            value = 3
+            return value
+          },
+          get() {
+            return value
+          },
+        }
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const counter = compiledFunction(mod, 'makeCounter')() as {
+      set(): number
+      get(): number
+    }
+
+    expect(counter.get()).toBe(0)
+    expect(counter.set()).toBe(3)
+    expect(counter.get()).toBe(3)
+  })
+
+  it('preserves function-valued identifier assignments', () => {
+    const source = `
+      export const calls: string[] = []
+
+      let handler = () => calls.push('a')
+
+      export function swap() {
+        handler = () => calls.push('b')
+      }
+
+      export function swapAndReturn() {
+        handler = () => calls.push('c')
+        return handler
+      }
+
+      export function run() {
+        handler()
+        return calls.slice()
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+
+    compiledFunction(mod, 'swap')()
+    expect(compiledFunction(mod, 'run')()).toEqual(['b'])
+
+    const returned = compiledFunction(mod, 'swapAndReturn')() as () => void
+    returned()
+    expect(compiledFunction(mod, 'run')()).toEqual(['b', 'c', 'c'])
+  })
+
+  it('preserves unused identifier assignment statements', () => {
+    const source = `
+      let value = 0
+
+      export function setOnly() {
+        value = 5
+      }
+
+      export function get() {
+        return value
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+
+    compiledFunction(mod, 'setOnly')()
+    expect(compiledFunction(mod, 'get')()).toBe(5)
+  })
+
+  it('keeps signal assignment controls working', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useSignalAssignment() {
+        let count = $state(0)
+        count = 2
+        return count
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const count = compiledFunction(mod, 'useSignalAssignment')() as () => number
+
+    expect(count()).toBe(2)
+  })
+
   it('preserves non-strict member assignment semantics on $state objects', () => {
     const source = `
       import { $state } from 'fict'

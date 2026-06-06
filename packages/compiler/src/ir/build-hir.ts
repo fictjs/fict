@@ -903,6 +903,7 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
           target.instructions.push({
             kind: 'Expression',
             value: convertExpression(stmt.expression),
+            loc: stmt.loc,
           })
         }
         continue
@@ -2318,6 +2319,7 @@ function handleExpressionStatement(
       kind: 'Assign',
       target: { kind: 'Identifier', name: unwrapped.left.name },
       value: convertAssignmentValue(unwrapped),
+      isMutation: true,
     })
     return true
   }

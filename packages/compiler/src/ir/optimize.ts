@@ -59,6 +59,10 @@ interface PurityContext {
   strictMacroBindings?: boolean | undefined
 }
 
+function isSourceMutationAssign(instr: Instruction): boolean {
+  return instr.kind === 'Assign' && instr.isMutation === true
+}
+
 interface IdentifierDeclarationPoint {
   blockId: BlockId
   instrIndex: number
@@ -1552,6 +1556,7 @@ function inlineSingleUseDerivedMemos(
       const instr = instructions[i]
       if (!instr) continue
       if (instr.kind !== 'Assign') continue
+      if (isSourceMutationAssign(instr)) continue
       const target = instr.target.name
       if (!allowUserNames && !isCompilerGeneratedName(target)) continue
       if (isHookLike && !isCompilerGeneratedName(target)) continue
@@ -4565,6 +4570,7 @@ function eliminateCommonSubexpressions(fn: HIRFunction, purity: PurityContext): 
     const cseMap = new Map<string, string>()
     const newInstructions = block.instructions.map(instr => {
       if (instr.kind !== 'Assign') return instr
+      if (isSourceMutationAssign(instr)) return instr
       if (!isPureExpression(instr.value, purity)) return instr
       if (!isCSESafeExpression(instr.value, purity)) return instr
       if (isExplicitMemoCall(instr.value, purity)) return instr
@@ -4619,6 +4625,7 @@ function inlineSingleUse(fn: HIRFunction, purity: PurityContext): HIRFunction {
       const instr = instructions[i]
       if (!instr) continue
       if (instr.kind !== 'Assign') continue
+      if (isSourceMutationAssign(instr)) continue
       const target = instr.target.name
       const info = defUse.get(target)
       if (!info || info.uses.length !== 1) continue
@@ -4717,6 +4724,7 @@ function hasSideEffectsBetween(
     if (instr.kind === 'Expression') {
       if (!isPureExpression(instr.value, purity)) return true
     } else if (instr.kind === 'Assign') {
+      if (isSourceMutationAssign(instr)) return true
       if (!isPureExpression(instr.value, purity)) return true
     }
   }
@@ -5376,6 +5384,7 @@ function eliminateDeadCode(fn: HIRFunction, purity: PurityContext): HIRFunction 
   const blocks = fn.blocks.map(block => {
     const instructions = block.instructions.filter((instr, index) => {
       if (instr.kind === 'Assign') {
+        if (isSourceMutationAssign(instr)) return true
         const name = instr.target.name
         if (live.has(name)) return true
         if (instr.declarationKind && baseLive.has(getSSABaseName(name))) return true
