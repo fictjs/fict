@@ -1352,6 +1352,36 @@ describe('resumable event handler transformation', () => {
     expect(code).not.toContain('() => () => helper()')
   })
 
+  it('preserves inferred names for hoisted resumable function deps', () => {
+    const ast = parseFile(`
+      export const log = []
+
+      function Comp() {
+        const helper = () => 1
+        return (
+          <button
+            onClick$={() => {
+              log.push(helper.name)
+              log.push(helper.length)
+              helper()
+            }}
+          >
+            Click
+          </button>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(/const __fict_fn_helper_\d+ = \(\(\) => \{/)
+    expect(code).toContain('const helper = () => 1')
+    expect(code).toContain('return helper')
+    expect(code).toMatch(/log\.push\(__fict_fn_helper_\d+\.name\)/)
+    expect(code).toMatch(/log\.push\(__fict_fn_helper_\d+\.length\)/)
+  })
+
   it('allocates resumable event exports around existing module bindings', () => {
     const ast = parseFile(`
       export const __fict_e0 = 'user'

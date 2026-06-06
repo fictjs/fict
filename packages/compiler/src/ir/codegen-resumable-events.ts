@@ -14,6 +14,27 @@ function voidZero(t: typeof BabelCore.types): BabelCore.types.UnaryExpression {
   return t.unaryExpression('void', t.numericLiteral(0), true)
 }
 
+function preserveInferredFunctionName(
+  expr: BabelCore.types.Expression,
+  sourceName: string,
+  t: typeof BabelCore.types,
+): BabelCore.types.Expression {
+  if (!t.isArrowFunctionExpression(expr) && !t.isFunctionExpression(expr)) return expr
+  if (t.isFunctionExpression(expr) && expr.id) return expr
+
+  const localId = t.identifier(sourceName)
+  return t.callExpression(
+    t.arrowFunctionExpression(
+      [],
+      t.blockStatement([
+        t.variableDeclaration('const', [t.variableDeclarator(localId, expr)]),
+        t.returnStatement(t.cloneNode(localId)),
+      ]),
+    ),
+    [],
+  )
+}
+
 export interface ResumableEventBindingOps {
   lowerDomExpression: (
     expr: Expression,
@@ -262,7 +283,10 @@ export function emitResumableEventBinding(
 
         // Create a module-level const declaration for the hoisted function.
         const hoistedDecl = t.variableDeclaration('const', [
-          t.variableDeclarator(t.identifier(hoistedName), loweredFn),
+          t.variableDeclarator(
+            t.identifier(hoistedName),
+            preserveInferredFunctionName(loweredFn, name, t),
+          ),
         ])
 
         // Also export it so vite-plugin can extract it to handler chunks.
