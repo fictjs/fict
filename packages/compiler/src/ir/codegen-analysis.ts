@@ -452,6 +452,172 @@ export function collectIdentifierAliasesFromRoots(
   return aliases
 }
 
+function getIdentifierRootName(expr: Expression): string | null {
+  if (expr.kind === 'Identifier') return deSSAVarName(expr.name)
+  if (expr.kind === 'MemberExpression' || expr.kind === 'OptionalMemberExpression') {
+    return getIdentifierRootName(expr.object)
+  }
+  return null
+}
+
+function getStaticMemberName(
+  expr: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
+): string {
+  if (!expr.computed && expr.property.kind === 'Identifier') return expr.property.name
+  if (expr.property.kind === 'Literal') {
+    if (typeof expr.property.value === 'string' || typeof expr.property.value === 'number') {
+      return String(expr.property.value)
+    }
+  }
+  return '*'
+}
+
+function formatMemberMutationPath(expr: Expression): string | null {
+  if (expr.kind === 'Identifier') return deSSAVarName(expr.name)
+  if (expr.kind === 'MemberExpression' || expr.kind === 'OptionalMemberExpression') {
+    const base = formatMemberMutationPath(expr.object)
+    if (!base) return null
+    return `${base}.${getStaticMemberName(expr)}`
+  }
+  return null
+}
+
+function getCallMemberName(expr: Expression): { objectName: string; propertyName: string } | null {
+  if (expr.kind !== 'MemberExpression' && expr.kind !== 'OptionalMemberExpression') return null
+  if (expr.object.kind !== 'Identifier') return null
+  return {
+    objectName: deSSAVarName(expr.object.name),
+    propertyName: getStaticMemberName(expr),
+  }
+}
+
+function collectFunctionMutationExpression(
+  expr: Expression | null | undefined,
+  ownerByName: Map<string, string>,
+  mutations: Map<string, Set<string>>,
+): void {
+  if (!expr) return
+  const recordTarget = (target: Expression, detail: string): void => {
+    const root = getIdentifierRootName(target)
+    if (!root) return
+    const owner = ownerByName.get(root)
+    if (!owner) return
+    const details = mutations.get(owner) ?? new Set<string>()
+    details.add(detail)
+    mutations.set(owner, details)
+  }
+  const recordMemberMutation = (target: Expression, kind: string): void => {
+    if (target.kind !== 'MemberExpression' && target.kind !== 'OptionalMemberExpression') return
+    const path = formatMemberMutationPath(target) ?? getIdentifierRootName(target) ?? '*'
+    recordTarget(target, `${kind} ${path}`)
+  }
+
+  walkExpression(
+    expr,
+    node => {
+      if (node.kind === 'AssignmentExpression') {
+        recordMemberMutation(node.left, node.operator)
+        return
+      }
+      if (node.kind === 'UpdateExpression') {
+        recordMemberMutation(node.argument, node.operator)
+        return
+      }
+      if (node.kind === 'UnaryExpression' && node.operator === 'delete') {
+        recordMemberMutation(node.argument, 'delete')
+        return
+      }
+      if (node.kind !== 'CallExpression' && node.kind !== 'OptionalCallExpression') return
+      const member = getCallMemberName(node.callee)
+      if (!member) return
+      const firstArg = node.arguments[0]
+      if (!firstArg) return
+      if (member.objectName === 'Object' && member.propertyName === 'defineProperty') {
+        recordTarget(firstArg, 'Object.defineProperty')
+        return
+      }
+      if (member.objectName === 'Object' && member.propertyName === 'assign') {
+        recordTarget(firstArg, 'Object.assign')
+      }
+    },
+    { includeFunctionBodies: false },
+  )
+}
+
+export function collectFunctionDependencyMutations(
+  fn: HIRFunction,
+  functionNames: Set<string>,
+): Map<string, string[]> {
+  const aliasSources = collectStableIdentifierAliases(fn)
+  const ownerByName = new Map<string, string>()
+  for (const name of functionNames) {
+    ownerByName.set(name, name)
+  }
+
+  const resolveOwner = (name: string, seen = new Set<string>()): string | null => {
+    if (ownerByName.has(name)) return ownerByName.get(name) ?? null
+    if (seen.has(name)) return null
+    seen.add(name)
+    const source = aliasSources.get(name)
+    if (!source) return null
+    const owner = resolveOwner(source, seen)
+    if (owner) ownerByName.set(name, owner)
+    return owner
+  }
+
+  for (const alias of aliasSources.keys()) {
+    resolveOwner(alias)
+  }
+
+  const mutations = new Map<string, Set<string>>()
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign' || instr.kind === 'Expression') {
+        collectFunctionMutationExpression(instr.value, ownerByName, mutations)
+      }
+    }
+    switch (block.terminator.kind) {
+      case 'Return':
+        collectFunctionMutationExpression(block.terminator.argument ?? null, ownerByName, mutations)
+        break
+      case 'Throw':
+        collectFunctionMutationExpression(block.terminator.argument, ownerByName, mutations)
+        break
+      case 'Branch':
+        collectFunctionMutationExpression(block.terminator.test, ownerByName, mutations)
+        break
+      case 'Switch':
+        collectFunctionMutationExpression(block.terminator.discriminant, ownerByName, mutations)
+        block.terminator.cases.forEach(item =>
+          collectFunctionMutationExpression(item.test ?? null, ownerByName, mutations),
+        )
+        break
+      case 'ForOf':
+        collectFunctionMutationExpression(block.terminator.iterable, ownerByName, mutations)
+        collectFunctionMutationExpression(
+          block.terminator.assignmentTarget ?? null,
+          ownerByName,
+          mutations,
+        )
+        break
+      case 'ForIn':
+        collectFunctionMutationExpression(block.terminator.object, ownerByName, mutations)
+        collectFunctionMutationExpression(
+          block.terminator.assignmentTarget ?? null,
+          ownerByName,
+          mutations,
+        )
+        break
+      default:
+        break
+    }
+  }
+
+  return new Map(
+    Array.from(mutations.entries(), ([name, details]) => [name, Array.from(details).sort()]),
+  )
+}
+
 export function collectCalledIdentifiers(
   fn: HIRFunction,
   shadowRootNames?: Set<string>,

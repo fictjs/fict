@@ -15,6 +15,7 @@ import {
 import {
   collectMutatedIdentifiers,
   collectCalledIdentifiers,
+  collectFunctionDependencyMutations,
   collectIdentifierAliasesFromRoots,
   functionContainsJSX,
   functionHasAsyncAwait,
@@ -832,6 +833,8 @@ export interface CodegenContext {
   delegatedEventsUsed?: Set<string> | undefined
   /** Component-scoped function definitions (variable name -> HIR expression) for handler dependency hoisting */
   componentFunctionDefs?: Map<string, Expression> | undefined
+  /** Component-scoped function object mutations that make dependency hoisting unsafe */
+  componentFunctionMutations?: Map<string, string[]> | undefined
   /** Hoisted function dependency counter for unique naming */
   hoistedFunctionDepCounter?: number | undefined
   /** Map of hoisted function dep names (original name -> hoisted module-level name) */
@@ -919,6 +922,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     autoExtractThreshold: 3,
     delegatedEventsUsed: new Set(),
     componentFunctionDefs: new Map(),
+    componentFunctionMutations: new Map(),
     hoistedFunctionDepCounter: 0,
     hoistedFunctionDepNames: new Map(),
     regionLoweringOps: createRegionLoweringOps(),
@@ -6031,7 +6035,9 @@ function lowerTopLevelStatementBlock(
   // Initialize componentFunctionDefs for this component to track function definitions
   // These may need to be hoisted for handler dependency resolution
   const componentFunctionDefs = ctx.componentFunctionDefs ?? new Map<string, Expression>()
+  const componentFunctionMutations = ctx.componentFunctionMutations ?? new Map<string, string[]>()
   ctx.componentFunctionDefs = componentFunctionDefs
+  ctx.componentFunctionMutations = componentFunctionMutations
 
   for (const block of fn.blocks) {
     for (const instr of block.instructions) {
@@ -6070,6 +6076,9 @@ function lowerTopLevelStatementBlock(
     }
   }
   collectMutatedIdentifiers(fn).forEach(name => mutatedVars.add(name))
+  for (const [name, mutations] of collectFunctionDependencyMutations(fn, functionVars)) {
+    componentFunctionMutations.set(name, mutations)
+  }
 
   const reactive = computeReactiveAccessors(fn, ctx)
   ctx.trackedVars = reactive.tracked
@@ -7094,7 +7103,9 @@ function lowerFunctionWithRegions(
   ctx.hookResultVarMap = new Map()
   // Save and initialize componentFunctionDefs for this function scope
   const prevComponentFunctionDefs = ctx.componentFunctionDefs
+  const prevComponentFunctionMutations = ctx.componentFunctionMutations
   ctx.componentFunctionDefs = new Map()
+  ctx.componentFunctionMutations = new Map()
   const hookResultVars = new Set<string>()
   const hookAccessorAliases = new Set<string>()
   const prevPropsParam = ctx.propsParamName
@@ -7196,6 +7207,10 @@ function lowerFunctionWithRegions(
     }
   }
   collectMutatedIdentifiers(fn).forEach(name => ctx.mutatedVars?.add(name))
+  ctx.componentFunctionMutations = collectFunctionDependencyMutations(
+    fn,
+    ctx.functionVars ?? new Set(),
+  )
   hookAccessorAliases.forEach(name => {
     ctx.aliasVars?.add(name)
     ctx.trackedVars.add(name)
@@ -7679,6 +7694,7 @@ function lowerFunctionWithRegions(
       ctx.callableSignalVars = prevCallableSignalVars
       ctx.functionVars = prevFunctionVars
       ctx.componentFunctionDefs = prevComponentFunctionDefs
+      ctx.componentFunctionMutations = prevComponentFunctionMutations
       ctx.memoVars = prevMemoVars
       ctx.storeVars = prevStoreVars
       ctx.mutatedVars = prevMutatedVars
@@ -7704,6 +7720,7 @@ function lowerFunctionWithRegions(
     ctx.callableSignalVars = prevCallableSignalVars
     ctx.functionVars = prevFunctionVars
     ctx.componentFunctionDefs = prevComponentFunctionDefs
+    ctx.componentFunctionMutations = prevComponentFunctionMutations
     ctx.memoVars = prevMemoVars
     ctx.storeVars = prevStoreVars
     ctx.mutatedVars = prevMutatedVars
@@ -7830,6 +7847,7 @@ function lowerFunctionWithRegions(
   ctx.callableSignalVars = prevCallableSignalVars
   ctx.functionVars = prevFunctionVars
   ctx.componentFunctionDefs = prevComponentFunctionDefs
+  ctx.componentFunctionMutations = prevComponentFunctionMutations
   ctx.memoVars = prevMemoVars
   ctx.storeVars = prevStoreVars
   ctx.namespaceStoreAliasVars = prevNamespaceStoreAliasVars

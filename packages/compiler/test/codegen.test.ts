@@ -1435,6 +1435,70 @@ describe('resumable event handler transformation', () => {
     expect(code).toMatch(/log\.push\(__fict_fn_helper_\d+\.length\)/)
   })
 
+  it('throws for explicit resumable handlers that capture mutated function deps', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const helper = () => 1
+        helper.extra = 'x'
+        return <button onClick$={() => helper.extra}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(
+      /function mutations: helper -> = helper\.extra/i,
+    )
+  })
+
+  it('throws for explicit resumable handlers that capture mutated function declarations', () => {
+    const ast = parseFile(`
+      function Comp() {
+        function helper() {
+          return 1
+        }
+        helper.extra = 'x'
+        return <button onClick$={() => helper.extra}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(
+      /function mutations: helper -> = helper\.extra/i,
+    )
+  })
+
+  it('throws for explicit resumable handlers that capture alias-mutated function deps', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const helper = () => 1
+        const alias = helper
+        alias.extra = 'x'
+        return <button onClick$={() => helper.extra}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(
+      /function mutations: helper -> = alias\.extra/i,
+    )
+  })
+
+  it('throws for explicit resumable handlers that capture Object-mutated function deps', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const helper = () => 1
+        Object.defineProperty(helper, 'secret', { value: 'x' })
+        Object.assign(helper, { extra: 'y' })
+        return <button onClick$={() => helper.secret + helper.extra}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(
+      /function mutations: helper -> Object\.assign, Object\.defineProperty/i,
+    )
+  })
+
   it('allocates resumable event exports around existing module bindings', () => {
     const ast = parseFile(`
       export const __fict_e0 = 'user'
@@ -1747,6 +1811,25 @@ describe('resumable event handler transformation', () => {
       function Comp() {
         const label = 'x'
         return <button onClick={() => console.log(label)}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",/)
+    expect(code).not.toContain('setAttribute(\"on:click\"')
+  })
+
+  it('falls back for auto-extracted handlers that capture mutated function deps', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const helper = () => 1
+        helper.extra = 'x'
+        return <button onClick={() => {
+          console.log("before")
+          console.log(helper.extra)
+        }}>Click</button>
       }
     `)
     const hir = buildHIR(ast)
