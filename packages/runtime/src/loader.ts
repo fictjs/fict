@@ -966,7 +966,9 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
       continue
     }
 
-    return
+    if (event.cancelBubble) {
+      return
+    }
   }
 }
 

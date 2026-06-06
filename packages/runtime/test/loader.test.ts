@@ -301,6 +301,89 @@ describe('resumable loader snapshot validation', () => {
     delete (globalThis as { __fictParentCalls?: number }).__fictParentCalls
   })
 
+  it('continues event path scanning after successful child handlers', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    ;(globalThis as { __fictBubbleCalls?: string[] }).__fictBubbleCalls = []
+
+    const parent = doc.createElement('div')
+    parent.setAttribute('data-fict-s', 's1')
+    parent.setAttribute('data-role', 'parent')
+    parent.setAttribute(
+      'on:click',
+      "data:text/javascript,export function parent(scopeId,event,el){globalThis.__fictBubbleCalls.push('parent:'+event.currentTarget.getAttribute('data-role')+':'+el.getAttribute('data-role'))}#parent",
+    )
+
+    const child = doc.createElement('button')
+    child.setAttribute('data-role', 'child')
+    child.setAttribute(
+      'on:click',
+      "data:text/javascript,export function child(scopeId,event,el){globalThis.__fictBubbleCalls.push('child:'+event.currentTarget.getAttribute('data-role')+':'+el.getAttribute('data-role'))}#child",
+    )
+
+    parent.appendChild(child)
+    doc.body.appendChild(parent)
+
+    installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+    child.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    await waitForPendingHandlers()
+
+    expect((globalThis as { __fictBubbleCalls?: string[] }).__fictBubbleCalls).toEqual([
+      'child:child:child',
+      'parent:parent:parent',
+    ])
+
+    delete (globalThis as { __fictBubbleCalls?: string[] }).__fictBubbleCalls
+  })
+
+  it('stops event path scanning when a successful child handler stops propagation', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    ;(globalThis as { __fictStoppedBubbleCalls?: string[] }).__fictStoppedBubbleCalls = []
+
+    const parent = doc.createElement('div')
+    parent.setAttribute('data-fict-s', 's1')
+    parent.setAttribute(
+      'on:click',
+      "data:text/javascript,export function parent(){globalThis.__fictStoppedBubbleCalls.push('parent')}#parent",
+    )
+
+    const child = doc.createElement('button')
+    child.setAttribute(
+      'on:click',
+      "data:text/javascript,export function child(scopeId,event){globalThis.__fictStoppedBubbleCalls.push('child');event.stopPropagation()}#child",
+    )
+
+    parent.appendChild(child)
+    doc.body.appendChild(parent)
+
+    installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+    child.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    await waitForPendingHandlers()
+
+    expect(
+      (globalThis as { __fictStoppedBubbleCalls?: string[] }).__fictStoppedBubbleCalls,
+    ).toEqual(['child'])
+
+    delete (globalThis as { __fictStoppedBubbleCalls?: string[] }).__fictStoppedBubbleCalls
+  })
+
   it('handles resumable handler failures without unhandled promise rejections', async () => {
     const issues: SnapshotIssue[] = []
     const doc = createDocumentWithSnapshots(
