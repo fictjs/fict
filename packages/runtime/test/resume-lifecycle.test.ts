@@ -10,6 +10,7 @@ import {
   __fictGetComponentMeta,
   __fictGetScopeRegistry,
   __fictGetSSRScope,
+  __fictQrl,
   __fictRegisterScope,
   __fictSetComponentMeta,
   __fictSerializeSSRState,
@@ -24,6 +25,8 @@ describe('SSR lifecycle state cleanup', () => {
     __fictDisableResumable()
     __fictDisableSSR()
     __fictSetSSRState(null)
+    delete (globalThis as Record<string, unknown>).__FICT_SSR_BASE__
+    delete (globalThis as Record<string, unknown>).__FICT_MANIFEST__
   })
 
   it('clears registry, snapshot state, and resumed scopes when SSR is disabled', () => {
@@ -94,6 +97,51 @@ describe('SSR lifecycle state cleanup', () => {
     ;(App as { __fictMeta?: typeof meta }).__fictMeta = meta
 
     expect(__fictGetComponentMeta(App)).toBe(meta)
+  })
+
+  it.each([
+    {
+      base: '/tmp/fict space',
+      moduleId: 'file:///tmp/fict%20space/src/App.tsx',
+      expected: '/src/App.tsx#__fict_e0',
+    },
+    {
+      base: '/tmp/fict-ä',
+      moduleId: 'file:///tmp/fict-%C3%A4/src/App.tsx',
+      expected: '/src/App.tsx#__fict_e0',
+    },
+    {
+      base: '/tmp/fict%literal',
+      moduleId: 'file:///tmp/fict%25literal/src/App.tsx',
+      expected: '/src/App.tsx#__fict_e0',
+    },
+    {
+      base: '/tmp/fict space',
+      moduleId: 'file:///tmp/fict%20space/src/My%20App.tsx',
+      expected: '/src/My%20App.tsx#__fict_e0',
+    },
+    {
+      base: 'C:/repo/fict',
+      moduleId: 'file:///C:/repo/fict/src/App.tsx',
+      expected: '/src/App.tsx#__fict_e0',
+    },
+    {
+      base: 'C:\\repo\\fict',
+      moduleId: 'file:///C:/repo/fict/src/App.tsx',
+      expected: '/src/App.tsx#__fict_e0',
+    },
+  ])('strips decoded SSR base from file QRL $moduleId', ({ base, moduleId, expected }) => {
+    ;(globalThis as Record<string, unknown>).__FICT_SSR_BASE__ = base
+
+    expect(__fictQrl(moduleId, '__fict_e0')).toBe(expected)
+  })
+
+  it('uses encoded /@fs fallback for unmatched file QRL bases', () => {
+    ;(globalThis as Record<string, unknown>).__FICT_SSR_BASE__ = '/tmp/other'
+
+    expect(__fictQrl('file:///tmp/fict%20space/src/App.tsx', '__fict_e0', 'pd')).toBe(
+      '/@fs/tmp/fict%20space/src/App.tsx#__fict_e0[pd]',
+    )
   })
 
   it('restores cross-slot references with shared refs', () => {

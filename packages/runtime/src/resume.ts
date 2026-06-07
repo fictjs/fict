@@ -320,6 +320,45 @@ function appendQrlFlags(qrl: string, flags?: string | string[]): string {
   return `${qrl}[${flagList.join(',')}]`
 }
 
+function decodeFileModulePath(moduleId: string): string {
+  try {
+    const url = new URL(moduleId)
+    if (url.protocol !== 'file:') return moduleId.slice('file://'.length)
+    const hostPrefix = url.hostname ? `//${url.hostname}` : ''
+    return decodeURIComponent(`${hostPrefix}${url.pathname}`)
+  } catch {
+    return moduleId.slice('file://'.length)
+  }
+}
+
+function normalizeFsPathForQrl(value: string): string {
+  let normalized = value.replace(/\\/g, '/')
+  if (/^\/[A-Za-z]:\//.test(normalized)) {
+    normalized = normalized.slice(1)
+  }
+  while (normalized.length > 1 && normalized.endsWith('/')) {
+    normalized = normalized.slice(0, -1)
+  }
+  return normalized
+}
+
+function stripQrlBase(filePath: string, ssrBase: string): string | null {
+  const normalizedFilePath = normalizeFsPathForQrl(filePath)
+  const normalizedBase = normalizeFsPathForQrl(ssrBase)
+  if (normalizedBase === '/') {
+    return normalizedFilePath.startsWith('/') ? normalizedFilePath : null
+  }
+  if (normalizedFilePath === normalizedBase) return '/'
+  if (normalizedFilePath.startsWith(`${normalizedBase}/`)) {
+    return normalizedFilePath.slice(normalizedBase.length)
+  }
+  return null
+}
+
+function encodeQrlPath(pathname: string): string {
+  return encodeURI(pathname).replace(/#/g, '%23').replace(/\?/g, '%3F')
+}
+
 export function __fictQrl(moduleId: string, exportName: string, flags?: string | string[]): string {
   const sessionManifest = __fictGetCurrentSSRSession()?.manifest
   const manifest =
@@ -335,20 +374,23 @@ export function __fictQrl(moduleId: string, exportName: string, flags?: string |
 
   // Handle file:// URLs for Vite dev mode SSR
   if (moduleId.startsWith('file://')) {
-    const filePath = moduleId.slice(7) // Remove 'file://'
+    const filePath = decodeFileModulePath(moduleId)
 
     // Check for configured SSR base path (project root)
     const ssrBase = (globalThis as Record<string, unknown>).__FICT_SSR_BASE__ as string | undefined
     if (ssrBase) {
       // Strip base to get relative path (e.g., /src/App.tsx)
-      if (filePath.startsWith(ssrBase)) {
-        const relativePath = filePath.slice(ssrBase.length)
-        return appendQrlFlags(`${relativePath}#${exportName}`, flags)
+      const relativePath = stripQrlBase(filePath, ssrBase)
+      if (relativePath) {
+        return appendQrlFlags(`${encodeQrlPath(relativePath)}#${exportName}`, flags)
       }
     }
 
     // Fallback: use Vite's /@fs/ convention for direct file system access
-    return appendQrlFlags(`/@fs${filePath}#${exportName}`, flags)
+    return appendQrlFlags(
+      `/@fs${encodeQrlPath(normalizeFsPathForQrl(filePath))}#${exportName}`,
+      flags,
+    )
   }
 
   return appendQrlFlags(`${moduleId}#${exportName}`, flags)
