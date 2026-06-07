@@ -152,7 +152,7 @@ export {
 // DOM Creation (Compiler-generated code)
 // ============================================================================
 
-export { createElement, template, render, hydrateComponent } from './dom'
+export { createElement, createElementInNamespace, template, render, hydrateComponent } from './dom'
 export type { HydrateComponentOptions } from './dom'
 export type { HydrationIssue, HydrationIssueCode, HydrationIssueHandler } from './hydration'
 export { createRenderEffect } from './effect'

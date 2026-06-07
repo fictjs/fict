@@ -4249,6 +4249,75 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('renders dynamic string intrinsic slots in inherited SVG and MathML namespaces', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      function DynamicShape() {
+        return { type: 'circle', props: { "data-id": "svg-component" } }
+      }
+
+      export function App() {
+        const SvgTag = 'circle'
+        const MathTag = 'mi'
+        const HtmlTag = 'div'
+        const items = ['list']
+        return (
+          <div>
+            <svg data-id="svg">
+              <SvgTag data-id="svg-direct" />
+              {true ? <SvgTag data-id="svg-conditional" /> : null}
+              {items.map(item => <SvgTag key={item} data-id="svg-list" />)}
+              <DynamicShape />
+              <foreignObject>
+                <HtmlTag data-id="foreign-html" />
+              </foreignObject>
+            </svg>
+            <math data-id="math">
+              <MathTag data-id="math-direct">x</MathTag>
+            </math>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const output = transformCommonJS(source, { fineGrainedDom: true, dev: false })
+    expect(output).toContain('createElementInNamespace')
+    expect(output).toMatch(/createElementInNamespace[\s\S]*"svg"/)
+    expect(output).toMatch(/createElementInNamespace[\s\S]*"mathml"/)
+    expect(output).toMatch(/createKeyedList[\s\S]*, true, "svg"\)/)
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true, dev: false })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    const svgDirect = container.querySelector('[data-id="svg-direct"]') as Element
+    const svgConditional = container.querySelector('[data-id="svg-conditional"]') as Element
+    const svgList = container.querySelector('[data-id="svg-list"]') as Element
+    const svgComponent = container.querySelector('[data-id="svg-component"]') as Element
+    const foreignHtml = container.querySelector('[data-id="foreign-html"]') as Element
+    const mathDirect = container.querySelector('[data-id="math-direct"]') as Element
+
+    expect(svgDirect.namespaceURI).toBe('http://www.w3.org/2000/svg')
+    expect(svgConditional.namespaceURI).toBe('http://www.w3.org/2000/svg')
+    expect(svgList.namespaceURI).toBe('http://www.w3.org/2000/svg')
+    expect(svgComponent.namespaceURI).toBe('http://www.w3.org/2000/svg')
+    expect(foreignHtml.namespaceURI).toBe('http://www.w3.org/1999/xhtml')
+    expect(mathDirect.namespaceURI).toBe('http://www.w3.org/1998/Math/MathML')
+
+    teardown()
+    container.remove()
+  })
+
   it.each([
     { mode: 'fine-grained', options: { fineGrainedDom: true } },
     { mode: 'vnode', options: { fineGrainedDom: false } },

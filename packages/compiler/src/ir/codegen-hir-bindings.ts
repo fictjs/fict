@@ -1,6 +1,7 @@
 import type * as BabelCore from '@babel/core'
 
 import type { CodegenContext, RegionInfo } from './codegen'
+import { createElementForNamespace } from './codegen-namespace-create-element'
 import { runtimeIdentifier } from './codegen-runtime-helpers'
 import type { NamespaceContext } from './codegen-template-extraction'
 import type { Expression } from './hir'
@@ -167,15 +168,15 @@ export function emitHIRChildBinding(
   // Check if it's a JSX element
   if (expr.kind === 'JSXElement') {
     const childExpr = ops.lowerJSXElement(expr, ctx)
+    const createElementExpr = createElementForNamespace(ctx, namespace)
     ctx.helpersUsed.add('insertBetween')
-    ctx.helpersUsed.add('createElement')
     statements.push(
       t.expressionStatement(
         t.callExpression(runtimeIdentifier(ctx, 'insertBetween'), [
           markerId,
           endMarkerId,
           t.arrowFunctionExpression([], childExpr),
-          runtimeIdentifier(ctx, 'createElement'),
+          createElementExpr,
         ]),
       ),
     )
@@ -184,15 +185,15 @@ export function emitHIRChildBinding(
 
   // Default: insert dynamic expression
   const valueExpr = ops.lowerDomExpression(expr, ctx, containingRegion)
+  const createElementExpr = createElementForNamespace(ctx, namespace)
   ctx.helpersUsed.add('insertBetween')
-  ctx.helpersUsed.add('createElement')
   statements.push(
     t.expressionStatement(
       t.callExpression(runtimeIdentifier(ctx, 'insertBetween'), [
         markerId,
         endMarkerId,
         t.arrowFunctionExpression([], valueExpr),
-        runtimeIdentifier(ctx, 'createElement'),
+        createElementExpr,
       ]),
     ),
   )

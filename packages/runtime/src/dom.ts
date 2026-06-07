@@ -290,6 +290,10 @@ export function createElement(node: FictNode): DOMElement {
   return createElementWithContext(node, null, resolveOwnerDocument())
 }
 
+export function createElementInNamespace(node: FictNode, namespace: NamespaceContext): DOMElement {
+  return createElementWithContext(node, namespace, resolveOwnerDocument())
+}
+
 registerCreateElement(createElement)
 
 function resolveNamespace(tagName: string, namespace: NamespaceContext): NamespaceContext {

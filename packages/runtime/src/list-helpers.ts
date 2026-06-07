@@ -5,7 +5,7 @@
  * They provide low-level primitives for DOM node manipulation without rebuilding.
  */
 
-import { createElement } from './dom'
+import { createElement, createElementInNamespace } from './dom'
 import { isNodeLike } from './dom-guards'
 import { createRenderEffect } from './effect'
 import { isHydratingActive, withHydrationRange } from './hydration'
@@ -24,6 +24,8 @@ import { __fictIsHydrating, __fictIsSSR } from './resume'
 import { batch } from './scheduler'
 import { createSignal, effectScope, flush, setActiveSub, type Signal } from './signal'
 import type { FictNode } from './types'
+
+type ListNamespaceContext = 'svg' | 'mathml' | null | undefined
 
 // Re-export shared DOM helpers for compiler-generated code
 export { insertNodesBefore, removeNodes, toNodeArray }
@@ -298,6 +300,7 @@ function createKeyedBlock<T>(
   render: (item: Signal<T>, index: Signal<number>, key: string | number) => Node[],
   needsIndex = true,
   hostRoot?: RootContext,
+  namespace?: ListNamespaceContext,
 ): KeyedBlock<T> {
   // Use versioned signal for all item types; avoid diffing proxy overhead for objects
   const itemSig = createVersionedSignalAccessor(item)
@@ -333,7 +336,10 @@ function createKeyedBlock<T>(
       ) {
         nodes = toNodeArray(rendered, nodeOwnerDocument)
       } else {
-        const element = createElement(rendered as unknown as FictNode)
+        const element =
+          namespace === 'svg' || namespace === 'mathml'
+            ? createElementInNamespace(rendered as unknown as FictNode, namespace)
+            : createElement(rendered as unknown as FictNode)
         nodes = toNodeArray(element, nodeOwnerDocument)
       }
     })
@@ -501,6 +507,7 @@ export function createKeyedList<T>(
   startMarker?: Comment,
   endMarker?: Comment,
   skipHoles?: boolean,
+  namespace?: ListNamespaceContext,
 ): KeyedListBinding {
   const resolvedNeedsIndex =
     arguments.length >= 4 ? !!needsIndex : renderItem.length > 1 /* has index param */
@@ -512,6 +519,7 @@ export function createKeyedList<T>(
     startMarker,
     endMarker,
     !!skipHoles,
+    namespace,
   )
 }
 
@@ -523,6 +531,7 @@ function createFineGrainedKeyedList<T>(
   startOverride?: Comment,
   endOverride?: Comment,
   skipHoles = false,
+  namespace?: ListNamespaceContext,
 ): KeyedListBinding {
   const hostRoot = getCurrentRoot()
   const container = createKeyedListContainer<T>(
@@ -628,7 +637,15 @@ function createFineGrainedKeyedList<T>(
                   removeNodes(existing.nodes)
                 }
               }
-              const block = createKeyedBlock<T>(key, item, index, renderItem, needsIndex, hostRoot)
+              const block = createKeyedBlock<T>(
+                key,
+                item,
+                index,
+                renderItem,
+                needsIndex,
+                hostRoot,
+                namespace,
+              )
               createdBlocks.push(block)
               newBlocks.set(key, block)
               orderedIndexByKey.set(key, nextOrderedBlocks.length)
@@ -755,7 +772,7 @@ function createFineGrainedKeyedList<T>(
             removeNodes(existingBlock.nodes)
           }
           // Create new block
-          block = createKeyedBlock<T>(key, item, index, renderItem, needsIndex, hostRoot)
+          block = createKeyedBlock<T>(key, item, index, renderItem, needsIndex, hostRoot, namespace)
           createdBlocks.push(block)
         }
 

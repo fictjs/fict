@@ -8,6 +8,7 @@ import {
   getReturnedKeyAttributeExpressionsFromMapCallback,
   keyExpressionSignature,
 } from './codegen-jsx-keys'
+import { appendKeyedListNamespaceArgs } from './codegen-namespace-create-element'
 import { replaceIdentifiersWithOverrides, type RegionOverrideMap } from './codegen-overrides'
 import { runtimeIdentifier } from './codegen-runtime-helpers'
 import { applySelectorHoist } from './codegen-selector-hoist'
@@ -23,6 +24,25 @@ export interface ListChildOps {
   genTemp: (ctx: CodegenContext, prefix?: string) => BabelCore.types.Identifier
   lowerDomExpression: (expr: Expression, ctx: CodegenContext) => BabelCore.types.Expression
   lowerExpression: (expr: Expression, ctx: CodegenContext) => BabelCore.types.Expression
+}
+
+export interface BuildListCallOptions {
+  startMarkerId?: BabelCore.types.Expression | undefined
+  endMarkerId?: BabelCore.types.Expression | undefined
+  skipHoles?: boolean | undefined
+}
+
+function finalizeKeyedListArgs(
+  args: BabelCore.types.Expression[],
+  ctx: CodegenContext,
+  options?: BuildListCallOptions,
+): BabelCore.types.Expression[] {
+  const { t } = ctx
+  if (options?.startMarkerId && options.endMarkerId) {
+    args.push(options.startMarkerId, options.endMarkerId, t.booleanLiteral(!!options.skipHoles))
+  }
+  appendKeyedListNamespaceArgs(ctx, args, ctx.namespaceContext)
+  return args
 }
 
 function getCallbackBlocks(callback: Expression): BasicBlock[] {
@@ -857,6 +877,7 @@ export function buildListCallExpression(
   statements: BabelCore.types.Statement[],
   ctx: CodegenContext,
   ops: ListChildOps,
+  options?: BuildListCallOptions,
 ): BabelCore.types.Expression | null {
   const { t } = ctx
 
@@ -1212,12 +1233,14 @@ export function buildListCallExpression(
         )
       : callbackExpr
 
-    listCall = t.callExpression(runtimeIdentifier(ctx, 'keyedList'), [
-      getItemsExpr,
-      keyFn,
-      renderExpr,
-      t.booleanLiteral(hasIndexParam),
-    ])
+    listCall = t.callExpression(
+      runtimeIdentifier(ctx, 'keyedList'),
+      finalizeKeyedListArgs(
+        [getItemsExpr, keyFn, renderExpr, t.booleanLiteral(hasIndexParam)],
+        ctx,
+        options,
+      ),
+    )
   } else {
     // Insert hoisted template declarations before list call.
     statements.push(...hoistedStatements)
@@ -1307,12 +1330,14 @@ export function buildListCallExpression(
       t.identifier(indexParamName),
     )
 
-    listCall = t.callExpression(runtimeIdentifier(ctx, 'keyedList'), [
-      getItemsExpr,
-      keyFn,
-      renderExpr,
-      t.booleanLiteral(hasIndexParam),
-    ])
+    listCall = t.callExpression(
+      runtimeIdentifier(ctx, 'keyedList'),
+      finalizeKeyedListArgs(
+        [getItemsExpr, keyFn, renderExpr, t.booleanLiteral(hasIndexParam)],
+        ctx,
+        options,
+      ),
+    )
   }
 
   return listCall
@@ -1331,12 +1356,12 @@ export function emitListChild(
 ): boolean {
   const { t } = ctx
 
-  const listCall = buildListCallExpression(expr, statements, ctx, ops)
+  const listCall = buildListCallExpression(expr, statements, ctx, ops, {
+    startMarkerId,
+    endMarkerId,
+    skipHoles: true,
+  })
   if (!listCall) return false
-
-  if (t.isCallExpression(listCall)) {
-    listCall.arguments.push(startMarkerId, endMarkerId, t.booleanLiteral(true))
-  }
 
   ctx.helpersUsed.add('onDestroy')
 

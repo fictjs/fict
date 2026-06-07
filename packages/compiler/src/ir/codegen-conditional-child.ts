@@ -1,6 +1,7 @@
 import type * as BabelCore from '@babel/core'
 
 import type { CodegenContext } from './codegen'
+import { createElementForNamespace } from './codegen-namespace-create-element'
 import { runtimeIdentifier } from './codegen-runtime-helpers'
 import type { Expression } from './hir'
 
@@ -31,7 +32,6 @@ export function emitConditionalChild(
 ): void {
   const { t } = ctx
   ctx.helpersUsed.add('conditional')
-  ctx.helpersUsed.add('createElement')
   ctx.helpersUsed.add('onDestroy')
 
   let condition: BabelCore.types.Expression
@@ -66,10 +66,11 @@ export function emitConditionalChild(
   }
 
   const bindingId = ops.genTemp(ctx, 'cond')
+  const createElementExpr = createElementForNamespace(ctx, ctx.namespaceContext)
   const args: BabelCore.types.Expression[] = [
     t.arrowFunctionExpression([], condition),
     t.arrowFunctionExpression([], consequent),
-    runtimeIdentifier(ctx, 'createElement'),
+    createElementExpr,
   ]
   if (alternate) {
     args.push(t.arrowFunctionExpression([], alternate))

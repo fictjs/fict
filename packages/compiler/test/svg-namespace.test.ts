@@ -127,6 +127,39 @@ describe('SVG/MathML Namespace Support ()', () => {
       expect(output).not.toContain('xlinkHref')
     })
 
+    it('passes SVG namespace to dynamic string intrinsic slots', () => {
+      const source = `
+        export function App({ Tag }) {
+          return (
+            <svg>
+              <Tag data-id="direct" />
+            </svg>
+          )
+        }
+      `
+      const output = transform(source, { dev: false })
+
+      expect(output).toContain('createElementInNamespace')
+      expect(output).toMatch(/createElementInNamespace\([^)]*,\s*"svg"\)/)
+    })
+
+    it('does not pass SVG namespace to dynamic tags inside foreignObject', () => {
+      const source = `
+        export function App({ Tag }) {
+          return (
+            <svg>
+              <foreignObject>
+                <Tag data-id="html" />
+              </foreignObject>
+            </svg>
+          )
+        }
+      `
+      const output = transform(source, { dev: false })
+
+      expect(output).not.toContain('createElementInNamespace')
+    })
+
     it('exits SVG namespace inside foreignObject', () => {
       const source = `
         import { $state } from 'fict'
@@ -209,6 +242,22 @@ describe('SVG/MathML Namespace Support ()', () => {
       // Check for pattern: template("...", void 0, void 0, true) for isMathML
       expect(output).toContain('<mi>')
       expect(output).toMatch(/template\([^)]*mi[^)]*,\s*void 0,\s*void 0,\s*true\)/)
+    })
+
+    it('passes MathML namespace to dynamic string intrinsic slots', () => {
+      const source = `
+        export function App({ Tag }) {
+          return (
+            <math>
+              <Tag data-id="direct">x</Tag>
+            </math>
+          )
+        }
+      `
+      const output = transform(source, { dev: false })
+
+      expect(output).toContain('createElementInNamespace')
+      expect(output).toMatch(/createElementInNamespace\([^)]*,\s*"mathml"\)/)
     })
 
     it('exits MathML namespace inside annotation-xml with HTML encoding', () => {
@@ -320,6 +369,24 @@ describe('SVG/MathML Namespace Support ()', () => {
       // List items inside SVG should have isSVG flag in hoisted template
       expect(output).toContain('<circle')
       expect(output).toMatch(/template\([^)]*circle[^)]*,\s*void 0,\s*true\)/)
+    })
+
+    it('passes SVG namespace to keyed list callbacks that return dynamic tags', () => {
+      const source = `
+        export function App() {
+          const items = ['a']
+          const Tag = 'circle'
+          return (
+            <svg>
+              {items.map(item => <Tag key={item} data-id="list" />)}
+            </svg>
+          )
+        }
+      `
+      const output = transform(source, { dev: false })
+
+      expect(output).toContain('createKeyedList')
+      expect(output).toMatch(/createKeyedList\([\s\S]*,\s*true,\s*"svg"\)/)
     })
   })
 })

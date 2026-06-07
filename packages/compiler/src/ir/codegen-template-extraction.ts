@@ -378,6 +378,7 @@ export function extractHIRStaticHtml(
           type: 'child',
           path: [...parentPath],
           expr: jsx,
+          namespace,
         },
       ],
       nodeCount: 1,
