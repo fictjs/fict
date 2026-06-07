@@ -39,6 +39,11 @@ function getStaticHookReturnPropName(expr: Expression, computed: boolean): strin
   return null
 }
 
+function getStaticNamespaceMetadataKey(expr: Expression, computed: boolean): string | null {
+  const propName = getStaticHookReturnPropName(expr, computed)
+  return propName === null ? null : String(propName)
+}
+
 export function serializeHookReturnInfo(info: HookReturnInfo): HookReturnInfoSerializable {
   const objectProps: Record<string, HookAccessorKind> | undefined = info.objectProps
     ? Object.fromEntries(info.objectProps.entries())
@@ -203,8 +208,8 @@ export function analyzeHookReturnInfo(
     if (expr.object.kind !== 'Identifier') return undefined
     const nsMeta = ctx.importedNamespaces?.get(deSSAVarName(expr.object.name))
     if (!nsMeta) return undefined
-    const propName = getStaticPropName(expr.property as Expression, expr.computed)
-    if (typeof propName !== 'string') return undefined
+    const propName = getStaticNamespaceMetadataKey(expr.property as Expression, expr.computed)
+    if (propName === null) return undefined
     const kind = nsMeta.exports[propName]
     return kind
   }
@@ -217,8 +222,8 @@ export function analyzeHookReturnInfo(
     if (callee.object.kind !== 'Identifier') return null
     const nsMeta = ctx.importedNamespaces?.get(deSSAVarName(callee.object.name))
     if (!nsMeta?.hooks) return null
-    const propName = getStaticPropName(callee.property as Expression, callee.computed)
-    if (typeof propName !== 'string') return null
+    const propName = getStaticNamespaceMetadataKey(callee.property as Expression, callee.computed)
+    if (propName === null) return null
     const hookInfo = nsMeta.hooks[propName]
     return hookInfo ? deserializeHookReturnInfo(hookInfo) : null
   }

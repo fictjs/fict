@@ -1866,7 +1866,12 @@ function getStaticMetadataPropertyKey(propName: string | number | null): string 
 }
 
 function getStaticMemberMetadataKey(property: Expression, computed: boolean): string | null {
-  return getStaticMetadataPropertyKey(getStaticPropName(property, computed))
+  const propName = getStaticMetadataPropertyKey(getStaticPropName(property, computed))
+  if (propName !== null) return propName
+  if (computed && property.kind === 'Literal' && typeof property.value === 'bigint') {
+    return property.value.toString()
+  }
+  return null
 }
 
 function getStaticHookReturnPropName(
@@ -5493,13 +5498,7 @@ function unwrapAccessorCalls(
     if (!t.isIdentifier(member.object)) return false
     const nsMeta = getImportedNamespaceMetadata(member.object.name, ctx)
     if (!nsMeta) return false
-    const propName = !member.computed
-      ? t.isIdentifier(member.property)
-        ? member.property.name
-        : null
-      : t.isStringLiteral(member.property) || t.isNumericLiteral(member.property)
-        ? String(member.property.value)
-        : null
+    const propName = getStaticBabelMetadataPropertyName(member.property, member.computed, t)
     if (!propName) return false
     const kind = nsMeta.exports[propName]
     return kind === 'signal' || kind === 'memo'
@@ -5803,6 +5802,17 @@ function getStaticBabelPropertyName(
   if (!computed && t.isIdentifier(node)) return node.name
   if (t.isStringLiteral(node)) return node.value
   if (t.isNumericLiteral(node)) return String(node.value)
+  return null
+}
+
+function getStaticBabelMetadataPropertyName(
+  node: BabelCore.types.Node,
+  computed: boolean | undefined,
+  t: typeof BabelCore.types,
+): string | null {
+  const propName = getStaticBabelPropertyName(node, computed, t)
+  if (propName !== null) return propName
+  if (computed && t.isBigIntLiteral(node)) return node.value
   return null
 }
 
@@ -8264,7 +8274,7 @@ function transformControlFlowReturns(
     if (t.isMemberExpression(expr) || t.isOptionalMemberExpression(expr)) {
       if (t.isIdentifier(expr.object)) {
         const nsMeta = getImportedNamespaceMetadata(expr.object.name, ctx)
-        const propName = getStaticBabelPropertyName(expr.property, expr.computed)
+        const propName = getStaticBabelMetadataPropertyName(expr.property, expr.computed, t)
         if (nsMeta && propName && nsMeta.exports[propName] === 'store') {
           return true
         }

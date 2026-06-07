@@ -1913,6 +1913,48 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toMatch(/hooks\[(?:"0"|0)\]\(\)\.count\(\)/)
     })
 
+    it('normalizes BigInt namespace hook metadata keys', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+
+        export { useCounter as "0", useCounter as "1" }
+      `
+      const appSource = `
+        import * as hooks from './use-counter-bigint-namespace-member'
+
+        export function App() {
+          const zero = hooks[0n]()
+          const one = hooks[1n]()
+          const missing = hooks[-1n]()
+          return <span>{zero.count}:{one.count}:{hooks[0n]().count}:{missing.count}</span>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-bigint-namespace-member.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-hook-bigint-namespace-member.tsx'),
+      )
+
+      expect(output).toMatch(/zero\.count\(\)/)
+      expect(output).toMatch(/one\.count\(\)/)
+      expect(output).toMatch(/hooks\[0n\]\(\)\.count\(\)/)
+      expect(output).toContain('missing.count')
+      expect(output).not.toContain('missing.count()')
+    })
+
     it('routes numeric namespace hook-result writes through signal setters', () => {
       const hookSource = `
         import { $state } from 'fict'
@@ -4893,6 +4935,58 @@ describe('Cross-Module Reactivity', () => {
       expect(output).not.toMatch(/ns\[(?:"1\.5"|1\.5)\]\?\.\(\)\?\.\(\)/)
     })
 
+    it('normalizes BigInt namespace reactive metadata keys', () => {
+      const storeSource = `
+        import { createMemo, createSignal, createStore } from 'fict/advanced'
+
+        const zero = createSignal(1)
+        const one = createMemo(() => 2)
+        const two = createStore({ name: 'Ada' })
+
+        export { zero as "0", one as "1", two as "2" }
+      `
+      const appSource = `
+        import * as ns from './store-ns-bigint-keys'
+
+        export function App() {
+          const called = ns[0n]()
+          const optional = ns[1n]?.()
+          return <div>{called}:{optional}:{ns[0n]}:{ns["0"]}:{ns[0]}:{ns[1n]}:{ns[2n].name}:{ns[-1n]}</div>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(storeSource, { moduleMetadata }, path.join(baseDir, 'store-ns-bigint-keys.ts'))
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-ns-bigint-keys.tsx'),
+      )
+
+      expect(output).toMatch(/ns\["0"\]\(\)/)
+      expect(output).toMatch(/const optional = ns\[1n\]\?\.\(\)/)
+      expect(output).toMatch(/ns\["1"\]\(\)/)
+      expect(output).toMatch(/ns\[2n\]\.name/)
+      expect(output).toContain('ns[-1n]')
+      expect(output).not.toContain('ns[-1n]()')
+      expect(output).not.toMatch(/ns\["0"\]\(\)\(\)/)
+      expect(output).not.toMatch(/ns\["1"\]\?\.\(\)\?\.\(\)/)
+
+      expect(() =>
+        transform(
+          `
+            import * as ns from './store-ns-bigint-keys'
+
+            export function Mutate() {
+              ns[2n] = { name: 'Lin' }
+            }
+          `,
+          { moduleMetadata },
+          path.join(baseDir, 'app-ns-bigint-store-write.tsx'),
+        ),
+      ).toThrow('Cannot write to imported store binding "ns.2"')
+    })
+
     it('preserves numeric namespace signal assignment targets in non-strict mode', () => {
       const storeSource = `
         import { createSignal } from 'fict/advanced'
@@ -5761,6 +5855,50 @@ describe('Cross-Module Reactivity', () => {
 
         const output = transform(appSource, { fineGrainedDom: true }, appPath)
         expect(output).toMatch(/count\(\) \* 2/)
+      } finally {
+        clearModuleMetadata()
+        if (existsSync(path.join(baseDir, 'node_modules'))) {
+          rmSync(path.join(baseDir, 'node_modules'), { recursive: true, force: true })
+        }
+      }
+    })
+
+    it('resolves BigInt namespace metadata from a bare package root import', () => {
+      clearModuleMetadata()
+      const appSource = `
+        import * as lib from 'fict-hook-lib'
+
+        export function App() {
+          const state = lib[0n]()
+          return <div>{state.count}:{lib[1n]}</div>
+        }
+      `
+      const packageDir = path.join(baseDir, 'node_modules', 'fict-hook-lib')
+      const appPath = path.join(baseDir, 'app-package-bigint-namespace.tsx')
+
+      try {
+        mkdirSync(packageDir, { recursive: true })
+        writeFileSync(
+          path.join(packageDir, 'package.json'),
+          JSON.stringify({
+            name: 'fict-hook-lib',
+            type: 'module',
+            exports: './dist/index.js',
+            fict: { metadata: './dist/index.fict.meta.json' },
+          }),
+        )
+        mkdirSync(path.join(packageDir, 'dist'), { recursive: true })
+        writeFileSync(
+          path.join(packageDir, 'dist', 'index.fict.meta.json'),
+          JSON.stringify({
+            exports: { '1': 'signal' },
+            hooks: { '0': { objectProps: { count: 'signal' } } },
+          }),
+        )
+
+        const output = transform(appSource, { fineGrainedDom: true }, appPath)
+        expect(output).toMatch(/state\.count\(\)/)
+        expect(output).toMatch(/lib\["1"\]\(\)/)
       } finally {
         clearModuleMetadata()
         if (existsSync(path.join(baseDir, 'node_modules'))) {
