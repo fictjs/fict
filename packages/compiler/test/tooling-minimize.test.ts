@@ -58,4 +58,117 @@ describe('source regression minimizer', () => {
       }),
     ).rejects.toThrow(/does not reproduce/)
   })
+
+  it('honors maxPasses: 0 without invoking the predicate', async () => {
+    let calls = 0
+    const source = ['target()', 'noise()'].join('\n')
+
+    const result = await minimizeSourceByLines({
+      source,
+      maxPasses: 0,
+      test: () => {
+        calls += 1
+        return true
+      },
+    })
+
+    expect(calls).toBe(0)
+    expect(result).toMatchObject({
+      source,
+      removedLines: 0,
+      passes: 0,
+      predicateCalls: 0,
+      chunkPasses: 0,
+      changed: false,
+    })
+  })
+
+  it('counts the initial reproduction check against maxPasses', async () => {
+    let calls = 0
+    const source = ['a', 'b', 'c', 'd', 'e', 'f'].join('\n')
+
+    const result = await minimizeSourceByLines({
+      source,
+      maxPasses: 1,
+      test: () => {
+        calls += 1
+        return true
+      },
+    })
+
+    expect(calls).toBe(1)
+    expect(result.source).toBe(source)
+    expect(result.passes).toBe(1)
+    expect(result.predicateCalls).toBe(1)
+    expect(result.chunkPasses).toBe(0)
+    expect(result.changed).toBe(false)
+  })
+
+  it('skips preserved ranges without spending predicate budget', async () => {
+    const candidates: string[] = []
+
+    const result = await minimizeSourceByLines({
+      source: ['// keep: repro id', 'target()', 'noise()'].join('\n'),
+      preserve: [/keep: repro id/],
+      maxPasses: 2,
+      test: candidate => {
+        candidates.push(candidate)
+        return true
+      },
+    })
+
+    expect(candidates).toEqual([
+      ['// keep: repro id', 'target()', 'noise()'].join('\n'),
+      ['// keep: repro id', 'target()'].join('\n'),
+    ])
+    expect(result.source).toBe(['// keep: repro id', 'target()'].join('\n'))
+    expect(result.predicateCalls).toBe(2)
+    expect(result.chunkPasses).toBe(1)
+  })
+
+  it('retries successful removals from the same start within the predicate budget', async () => {
+    const candidates: string[] = []
+
+    const result = await minimizeSourceByLines({
+      source: ['target()', 'noiseA()', 'noiseB()', '// keep'].join('\n'),
+      preserve: [/\/\/ keep/],
+      maxPasses: 5,
+      test: candidate => {
+        candidates.push(candidate)
+        return candidate.includes('target()') && candidate.includes('// keep')
+      },
+    })
+
+    expect(candidates).toEqual([
+      ['target()', 'noiseA()', 'noiseB()', '// keep'].join('\n'),
+      ['noiseB()', '// keep'].join('\n'),
+      ['noiseA()', 'noiseB()', '// keep'].join('\n'),
+      ['target()', 'noiseB()', '// keep'].join('\n'),
+      ['target()', '// keep'].join('\n'),
+    ])
+    expect(result.source).toBe(['target()', '// keep'].join('\n'))
+    expect(result.predicateCalls).toBe(5)
+    expect(result.chunkPasses).toBe(2)
+  })
+
+  it('stops unstable predicates when the predicate budget is exhausted', async () => {
+    let calls = 0
+    const source = ['target()', 'noiseA()', 'noiseB()'].join('\n')
+
+    const result = await minimizeSourceByLines({
+      source,
+      maxPasses: 2,
+      test: () => {
+        calls += 1
+        return calls % 2 === 1
+      },
+    })
+
+    expect(calls).toBe(2)
+    expect(result.source).toBe(source)
+    expect(result.passes).toBe(2)
+    expect(result.predicateCalls).toBe(2)
+    expect(result.chunkPasses).toBe(1)
+    expect(result.changed).toBe(false)
+  })
 })

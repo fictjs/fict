@@ -10,7 +10,9 @@ export interface SourceMinimizerOptions {
   preserve?: RegExp[]
   /**
    * Guard against predicates that are expensive or unexpectedly unstable.
-   * Defaults to 200 passes.
+   * Counts every predicate evaluation, including the initial reproduction check.
+   * Use 0 to return the original source without invoking the predicate.
+   * Defaults to 200 evaluations.
    */
   maxPasses?: number
 }
@@ -18,7 +20,10 @@ export interface SourceMinimizerOptions {
 export interface SourceMinimizerResult {
   source: string
   removedLines: number
+  /** Predicate evaluations consumed. Kept as passes for API compatibility. */
   passes: number
+  predicateCalls: number
+  chunkPasses: number
   changed: boolean
 }
 
@@ -58,6 +63,13 @@ function removeRange(lines: readonly string[], start: number, end: number): stri
   return [...lines.slice(0, start), ...lines.slice(end)]
 }
 
+function normalizePredicateBudget(maxPasses: number): number {
+  if (!Number.isFinite(maxPasses)) {
+    return maxPasses === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : 0
+  }
+  return Math.max(0, Math.floor(maxPasses))
+}
+
 /**
  * Greedy line-oriented regression minimizer.
  *
@@ -70,20 +82,51 @@ export async function minimizeSourceByLines({
   preserve = [],
   maxPasses = 200,
 }: SourceMinimizerOptions): Promise<SourceMinimizerResult> {
-  if (!(await test(source))) {
+  let lines = splitLines(source)
+  const originalLineCount = lines.length
+  const maxPredicateCalls = normalizePredicateBudget(maxPasses)
+  let predicateCalls = 0
+  let chunkPasses = 0
+
+  const finish = (): SourceMinimizerResult => {
+    const removedLines = originalLineCount - lines.length
+    return {
+      source: joinLines(lines),
+      removedLines,
+      passes: predicateCalls,
+      predicateCalls,
+      chunkPasses,
+      changed: removedLines > 0,
+    }
+  }
+
+  const runPredicate = async (candidate: string): Promise<boolean | undefined> => {
+    if (predicateCalls >= maxPredicateCalls) {
+      return undefined
+    }
+    predicateCalls += 1
+    return await test(candidate)
+  }
+
+  const originalReproduces = await runPredicate(source)
+  if (originalReproduces === undefined) {
+    return finish()
+  }
+  if (!originalReproduces) {
     throw new Error('Cannot minimize source because the original input does not reproduce.')
   }
 
-  let lines = splitLines(source)
-  const originalLineCount = lines.length
   let chunkSize = Math.max(1, Math.ceil(lines.length / 2))
-  let passes = 0
 
-  while (chunkSize >= 1 && passes < maxPasses) {
-    passes += 1
+  while (chunkSize >= 1 && predicateCalls < maxPredicateCalls) {
+    chunkPasses += 1
     let removedInPass = false
 
     for (let start = 0; start < lines.length; ) {
+      if (predicateCalls >= maxPredicateCalls) {
+        break
+      }
+
       const end = Math.min(lines.length, start + chunkSize)
       if (start === end || rangeContainsPreservedLine(lines, start, end, preserve)) {
         start = Math.max(start + 1, end)
@@ -92,7 +135,11 @@ export async function minimizeSourceByLines({
 
       const candidateLines = removeRange(lines, start, end)
       const candidate = joinLines(candidateLines)
-      if (await test(candidate)) {
+      const reproduces = await runPredicate(candidate)
+      if (reproduces === undefined) {
+        break
+      }
+      if (reproduces) {
         lines = candidateLines
         removedInPass = true
         continue
@@ -106,11 +153,5 @@ export async function minimizeSourceByLines({
     }
   }
 
-  const removedLines = originalLineCount - lines.length
-  return {
-    source: joinLines(lines),
-    removedLines,
-    passes,
-    changed: removedLines > 0,
-  }
+  return finish()
 }

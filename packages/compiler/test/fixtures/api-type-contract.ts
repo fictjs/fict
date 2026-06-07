@@ -45,7 +45,14 @@ const minimizerOptions = {
 } satisfies SourceMinimizerOptions
 
 async function runMinimizer(): Promise<SourceMinimizerResult> {
-  return minimizeSourceByLines(minimizerOptions)
+  const result = await minimizeSourceByLines(minimizerOptions)
+  const predicateCalls: number = result.predicateCalls
+  const chunkPasses: number = result.chunkPasses
+
+  void predicateCalls
+  void chunkPasses
+
+  return result
 }
 
 void compilerOptions
