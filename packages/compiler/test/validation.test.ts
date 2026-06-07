@@ -280,6 +280,17 @@ describe('rule validations', () => {
     expect(diagnostic?.code).toBe(DiagnosticCode.FICT_C001)
   })
 
+  it('reports conditional optional hook calls (FICT_C001)', () => {
+    const call = t.optionalCallExpression(
+      t.identifier('useEffect'),
+      [t.arrowFunctionExpression([], t.nullLiteral())],
+      true,
+    )
+    const ifNode = t.ifStatement(t.identifier('flag'), t.blockStatement([]))
+    const diagnostic = validateNoConditionalHooks(call, ctx, t, [ifNode])
+    expect(diagnostic?.code).toBe(DiagnosticCode.FICT_C001)
+  })
+
   it('reports loop hook calls (FICT_C002)', () => {
     const call = t.callExpression(t.identifier('useEffect'), [
       t.arrowFunctionExpression([], t.nullLiteral()),
@@ -336,6 +347,40 @@ describe('rule validations', () => {
     const mapCall = t.callExpression(
       t.memberExpression(t.identifier('items'), t.identifier('map')),
       [callback],
+    )
+    const diagnostic = validateListKeys(jsx, ctx, t, [mapCall, callback])
+    expect(diagnostic?.code).toBe(DiagnosticCode.FICT_J002)
+  })
+
+  it('reports missing list keys inside optional map callbacks (FICT_J002)', () => {
+    const jsx = t.jsxElement(
+      t.jsxOpeningElement(t.jsxIdentifier('li'), [], false),
+      t.jsxClosingElement(t.jsxIdentifier('li')),
+      [t.jsxExpressionContainer(t.identifier('item'))],
+      false,
+    )
+    const callback = t.arrowFunctionExpression([t.identifier('item')], jsx)
+    const mapCall = t.optionalCallExpression(
+      t.optionalMemberExpression(t.identifier('items'), t.identifier('map'), false, true),
+      [callback],
+      false,
+    )
+    const diagnostic = validateListKeys(jsx, ctx, t, [mapCall, callback])
+    expect(diagnostic?.code).toBe(DiagnosticCode.FICT_J002)
+  })
+
+  it('reports missing list keys inside optional-call map callbacks (FICT_J002)', () => {
+    const jsx = t.jsxElement(
+      t.jsxOpeningElement(t.jsxIdentifier('li'), [], false),
+      t.jsxClosingElement(t.jsxIdentifier('li')),
+      [t.jsxExpressionContainer(t.identifier('item'))],
+      false,
+    )
+    const callback = t.arrowFunctionExpression([t.identifier('item')], jsx)
+    const mapCall = t.optionalCallExpression(
+      t.memberExpression(t.identifier('items'), t.identifier('map')),
+      [callback],
+      true,
     )
     const diagnostic = validateListKeys(jsx, ctx, t, [mapCall, callback])
     expect(diagnostic?.code).toBe(DiagnosticCode.FICT_J002)
@@ -530,12 +575,84 @@ describe('rule validations', () => {
     expect(codes).toContain(DiagnosticCode.FICT_X003)
   })
 
+  it('collects optional-call hook and map diagnostics during function validation', () => {
+    const listItem = t.jsxElement(
+      t.jsxOpeningElement(t.jsxIdentifier('li'), [], false),
+      t.jsxClosingElement(t.jsxIdentifier('li')),
+      [t.jsxExpressionContainer(t.identifier('item'))],
+      false,
+    )
+    const mapCallback = t.arrowFunctionExpression([t.identifier('item')], listItem)
+    const rowsDecl = t.variableDeclaration('const', [
+      t.variableDeclarator(
+        t.identifier('rows'),
+        t.optionalCallExpression(
+          t.optionalMemberExpression(t.identifier('items'), t.identifier('map'), false, true),
+          [mapCallback],
+          false,
+        ),
+      ),
+    ])
+    const fn = t.functionDeclaration(
+      t.identifier('App'),
+      [],
+      t.blockStatement([
+        t.ifStatement(
+          t.identifier('flag'),
+          t.blockStatement([
+            t.expressionStatement(
+              t.optionalCallExpression(
+                t.identifier('createMemo'),
+                [t.arrowFunctionExpression([], t.nullLiteral())],
+                true,
+              ),
+            ),
+          ]),
+        ),
+        rowsDecl,
+      ]),
+    )
+
+    const diagnostics = validateFunction(fn, ctx, t)
+    const codes = diagnostics.map(d => d.code)
+    expect(codes).toContain(DiagnosticCode.FICT_C001)
+    expect(codes).toContain(DiagnosticCode.FICT_J002)
+  })
+
   it('does not report outer conditional context for hooks inside nested functions', () => {
     const nestedFn = t.arrowFunctionExpression(
       [],
       t.callExpression(t.identifier('useEffect'), [
         t.arrowFunctionExpression([], t.blockStatement([])),
       ]),
+    )
+    const fn = t.functionDeclaration(
+      t.identifier('App'),
+      [],
+      t.blockStatement([
+        t.ifStatement(
+          t.identifier('flag'),
+          t.blockStatement([
+            t.variableDeclaration('const', [
+              t.variableDeclarator(t.identifier('runner'), nestedFn),
+            ]),
+          ]),
+        ),
+      ]),
+    )
+    const diagnostics = validateFunction(fn, ctx, t)
+    expect(diagnostics.some(d => d.code === DiagnosticCode.FICT_C001)).toBe(false)
+    expect(diagnostics.some(d => d.code === DiagnosticCode.FICT_C002)).toBe(false)
+  })
+
+  it('does not report outer conditional context for optional hooks inside nested functions', () => {
+    const nestedFn = t.arrowFunctionExpression(
+      [],
+      t.optionalCallExpression(
+        t.identifier('useEffect'),
+        [t.arrowFunctionExpression([], t.blockStatement([]))],
+        true,
+      ),
     )
     const fn = t.functionDeclaration(
       t.identifier('App'),

@@ -357,15 +357,21 @@ const HOOK_CALLEE_NAMES = new Set([
   '__fictUseEffect',
 ])
 
+type CallLikeExpression = BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
+
 function getCallExpressionCalleeName(
-  node: BabelCore.types.CallExpression,
+  node: CallLikeExpression,
   t: typeof BabelCore.types,
 ): string | null {
   const { callee } = node
   if (t.isIdentifier(callee)) {
     return callee.name
   }
-  if (t.isMemberExpression(callee) && !callee.computed && t.isIdentifier(callee.property)) {
+  if (
+    (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+    !callee.computed &&
+    t.isIdentifier(callee.property)
+  ) {
     return callee.property.name
   }
   return null
@@ -436,10 +442,14 @@ function isMapCallbackContext(
     }
     if (i === 0) continue
     const parent = ancestors[i - 1]
-    if (!parent || !t.isCallExpression(parent)) continue
+    if (!parent || (!t.isCallExpression(parent) && !t.isOptionalCallExpression(parent))) continue
     if (!parent.arguments.includes(candidate)) continue
     const callee = parent.callee
-    if (t.isMemberExpression(callee) && !callee.computed && t.isIdentifier(callee.property)) {
+    if (
+      (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+      !callee.computed &&
+      t.isIdentifier(callee.property)
+    ) {
       if (callee.property.name === 'map') {
         return i
       }
@@ -506,7 +516,7 @@ function walkNode(
  * Validate that hooks are not called conditionally
  */
 export function validateNoConditionalHooks(
-  node: BabelCore.types.CallExpression,
+  node: CallLikeExpression,
   ctx: TransformContext,
   t: typeof BabelCore.types,
   ancestors: readonly BabelCore.types.Node[] = [],
@@ -652,7 +662,7 @@ function validateNode(
     return false
   }
 
-  if (t.isCallExpression(node)) {
+  if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
     pushDiagnostic(diagnostics, validateNoConditionalHooks(node, ctx, t, ancestors))
   }
   if (t.isJSXElement(node) || t.isJSXFragment(node)) {
