@@ -12,6 +12,11 @@ import {
   analyzeRegionMemoization,
   expressionUsesTracked,
 } from '../src/ir/regions'
+import {
+  analyzeObjectShapes,
+  getPropertySubscription,
+  shouldUseWholeObjectSubscription,
+} from '../src/ir/shapes'
 import { firstFunction } from './hir-test-utils'
 
 const parseFile = (code: string) =>
@@ -202,6 +207,103 @@ describe('generateRegions + shapes', () => {
         expect(deps.has(expected), `${testCase.name} should depend on ${expected}`).toBe(true)
       }
     }
+  })
+
+  it('does not treat observed parameter reads as complete object key sets', () => {
+    const cases = [
+      {
+        name: 'Object.keys parameter',
+        source: `
+          function Foo(props, obj, i) {
+            const seen = obj.visible
+            const keys = Object.keys(obj)
+            const value = props.always + props[keys[i]]
+            return value
+          }
+        `,
+      },
+      {
+        name: 'Object.getOwnPropertyNames parameter',
+        source: `
+          function Foo(props, obj, i) {
+            const seen = obj.visible
+            const keys = Object.getOwnPropertyNames(obj)
+            const value = props.always + props[keys[i]]
+            return value
+          }
+        `,
+      },
+      {
+        name: 'for-in parameter',
+        source: `
+          function Foo(props, obj) {
+            const seen = obj.visible
+            let value = props.always
+            for (const key in obj) {
+              value = value + props[key]
+            }
+            return value
+          }
+        `,
+      },
+      {
+        name: 'object literal spread',
+        source: `
+          function Foo(props, extra, i) {
+            const obj = { visible: 1, ...extra }
+            const keys = Object.keys(obj)
+            const value = props.always + props[keys[i]]
+            return value
+          }
+        `,
+      },
+      {
+        name: 'object literal computed key',
+        source: `
+          function Foo(props, key, i) {
+            const obj = { [key]: 1, visible: 2 }
+            const keys = Object.keys(obj)
+            const value = props.always + props[keys[i]]
+            return value
+          }
+        `,
+      },
+    ]
+
+    for (const testCase of cases) {
+      const ast = parseFile(testCase.source)
+      const hir = buildHIR(ast)
+      const shapeResult = analyzeObjectShapes(firstFunction(hir))
+      const propsSubscription = getPropertySubscription('props', shapeResult)
+
+      expect(
+        shouldUseWholeObjectSubscription('props', shapeResult),
+        `${testCase.name} should use whole props`,
+      ).toBe(true)
+      expect(
+        propsSubscription?.has('visible') ?? false,
+        `${testCase.name} should not narrow to visible`,
+      ).toBe(false)
+    }
+  })
+
+  it('keeps complete object literal key sets finite', () => {
+    const ast = parseFile(`
+      function Foo(props, i) {
+        const obj = { visible: 1, other: 2 }
+        const keys = Object.keys(obj)
+        const value = props.always + props[keys[i]]
+        return value
+      }
+    `)
+    const hir = buildHIR(ast)
+    const shapeResult = analyzeObjectShapes(firstFunction(hir))
+    const propsSubscription = getPropertySubscription('props', shapeResult)
+
+    expect(shouldUseWholeObjectSubscription('props', shapeResult)).toBe(false)
+    expect(propsSubscription?.has('always')).toBe(true)
+    expect(propsSubscription?.has('visible')).toBe(true)
+    expect(propsSubscription?.has('other')).toBe(true)
   })
 
   it('keeps optional-chain subscriptions minimal', () => {

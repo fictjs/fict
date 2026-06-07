@@ -21,6 +21,8 @@ import { structurizeCFG, type StructuredNode } from './structurize'
 export interface ObjectShape {
   /** Known static property names */
   knownKeys: Set<string>
+  /** Whether knownKeys is a complete enumerable key-set proof */
+  completeKeySet: boolean
   /** Properties that may be mutated */
   mutableKeys: Set<string>
   /** Properties accessed dynamically (computed with non-literal) */
@@ -73,6 +75,7 @@ interface EqualityNarrowing {
 function createUnknownShape(source: ObjectSource = { kind: 'unknown' }): ObjectShape {
   return {
     knownKeys: new Set(),
+    completeKeySet: false,
     mutableKeys: new Set(),
     dynamicAccess: false,
     escapes: false,
@@ -87,6 +90,7 @@ function createUnknownShape(source: ObjectSource = { kind: 'unknown' }): ObjectS
 function createPropsShape(): ObjectShape {
   return {
     knownKeys: new Set(),
+    completeKeySet: false,
     mutableKeys: new Set(),
     dynamicAccess: false,
     escapes: false,
@@ -98,6 +102,7 @@ function createPropsShape(): ObjectShape {
 function createStoreShape(name?: string): ObjectShape {
   return {
     knownKeys: new Set(),
+    completeKeySet: false,
     mutableKeys: new Set(),
     dynamicAccess: false,
     escapes: false,
@@ -249,6 +254,7 @@ function resolveKeySet(
           const shape = shapes.get(arg.name)
           if (
             shape &&
+            shape.completeKeySet &&
             shape.knownKeys.size > 0 &&
             !shape.dynamicAccess &&
             !shape.escapes &&
@@ -392,6 +398,7 @@ function applyKeyAssignment(
 function mergeShapes(a: ObjectShape, b: ObjectShape): ObjectShape {
   return {
     knownKeys: new Set([...a.knownKeys, ...b.knownKeys]),
+    completeKeySet: a.completeKeySet && b.completeKeySet,
     mutableKeys: new Set([...a.mutableKeys, ...b.mutableKeys]),
     dynamicAccess: a.dynamicAccess || b.dynamicAccess,
     escapes: a.escapes || b.escapes,
@@ -619,6 +626,7 @@ function analyzeStructuredNode(
           const shape = shapes.get(node.object.name)
           if (
             shape &&
+            shape.completeKeySet &&
             shape.knownKeys.size > 0 &&
             !shape.dynamicAccess &&
             !shape.escapes &&
@@ -1040,8 +1048,10 @@ function analyzeExpression(
     case 'ObjectExpression': {
       // Object literal: we know all the keys
       const shape = createUnknownShape({ kind: 'local', name: '' })
+      shape.completeKeySet = true
       for (const prop of expr.properties) {
         if (prop.kind === 'SpreadElement') {
+          shape.completeKeySet = false
           // Handle spread element in object literal
           if (prop.argument.kind === 'Identifier') {
             const argShape = shapes.get(prop.argument.name)
@@ -1052,6 +1062,7 @@ function analyzeExpression(
           analyzeExpression(prop.argument, shapes, propertyReads, ctx)
         } else if (prop.kind === 'Property') {
           if (prop.computed) {
+            shape.completeKeySet = false
             shape.dynamicAccess = true
             analyzeExpression(prop.key, shapes, propertyReads, ctx)
           } else if (prop.key.kind === 'Identifier') {
