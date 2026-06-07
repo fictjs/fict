@@ -1532,6 +1532,76 @@ describe('state write expression semantics', () => {
     expect(values).toEqual([5, 1, 5])
   })
 
+  it('coerces signed static keys for hook-return reads', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function useBucket() {
+        let neg = $state(1)
+        let one = $state(2)
+        return { "-1": neg, "1": one }
+      }
+
+      function useComputedBucket() {
+        let neg = $state(3)
+        return { [-1]: neg }
+      }
+
+      function readDynamic(bucket, key) {
+        return typeof bucket[key]
+      }
+
+      export function useSignedHookMemberRead() {
+        const bucket = useBucket()
+        const computed = useComputedBucket()
+        return [bucket[-1], bucket[-1n], bucket[+"1"], computed[-1], readDynamic(bucket, -1)]
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).toContain('bucket[-1]()')
+    expect(output).toContain('bucket[-1n]()')
+    expect(output).toContain('bucket[+"1"]()')
+    expect(output).toContain('computed[-1]()')
+    expect(output).not.toContain('bucket[key]()')
+
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useSignedHookMemberRead')() as unknown[]
+    expect(raw).toEqual([1, 1, 2, 3, 'function'])
+  })
+
+  it('coerces signed static keys for hook-return writes and updates', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function useBucket() {
+        let neg = $state(1)
+        let one = $state(10)
+        return { "-1": neg, "1": one }
+      }
+
+      export function useSignedHookMemberWrite() {
+        const bucket = useBucket()
+        const assign = (bucket[-1] = 5)
+        const post = bucket[-1n]++
+        const plus = (bucket[+"1"] += 2)
+        return [assign, post, plus, bucket["-1"], bucket["1"]]
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).toContain('bucket[-1](__next_')
+    expect(output).not.toContain('bucket[-1] = 5')
+    expect(output).toContain('bucket[-1n]()')
+    expect(output).toContain('bucket[-1n](__prev_')
+    expect(output).toContain('bucket[+"1"](__next_')
+
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useSignedHookMemberWrite')() as unknown[]
+    const values = raw.map(value =>
+      typeof value === 'function' ? (value as () => unknown)() : value,
+    )
+    expect(values).toEqual([5, 5, 12, 6, 12])
+  })
+
   it('records static computed hook-return object keys', () => {
     const source = `
       import { $state } from 'fict'

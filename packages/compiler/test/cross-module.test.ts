@@ -1955,6 +1955,53 @@ describe('Cross-Module Reactivity', () => {
       expect(output).not.toContain('missing.count()')
     })
 
+    it('normalizes signed namespace hook metadata keys', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+
+        export { useCounter as "-1", useCounter as "1" }
+      `
+      const appSource = `
+        import * as hooks from './use-counter-signed-namespace-member'
+
+        function readDynamic(key) {
+          const dynamic = hooks[key]()
+          return dynamic.count
+        }
+
+        export function App() {
+          const neg = hooks[-1]()
+          const negBig = hooks[-1n]()
+          const plus = hooks[+"1"]()
+          return <span>{neg.count}:{negBig.count}:{plus.count}:{readDynamic(-1)}</span>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-signed-namespace-member.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-hook-signed-namespace-member.tsx'),
+      )
+
+      expect(output).toMatch(/neg\.count\(\)/)
+      expect(output).toMatch(/negBig\.count\(\)/)
+      expect(output).toMatch(/plus\.count\(\)/)
+      expect(output).toContain('dynamic.count')
+      expect(output).not.toContain('dynamic.count()')
+    })
+
     it('routes numeric namespace hook-result writes through signal setters', () => {
       const hookSource = `
         import { $state } from 'fict'
@@ -4985,6 +5032,54 @@ describe('Cross-Module Reactivity', () => {
           path.join(baseDir, 'app-ns-bigint-store-write.tsx'),
         ),
       ).toThrow('Cannot write to imported store binding "ns.2"')
+    })
+
+    it('normalizes signed namespace reactive metadata keys', () => {
+      const storeSource = `
+        import { createMemo, createSignal, createStore } from 'fict/advanced'
+
+        const neg = createSignal(1)
+        const one = createMemo(() => 2)
+        const user = createStore({ name: 'Ada' })
+
+        export { neg as "-1", one as "1", user as "-2" }
+      `
+      const appSource = `
+        import * as ns from './store-ns-signed-keys'
+
+        export function App() {
+          const key = -1
+          return <div>{ns[-1]}:{ns[-1n]}:{ns[+"1"]}:{ns[-2n].name}:{ns[key]}</div>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(storeSource, { moduleMetadata }, path.join(baseDir, 'store-ns-signed-keys.ts'))
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-ns-signed-keys.tsx'),
+      )
+
+      expect(output).toMatch(/ns\["-1"\]\(\)/)
+      expect(output).toMatch(/ns\["1"\]\(\)/)
+      expect(output).toMatch(/ns\[-2n\]\.name/)
+      expect(output).toContain('ns[key]')
+      expect(output).not.toContain('ns[key]()')
+
+      expect(() =>
+        transform(
+          `
+            import * as ns from './store-ns-signed-keys'
+
+            export function Mutate() {
+              ns[-2n] = { name: 'Lin' }
+            }
+          `,
+          { moduleMetadata },
+          path.join(baseDir, 'app-ns-signed-store-write.tsx'),
+        ),
+      ).toThrow('Cannot write to imported store binding "ns.-2"')
     })
 
     it('preserves numeric namespace signal assignment targets in non-strict mode', () => {

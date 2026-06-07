@@ -36,6 +36,20 @@ function getStaticHookReturnPropName(expr: Expression, computed: boolean): strin
   if (computed && expr.kind === 'Literal' && typeof expr.value === 'bigint') {
     return expr.value.toString()
   }
+  if (computed && expr.kind === 'UnaryExpression') {
+    if (expr.operator !== '-' && expr.operator !== '+') return null
+    if (expr.argument.kind !== 'Literal') return null
+    const value = expr.argument.value
+    if (typeof value === 'number') return String(expr.operator === '-' ? -value : +value)
+    if (typeof value === 'bigint') {
+      if (expr.operator !== '-') return null
+      return (-value).toString()
+    }
+    if (typeof value === 'string') {
+      const numeric = Number(value)
+      return String(expr.operator === '-' ? -numeric : numeric)
+    }
+  }
   return null
 }
 

@@ -1865,12 +1865,33 @@ function getStaticMetadataPropertyKey(propName: string | number | null): string 
   return null
 }
 
+function getStaticUnaryPropertyKey(expr: Expression): string | null {
+  if (expr.kind !== 'UnaryExpression') return null
+  if (expr.operator !== '-' && expr.operator !== '+') return null
+  if (expr.argument.kind !== 'Literal') return null
+
+  const value = expr.argument.value
+  if (typeof value === 'number') {
+    return String(expr.operator === '-' ? -value : +value)
+  }
+  if (typeof value === 'bigint') {
+    if (expr.operator !== '-') return null
+    return (-value).toString()
+  }
+  if (typeof value === 'string') {
+    const numeric = Number(value)
+    return String(expr.operator === '-' ? -numeric : numeric)
+  }
+  return null
+}
+
 function getStaticMemberMetadataKey(property: Expression, computed: boolean): string | null {
   const propName = getStaticMetadataPropertyKey(getStaticPropName(property, computed))
   if (propName !== null) return propName
   if (computed && property.kind === 'Literal' && typeof property.value === 'bigint') {
     return property.value.toString()
   }
+  if (computed) return getStaticUnaryPropertyKey(property)
   return null
 }
 
@@ -1883,6 +1904,7 @@ function getStaticHookReturnPropName(
   if (computed && property.kind === 'Literal' && typeof property.value === 'bigint') {
     return property.value.toString()
   }
+  if (computed) return getStaticUnaryPropertyKey(property)
   return null
 }
 
@@ -5805,6 +5827,27 @@ function getStaticBabelPropertyName(
   return null
 }
 
+function getStaticBabelUnaryPropertyKey(
+  node: BabelCore.types.Node,
+  t: typeof BabelCore.types,
+): string | null {
+  if (!t.isUnaryExpression(node)) return null
+  if (node.operator !== '-' && node.operator !== '+') return null
+  const argument = node.argument
+  if (t.isNumericLiteral(argument)) {
+    return String(node.operator === '-' ? -argument.value : +argument.value)
+  }
+  if (t.isBigIntLiteral(argument)) {
+    if (node.operator !== '-') return null
+    return (-BigInt(argument.value)).toString()
+  }
+  if (t.isStringLiteral(argument)) {
+    const numeric = Number(argument.value)
+    return String(node.operator === '-' ? -numeric : numeric)
+  }
+  return null
+}
+
 function getStaticBabelMetadataPropertyName(
   node: BabelCore.types.Node,
   computed: boolean | undefined,
@@ -5813,6 +5856,7 @@ function getStaticBabelMetadataPropertyName(
   const propName = getStaticBabelPropertyName(node, computed, t)
   if (propName !== null) return propName
   if (computed && t.isBigIntLiteral(node)) return node.value
+  if (computed) return getStaticBabelUnaryPropertyKey(node, t)
   return null
 }
 
