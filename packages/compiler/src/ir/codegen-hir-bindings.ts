@@ -122,8 +122,13 @@ export function emitHIRChildBinding(
   )
 
   // Set namespace context for child element lowering
+  const prevNamespaceExplicit = ctx.namespaceContextExplicit
   if (namespace !== undefined) {
     ctx.namespaceContext = namespace
+    ctx.namespaceContextExplicit = true
+  }
+  const restoreNamespaceExplicit = () => {
+    ctx.namespaceContextExplicit = prevNamespaceExplicit
   }
 
   // createPortal call inside JSX child: register cleanup but don't insert marker into parent
@@ -139,6 +144,7 @@ export function emitHIRChildBinding(
         ]),
       ),
     )
+    restoreNamespaceExplicit()
     return
   }
 
@@ -148,6 +154,7 @@ export function emitHIRChildBinding(
     (expr.kind === 'LogicalExpression' && expr.operator === '&&')
   ) {
     ops.emitConditionalChild(markerId, endMarkerId, expr, statements, ctx)
+    restoreNamespaceExplicit()
     return
   }
 
@@ -160,6 +167,7 @@ export function emitHIRChildBinding(
       callee.property.name === 'map'
     ) {
       if (ops.emitListChild(markerId, endMarkerId, expr, statements, ctx)) {
+        restoreNamespaceExplicit()
         return
       }
     }
@@ -180,6 +188,7 @@ export function emitHIRChildBinding(
         ]),
       ),
     )
+    restoreNamespaceExplicit()
     return
   }
 
@@ -197,4 +206,5 @@ export function emitHIRChildBinding(
       ]),
     ),
   )
+  restoreNamespaceExplicit()
 }

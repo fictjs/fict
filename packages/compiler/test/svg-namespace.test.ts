@@ -143,6 +143,28 @@ describe('SVG/MathML Namespace Support ()', () => {
       expect(output).toMatch(/createElementInNamespace\([^)]*,\s*"svg"\)/)
     })
 
+    it('adds isSVG flag for standalone SVG intrinsic component roots', () => {
+      const source = `
+        function CircleIcon() {
+          return <circle data-id="circle" />
+        }
+        function PathIcon() {
+          return <path data-id="path" d="M0 0" />
+        }
+        function GroupIcon() {
+          return <g data-id="group"><path data-id="nested" d="M0 0" /></g>
+        }
+        export function App() {
+          return <svg><CircleIcon /><PathIcon /><GroupIcon /></svg>
+        }
+      `
+      const output = transform(source, { dev: false })
+
+      expect(output).toMatch(/template\([^)]*circle[^)]*,\s*void 0,\s*true\)/)
+      expect(output).toMatch(/template\([^)]*path[^)]*,\s*void 0,\s*true\)/)
+      expect(output).toMatch(/template\([^)]*<g[^)]*,\s*void 0,\s*true\)/)
+    })
+
     it('does not pass SVG namespace to dynamic tags inside foreignObject', () => {
       const source = `
         export function App({ Tag }) {
@@ -180,6 +202,23 @@ describe('SVG/MathML Namespace Support ()', () => {
       expect(output).toContain('template(')
       // The div should be a regular HTML template without namespace flags
       expect(output).not.toMatch(/template\("[^"]*div[^"]*",\s*undefined,\s*true\)/)
+    })
+
+    it('keeps dynamic SVG integration point elements in the SVG namespace', () => {
+      const source = `
+        import { $state } from 'fict'
+        export function App() {
+          const show = $state(true)
+          return (
+            <svg>
+              {show && <foreignObject><div data-id="html" /></foreignObject>}
+            </svg>
+          )
+        }
+      `
+      const output = transform(source)
+
+      expect(output).toMatch(/template\([^)]*foreignObject[^)]*,\s*void 0,\s*true\)/)
     })
 
     it.each(['title', 'desc'])('exits SVG namespace inside %s integration point', parentTag => {
@@ -260,6 +299,20 @@ describe('SVG/MathML Namespace Support ()', () => {
       expect(output).toMatch(/createElementInNamespace\([^)]*,\s*"mathml"\)/)
     })
 
+    it('adds isMathML flag for standalone MathML intrinsic component roots', () => {
+      const source = `
+        function Token() {
+          return <mi data-id="token">x</mi>
+        }
+        export function App() {
+          return <math><Token /></math>
+        }
+      `
+      const output = transform(source, { dev: false })
+
+      expect(output).toMatch(/template\([^)]*mi[^)]*,\s*void 0,\s*void 0,\s*true\)/)
+    })
+
     it('exits MathML namespace inside annotation-xml with HTML encoding', () => {
       const source = `
         import { $state } from 'fict'
@@ -303,6 +356,23 @@ describe('SVG/MathML Namespace Support ()', () => {
 
       expect(output).toContain('<mi data-id=\\"math-mi\\">')
       expect(output).toMatch(/template\([^)]*math-mi[^)]*,\s*void 0,\s*void 0,\s*true\)/)
+    })
+
+    it('keeps dynamic MathML annotation-xml elements in the MathML namespace', () => {
+      const source = `
+        import { $state } from 'fict'
+        export function App() {
+          const show = $state(true)
+          return (
+            <math>
+              {show && <annotation-xml encoding="text/html"><div data-id="html" /></annotation-xml>}
+            </math>
+          )
+        }
+      `
+      const output = transform(source)
+
+      expect(output).toMatch(/template\([^)]*annotation-xml[^)]*,\s*void 0,\s*void 0,\s*true\)/)
     })
 
     it.each(['mi', 'mo', 'mn', 'ms', 'mtext'])(

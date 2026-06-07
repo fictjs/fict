@@ -40,6 +40,10 @@ export interface TemplateExtractionOps {
   isLikelyTextExpression: (expr: Expression, ctx: CodegenContext) => boolean
 }
 
+interface NamespaceResolveOptions {
+  allowStandaloneIntrinsic?: boolean | undefined
+}
+
 type JSXElementAttribute = JSXElementExpression['attributes'][number]
 
 /**
@@ -184,6 +188,100 @@ const MATHML_TEXT_INTEGRATION_POINTS = new Set(['mi', 'mo', 'mn', 'ms', 'mtext']
 const MATHML_TEXT_INTEGRATION_EXCEPTIONS = new Set(['mglyph', 'malignmark'])
 const SVG_HTML_INTEGRATION_POINTS = new Set(['foreignObject', 'title', 'desc'])
 const HTML_RAW_TEXT_CONTENT_ELEMENTS = new Set(['script', 'style', 'title'])
+const STANDALONE_SVG_INTRINSIC_ELEMENTS = new Set([
+  'animate',
+  'animateMotion',
+  'animateTransform',
+  'circle',
+  'clipPath',
+  'defs',
+  'desc',
+  'ellipse',
+  'feBlend',
+  'feColorMatrix',
+  'feComponentTransfer',
+  'feComposite',
+  'feConvolveMatrix',
+  'feDiffuseLighting',
+  'feDisplacementMap',
+  'feDistantLight',
+  'feDropShadow',
+  'feFlood',
+  'feFuncA',
+  'feFuncB',
+  'feFuncG',
+  'feFuncR',
+  'feGaussianBlur',
+  'feImage',
+  'feMerge',
+  'feMergeNode',
+  'feMorphology',
+  'feOffset',
+  'fePointLight',
+  'feSpecularLighting',
+  'feSpotLight',
+  'feTile',
+  'feTurbulence',
+  'filter',
+  'g',
+  'image',
+  'line',
+  'linearGradient',
+  'marker',
+  'mask',
+  'metadata',
+  'mpath',
+  'path',
+  'pattern',
+  'polygon',
+  'polyline',
+  'radialGradient',
+  'rect',
+  'set',
+  'stop',
+  'switch',
+  'symbol',
+  'text',
+  'textPath',
+  'tspan',
+  'use',
+  'view',
+])
+const STANDALONE_MATHML_INTRINSIC_ELEMENTS = new Set([
+  'annotation',
+  'maction',
+  'maligngroup',
+  'malignmark',
+  'menclose',
+  'merror',
+  'mfenced',
+  'mfrac',
+  'mglyph',
+  'mlabeledtr',
+  'mlongdiv',
+  'mmultiscripts',
+  'mover',
+  'mpadded',
+  'mphantom',
+  'mroot',
+  'mrow',
+  'msgroup',
+  'msline',
+  'mspace',
+  'msqrt',
+  'msrow',
+  'mstack',
+  'mstyle',
+  'msub',
+  'msubsup',
+  'msup',
+  'mtable',
+  'mtd',
+  'mtr',
+  'munder',
+  'munderover',
+  'semantics',
+])
 
 /**
  * Resolve namespace context based on tag name and parent context.
@@ -198,9 +296,31 @@ export function resolveNamespaceContext(
   tagName: string,
   parentNamespace: NamespaceContext,
   attrs?: readonly JSXElementAttribute[],
+  options?: NamespaceResolveOptions,
 ): NamespaceContext {
   if (tagName === 'svg') return 'svg'
   if (tagName === 'math') return 'mathml'
+  if (
+    options?.allowStandaloneIntrinsic === true &&
+    parentNamespace === null &&
+    STANDALONE_SVG_INTRINSIC_ELEMENTS.has(tagName)
+  ) {
+    return 'svg'
+  }
+  if (
+    options?.allowStandaloneIntrinsic === true &&
+    parentNamespace === null &&
+    MATHML_TEXT_INTEGRATION_POINTS.has(tagName)
+  ) {
+    return 'mathmlTextIntegration'
+  }
+  if (
+    options?.allowStandaloneIntrinsic === true &&
+    parentNamespace === null &&
+    STANDALONE_MATHML_INTRINSIC_ELEMENTS.has(tagName)
+  ) {
+    return 'mathml'
+  }
   if (parentNamespace === 'svg' && SVG_HTML_INTEGRATION_POINTS.has(tagName)) return null
   if (parentNamespace === 'mathmlTextIntegration') {
     return MATHML_TEXT_INTEGRATION_EXCEPTIONS.has(tagName) ? 'mathml' : null
@@ -367,6 +487,7 @@ export function extractHIRStaticHtml(
   ops: TemplateExtractionOps,
   parentPath: number[] = [],
   namespace: NamespaceContext = null,
+  allowStandaloneIntrinsic = true,
 ): HIRTemplateExtractionResult {
   // Components or dynamic tag expressions should be treated as dynamic children,
   // not baked into static HTML.
@@ -387,7 +508,9 @@ export function extractHIRStaticHtml(
 
   const tagName = jsx.tagName as string
   // Resolve namespace for this element
-  const resolvedNamespace = resolveNamespaceContext(tagName, namespace, jsx.attributes)
+  const resolvedNamespace = resolveNamespaceContext(tagName, namespace, jsx.attributes, {
+    allowStandaloneIntrinsic,
+  })
   const isCustomElement =
     resolvedNamespace === null &&
     (isCustomElementTagName(tagName) || hasExplicitIsAttribute(jsx, resolvedNamespace))
@@ -737,6 +860,7 @@ export function extractHIRStaticHtml(
               ops,
               [...tbodyPath, rowIndex],
               resolvedNamespace,
+              false,
             )
             html += rowResult.html
             bindings.push(...rowResult.bindings)
@@ -756,6 +880,7 @@ export function extractHIRStaticHtml(
           ops,
           childPath,
           resolvedNamespace,
+          false,
         )
         html += childResult.html
         bindings.push(...childResult.bindings)
@@ -797,10 +922,14 @@ export function extractHIRStaticHtml(
   // - We're in SVG/MathML context (from parent) but root tag isn't 'svg'/'math' itself
   // - In that case, the browser would parse the HTML as HTML elements without the namespace
   // Note: If root IS 'svg' or 'math', the tag itself creates the namespace, no wrapping needed
-  const needsSVG = namespace === 'svg' && tagName !== 'svg'
+  const needsSVG =
+    (namespace === 'svg' || (namespace === null && resolvedNamespace === 'svg')) &&
+    tagName !== 'svg'
   const needsMathML =
     (namespace === 'mathml' ||
-      (namespace === 'mathmlTextIntegration' && resolvedNamespace === 'mathml')) &&
+      (namespace === 'mathmlTextIntegration' && resolvedNamespace === 'mathml') ||
+      (namespace === null &&
+        (resolvedNamespace === 'mathml' || resolvedNamespace === 'mathmlTextIntegration'))) &&
     tagName !== 'math'
 
   return {

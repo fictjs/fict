@@ -4318,6 +4318,77 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('renders component-root SVG and MathML intrinsics in their native namespaces', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      function CircleIcon() {
+        return <circle data-id="circle-icon" />
+      }
+
+      function PathIcon() {
+        return <path data-id="path-icon" d="M0 0" />
+      }
+
+      function GroupIcon() {
+        return <g data-id="group-icon"><path data-id="group-path" d="M0 0" /></g>
+      }
+
+      function MathToken() {
+        return <mi data-id="math-token">x</mi>
+      }
+
+      export function App() {
+        return (
+          <div>
+            <svg data-id="svg">
+              <CircleIcon />
+              <PathIcon />
+              <GroupIcon />
+            </svg>
+            <math data-id="math">
+              <MathToken />
+            </math>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const output = transformCommonJS(source, { fineGrainedDom: true, dev: false })
+    expect(output).toMatch(/"<circle data-id=\\"circle-icon\\"><\/circle>", void 0, true/)
+    expect(output).toMatch(/"<path data-id=\\"path-icon\\" d=\\"M0 0\\"><\/path>", void 0, true/)
+    expect(output).toMatch(/"<g data-id=\\"group-icon\\">[\s\S]*", void 0, true/)
+    expect(output).toMatch(/"<mi data-id=\\"math-token\\">x<\/mi>", void 0, void 0, true/)
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true, dev: false })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    const circle = container.querySelector('[data-id="circle-icon"]') as Element
+    const path = container.querySelector('[data-id="path-icon"]') as Element
+    const group = container.querySelector('[data-id="group-icon"]') as Element
+    const groupPath = container.querySelector('[data-id="group-path"]') as Element
+    const mathToken = container.querySelector('[data-id="math-token"]') as Element
+
+    expect(circle.namespaceURI).toBe('http://www.w3.org/2000/svg')
+    expect(path.namespaceURI).toBe('http://www.w3.org/2000/svg')
+    expect(group.namespaceURI).toBe('http://www.w3.org/2000/svg')
+    expect(groupPath.namespaceURI).toBe('http://www.w3.org/2000/svg')
+    expect(mathToken.namespaceURI).toBe('http://www.w3.org/1998/Math/MathML')
+
+    teardown()
+    container.remove()
+  })
+
   it.each([
     { mode: 'fine-grained', options: { fineGrainedDom: true } },
     { mode: 'vnode', options: { fineGrainedDom: false } },

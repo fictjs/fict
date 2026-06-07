@@ -1454,6 +1454,8 @@ export interface CodegenContext {
   listKeyConstificationDisabled?: boolean | undefined
   /** Current namespace context for SVG/MathML element creation */
   namespaceContext?: NamespaceContext | undefined
+  /** Whether namespaceContext came from an explicit child binding location */
+  namespaceContextExplicit?: boolean | undefined
   /** Injected lowering operations used by regions.ts to avoid runtime import cycles */
   regionLoweringOps?: RegionLoweringOps | undefined
   /** Dedupe set for control-flow re-execution diagnostics */
@@ -6004,6 +6006,7 @@ function lowerIntrinsicElement(
     },
     [],
     ctx.namespaceContext ?? null,
+    ctx.namespaceContextExplicit !== true,
   )
 
   // Collect all dependencies from bindings to find containing region
@@ -6100,13 +6103,16 @@ function lowerIntrinsicElement(
   // This allows dynamic child expressions to know they're inside SVG/MathML
   const tagName = typeof jsx.tagName === 'string' ? jsx.tagName : null
   const prevNamespace = ctx.namespaceContext
+  const prevNamespaceExplicit = ctx.namespaceContextExplicit
   if (tagName) {
     const elementNamespace = resolveNamespaceContext(
       tagName,
       ctx.namespaceContext ?? null,
       jsx.attributes,
+      { allowStandaloneIntrinsic: ctx.namespaceContextExplicit !== true },
     )
     ctx.namespaceContext = elementNamespace
+    ctx.namespaceContextExplicit = false
   }
 
   // Precompute node references before any binding mutates the DOM tree
@@ -7142,6 +7148,7 @@ function lowerIntrinsicElement(
 
   // Restore previous namespace context
   ctx.namespaceContext = prevNamespace
+  ctx.namespaceContextExplicit = prevNamespaceExplicit
 
   // Return element
   statements.push(t.returnStatement(elId))
