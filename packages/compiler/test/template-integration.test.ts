@@ -2469,6 +2469,75 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('sets dangerouslySetInnerHTML in VNode fallback output', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        return <div data-testid="box" dangerouslySetInnerHTML={{ __html: '<span>x</span>' }} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: false,
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const box = container.querySelector('[data-testid="box"]') as HTMLDivElement
+
+    expect(box.innerHTML).toBe('<span>x</span>')
+    expect(box.hasAttribute('dangerouslysetinnerhtml')).toBe(false)
+
+    teardown()
+    container.remove()
+  })
+
+  it('updates reactive dangerouslySetInnerHTML in VNode fallback output', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { set(value: string | null): void }
+
+      export function App() {
+        let html = $state<string | null>('<span>a</span>')
+        api = { set: value => (html = value) }
+        return <div data-testid="box" dangerouslySetInnerHTML={{ __html: html }} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { set(value: string | null): void }
+    }>(source, { fineGrainedDom: false })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const box = container.querySelector('[data-testid="box"]') as HTMLDivElement
+
+    expect(box.innerHTML).toBe('<span>a</span>')
+    expect(box.getAttribute('dangerouslySetInnerHTML')).toBeNull()
+
+    mod.api.set('<em>b</em>')
+    await flushUpdates()
+    expect(box.innerHTML).toBe('<em>b</em>')
+
+    mod.api.set(null)
+    await flushUpdates()
+    expect(box.innerHTML).toBe('')
+
+    teardown()
+    container.remove()
+  })
+
   it('preserves lower-case on-prefixed intrinsic spread attributes', async () => {
     const source = `
       import { render } from 'fict'
@@ -2590,6 +2659,34 @@ describe('compiled templates DOM integration', () => {
 
     const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
       fineGrainedDom: true,
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const box = container.querySelector('[data-testid="box"]') as HTMLDivElement
+
+    expect(box.innerHTML).toBe('')
+    expect(box.hasAttribute('dangerouslysetinnerhtml')).toBe(false)
+
+    teardown()
+    container.remove()
+  })
+
+  it('keeps missing VNode fallback dangerouslySetInnerHTML __html from writing an attribute', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        return <div data-testid="box" dangerouslySetInnerHTML={{}} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: false,
     })
     const container = document.createElement('div')
     document.body.appendChild(container)

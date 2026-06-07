@@ -870,6 +870,22 @@ describe('region metadata → DOM', () => {
     expect(code).not.toContain('dangerouslySetInnerHTML')
   })
 
+  it('keeps VNode fallback dangerouslySetInnerHTML object shape reactive at __html', () => {
+    const ast = parseFile(`
+      function View() {
+        let html = $state('<span>x</span>')
+        return <div dangerouslySetInnerHTML={{ __html: html }} />
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { fineGrainedDom: false })
+    const { code } = generate(file)
+
+    expect(code).toContain('dangerouslySetInnerHTML: {')
+    expect(code).toContain('__html: __fictReactive(() => html())')
+    expect(code).not.toContain('dangerouslySetInnerHTML: __fictReactive')
+  })
+
   it('rejects dangerouslySetInnerHTML with JSX children in fine-grained output', () => {
     const ast = parseFile(`
       function View() {

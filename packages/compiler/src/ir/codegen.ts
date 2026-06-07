@@ -5239,6 +5239,39 @@ function lowerIntrinsicElementAsVNode(
     if (isCamelCaseEventProp(name)) return { name, isEvent: true, resumableExplicit: false }
     return { name, isEvent: false, resumableExplicit: false }
   }
+  const lowerVNodeObjectKey = (
+    key: Expression,
+    computed: boolean | undefined,
+  ): BabelCore.types.Expression => {
+    if (computed) return lowerExpression(key, ctx)
+    const keyName = getStaticPropName(key, false)
+    if (typeof keyName === 'string' && /^[a-zA-Z_$][\w$]*$/.test(keyName)) {
+      return t.identifier(keyName)
+    }
+    if (typeof keyName === 'string') return t.stringLiteral(keyName)
+    if (typeof keyName === 'number') return t.numericLiteral(keyName)
+    return lowerExpression(key, ctx)
+  }
+  const lowerVNodeDangerouslySetInnerHTMLValue = (expr: Expression): BabelCore.types.Expression => {
+    if (expr.kind !== 'ObjectExpression') {
+      return lowerDomExpression(expr, ctx)
+    }
+
+    return t.objectExpression(
+      expr.properties.map(prop => {
+        if (prop.kind === 'SpreadElement') {
+          return t.spreadElement(lowerDomExpression(prop.argument, ctx))
+        }
+        const keyName = getStaticObjectPropertySegment(prop)
+        const keyNode = lowerVNodeObjectKey(prop.key, prop.computed)
+        let valueNode = lowerDomExpression(prop.value, ctx)
+        if (keyName === '__html' && isExpressionReactive(prop.value, ctx)) {
+          valueNode = markCompilerReactiveGetter(ctx, t.arrowFunctionExpression([], valueNode))
+        }
+        return t.objectProperty(keyNode, valueNode, !!prop.computed)
+      }),
+    )
+  }
 
   for (const attr of jsx.attributes) {
     if (attr.isSpread && attr.spreadExpr) {
@@ -5278,7 +5311,12 @@ function lowerIntrinsicElementAsVNode(
     if (isEvent) {
       ctx.wrapTrackedExpressions = false
     }
-    const rawExpr = attr.value ? lowerDomExpression(attr.value, ctx) : t.booleanLiteral(true)
+    const rawExpr =
+      attr.value && name === 'dangerouslySetInnerHTML'
+        ? lowerVNodeDangerouslySetInnerHTMLValue(attr.value)
+        : attr.value
+          ? lowerDomExpression(attr.value, ctx)
+          : t.booleanLiteral(true)
     ctx.wrapTrackedExpressions = prevWrapTracked
     let valueExpr = rawExpr
 
@@ -5288,7 +5326,7 @@ function lowerIntrinsicElementAsVNode(
         if (valueExpr === rawExpr && eventHandlerExpressionNeedsReactiveGetter(attr.value, ctx)) {
           valueExpr = markCompilerReactiveGetter(ctx, t.arrowFunctionExpression([], rawExpr))
         }
-      } else if (isExpressionReactive(attr.value, ctx)) {
+      } else if (name !== 'dangerouslySetInnerHTML' && isExpressionReactive(attr.value, ctx)) {
         valueExpr = markCompilerReactiveGetter(ctx, t.arrowFunctionExpression([], rawExpr))
       }
     }
