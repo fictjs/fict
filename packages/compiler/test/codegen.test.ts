@@ -2223,6 +2223,81 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).not.toMatch(/insertBetween\([^,]+,\s*[^,]+,\s*\(\)\s*=>\s*createPortal/)
   })
 
+  it.each([
+    {
+      name: 'aliased framework import',
+      source: 'fict',
+      importClause: '{ createPortal as cp, createElement }',
+      call: 'cp(document.body, () => <span>child</span>, createElement)',
+      expectedCall: 'cp(document.body',
+    },
+    {
+      name: 'aliased runtime package import',
+      source: '@fictjs/runtime',
+      importClause: '{ createPortal as cp, createElement }',
+      call: 'cp(document.body, () => <span>child</span>, createElement)',
+      expectedCall: 'cp(document.body',
+    },
+    {
+      name: 'namespace import',
+      source: 'fict',
+      importClause: '* as Fict',
+      call: 'Fict.createPortal(document.body, () => <span>child</span>, Fict.createElement)',
+      expectedCall: 'Fict.createPortal(document.body',
+    },
+    {
+      name: 'computed namespace import',
+      source: 'fict',
+      importClause: '* as Fict',
+      call: 'Fict["createPortal"](document.body, () => <span>child</span>, Fict.createElement)',
+      expectedCall: 'Fict["createPortal"](document.body',
+    },
+  ])('registers cleanup for $name createPortal child calls', testCase => {
+    const output = transform(`
+      import ${testCase.importClause} from '${testCase.source}'
+
+      export function App() {
+        return <div>{${testCase.call}}</div>
+      }
+    `)
+
+    expect(output).toContain(testCase.expectedCall)
+    expect(output).toContain('onDestroy')
+    expect(output).not.toMatch(
+      /insertBetween[\s\S]*\(\)\s*=>[\s\S]*(?:cp|Fict(?:\.|\["createPortal"\]))/,
+    )
+  })
+
+  it.each([
+    {
+      name: 'aliased import',
+      importLine: "import { createPortal as cp } from 'fict'",
+      shadow: 'const cp = (value: unknown) => value',
+      call: "cp('child')",
+      expectedCall: 'cp("child")',
+    },
+    {
+      name: 'namespace import',
+      importLine: "import * as Fict from 'fict'",
+      shadow: 'const Fict = { createPortal(value: unknown) { return value } }',
+      call: "Fict.createPortal('child')",
+      expectedCall: 'Fict.createPortal("child")',
+    },
+  ])('preserves locally shadowed $name createPortal child calls', testCase => {
+    const output = transform(`
+      ${testCase.importLine}
+
+      export function App() {
+        ${testCase.shadow}
+        return <div>{${testCase.call}}</div>
+      }
+    `)
+
+    expect(output).toContain(testCase.expectedCall)
+    expect(output).toContain('insertBetween')
+    expect(output).not.toContain('onDestroy')
+  })
+
   it('lowers object-property JSX member components with component state semantics', () => {
     const output = transform(`
       import { $state } from 'fict'

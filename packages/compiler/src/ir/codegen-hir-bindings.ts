@@ -33,12 +33,34 @@ export interface HIRChildBindingOps {
 
 function isRuntimeCreatePortalCall(expr: Expression, ctx: CodegenContext): boolean {
   if (expr.kind !== 'CallExpression') return false
-  if (expr.callee.kind !== 'Identifier') return false
-  const name = expr.callee.name
-  if (ctx.shadowedNames?.has(name) || ctx.localDeclaredNames?.has(name)) {
-    return false
+  const callee = expr.callee
+  if (callee.kind === 'Identifier') {
+    const name = callee.name
+    if (ctx.shadowedNames?.has(name) || ctx.localDeclaredNames?.has(name)) {
+      return false
+    }
+    return ctx.moduleRuntimeImportMap?.get(name) === 'createPortal'
   }
-  return ctx.moduleRuntimeImportMap?.get(name) === 'createPortal'
+  if (
+    callee.kind === 'MemberExpression' &&
+    callee.object.kind === 'Identifier' &&
+    getCreatePortalMemberName(callee.property as Expression, callee.computed) === 'createPortal'
+  ) {
+    const namespaceName = callee.object.name
+    if (ctx.shadowedNames?.has(namespaceName) || ctx.localDeclaredNames?.has(namespaceName)) {
+      return false
+    }
+    return ctx.moduleRuntimeNamespaceImports?.has(namespaceName) ?? false
+  }
+  return false
+}
+
+function getCreatePortalMemberName(property: Expression, computed: boolean): string | null {
+  if (!computed && property.kind === 'Identifier') return property.name
+  if (computed && property.kind === 'Literal' && property.value === 'createPortal') {
+    return property.value
+  }
+  return null
 }
 
 /**
