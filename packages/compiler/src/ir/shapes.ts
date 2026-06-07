@@ -61,6 +61,7 @@ type KeyNarrowingValue = Set<string | number>
 interface KeyNarrowingContext {
   values: Map<string, KeyNarrowingValue>
   keySets: Map<string, KeyNarrowingValue>
+  shadowedGlobals: Set<string>
 }
 
 interface EqualityNarrowing {
@@ -122,6 +123,7 @@ function cloneKeyContext(ctx: KeyNarrowingContext): KeyNarrowingContext {
   return {
     values: cloneMap(ctx.values),
     keySets: cloneMap(ctx.keySets),
+    shadowedGlobals: new Set(ctx.shadowedGlobals),
   }
 }
 
@@ -163,6 +165,20 @@ function clearPatternBindings(pattern: BabelPattern, ctx: KeyNarrowingContext): 
         clearPatternBindings(prop.value as t.PatternLike, ctx)
       }
     }
+  }
+}
+
+function markShadowedGlobalName(name: string | null | undefined, ctx: KeyNarrowingContext): void {
+  if (name === 'Object') {
+    ctx.shadowedGlobals.add(name)
+  }
+}
+
+function markPatternShadowedGlobals(pattern: BabelPattern, ctx: KeyNarrowingContext): void {
+  if (!pattern || typeof pattern !== 'object') return
+  const ids = t.getBindingIdentifiers(pattern as t.Node)
+  for (const name of Object.keys(ids)) {
+    markShadowedGlobalName(name, ctx)
   }
 }
 
@@ -226,6 +242,7 @@ function resolveKeySet(
       if (
         object.kind === 'Identifier' &&
         object.name === 'Object' &&
+        !ctx.shadowedGlobals.has('Object') &&
         !expr.callee.computed &&
         property.kind === 'Identifier' &&
         (property.name === 'keys' || property.name === 'getOwnPropertyNames') &&
@@ -425,7 +442,11 @@ export function analyzeObjectShapes(fn: HIRFunction): ShapeAnalysisResult {
   }
 
   // First pass: collect all property accesses and assignments
-  const baseCtx: KeyNarrowingContext = { values: new Map(), keySets: new Map() }
+  const baseCtx: KeyNarrowingContext = {
+    values: new Map(),
+    keySets: new Map(),
+    shadowedGlobals: new Set(fn.params.map(param => param.name)),
+  }
   let structured: StructuredNode | null
   try {
     structured = structurizeCFG(fn, {
@@ -597,8 +618,10 @@ function analyzeStructuredNode(
         const bodyCtx = cloneKeyContext(ctx)
         bodyCtx.values.delete(node.variable)
         bodyCtx.keySets.delete(node.variable)
+        markShadowedGlobalName(node.variable, bodyCtx)
         if (node.pattern) {
           clearPatternBindings(node.pattern, bodyCtx)
+          markPatternShadowedGlobals(node.pattern, bodyCtx)
         }
         if (node.iterable.kind === 'Identifier') {
           const keySet = ctx.keySets.get(node.iterable.name)
@@ -619,8 +642,10 @@ function analyzeStructuredNode(
         const bodyCtx = cloneKeyContext(ctx)
         bodyCtx.values.delete(node.variable)
         bodyCtx.keySets.delete(node.variable)
+        markShadowedGlobalName(node.variable, bodyCtx)
         if (node.pattern) {
           clearPatternBindings(node.pattern, bodyCtx)
+          markPatternShadowedGlobals(node.pattern, bodyCtx)
         }
         if (node.object.kind === 'Identifier') {
           const shape = shapes.get(node.object.name)
@@ -650,6 +675,10 @@ function analyzeStructuredNode(
         if (node.handler.param) {
           handlerCtx.values.delete(node.handler.param)
           handlerCtx.keySets.delete(node.handler.param)
+          markShadowedGlobalName(node.handler.param, handlerCtx)
+        }
+        if (node.handler.pattern) {
+          markPatternShadowedGlobals(node.handler.pattern, handlerCtx)
         }
         analyzeStructuredNode(node.handler.body, shapes, propertyReads, handlerCtx)
       }
@@ -684,6 +713,7 @@ function analyzeInstruction(
   ctx: KeyNarrowingContext,
 ): void {
   if (instr.kind === 'Assign') {
+    markShadowedGlobalName(instr.target.name, ctx)
     applyKeyAssignment(ctx, instr.target.name, instr.value, shapes)
     // Analyze the assigned value
     const valueShape = analyzeExpression(instr.value, shapes, propertyReads, ctx)

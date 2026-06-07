@@ -306,6 +306,99 @@ describe('generateRegions + shapes', () => {
     expect(propsSubscription?.has('other')).toBe(true)
   })
 
+  it('does not trust shadowed Object key-set callees', () => {
+    const cases = [
+      {
+        name: 'Object parameter',
+        source: `
+          function Foo(props, Object, i) {
+            const keys = Object.keys({ a: 1 })
+            const value = props[keys[i]]
+            return value
+          }
+        `,
+      },
+      {
+        name: 'Object.getOwnPropertyNames parameter',
+        source: `
+          function Foo(props, Object, i) {
+            const keys = Object.getOwnPropertyNames({ a: 1 })
+            const value = props[keys[i]]
+            return value
+          }
+        `,
+      },
+      {
+        name: 'Object local',
+        source: `
+          function Foo(props, i) {
+            const Object = {
+              keys() {
+                return ['b']
+              }
+            }
+            const keys = Object.keys({ a: 1 })
+            const value = props[keys[i]]
+            return value
+          }
+        `,
+      },
+      {
+        name: 'Object catch binding',
+        source: `
+          function Foo(props, i) {
+            try {
+              throw null
+            } catch (Object) {
+              const keys = Object.keys({ a: 1 })
+              return props[keys[i]]
+            }
+            return props.fallback
+          }
+        `,
+      },
+    ]
+
+    for (const testCase of cases) {
+      const ast = parseFile(testCase.source)
+      const hir = buildHIR(ast)
+      const shapeResult = analyzeObjectShapes(firstFunction(hir))
+      const propsSubscription = getPropertySubscription('props', shapeResult)
+
+      expect(
+        shouldUseWholeObjectSubscription('props', shapeResult),
+        `${testCase.name} should use whole props`,
+      ).toBe(true)
+      expect(
+        propsSubscription?.has('a') ?? false,
+        `${testCase.name} should not narrow to literal key a`,
+      ).toBe(false)
+    }
+  })
+
+  it('keeps unshadowed global Object key-set callees finite', () => {
+    const cases = [
+      'const keys = Object.keys({ a: 1 })',
+      'const keys = Object.getOwnPropertyNames({ a: 1 })',
+    ]
+
+    for (const declaration of cases) {
+      const ast = parseFile(`
+        function Foo(props, i) {
+          ${declaration}
+          const value = props[keys[i]]
+          return value
+        }
+      `)
+      const hir = buildHIR(ast)
+      const shapeResult = analyzeObjectShapes(firstFunction(hir))
+      const propsSubscription = getPropertySubscription('props', shapeResult)
+
+      expect(shouldUseWholeObjectSubscription('props', shapeResult)).toBe(false)
+      expect(propsSubscription?.has('a')).toBe(true)
+    }
+  })
+
   it('keeps optional-chain subscriptions minimal', () => {
     const ast = parseFile(`
       function Foo(props) {
