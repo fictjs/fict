@@ -35,6 +35,7 @@ import {
   invalidateCachedGetter,
   withGetterCache,
 } from './codegen-cache'
+import { shouldAutoExtract } from './codegen-auto-extract'
 import { emitConditionalChild } from './codegen-conditional-child'
 import { detectDerivedCycles } from './codegen-cycles'
 import {
@@ -5221,15 +5222,21 @@ function lowerIntrinsicElementAsVNode(
   const isNamespacedEventProp = (name: string) =>
     (name.startsWith('on:') && name.length > 'on:'.length) ||
     (name.startsWith('oncapture:') && name.length > 'oncapture:'.length)
-  const normalizeEventPropName = (name: string): { name: string; isEvent: boolean } => {
+  const normalizeEventPropName = (
+    name: string,
+  ): { name: string; isEvent: boolean; resumableExplicit: boolean } => {
     if (name.endsWith('$')) {
       const candidate = name.slice(0, -1)
-      if (isCamelCaseEventProp(candidate)) return { name: candidate, isEvent: true }
-      if (isNamespacedEventProp(candidate)) return { name: candidate, isEvent: false }
-      return { name, isEvent: false }
+      if (isCamelCaseEventProp(candidate)) {
+        return { name: candidate, isEvent: true, resumableExplicit: true }
+      }
+      if (isNamespacedEventProp(candidate)) {
+        return { name: candidate, isEvent: false, resumableExplicit: true }
+      }
+      return { name, isEvent: false, resumableExplicit: false }
     }
-    if (isCamelCaseEventProp(name)) return { name, isEvent: true }
-    return { name, isEvent: false }
+    if (isCamelCaseEventProp(name)) return { name, isEvent: true, resumableExplicit: false }
+    return { name, isEvent: false, resumableExplicit: false }
   }
 
   for (const attr of jsx.attributes) {
@@ -5247,6 +5254,25 @@ function lowerIntrinsicElementAsVNode(
     const eventProp = normalizeEventPropName(name)
     const propName = eventProp.name
     const isEvent = eventProp.isEvent
+    if (
+      isEvent &&
+      attr.value &&
+      !eventProp.resumableExplicit &&
+      ctx.resumableEnabled &&
+      ctx.autoExtractEnabled !== false &&
+      shouldAutoExtract(attr.value, ctx)
+    ) {
+      const loc = attr.value.loc?.start
+      throw new HIRError(
+        `VNode fallback cannot auto-extract resumable event handler "${propName}". Enable fineGrainedDom or disable autoExtractHandlers for this output mode.`,
+        'BUILD_ERROR',
+        {
+          file: ctx.options?.filename ?? '<unknown>',
+          line: loc?.line,
+          variable: propName,
+        },
+      )
+    }
     const prevWrapTracked = ctx.wrapTrackedExpressions
     if (isEvent) {
       ctx.wrapTrackedExpressions = false

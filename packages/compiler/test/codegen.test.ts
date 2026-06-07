@@ -6354,6 +6354,79 @@ describe('resumable event handler transformation', () => {
     )
   })
 
+  it('rejects VNode fallback event handlers that would be auto-extracted', () => {
+    const cases = [
+      { name: 'external-call', handler: `() => fetch('/api')` },
+      { name: 'async-handler', handler: `async () => { await import('./chunk') }` },
+    ]
+
+    for (const testCase of cases) {
+      const ast = parseFile(`
+        export function App() {
+          return <button onClick={${testCase.handler}}>Click</button>
+        }
+      `)
+      const hir = buildHIR(ast)
+
+      try {
+        lowerHIRWithRegions(hir, t, {
+          fineGrainedDom: false,
+          resumable: true,
+          filename: `${testCase.name}.tsx`,
+        })
+        throw new Error('expected lowerHIRWithRegions to throw')
+      } catch (error) {
+        expect(error).toBeInstanceOf(HIRError)
+        const hirError = error as HIRError
+        expect(hirError.code).toBe('BUILD_ERROR')
+        expect(hirError.message).toContain(
+          'VNode fallback cannot auto-extract resumable event handler "onClick"',
+        )
+        expect(hirError.context?.file).toBe(`${testCase.name}.tsx`)
+        expect(hirError.context?.line).toBeDefined()
+        expect(hirError.context?.variable).toBe('onClick')
+      }
+    }
+  })
+
+  it('keeps VNode fallback event handlers eager when auto extraction is disabled', () => {
+    const ast = parseFile(`
+      export function App() {
+        return <button onClick={() => fetch('/api')}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, {
+      autoExtractHandlers: false,
+      fineGrainedDom: false,
+      resumable: true,
+    })
+    const { code } = generate(file)
+
+    expect(code).toContain('onClick: () => fetch("/api")')
+    expect(code).not.toContain('setAttribute("on:click"')
+    expect(code).not.toContain('export const __fict_e')
+  })
+
+  it('keeps explicit VNode fallback dollar event handlers eager in resumable mode', () => {
+    const ast = parseFile(`
+      export function App() {
+        return <button onClick$={() => fetch('/api')}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, {
+      fineGrainedDom: false,
+      resumable: true,
+    })
+    const { code } = generate(file)
+
+    expect(code).toContain('onClick: () => fetch("/api")')
+    expect(code).not.toContain('onClick$')
+    expect(code).not.toContain('setAttribute("on:click"')
+    expect(code).not.toContain('export const __fict_e')
+  })
+
   it('falls back to non-resumable handler for auto-extracted unsupported captures', () => {
     const ast = parseFile(`
       function Comp() {
