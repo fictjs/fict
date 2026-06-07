@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest'
 import { parseSync } from '@babel/core'
 import * as t from '@babel/types'
 import { buildHIR } from '../src/ir/build-hir'
-import { HIRError } from '../src/ir/hir'
+import { HIRError, type Expression } from '../src/ir/hir'
+import { keyExpressionSignature } from '../src/ir/codegen-jsx-keys'
 import {
   lowerHIRToBabel,
   codegenWithScopes,
@@ -4578,6 +4579,67 @@ describe('event handler transformation', () => {
 
     expect(code).not.toContain('createKeyedList')
     expect(code).toContain('items.map')
+  })
+
+  it('falls back for branch keys that differ only by BigInt signature marker text', () => {
+    const ast = parseFile(`
+      function List() {
+        const items = [{ big: true, name: 'a' }]
+        return (
+          <ul>
+            {items.map(item => {
+              if (item.big) {
+                return <li key={1n}>{item.name}</li>
+              }
+              return <li key={"__bigint:1"}>{item.name}</li>
+            })}
+          </ul>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).not.toContain('createKeyedList')
+    expect(code).toContain('items.map')
+    expect(code).toContain('key: 1n')
+    expect(code).toContain('key: "__bigint:1"')
+  })
+
+  it('falls back for nested branch keys that differ only by BigInt signature marker text', () => {
+    const ast = parseFile(`
+      function List() {
+        const items = [{ big: true, name: 'a' }]
+        return (
+          <ul>
+            {items.map(item => {
+              if (item.big) {
+                return <li key={[1n]}>{item.name}</li>
+              }
+              return <li key={["__bigint:1"]}>{item.name}</li>
+            })}
+          </ul>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).not.toContain('createKeyedList')
+    expect(code).toContain('items.map')
+    expect(code).toContain('key: [1n]')
+    expect(code).toContain('key: ["__bigint:1"]')
+  })
+
+  it('keeps BigInt key signatures equal without colliding with marker strings', () => {
+    const bigintKey: Expression = { kind: 'Literal', value: 1n }
+    const sameBigintKey: Expression = { kind: 'Literal', value: 1n }
+    const markerStringKey: Expression = { kind: 'Literal', value: '__bigint:1' }
+
+    expect(keyExpressionSignature(bigintKey)).toBe(keyExpressionSignature(sameBigintKey))
+    expect(keyExpressionSignature(bigintKey)).not.toBe(keyExpressionSignature(markerStringKey))
   })
 
   it('falls back for unresolved callback-local list key aliases', () => {

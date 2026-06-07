@@ -259,7 +259,9 @@ export function keyExpressionSignature(expression: Expression): string {
     return (
       JSON.stringify(expression, (key, value) => {
         if (key === 'loc') return undefined
-        if (typeof value === 'bigint') return `__bigint:${value.toString()}`
+        if (typeof value === 'bigint') {
+          return { __fictLiteralType: 'bigint', value: value.toString() }
+        }
         return value
       }) ?? ''
     )
