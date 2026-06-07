@@ -1,6 +1,7 @@
 import type * as BabelCore from '@babel/core'
 
 import type { CodegenContext, RegionInfo } from './codegen'
+import { ignoresInlineEventHandlerReturn } from './codegen-event-handlers'
 import { reserveGeneratedIndexedModuleName } from './codegen-name-allocation'
 import { replaceIdentifiersWithOverrides, type RegionOverrideMap } from './codegen-overrides'
 import {
@@ -273,11 +274,8 @@ export function emitResumableEventBinding(
   }
 
   const ensureHandlerParam = (fn: BabelCore.types.Expression): BabelCore.types.Expression => {
-    if (t.isArrowFunctionExpression(fn)) {
-      return fn
-    }
-    if (t.isFunctionExpression(fn)) {
-      return fn
+    if (t.isArrowFunctionExpression(fn) || t.isFunctionExpression(fn)) {
+      return ignoresInlineEventHandlerReturn(fn, t)
     }
     if (t.isIdentifier(fn) || t.isMemberExpression(fn)) {
       return fn
@@ -462,6 +460,7 @@ export function emitResumableEventBinding(
     ? (loweredFunctionDeps.get(handlerExpr.name) ?? inlineFunctionDeps.get(handlerExpr.name))
     : undefined
   const handlerMayPreventDefault =
+    callsEventPreventDefault(valueExpr, t) ||
     callsEventPreventDefault(handlerExpr, t) ||
     callsEventPreventDefault(loweredHandlerFunctionDep, t)
 

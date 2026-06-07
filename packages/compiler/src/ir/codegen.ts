@@ -44,6 +44,7 @@ import {
 } from './codegen-delegated-data'
 import { emitReactiveControlFlowReexecutionWarning } from './codegen-diagnostics'
 import { isDOMProperty, isStaticDelegatedDataAst } from './codegen-dom-utils'
+import { ignoresInlineEventHandlerReturn } from './codegen-event-handlers'
 import { collectExpressionDependencies } from './codegen-expression-deps'
 import {
   emitHIRChildBinding,
@@ -5283,10 +5284,8 @@ function lowerIntrinsicElementAsVNode(
 
     if (attr.value) {
       if (isEvent) {
-        if (
-          !(t.isArrowFunctionExpression(rawExpr) || t.isFunctionExpression(rawExpr)) &&
-          eventHandlerExpressionNeedsReactiveGetter(attr.value, ctx)
-        ) {
+        valueExpr = ignoresInlineEventHandlerReturn(rawExpr, t)
+        if (valueExpr === rawExpr && eventHandlerExpressionNeedsReactiveGetter(attr.value, ctx)) {
           valueExpr = markCompilerReactiveGetter(ctx, t.arrowFunctionExpression([], rawExpr))
         }
       } else if (isExpressionReactive(attr.value, ctx)) {
@@ -6778,7 +6777,9 @@ function lowerIntrinsicElement(
             ? t.identifier(reactiveGetterIdentifierName)
             : !isFn && shouldWrapHandler
               ? markCompilerReactiveGetter(ctx, t.arrowFunctionExpression([], valueExpr))
-              : ensureHandlerParam(handlerValueExpr)
+              : isFn
+                ? ignoresInlineEventHandlerReturn(handlerValueExpr, t)
+                : ensureHandlerParam(handlerValueExpr)
 
         let dataBinding =
           isDelegated && !shouldTreatAsReactiveHandler

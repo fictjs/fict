@@ -4518,11 +4518,12 @@ describe('event handler transformation', () => {
       { fineGrainedDom: false, resumable: true },
     )
 
-    expect(output).toContain('onClick: () => undefined')
-    expect(output).toContain('onInput: () => undefined')
-    expect(output).toContain('onClickCapture: () => undefined')
-    expect(output).toContain('onCustom: () => undefined')
-    expect(output).toContain('"on:custom": () => undefined')
+    expect(output).toContain('onClick: (...__fictArgs) =>')
+    expect(output).toContain('onInput: (...__fictArgs) =>')
+    expect(output).toContain('onClickCapture: (...__fictArgs) =>')
+    expect(output).toContain('onCustom: (...__fictArgs) =>')
+    expect(output).toContain('"on:custom": (...__fictArgs) =>')
+    expect(output).toContain('(() => undefined)(...__fictArgs)')
     expect(output).toContain('"data-mode$": "static"')
     expect(output).not.toContain('onClick$')
     expect(output).not.toContain('onInput$')
@@ -4542,7 +4543,7 @@ describe('event handler transformation', () => {
     const file = lowerHIRWithRegions(hir, t)
     const { code } = generate(file)
 
-    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",\s*\(\)\s*=>\s*_e,\s*true\)/)
+    expect(code).toContain('(() => _e)(...__fictArgs)')
     expect(code).not.toMatch(/addEventListener\([^,]+,\s*"click",\s*_e\s*=>\s*_e,\s*true\)/)
   })
 
@@ -5301,7 +5302,8 @@ describe('resumable event handler transformation', () => {
     const file = lowerHIRWithRegions(hir, t, { resumable: true })
     const { code } = generate(file)
 
-    expect(code).toContain('const __handler = () => event')
+    expect(code).toContain('const __handler = (...__fictArgs) => {')
+    expect(code).toContain('(() => event)(...__fictArgs)')
     expect(code).not.toContain('const __handler = event => event')
   })
 
@@ -5685,7 +5687,8 @@ describe('resumable event handler transformation', () => {
 
     expect(code).toContain('export const __fict_fn_helper_0 = "user"')
     expect(code).toContain('export const __fict_fn_helper_1')
-    expect(code).toContain('const __handler = () => __fict_fn_helper_1()')
+    expect(code).toContain('const __handler = (...__fictArgs) => {')
+    expect(code).toContain('(() => __fict_fn_helper_1())(...__fictArgs)')
   })
 
   it('does not reuse hoisted function deps across components with the same local name', () => {
@@ -5780,7 +5783,8 @@ describe('resumable event handler transformation', () => {
 
     expect(code).toContain('const __scopeProps = __fictGetScopeProps(scopeId) || {}')
     expect(code).toMatch(/const id = \(\) => __scopeProps\.id/)
-    expect(code).toContain('const __handler = () => console.log(id())')
+    expect(code).toContain('const __handler = (...__fictArgs) => {')
+    expect(code).toContain('(() => console.log(id()))(...__fictArgs)')
     expect(code).not.toContain('const id = __fictGetScopeProps(scopeId) || {}')
   })
 
@@ -6512,7 +6516,8 @@ describe('resumable event handler transformation', () => {
     })
     const { code } = generate(file)
 
-    expect(code).toContain('onClick: () => fetch("/api")')
+    expect(code).toContain('onClick: (...__fictArgs) =>')
+    expect(code).toContain('(() => fetch("/api"))(...__fictArgs)')
     expect(code).not.toContain('setAttribute("on:click"')
     expect(code).not.toContain('export const __fict_e')
   })
@@ -6530,7 +6535,8 @@ describe('resumable event handler transformation', () => {
     })
     const { code } = generate(file)
 
-    expect(code).toContain('onClick: () => fetch("/api")')
+    expect(code).toContain('onClick: (...__fictArgs) =>')
+    expect(code).toContain('(() => fetch("/api"))(...__fictArgs)')
     expect(code).not.toContain('onClick$')
     expect(code).not.toContain('setAttribute("on:click"')
     expect(code).not.toContain('export const __fict_e')
@@ -6914,7 +6920,7 @@ describe('resumable event handler transformation', () => {
 
     expect(code).toMatch(/export const __fict_e0 = \(scopeId_1, event_1, el_1\) =>/)
     expect(code).toContain('__fictUseLexicalScope(scopeId_1')
-    expect(code).toContain('const __handler_1 = () => {')
+    expect(code).toContain('const __handler_1 = (...__fictArgs) => {')
     expect(code).toContain('const __result_1 = __handler_1.call(el_1, event_1)')
   })
 
@@ -6948,7 +6954,7 @@ describe('resumable event handler transformation', () => {
     const { code } = generate(file)
 
     expect(code).toMatch(/export const __fict_e0 = \(scopeId_1, event_1, el_1\) =>/)
-    expect(code).toContain('const __handler_1 = () => {')
+    expect(code).toContain('const __handler_1 = (...__fictArgs) => {')
     expect(code).toContain('log.push(scopeId)')
     expect(code).toContain('log.push(event)')
     expect(code).toContain('log.push(el)')
@@ -6969,7 +6975,8 @@ describe('resumable event handler transformation', () => {
 
     expect(code).toContain('const __scopeProps = __fictGetScopeProps(scopeId) || {}')
     expect(code).toContain('const __handler = __scopeProps')
-    expect(code).toContain('const __handler_1 = () => __handler.id')
+    expect(code).toContain('const __handler_1 = (...__fictArgs) => {')
+    expect(code).toContain('(() => __handler.id)(...__fictArgs)')
     expect(code).toContain('const __result = __handler_1.call(el, event)')
   })
 

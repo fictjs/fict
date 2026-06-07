@@ -8052,6 +8052,102 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it.each([
+    { name: 'fine-grained', options: { fineGrainedDom: true } },
+    { name: 'VNode fallback', options: { fineGrainedDom: false } },
+  ])('ignores returned handlers from direct JSX event handlers in $name mode', async testCase => {
+    const source = `
+      import { render } from 'fict'
+
+      export const calls: string[] = []
+
+      function makeHandler(label: string) {
+        calls.push('factory:' + label)
+        return () => calls.push('hit:' + label)
+      }
+
+      export function App() {
+        return (
+          <>
+            <button
+              data-id="arrow"
+              onClick={() => {
+                calls.push('arrow')
+                return () => calls.push('arrow-inner')
+              }}
+            >
+              arrow
+            </button>
+            <button
+              data-id="function"
+              onClick={function (this: HTMLElement) {
+                calls.push('function:' + this.dataset.id)
+                return () => calls.push('function-inner')
+              }}
+            >
+              function
+            </button>
+            <button
+              data-id="object"
+              onClick={() => {
+                calls.push('object')
+                return {
+                  handleEvent() {
+                    calls.push('object-inner')
+                  },
+                }
+              }}
+            >
+              object
+            </button>
+            <button
+              data-id="capture"
+              onClickCapture={() => {
+                calls.push('capture')
+                return () => calls.push('capture-inner')
+              }}
+            >
+              capture
+            </button>
+            <button data-id="factory" onClick={makeHandler('factory')}>factory</button>
+          </>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        calls.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      calls: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, testCase.options)
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(mod.calls).toEqual(['factory:factory'])
+
+    for (const id of ['arrow', 'function', 'object', 'capture', 'factory']) {
+      ;(container.querySelector(`[data-id="${id}"]`) as HTMLButtonElement).click()
+    }
+    await flushUpdates()
+
+    expect(mod.calls).toEqual([
+      'factory:factory',
+      'arrow',
+      'function:function',
+      'object',
+      'capture',
+      'hit:factory',
+    ])
+
+    teardown()
+    container.remove()
+  })
+
   it('wires namespaced oncapture: event handlers in fine-grained mode', async () => {
     const source = `
       import { render } from 'fict'
