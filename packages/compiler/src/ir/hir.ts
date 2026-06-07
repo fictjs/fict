@@ -404,12 +404,15 @@ export function extractDependencyPath(expr: Expression): DependencyPath | undefi
 
       // Get property name
       let propertyName: string
-      if (member.property.kind === 'Identifier') {
+      if (!member.computed && member.property.kind === 'Identifier') {
         propertyName = member.property.name
-      } else if (member.property.kind === 'Literal' && typeof member.property.value === 'string') {
-        propertyName = member.property.value
+      } else if (
+        member.property.kind === 'Literal' &&
+        (typeof member.property.value === 'string' || typeof member.property.value === 'number')
+      ) {
+        propertyName = String(member.property.value)
       } else {
-        // Complex computed property - can't track
+        // Dynamic computed property - collect the key expression separately.
         return undefined
       }
 

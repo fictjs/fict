@@ -12,6 +12,7 @@ import {
   getLoopDependentScopes,
   needsVersionedMemo,
 } from '../src/ir/scopes'
+import { pathToString } from '../src/ir/hir'
 import { firstFunction } from './hir-test-utils'
 
 const parseFile = (code: string) =>
@@ -117,6 +118,50 @@ describe('analyzeOptionalChainDependencies', () => {
     const deps = getScopeDependencies(xScope!)
     expect(deps).toContain('a')
     expect(deps).toContain('b')
+  })
+
+  it('tracks dynamic computed member key expressions separately', () => {
+    const ast = parseFile(`
+      function Foo(props, key, keyFn) {
+        const dynamic = props[key]
+        const staticString = props['key']
+        const staticNumber = props[0]
+        const dynamicCall = props[keyFn()]
+        const optionalDynamic = props?.[key]
+        return dynamic + staticString + staticNumber + dynamicCall + optionalDynamic
+      }
+    `)
+    const hir = buildHIR(ast)
+    const res = analyzeReactiveScopes(firstFunction(hir))
+
+    const dynamic = res.byName.get('dynamic')!
+    expect(dynamic.reads.has('props')).toBe(true)
+    expect(dynamic.reads.has('key')).toBe(true)
+    expect((dynamic.dependencyPaths.get('props') ?? []).map(pathToString)).not.toContain(
+      'props.[key]',
+    )
+
+    const staticString = res.byName.get('staticString')!
+    expect(staticString.reads.has('props')).toBe(true)
+    expect(staticString.reads.has('key')).toBe(false)
+    expect((staticString.dependencyPaths.get('props') ?? []).map(pathToString)).toContain(
+      'props.[key]',
+    )
+
+    const staticNumber = res.byName.get('staticNumber')!
+    expect(staticNumber.reads.has('props')).toBe(true)
+    expect(staticNumber.reads.has('0')).toBe(false)
+    expect((staticNumber.dependencyPaths.get('props') ?? []).map(pathToString)).toContain(
+      'props.[0]',
+    )
+
+    const dynamicCall = res.byName.get('dynamicCall')!
+    expect(dynamicCall.reads.has('props')).toBe(true)
+    expect(dynamicCall.reads.has('keyFn')).toBe(true)
+
+    const optionalDynamic = res.byName.get('optionalDynamic')!
+    expect(optionalDynamic.reads.has('props')).toBe(true)
+    expect(optionalDynamic.reads.has('key')).toBe(true)
   })
 })
 
