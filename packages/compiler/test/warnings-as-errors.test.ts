@@ -123,6 +123,20 @@ describe('warnings as errors', () => {
     expect(() => transform(source, { strictReactivity: true, dev: false })).toThrow(/FICT-R006/)
   })
 
+  it('strictReactivity escalates optional-call FICT-R006 to error', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const count = $state(0)
+        if (maybe?.(count)) {
+          return <div>High</div>
+        }
+        return <div>Low</div>
+      }
+    `
+    expect(() => transform(source, { strictReactivity: true, dev: false })).toThrow(/FICT-R006/)
+  })
+
   it('strictReactivity escalates FICT-R003 to error', () => {
     const source = `
       function App({ mode }) {

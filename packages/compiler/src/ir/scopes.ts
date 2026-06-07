@@ -479,7 +479,8 @@ function collectExprReads(
         addPath(paths, expr.name, path)
       }
       return
-    case 'CallExpression': {
+    case 'CallExpression':
+    case 'OptionalCallExpression': {
       const isMacroCallee =
         expr.callee.kind === 'Identifier' &&
         (expr.callee.name === '$state' ||

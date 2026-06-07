@@ -1295,6 +1295,94 @@ describe('Fict Compiler - Control Flow', () => {
       ).toBe(true)
     })
 
+    it('emits FICT-R006 for optional-call reads in control-flow positions', () => {
+      const cases = [
+        {
+          name: 'if',
+          state: 'let count = $state(0)',
+          body: `
+            if (maybe?.(count)) {
+              count++
+            }
+          `,
+          read: 'count',
+        },
+        {
+          name: 'while',
+          state: 'let count = $state(0)',
+          body: `
+            while (maybe?.(count)) {
+              break
+            }
+          `,
+          read: 'count',
+        },
+        {
+          name: 'switch',
+          state: 'let count = $state(0)',
+          body: `
+            switch (maybe?.(count)) {
+              case 1:
+                count++
+                break
+            }
+          `,
+          read: 'count',
+        },
+        {
+          name: 'for-of',
+          state: 'let rows = $state([])',
+          body: `
+            for (const row of maybeList?.(rows) ?? []) {
+              row
+            }
+          `,
+          read: 'rows',
+        },
+        {
+          name: 'for-in',
+          state: 'let dict = $state({})',
+          body: `
+            for (const key in maybeObject?.(dict) ?? {}) {
+              key
+            }
+          `,
+          read: 'dict',
+        },
+      ]
+
+      for (const testCase of cases) {
+        const input = `
+          import { $state } from 'fict'
+          function Component() {
+            ${testCase.state}
+            ${testCase.body}
+            return <div>${testCase.name}</div>
+          }
+        `
+        const { warnings } = runTransformWithWarnings(input)
+        expect(
+          warnings.some(
+            warning => warning.includes('FICT-R006') && warning.includes(testCase.read),
+          ),
+        ).toBe(true)
+      }
+    })
+
+    it('does not emit FICT-R006 for optional-call reads outside control flow', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let count = $state(0)
+          const value = maybe?.(count)
+          maybe?.(count)
+          return <div>{value}</div>
+        }
+      `
+      const { warnings } = runTransformWithWarnings(input)
+      expect(warnings.some(warning => warning.includes('FICT-R006'))).toBe(false)
+    })
+
     it('does not emit FICT-R006 for expression-only branching in JSX', () => {
       const input = `
         import { $state } from 'fict'
