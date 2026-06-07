@@ -596,6 +596,120 @@ describe('module metadata safety', () => {
     }
   })
 
+  it('normalizes package export suffixes before resolving metadata', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_package_suffix_metadata__')
+    const packageDir = path.join(baseDir, 'node_modules', 'fict-suffix-lib')
+    const scopedPackageDir = path.join(baseDir, 'node_modules', '@scope', 'fict-suffix-lib')
+    const importer = path.join(baseDir, 'src', 'consumer.tsx')
+
+    const writePackage = (dir: string, name: string): void => {
+      mkdirSync(path.join(dir, 'dist'), { recursive: true })
+      writeFileSync(
+        path.join(dir, 'package.json'),
+        JSON.stringify({
+          name,
+          fict: {
+            metadata: './dist/root.fict.meta.json',
+            exports: {
+              './hooks': './dist/hooks.fict.meta.json',
+            },
+          },
+        }),
+        'utf8',
+      )
+      writeFileSync(
+        path.join(dir, 'dist', 'root.fict.meta.json'),
+        JSON.stringify({ exports: { rootCount: 'signal' } }),
+        'utf8',
+      )
+      writeFileSync(
+        path.join(dir, 'dist', 'hooks.fict.meta.json'),
+        JSON.stringify({ exports: { count: 'signal' } }),
+        'utf8',
+      )
+    }
+
+    try {
+      mkdirSync(path.dirname(importer), { recursive: true })
+      writePackage(packageDir, 'fict-suffix-lib')
+      writePackage(scopedPackageDir, '@scope/fict-suffix-lib')
+
+      for (const source of ['fict-suffix-lib?raw', 'fict-suffix-lib#frag']) {
+        expect(
+          resolveModuleMetadata(source, importer, { emitModuleMetadata: false })?.exports,
+        ).toEqual({ rootCount: 'signal' })
+      }
+
+      for (const source of [
+        'fict-suffix-lib/hooks?raw',
+        'fict-suffix-lib/hooks#frag',
+        'fict-suffix-lib/hooks?raw#frag',
+        '@scope/fict-suffix-lib/hooks?worker#frag',
+      ]) {
+        expect(
+          resolveModuleMetadata(source, importer, { emitModuleMetadata: false })?.exports,
+        ).toEqual({ count: 'signal' })
+      }
+    } finally {
+      if (existsSync(baseDir)) {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+      clearModuleMetadata()
+    }
+  })
+
+  it('prefers exact suffix-bearing package metadata exports before normalized keys', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_package_exact_suffix_metadata__')
+    const packageDir = path.join(baseDir, 'node_modules', 'fict-suffix-exact-lib')
+    const importer = path.join(baseDir, 'src', 'consumer.tsx')
+
+    try {
+      mkdirSync(path.join(packageDir, 'dist'), { recursive: true })
+      mkdirSync(path.dirname(importer), { recursive: true })
+      writeFileSync(
+        path.join(packageDir, 'package.json'),
+        JSON.stringify({
+          name: 'fict-suffix-exact-lib',
+          fict: {
+            exports: {
+              './hooks': './dist/hooks.fict.meta.json',
+              './hooks?raw': './dist/raw-hooks.fict.meta.json',
+            },
+          },
+        }),
+        'utf8',
+      )
+      writeFileSync(
+        path.join(packageDir, 'dist', 'hooks.fict.meta.json'),
+        JSON.stringify({ exports: { count: 'signal' } }),
+        'utf8',
+      )
+      writeFileSync(
+        path.join(packageDir, 'dist', 'raw-hooks.fict.meta.json'),
+        JSON.stringify({ exports: { rawCount: 'memo' } }),
+        'utf8',
+      )
+
+      expect(
+        resolveModuleMetadata('fict-suffix-exact-lib/hooks?raw', importer, {
+          emitModuleMetadata: false,
+        })?.exports,
+      ).toEqual({ rawCount: 'memo' })
+      expect(
+        resolveModuleMetadata('fict-suffix-exact-lib/hooks#frag', importer, {
+          emitModuleMetadata: false,
+        })?.exports,
+      ).toEqual({ count: 'signal' })
+    } finally {
+      if (existsSync(baseDir)) {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+      clearModuleMetadata()
+    }
+  })
+
   it('does not read disk sidecars when moduleMetadata store is explicitly provided', () => {
     clearModuleMetadata()
     const baseDir = path.join(process.cwd(), '__fict_metadata_store_only__')

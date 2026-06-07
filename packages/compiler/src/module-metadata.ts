@@ -114,18 +114,7 @@ function isVirtualFileName(fileName: string): boolean {
 }
 
 function normalizeFileName(fileName: string): string {
-  let normalized = fileName
-  const queryStart = normalized.indexOf('?')
-  const fragmentStart = normalized.indexOf('#')
-  const suffixStart =
-    queryStart === -1
-      ? fragmentStart
-      : fragmentStart === -1
-        ? queryStart
-        : Math.min(queryStart, fragmentStart)
-  if (suffixStart !== -1) {
-    normalized = normalized.slice(0, suffixStart)
-  }
+  let normalized = stripUrlLikeSuffix(fileName)
   if (normalized.startsWith('/@fs/')) {
     const fsPath = normalized.slice('/@fs/'.length)
     normalized = fsPath.startsWith('/') || isWindowsDrivePath(fsPath) ? fsPath : `/${fsPath}`
@@ -138,6 +127,22 @@ function normalizeFileName(fileName: string): string {
     }
   }
   return path.resolve(normalized)
+}
+
+function stripUrlLikeSuffix(value: string): string {
+  let normalized = value
+  const queryStart = normalized.indexOf('?')
+  const fragmentStart = normalized.indexOf('#')
+  const suffixStart =
+    queryStart === -1
+      ? fragmentStart
+      : fragmentStart === -1
+        ? queryStart
+        : Math.min(queryStart, fragmentStart)
+  if (suffixStart !== -1) {
+    normalized = normalized.slice(0, suffixStart)
+  }
+  return normalized
 }
 
 function hasQuerySuffix(source: string): boolean {
@@ -348,18 +353,39 @@ function isBarePackageSource(source: string): boolean {
   return !path.isAbsolute(source) && !source.startsWith('.') && !source.startsWith('/@fs/')
 }
 
-function splitPackageSource(source: string): { packageName: string; subpath: string } | null {
-  if (!isBarePackageSource(source)) return null
-  const parts = source.split('/')
-  if (source.startsWith('@')) {
-    if (parts.length < 2 || !parts[0] || !parts[1]) return null
-    const packageName = `${parts[0]}/${parts[1]}`
-    const rest = parts.slice(2).join('/')
-    return { packageName, subpath: rest ? `./${rest}` : '.' }
+function splitPackageSource(
+  source: string,
+): { packageName: string; subpath: string; rawSubpath: string } | null {
+  const normalizedSource = stripUrlLikeSuffix(source)
+  if (!isBarePackageSource(normalizedSource)) return null
+  const normalizedParts = normalizedSource.split('/')
+  const rawParts = source.split('/')
+  if (normalizedSource.startsWith('@')) {
+    if (
+      normalizedParts.length < 2 ||
+      !normalizedParts[0] ||
+      !normalizedParts[1] ||
+      rawParts.length < 2
+    ) {
+      return null
+    }
+    const packageName = `${normalizedParts[0]}/${normalizedParts[1]}`
+    const normalizedRest = normalizedParts.slice(2).join('/')
+    const rawRest = rawParts.slice(2).join('/')
+    return {
+      packageName,
+      subpath: normalizedRest ? `./${normalizedRest}` : '.',
+      rawSubpath: rawRest ? `./${rawRest}` : '.',
+    }
   }
-  if (!parts[0]) return null
-  const rest = parts.slice(1).join('/')
-  return { packageName: parts[0], subpath: rest ? `./${rest}` : '.' }
+  if (!normalizedParts[0]) return null
+  const normalizedRest = normalizedParts.slice(1).join('/')
+  const rawRest = rawParts.slice(1).join('/')
+  return {
+    packageName: normalizedParts[0],
+    subpath: normalizedRest ? `./${normalizedRest}` : '.',
+    rawSubpath: rawRest ? `./${rawRest}` : '.',
+  }
 }
 
 function findPackageJsonPath(packageName: string, importer: string | undefined): string | null {
@@ -464,6 +490,7 @@ export function resolvePackageModuleMetadata(
 
   const packageDir = path.dirname(packageJsonPath)
   const metadataPath =
+    packageConfig.exports?.[parsedSource.rawSubpath] ??
     packageConfig.exports?.[parsedSource.subpath] ??
     (parsedSource.subpath === '.' ? packageConfig.metadata : undefined)
   if (!metadataPath) return undefined
@@ -567,7 +594,11 @@ export function resolveModuleMetadata(
     const resolved = options.resolveModuleMetadata(source, importer)
     if (resolved) return resolved
   }
-  if (hasQuerySuffix(source)) return undefined
+  if (hasQuerySuffix(source)) {
+    const packageMetadata = resolvePackageModuleMetadata(source, importer, options)
+    if (packageMetadata) return packageMetadata
+    return undefined
+  }
   const store = getMetadataStore(options)
   const hasExternalMetadataStore = !!options?.moduleMetadata
   // When a caller provides an explicit metadata store, treat it as the source

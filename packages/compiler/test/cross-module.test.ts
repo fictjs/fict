@@ -5960,6 +5960,69 @@ describe('Cross-Module Reactivity', () => {
       }
     })
 
+    it('resolves package metadata for query and hash suffixed package subpaths', () => {
+      clearModuleMetadata()
+      const packageDir = path.join(baseDir, 'node_modules', 'fict-suffix-lib')
+      const scopedPackageDir = path.join(baseDir, 'node_modules', '@scope', 'fict-suffix-lib')
+      const appPath = path.join(baseDir, 'app-package-suffix-metadata.tsx')
+
+      const writePackage = (dir: string, name: string): void => {
+        mkdirSync(path.join(dir, 'dist'), { recursive: true })
+        writeFileSync(
+          path.join(dir, 'package.json'),
+          JSON.stringify({
+            name,
+            fict: {
+              metadata: './dist/root.fict.meta.json',
+              exports: {
+                './hooks': './dist/hooks.fict.meta.json',
+              },
+            },
+          }),
+        )
+        writeFileSync(
+          path.join(dir, 'dist', 'root.fict.meta.json'),
+          JSON.stringify({ exports: { rootCount: 'signal' } }),
+        )
+        writeFileSync(
+          path.join(dir, 'dist', 'hooks.fict.meta.json'),
+          JSON.stringify({ exports: { count: 'signal' } }),
+        )
+      }
+
+      try {
+        writePackage(packageDir, 'fict-suffix-lib')
+        writePackage(scopedPackageDir, '@scope/fict-suffix-lib')
+
+        for (const [source, imported] of [
+          ['fict-suffix-lib?raw', 'rootCount'],
+          ['fict-suffix-lib#frag', 'rootCount'],
+          ['fict-suffix-lib/hooks?raw', 'count'],
+          ['fict-suffix-lib/hooks#frag', 'count'],
+          ['fict-suffix-lib/hooks?raw#frag', 'count'],
+          ['@scope/fict-suffix-lib/hooks?worker#frag', 'count'],
+        ] as const) {
+          const output = transform(
+            `
+              import { ${imported} } from '${source}'
+
+              export function App() {
+                return <span>{${imported}}</span>
+              }
+            `,
+            { fineGrainedDom: true },
+            appPath,
+          )
+          expect(output).toMatch(new RegExp(`${imported}\\(\\)`))
+        }
+      } finally {
+        clearModuleMetadata()
+        if (existsSync(path.join(baseDir, 'node_modules'))) {
+          rmSync(path.join(baseDir, 'node_modules'), { recursive: true, force: true })
+        }
+      }
+    })
+
     it('auto mode emits metadata to cache and avoids adjacent sidecar files', () => {
       clearModuleMetadata()
       const hookSource = `
