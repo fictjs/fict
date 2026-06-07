@@ -930,6 +930,25 @@ describe('region metadata → DOM', () => {
     expect(code).not.toContain('bindText')
   })
 
+  it('routes import and meta-property children through child insertion', () => {
+    const ast = parseFile(`
+      function View() {
+        return <div>{new.target}{import.meta.url}{import("./dep")}</div>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { optimizeLevel: 'safe' })
+    const { code } = generate(file)
+
+    expect(code).toContain('insertBetween')
+    expect(code).toContain('new.target')
+    expect(code).toContain('import.meta.url')
+    expect(code).toContain('import("./dep")')
+    expect(code).not.toContain('String(new.target)')
+    expect(code).not.toContain('String(import.meta.url)')
+    expect(code).not.toContain('String(import("./dep"))')
+  })
+
   it('keeps optional member attribute bindings reactive', () => {
     const ast = parseFile(`
       function View() {

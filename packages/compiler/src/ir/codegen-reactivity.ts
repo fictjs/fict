@@ -201,6 +201,10 @@ export function isLikelyTextExpression(
       case 'SpreadElement':
         visit(node.argument)
         return
+      case 'ImportExpression':
+      case 'MetaProperty':
+        ok = false
+        return
       case 'Identifier':
         if (!isReactiveIdentifier(node.name) && !allowNonSignalReference) {
           ok = false
@@ -209,6 +213,9 @@ export function isLikelyTextExpression(
       case 'Literal':
       case 'ThisExpression':
       case 'SuperExpression':
+        return
+      default:
+        ok = false
         return
     }
   }
