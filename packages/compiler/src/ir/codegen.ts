@@ -5216,6 +5216,21 @@ function lowerIntrinsicElementAsVNode(
     name === '__proto__'
       ? t.objectProperty(t.stringLiteral(name), value, true)
       : t.objectProperty(toPropKey(name), value)
+  const isCamelCaseEventProp = (name: string) =>
+    name.startsWith('on') && name.length > 2 && name[2] === name[2]?.toUpperCase()
+  const isNamespacedEventProp = (name: string) =>
+    (name.startsWith('on:') && name.length > 'on:'.length) ||
+    (name.startsWith('oncapture:') && name.length > 'oncapture:'.length)
+  const normalizeEventPropName = (name: string): { name: string; isEvent: boolean } => {
+    if (name.endsWith('$')) {
+      const candidate = name.slice(0, -1)
+      if (isCamelCaseEventProp(candidate)) return { name: candidate, isEvent: true }
+      if (isNamespacedEventProp(candidate)) return { name: candidate, isEvent: false }
+      return { name, isEvent: false }
+    }
+    if (isCamelCaseEventProp(name)) return { name, isEvent: true }
+    return { name, isEvent: false }
+  }
 
   for (const attr of jsx.attributes) {
     if (attr.isSpread && attr.spreadExpr) {
@@ -5229,7 +5244,9 @@ function lowerIntrinsicElementAsVNode(
       continue
     }
 
-    const isEvent = name.startsWith('on') && name.length > 2 && name[2] === name[2]?.toUpperCase()
+    const eventProp = normalizeEventPropName(name)
+    const propName = eventProp.name
+    const isEvent = eventProp.isEvent
     const prevWrapTracked = ctx.wrapTrackedExpressions
     if (isEvent) {
       ctx.wrapTrackedExpressions = false
@@ -5251,7 +5268,7 @@ function lowerIntrinsicElementAsVNode(
       }
     }
 
-    props.push(toPropObjectProperty(name, valueExpr))
+    props.push(toPropObjectProperty(propName, valueExpr))
   }
 
   const children = jsx.children.map(child => lowerJSXChildNonFineGrained(child, ctx))

@@ -7685,6 +7685,58 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('wires explicit dollar event props in VNode fallback mode', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const calls: string[] = []
+
+      export function App() {
+        return (
+          <div data-id="outer">
+            <button data-id="click" onClick$={() => calls.push('click')}>click</button>
+            <input data-id="input" onInput$={() => calls.push('input')} />
+            <button data-id="capture" onClickCapture$={() => calls.push('capture')}>capture</button>
+            <button data-id="plain" onClick={() => calls.push('plain')}>plain</button>
+            <div data-id="custom" onCustom$={() => calls.push('custom')} />
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        calls.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      calls: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: false })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const click = container.querySelector('[data-id="click"]') as HTMLButtonElement
+    const input = container.querySelector('[data-id="input"]') as HTMLInputElement
+    const capture = container.querySelector('[data-id="capture"]') as HTMLButtonElement
+    const plain = container.querySelector('[data-id="plain"]') as HTMLButtonElement
+    const custom = container.querySelector('[data-id="custom"]') as HTMLDivElement
+
+    click.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    capture.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    plain.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    custom.dispatchEvent(new Event('custom', { bubbles: true }))
+    click.dispatchEvent(new Event('click$', { bubbles: true }))
+    await flushUpdates()
+
+    expect(mod.calls).toEqual(['click', 'input', 'capture', 'plain', 'custom'])
+
+    teardown()
+    container.remove()
+  })
+
   it('evaluates VNode fallback event handler factory expressions during render', async () => {
     const source = `
       import { render } from 'fict'

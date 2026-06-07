@@ -4390,6 +4390,38 @@ describe('event handler transformation', () => {
     expect(code).toMatch(/props/)
   })
 
+  it('normalizes explicit dollar event props in VNode fallback output', () => {
+    const output = transform(
+      `
+        export function App() {
+          return (
+            <div>
+              <button onClick$={() => undefined}>click</button>
+              <input onInput$={() => undefined} />
+              <button onClickCapture$={() => undefined}>capture</button>
+              <div onCustom$={() => undefined} />
+              <div on:custom$={() => undefined} />
+              <div data-mode$="static" />
+            </div>
+          )
+        }
+      `,
+      { fineGrainedDom: false, resumable: true },
+    )
+
+    expect(output).toContain('onClick: () => undefined')
+    expect(output).toContain('onInput: () => undefined')
+    expect(output).toContain('onClickCapture: () => undefined')
+    expect(output).toContain('onCustom: () => undefined')
+    expect(output).toContain('"on:custom": () => undefined')
+    expect(output).toContain('"data-mode$": "static"')
+    expect(output).not.toContain('onClick$')
+    expect(output).not.toContain('onInput$')
+    expect(output).not.toContain('onClickCapture$')
+    expect(output).not.toContain('onCustom$')
+    expect(output).not.toContain('on:custom$')
+  })
+
   it('preserves captured identifiers in zero-arg handlers', () => {
     const ast = parseFile(`
       function Button() {
