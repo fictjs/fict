@@ -4795,6 +4795,9 @@ function createHIREntrypointVisitor(
               state: stateMacroNames,
               effect: effectMacroNames,
               memo: memoMacroNames,
+              memoNamespaces: new Set(
+                Array.from(reactiveCreationNamespaceBindingIds, binding => binding.name),
+              ),
             },
           })
           emitCompilerExplainArtifact(hub.file, options, artifact)

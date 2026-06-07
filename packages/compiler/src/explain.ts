@@ -23,6 +23,7 @@ interface MacroNames {
   state: ReadonlySet<string>
   effect: ReadonlySet<string>
   memo: ReadonlySet<string>
+  memoNamespaces?: ReadonlySet<string>
 }
 
 export interface CreateCompilerExplainArtifactInput {
@@ -75,43 +76,78 @@ function collectSourceEvents(
 ): CompilerExplainEvent[] {
   const events: CompilerExplainEvent[] = []
   const file = BabelTypes.file(BabelTypes.cloneNode(program, true))
+  const emitSourceEvent = (
+    node: BabelCore.types.Node,
+    kind: 'source-signal' | 'source-effect' | 'source-memo',
+    name: string,
+  ): void => {
+    const boundary =
+      kind === 'source-signal'
+        ? 'signal accessor'
+        : kind === 'source-effect'
+          ? 'effect boundary'
+          : 'memo boundary'
+    events.push(
+      withLocation(node, {
+        kind,
+        name,
+        message: `${name} creates a compiler-managed ${boundary}.`,
+      }),
+    )
+  }
+  const getStaticMemberPropertyName = (
+    member: BabelCore.types.MemberExpression | BabelCore.types.OptionalMemberExpression,
+  ): string | null => {
+    if (!member.computed) {
+      return BabelTypes.isIdentifier(member.property) ? member.property.name : null
+    }
+    if (
+      BabelTypes.isStringLiteral(member.property) ||
+      BabelTypes.isNumericLiteral(member.property)
+    ) {
+      return String(member.property.value)
+    }
+    return null
+  }
+  const collectCallEvent = (
+    node: BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression,
+  ): void => {
+    const callee = node.callee
 
-  traverse(file, {
-    CallExpression(path) {
-      const callee = path.node.callee
-      if (!BabelTypes.isIdentifier(callee)) return
-
+    if (BabelTypes.isIdentifier(callee)) {
       if (macroNames.state.has(callee.name)) {
-        events.push(
-          withLocation(path.node, {
-            kind: 'source-signal',
-            name: callee.name,
-            message: `${callee.name} creates a compiler-managed signal accessor.`,
-          }),
-        )
+        emitSourceEvent(node, 'source-signal', callee.name)
         return
       }
 
       if (macroNames.effect.has(callee.name)) {
-        events.push(
-          withLocation(path.node, {
-            kind: 'source-effect',
-            name: callee.name,
-            message: `${callee.name} creates a compiler-managed effect boundary.`,
-          }),
-        )
+        emitSourceEvent(node, 'source-effect', callee.name)
         return
       }
 
       if (macroNames.memo.has(callee.name)) {
-        events.push(
-          withLocation(path.node, {
-            kind: 'source-memo',
-            name: callee.name,
-            message: `${callee.name} creates a compiler-managed memo boundary.`,
-          }),
-        )
+        emitSourceEvent(node, 'source-memo', callee.name)
       }
+      return
+    }
+
+    if (!BabelTypes.isMemberExpression(callee) && !BabelTypes.isOptionalMemberExpression(callee)) {
+      return
+    }
+    if (!BabelTypes.isIdentifier(callee.object)) return
+    if (!macroNames.memoNamespaces?.has(callee.object.name)) return
+    const propertyName = getStaticMemberPropertyName(callee)
+    if (!propertyName || !macroNames.memo.has(propertyName)) return
+
+    emitSourceEvent(node, 'source-memo', `${callee.object.name}.${propertyName}`)
+  }
+
+  traverse(file, {
+    CallExpression(path) {
+      collectCallEvent(path.node)
+    },
+    OptionalCallExpression(path) {
+      collectCallEvent(path.node)
     },
     JSXElement(path) {
       events.push(

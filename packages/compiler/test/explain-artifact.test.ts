@@ -89,4 +89,112 @@ describe('compiler explain artifact', () => {
     expect(artifact?.events.some(event => event.kind === 'source-signal')).toBe(true)
     expect(artifact?.helpers).toContain('insertBetween')
   })
+
+  it('reports optional runtime creator calls as source memo events', () => {
+    const cases = [
+      {
+        expectedName: 'createMemo',
+        source: `
+          import { createMemo } from 'fict'
+
+          export function App() {
+            const value = createMemo(() => 1)
+            return <div>{value}</div>
+          }
+        `,
+      },
+      {
+        expectedName: 'createMemo',
+        source: `
+          import { createMemo } from 'fict'
+
+          export function App() {
+            const value = createMemo?.(() => 1)
+            return <div>{value}</div>
+          }
+        `,
+      },
+      {
+        expectedName: 'memo',
+        source: `
+          import { createMemo as memo } from 'fict'
+
+          export function App() {
+            const value = memo?.(() => 1)
+            return <div>{value}</div>
+          }
+        `,
+      },
+      {
+        expectedName: 'F.createMemo',
+        source: `
+          import * as F from 'fict'
+
+          export function App() {
+            const value = F.createMemo?.(() => 1)
+            return <div>{value}</div>
+          }
+        `,
+      },
+      {
+        expectedName: 'Runtime.createMemo',
+        source: `
+          import * as Runtime from '@fictjs/runtime'
+
+          export function App() {
+            const value = Runtime['createMemo']?.(() => 1)
+            return <div>{value}</div>
+          }
+        `,
+      },
+    ]
+
+    for (const [index, { expectedName, source }] of cases.entries()) {
+      const artifacts: CompilerExplainArtifact[] = []
+
+      transform(
+        source,
+        {
+          dev: true,
+          strictGuarantee: false,
+          explain: artifact => artifacts.push(artifact),
+        },
+        `optional-explain-${index}.tsx`,
+      )
+
+      const memoEvent = artifacts[0]?.events.find(
+        event => event.kind === 'source-memo' && event.name === expectedName,
+      )
+      expect(memoEvent).toMatchObject({
+        kind: 'source-memo',
+        name: expectedName,
+      })
+      expect(memoEvent?.line).toBeGreaterThan(0)
+      expect(memoEvent?.column).toBeGreaterThan(0)
+    }
+  })
+
+  it('rejects optional state and effect macros before emitting explain artifacts', () => {
+    const artifacts: CompilerExplainArtifact[] = []
+
+    expect(() =>
+      transform(
+        `
+          import { $effect } from 'fict'
+
+          export function App() {
+            $effect?.(() => {})
+            return <div />
+          }
+        `,
+        {
+          dev: true,
+          strictGuarantee: false,
+          explain: artifact => artifacts.push(artifact),
+        },
+        'optional-effect-explain.tsx',
+      ),
+    ).toThrow(/optional-call syntax/)
+    expect(artifacts).toHaveLength(0)
+  })
 })
