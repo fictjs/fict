@@ -182,6 +182,55 @@ describe('P1: Selector Hoist Optimization', () => {
     }
   })
 
+  it('does not hoist selector calls shadowed by callback locals', () => {
+    const cases = [
+      `
+        const selected = () => row.id
+        return <li key={row.id} class={row.id === selected() ? "active" : ""}>{row.id}</li>
+      `,
+      `
+        function selected() {
+          return row.id
+        }
+        return <li key={row.id} class={row.id === selected() ? "active" : ""}>{row.id}</li>
+      `,
+      `
+        const { selected } = { selected: () => row.id }
+        return <li key={row.id} class={row.id === selected() ? "active" : ""}>{row.id}</li>
+      `,
+      `
+        try {
+          throw () => row.id
+        } catch (selected) {
+          return <li key={row.id} class={row.id === selected() ? "active" : ""}>{row.id}</li>
+        }
+      `,
+    ]
+
+    for (const body of cases) {
+      const source = `
+        import { $state, render } from "fict";
+
+        function App() {
+          let rows = $state([{ id: 1 }]);
+          let selected = $state(0);
+
+          return (
+            <ul>
+              {rows.map((row) => {
+                ${body}
+              })}
+            </ul>
+          );
+        }
+      `
+      const output = transform(source)
+
+      expect(output).not.toContain('createSelector')
+      expect(output).not.toMatch(/__sel_\d+\(__key\)/)
+    }
+  })
+
   it('should hoist selector for benchmark-like pattern', () => {
     const source = `
       import { $state, render } from "fict";

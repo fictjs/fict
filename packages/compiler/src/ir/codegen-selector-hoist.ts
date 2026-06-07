@@ -12,15 +12,68 @@ function getTrackedCallIdentifier(
   expr: BabelCore.types.Expression,
   ctx: CodegenContext,
   itemParamName: string,
+  shadowedNames: ReadonlySet<string>,
 ): string | null {
   if (ctx.t.isCallExpression(expr) && ctx.t.isIdentifier(expr.callee)) {
     if (expr.arguments.length !== 0) return null
     const name = deSSAVarName(expr.callee.name)
     if (name === itemParamName) return null
+    if (shadowedNames.has(name)) return null
     if (!ctx.trackedVars.has(name)) return null
     return expr.callee.name
   }
   return null
+}
+
+function addBindingName(name: string | null | undefined, into: Set<string>): void {
+  if (name) into.add(deSSAVarName(name))
+}
+
+function addPatternBindingNames(
+  node: BabelCore.types.Node | null | undefined,
+  into: Set<string>,
+  t: typeof BabelCore.types,
+): void {
+  if (!node) return
+  const ids = t.getBindingIdentifiers(node)
+  for (const name of Object.keys(ids)) {
+    addBindingName(name, into)
+  }
+}
+
+function collectStatementBindings(
+  stmt: BabelCore.types.Statement,
+  into: Set<string>,
+  t: typeof BabelCore.types,
+): void {
+  if (t.isVariableDeclaration(stmt)) {
+    stmt.declarations.forEach(decl => addPatternBindingNames(decl.id, into, t))
+    return
+  }
+  if (t.isFunctionDeclaration(stmt) || t.isClassDeclaration(stmt)) {
+    addBindingName(stmt.id?.name, into)
+  }
+}
+
+function functionShadowSet(
+  fn: BabelCore.types.ArrowFunctionExpression | BabelCore.types.FunctionExpression,
+  parent: ReadonlySet<string>,
+  t: typeof BabelCore.types,
+): Set<string> {
+  const next = new Set(parent)
+  if (t.isFunctionExpression(fn)) addBindingName(fn.id?.name, next)
+  fn.params.forEach(param => addPatternBindingNames(param, next, t))
+  return next
+}
+
+function blockShadowSet(
+  block: BabelCore.types.BlockStatement,
+  parent: ReadonlySet<string>,
+  t: typeof BabelCore.types,
+): Set<string> {
+  const next = new Set(parent)
+  block.body.forEach(stmt => collectStatementBindings(stmt, next, t))
+  return next
 }
 
 function rewriteSelectorExpression(
@@ -29,6 +82,7 @@ function rewriteSelectorExpression(
   keyParamName: string | null,
   getSelectorId: (name: string) => BabelCore.types.Identifier,
   ctx: CodegenContext,
+  shadowedNames: ReadonlySet<string>,
 ): { expr: BabelCore.types.Expression; changed: boolean } {
   const { t } = ctx
 
@@ -43,11 +97,13 @@ function rewriteSelectorExpression(
       expr.left as BabelCore.types.Expression,
       ctx,
       itemParamName,
+      shadowedNames,
     )
     const rightTracked = getTrackedCallIdentifier(
       expr.right as BabelCore.types.Expression,
       ctx,
       itemParamName,
+      shadowedNames,
     )
     if (leftTracked && usesParamIdentifier(expr.right as BabelCore.types.Expression)) {
       return {
@@ -69,7 +125,14 @@ function rewriteSelectorExpression(
 
   let changed = false
   const rewrite = (node: BabelCore.types.Expression): BabelCore.types.Expression => {
-    const result = rewriteSelectorExpression(node, itemParamName, keyParamName, getSelectorId, ctx)
+    const result = rewriteSelectorExpression(
+      node,
+      itemParamName,
+      keyParamName,
+      getSelectorId,
+      ctx,
+      shadowedNames,
+    )
     if (result.changed) changed = true
     return result.expr
   }
@@ -159,8 +222,11 @@ export function applySelectorHoist(
 
   const rewriteInFunction = (
     fn: BabelCore.types.ArrowFunctionExpression | BabelCore.types.FunctionExpression,
+    parentShadowedNames: ReadonlySet<string>,
   ): void => {
+    const functionShadowedNames = functionShadowSet(fn, parentShadowedNames, t)
     if (t.isBlockStatement(fn.body)) {
+      const bodyShadowedNames = blockShadowSet(fn.body, functionShadowedNames, t)
       for (const stmt of fn.body.body) {
         if (t.isReturnStatement(stmt) && stmt.argument && t.isExpression(stmt.argument)) {
           const result = rewriteSelectorExpression(
@@ -169,6 +235,7 @@ export function applySelectorHoist(
             keyParamName,
             getSelectorId,
             ctx,
+            bodyShadowedNames,
           )
           if (result.changed) {
             stmt.argument = result.expr
@@ -184,6 +251,7 @@ export function applySelectorHoist(
         keyParamName,
         getSelectorId,
         ctx,
+        functionShadowedNames,
       )
       if (result.changed) {
         fn.body = result.expr
@@ -191,13 +259,15 @@ export function applySelectorHoist(
     }
   }
 
-  const visitNode = (node: BabelCore.types.Node): void => {
+  const visitNode = (node: BabelCore.types.Node, shadowedNames: ReadonlySet<string>): void => {
     if (t.isFunctionExpression(node) || t.isArrowFunctionExpression(node)) {
       if (node !== callbackExpr) {
+        const functionShadowedNames = functionShadowSet(node, shadowedNames, t)
         if (t.isBlockStatement(node.body)) {
-          node.body.body.forEach(stmt => visitNode(stmt))
+          const bodyShadowedNames = blockShadowSet(node.body, functionShadowedNames, t)
+          node.body.body.forEach(stmt => visitNode(stmt, bodyShadowedNames))
         } else if (t.isExpression(node.body)) {
-          visitNode(node.body)
+          visitNode(node.body, functionShadowedNames)
         }
         return
       }
@@ -211,7 +281,7 @@ export function applySelectorHoist(
       if (calleeName === RUNTIME_ALIASES.bindClass || calleeName === 'bindClass') {
         const handler = node.arguments[1]
         if (handler && (t.isArrowFunctionExpression(handler) || t.isFunctionExpression(handler))) {
-          rewriteInFunction(handler)
+          rewriteInFunction(handler, shadowedNames)
         }
       }
       if (calleeName === RUNTIME_ALIASES.setClass || calleeName === 'setClass') {
@@ -223,6 +293,7 @@ export function applySelectorHoist(
             keyParamName,
             getSelectorId,
             ctx,
+            shadowedNames,
           )
           if (result.changed) {
             node.arguments[1] = result.expr
@@ -232,66 +303,84 @@ export function applySelectorHoist(
     }
 
     if (t.isBlockStatement(node)) {
-      node.body.forEach(stmt => visitNode(stmt))
+      const blockShadowedNames = blockShadowSet(node, shadowedNames, t)
+      node.body.forEach(stmt => visitNode(stmt, blockShadowedNames))
       return
     }
     if (t.isExpressionStatement(node)) {
-      visitNode(node.expression)
+      visitNode(node.expression, shadowedNames)
       return
     }
     if (t.isReturnStatement(node) && node.argument) {
-      visitNode(node.argument)
+      visitNode(node.argument, shadowedNames)
       return
     }
     if (t.isIfStatement(node)) {
-      visitNode(node.test)
-      visitNode(node.consequent)
-      if (node.alternate) visitNode(node.alternate)
+      visitNode(node.test, shadowedNames)
+      visitNode(node.consequent, shadowedNames)
+      if (node.alternate) visitNode(node.alternate, shadowedNames)
+      return
+    }
+    if (t.isTryStatement(node)) {
+      visitNode(node.block, shadowedNames)
+      if (node.handler) {
+        const handlerShadowedNames = new Set(shadowedNames)
+        if (node.handler.param) {
+          addPatternBindingNames(node.handler.param, handlerShadowedNames, t)
+        }
+        visitNode(node.handler.body, handlerShadowedNames)
+      }
+      if (node.finalizer) visitNode(node.finalizer, shadowedNames)
       return
     }
     if (t.isExpression(node)) {
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
-        visitNode(node.callee as BabelCore.types.Node)
+        visitNode(node.callee as BabelCore.types.Node, shadowedNames)
         node.arguments.forEach(arg => {
-          if (t.isExpression(arg)) visitNode(arg)
+          if (t.isExpression(arg)) visitNode(arg, shadowedNames)
         })
       } else if (t.isConditionalExpression(node)) {
-        visitNode(node.test)
-        visitNode(node.consequent)
-        visitNode(node.alternate)
+        visitNode(node.test, shadowedNames)
+        visitNode(node.consequent, shadowedNames)
+        visitNode(node.alternate, shadowedNames)
       } else if (t.isLogicalExpression(node) || t.isBinaryExpression(node)) {
-        visitNode(node.left as BabelCore.types.Node)
-        visitNode(node.right as BabelCore.types.Node)
+        visitNode(node.left as BabelCore.types.Node, shadowedNames)
+        visitNode(node.right as BabelCore.types.Node, shadowedNames)
       } else if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
-        visitNode(node.object as BabelCore.types.Node)
-        if (node.computed) visitNode(node.property as BabelCore.types.Node)
+        visitNode(node.object as BabelCore.types.Node, shadowedNames)
+        if (node.computed) visitNode(node.property as BabelCore.types.Node, shadowedNames)
       } else if (t.isSequenceExpression(node)) {
-        node.expressions.forEach(expr => visitNode(expr))
+        node.expressions.forEach(expr => visitNode(expr, shadowedNames))
       } else if (t.isArrayExpression(node)) {
         node.elements.forEach(el => {
-          if (t.isExpression(el)) visitNode(el)
+          if (t.isExpression(el)) visitNode(el, shadowedNames)
         })
       } else if (t.isObjectExpression(node)) {
         node.properties.forEach(prop => {
           if (t.isObjectProperty(prop)) {
-            if (prop.computed) visitNode(prop.key as BabelCore.types.Node)
-            visitNode(prop.value as BabelCore.types.Node)
+            if (prop.computed) visitNode(prop.key as BabelCore.types.Node, shadowedNames)
+            visitNode(prop.value as BabelCore.types.Node, shadowedNames)
           } else if (t.isSpreadElement(prop)) {
-            visitNode(prop.argument as BabelCore.types.Node)
+            visitNode(prop.argument as BabelCore.types.Node, shadowedNames)
           }
         })
       } else if (t.isUnaryExpression(node) || t.isUpdateExpression(node)) {
-        visitNode(node.argument as BabelCore.types.Node)
+        visitNode(node.argument as BabelCore.types.Node, shadowedNames)
       } else if (t.isAssignmentExpression(node)) {
-        visitNode(node.left as BabelCore.types.Node)
-        visitNode(node.right as BabelCore.types.Node)
+        visitNode(node.left as BabelCore.types.Node, shadowedNames)
+        visitNode(node.right as BabelCore.types.Node, shadowedNames)
       } else if (t.isParenthesizedExpression(node)) {
-        visitNode(node.expression)
+        visitNode(node.expression, shadowedNames)
       }
     }
   }
 
-  visitNode(callbackExpr.body)
+  const initialShadowedNames = functionShadowSet(callbackExpr, new Set(), t)
+  if (t.isBlockStatement(callbackExpr.body)) {
+    visitNode(callbackExpr.body, blockShadowSet(callbackExpr.body, initialShadowedNames, t))
+  } else {
+    visitNode(callbackExpr.body, initialShadowedNames)
+  }
 
   if (selectorIds.size > 0) {
     ctx.helpersUsed.add('createSelector')
