@@ -7550,6 +7550,44 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps delegated class data evaluation inside the handler scope', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const seen: string[] = []
+
+      function select(value: { prototype: Record<string, unknown> }) {
+        seen.push(typeof value.prototype.click)
+      }
+
+      export function App() {
+        return <button data-id="btn" onClick={(event) => select(class { [event.type]() {} })}>Click</button>
+      }
+
+      export function mount(el: HTMLElement) {
+        seen.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      seen: string[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const button = container.querySelector('[data-id="btn"]') as HTMLButtonElement
+    button.click()
+    await flushUpdates()
+
+    expect(mod.seen).toEqual(['function'])
+
+    teardown()
+    container.remove()
+  })
+
   it('preserves plain-call this semantics for extracted delegated event data', async () => {
     const source = `
       import { render } from 'fict'

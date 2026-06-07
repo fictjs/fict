@@ -11,17 +11,69 @@ export function expressionUsesIdentifier(
   t: typeof BabelCore.types,
 ): boolean {
   let found = false
-  const visit = (node?: BabelCore.types.Node | null): void => {
+  let visit: (node?: BabelCore.types.Node | null) => void
+  const visitDecorators = (decorators?: readonly BabelCore.types.Decorator[] | null): void => {
+    decorators?.forEach(decorator => visit(decorator.expression))
+  }
+  const visitClassMember = (member: BabelCore.types.ClassBody['body'][number]): void => {
+    visitDecorators((member as { decorators?: BabelCore.types.Decorator[] | null }).decorators)
+
+    if (t.isStaticBlock(member)) {
+      member.body.forEach(statement => visit(statement))
+      return
+    }
+
+    if (t.isClassMethod(member) || t.isClassPrivateMethod(member)) {
+      if (member.computed) visit(member.key)
+      return
+    }
+
+    if (
+      t.isClassProperty(member) ||
+      t.isClassPrivateProperty(member) ||
+      t.isClassAccessorProperty(member)
+    ) {
+      if ((t.isClassProperty(member) || t.isClassAccessorProperty(member)) && member.computed) {
+        visit(member.key)
+      }
+      visit(member.value)
+    }
+  }
+  visit = (node?: BabelCore.types.Node | null): void => {
     if (!node || found) return
     if (t.isIdentifier(node)) {
       if (node.name === name) found = true
       return
     }
-    if (
-      t.isFunctionExpression(node) ||
-      t.isArrowFunctionExpression(node) ||
-      t.isClassExpression(node)
-    ) {
+    if (t.isFunctionExpression(node) || t.isArrowFunctionExpression(node)) {
+      return
+    }
+    if (t.isClassExpression(node)) {
+      visitDecorators(node.decorators)
+      visit(node.superClass)
+      node.body.body.forEach(member => visitClassMember(member))
+      return
+    }
+    if (t.isBlockStatement(node)) {
+      node.body.forEach(statement => visit(statement))
+      return
+    }
+    if (t.isExpressionStatement(node)) {
+      visit(node.expression)
+      return
+    }
+    if (t.isReturnStatement(node) || t.isThrowStatement(node)) {
+      visit(node.argument)
+      return
+    }
+    if (t.isVariableDeclaration(node)) {
+      node.declarations.forEach(declaration => visit(declaration.init))
+      return
+    }
+    if (t.isIfStatement(node)) {
+      visit(node.test)
+      visit(node.consequent)
+      visit(node.alternate)
       return
     }
     if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
@@ -127,7 +179,45 @@ function expressionCapturesIdentifiersInNestedFunctions(
   t: typeof BabelCore.types,
 ): boolean {
   let found = false
-  const visit = (node?: BabelCore.types.Node | null, inFunctionBody = false): void => {
+  let visit: (node?: BabelCore.types.Node | null, inFunctionBody?: boolean) => void
+  const visitDecorators = (
+    decorators: readonly BabelCore.types.Decorator[] | null | undefined,
+    inFunctionBody: boolean,
+  ): void => {
+    decorators?.forEach(decorator => visit(decorator.expression, inFunctionBody))
+  }
+  const visitClassMember = (
+    member: BabelCore.types.ClassBody['body'][number],
+    inFunctionBody: boolean,
+  ): void => {
+    visitDecorators(
+      (member as { decorators?: BabelCore.types.Decorator[] | null }).decorators,
+      inFunctionBody,
+    )
+
+    if (t.isStaticBlock(member)) {
+      member.body.forEach(statement => visit(statement, inFunctionBody))
+      return
+    }
+
+    if (t.isClassMethod(member) || t.isClassPrivateMethod(member)) {
+      if (member.computed) visit(member.key, inFunctionBody)
+      visit(member.body, true)
+      return
+    }
+
+    if (
+      t.isClassProperty(member) ||
+      t.isClassPrivateProperty(member) ||
+      t.isClassAccessorProperty(member)
+    ) {
+      if ((t.isClassProperty(member) || t.isClassAccessorProperty(member)) && member.computed) {
+        visit(member.key, inFunctionBody)
+      }
+      visit(member.value, inFunctionBody)
+    }
+  }
+  visit = (node?: BabelCore.types.Node | null, inFunctionBody = false): void => {
     if (!node || found) return
     if (t.isIdentifier(node)) {
       if (inFunctionBody && names.has(node.name)) found = true
@@ -143,6 +233,9 @@ function expressionCapturesIdentifiersInNestedFunctions(
       return
     }
     if (t.isClassExpression(node)) {
+      visitDecorators(node.decorators, inFunctionBody)
+      visit(node.superClass, inFunctionBody)
+      node.body.body.forEach(member => visitClassMember(member, inFunctionBody))
       return
     }
     if (t.isBlockStatement(node)) {
@@ -311,6 +404,18 @@ export function hirExpressionUsesIdentifiers(expr: Expression, names: Set<string
   return found
 }
 
+function hirExpressionContainsClassExpression(expr: Expression): boolean {
+  let found = false
+  walkExpression(
+    expr,
+    node => {
+      if (node.kind === 'ClassExpression') found = true
+    },
+    { includeFunctionBodies: false },
+  )
+  return found
+}
+
 function hirExpressionCapturesIdentifiersInNestedFunctions(
   expr: Expression,
   names: Set<string>,
@@ -395,6 +500,9 @@ export function extractDelegatedEventDataFromHIR(
   }
   const dataExpr = bodyExpr.arguments[0]
   if (!dataExpr) {
+    return null
+  }
+  if (hirExpressionContainsClassExpression(dataExpr)) {
     return null
   }
   if (hirExpressionUsesIdentifiers(dataExpr, paramNames)) {

@@ -5216,6 +5216,51 @@ describe('event handler transformation', () => {
     expect(code).not.toMatch(/addEventListener\([^,]+,\s*"click",\s*e\s*[),]/)
   })
 
+  it('does not extract delegated class data when class evaluation reads the event param', () => {
+    const cases = [
+      `class { [e.type]() {} }`,
+      `class extends e.Base {}`,
+      `class { static value = e.type }`,
+      `class { static { e.type } }`,
+    ]
+
+    for (const classExpr of cases) {
+      const ast = parseFile(`
+        function Comp() {
+          function select(value) {
+            return value
+          }
+          return <button onClick={(e) => select(${classExpr})}>Click</button>
+        }
+      `)
+      const hir = buildHIR(ast)
+      const file = lowerHIRWithRegions(hir, t)
+      const { code } = generate(file)
+
+      expect(code).toMatch(/addEventListener\([^,]+,\s*"click",/)
+      expect(code).toContain('select(class')
+      expect(code).not.toMatch(/addEventListener\([^,]+,\s*"click",\s*\[/)
+      expect(code).not.toContain('__fictReactive(() => class')
+    }
+  })
+
+  it('still extracts delegated class data without event-param dependencies', () => {
+    const ast = parseFile(`
+      function Comp() {
+        function select(value) {
+          return value
+        }
+        return <button onClick={() => select(class { static value = 'stable' })}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",\s*\[/)
+    expect(code).toContain('__fictReactive(() => class')
+  })
+
   it('does not extract delegated data for unknown global callees', () => {
     const ast = parseFile(`
       function Comp() {
