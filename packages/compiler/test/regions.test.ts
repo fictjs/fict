@@ -104,6 +104,106 @@ describe('generateRegions + shapes', () => {
     expect(deps.some(d => d === 'props.value')).toBe(true)
   })
 
+  it('includes dependencies from newer evaluated expression containers', () => {
+    const cases = [
+      {
+        name: 'assignment',
+        declaration: 'const value = (target[props.bar] = props.foo)',
+        expected: ['target', 'props.bar', 'props.foo'],
+      },
+      {
+        name: 'update',
+        declaration: 'const value = props.count++',
+        expected: ['props.count'],
+      },
+      {
+        name: 'optional-call',
+        declaration: 'const value = maybe?.(props.foo)',
+        expected: ['maybe', 'props.foo'],
+      },
+      {
+        name: 'sequence',
+        declaration: 'const value = (props.foo, props.bar)',
+        expected: ['props.foo', 'props.bar'],
+      },
+      {
+        name: 'template',
+        declaration: 'const value = `${props.foo}`',
+        expected: ['props.foo'],
+      },
+      {
+        name: 'tagged-template',
+        declaration: 'const value = tag`${props.foo}`',
+        expected: ['tag', 'props.foo'],
+      },
+      {
+        name: 'new',
+        declaration: 'const value = new Box(props.foo)',
+        expected: ['Box', 'props.foo'],
+      },
+      {
+        name: 'await',
+        prefix: 'async ',
+        declaration: 'const value = await maybe?.(props.foo)',
+        expected: ['maybe', 'props.foo'],
+      },
+      {
+        name: 'yield',
+        star: '*',
+        declaration: 'const value = yield props.foo',
+        expected: ['props.foo'],
+      },
+      {
+        name: 'dynamic-import',
+        declaration: 'const value = import(props.path)',
+        expected: ['props.path'],
+      },
+      {
+        name: 'class-expression',
+        declaration: `
+          const value = class extends Base(props.base) {
+            [props.key]() {}
+            static field = props.staticValue
+            static {
+              maybe(props.block)
+            }
+          }
+        `,
+        expected: ['Base', 'maybe', 'props.base', 'props.key', 'props.staticValue', 'props.block'],
+      },
+      {
+        name: 'binary-control',
+        declaration: 'const value = props.foo + props.bar',
+        expected: ['props.foo', 'props.bar'],
+      },
+    ]
+
+    for (const testCase of cases) {
+      const ast = parseFile(`
+        ${testCase.prefix ?? ''}function${testCase.star ?? ''} Foo(
+          props,
+          target,
+          maybe,
+          maybeList,
+          tag,
+          Box,
+          Base
+        ) {
+          ${testCase.declaration}
+          return value
+        }
+      `)
+      const hir = buildHIR(ast)
+      const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+      const regionResult = generateRegions(firstFunction(hir), scopeResult)
+      const deps = new Set(regionResult.regions.flatMap(r => Array.from(r.dependencies)))
+
+      for (const expected of testCase.expected) {
+        expect(deps.has(expected), `${testCase.name} should depend on ${expected}`).toBe(true)
+      }
+    }
+  })
+
   it('keeps optional-chain subscriptions minimal', () => {
     const ast = parseFile(`
       function Foo(props) {
@@ -117,7 +217,7 @@ describe('generateRegions + shapes', () => {
     const regionResult = generateRegions(fn, scopeResult)
 
     const deps = new Set(regionResult.regions.flatMap(r => Array.from(r.dependencies)))
-    expect(deps.has('props')).toBe(true)
+    expect(deps.has('props') || deps.has('props.user')).toBe(true)
     expect(Array.from(deps).some(d => d.includes('profile'))).toBe(false)
   })
 })

@@ -9,6 +9,419 @@ function baseName(name: string): string {
   return getSSABaseName(name)
 }
 
+type BabelNodeLike = {
+  type?: string
+  [key: string]: unknown
+}
+
+function isBabelNodeLike(value: unknown): value is BabelNodeLike {
+  return !!value && typeof value === 'object' && typeof (value as BabelNodeLike).type === 'string'
+}
+
+function isIgnoredBabelTraversalKey(key: string): boolean {
+  return (
+    key === 'type' ||
+    key === 'loc' ||
+    key === 'start' ||
+    key === 'end' ||
+    key === 'leadingComments' ||
+    key === 'innerComments' ||
+    key === 'trailingComments'
+  )
+}
+
+function collectBabelPatternBindingNames(node: unknown, into: Set<string>): void {
+  if (!isBabelNodeLike(node)) return
+  switch (node.type) {
+    case 'Identifier':
+      if (typeof node.name === 'string') into.add(baseName(node.name))
+      return
+    case 'RestElement':
+      collectBabelPatternBindingNames(node.argument, into)
+      return
+    case 'AssignmentPattern':
+      collectBabelPatternBindingNames(node.left, into)
+      return
+    case 'ArrayPattern':
+      ;(Array.isArray(node.elements) ? node.elements : []).forEach(element =>
+        collectBabelPatternBindingNames(element, into),
+      )
+      return
+    case 'ObjectPattern':
+      ;(Array.isArray(node.properties) ? node.properties : []).forEach(prop => {
+        if (!isBabelNodeLike(prop)) return
+        if (prop.type === 'ObjectProperty') {
+          collectBabelPatternBindingNames(prop.value, into)
+        } else if (prop.type === 'RestElement') {
+          collectBabelPatternBindingNames(prop.argument, into)
+        }
+      })
+      return
+    case 'TSParameterProperty':
+      collectBabelPatternBindingNames(node.parameter, into)
+      return
+    default:
+      return
+  }
+}
+
+function collectBabelStatementBindingNames(node: unknown, into: Set<string>): void {
+  if (!isBabelNodeLike(node)) return
+  switch (node.type) {
+    case 'VariableDeclaration':
+      ;(Array.isArray(node.declarations) ? node.declarations : []).forEach(decl => {
+        if (isBabelNodeLike(decl)) collectBabelPatternBindingNames(decl.id, into)
+      })
+      return
+    case 'FunctionDeclaration':
+    case 'ClassDeclaration':
+      if (isBabelNodeLike(node.id) && node.id.type === 'Identifier') {
+        collectBabelPatternBindingNames(node.id, into)
+      }
+      return
+    default:
+      return
+  }
+}
+
+function getBabelStaticPropertyName(node: unknown): string | null {
+  if (!isBabelNodeLike(node)) return null
+  switch (node.type) {
+    case 'Identifier':
+      return typeof node.name === 'string' ? node.name : null
+    case 'StringLiteral':
+      return typeof node.value === 'string' ? node.value : null
+    case 'NumericLiteral':
+      return typeof node.value === 'number' ? String(node.value) : null
+    case 'BigIntLiteral':
+      return typeof node.value === 'string' ? node.value : null
+    default:
+      return null
+  }
+}
+
+function extractBabelDependencyPath(node: unknown): DependencyPath | null {
+  if (!isBabelNodeLike(node)) return null
+  if (node.type === 'Identifier' && typeof node.name === 'string') {
+    return { base: node.name, segments: [], hasOptional: false }
+  }
+  if (node.type !== 'MemberExpression' && node.type !== 'OptionalMemberExpression') {
+    return null
+  }
+
+  const segments: DependencyPath['segments'] = []
+  let hasOptional = false
+  let current: unknown = node
+  while (
+    isBabelNodeLike(current) &&
+    (current.type === 'MemberExpression' || current.type === 'OptionalMemberExpression')
+  ) {
+    const propertyName = getBabelStaticPropertyName(current.property)
+    if (!propertyName) return null
+    const optional = current.type === 'OptionalMemberExpression' && current.optional === true
+    segments.unshift({
+      property: propertyName,
+      optional,
+      computed: current.computed === true,
+    })
+    if (optional) hasOptional = true
+    current = current.object
+  }
+
+  if (
+    !isBabelNodeLike(current) ||
+    current.type !== 'Identifier' ||
+    typeof current.name !== 'string'
+  ) {
+    return null
+  }
+  return { base: current.name, segments, hasOptional }
+}
+
+function collectBabelReadIdentifier(
+  name: unknown,
+  into: Set<string>,
+  paths: Map<string, DependencyPath[]> | undefined,
+  bound: Set<string>,
+): void {
+  if (typeof name !== 'string') return
+  if (bound.has(baseName(name))) return
+  into.add(name)
+  if (paths) addPath(paths, name, { base: name, segments: [], hasOptional: false })
+}
+
+function collectBabelMemberReads(
+  node: BabelNodeLike,
+  into: Set<string>,
+  paths: Map<string, DependencyPath[]> | undefined,
+  bound: Set<string>,
+): void {
+  const depPath = extractBabelDependencyPath(node)
+  if (depPath) {
+    if (bound.has(baseName(depPath.base))) return
+    into.add(depPath.base)
+    if (paths) addPath(paths, depPath.base, depPath)
+    return
+  }
+
+  collectBabelDefinitionReads(node.object, into, paths, bound)
+  if (node.computed) collectBabelDefinitionReads(node.property, into, paths, bound)
+}
+
+function collectBabelAssignmentTargetReads(
+  node: unknown,
+  into: Set<string>,
+  paths: Map<string, DependencyPath[]> | undefined,
+  bound: Set<string>,
+): void {
+  if (!isBabelNodeLike(node)) return
+  switch (node.type) {
+    case 'Identifier':
+      return
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+      collectBabelDefinitionReads(node.object, into, paths, bound)
+      if (node.computed) collectBabelDefinitionReads(node.property, into, paths, bound)
+      return
+    case 'ObjectPattern':
+      ;(Array.isArray(node.properties) ? node.properties : []).forEach(prop => {
+        if (!isBabelNodeLike(prop)) return
+        if (prop.type === 'ObjectProperty') {
+          if (prop.computed) collectBabelDefinitionReads(prop.key, into, paths, bound)
+          collectBabelAssignmentTargetReads(prop.value, into, paths, bound)
+        } else if (prop.type === 'RestElement') {
+          collectBabelAssignmentTargetReads(prop.argument, into, paths, bound)
+        }
+      })
+      return
+    case 'ArrayPattern':
+      ;(Array.isArray(node.elements) ? node.elements : []).forEach(element =>
+        collectBabelAssignmentTargetReads(element, into, paths, bound),
+      )
+      return
+    case 'AssignmentPattern':
+      collectBabelAssignmentTargetReads(node.left, into, paths, bound)
+      collectBabelDefinitionReads(node.right, into, paths, bound)
+      return
+    case 'RestElement':
+      collectBabelAssignmentTargetReads(node.argument, into, paths, bound)
+      return
+    default:
+      collectBabelDefinitionReads(node, into, paths, bound)
+  }
+}
+
+function collectBabelStatementListReads(
+  statements: unknown,
+  into: Set<string>,
+  paths: Map<string, DependencyPath[]> | undefined,
+  bound: Set<string>,
+): void {
+  const items = Array.isArray(statements) ? statements : []
+  const blockBound = new Set(bound)
+  items.forEach(stmt => collectBabelStatementBindingNames(stmt, blockBound))
+  items.forEach(stmt => collectBabelDefinitionReads(stmt, into, paths, blockBound))
+}
+
+function collectBabelClassMemberDefinitionReads(
+  member: unknown,
+  into: Set<string>,
+  paths: Map<string, DependencyPath[]> | undefined,
+  bound: Set<string>,
+): void {
+  if (Array.isArray(member)) {
+    member.forEach(item => collectBabelClassMemberDefinitionReads(item, into, paths, bound))
+    return
+  }
+  if (!isBabelNodeLike(member)) return
+  switch (member.type) {
+    case 'ClassMethod':
+    case 'ClassPrivateMethod':
+      collectBabelDefinitionReads(member.decorators, into, paths, bound)
+      if (member.computed) collectBabelDefinitionReads(member.key, into, paths, bound)
+      return
+    case 'ClassProperty':
+    case 'ClassPrivateProperty':
+    case 'ClassAccessorProperty':
+      collectBabelDefinitionReads(member.decorators, into, paths, bound)
+      if (member.computed) collectBabelDefinitionReads(member.key, into, paths, bound)
+      if (member.static) collectBabelDefinitionReads(member.value, into, paths, bound)
+      return
+    case 'StaticBlock':
+      collectBabelStatementListReads(member.body, into, paths, bound)
+      return
+    default:
+      collectBabelDefinitionReads(member, into, paths, bound)
+  }
+}
+
+function collectBabelClassLikeDefinitionReads(
+  node: BabelNodeLike,
+  into: Set<string>,
+  paths: Map<string, DependencyPath[]> | undefined,
+  bound: Set<string>,
+): void {
+  collectBabelDefinitionReads(node.superClass, into, paths, bound)
+  collectBabelDefinitionReads(node.decorators, into, paths, bound)
+  const classBound = new Set(bound)
+  if (
+    isBabelNodeLike(node.id) &&
+    node.id.type === 'Identifier' &&
+    typeof node.id.name === 'string'
+  ) {
+    classBound.add(baseName(node.id.name))
+  }
+  if (isBabelNodeLike(node.body)) {
+    collectBabelClassMemberDefinitionReads(node.body.body, into, paths, classBound)
+  }
+}
+
+function collectBabelDefinitionReads(
+  node: unknown,
+  into: Set<string>,
+  paths: Map<string, DependencyPath[]> | undefined,
+  bound: Set<string>,
+): void {
+  if (Array.isArray(node)) {
+    node.forEach(item => collectBabelDefinitionReads(item, into, paths, bound))
+    return
+  }
+  if (!isBabelNodeLike(node)) return
+
+  switch (node.type) {
+    case 'Identifier':
+      collectBabelReadIdentifier(node.name, into, paths, bound)
+      return
+    case 'PrivateName':
+    case 'StringLiteral':
+    case 'NumericLiteral':
+    case 'BooleanLiteral':
+    case 'NullLiteral':
+    case 'BigIntLiteral':
+    case 'RegExpLiteral':
+    case 'ThisExpression':
+    case 'Super':
+    case 'MetaProperty':
+      return
+    case 'FunctionDeclaration':
+    case 'FunctionExpression':
+    case 'ArrowFunctionExpression':
+    case 'ObjectMethod':
+      return
+    case 'Decorator':
+      collectBabelDefinitionReads(node.expression, into, paths, bound)
+      return
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+      collectBabelMemberReads(node, into, paths, bound)
+      return
+    case 'CallExpression':
+    case 'OptionalCallExpression':
+      collectBabelDefinitionReads(node.callee, into, paths, bound)
+      collectBabelDefinitionReads(node.arguments, into, paths, bound)
+      return
+    case 'NewExpression':
+      collectBabelDefinitionReads(node.callee, into, paths, bound)
+      collectBabelDefinitionReads(node.arguments, into, paths, bound)
+      return
+    case 'ImportExpression':
+      collectBabelDefinitionReads(node.source, into, paths, bound)
+      collectBabelDefinitionReads(node.options, into, paths, bound)
+      return
+    case 'AssignmentExpression':
+      collectBabelAssignmentTargetReads(node.left, into, paths, bound)
+      collectBabelDefinitionReads(node.right, into, paths, bound)
+      return
+    case 'UpdateExpression':
+      collectBabelDefinitionReads(node.argument, into, paths, bound)
+      return
+    case 'VariableDeclaration':
+      collectBabelStatementListReads(node.declarations, into, paths, bound)
+      return
+    case 'VariableDeclarator':
+      collectBabelDefinitionReads(node.init, into, paths, bound)
+      return
+    case 'ExpressionStatement':
+      collectBabelDefinitionReads(node.expression, into, paths, bound)
+      return
+    case 'BlockStatement':
+      collectBabelStatementListReads(node.body, into, paths, bound)
+      return
+    case 'ReturnStatement':
+    case 'ThrowStatement':
+      collectBabelDefinitionReads(node.argument, into, paths, bound)
+      return
+    case 'IfStatement':
+      collectBabelDefinitionReads(node.test, into, paths, bound)
+      collectBabelDefinitionReads(node.consequent, into, paths, bound)
+      collectBabelDefinitionReads(node.alternate, into, paths, bound)
+      return
+    case 'ForOfStatement':
+      collectBabelDefinitionReads(node.right, into, paths, bound)
+      collectBabelDefinitionReads(node.body, into, paths, bound)
+      return
+    case 'ForInStatement':
+      collectBabelDefinitionReads(node.right, into, paths, bound)
+      collectBabelDefinitionReads(node.body, into, paths, bound)
+      return
+    case 'ObjectExpression':
+      collectBabelDefinitionReads(node.properties, into, paths, bound)
+      return
+    case 'ObjectProperty':
+      if (node.computed) collectBabelDefinitionReads(node.key, into, paths, bound)
+      collectBabelDefinitionReads(node.value, into, paths, bound)
+      return
+    case 'ArrayExpression':
+      collectBabelDefinitionReads(node.elements, into, paths, bound)
+      return
+    case 'BinaryExpression':
+    case 'LogicalExpression':
+      collectBabelDefinitionReads(node.left, into, paths, bound)
+      collectBabelDefinitionReads(node.right, into, paths, bound)
+      return
+    case 'UnaryExpression':
+    case 'AwaitExpression':
+      collectBabelDefinitionReads(node.argument, into, paths, bound)
+      return
+    case 'YieldExpression':
+      collectBabelDefinitionReads(node.argument, into, paths, bound)
+      return
+    case 'ConditionalExpression':
+      collectBabelDefinitionReads(node.test, into, paths, bound)
+      collectBabelDefinitionReads(node.consequent, into, paths, bound)
+      collectBabelDefinitionReads(node.alternate, into, paths, bound)
+      return
+    case 'SequenceExpression':
+      collectBabelDefinitionReads(node.expressions, into, paths, bound)
+      return
+    case 'TemplateLiteral':
+      collectBabelDefinitionReads(node.expressions, into, paths, bound)
+      return
+    case 'TaggedTemplateExpression':
+      collectBabelDefinitionReads(node.tag, into, paths, bound)
+      collectBabelDefinitionReads(node.quasi, into, paths, bound)
+      return
+    case 'ClassExpression':
+    case 'ClassDeclaration':
+      collectBabelClassLikeDefinitionReads(node, into, paths, bound)
+      return
+    case 'ClassMethod':
+    case 'ClassPrivateMethod':
+    case 'ClassProperty':
+    case 'ClassPrivateProperty':
+    case 'ClassAccessorProperty':
+    case 'StaticBlock':
+      collectBabelClassMemberDefinitionReads(node, into, paths, bound)
+      return
+    default:
+      for (const [key, value] of Object.entries(node)) {
+        if (!isIgnoredBabelTraversalKey(key)) {
+          collectBabelDefinitionReads(value, into, paths, bound)
+        }
+      }
+  }
+}
+
 /**
  * Analysis result for control flow reads.
  * Distinguishes reads in condition positions (if/while tests) from pure expression reads.
@@ -450,6 +863,26 @@ function collectReads(
   }
 }
 
+function collectAssignmentTargetExprReads(
+  expr: Expression | null | undefined,
+  into: Set<string>,
+  paths?: Map<string, DependencyPath[]>,
+  bound = new Set<string>(),
+) {
+  if (!expr || typeof expr !== 'object') return
+  switch (expr.kind) {
+    case 'Identifier':
+      return
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+      collectExprReads(expr.object, into, paths, bound)
+      if (expr.computed) collectExprReads(expr.property, into, paths, bound)
+      return
+    default:
+      collectExprReads(expr, into, paths, bound)
+  }
+}
+
 function accumulateAllReads(byName: Map<string, ReactiveScope>): Set<string> {
   const set = new Set<string>()
   for (const scope of byName.values()) {
@@ -528,10 +961,37 @@ function collectExprReads(
     case 'UnaryExpression':
       collectExprReads(expr.argument, into, paths, bound)
       return
+    case 'AssignmentExpression':
+      collectAssignmentTargetExprReads(expr.left, into, paths, bound)
+      collectExprReads(expr.right, into, paths, bound)
+      return
+    case 'UpdateExpression':
+      collectExprReads(expr.argument, into, paths, bound)
+      return
     case 'ConditionalExpression':
       collectExprReads(expr.test, into, paths, bound)
       collectExprReads(expr.consequent, into, paths, bound)
       collectExprReads(expr.alternate, into, paths, bound)
+      return
+    case 'SequenceExpression':
+      expr.expressions.forEach(item => collectExprReads(item, into, paths, bound))
+      return
+    case 'TemplateLiteral':
+      expr.expressions.forEach(item => collectExprReads(item, into, paths, bound))
+      return
+    case 'TaggedTemplateExpression':
+      collectExprReads(expr.tag, into, paths, bound)
+      collectExprReads(expr.quasi, into, paths, bound)
+      return
+    case 'AwaitExpression':
+      collectExprReads(expr.argument, into, paths, bound)
+      return
+    case 'YieldExpression':
+      if (expr.argument) collectExprReads(expr.argument, into, paths, bound)
+      return
+    case 'NewExpression':
+      collectExprReads(expr.callee, into, paths, bound)
+      expr.arguments.forEach(arg => collectExprReads(arg, into, paths, bound))
       return
     case 'ArrayExpression':
       expr.elements?.forEach(element => collectExprReads(element, into, paths, bound))
@@ -635,6 +1095,14 @@ function collectExprReads(
       }
       return
     }
+    case 'ClassExpression': {
+      collectExprReads(expr.superClass, into, paths, bound)
+      collectBabelDefinitionReads(expr.decorators, into, paths, bound)
+      const classBound = new Set(bound)
+      if (expr.name) classBound.add(baseName(expr.name))
+      collectBabelClassMemberDefinitionReads(expr.body, into, paths, classBound)
+      return
+    }
     case 'JSXElement':
       // Collect from JSX attributes and children
       expr.attributes?.forEach(attr => {
@@ -645,6 +1113,11 @@ function collectExprReads(
         if (child.kind === 'expression') collectExprReads(child.value, into, paths, bound)
         if (child.kind === 'element') collectExprReads(child.value, into, paths, bound)
       })
+      return
+    case 'Literal':
+    case 'MetaProperty':
+    case 'ThisExpression':
+    case 'SuperExpression':
       return
     default:
       return

@@ -122,6 +122,12 @@ function cloneKeyContext(ctx: KeyNarrowingContext): KeyNarrowingContext {
 
 type BabelPattern = t.PatternLike | t.LVal | null | undefined
 
+function isBabelNode(value: unknown): value is t.Node {
+  return (
+    !!value && typeof value === 'object' && typeof (value as { type?: unknown }).type === 'string'
+  )
+}
+
 function clearPatternBindings(pattern: BabelPattern, ctx: KeyNarrowingContext): void {
   if (!pattern || typeof pattern !== 'object') return
 
@@ -686,6 +692,335 @@ function analyzeInstruction(
   }
 }
 
+function analyzeAssignmentTargetExpression(
+  expr: Expression,
+  shapes: Map<string, ObjectShape>,
+  propertyReads: Map<string, Set<string>>,
+  ctx: KeyNarrowingContext,
+): void {
+  switch (expr.kind) {
+    case 'Identifier':
+      return
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+      analyzeExpression(expr.object, shapes, propertyReads, ctx)
+      if (expr.computed) analyzeExpression(expr.property, shapes, propertyReads, ctx)
+      return
+    default:
+      analyzeExpression(expr, shapes, propertyReads, ctx)
+  }
+}
+
+function getBabelBaseIdentifier(node: unknown): string | null {
+  if (!isBabelNode(node)) return null
+  if (t.isIdentifier(node)) return node.name
+  if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+    return getBabelBaseIdentifier(node.object)
+  }
+  return null
+}
+
+function getStaticBabelPropertyName(node: unknown): string | null {
+  if (!isBabelNode(node)) return null
+  if (t.isIdentifier(node)) return node.name
+  if (t.isStringLiteral(node)) return node.value
+  if (t.isNumericLiteral(node)) return String(node.value)
+  if (t.isBigIntLiteral(node)) return node.value
+  return null
+}
+
+function recordBabelMemberRead(
+  node: t.MemberExpression | t.OptionalMemberExpression,
+  shapes: Map<string, ObjectShape>,
+  propertyReads: Map<string, Set<string>>,
+  ctx: KeyNarrowingContext,
+): void {
+  let current: unknown = node
+  let directMember: { property: unknown; computed: boolean } | null = null
+
+  while (
+    isBabelNode(current) &&
+    (t.isMemberExpression(current) || t.isOptionalMemberExpression(current))
+  ) {
+    if (t.isIdentifier(current.object)) {
+      directMember = { property: current.property, computed: current.computed }
+      break
+    }
+    current = current.object
+  }
+
+  const base = getBabelBaseIdentifier(node.object)
+  if (!base || !directMember) {
+    if (base) {
+      const reads = propertyReads.get(base) ?? new Set()
+      const propertyName = !node.computed ? getStaticBabelPropertyName(node.property) : null
+      if (propertyName) reads.add(propertyName)
+      propertyReads.set(base, reads)
+    }
+    return
+  }
+
+  const reads = propertyReads.get(base) ?? new Set()
+  const baseShape = shapes.get(base)
+  if (directMember.computed) {
+    const propertyName = getStaticBabelPropertyName(directMember.property)
+    if (propertyName) {
+      reads.add(propertyName)
+      if (baseShape) baseShape.knownKeys.add(propertyName)
+    } else {
+      if (baseShape) baseShape.dynamicAccess = true
+      analyzeBabelDefinitionExpression(directMember.property, shapes, propertyReads, ctx)
+    }
+  } else {
+    const propertyName = getStaticBabelPropertyName(directMember.property)
+    if (propertyName) {
+      reads.add(propertyName)
+      if (baseShape) baseShape.knownKeys.add(propertyName)
+    }
+  }
+  propertyReads.set(base, reads)
+}
+
+function analyzeBabelAssignmentTargetExpression(
+  node: unknown,
+  shapes: Map<string, ObjectShape>,
+  propertyReads: Map<string, Set<string>>,
+  ctx: KeyNarrowingContext,
+): void {
+  if (!isBabelNode(node)) return
+  if (t.isIdentifier(node)) return
+  if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+    analyzeBabelDefinitionExpression(node.object, shapes, propertyReads, ctx)
+    if (node.computed) analyzeBabelDefinitionExpression(node.property, shapes, propertyReads, ctx)
+    return
+  }
+  if (t.isObjectPattern(node)) {
+    for (const prop of node.properties) {
+      if (t.isObjectProperty(prop)) {
+        if (prop.computed) analyzeBabelDefinitionExpression(prop.key, shapes, propertyReads, ctx)
+        analyzeBabelAssignmentTargetExpression(prop.value, shapes, propertyReads, ctx)
+      } else if (t.isRestElement(prop)) {
+        analyzeBabelAssignmentTargetExpression(prop.argument, shapes, propertyReads, ctx)
+      }
+    }
+    return
+  }
+  if (t.isArrayPattern(node)) {
+    for (const element of node.elements) {
+      analyzeBabelAssignmentTargetExpression(element, shapes, propertyReads, ctx)
+    }
+    return
+  }
+  if (t.isAssignmentPattern(node)) {
+    analyzeBabelAssignmentTargetExpression(node.left, shapes, propertyReads, ctx)
+    analyzeBabelDefinitionExpression(node.right, shapes, propertyReads, ctx)
+    return
+  }
+  if (t.isRestElement(node)) {
+    analyzeBabelAssignmentTargetExpression(node.argument, shapes, propertyReads, ctx)
+    return
+  }
+  analyzeBabelDefinitionExpression(node, shapes, propertyReads, ctx)
+}
+
+function analyzeBabelClassMemberDefinitionExpression(
+  node: unknown,
+  shapes: Map<string, ObjectShape>,
+  propertyReads: Map<string, Set<string>>,
+  ctx: KeyNarrowingContext,
+): void {
+  if (Array.isArray(node)) {
+    node.forEach(item =>
+      analyzeBabelClassMemberDefinitionExpression(item, shapes, propertyReads, ctx),
+    )
+    return
+  }
+  if (!t.isNode(node)) return
+
+  if (t.isClassMethod(node) || t.isClassPrivateMethod(node)) {
+    node.decorators?.forEach(decorator =>
+      analyzeBabelDefinitionExpression(decorator, shapes, propertyReads, ctx),
+    )
+    if (node.computed) analyzeBabelDefinitionExpression(node.key, shapes, propertyReads, ctx)
+    return
+  }
+  if (
+    t.isClassProperty(node) ||
+    t.isClassPrivateProperty(node) ||
+    t.isClassAccessorProperty(node)
+  ) {
+    node.decorators?.forEach(decorator =>
+      analyzeBabelDefinitionExpression(decorator, shapes, propertyReads, ctx),
+    )
+    if ('computed' in node && node.computed) {
+      analyzeBabelDefinitionExpression(node.key, shapes, propertyReads, ctx)
+    }
+    if (node.static && node.value) {
+      analyzeBabelDefinitionExpression(node.value, shapes, propertyReads, ctx)
+    }
+    return
+  }
+  if (t.isStaticBlock(node)) {
+    node.body.forEach(stmt => analyzeBabelDefinitionExpression(stmt, shapes, propertyReads, ctx))
+    return
+  }
+  analyzeBabelDefinitionExpression(node, shapes, propertyReads, ctx)
+}
+
+function analyzeBabelDefinitionExpression(
+  node: unknown,
+  shapes: Map<string, ObjectShape>,
+  propertyReads: Map<string, Set<string>>,
+  ctx: KeyNarrowingContext,
+): void {
+  if (Array.isArray(node)) {
+    node.forEach(item => analyzeBabelDefinitionExpression(item, shapes, propertyReads, ctx))
+    return
+  }
+  if (!isBabelNode(node)) return
+
+  if (
+    t.isFunctionDeclaration(node) ||
+    t.isFunctionExpression(node) ||
+    t.isArrowFunctionExpression(node)
+  ) {
+    return
+  }
+  if (t.isObjectMethod(node)) {
+    if (node.computed) analyzeBabelDefinitionExpression(node.key, shapes, propertyReads, ctx)
+    return
+  }
+  if (t.isClassMethod(node) || t.isClassPrivateMethod(node)) {
+    analyzeBabelClassMemberDefinitionExpression(node, shapes, propertyReads, ctx)
+    return
+  }
+  if (t.isDecorator(node)) {
+    analyzeBabelDefinitionExpression(node.expression, shapes, propertyReads, ctx)
+    return
+  }
+  if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+    recordBabelMemberRead(node, shapes, propertyReads, ctx)
+    return
+  }
+  if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+    analyzeBabelDefinitionExpression(node.callee, shapes, propertyReads, ctx)
+    analyzeBabelDefinitionExpression(node.arguments, shapes, propertyReads, ctx)
+    return
+  }
+  if (t.isNewExpression(node)) {
+    analyzeBabelDefinitionExpression(node.callee, shapes, propertyReads, ctx)
+    analyzeBabelDefinitionExpression(node.arguments, shapes, propertyReads, ctx)
+    return
+  }
+  if (t.isImportExpression(node)) {
+    analyzeBabelDefinitionExpression(node.source, shapes, propertyReads, ctx)
+    analyzeBabelDefinitionExpression(node.options, shapes, propertyReads, ctx)
+    return
+  }
+  if (t.isAssignmentExpression(node)) {
+    analyzeBabelAssignmentTargetExpression(node.left, shapes, propertyReads, ctx)
+    analyzeBabelDefinitionExpression(node.right, shapes, propertyReads, ctx)
+    return
+  }
+  if (t.isUpdateExpression(node)) {
+    analyzeBabelDefinitionExpression(node.argument, shapes, propertyReads, ctx)
+    return
+  }
+  if (t.isVariableDeclaration(node)) {
+    node.declarations.forEach(decl =>
+      analyzeBabelDefinitionExpression(decl, shapes, propertyReads, ctx),
+    )
+    return
+  }
+  if (t.isVariableDeclarator(node)) {
+    analyzeBabelDefinitionExpression(node.init, shapes, propertyReads, ctx)
+    return
+  }
+  if (t.isExpressionStatement(node)) {
+    analyzeBabelDefinitionExpression(node.expression, shapes, propertyReads, ctx)
+    return
+  }
+  if (t.isBlockStatement(node)) {
+    node.body.forEach(stmt => analyzeBabelDefinitionExpression(stmt, shapes, propertyReads, ctx))
+    return
+  }
+  if (t.isReturnStatement(node) || t.isThrowStatement(node)) {
+    analyzeBabelDefinitionExpression(node.argument, shapes, propertyReads, ctx)
+    return
+  }
+  if (t.isObjectExpression(node)) {
+    node.properties.forEach(prop =>
+      analyzeBabelDefinitionExpression(prop, shapes, propertyReads, ctx),
+    )
+    return
+  }
+  if (t.isObjectProperty(node)) {
+    if (node.computed) analyzeBabelDefinitionExpression(node.key, shapes, propertyReads, ctx)
+    analyzeBabelDefinitionExpression(node.value, shapes, propertyReads, ctx)
+    return
+  }
+  if (t.isArrayExpression(node)) {
+    node.elements.forEach(element =>
+      analyzeBabelDefinitionExpression(element, shapes, propertyReads, ctx),
+    )
+    return
+  }
+  if (t.isBinaryExpression(node) || t.isLogicalExpression(node)) {
+    analyzeBabelDefinitionExpression(node.left, shapes, propertyReads, ctx)
+    analyzeBabelDefinitionExpression(node.right, shapes, propertyReads, ctx)
+    return
+  }
+  if (t.isUnaryExpression(node) || t.isAwaitExpression(node)) {
+    analyzeBabelDefinitionExpression(node.argument, shapes, propertyReads, ctx)
+    return
+  }
+  if (t.isYieldExpression(node)) {
+    analyzeBabelDefinitionExpression(node.argument, shapes, propertyReads, ctx)
+    return
+  }
+  if (t.isConditionalExpression(node)) {
+    analyzeBabelDefinitionExpression(node.test, shapes, propertyReads, ctx)
+    analyzeBabelDefinitionExpression(node.consequent, shapes, propertyReads, ctx)
+    analyzeBabelDefinitionExpression(node.alternate, shapes, propertyReads, ctx)
+    return
+  }
+  if (t.isSequenceExpression(node)) {
+    node.expressions.forEach(expr =>
+      analyzeBabelDefinitionExpression(expr, shapes, propertyReads, ctx),
+    )
+    return
+  }
+  if (t.isTemplateLiteral(node)) {
+    node.expressions.forEach(expr =>
+      analyzeBabelDefinitionExpression(expr, shapes, propertyReads, ctx),
+    )
+    return
+  }
+  if (t.isTaggedTemplateExpression(node)) {
+    analyzeBabelDefinitionExpression(node.tag, shapes, propertyReads, ctx)
+    analyzeBabelDefinitionExpression(node.quasi, shapes, propertyReads, ctx)
+    return
+  }
+  if (t.isClassExpression(node) || t.isClassDeclaration(node)) {
+    analyzeBabelDefinitionExpression(node.superClass, shapes, propertyReads, ctx)
+    node.decorators?.forEach(decorator =>
+      analyzeBabelDefinitionExpression(decorator, shapes, propertyReads, ctx),
+    )
+    node.body.body.forEach(member =>
+      analyzeBabelClassMemberDefinitionExpression(member, shapes, propertyReads, ctx),
+    )
+    return
+  }
+  if (
+    t.isClassProperty(node) ||
+    t.isClassPrivateProperty(node) ||
+    t.isClassAccessorProperty(node) ||
+    t.isStaticBlock(node)
+  ) {
+    analyzeBabelClassMemberDefinitionExpression(node, shapes, propertyReads, ctx)
+  }
+}
+
 /**
  * Analyze an expression and return its shape (if it's an object)
  */
@@ -731,7 +1066,8 @@ function analyzeExpression(
       return shape
     }
 
-    case 'MemberExpression': {
+    case 'MemberExpression':
+    case 'OptionalMemberExpression': {
       // Track property access - need to find the DIRECT property on the base
       // For props.user.name, we want to track 'user' on 'props', not 'name'
 
@@ -739,7 +1075,7 @@ function analyzeExpression(
       let current: Expression = expr
       let directMember: { property: Expression; computed: boolean } | null = null
 
-      while (current.kind === 'MemberExpression') {
+      while (current.kind === 'MemberExpression' || current.kind === 'OptionalMemberExpression') {
         if (current.object.kind === 'Identifier') {
           // Found the direct property access on an identifier
           directMember = { property: current.property, computed: current.computed }
@@ -786,9 +1122,13 @@ function analyzeExpression(
       return null
     }
 
-    case 'CallExpression': {
+    case 'CallExpression':
+    case 'OptionalCallExpression': {
       // Invalidate key-set arrays when they escape or are mutated
-      if (expr.callee.kind === 'MemberExpression') {
+      if (
+        expr.callee.kind === 'MemberExpression' ||
+        expr.callee.kind === 'OptionalMemberExpression'
+      ) {
         if (expr.callee.object.kind === 'Identifier') {
           const baseName = expr.callee.object.name
           const propName =
@@ -898,6 +1238,44 @@ function analyzeExpression(
       return null
     }
 
+    case 'SequenceExpression': {
+      let shape: ObjectShape | null = null
+      for (const item of expr.expressions) {
+        shape = analyzeExpression(item, shapes, propertyReads, ctx)
+      }
+      return shape
+    }
+
+    case 'TemplateLiteral': {
+      for (const item of expr.expressions) {
+        analyzeExpression(item, shapes, propertyReads, ctx)
+      }
+      return null
+    }
+
+    case 'TaggedTemplateExpression': {
+      analyzeExpression(expr.tag, shapes, propertyReads, ctx)
+      analyzeExpression(expr.quasi, shapes, propertyReads, ctx)
+      return null
+    }
+
+    case 'AwaitExpression':
+      return analyzeExpression(expr.argument, shapes, propertyReads, ctx)
+
+    case 'YieldExpression':
+      if (expr.argument) analyzeExpression(expr.argument, shapes, propertyReads, ctx)
+      return null
+
+    case 'NewExpression':
+      analyzeExpression(expr.callee, shapes, propertyReads, ctx)
+      expr.arguments.forEach(arg => analyzeExpression(arg, shapes, propertyReads, ctx))
+      return null
+
+    case 'ImportExpression':
+      analyzeExpression(expr.source, shapes, propertyReads, ctx)
+      if (expr.options) analyzeExpression(expr.options, shapes, propertyReads, ctx)
+      return null
+
     case 'ConditionalExpression': {
       analyzeExpression(expr.test, shapes, propertyReads, ctx)
       const consequent = analyzeExpression(expr.consequent, shapes, propertyReads, ctx)
@@ -942,6 +1320,7 @@ function analyzeExpression(
           }
         }
       }
+      analyzeAssignmentTargetExpression(expr.left, shapes, propertyReads, ctx)
       analyzeExpression(expr.right, shapes, propertyReads, ctx)
       return null
     }
@@ -965,6 +1344,13 @@ function analyzeExpression(
     case 'FunctionExpression': {
       // Functions capture and may escape their free variables
       // This is a conservative approximation
+      return null
+    }
+
+    case 'ClassExpression': {
+      if (expr.superClass) analyzeExpression(expr.superClass, shapes, propertyReads, ctx)
+      analyzeBabelDefinitionExpression(expr.decorators, shapes, propertyReads, ctx)
+      analyzeBabelClassMemberDefinitionExpression(expr.body, shapes, propertyReads, ctx)
       return null
     }
 
@@ -1008,7 +1394,7 @@ function getBaseIdentifier(expr: Expression): string | null {
   if (expr.kind === 'Identifier') {
     return expr.name
   }
-  if (expr.kind === 'MemberExpression') {
+  if (expr.kind === 'MemberExpression' || expr.kind === 'OptionalMemberExpression') {
     return getBaseIdentifier(expr.object)
   }
   return null
