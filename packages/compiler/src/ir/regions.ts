@@ -937,6 +937,129 @@ function getNamespaceReactiveMemberKind(
 }
 
 export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): boolean {
+  const babelNodeUsesTracked = (node: unknown): boolean => {
+    const { t } = ctx
+    if (Array.isArray(node)) return node.some(item => babelNodeUsesTracked(item))
+    if (
+      !node ||
+      typeof node !== 'object' ||
+      typeof (node as { type?: unknown }).type !== 'string'
+    ) {
+      return false
+    }
+    const babelNode = node as BabelCore.types.Node
+
+    if (t.isIdentifier(babelNode)) {
+      return expressionUsesTracked({ kind: 'Identifier', name: babelNode.name }, ctx)
+    }
+    if (
+      t.isStringLiteral(babelNode) ||
+      t.isNumericLiteral(babelNode) ||
+      t.isBooleanLiteral(babelNode) ||
+      t.isNullLiteral(babelNode) ||
+      t.isBigIntLiteral(babelNode) ||
+      t.isRegExpLiteral(babelNode) ||
+      t.isThisExpression(babelNode) ||
+      t.isSuper(babelNode) ||
+      t.isMetaProperty(babelNode)
+    ) {
+      return false
+    }
+    if (
+      t.isFunctionDeclaration(babelNode) ||
+      t.isFunctionExpression(babelNode) ||
+      t.isArrowFunctionExpression(babelNode) ||
+      t.isObjectMethod(babelNode)
+    ) {
+      return false
+    }
+    if (t.isDecorator(babelNode)) return babelNodeUsesTracked(babelNode.expression)
+    if (t.isMemberExpression(babelNode) || t.isOptionalMemberExpression(babelNode)) {
+      return (
+        babelNodeUsesTracked(babelNode.object) ||
+        (babelNode.computed ? babelNodeUsesTracked(babelNode.property) : false)
+      )
+    }
+    if (t.isCallExpression(babelNode) || t.isOptionalCallExpression(babelNode)) {
+      return babelNodeUsesTracked(babelNode.callee) || babelNodeUsesTracked(babelNode.arguments)
+    }
+    if (t.isNewExpression(babelNode)) {
+      return babelNodeUsesTracked(babelNode.callee) || babelNodeUsesTracked(babelNode.arguments)
+    }
+    if (t.isImportExpression(babelNode)) {
+      return babelNodeUsesTracked(babelNode.source) || babelNodeUsesTracked(babelNode.options)
+    }
+    if (t.isAssignmentExpression(babelNode)) {
+      return babelNodeUsesTracked(babelNode.left) || babelNodeUsesTracked(babelNode.right)
+    }
+    if (t.isUpdateExpression(babelNode)) return babelNodeUsesTracked(babelNode.argument)
+    if (t.isVariableDeclaration(babelNode)) return babelNodeUsesTracked(babelNode.declarations)
+    if (t.isVariableDeclarator(babelNode)) return babelNodeUsesTracked(babelNode.init)
+    if (t.isExpressionStatement(babelNode)) return babelNodeUsesTracked(babelNode.expression)
+    if (t.isBlockStatement(babelNode)) return babelNodeUsesTracked(babelNode.body)
+    if (t.isReturnStatement(babelNode) || t.isThrowStatement(babelNode)) {
+      return babelNodeUsesTracked(babelNode.argument)
+    }
+    if (t.isObjectExpression(babelNode)) return babelNodeUsesTracked(babelNode.properties)
+    if (t.isObjectProperty(babelNode)) {
+      return (
+        (babelNode.computed ? babelNodeUsesTracked(babelNode.key) : false) ||
+        babelNodeUsesTracked(babelNode.value)
+      )
+    }
+    if (t.isArrayExpression(babelNode)) return babelNodeUsesTracked(babelNode.elements)
+    if (t.isBinaryExpression(babelNode) || t.isLogicalExpression(babelNode)) {
+      return babelNodeUsesTracked(babelNode.left) || babelNodeUsesTracked(babelNode.right)
+    }
+    if (t.isUnaryExpression(babelNode) || t.isAwaitExpression(babelNode)) {
+      return babelNodeUsesTracked(babelNode.argument)
+    }
+    if (t.isYieldExpression(babelNode)) return babelNodeUsesTracked(babelNode.argument)
+    if (t.isConditionalExpression(babelNode)) {
+      return (
+        babelNodeUsesTracked(babelNode.test) ||
+        babelNodeUsesTracked(babelNode.consequent) ||
+        babelNodeUsesTracked(babelNode.alternate)
+      )
+    }
+    if (t.isSequenceExpression(babelNode)) return babelNodeUsesTracked(babelNode.expressions)
+    if (t.isTemplateLiteral(babelNode)) return babelNodeUsesTracked(babelNode.expressions)
+    if (t.isTaggedTemplateExpression(babelNode)) {
+      return babelNodeUsesTracked(babelNode.tag) || babelNodeUsesTracked(babelNode.quasi)
+    }
+    if (t.isClassExpression(babelNode) || t.isClassDeclaration(babelNode)) {
+      return (
+        babelNodeUsesTracked(babelNode.superClass) ||
+        babelNodeUsesTracked(babelNode.decorators) ||
+        babelNodeUsesTracked(babelNode.body.body)
+      )
+    }
+    if (t.isClassMethod(babelNode) || t.isClassPrivateMethod(babelNode)) {
+      return (
+        babelNodeUsesTracked(babelNode.decorators) ||
+        (babelNode.computed ? babelNodeUsesTracked(babelNode.key) : false)
+      )
+    }
+    if (
+      t.isClassProperty(babelNode) ||
+      t.isClassPrivateProperty(babelNode) ||
+      t.isClassAccessorProperty(babelNode)
+    ) {
+      const staticFieldValueUsesTracked =
+        'static' in babelNode && babelNode.static ? babelNodeUsesTracked(babelNode.value) : false
+
+      return (
+        babelNodeUsesTracked(babelNode.decorators) ||
+        ('computed' in babelNode && babelNode.computed
+          ? babelNodeUsesTracked(babelNode.key)
+          : false) ||
+        staticFieldValueUsesTracked
+      )
+    }
+    if (t.isStaticBlock(babelNode)) return babelNodeUsesTracked(babelNode.body)
+    return false
+  }
+
   const assignmentTargetUsesTrackedRead = (target: Expression): boolean => {
     switch (target.kind) {
       case 'Identifier':
@@ -1026,7 +1149,11 @@ export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): bo
         (expr.options ? expressionUsesTracked(expr.options as Expression, ctx) : false)
       )
     case 'ClassExpression':
-      return expr.superClass ? expressionUsesTracked(expr.superClass as Expression, ctx) : false
+      return (
+        (expr.superClass ? expressionUsesTracked(expr.superClass as Expression, ctx) : false) ||
+        babelNodeUsesTracked(expr.decorators) ||
+        babelNodeUsesTracked(expr.body)
+      )
     case 'AssignmentExpression':
       return (
         assignmentTargetUsesTrackedRead(expr.left as Expression) ||

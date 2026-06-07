@@ -3192,6 +3192,93 @@ describe('tracked reads/writes in HIR codegen', () => {
 
   it.each([
     {
+      name: 'extends',
+      expression: 'class extends Base(count) {}',
+      expected: /class extends Base\(count\(\)\) \{\}/,
+    },
+    {
+      name: 'computed method',
+      expression: 'class { [count]() { return 1 } }',
+      expected: /\[count\(\)\]\(\)/,
+    },
+    {
+      name: 'static field',
+      expression: 'class { static value = count }',
+      expected: /static value = count\(\)/,
+    },
+    {
+      name: 'static private field',
+      expression: 'class { static #value = count }',
+      expected: /static #value = count\(\)/,
+    },
+    {
+      name: 'static block',
+      expression: 'class { static { this.value = count } }',
+      expected: /this\.value = count\(\)/,
+    },
+  ])(
+    'wraps class expression component props with tracked $name reads',
+    ({ expression, expected }) => {
+      const output = transform(`
+      import { $state } from 'fict'
+
+      function Base(value: number) {
+        return class {}
+      }
+
+      function Child(props: { value: any }) {
+        return <span>{props.value}</span>
+      }
+
+      export function App() {
+        const count = $state(1)
+        return <Child value={${expression}} />
+      }
+    `)
+
+      expect(output).toMatch(/value: (?:__fictProp|propGetter|prop)\(\(\) => class/)
+      expect(output).toMatch(expected)
+      expect(output).not.toMatch(/value: class(?:\s|\{)/)
+    },
+  )
+
+  it('does not wrap static class expression component props', () => {
+    const output = transform(`
+      function Child(props: { value: any }) {
+        return <span>{props.value}</span>
+      }
+
+      export function App() {
+        return <Child value={class { static value = 1 }} />
+      }
+    `)
+
+    expect(output).toMatch(/value: class \{/)
+    expect(output).toContain('static value = 1')
+    expect(output).not.toMatch(/value: (?:__fictProp|propGetter|prop)\(\(\) => class/)
+  })
+
+  it('does not wrap class expression component props for instance field reads alone', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      function Child(props: { value: any }) {
+        return <span>{props.value}</span>
+      }
+
+      export function App() {
+        const count = $state(1)
+        return <Child value={class { value = count }} />
+      }
+    `)
+
+    expect(output).toMatch(/value: class \{/)
+    expect(output).toContain('value = count()')
+    expect(output).not.toMatch(/value: (?:__fictProp|propGetter|prop)\(\(\) => class/)
+  })
+
+  it.each([
+    {
       name: 'sequence',
       initializer: '(0, <div>{count}</div>)',
       result: 'node',
