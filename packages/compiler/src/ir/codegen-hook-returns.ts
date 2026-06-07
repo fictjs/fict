@@ -30,6 +30,15 @@ export interface HookReturnInfoAnalysisOps {
   flattenRegions: (regions: Region[]) => NonNullable<CodegenContext['regions']>
 }
 
+function getStaticHookReturnPropName(expr: Expression, computed: boolean): string | number | null {
+  const propName = getStaticPropName(expr, computed)
+  if (propName !== null) return propName
+  if (computed && expr.kind === 'Literal' && typeof expr.value === 'bigint') {
+    return expr.value.toString()
+  }
+  return null
+}
+
 export function serializeHookReturnInfo(info: HookReturnInfo): HookReturnInfoSerializable {
   const objectProps: Record<string, HookAccessorKind> | undefined = info.objectProps
     ? Object.fromEntries(info.objectProps.entries())
@@ -218,7 +227,7 @@ export function analyzeHookReturnInfo(
     if (expr.kind !== 'MemberExpression' && expr.kind !== 'OptionalMemberExpression') return null
     const objectPath = staticMemberPath(expr.object as Expression)
     if (!objectPath) return null
-    const propName = getStaticPropName(expr.property as Expression, expr.computed)
+    const propName = getStaticHookReturnPropName(expr.property as Expression, expr.computed)
     if (propName === null) return null
     return [...objectPath, String(propName)]
   }
@@ -339,7 +348,7 @@ export function analyzeHookReturnInfo(
           return
         }
         if (prop.kind !== 'Property') return
-        const propName = getStaticPropName(prop.key as Expression, prop.computed === true)
+        const propName = getStaticHookReturnPropName(prop.key as Expression, prop.computed === true)
         if (propName === null) return
         if (prop.computed !== true && propName === '__proto__') return
         const keyName = String(propName)

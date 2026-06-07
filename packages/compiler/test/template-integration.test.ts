@@ -6781,6 +6781,46 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('renders BigInt hook-return DOM bindings without calling plain slots', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function useTuple() {
+        let count = $state(2)
+        return [count, 9]
+      }
+
+      export function App() {
+        const tuple = useTuple()
+        return (
+          <div>
+            <span data-id="signal">{tuple[0n]}</span>
+            <span data-id="plain">{tuple[1n]}</span>
+            <span data-id="missing">{tuple[-1n]}</span>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: true,
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-id="signal"]')?.textContent).toBe('2')
+    expect(container.querySelector('[data-id="plain"]')?.textContent).toBe('9')
+    expect(container.querySelector('[data-id="missing"]')?.textContent).toBe('')
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps dynamic hook-return DOM binding keys conservative in output', () => {
     const source = `
       import { $state, render } from 'fict'

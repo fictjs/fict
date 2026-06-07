@@ -1738,7 +1738,7 @@ export function resolveHookMemberValue(
   const kind = resolveHookReturnMemberAccessorKind(expr, ctx)
   if (!kind) return null
 
-  const propName = getStaticPropName(expr.property as Expression, expr.computed)
+  const propName = getStaticHookReturnPropName(expr.property as Expression, expr.computed)
   const obj =
     expr.object.kind === 'Identifier'
       ? ctx.t.identifier(deSSAVarName(expr.object.name))
@@ -1867,6 +1867,18 @@ function getStaticMetadataPropertyKey(propName: string | number | null): string 
 
 function getStaticMemberMetadataKey(property: Expression, computed: boolean): string | null {
   return getStaticMetadataPropertyKey(getStaticPropName(property, computed))
+}
+
+function getStaticHookReturnPropName(
+  property: Expression,
+  computed: boolean,
+): string | number | null {
+  const propName = getStaticPropName(property, computed)
+  if (propName !== null) return propName
+  if (computed && property.kind === 'Literal' && typeof property.value === 'bigint') {
+    return property.value.toString()
+  }
+  return null
 }
 
 function getCanonicalNumericKey(key: string): number | null {
@@ -2065,7 +2077,7 @@ function resolveHookReturnMemberAccessorKind(
 ): HookAccessorKind | null {
   const hookMemberInfo = resolveHookReturnMemberInfo(expr, ctx)
   if (!hookMemberInfo) return null
-  const propName = getStaticPropName(expr.property as Expression, expr.computed)
+  const propName = getStaticHookReturnPropName(expr.property as Expression, expr.computed)
   return getHookReturnAccessorKind(hookMemberInfo.info, propName)
 }
 
@@ -3593,35 +3605,48 @@ function lowerExpressionImpl(
     }
   }
   const buildStaticSignalKeyTest = (
-    keyRef: BabelCore.types.Identifier,
+    propertyKeyRef: BabelCore.types.Identifier,
     keys: (string | number)[],
   ): BabelCore.types.Expression | null => {
     if (keys.length === 0) return null
     let test: BabelCore.types.Expression | null = null
     const seen = new Set<string>()
     const addKeyTest = (key: string | number): void => {
-      const seenKey = `${typeof key}:${String(key)}`
+      const seenKey = String(key)
       if (seen.has(seenKey)) return
       seen.add(seenKey)
-      const literal = typeof key === 'number' ? t.numericLiteral(key) : t.stringLiteral(String(key))
-      const eq = t.binaryExpression('===', t.cloneNode(keyRef, true), literal)
+      const eq = t.binaryExpression(
+        '===',
+        t.cloneNode(propertyKeyRef, true),
+        t.stringLiteral(seenKey),
+      )
       test = test ? t.logicalExpression('||', test, eq) : eq
-    }
-    const addNumericStringEquivalent = (key: string): void => {
-      const numeric = getCanonicalNumericKey(key)
-      if (numeric === null) return
-      addKeyTest(numeric)
     }
 
     for (const key of keys) {
       addKeyTest(key)
-      if (typeof key === 'number' && Number.isFinite(key)) {
-        addKeyTest(String(key))
-      } else if (typeof key === 'string') {
-        addNumericStringEquivalent(key)
-      }
     }
     return test
+  }
+  const buildPropertyKeyExpression = (
+    keyRef: BabelCore.types.Identifier,
+  ): BabelCore.types.Expression => {
+    const stringified = t.templateLiteral(
+      [
+        t.templateElement({ raw: '', cooked: '' }, false),
+        t.templateElement({ raw: '', cooked: '' }, true),
+      ],
+      [t.cloneNode(keyRef, true)],
+    )
+    return t.conditionalExpression(
+      t.binaryExpression(
+        '===',
+        t.unaryExpression('typeof', t.cloneNode(keyRef, true)),
+        t.stringLiteral('symbol'),
+      ),
+      t.cloneNode(keyRef, true),
+      stringified,
+    )
   }
   const lowerComputedHookSignalAssignmentForObject = (
     objectExpr: BabelCore.types.Expression,
@@ -3637,9 +3662,11 @@ function lowerExpressionImpl(
 
     const keyId = genTemp(ctx, 'key')
     const keyRef = t.identifier(keyId.name)
+    const propertyKeyId = genTemp(ctx, 'propertyKey')
+    const propertyKeyRef = t.identifier(propertyKeyId.name)
     const memberForAccessor = t.memberExpression(
       t.cloneNode(objectExpr, true),
-      t.identifier(keyId.name),
+      t.cloneNode(propertyKeyRef, true),
       true,
     )
     const current = t.callExpression(t.cloneNode(memberForAccessor, true), [])
@@ -3652,15 +3679,21 @@ function lowerExpressionImpl(
     )
     const fallback = t.assignmentExpression(
       operator,
-      t.memberExpression(t.cloneNode(objectExpr, true), t.identifier(keyId.name), true),
+      t.memberExpression(t.cloneNode(objectExpr, true), t.cloneNode(propertyKeyRef, true), true),
       right,
     )
-    const keyTest = buildStaticSignalKeyTest(keyRef, keyTestKeys)
+    const keyTest = buildStaticSignalKeyTest(propertyKeyRef, keyTestKeys)
     if (!keyTest) return null
     return t.callExpression(
       t.arrowFunctionExpression(
         [t.cloneNode(keyId, true)],
-        t.conditionalExpression(keyTest, signalWrite, fallback),
+        t.callExpression(
+          t.arrowFunctionExpression(
+            [t.cloneNode(propertyKeyId, true)],
+            t.conditionalExpression(keyTest, signalWrite, fallback),
+          ),
+          [buildPropertyKeyExpression(keyRef)],
+        ),
       ),
       [lowerExpression(keyExpr, ctx)],
     )
@@ -3679,22 +3712,30 @@ function lowerExpressionImpl(
 
     const keyId = genTemp(ctx, 'key')
     const keyRef = t.identifier(keyId.name)
+    const propertyKeyId = genTemp(ctx, 'propertyKey')
+    const propertyKeyRef = t.identifier(propertyKeyId.name)
     const signalUpdate = lowerTrackedUpdateCall(
-      t.memberExpression(t.cloneNode(objectExpr, true), t.identifier(keyId.name), true),
+      t.memberExpression(t.cloneNode(objectExpr, true), t.cloneNode(propertyKeyRef, true), true),
       operator,
       prefix,
     )
     const fallback = t.updateExpression(
       operator,
-      t.memberExpression(t.cloneNode(objectExpr, true), t.identifier(keyId.name), true),
+      t.memberExpression(t.cloneNode(objectExpr, true), t.cloneNode(propertyKeyRef, true), true),
       prefix,
     )
-    const keyTest = buildStaticSignalKeyTest(keyRef, keyTestKeys)
+    const keyTest = buildStaticSignalKeyTest(propertyKeyRef, keyTestKeys)
     if (!keyTest) return null
     return t.callExpression(
       t.arrowFunctionExpression(
         [t.cloneNode(keyId, true)],
-        t.conditionalExpression(keyTest, signalUpdate, fallback),
+        t.callExpression(
+          t.arrowFunctionExpression(
+            [t.cloneNode(propertyKeyId, true)],
+            t.conditionalExpression(keyTest, signalUpdate, fallback),
+          ),
+          [buildPropertyKeyExpression(keyRef)],
+        ),
       ),
       [lowerExpression(keyExpr, ctx)],
     )

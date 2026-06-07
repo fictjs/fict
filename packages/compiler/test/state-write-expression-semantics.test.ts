@@ -1421,6 +1421,117 @@ describe('state write expression semantics', () => {
     expect(raw).toEqual([1, 1])
   })
 
+  it('coerces BigInt literal keys for hook-return reads', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function usePair() {
+        let count = $state(1)
+        let doubled = $state(2)
+        return [count, doubled]
+      }
+
+      function useObj() {
+        let count = $state(3)
+        let doubled = $state(4)
+        return { 0: count, 1: doubled }
+      }
+
+      function useComputedObj() {
+        let count = $state(5)
+        return { [0n]: count }
+      }
+
+      export function useBigIntHookMemberRead() {
+        const pair = usePair()
+        const obj = useObj()
+        const computedObj = useComputedObj()
+        return [pair[0n], pair[1n], obj[0n], obj[1n], computedObj[0n], pair[-1n]]
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).toContain('pair[0n]()')
+    expect(output).toContain('pair[1n]()')
+    expect(output).toContain('obj[0n]()')
+    expect(output).toContain('obj[1n]()')
+    expect(output).toContain('computedObj[0n]()')
+    expect(output).not.toContain('pair[-1n]()')
+
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useBigIntHookMemberRead')() as unknown[]
+    expect(raw).toEqual([1, 2, 3, 4, 5, undefined])
+  })
+
+  it('coerces BigInt keys for computed hook-return writes and updates', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function usePair() {
+        let count = $state(1)
+        let doubled = $state(10)
+        return [count, doubled]
+      }
+
+      function useObj() {
+        let count = $state(20)
+        let doubled = $state(30)
+        return { 0: count, 1: doubled }
+      }
+
+      export function useBigIntHookMemberWrite() {
+        const pair = usePair()
+        const obj = useObj()
+        const zero = 0n
+        const one = 1n
+        const assign = (pair[zero] += 2)
+        const post = pair[one]++
+        const objAssign = (obj[zero] = 40)
+        const objPost = obj[one]++
+        return [assign, post, pair[0], pair[1], objAssign, objPost, obj[0], obj[1]]
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).not.toMatch(/__key_\d+ === 0/)
+    expect(output).not.toMatch(/__key_\d+ === 1/)
+    expect(output).toMatch(/__propertyKey_\d+ === "0"/)
+    expect(output).toMatch(/__propertyKey_\d+ === "1"/)
+
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useBigIntHookMemberWrite')() as unknown[]
+    const values = raw.map(value =>
+      typeof value === 'function' ? (value as () => unknown)() : value,
+    )
+    expect(values).toEqual([3, 10, 3, 11, 40, 30, 40, 31])
+  })
+
+  it('keeps negative BigInt hook-return keys on the computed fallback path', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function usePair() {
+        let count = $state(1)
+        return [count]
+      }
+
+      export function useNegativeBigIntHookKeyWrite() {
+        const pair = usePair()
+        const key = -1n
+        const assigned = (pair[key] = 5)
+        return [assigned, pair[0], pair[-1n]]
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).toMatch(/__propertyKey_\d+ === "0"/)
+    expect(output).not.toContain('pair[-1n]()')
+
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useNegativeBigIntHookKeyWrite')() as unknown[]
+    const values = raw.map(value =>
+      typeof value === 'function' ? (value as () => unknown)() : value,
+    )
+    expect(values).toEqual([5, 1, 5])
+  })
+
   it('records static computed hook-return object keys', () => {
     const source = `
       import { $state } from 'fict'

@@ -2355,7 +2355,7 @@ describe('Cross-Module Reactivity', () => {
       )
 
       expect(controlOutput).toContain('pair[1](2)')
-      expect(controlOutput).toMatch(/: pair\[__key_\d+\] = 3/)
+      expect(controlOutput).toMatch(/: pair\[__propertyKey_\d+\] = 3/)
       expect(controlOutput).not.toContain('pair[2](3)')
       expect(controlOutput).toContain('pair[0]()')
       expect(controlOutput).not.toContain('pair[0]()()')
