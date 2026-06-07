@@ -6348,6 +6348,46 @@ describe('resumable event handler transformation', () => {
     expect(code).not.toMatch(/addEventListener\([^,]+,\s*"click"/)
   })
 
+  it('auto-extracts class expressions with definition-time work in inline handlers', () => {
+    const ast = parseFile(`
+      function makeBase() {
+        return HTMLElement
+      }
+      function makeKey() {
+        return "run"
+      }
+      function makeValue() {
+        return 1
+      }
+      function makeBlock() {
+        return 2
+      }
+
+      export function App() {
+        return (
+          <div>
+            <button onClick={() => class extends makeBase() {}}>extends</button>
+            <button onClick={() => class { [makeKey()]() {} }}>computed</button>
+            <button onClick={() => class { static value = makeValue() }}>field</button>
+            <button onClick={() => class { static { makeBlock() } }}>block</button>
+            <input onInput={() => class Local {}} />
+          </div>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code.match(/setAttribute\("on:click"/g)).toHaveLength(4)
+    expect(code).toContain('export const __fict_e0')
+    expect(code).toContain('export const __fict_e1')
+    expect(code).toContain('export const __fict_e2')
+    expect(code).toContain('export const __fict_e3')
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"input"/)
+    expect(code).not.toMatch(/addEventListener\([^,]+,\s*"click"/)
+  })
+
   it('auto-extracts stable bare handler identifiers', () => {
     const ast = parseFile(`
       export const moduleConstHandler = () => console.log('module const')
