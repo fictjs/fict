@@ -9566,6 +9566,57 @@ describe('compiled templates DOM integration', () => {
   })
 
   it(
+    'renders and cleans up an optional portal in fine-grained mode',
+    { timeout: 10000 },
+    async () => {
+      const source = `
+      import { $state, render, createPortal, createElement } from 'fict'
+
+      export let api: { inc(): void }
+
+      export function App() {
+        let count = $state(0)
+        api = { inc: () => (count = count + 1) }
+
+        return (
+          <>
+            <div data-id="host">host</div>
+            {createPortal?.(document.body, () => <div data-id="optional-portal">{count}</div>, createElement)}
+          </>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+        api: { inc(): void }
+      }>(source, { fineGrainedDom: true })
+
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const teardown = mod.mount(container)
+
+      const portal = () => document.body.querySelector('[data-id="optional-portal"]') as HTMLElement
+
+      await flushUpdates()
+      expect(portal().textContent).toBe('0')
+
+      mod.api.inc()
+      await flushUpdates()
+      expect(portal().textContent).toBe('1')
+
+      teardown()
+      await flushUpdates()
+      expect(document.body.querySelector('[data-id="optional-portal"]')).toBeNull()
+      container.remove()
+    },
+  )
+
+  it(
     'updates nested text content without re-rendering parent elements',
     { timeout: 10000 },
     async () => {

@@ -2286,6 +2286,69 @@ describe('tracked reads/writes in HIR codegen', () => {
 
   it.each([
     {
+      name: 'direct optional import',
+      source: 'fict',
+      importClause: '{ createPortal, createElement }',
+      call: 'createPortal?.(document.body, () => <span>child</span>, createElement)',
+      expectedCall: 'createPortal?.(document.body',
+      insertPattern: /insertBetween[\s\S]*\(\)\s*=>[\s\S]*createPortal\?\./,
+    },
+    {
+      name: 'parenthesized optional import',
+      source: 'fict',
+      importClause: '{ createPortal, createElement }',
+      call: '(createPortal)?.(document.body, () => <span>child</span>, createElement)',
+      expectedCall: 'createPortal?.(document.body',
+      insertPattern: /insertBetween[\s\S]*\(\)\s*=>[\s\S]*createPortal\?\./,
+    },
+    {
+      name: 'aliased optional import',
+      source: '@fictjs/runtime',
+      importClause: '{ createPortal as cp, createElement }',
+      call: 'cp?.(document.body, () => <span>child</span>, createElement)',
+      expectedCall: 'cp?.(document.body',
+      insertPattern: /insertBetween[\s\S]*\(\)\s*=>[\s\S]*cp\?\./,
+    },
+    {
+      name: 'namespace optional member call',
+      source: 'fict',
+      importClause: '* as Fict',
+      call: 'Fict.createPortal?.(document.body, () => <span>child</span>, Fict.createElement)',
+      expectedCall: 'Fict.createPortal?.(document.body',
+      insertPattern: /insertBetween[\s\S]*\(\)\s*=>[\s\S]*Fict\.createPortal\?\./,
+    },
+    {
+      name: 'namespace optional object call',
+      source: 'fict',
+      importClause: '* as Fict',
+      call: 'Fict?.createPortal(document.body, () => <span>child</span>, Fict.createElement)',
+      expectedCall: 'Fict?.createPortal(document.body',
+      insertPattern: /insertBetween[\s\S]*\(\)\s*=>[\s\S]*Fict\?\.createPortal/,
+    },
+    {
+      name: 'computed namespace optional call',
+      source: 'fict',
+      importClause: '* as Fict',
+      call: 'Fict["createPortal"]?.(document.body, () => <span>child</span>, Fict.createElement)',
+      expectedCall: 'Fict["createPortal"]?.(document.body',
+      insertPattern: /insertBetween[\s\S]*\(\)\s*=>[\s\S]*Fict\["createPortal"\]\?\./,
+    },
+  ])('registers cleanup for optional $name createPortal child calls', testCase => {
+    const output = transform(`
+      import ${testCase.importClause} from '${testCase.source}'
+
+      export function App() {
+        return <div>{${testCase.call}}</div>
+      }
+    `)
+
+    expect(output).toContain(testCase.expectedCall)
+    expect(output).toContain('onDestroy')
+    expect(output).not.toMatch(testCase.insertPattern)
+  })
+
+  it.each([
+    {
       name: 'aliased import',
       importLine: "import { createPortal as cp } from 'fict'",
       shadow: 'const cp = (value: unknown) => value',
@@ -2300,6 +2363,36 @@ describe('tracked reads/writes in HIR codegen', () => {
       expectedCall: 'Fict.createPortal("child")',
     },
   ])('preserves locally shadowed $name createPortal child calls', testCase => {
+    const output = transform(`
+      ${testCase.importLine}
+
+      export function App() {
+        ${testCase.shadow}
+        return <div>{${testCase.call}}</div>
+      }
+    `)
+
+    expect(output).toContain(testCase.expectedCall)
+    expect(output).toContain('insertBetween')
+    expect(output).not.toContain('onDestroy')
+  })
+
+  it.each([
+    {
+      name: 'aliased optional import',
+      importLine: "import { createPortal as cp } from 'fict'",
+      shadow: 'const cp = (value: unknown) => value',
+      call: "cp?.('child')",
+      expectedCall: 'cp?.("child")',
+    },
+    {
+      name: 'namespace optional import',
+      importLine: "import * as Fict from 'fict'",
+      shadow: 'const Fict = { createPortal(value: unknown) { return value } }',
+      call: "Fict?.createPortal('child')",
+      expectedCall: 'Fict?.createPortal("child")',
+    },
+  ])('preserves locally shadowed optional $name createPortal child calls', testCase => {
     const output = transform(`
       ${testCase.importLine}
 

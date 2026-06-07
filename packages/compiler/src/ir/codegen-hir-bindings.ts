@@ -32,7 +32,7 @@ export interface HIRChildBindingOps {
 }
 
 function isRuntimeCreatePortalCall(expr: Expression, ctx: CodegenContext): boolean {
-  if (expr.kind !== 'CallExpression') return false
+  if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
   const callee = expr.callee
   if (callee.kind === 'Identifier') {
     const name = callee.name
@@ -42,7 +42,7 @@ function isRuntimeCreatePortalCall(expr: Expression, ctx: CodegenContext): boole
     return ctx.moduleRuntimeImportMap?.get(name) === 'createPortal'
   }
   if (
-    callee.kind === 'MemberExpression' &&
+    (callee.kind === 'MemberExpression' || callee.kind === 'OptionalMemberExpression') &&
     callee.object.kind === 'Identifier' &&
     getCreatePortalMemberName(callee.property as Expression, callee.computed) === 'createPortal'
   ) {
