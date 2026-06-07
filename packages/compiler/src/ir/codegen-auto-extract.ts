@@ -107,6 +107,11 @@ function countExpressionNodes(expr: Expression | undefined): number {
       count += countExpressionNodes(expr.argument)
       return count + 2 // Async adds complexity
 
+    case 'ImportExpression':
+      count += countExpressionNodes(expr.source)
+      if (expr.options) count += countExpressionNodes(expr.options)
+      return count
+
     case 'NewExpression':
       count += countExpressionNodes(expr.callee)
       for (const arg of expr.arguments) {
@@ -243,6 +248,9 @@ function hasExternalCalls(expr: Expression | undefined): boolean {
     case 'AwaitExpression':
       return true // Await implies async external operation
 
+    case 'ImportExpression':
+      return true // Dynamic import starts external async module loading
+
     case 'NewExpression':
       return true // Constructor calls are external
 
@@ -300,6 +308,9 @@ function hasAsyncAwait(expr: Expression | undefined): boolean {
 
   switch (expr.kind) {
     case 'AwaitExpression':
+      return true
+
+    case 'ImportExpression':
       return true
 
     case 'ArrowFunction':

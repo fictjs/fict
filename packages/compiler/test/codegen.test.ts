@@ -6319,6 +6319,35 @@ describe('resumable event handler transformation', () => {
     expect(code).not.toMatch(/addEventListener\([^,]+,\s*"click"/)
   })
 
+  it('auto-extracts dynamic imports in inline handlers', () => {
+    const ast = parseFile(`
+      const path = "./dynamic-chunk"
+
+      export function App() {
+        return (
+          <div>
+            <button onClick={() => import("./chunk")}>static</button>
+            <button onClick={() => import(path)}>path</button>
+            <button onClick={async () => import("./async-chunk")}>async</button>
+            <button onClick={async () => await import("./await-chunk")}>awaited</button>
+            <input onInput={() => 1} />
+          </div>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code.match(/setAttribute\("on:click"/g)).toHaveLength(4)
+    expect(code).toContain('export const __fict_e0')
+    expect(code).toContain('export const __fict_e1')
+    expect(code).toContain('export const __fict_e2')
+    expect(code).toContain('export const __fict_e3')
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"input"/)
+    expect(code).not.toMatch(/addEventListener\([^,]+,\s*"click"/)
+  })
+
   it('auto-extracts stable bare handler identifiers', () => {
     const ast = parseFile(`
       export const moduleConstHandler = () => console.log('module const')
