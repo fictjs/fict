@@ -3887,6 +3887,139 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it.each([
+    { name: 'fine-grained DOM', fineGrainedDom: true },
+    { name: 'VNode fallback', fineGrainedDom: false },
+  ])(
+    'formats logical-or JSX fallback children with runtime child semantics in $name',
+    async opts => {
+      const source = `
+      import { render } from 'fict'
+
+      function Fallback(props: { id: string }) {
+        return <span data-testid={props.id + '-fallback'}>fallback</span>
+      }
+
+      function Case(props: { id: string; value: unknown }) {
+        return <div data-testid={props.id}>{props.value || <Fallback id={props.id} />}</div>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => (
+          <>
+            <Case id="true" value={true} />
+            <Case id="false" value={false} />
+            <Case id="zero" value={0} />
+            <Case id="one" value={1} />
+            <Case id="empty" value="" />
+            <Case id="text" value="ok" />
+            <Case id="null" value={null} />
+            <Case id="undefined" value={void 0} />
+          </>
+        ), el)
+      }
+    `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+        fineGrainedDom: opts.fineGrainedDom,
+      })
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const teardown = mod.mount(container)
+
+      const expectedText = new Map([
+        ['true', ''],
+        ['false', 'fallback'],
+        ['zero', 'fallback'],
+        ['one', '1'],
+        ['empty', 'fallback'],
+        ['text', 'ok'],
+        ['null', 'fallback'],
+        ['undefined', 'fallback'],
+      ])
+      const fallbackCases = new Set(['false', 'zero', 'empty', 'null', 'undefined'])
+
+      for (const [id, text] of expectedText) {
+        const el = container.querySelector(`[data-testid="${id}"]`) as HTMLDivElement
+        expect(el.textContent).toBe(text)
+        expect(!!container.querySelector(`[data-testid="${id}-fallback"]`)).toBe(
+          fallbackCases.has(id),
+        )
+      }
+
+      teardown()
+      container.remove()
+    },
+  )
+
+  it('updates logical-or JSX fallback children without rendering boolean text', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { set(value: boolean | number | string | null | undefined): void }
+
+      function Fallback() {
+        return <span data-testid="fallback">fallback</span>
+      }
+
+      export function App() {
+        let ready = $state<boolean | number | string | null | undefined>(false)
+        api = { set: next => (ready = next) }
+        return <div data-testid="box">{ready || <Fallback />}</div>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { set(value: boolean | number | string | null | undefined): void }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const box = container.querySelector('[data-testid="box"]') as HTMLDivElement
+    const hasFallback = () => !!container.querySelector('[data-testid="fallback"]')
+
+    expect(box.textContent).toBe('fallback')
+    expect(hasFallback()).toBe(true)
+
+    mod.api.set(true)
+    await flushUpdates()
+    expect(box.textContent).toBe('')
+    expect(hasFallback()).toBe(false)
+
+    mod.api.set(1)
+    await flushUpdates()
+    expect(box.textContent).toBe('1')
+    expect(hasFallback()).toBe(false)
+
+    mod.api.set('')
+    await flushUpdates()
+    expect(box.textContent).toBe('fallback')
+    expect(hasFallback()).toBe(true)
+
+    mod.api.set('ok')
+    await flushUpdates()
+    expect(box.textContent).toBe('ok')
+    expect(hasFallback()).toBe(false)
+
+    mod.api.set(null)
+    await flushUpdates()
+    expect(box.textContent).toBe('fallback')
+    expect(hasFallback()).toBe(true)
+
+    mod.api.set(undefined)
+    await flushUpdates()
+    expect(box.textContent).toBe('fallback')
+    expect(hasFallback()).toBe(true)
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps adjacent text around empty JSX expression children', async () => {
     const source = `
       import { render } from 'fict'
