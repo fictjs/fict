@@ -267,6 +267,56 @@ describe('analyzeFictFile', () => {
     )
   })
 
+  it('includes components with JSX hidden inside logical expressions', () => {
+    const source = `
+      export function LogicalAnd(props: { ok: boolean }) {
+        return props.ok && <span>ok</span>
+      }
+
+      export function LogicalOr(props: { ok: boolean }) {
+        return props.ok || <span>fallback</span>
+      }
+
+      export function NestedLogical(props: { first: boolean; second: boolean }) {
+        return props.first && (props.second || <span>nested</span>)
+      }
+
+      export function LogicalArray(props: { ok: boolean }) {
+        return [props.ok && <span>item</span>]
+      }
+
+      export function LogicalObject(props: { ok: boolean }) {
+        return { child: props.ok || <span>child</span> }
+      }
+
+      export function LogicalCall(props: { ok: boolean }, wrap: (value: unknown) => unknown) {
+        return wrap(props.ok && <span>call</span>)
+      }
+
+      export function PlainLogic(props: { ok: boolean }) {
+        return props.ok && !props.ok
+      }
+    `
+    const result = analyzeFictFile(source, 'logical-jsx.tsx', {
+      includeRegions: true,
+      includeDiagnostics: true,
+      verbosity: 'minimal',
+    })
+
+    const names = result.components.map(component => component.name)
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'LogicalAnd',
+        'LogicalOr',
+        'NestedLogical',
+        'LogicalArray',
+        'LogicalObject',
+        'LogicalCall',
+      ]),
+    )
+    expect(names).not.toContain('PlainLogic')
+  })
+
   it('marks derived JSX reads from dollar-suffixed state identifiers as reactive', () => {
     const source = `
       import { $state } from 'fict'
