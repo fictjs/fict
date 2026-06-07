@@ -474,6 +474,90 @@ describe('Object Shape Lattice Analysis', () => {
       expect(subscriptions!.has('age')).toBe(true)
     })
 
+    it('should use property subscription for optional prop access', () => {
+      const ast = parseFile(`
+        function Component(props) {
+          return props?.name
+        }
+      `)
+      const hir = buildHIR(ast)
+      const result = analyzeObjectShapes(firstFunction(hir))
+
+      expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
+      const subscriptions = getPropertySubscription('props', result)
+      expect(subscriptions).toBeDefined()
+      expect(subscriptions!.has('name')).toBe(true)
+    })
+
+    it('should track the direct base property for nested optional prop access', () => {
+      const ast = parseFile(`
+        function Component(props) {
+          return props?.user?.name
+        }
+      `)
+      const hir = buildHIR(ast)
+      const result = analyzeObjectShapes(firstFunction(hir))
+
+      expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
+      const subscriptions = getPropertySubscription('props', result)
+      expect(subscriptions).toBeDefined()
+      expect(subscriptions!.has('user')).toBe(true)
+      expect(subscriptions!.has('name')).toBe(false)
+    })
+
+    it('should fall back to whole-object subscription for unknown optional computed keys', () => {
+      const ast = parseFile(`
+        function Component(props, key) {
+          return props?.[key]
+        }
+      `)
+      const hir = buildHIR(ast)
+      const result = analyzeObjectShapes(firstFunction(hir))
+
+      const propsShape = result.shapes.get('props')
+      expect(propsShape).toBeDefined()
+      expect(propsShape!.dynamicAccess).toBe(true)
+      expect(shouldUseWholeObjectSubscription('props', result)).toBe(true)
+    })
+
+    it('should narrow optional computed prop keys when the key set is known', () => {
+      const ast = parseFile(`
+        function Component(props, key) {
+          if (key === 'name') {
+            return props?.[key]
+          }
+          return null
+        }
+      `)
+      const hir = buildHIR(ast)
+      const result = analyzeObjectShapes(firstFunction(hir))
+
+      expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
+      const subscriptions = getPropertySubscription('props', result)
+      expect(subscriptions).toBeDefined()
+      expect(subscriptions!.has('name')).toBe(true)
+    })
+
+    it('should use property subscription for optional store access', () => {
+      const ast = parseFile(`
+        import { $store } from 'fict'
+        function Component() {
+          const store = $store({ name: 'Ada', age: 36 })
+          return store?.name
+        }
+      `)
+      const hir = buildHIR(ast)
+      const result = analyzeObjectShapes(firstFunction(hir))
+
+      const storeShape = result.shapes.get('store')
+      expect(storeShape).toBeDefined()
+      expect(storeShape!.source.kind).toBe('store')
+      expect(shouldUseWholeObjectSubscription('store', result)).toBe(false)
+      const subscriptions = getPropertySubscription('store', result)
+      expect(subscriptions).toBeDefined()
+      expect(subscriptions!.has('name')).toBe(true)
+    })
+
     it('should fallback to whole-object subscription for complex patterns', () => {
       const ast = parseFile(`
         function Component(props, dynamicKey) {
