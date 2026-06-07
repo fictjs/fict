@@ -262,6 +262,9 @@ export function keyExpressionSignature(expression: Expression): string {
         if (typeof value === 'bigint') {
           return { __fictLiteralType: 'bigint', value: value.toString() }
         }
+        if (value instanceof RegExp) {
+          return { __fictLiteralType: 'regexp', source: value.source, flags: value.flags }
+        }
         return value
       }) ?? ''
     )

@@ -4642,6 +4642,71 @@ describe('event handler transformation', () => {
     expect(keyExpressionSignature(bigintKey)).not.toBe(keyExpressionSignature(markerStringKey))
   })
 
+  it('falls back for branch keys with different RegExp literals', () => {
+    const ast = parseFile(`
+      function List() {
+        const items = [{ big: true, name: 'a' }]
+        return (
+          <ul>
+            {items.map(item => {
+              if (item.big) {
+                return <li key={/a/}>{item.name}</li>
+              }
+              return <li key={/b/}>{item.name}</li>
+            })}
+          </ul>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).not.toContain('createKeyedList')
+    expect(code).toContain('items.map')
+    expect(code).toContain('key: /a/')
+    expect(code).toContain('key: /b/')
+  })
+
+  it('falls back for branch keys with matching RegExp source but different flags', () => {
+    const ast = parseFile(`
+      function List() {
+        const items = [{ big: true, name: 'a' }]
+        return (
+          <ul>
+            {items.map(item => {
+              if (item.big) {
+                return <li key={/a/}>{item.name}</li>
+              }
+              return <li key={/a/i}>{item.name}</li>
+            })}
+          </ul>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).not.toContain('createKeyedList')
+    expect(code).toContain('items.map')
+    expect(code).toContain('key: /a/')
+    expect(code).toContain('key: /a/i')
+  })
+
+  it('keeps RegExp key signatures equal without colliding with strings or objects', () => {
+    const regexpKey: Expression = { kind: 'Literal', value: /a/g }
+    const sameRegexpKey: Expression = { kind: 'Literal', value: /a/g }
+    const differentFlagsKey: Expression = { kind: 'Literal', value: /a/i }
+    const stringKey: Expression = { kind: 'Literal', value: '/a/g' }
+    const objectKey: Expression = { kind: 'ObjectExpression', properties: [] }
+
+    expect(keyExpressionSignature(regexpKey)).toBe(keyExpressionSignature(sameRegexpKey))
+    expect(keyExpressionSignature(regexpKey)).not.toBe(keyExpressionSignature(differentFlagsKey))
+    expect(keyExpressionSignature(regexpKey)).not.toBe(keyExpressionSignature(stringKey))
+    expect(keyExpressionSignature(regexpKey)).not.toBe(keyExpressionSignature(objectKey))
+  })
+
   it('falls back for unresolved callback-local list key aliases', () => {
     const ast = parseFile(`
       function List() {
