@@ -122,60 +122,73 @@ export function emitHIRChildBinding(
   )
 
   // Set namespace context for child element lowering
+  const prevNamespace = ctx.namespaceContext
   const prevNamespaceExplicit = ctx.namespaceContextExplicit
   if (namespace !== undefined) {
     ctx.namespaceContext = namespace
     ctx.namespaceContextExplicit = true
   }
-  const restoreNamespaceExplicit = () => {
-    ctx.namespaceContextExplicit = prevNamespaceExplicit
-  }
 
-  // createPortal call inside JSX child: register cleanup but don't insert marker into parent
-  if (isRuntimeCreatePortalCall(expr, ctx)) {
-    ctx.helpersUsed.add('onDestroy')
-    const portalId = ops.genTemp(ctx, 'portal')
-    const portalExpr = ops.lowerExpression(expr, ctx)
-    statements.push(
-      t.variableDeclaration('const', [t.variableDeclarator(portalId, portalExpr)]),
-      t.expressionStatement(
-        t.callExpression(runtimeIdentifier(ctx, 'onDestroy'), [
-          t.memberExpression(portalId, t.identifier('dispose')),
-        ]),
-      ),
-    )
-    restoreNamespaceExplicit()
-    return
-  }
+  try {
+    // createPortal call inside JSX child: register cleanup but don't insert marker into parent
+    if (isRuntimeCreatePortalCall(expr, ctx)) {
+      ctx.helpersUsed.add('onDestroy')
+      const portalId = ops.genTemp(ctx, 'portal')
+      const portalExpr = ops.lowerExpression(expr, ctx)
+      statements.push(
+        t.variableDeclaration('const', [t.variableDeclarator(portalId, portalExpr)]),
+        t.expressionStatement(
+          t.callExpression(runtimeIdentifier(ctx, 'onDestroy'), [
+            t.memberExpression(portalId, t.identifier('dispose')),
+          ]),
+        ),
+      )
+      return
+    }
 
-  // Check if it's a conditional
-  if (
-    expr.kind === 'ConditionalExpression' ||
-    (expr.kind === 'LogicalExpression' && expr.operator === '&&')
-  ) {
-    ops.emitConditionalChild(markerId, endMarkerId, expr, statements, ctx)
-    restoreNamespaceExplicit()
-    return
-  }
-
-  // Check if it's a list (.map call), including optional chaining
-  if (expr.kind === 'CallExpression' || expr.kind === 'OptionalCallExpression') {
-    const callee = expr.callee
+    // Check if it's a conditional
     if (
-      (callee.kind === 'MemberExpression' || callee.kind === 'OptionalMemberExpression') &&
-      callee.property.kind === 'Identifier' &&
-      callee.property.name === 'map'
+      expr.kind === 'ConditionalExpression' ||
+      (expr.kind === 'LogicalExpression' && expr.operator === '&&')
     ) {
-      if (ops.emitListChild(markerId, endMarkerId, expr, statements, ctx)) {
-        restoreNamespaceExplicit()
-        return
+      ops.emitConditionalChild(markerId, endMarkerId, expr, statements, ctx)
+      return
+    }
+
+    // Check if it's a list (.map call), including optional chaining
+    if (expr.kind === 'CallExpression' || expr.kind === 'OptionalCallExpression') {
+      const callee = expr.callee
+      if (
+        (callee.kind === 'MemberExpression' || callee.kind === 'OptionalMemberExpression') &&
+        callee.property.kind === 'Identifier' &&
+        callee.property.name === 'map'
+      ) {
+        if (ops.emitListChild(markerId, endMarkerId, expr, statements, ctx)) {
+          return
+        }
       }
     }
-  }
 
-  // Check if it's a JSX element
-  if (expr.kind === 'JSXElement') {
-    const childExpr = ops.lowerJSXElement(expr, ctx)
+    // Check if it's a JSX element
+    if (expr.kind === 'JSXElement') {
+      const childExpr = ops.lowerJSXElement(expr, ctx)
+      const createElementExpr = createElementForNamespace(ctx, namespace)
+      ctx.helpersUsed.add('insertBetween')
+      statements.push(
+        t.expressionStatement(
+          t.callExpression(runtimeIdentifier(ctx, 'insertBetween'), [
+            markerId,
+            endMarkerId,
+            t.arrowFunctionExpression([], childExpr),
+            createElementExpr,
+          ]),
+        ),
+      )
+      return
+    }
+
+    // Default: insert dynamic expression
+    const valueExpr = ops.lowerDomExpression(expr, ctx, containingRegion)
     const createElementExpr = createElementForNamespace(ctx, namespace)
     ctx.helpersUsed.add('insertBetween')
     statements.push(
@@ -183,28 +196,13 @@ export function emitHIRChildBinding(
         t.callExpression(runtimeIdentifier(ctx, 'insertBetween'), [
           markerId,
           endMarkerId,
-          t.arrowFunctionExpression([], childExpr),
+          t.arrowFunctionExpression([], valueExpr),
           createElementExpr,
         ]),
       ),
     )
-    restoreNamespaceExplicit()
-    return
+  } finally {
+    ctx.namespaceContext = prevNamespace
+    ctx.namespaceContextExplicit = prevNamespaceExplicit
   }
-
-  // Default: insert dynamic expression
-  const valueExpr = ops.lowerDomExpression(expr, ctx, containingRegion)
-  const createElementExpr = createElementForNamespace(ctx, namespace)
-  ctx.helpersUsed.add('insertBetween')
-  statements.push(
-    t.expressionStatement(
-      t.callExpression(runtimeIdentifier(ctx, 'insertBetween'), [
-        markerId,
-        endMarkerId,
-        t.arrowFunctionExpression([], valueExpr),
-        createElementExpr,
-      ]),
-    ),
-  )
-  restoreNamespaceExplicit()
 }

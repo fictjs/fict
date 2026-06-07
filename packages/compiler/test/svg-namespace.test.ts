@@ -54,6 +54,67 @@ describe('SVG/MathML Namespace Support ()', () => {
       expect(output).toMatch(/template\([^)]*circle[^)]*,\s*void 0,\s*true\)/)
     })
 
+    it('restores SVG namespace before later HTML component children', () => {
+      const source = `
+        function Wrapper(props) {
+          return <section>{props.children}</section>
+        }
+
+        export function App(props) {
+          return (
+            <div>
+              <svg>{props.show ? <circle data-id="svg" /> : null}</svg>
+              <Wrapper><span data-id="html">html</span></Wrapper>
+            </div>
+          )
+        }
+      `
+      const output = transform(source)
+
+      expect(output).toMatch(/template\([^)]*circle[^)]*,\s*void 0,\s*true\)/)
+      expect(output).toMatch(/template\([^)]*span data-id=\\"html\\"[^)]*\)/)
+      expect(output).not.toMatch(/template\([^)]*span data-id=\\"html\\"[^)]*,\s*void 0,\s*true\)/)
+    })
+
+    it('restores SVG namespace before later HTML dynamic siblings', () => {
+      const source = `
+        export function App(props) {
+          return (
+            <div>
+              <svg>{props.show ? <circle data-id="svg" /> : null}</svg>
+              {props.show ? <span data-id="html">html</span> : null}
+            </div>
+          )
+        }
+      `
+      const output = transform(source)
+
+      expect(output).toMatch(/template\([^)]*circle[^)]*,\s*void 0,\s*true\)/)
+      expect(output).toMatch(/template\([^)]*span data-id=\\"html\\"[^)]*\)/)
+      expect(output).not.toMatch(/template\([^)]*span data-id=\\"html\\"[^)]*,\s*void 0,\s*true\)/)
+    })
+
+    it('keeps later component children in SVG namespace when still inside SVG', () => {
+      const source = `
+        function Wrapper(props) {
+          return <>{props.children}</>
+        }
+
+        export function App(props) {
+          return (
+            <svg>
+              {props.show ? <circle data-id="first" /> : null}
+              <Wrapper><g data-id="still-svg" /></Wrapper>
+            </svg>
+          )
+        }
+      `
+      const output = transform(source)
+
+      expect(output).toMatch(/template\([^)]*circle[^)]*,\s*void 0,\s*true\)/)
+      expect(output).toMatch(/template\([^)]*g data-id=\\"still-svg\\"[^)]*,\s*void 0,\s*true\)/)
+    })
+
     it('handles nested SVG elements correctly', () => {
       const source = `
         import { $state } from 'fict'
@@ -281,6 +342,30 @@ describe('SVG/MathML Namespace Support ()', () => {
       // Check for pattern: template("...", void 0, void 0, true) for isMathML
       expect(output).toContain('<mi>')
       expect(output).toMatch(/template\([^)]*mi[^)]*,\s*void 0,\s*void 0,\s*true\)/)
+    })
+
+    it('restores MathML namespace before later HTML component children', () => {
+      const source = `
+        function Wrapper(props) {
+          return <section>{props.children}</section>
+        }
+
+        export function App(props) {
+          return (
+            <div>
+              <math>{props.show ? <mi data-id="math" /> : null}</math>
+              <Wrapper><span data-id="html-math">html</span></Wrapper>
+            </div>
+          )
+        }
+      `
+      const output = transform(source)
+
+      expect(output).toMatch(/template\([^)]*mi[^)]*,\s*void 0,\s*void 0,\s*true\)/)
+      expect(output).toMatch(/template\([^)]*span data-id=\\"html-math\\"[^)]*\)/)
+      expect(output).not.toMatch(
+        /template\([^)]*span data-id=\\"html-math\\"[^)]*,\s*void 0,\s*void 0,\s*true\)/,
+      )
     })
 
     it('passes MathML namespace to dynamic string intrinsic slots', () => {
