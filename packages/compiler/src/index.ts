@@ -388,6 +388,7 @@ const STRICT_GUARANTEE_WARNING_CODES = new Set([
   'FICT-R003',
   'FICT-R005',
   'FICT-R006',
+  'FICT-R007',
 ])
 
 function readBooleanEnv(name: string): boolean | undefined {
@@ -975,6 +976,96 @@ function runWarningPass(
     const root = getRootIdentifier(expr, t)
     if (!root) return false
     return hasTrackedBinding(path, root.name, reactiveBindingIds)
+  }
+  const unwrapTransparentExpressionNode = (node: BabelCore.types.Node): BabelCore.types.Node => {
+    if (
+      t.isParenthesizedExpression(node) ||
+      t.isTSAsExpression(node) ||
+      t.isTSTypeAssertion(node) ||
+      t.isTSNonNullExpression(node) ||
+      t.isTSSatisfiesExpression(node) ||
+      t.isTypeCastExpression(node)
+    ) {
+      return unwrapTransparentExpressionNode(node.expression)
+    }
+    return node
+  }
+  const targetWritesReactiveRoot = (
+    node: BabelCore.types.Node | null | undefined,
+    path: BabelCore.NodePath,
+  ): boolean => {
+    if (!node) return false
+    const target = unwrapTransparentExpressionNode(node)
+    if (
+      t.isIdentifier(target) ||
+      t.isMemberExpression(target) ||
+      t.isOptionalMemberExpression(target)
+    ) {
+      const root = getRootIdentifier(target as BabelCore.types.Expression, t)
+      if (!root) return false
+      return (
+        hasTrackedBinding(path, root.name, stateRootBindingIds) ||
+        hasTrackedBinding(path, root.name, reactiveBindingIds)
+      )
+    }
+    if (t.isAssignmentPattern(target)) {
+      return targetWritesReactiveRoot(target.left, path)
+    }
+    if (t.isRestElement(target)) {
+      return targetWritesReactiveRoot(target.argument, path)
+    }
+    if (t.isArrayPattern(target)) {
+      return target.elements.some(element => targetWritesReactiveRoot(element, path))
+    }
+    if (t.isObjectPattern(target)) {
+      return target.properties.some(property => {
+        if (t.isObjectProperty(property)) {
+          return targetWritesReactiveRoot(property.value, path)
+        }
+        return targetWritesReactiveRoot(property.argument, path)
+      })
+    }
+    return false
+  }
+  const jsxChildExpressionWritesReactiveState = (
+    exprPath: BabelCore.NodePath<BabelCore.types.JSXExpressionContainer>,
+  ): boolean => {
+    const expressionPath = exprPath.get('expression') as BabelCore.NodePath<BabelCore.types.Node>
+    if (!expressionPath.isExpression()) return false
+    let found = false
+    const checkWritePath = (writePath: BabelCore.NodePath): void => {
+      if (found) return
+      if (writePath.isAssignmentExpression()) {
+        found = targetWritesReactiveRoot(writePath.node.left, writePath)
+      } else if (writePath.isUpdateExpression()) {
+        found = targetWritesReactiveRoot(writePath.node.argument, writePath)
+      }
+    }
+
+    checkWritePath(expressionPath)
+    if (found) return true
+    if (expressionPath.isJSXElement() || expressionPath.isJSXFragment()) return false
+
+    expressionPath.traverse({
+      Function(fnPath) {
+        fnPath.skip()
+      },
+      JSXElement(jsxPath) {
+        jsxPath.skip()
+      },
+      JSXFragment(fragmentPath) {
+        fragmentPath.skip()
+      },
+      AssignmentExpression(assignPath) {
+        checkWritePath(assignPath)
+        if (found) assignPath.stop()
+      },
+      UpdateExpression(updatePath) {
+        checkWritePath(updatePath)
+        if (found) updatePath.stop()
+      },
+    })
+    return found
   }
   const NON_ESCAPING_CALLBACK_METHODS = new Set([
     'map',
@@ -2049,6 +2140,17 @@ function runWarningPass(
           }
         }
       }
+    },
+    JSXExpressionContainer(path) {
+      if (!path.parentPath.isJSXElement() && !path.parentPath.isJSXFragment()) return
+      if (!jsxChildExpressionWritesReactiveState(path)) return
+      emitWarning(
+        path,
+        'FICT-R007',
+        'Reactive state writes in JSX children cannot be installed as DOM bindings; move the write into an event, effect, or statement before rendering.',
+        warn,
+        fileName,
+      )
     },
     MemberExpression(path) {
       if (!path.node.computed) return

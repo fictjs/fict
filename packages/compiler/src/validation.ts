@@ -63,6 +63,7 @@ export enum DiagnosticCode {
   FICT_R004 = 'FICT-R004', // Reactive creation inside non-JSX control flow
   FICT_R005 = 'FICT-R005', // Function captures reactive variable without explicit dependency boundary
   FICT_R006 = 'FICT-R006',
+  FICT_R007 = 'FICT-R007', // Reactive write in JSX child expression
 
   FICT_M = 'FICT-M',
   FICT_H = 'FICT-H',
@@ -125,6 +126,8 @@ export const DiagnosticMessages: Record<DiagnosticCode, string> = {
     'Function captures reactive variables from outer scope; pass them as parameters or memoize explicitly to avoid hidden dependencies.',
   [DiagnosticCode.FICT_R006]:
     'Reactive control-flow reads force region re-execution; prefer expression-only branching in JSX for finer-grained updates.',
+  [DiagnosticCode.FICT_R007]:
+    'Reactive state writes in JSX children cannot be installed as DOM bindings; move the write into an event, effect, or statement before rendering.',
   [DiagnosticCode.FICT_M]:
     'Direct mutation of nested $state properties is not tracked; use immutable updates or $store helpers.',
   [DiagnosticCode.FICT_H]: 'Dynamic property access widens dependency tracking.',
@@ -163,6 +166,7 @@ const BaseDiagnosticSeverities: Record<DiagnosticCode, DiagnosticSeverity> = {
   [DiagnosticCode.FICT_R004]: DiagnosticSeverity.Error,
   [DiagnosticCode.FICT_R005]: DiagnosticSeverity.Warning,
   [DiagnosticCode.FICT_R006]: DiagnosticSeverity.Warning,
+  [DiagnosticCode.FICT_R007]: DiagnosticSeverity.Warning,
   [DiagnosticCode.FICT_M]: DiagnosticSeverity.Warning,
   [DiagnosticCode.FICT_H]: DiagnosticSeverity.Warning,
   [DiagnosticCode.FICT_HIR_UNSUPPORTED]: DiagnosticSeverity.Error,
@@ -189,6 +193,7 @@ const STRICT_GUARANTEE_DIAGNOSTICS = new Set<DiagnosticCode>([
   DiagnosticCode.FICT_R003,
   DiagnosticCode.FICT_R005,
   DiagnosticCode.FICT_R006,
+  DiagnosticCode.FICT_R007,
 ])
 
 export const DiagnosticSeverities: Record<DiagnosticCode, DiagnosticSeverity> = Object.fromEntries(

@@ -241,6 +241,18 @@ describe('warnings as errors', () => {
     expect(() => transformWithCompilerDefaults(source, { dev: false })).toThrow(/FICT-M/)
   })
 
+  it('strictGuarantee is enabled by default and escalates JSX child reactive writes', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        let count = $state(0)
+        return <div>{count++}</div>
+      }
+    `
+
+    expect(() => transformWithCompilerDefaults(source, { dev: false })).toThrow(/FICT-R007/)
+  })
+
   it('strictGuarantee is enabled by default and escalates props fallback diagnostics', () => {
     const source = `
       function App({ list: [first, ...rest] }) {

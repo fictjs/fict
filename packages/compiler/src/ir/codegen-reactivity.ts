@@ -176,14 +176,13 @@ export function isLikelyTextExpression(
         visit(node.consequent)
         visit(node.alternate)
         return
-      case 'UnaryExpression':
       case 'UpdateExpression':
+      case 'AssignmentExpression':
+        ok = false
+        return
+      case 'UnaryExpression':
       case 'AwaitExpression':
         visit(node.argument)
-        return
-      case 'AssignmentExpression':
-        visit(node.left)
-        visit(node.right)
         return
       case 'SequenceExpression':
         node.expressions.forEach(item => visit(item))

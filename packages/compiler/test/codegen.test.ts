@@ -930,6 +930,22 @@ describe('region metadata → DOM', () => {
     expect(code).not.toContain('bindText')
   })
 
+  it('routes JSX child assignments and updates through child insertion', () => {
+    const ast = parseFile(`
+      function View() {
+        let count = $state(0)
+        return <div>{count++}{count = count + 1}</div>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { optimizeLevel: 'safe' })
+    const { code } = generate(file)
+
+    expect(code).toContain('insertBetween')
+    expect(code).not.toContain('bindText')
+    expect(code).not.toContain('setText(')
+  })
+
   it('routes import and meta-property children through child insertion', () => {
     const ast = parseFile(`
       function View() {

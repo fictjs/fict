@@ -2182,4 +2182,54 @@ describe('semantic validation', () => {
     expect(warnings.filter(w => w.code === 'FICT-M')).toHaveLength(1)
     expect(warnings.filter(w => w.code === 'FICT-H')).toHaveLength(1)
   })
+
+  it('warns when JSX child expressions write reactive state', () => {
+    const cases = [
+      { name: 'postfix update', expression: 'count++' },
+      { name: 'prefix update', expression: '++count' },
+      { name: 'assignment', expression: 'count = count + 1' },
+      { name: 'compound assignment', expression: 'count += 1' },
+      { name: 'nested sequence update', expression: '(count++, count)' },
+    ]
+
+    for (const testCase of cases) {
+      const source = `
+        import { $state } from 'fict'
+        function App() {
+          let count = $state(0)
+          return <div>{${testCase.expression}}</div>
+        }
+      `
+      const warnings: Array<{ code: string }> = []
+      transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+      expect(
+        warnings.some(w => w.code === 'FICT-R007'),
+        `${testCase.name} should warn`,
+      ).toBe(true)
+    }
+  })
+
+  it('throws under strictGuarantee when JSX child expressions write reactive state', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        let count = $state(0)
+        return <div>{count++}</div>
+      }
+    `
+
+    expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow(/FICT-R007/)
+  })
+
+  it('does not warn when JSX child expressions write non-reactive locals', () => {
+    const source = `
+      function App() {
+        let local = 0
+        return <div>{local++}{local = local + 1}</div>
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-R007')).toBe(false)
+  })
 })
