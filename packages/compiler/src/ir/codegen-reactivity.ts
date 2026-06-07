@@ -211,8 +211,10 @@ export function isLikelyTextExpression(
         }
         return
       case 'Literal':
-      case 'ThisExpression':
       case 'SuperExpression':
+        return
+      case 'ThisExpression':
+        ok = false
         return
       default:
         ok = false

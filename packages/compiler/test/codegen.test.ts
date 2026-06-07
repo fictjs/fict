@@ -949,6 +949,22 @@ describe('region metadata → DOM', () => {
     expect(code).not.toContain('String(import("./dep"))')
   })
 
+  it('routes this expression children through child insertion', () => {
+    const source = `
+      export function App() {
+        return <div>{this}</div>
+      }
+    `
+    const output = transform(source)
+    const vnodeOutput = transform(source, { fineGrainedDom: false })
+
+    expect(output).toContain('insertBetween')
+    expect(output).toContain('this')
+    expect(output).not.toContain('String(this)')
+    expect(vnodeOutput).toContain('children: this')
+    expect(vnodeOutput).not.toContain('String(this)')
+  })
+
   it('keeps optional member attribute bindings reactive', () => {
     const ast = parseFile(`
       function View() {
