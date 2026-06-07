@@ -3507,6 +3507,46 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('preserves dollar suffixes on non-event fine-grained attributes', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        return (
+          <section>
+            <div
+              data-testid="target"
+              data-mode$="static"
+              data-active$={true}
+            />
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const target = container.querySelector('[data-testid="target"]') as HTMLDivElement
+    const targetAttrs = new Map(Array.from(target.attributes).map(attr => [attr.name, attr.value]))
+
+    expect(targetAttrs.get('data-mode$')).toBe('static')
+    expect(targetAttrs.get('data-active$')).toBe('true')
+    expect(targetAttrs.has('data-mode')).toBe(false)
+    expect(targetAttrs.has('data-active')).toBe(false)
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps forced binding prefixes aligned with VNode fallback', async () => {
     const source = `
       import { render } from 'fict'

@@ -124,6 +124,15 @@ function isCamelCaseEventName(name: string): boolean {
   return name.startsWith('on') && name.length > 2 && /^[A-Z]$/.test(name[2] ?? '')
 }
 
+function normalizeEventAttributeName(name: string): { name: string; resumableExplicit: boolean } {
+  if (!name.endsWith('$')) return { name, resumableExplicit: false }
+  const eventCandidate = name.slice(0, -1)
+  if (parseNamespacedEventName(eventCandidate) || isCamelCaseEventName(eventCandidate)) {
+    return { name: eventCandidate, resumableExplicit: true }
+  }
+  return { name, resumableExplicit: false }
+}
+
 const EVENT_NAMES_WITH_MODIFIER_SUFFIX = ['GotPointerCapture', 'LostPointerCapture'] as const
 
 function parseModifierSuffixes(
@@ -534,9 +543,7 @@ export function extractHIRStaticHtml(
           if (nextAttr.isSpread) continue
 
           let nextName = normalizeHIRAttrName(nextAttr.name, resolvedNamespace)
-          if (nextName.endsWith('$')) {
-            nextName = nextName.slice(0, -1)
-          }
+          nextName = normalizeEventAttributeName(nextName).name
           if (nextName === 'key') continue
 
           addSpreadExclusionName(excluded, nextName)
@@ -564,11 +571,11 @@ export function extractHIRStaticHtml(
       continue
     }
 
-    let name = normalizeHIRAttrName(attr.name, resolvedNamespace)
-    const isResumableEvent = name.endsWith('$')
-    if (isResumableEvent) {
-      name = name.slice(0, -1)
-    }
+    const normalizedName = normalizeEventAttributeName(
+      normalizeHIRAttrName(attr.name, resolvedNamespace),
+    )
+    const name = normalizedName.name
+    const isResumableEvent = normalizedName.resumableExplicit
     const forcedBinding = parseForcedBindingName(name)
     if (
       tagName === 'textarea' &&

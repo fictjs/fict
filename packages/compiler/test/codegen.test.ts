@@ -7353,6 +7353,54 @@ describe('spread operator in JSX', () => {
     expect(code).toContain('data-apos=\\"it\'s\\"')
   })
 
+  it('preserves dollar suffixes on non-event fine-grained attributes', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        export function App() {
+          const value = $state('live')
+          return (
+            <>
+              <div
+                data-mode$="static"
+                data-enabled$={true}
+                data-dynamic$={value}
+                attr:data-forced$={value}
+                onClick$={() => value}
+              />
+              <x-widget data-token$="custom" foo-bar$={value} />
+            </>
+          )
+        }
+      `,
+      { resumable: true },
+    )
+
+    expect(output).toContain('data-mode$=\\"static\\"')
+    expect(output).toContain('data-enabled$=\\"true\\"')
+    expect(output).toMatch(/setAttr\([^,]+,\s*"data-dynamic\$",\s*value\(\)\)/)
+    expect(output).toMatch(/setAttr\([^,]+,\s*"data-forced\$",\s*value\(\)\)/)
+    expect(output).toMatch(/setProp\([^,]+,\s*"dataToken\$",\s*"custom"\)/)
+    expect(output).toMatch(/bindProperty\([^,]+,\s*"fooBar\$",\s*\(\) => value\(\)\)/)
+    expect(output).not.toContain('data-mode=\\"static\\"')
+    expect(output).not.toContain('data-enabled=\\"true\\"')
+    expect(output).not.toMatch(/setAttr\([^,]+,\s*"data-dynamic"/)
+    expect(output).toContain('on:click')
+    expect(output).not.toContain('on:click$')
+  })
+
+  it('preserves dollar suffixes in spread exclusions for non-event attributes', () => {
+    const output = transform(`
+      export function App(props: Record<string, unknown>) {
+        return <div {...props} data-mode$="fixed" onClick$={() => undefined} />
+      }
+    `)
+
+    expect(output).toMatch(/spread\([\s\S]*\["data-mode\$",\s*"onClick",\s*"onClick\$"\]/)
+    expect(output).not.toMatch(/spread\([\s\S]*\["data-mode",/)
+  })
+
   it('routes content JSX props through DOM properties', () => {
     const ast = parseFile(`
       function ContentProps() {
