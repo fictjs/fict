@@ -482,7 +482,7 @@ export function lowerPropsPlan(
 ): BabelCore.types.Expression | null {
   const { t } = ctx
   const snapshotSegments = (): BabelCore.types.ObjectExpression => {
-    const properties: Array<BabelCore.types.ObjectProperty | BabelCore.types.SpreadElement> = []
+    const properties: (BabelCore.types.ObjectProperty | BabelCore.types.SpreadElement)[] = []
     for (const segment of plan.segments) {
       if (segment.kind === 'object') {
         properties.push(...segment.properties)

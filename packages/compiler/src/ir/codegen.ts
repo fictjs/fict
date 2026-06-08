@@ -28,6 +28,7 @@ import {
   functionHasYield,
   structuredNodeHasComplexControlFlow,
 } from './codegen-analysis'
+import { shouldAutoExtract } from './codegen-auto-extract'
 import {
   clearCachedGetters,
   getCachedGetterExpression,
@@ -35,7 +36,6 @@ import {
   invalidateCachedGetter,
   withGetterCache,
 } from './codegen-cache'
-import { shouldAutoExtract } from './codegen-auto-extract'
 import { emitConditionalChild } from './codegen-conditional-child'
 import { detectDerivedCycles } from './codegen-cycles'
 import {
@@ -8384,14 +8384,6 @@ function transformControlFlowReturns(
       current = current.object as BabelCore.types.Expression
     }
     return t.isIdentifier(current) ? current : null
-  }
-  const getStaticBabelPropertyName = (
-    property: BabelCore.types.Expression | BabelCore.types.PrivateName,
-    computed: boolean | null | undefined,
-  ): string | null => {
-    if (!computed && t.isIdentifier(property)) return property.name
-    if (t.isStringLiteral(property) || t.isNumericLiteral(property)) return String(property.value)
-    return null
   }
   const isNamespaceStoreMemberExpression = (
     expr: BabelCore.types.Expression | null | undefined,

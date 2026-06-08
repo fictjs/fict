@@ -45,7 +45,7 @@ function isFunctionExpressionValue(expr: Expression): boolean {
   return expr.kind === 'ArrowFunction' || expr.kind === 'FunctionExpression'
 }
 
-type BabelNodeLike = {
+interface BabelNodeLike {
   type?: string
   [key: string]: unknown
 }
@@ -1218,14 +1218,6 @@ export function collectExpressionIdentifiersDeep(
     case 'Literal':
       return
   }
-}
-
-function getExpressionIdentifiers(expr?: Expression | null): Set<string> {
-  const deps = new Set<string>()
-  if (expr) {
-    collectExpressionIdentifiers(expr, deps)
-  }
-  return deps
 }
 
 function getExpressionIdentifiersDeep(expr?: Expression | null): Set<string> {

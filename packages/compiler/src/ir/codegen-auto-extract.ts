@@ -1,7 +1,7 @@
 import type { CodegenContext } from './codegen'
 import { getSSABaseName, type BasicBlock, type Expression, type Instruction } from './hir'
 
-type BabelNodeLike = {
+interface BabelNodeLike {
   type?: string
   [key: string]: unknown
 }

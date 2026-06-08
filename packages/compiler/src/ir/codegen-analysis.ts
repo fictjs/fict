@@ -486,7 +486,7 @@ function collectFunctionMutationExpression(
   expr: Expression | null | undefined,
   ownerByName: Map<string, string>,
   mutations: Map<string, Set<string>>,
-  shadowed: Set<string> = new Set(),
+  shadowed = new Set<string>(),
 ): void {
   if (!expr) return
   const recordNameMutation = (

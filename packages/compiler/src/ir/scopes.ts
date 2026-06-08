@@ -9,7 +9,7 @@ function baseName(name: string): string {
   return getSSABaseName(name)
 }
 
-type BabelNodeLike = {
+interface BabelNodeLike {
   type?: string
   [key: string]: unknown
 }

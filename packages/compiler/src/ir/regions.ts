@@ -6041,7 +6041,10 @@ function instructionToStatement(
         },
       )
     }
-    type DerivedSnapshot = { sourceName: string; paramName: string }
+    interface DerivedSnapshot {
+      sourceName: string
+      paramName: string
+    }
     const createDerivedSnapshotPlan = (): DerivedSnapshot[] => {
       const deps = collectMutableNonReactiveDependencies(instr.value, ctx, baseName, declaredVars)
       return deps.map(sourceName => ({

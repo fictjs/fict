@@ -1,5 +1,7 @@
 import type * as BabelCore from '@babel/core'
 
+import { collectBindingNames } from '../utils'
+
 import type { CodegenContext, RegionInfo } from './codegen'
 import { ignoresInlineEventHandlerReturn } from './codegen-event-handlers'
 import { reserveGeneratedIndexedModuleName } from './codegen-name-allocation'
@@ -14,7 +16,6 @@ import {
 } from './codegen-resumable-utils'
 import { runtimeIdentifier } from './codegen-runtime-helpers'
 import { HIRError, type Expression } from './hir'
-import { collectBindingNames } from '../utils'
 
 function voidZero(t: typeof BabelCore.types): BabelCore.types.UnaryExpression {
   return t.unaryExpression('void', t.numericLiteral(0), true)

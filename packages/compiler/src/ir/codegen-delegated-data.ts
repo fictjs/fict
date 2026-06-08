@@ -11,7 +11,6 @@ export function expressionUsesIdentifier(
   t: typeof BabelCore.types,
 ): boolean {
   let found = false
-  let visit: (node?: BabelCore.types.Node | null) => void
   const visitDecorators = (decorators?: readonly BabelCore.types.Decorator[] | null): void => {
     decorators?.forEach(decorator => visit(decorator.expression))
   }
@@ -39,7 +38,7 @@ export function expressionUsesIdentifier(
       visit(member.value)
     }
   }
-  visit = (node?: BabelCore.types.Node | null): void => {
+  function visit(node?: BabelCore.types.Node | null): void {
     if (!node || found) return
     if (t.isIdentifier(node)) {
       if (node.name === name) found = true
@@ -179,7 +178,6 @@ function expressionCapturesIdentifiersInNestedFunctions(
   t: typeof BabelCore.types,
 ): boolean {
   let found = false
-  let visit: (node?: BabelCore.types.Node | null, inFunctionBody?: boolean) => void
   const visitDecorators = (
     decorators: readonly BabelCore.types.Decorator[] | null | undefined,
     inFunctionBody: boolean,
@@ -217,7 +215,7 @@ function expressionCapturesIdentifiersInNestedFunctions(
       visit(member.value, inFunctionBody)
     }
   }
-  visit = (node?: BabelCore.types.Node | null, inFunctionBody = false): void => {
+  function visit(node?: BabelCore.types.Node | null, inFunctionBody = false): void {
     if (!node || found) return
     if (t.isIdentifier(node)) {
       if (inFunctionBody && names.has(node.name)) found = true
