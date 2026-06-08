@@ -1,16 +1,16 @@
 {
   "samples": {
     "counter-basic": {
-      "helpers": 4,
-      "regions": 0,
-      "sizeBytes": 1029,
-      "gzipBytes": 446
+      "helpers": 5,
+      "regions": 1,
+      "sizeBytes": 1387,
+      "gzipBytes": 543
     },
     "optional-chain": {
       "helpers": 3,
       "regions": 0,
-      "sizeBytes": 676,
-      "gzipBytes": 355
+      "sizeBytes": 733,
+      "gzipBytes": 372
     },
     "no-jsx": {
       "helpers": 4,
