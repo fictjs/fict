@@ -138,6 +138,20 @@ function UserCard(props: { user: User; selected: boolean; onSelect: () => void }
 }
 
 // Posts list component
+function PostItems(props: { posts: Post[] }) {
+  const [post, ...remainingPosts] = props.posts
+
+  return post ? (
+    <>
+      <div key={post.id} style={styles.postCard}>
+        <h4 style={styles.postTitle}>{post.title}</h4>
+        <p style={styles.postBody}>{post.body}</p>
+      </div>
+      {remainingPosts.length > 0 ? <PostItems posts={remainingPosts} /> : null}
+    </>
+  ) : null
+}
+
 function PostsList(props: { userId: number }) {
   const userId = props.userId
   const posts = postsResource.read(userId)
@@ -146,32 +160,43 @@ function PostsList(props: { userId: number }) {
     <div style={styles.postsContainer}>
       {posts.data?.length === 0 ? (
         <p style={styles.noPosts}>No posts yet</p>
-      ) : (
-        posts.data?.map(post => (
-          <div key={post.id} style={styles.postCard}>
-            <h4 style={styles.postTitle}>{post.title}</h4>
-            <p style={styles.postBody}>{post.body}</p>
-          </div>
-        ))
-      )}
+      ) : posts.data ? (
+        <PostItems posts={posts.data} />
+      ) : null}
     </div>
   )
 }
 
 // Users list component
+function UserItems(props: {
+  users: User[]
+  selectedId: number | null
+  onSelect: (id: number) => void
+}) {
+  const [user, ...remainingUsers] = props.users
+
+  return user ? (
+    <>
+      <UserCard
+        user={user}
+        selected={props.selectedId === user.id}
+        onSelect={() => props.onSelect(user.id)}
+      />
+      {remainingUsers.length > 0 ? (
+        <UserItems users={remainingUsers} selectedId={props.selectedId} onSelect={props.onSelect} />
+      ) : null}
+    </>
+  ) : null
+}
+
 function UsersList(props: { selectedId: number | null; onSelect: (id: number) => void }) {
   const users = usersResource.read(undefined)
 
   return (
     <div style={styles.usersList}>
-      {users.data?.map(user => (
-        <UserCard
-          key={user.id}
-          user={user}
-          selected={props.selectedId === user.id}
-          onSelect={() => props.onSelect(user.id)}
-        />
-      ))}
+      {users.data ? (
+        <UserItems users={users.data} selectedId={props.selectedId} onSelect={props.onSelect} />
+      ) : null}
       <button onClick={() => users.refresh()} style={styles.refreshButton} disabled={users.loading}>
         {users.loading ? '⏳ Refreshing...' : '🔄 Refresh Users'}
       </button>
