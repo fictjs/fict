@@ -160,6 +160,8 @@ export interface ComputedNode<T = unknown> extends BaseNode {
   devToolsSource?: string
   /** Hide this computed from DevTools (used by compiler-internal memos) */
   devToolsInternal?: boolean
+  /** Boxed error from the last failed update; reads rethrow until deps change */
+  thrownError?: { error: unknown } | undefined
 }
 
 /**
@@ -891,6 +893,7 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
     activeSub = prevSub
     c.flags &= ~Running
     purgeDeps(c)
+    c.thrownError = undefined
     if (valuesDiffer(c, oldValue, newValue)) {
       c.prevValue = oldValue
       c.prevFlushId = currentFlushId
@@ -905,6 +908,9 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
     // Keep dependency graph consistent even when getter throws.
     // Without this, stale old deps can remain subscribed.
     purgeDeps(c)
+    // Cache the error so reads keep rethrowing instead of serving the stale
+    // pre-throw value; the next dependency change marks Dirty and retries.
+    c.thrownError = { error: e }
     throw e
   }
 }
@@ -1296,6 +1302,7 @@ function computedOper<T>(this: ComputedNode<T>): T {
   }
 
   if (activeSub !== undefined) link(this, activeSub, cycle)
+  if (this.thrownError !== undefined) throw this.thrownError.error
   return this.value
 }
 // ============================================================================

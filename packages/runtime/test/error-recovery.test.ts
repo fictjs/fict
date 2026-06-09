@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   __resetReactiveState,
   batch as rawBatch,
+  computed as rawComputed,
   effect as rawEffect,
   effectWithCleanup as rawEffectWithCleanup,
   signal as rawSignal,
@@ -58,6 +59,25 @@ describe('scheduler error recovery', () => {
     await tick()
 
     expect(seen).toContain(2)
+  })
+
+  it('keeps a throwing memo throwing until its dependencies change', () => {
+    __resetReactiveState()
+    const flag = rawSignal(false)
+    const memo = rawComputed(() => {
+      if (flag()) throw new Error('memo boom')
+      return 1
+    })
+
+    expect(memo()).toBe(1)
+
+    flag(true)
+    expect(() => memo()).toThrow('memo boom')
+    // A second read must retry and rethrow, not serve the stale pre-throw value.
+    expect(() => memo()).toThrow('memo boom')
+
+    flag(false)
+    expect(memo()).toBe(1)
   })
 
   it('does not brick an effect whose cleanup throws', async () => {
