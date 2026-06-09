@@ -432,11 +432,7 @@ export function NavLink(props: NavLinkProps): FictNode {
     const disabledClassName = computedClassName()
     const disabledStyle = computedStyle()
     return (
-      <span
-        ref={spanRef}
-        {...(disabledClassName !== undefined ? { class: disabledClassName } : {})}
-        {...(disabledStyle !== undefined ? { style: disabledStyle } : {})}
-      >
+      <span ref={spanRef} class={disabledClassName} style={disabledStyle}>
         {computedChildren()}
       </span>
     )
@@ -450,9 +446,9 @@ export function NavLink(props: NavLinkProps): FictNode {
     <a
       ref={anchorRef}
       href={getHrefValue()}
-      {...(finalClassName !== undefined ? { class: finalClassName } : {})}
-      {...(finalStyle !== undefined ? { style: finalStyle } : {})}
-      {...(finalAriaCurrent !== undefined ? { 'aria-current': finalAriaCurrent } : {})}
+      class={finalClassName}
+      style={finalStyle}
+      aria-current={finalAriaCurrent}
       onClick={handleClick}
     >
       {computedChildren()}
@@ -630,12 +626,7 @@ export function Form(props: FormProps): FictNode {
     method && ['get', 'post'].includes(method) ? (method as 'get' | 'post') : undefined
 
   return (
-    <form
-      ref={formRef}
-      {...(action !== undefined ? { action } : {})}
-      {...(htmlMethod !== undefined ? { method: htmlMethod } : {})}
-      onSubmit={handleSubmit}
-    >
+    <form ref={formRef} action={action} method={htmlMethod} onSubmit={handleSubmit}>
       {children}
     </form>
   )
