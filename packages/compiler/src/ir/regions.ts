@@ -6177,7 +6177,10 @@ function instructionToStatement(
     }
     const needsAsyncContext = expressionNeedsAsyncContext(instr.value)
     const isLocalFunctionDerivedCall = expressionIsLocalFunctionDirectCall(instr.value, ctx)
+    const shouldUseNoMemoDerivedValue =
+      ctx.noMemo || (inRegionMemo && (derivedValueContainsJSX || (ctx.inConditional ?? 0) > 0))
     const shouldEagerDerivedValue =
+      !shouldUseNoMemoDerivedValue &&
       !needsAsyncContext &&
       !isMemoReturningCall &&
       !isLocalFunctionDerivedCall &&
@@ -6185,14 +6188,16 @@ function instructionToStatement(
       !needsReactiveClassMemo &&
       !derivedValueContainsJSX
     const lowerEagerDerivedValue = (): BabelCore.types.Expression => {
-      ctx.memoVars?.add(baseName)
+      trackDerivedMemoVar()
+      const memoExpr = buildDerivedMemoCall(lowerAssignedValue(true))
       const valueName = reserveFunctionLocalName(ctx, `__eager_${baseName}`)
+      const valueId = t.identifier(valueName)
       return t.callExpression(
         t.arrowFunctionExpression(
-          [t.identifier(valueName)],
-          t.arrowFunctionExpression([], t.identifier(valueName)),
+          [valueId],
+          t.sequenceExpression([t.callExpression(t.cloneNode(valueId), []), t.cloneNode(valueId)]),
         ),
-        [lowerAssignedValue(true)],
+        [memoExpr],
       )
     }
     const throwAliasReassignment = (): never => {
@@ -6288,8 +6293,6 @@ function instructionToStatement(
       needsAsyncContext
         ? expr
         : wrapDerivedWithSnapshots(t.arrowFunctionExpression([], expr), snapshots)
-    const shouldUseNoMemoDerivedValue =
-      ctx.noMemo || (inRegionMemo && (derivedValueContainsJSX || (ctx.inConditional ?? 0) > 0))
     const buildHoistedInitializer = (): BabelCore.types.Expression => {
       if (isStateCall) {
         ctx.currentAssignmentName = baseName

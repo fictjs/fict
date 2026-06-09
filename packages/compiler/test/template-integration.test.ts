@@ -744,7 +744,7 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
-  it('evaluates impure reactive derived declaration initializers eagerly', async () => {
+  it('primes impure reactive derived declaration initializers and keeps them reactive', async () => {
     const source = `
       import { $state, render } from 'fict'
 
@@ -814,12 +814,111 @@ describe('compiled templates DOM integration', () => {
 
     mod.api.set(5)
     await flushUpdates()
-    expect(mod.log).toEqual([1, 2, 'after-delayed', 'get', 5, ['assigned', 3]])
+    expect(mod.log).toEqual([1, 2, 'after-delayed', 'get', 5, ['assigned', 3], 6, 'get', 9])
     expect(container.querySelector('[data-testid="pure"]')?.textContent).toBe('15')
-    expect(container.querySelector('[data-testid="delayed"]')?.textContent).toBe('2')
-    expect(container.querySelector('[data-testid="getter"]')?.textContent).toBe('5')
-    expect(container.querySelector('[data-testid="iife"]')?.textContent).toBe('5')
-    expect(container.querySelector('[data-testid="assigned"]')?.textContent).toBe('3')
+    expect(container.querySelector('[data-testid="delayed"]')?.textContent).toBe('6')
+    expect(container.querySelector('[data-testid="getter"]')?.textContent).toBe('9')
+    expect(container.querySelector('[data-testid="iife"]')?.textContent).toBe('9')
+    expect(container.querySelector('[data-testid="assigned"]')?.textContent).toBe('7')
+
+    teardown()
+    container.remove()
+  })
+
+  it('keeps arbitrary-call derived values reactive in non-strict mode', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export const log: unknown[] = []
+
+      function record(label: string, value: unknown) {
+        log.push([label, value])
+      }
+
+      function App() {
+        let count = $state(0)
+        const doubled = (record('compute', count), count * 2)
+        return <button data-testid="value" onClick={() => count++}>{doubled}</button>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      log: unknown[]
+    }>(source, { fineGrainedDom: true, strictGuarantee: false, dev: false })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const button = container.querySelector('[data-testid="value"]') as HTMLButtonElement
+
+    expect(button.textContent).toBe('0')
+    expect(mod.log).toEqual([['compute', 0]])
+
+    button.click()
+    await flushUpdates()
+
+    expect(button.textContent).toBe('2')
+    expect(mod.log).toEqual([
+      ['compute', 0],
+      ['compute', 1],
+    ])
+
+    teardown()
+    container.remove()
+  })
+
+  it('uses plain getters for arbitrary-call derived values under use no memo', async () => {
+    const source = `
+      "use no memo";
+      import { $state, render } from 'fict'
+
+      export let calls = 0
+
+      function mark() {
+        calls++
+      }
+
+      function App() {
+        let count = $state(1)
+        const doubled = (mark(), count * 2)
+        return (
+          <button data-testid="value" onClick={() => count++}>
+            <span data-testid="first">{doubled}</span>
+            <span data-testid="second">{doubled}</span>
+          </button>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      calls: number
+    }>(source, { fineGrainedDom: true, strictGuarantee: false, dev: false })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const button = container.querySelector('[data-testid="value"]') as HTMLButtonElement
+    const first = () => container.querySelector('[data-testid="first"]')?.textContent
+    const second = () => container.querySelector('[data-testid="second"]')?.textContent
+
+    expect(first()).toBe('2')
+    expect(second()).toBe('2')
+    expect(mod.calls).toBe(2)
+
+    button.click()
+    await flushUpdates()
+
+    expect(first()).toBe('4')
+    expect(second()).toBe('4')
+    expect(mod.calls).toBe(4)
 
     teardown()
     container.remove()

@@ -2036,7 +2036,7 @@ describe('tracked reads/writes in HIR codegen', () => {
 
       expect(output, testCase.name).toMatch(/prop\(count\(\)\)/)
       expect(output, testCase.name).toMatch(
-        /const value = \(__eager_value => \(\) => __eager_value\)\(/,
+        /const value = \(__eager_value => \(__eager_value\(\), __eager_value\)\)\(__fictUseMemo/,
       )
       expect(output, testCase.name).not.toContain('const value = prop(count())')
       expect(output, testCase.name).toContain('() => value()')
