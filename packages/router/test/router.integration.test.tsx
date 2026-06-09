@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { untrack } from '@fictjs/runtime'
 import { render, screen, act } from '@fictjs/testing-library'
 
 import {
@@ -19,8 +20,9 @@ function LocationText() {
 
 function NavigateButton({ to }: { to: string }) {
   const navigate = useNavigate()
+  const target = untrack(() => to)
   return (
-    <button data-testid={`go-${to}`} onClick={() => navigate(to)}>
+    <button data-testid={`go-${target}`} onClick={() => navigate(target)}>
       go
     </button>
   )
@@ -36,8 +38,9 @@ function Guarded({
 }: {
   onCall: (retry: (force?: boolean) => void, prevent: () => void) => void
 }) {
+  const handleCall = untrack(() => onCall)
   useBeforeLeave(event => {
-    onCall(event.retry, event.preventDefault)
+    handleCall(event.retry, event.preventDefault)
   })
   return <div data-testid="guarded" />
 }
