@@ -920,6 +920,32 @@ function getStaticPropertyName(property: Expression, computed: boolean): string 
   return null
 }
 
+const LAZY_MEMO_SAFE_SYNC_CALLBACK_METHODS = new Set([
+  'every',
+  'filter',
+  'find',
+  'findIndex',
+  'findLast',
+  'findLastIndex',
+  'flatMap',
+  'forEach',
+  'map',
+  'reduce',
+  'reduceRight',
+  'some',
+  'sort',
+])
+
+const LAZY_MEMO_SAFE_GLOBAL_CALLS = new Set(['String', 'Number', 'Boolean', 'BigInt'])
+
+function isLazyMemoSafeSyncCallbackHost(callee: Expression): boolean {
+  if (callee.kind !== 'MemberExpression' && callee.kind !== 'OptionalMemberExpression') {
+    return false
+  }
+  const propName = getStaticPropertyName(callee.property as Expression, callee.computed)
+  return !!propName && LAZY_MEMO_SAFE_SYNC_CALLBACK_METHODS.has(propName)
+}
+
 function getNamespaceReactiveMemberKind(
   candidate: Expression,
   ctx: CodegenContext,
@@ -5131,24 +5157,34 @@ function isFunctionExpressionValue(expr: Expression | undefined): boolean {
   return expr?.kind === 'ArrowFunction' || expr?.kind === 'FunctionExpression'
 }
 
-function instructionIsLazyMemoSafe(instr: Instruction, ctx: CodegenContext): boolean {
+function instructionIsLazyMemoSafe(
+  instr: Instruction,
+  ctx: CodegenContext,
+  safeLocalRoots = new Set<string>(),
+): boolean {
   if (instr.kind === 'Phi') return true
-  if (instr.kind === 'Expression') return expressionIsLazyMemoSafe(instr.value, ctx)
+  if (instr.kind === 'Expression') return expressionIsLazyMemoSafe(instr.value, ctx, safeLocalRoots)
   if (instr.kind !== 'Assign') return true
   if (!instr.declarationKind) return false
-  return expressionIsLazyMemoSafe(instr.value, ctx)
+  return expressionIsLazyMemoSafe(instr.value, ctx, safeLocalRoots)
 }
 
-function terminatorIsLazyMemoSafe(term: Terminator, ctx: CodegenContext): boolean {
+function terminatorIsLazyMemoSafe(
+  term: Terminator,
+  ctx: CodegenContext,
+  safeLocalRoots = new Set<string>(),
+): boolean {
   switch (term.kind) {
     case 'Return':
-      return !term.argument || expressionIsLazyMemoSafe(term.argument, ctx)
+      return !term.argument || expressionIsLazyMemoSafe(term.argument, ctx, safeLocalRoots)
     case 'Branch':
-      return expressionIsLazyMemoSafe(term.test, ctx)
+      return expressionIsLazyMemoSafe(term.test, ctx, safeLocalRoots)
     case 'Switch':
       return (
-        expressionIsLazyMemoSafe(term.discriminant, ctx) &&
-        term.cases.every(item => !item.test || expressionIsLazyMemoSafe(item.test, ctx))
+        expressionIsLazyMemoSafe(term.discriminant, ctx, safeLocalRoots) &&
+        term.cases.every(
+          item => !item.test || expressionIsLazyMemoSafe(item.test, ctx, safeLocalRoots),
+        )
       )
     case 'Throw':
     case 'ForOf':
@@ -5163,23 +5199,52 @@ function terminatorIsLazyMemoSafe(term: Terminator, ctx: CodegenContext): boolea
   }
 }
 
-function functionExpressionBodyIsLazyMemoSafe(expr: Expression, ctx: CodegenContext): boolean {
+function functionParamNames(
+  expr: Extract<Expression, { kind: 'ArrowFunction' | 'FunctionExpression' }>,
+): Set<string> {
+  return new Set(expr.params.map(param => deSSAVarName(param.name)))
+}
+
+function expressionRootName(expr: Expression): string | null {
+  let current = expr
+  while (current.kind === 'MemberExpression' || current.kind === 'OptionalMemberExpression') {
+    current = current.object
+  }
+  return current.kind === 'Identifier' ? deSSAVarName(current.name) : null
+}
+
+function expressionHasSafeLocalRoot(expr: Expression, safeLocalRoots: Set<string>): boolean {
+  const root = expressionRootName(expr)
+  return !!root && safeLocalRoots.has(root)
+}
+
+function functionExpressionBodyIsLazyMemoSafe(
+  expr: Expression,
+  ctx: CodegenContext,
+  safeLocalRoots = new Set<string>(),
+): boolean {
   if (expr.kind === 'ArrowFunction') {
+    const functionSafeLocalRoots = new Set(safeLocalRoots)
+    functionParamNames(expr).forEach(name => functionSafeLocalRoots.add(name))
     if (expr.isExpression && expr.body && !Array.isArray(expr.body)) {
-      return expressionIsLazyMemoSafe(expr.body as Expression, ctx)
+      return expressionIsLazyMemoSafe(expr.body as Expression, ctx, functionSafeLocalRoots)
     }
     if (!Array.isArray(expr.body)) return true
     return expr.body.every(
       block =>
-        block.instructions.every(instr => instructionIsLazyMemoSafe(instr, ctx)) &&
-        terminatorIsLazyMemoSafe(block.terminator, ctx),
+        block.instructions.every(instr =>
+          instructionIsLazyMemoSafe(instr, ctx, functionSafeLocalRoots),
+        ) && terminatorIsLazyMemoSafe(block.terminator, ctx, functionSafeLocalRoots),
     )
   }
   if (expr.kind === 'FunctionExpression') {
+    const functionSafeLocalRoots = new Set(safeLocalRoots)
+    functionParamNames(expr).forEach(name => functionSafeLocalRoots.add(name))
     return expr.body.every(
       block =>
-        block.instructions.every(instr => instructionIsLazyMemoSafe(instr, ctx)) &&
-        terminatorIsLazyMemoSafe(block.terminator, ctx),
+        block.instructions.every(instr =>
+          instructionIsLazyMemoSafe(instr, ctx, functionSafeLocalRoots),
+        ) && terminatorIsLazyMemoSafe(block.terminator, ctx, functionSafeLocalRoots),
     )
   }
   return false
@@ -5206,7 +5271,11 @@ function classExpressionDefinitionIsLazyMemoSafe(
   })
 }
 
-function expressionIsLazyMemoSafe(expr: Expression, ctx: CodegenContext): boolean {
+function expressionIsLazyMemoSafe(
+  expr: Expression,
+  ctx: CodegenContext,
+  safeLocalRoots = new Set<string>(),
+): boolean {
   switch (expr.kind) {
     case 'Identifier':
     case 'Literal':
@@ -5221,77 +5290,109 @@ function expressionIsLazyMemoSafe(expr: Expression, ctx: CodegenContext): boolea
       if (isReactiveAccessorReadCall(expr, ctx)) return true
       if (isFunctionExpressionValue(expr.callee)) {
         return (
-          functionExpressionBodyIsLazyMemoSafe(expr.callee, ctx) &&
-          expr.arguments.every(arg => expressionIsLazyMemoSafe(arg, ctx))
+          functionExpressionBodyIsLazyMemoSafe(expr.callee, ctx, safeLocalRoots) &&
+          expr.arguments.every(arg => expressionIsLazyMemoSafe(arg, ctx, safeLocalRoots))
         )
+      }
+      if (
+        expr.callee.kind === 'Identifier' &&
+        LAZY_MEMO_SAFE_GLOBAL_CALLS.has(deSSAVarName(expr.callee.name))
+      ) {
+        return expr.arguments.every(arg => expressionIsLazyMemoSafe(arg, ctx, safeLocalRoots))
       }
       if (
         expr.callee.kind === 'MemberExpression' ||
         expr.callee.kind === 'OptionalMemberExpression'
       ) {
+        if (isLazyMemoSafeSyncCallbackHost(expr.callee)) {
+          return (
+            expressionIsLazyMemoSafe(expr.callee.object as Expression, ctx, safeLocalRoots) &&
+            (!expr.callee.computed ||
+              expressionIsLazyMemoSafe(expr.callee.property, ctx, safeLocalRoots)) &&
+            expr.arguments.every(arg => {
+              const argExpr = arg as Expression
+              return isFunctionExpressionValue(argExpr)
+                ? functionExpressionBodyIsLazyMemoSafe(argExpr, ctx, safeLocalRoots)
+                : expressionIsLazyMemoSafe(argExpr, ctx, safeLocalRoots)
+            })
+          )
+        }
         return (
-          expressionUsesTracked(expr.callee.object, ctx) &&
-          expressionIsLazyMemoSafe(expr.callee, ctx) &&
-          expr.arguments.every(arg => expressionIsLazyMemoSafe(arg, ctx))
+          (expressionUsesTracked(expr.callee.object, ctx) ||
+            expressionHasSafeLocalRoot(expr.callee.object, safeLocalRoots)) &&
+          expressionIsLazyMemoSafe(expr.callee, ctx, safeLocalRoots) &&
+          expr.arguments.every(arg => expressionIsLazyMemoSafe(arg, ctx, safeLocalRoots))
         )
       }
       return false
     case 'BinaryExpression':
     case 'LogicalExpression':
-      return expressionIsLazyMemoSafe(expr.left, ctx) && expressionIsLazyMemoSafe(expr.right, ctx)
+      return (
+        expressionIsLazyMemoSafe(expr.left, ctx, safeLocalRoots) &&
+        expressionIsLazyMemoSafe(expr.right, ctx, safeLocalRoots)
+      )
     case 'UnaryExpression':
-      return expr.operator !== 'delete' && expressionIsLazyMemoSafe(expr.argument, ctx)
+      return (
+        expr.operator !== 'delete' && expressionIsLazyMemoSafe(expr.argument, ctx, safeLocalRoots)
+      )
     case 'ConditionalExpression':
       return (
-        expressionIsLazyMemoSafe(expr.test, ctx) &&
-        expressionIsLazyMemoSafe(expr.consequent, ctx) &&
-        expressionIsLazyMemoSafe(expr.alternate, ctx)
+        expressionIsLazyMemoSafe(expr.test, ctx, safeLocalRoots) &&
+        expressionIsLazyMemoSafe(expr.consequent, ctx, safeLocalRoots) &&
+        expressionIsLazyMemoSafe(expr.alternate, ctx, safeLocalRoots)
       )
     case 'ArrayExpression':
-      return expr.elements.every(element => !element || expressionIsLazyMemoSafe(element, ctx))
+      return expr.elements.every(
+        element => !element || expressionIsLazyMemoSafe(element, ctx, safeLocalRoots),
+      )
     case 'ObjectExpression':
       return expr.properties.every(prop => {
-        if (prop.kind === 'SpreadElement') return expressionIsLazyMemoSafe(prop.argument, ctx)
+        if (prop.kind === 'SpreadElement') {
+          return expressionIsLazyMemoSafe(prop.argument, ctx, safeLocalRoots)
+        }
         return (
-          (!prop.computed || expressionIsLazyMemoSafe(prop.key, ctx)) &&
+          (!prop.computed || expressionIsLazyMemoSafe(prop.key, ctx, safeLocalRoots)) &&
           (prop.propertyKind === 'method' ||
             prop.propertyKind === 'get' ||
             prop.propertyKind === 'set' ||
-            expressionIsLazyMemoSafe(prop.value, ctx))
+            expressionIsLazyMemoSafe(prop.value, ctx, safeLocalRoots))
         )
       })
     case 'MemberExpression':
     case 'OptionalMemberExpression':
       if (resolveHookMemberValue(expr, ctx)) return true
       if (getNamespaceReactiveMemberKind(expr, ctx)) return true
-      if (!expressionUsesTracked(expr, ctx)) return false
+      if (!expressionUsesTracked(expr, ctx) && !expressionHasSafeLocalRoot(expr, safeLocalRoots)) {
+        return false
+      }
       return (
-        expressionIsLazyMemoSafe(expr.object, ctx) &&
-        (!expr.computed || expressionIsLazyMemoSafe(expr.property, ctx))
+        expressionIsLazyMemoSafe(expr.object, ctx, safeLocalRoots) &&
+        (!expr.computed || expressionIsLazyMemoSafe(expr.property, ctx, safeLocalRoots))
       )
     case 'JSXElement':
       return (
-        (typeof expr.tagName === 'string' || expressionIsLazyMemoSafe(expr.tagName, ctx)) &&
+        (typeof expr.tagName === 'string' ||
+          expressionIsLazyMemoSafe(expr.tagName, ctx, safeLocalRoots)) &&
         expr.attributes.every(attr =>
           attr.isSpread
-            ? !attr.spreadExpr || expressionIsLazyMemoSafe(attr.spreadExpr, ctx)
-            : !attr.value || expressionIsLazyMemoSafe(attr.value, ctx),
+            ? !attr.spreadExpr || expressionIsLazyMemoSafe(attr.spreadExpr, ctx, safeLocalRoots)
+            : !attr.value || expressionIsLazyMemoSafe(attr.value, ctx, safeLocalRoots),
         ) &&
         expr.children.every(child => {
           if (child.kind === 'text') return true
-          return expressionIsLazyMemoSafe(child.value, ctx)
+          return expressionIsLazyMemoSafe(child.value, ctx, safeLocalRoots)
         })
       )
     case 'TemplateLiteral':
-      return expr.expressions.every(item => expressionIsLazyMemoSafe(item, ctx))
+      return expr.expressions.every(item => expressionIsLazyMemoSafe(item, ctx, safeLocalRoots))
     case 'SequenceExpression':
-      return expr.expressions.every(item => expressionIsLazyMemoSafe(item, ctx))
+      return expr.expressions.every(item => expressionIsLazyMemoSafe(item, ctx, safeLocalRoots))
     case 'SpreadElement':
-      return expressionIsLazyMemoSafe(expr.argument, ctx)
+      return expressionIsLazyMemoSafe(expr.argument, ctx, safeLocalRoots)
     case 'ImportExpression':
       return (
-        expressionIsLazyMemoSafe(expr.source, ctx) &&
-        (!expr.options || expressionIsLazyMemoSafe(expr.options, ctx))
+        expressionIsLazyMemoSafe(expr.source, ctx, safeLocalRoots) &&
+        (!expr.options || expressionIsLazyMemoSafe(expr.options, ctx, safeLocalRoots))
       )
     case 'TaggedTemplateExpression':
     case 'AssignmentExpression':
@@ -5306,6 +5407,14 @@ function expressionIsLazyMemoSafe(expr: Expression, ctx: CodegenContext): boolea
         classExpressionDefinitionIsLazyMemoSafe(expr, ctx.t)
       )
   }
+}
+
+function expressionIsLocalFunctionDirectCall(expr: Expression, ctx: CodegenContext): boolean {
+  if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
+  if (expr.callee.kind !== 'Identifier') return false
+  const calleeName = deSSAVarName(expr.callee.name)
+  if (calleeName === 'prop') return false
+  return ctx.componentFunctionDefs?.has(calleeName) ?? false
 }
 
 function expressionReturnsAccessorOrReactiveObject(expr: Expression, ctx: CodegenContext): boolean {
@@ -6070,9 +6179,11 @@ function instructionToStatement(
       }
     }
     const needsAsyncContext = expressionNeedsAsyncContext(instr.value)
+    const isLocalFunctionDerivedCall = expressionIsLocalFunctionDirectCall(instr.value, ctx)
     const shouldEagerDerivedValue =
       !needsAsyncContext &&
       !isMemoReturningCall &&
+      !isLocalFunctionDerivedCall &&
       !canLazyMemoizeDerived &&
       !needsReactiveClassMemo &&
       !derivedValueContainsJSX

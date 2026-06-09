@@ -1228,6 +1228,48 @@ function getExpressionIdentifiersDeep(expr?: Expression | null): Set<string> {
   return deps
 }
 
+function expressionIsContainerSnapshotValue(expr: Expression): boolean {
+  switch (expr.kind) {
+    case 'ObjectExpression':
+    case 'ArrayExpression':
+    case 'JSXElement':
+      return true
+    case 'ConditionalExpression':
+      return (
+        expressionIsContainerSnapshotValue(expr.consequent as Expression) ||
+        expressionIsContainerSnapshotValue(expr.alternate as Expression)
+      )
+    case 'LogicalExpression':
+      return expressionIsContainerSnapshotValue(expr.right as Expression)
+    default:
+      return false
+  }
+}
+
+function functionExpressionReturnsContainerSnapshotValue(expr: Expression): boolean {
+  if (expr.kind === 'ArrowFunction') {
+    if (expr.isExpression && expr.body && !Array.isArray(expr.body)) {
+      return expressionIsContainerSnapshotValue(expr.body as Expression)
+    }
+    if (!Array.isArray(expr.body)) return false
+    return expr.body.some(
+      block =>
+        block.terminator.kind === 'Return' &&
+        !!block.terminator.argument &&
+        expressionIsContainerSnapshotValue(block.terminator.argument),
+    )
+  }
+  if (expr.kind === 'FunctionExpression') {
+    return expr.body.some(
+      block =>
+        block.terminator.kind === 'Return' &&
+        !!block.terminator.argument &&
+        expressionIsContainerSnapshotValue(block.terminator.argument),
+    )
+  }
+  return false
+}
+
 function getAccessorPromotionDependencies(expr?: Expression | null): Set<string> {
   const deps = new Set<string>()
   if (!expr) return deps
@@ -1236,6 +1278,9 @@ function getAccessorPromotionDependencies(expr?: Expression | null): Set<string>
     (expr.kind === 'CallExpression' || expr.kind === 'OptionalCallExpression') &&
     (expr.callee.kind === 'ArrowFunction' || expr.callee.kind === 'FunctionExpression')
   ) {
+    if (!functionExpressionReturnsContainerSnapshotValue(expr.callee)) {
+      collectExpressionIdentifiersDeep(expr.callee, deps, new Set(), true, false)
+    }
     expr.arguments.forEach(arg => collectExpressionIdentifiersDeep(arg as Expression, deps))
     return deps
   }
