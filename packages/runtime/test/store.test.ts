@@ -1046,3 +1046,80 @@ describe('createDiffingSignal reactivity', () => {
     }).toThrow('[Fict] Cannot set "foo" on a diffing signal proxy directly.')
   })
 })
+
+describe('createStore collections and internal-slot objects', () => {
+  it('reads and mutates a stored Map without crashing', () => {
+    const [store] = createStore({ m: new Map<string, number>([['a', 1]]) })
+
+    expect(store.m.size).toBe(1)
+    expect(store.m.get('a')).toBe(1)
+    expect(store.m.has('a')).toBe(true)
+
+    store.m.set('b', 2)
+    expect(store.m.get('b')).toBe(2)
+    expect(store.m.size).toBe(2)
+
+    expect(store.m.delete('a')).toBe(true)
+    expect(store.m.size).toBe(1)
+  })
+
+  it('reads and mutates a stored Set without crashing', () => {
+    const [store] = createStore({ s: new Set<number>([1]) })
+
+    expect(store.s.size).toBe(1)
+    store.s.add(2)
+    expect(store.s.has(2)).toBe(true)
+    expect(Array.from(store.s)).toEqual([1, 2])
+  })
+
+  it('notifies collection readers on mutation', async () => {
+    const [store] = createStore({ m: new Map<string, number>([['a', 1]]) })
+    const sizes: number[] = []
+
+    createEffect(() => {
+      sizes.push(store.m.size)
+    })
+
+    store.m.set('b', 2)
+    await tick()
+    expect(sizes).toEqual([1, 2])
+
+    // delete() that removes nothing must not notify
+    store.m.delete('missing')
+    await tick()
+    expect(sizes).toEqual([1, 2])
+
+    store.m.clear()
+    await tick()
+    expect(sizes).toEqual([1, 2, 0])
+  })
+
+  it('notifies iteration readers of a stored Set', async () => {
+    const [store] = createStore({ s: new Set<number>([1]) })
+    const snapshots: number[][] = []
+
+    createEffect(() => {
+      snapshots.push(Array.from(store.s))
+    })
+
+    store.s.add(2)
+    await tick()
+    expect(snapshots).toEqual([[1], [1, 2]])
+  })
+
+  it('returns internal-slot objects raw and keeps their methods working', async () => {
+    const [store] = createStore({ d: new Date(0), r: /abc/g })
+
+    expect(store.d.getTime()).toBe(0)
+    expect(store.r.test('abc')).toBe(true)
+
+    const times: number[] = []
+    createEffect(() => {
+      times.push(store.d.getTime())
+    })
+
+    store.d = new Date(1000)
+    await tick()
+    expect(times).toEqual([0, 1000])
+  })
+})

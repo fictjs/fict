@@ -161,11 +161,94 @@ function descriptorValue(
   }
 }
 
+type ReactiveCollection =
+  | Map<unknown, unknown>
+  | Set<unknown>
+  | WeakMap<object, unknown>
+  | WeakSet<object>
+
+function isCollection(value: object): value is ReactiveCollection {
+  return (
+    value instanceof Map ||
+    value instanceof Set ||
+    value instanceof WeakMap ||
+    value instanceof WeakSet
+  )
+}
+
+// Objects whose methods depend on internal slots cannot go through the
+// generic deep proxy: their methods would be invoked with the proxy as
+// `this` and throw "called on incompatible receiver". They are returned
+// raw; property-level tracking on the parent still notifies on replacement.
+function hasInternalSlots(value: object): boolean {
+  return (
+    value instanceof Date ||
+    value instanceof RegExp ||
+    value instanceof Promise ||
+    value instanceof Error ||
+    value instanceof ArrayBuffer ||
+    ArrayBuffer.isView(value)
+  )
+}
+
+const collectionMutators = new Set(['set', 'add', 'delete', 'clear'])
+
+/**
+ * Coarse-grained reactive wrapper for Map/Set/WeakMap/WeakSet: methods are
+ * dispatched against the raw target (proxies cannot carry collection
+ * internal slots), reads subscribe to a per-collection version, and any
+ * mutation bumps it. Values read out of collections are returned raw.
+ */
+function wrapCollection<T extends object>(target: T): T {
+  const handler: ProxyHandler<object> = {
+    get(t, prop) {
+      if (prop === PROXY) return true
+      if (prop === TARGET) return t
+      if (prop === 'size') {
+        track(t, ITERATE_KEY)
+        return Reflect.get(t, 'size', t)
+      }
+      const value = Reflect.get(t, prop, t)
+      if (typeof value !== 'function') {
+        track(t, prop)
+        return value
+      }
+      if (collectionMutators.has(prop as string)) {
+        return function (this: unknown, ...args: unknown[]) {
+          const result = (value as (...inner: unknown[]) => unknown).apply(t, args)
+          // delete() returning false removed nothing; skip the notification.
+          if (prop !== 'delete' || result === true) {
+            trigger(t, ITERATE_KEY)
+          }
+          return result === t ? proxy : result
+        }
+      }
+      return function (this: unknown, ...args: unknown[]) {
+        track(t, ITERATE_KEY)
+        const result = (value as (...inner: unknown[]) => unknown).apply(t, args)
+        return result === t ? proxy : result
+      }
+    },
+  }
+
+  const proxy = new Proxy(target, handler) as T
+  return proxy
+}
+
 function wrap<T>(value: T): T {
   if (value === null || typeof value !== 'object') return value
   if (Reflect.get(value, PROXY)) return value
 
   if (proxyCache.has(value)) return proxyCache.get(value) as T
+
+  if (isCollection(value)) {
+    const collectionProxy = wrapCollection(value)
+    proxyCache.set(value, collectionProxy)
+    return collectionProxy
+  }
+  if (hasInternalSlots(value)) {
+    return value
+  }
 
   const handler: ProxyHandler<object> = {
     get(target, prop, receiver) {
