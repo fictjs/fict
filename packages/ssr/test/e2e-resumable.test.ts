@@ -358,7 +358,8 @@ describe('QRL Generation and Event Handler Resolution', () => {
     try {
       // Verify resume function is exported
       expect(compiled.code).toContain('__fict_r')
-      expect(compiled.code).toContain('__fictMeta')
+      expect(compiled.code).toContain('__fictSetComponentMeta')
+      expect(compiled.code).toContain('__fict_meta_Counter')
     } finally {
       compiled.cleanup()
     }
@@ -1392,15 +1393,14 @@ describe('Attribute Binding and Dynamic Content', () => {
 
       const button = env.document.querySelector('button') as HTMLElement
       expect(button.textContent).toBe('Inactive')
-      // Note: when value is `false`, bindAttribute removes the attribute (falsy removal)
-      expect(button.hasAttribute('data-active')).toBe(false)
+      // `data-*` boolean attributes are stringified for SSR/client parity.
+      expect(button.getAttribute('data-active')).toBe('false')
 
       dispatchClick(button, env.window)
       await tick(3)
 
       expect(button.textContent).toBe('Active')
-      // After click, active becomes true, so attribute should be set (empty string for true)
-      expect(button.hasAttribute('data-active')).toBe(true)
+      expect(button.getAttribute('data-active')).toBe('true')
     } finally {
       await cleanup()
       compiled.cleanup()
@@ -2038,7 +2038,8 @@ describe('Function-level Code Splitting', () => {
       expect(resumeMatch).not.toBeNull()
 
       // Resume function should set up component metadata
-      expect(compiled.code).toContain('__fictMeta')
+      expect(compiled.code).toContain('__fictSetComponentMeta')
+      expect(compiled.code).toContain('__fict_meta_Counter')
       // The meta should contain 'resume' property which creates QRL for resume handler
       expect(compiled.code).toContain('resume:')
     } finally {
