@@ -207,15 +207,15 @@ describe('R005: Props destructuring', () => {
     expect(output).toContain('__props')
   })
 
-  it('auto merges spread props for components', () => {
+  it('emits component spread props with explicit prop precedence', () => {
     const output = transform(`
       function Parent(props) {
         return <Child {...props} id="next" />
       }
     `)
-    expect(output).toContain('mergeProps')
-    expect(output).toContain('props')
-    expect(output).toContain('id')
+    expect(output).toContain('...props')
+    expect(output).toContain('id: "next"')
+    expect(output).not.toContain('mergeProps')
   })
 })
 
