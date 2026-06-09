@@ -122,6 +122,7 @@ export type HIRErrorCode =
   | 'SSA_ERROR' // Error during SSA conversion
   | 'STRUCTURIZE_ERROR' // Error during CFG structurization
   | 'CODEGEN_ERROR' // Error during code generation
+  | 'OPTIMIZE_ERROR' // Error during HIR optimization
   | 'SCOPE_ERROR' // Error in reactive scope analysis
   | 'VALIDATION_ERROR' // Error in HIR validation
   | 'CYCLE_ERROR' // Cyclic dependency detected

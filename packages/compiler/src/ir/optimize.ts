@@ -15,7 +15,7 @@ import type {
   BlockId,
   TemplateQuasi,
 } from './hir'
-import { getSSABaseName, makeSSAName, resetGeneratedSSANames } from './hir'
+import { getSSABaseName, HIRError, makeSSAName, resetGeneratedSSANames } from './hir'
 import { isHookLikeFunction } from './hook-utils'
 import { analyzeReactiveScopesWithSSA, type ReactiveScopeResult } from './scopes'
 import { analyzeCFG, enterSSA } from './ssa'
@@ -191,6 +191,7 @@ export interface OptimizeOptions {
   inlineDerivedMemos?: boolean
   optimizeLevel?: 'safe' | 'full'
   strictMacroBindings?: boolean
+  constantPropagationMaxIterations?: number
 }
 
 export function optimizeHIR(program: HIRProgram, options: OptimizeOptions = {}): HIRProgram {
@@ -3386,7 +3387,7 @@ function blocksContainImpureMarkers(blocks: BasicBlock[]): boolean {
 }
 
 function propagateConstants(fn: HIRFunction, options: OptimizeOptions): HIRFunction {
-  const constants = computeConstantMap(fn)
+  const constants = computeConstantMap(fn, options)
   if (constants.size === 0) return fn
   const blocks = fn.blocks.map(block => ({
     ...block,
@@ -3430,7 +3431,7 @@ function collectMutableConstantBases(fn: HIRFunction): Set<string> {
   return mutable
 }
 
-function computeConstantMap(fn: HIRFunction): Map<string, ConstantValue> {
+function computeConstantMap(fn: HIRFunction, options: OptimizeOptions): Map<string, ConstantValue> {
   const constants = new Map<string, ConstantValue>()
   const mutableBases = collectMutableConstantBases(fn)
   const invalidateWrittenName = (writtenName: string): boolean => {
@@ -3445,7 +3446,7 @@ function computeConstantMap(fn: HIRFunction): Map<string, ConstantValue> {
   }
   let changed = true
   let iterations = 0
-  const maxIterations = 10
+  const maxIterations = Math.max(0, options.constantPropagationMaxIterations ?? 10)
   while (changed && iterations < maxIterations) {
     iterations += 1
     changed = false
@@ -3495,6 +3496,14 @@ function computeConstantMap(fn: HIRFunction): Map<string, ConstantValue> {
         }
       }
     }
+  }
+  if (changed) {
+    throw new HIRError(
+      `Constant propagation did not converge after ${maxIterations} iteration${
+        maxIterations === 1 ? '' : 's'
+      }`,
+      'OPTIMIZE_ERROR',
+    )
   }
   return constants
 }

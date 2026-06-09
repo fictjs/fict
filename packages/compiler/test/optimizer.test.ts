@@ -714,6 +714,19 @@ describe('optimizeHIR', () => {
     expect(ret.value).toBe(3)
   })
 
+  it('fails closed when constant propagation does not converge within the guard', () => {
+    const ast = parseFile(`
+      function Foo() {
+        const a = 1
+        return a
+      }
+    `)
+
+    expect(() => optimizeHIR(buildHIR(ast), { constantPropagationMaxIterations: 0 })).toThrow(
+      /Constant propagation did not converge after 0 iterations/,
+    )
+  })
+
   it('eliminates common subexpressions within a block', () => {
     const ast = parseFile(`
       function Foo(x) {
