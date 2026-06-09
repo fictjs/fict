@@ -200,6 +200,55 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('updates branch-local derived declarations inside control-flow regions', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function App() {
+        let n = $state(0)
+        let heading = 'empty'
+
+        if (n > 0) {
+          const noun = n > 1 ? 'items' : 'item'
+          heading = n + ' ' + noun
+        }
+
+        return (
+          <div>
+            <h1 data-testid="heading">{heading}</h1>
+            <button data-testid="inc" onClick={() => n++}>inc</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const heading = () => container.querySelector('[data-testid="heading"]')?.textContent
+    const increment = container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+    expect(heading()).toBe('empty')
+
+    increment.click()
+    await flushUpdates()
+    expect(heading()).toBe('1 item')
+
+    increment.click()
+    await flushUpdates()
+    expect(heading()).toBe('2 items')
+
+    teardown()
+    container.remove()
+  })
+
   it('does not treat local $store functions as reactive stores', () => {
     const source = `
       import { render } from 'fict'

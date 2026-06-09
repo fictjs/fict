@@ -3366,6 +3366,9 @@ function lowerStructuredNodeForRegion(
         !inNonReactiveScope &&
         expressionUsesTracked(node.test, ctx)
 
+      const prevConditional = ctx.inConditional ?? 0
+      ctx.inConditional = prevConditional + 1
+
       const lowerChild = (
         child: StructuredNode | null | undefined,
         forceNonReactive: boolean,
@@ -3403,14 +3406,20 @@ function lowerStructuredNodeForRegion(
         })
       }
 
-      // Lower children with forceNonReactive=true if we might wrap in effect
-      let consequent = lowerChild(
-        node.consequent,
-        mightWrapInEffect || shouldInlineUnownedInstructions,
-      )
-      let alternate = node.alternate
-        ? lowerChild(node.alternate, mightWrapInEffect || shouldInlineUnownedInstructions)
-        : []
+      let consequent: BabelCore.types.Statement[] = []
+      let alternate: BabelCore.types.Statement[] = []
+      try {
+        // Lower children with forceNonReactive=true if we might wrap in effect
+        consequent = lowerChild(
+          node.consequent,
+          mightWrapInEffect || shouldInlineUnownedInstructions,
+        )
+        alternate = node.alternate
+          ? lowerChild(node.alternate, mightWrapInEffect || shouldInlineUnownedInstructions)
+          : []
+      } finally {
+        ctx.inConditional = prevConditional
+      }
       if (consequent.length === 0 && alternate.length === 0) return []
       const buildIfStmt = (
         cons: BabelCore.types.Statement[],
@@ -6291,7 +6300,8 @@ function instructionToStatement(
       needsAsyncContext
         ? expr
         : wrapDerivedWithSnapshots(t.arrowFunctionExpression([], expr), snapshots)
-    const shouldUseNoMemoDerivedValue = ctx.noMemo || (inRegionMemo && derivedValueContainsJSX)
+    const shouldUseNoMemoDerivedValue =
+      ctx.noMemo || (inRegionMemo && (derivedValueContainsJSX || (ctx.inConditional ?? 0) > 0))
     const buildHoistedInitializer = (): BabelCore.types.Expression => {
       if (isStateCall) {
         ctx.currentAssignmentName = baseName
