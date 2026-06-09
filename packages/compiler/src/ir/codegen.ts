@@ -4122,9 +4122,18 @@ function lowerExpressionImpl(
           return false
       }
     })
+  const blocksHaveControlFlow = (blocks: BasicBlock[]): boolean =>
+    blocks.length > 1 ||
+    blocks.some(
+      block =>
+        block.terminator.kind === 'Branch' ||
+        block.terminator.kind === 'Switch' ||
+        block.terminator.kind === 'ForOf' ||
+        block.terminator.kind === 'ForIn',
+    )
   const collectDisabledGetterNames = (blocks: BasicBlock[]): Set<string> => {
     const disabled = collectWrittenGetterNames(blocks)
-    if (blocksHaveCallBarrier(blocks)) {
+    if (blocksHaveCallBarrier(blocks) || blocksHaveControlFlow(blocks)) {
       collectCacheableGetterNames().forEach(name => disabled.add(name))
     }
     return disabled
