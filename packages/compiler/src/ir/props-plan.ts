@@ -316,10 +316,7 @@ export function buildPropsPlan(
             (ctx.memoVars?.has(baseIdent) ?? false) ||
             (ctx.aliasVars?.has(baseIdent) ?? false)
           : false)
-      const usesTracked =
-        (!ctx.nonReactiveScopeDepth || ctx.nonReactiveScopeDepth === 0) &&
-        helpers.expressionUsesTracked(value, ctx) &&
-        !alreadyGetter
+      const usesTracked = helpers.expressionUsesTracked(value, ctx) && !alreadyGetter
       const lowered = withPropsContextDisabled(
         isFunctionLike || (usesTracked && isCompositeValue),
         () => helpers.lowerDomExpression(value, ctx),
@@ -443,7 +440,6 @@ export function buildPropsPlan(
       child =>
         child.source &&
         !(t.isArrowFunctionExpression(child.value) || t.isFunctionExpression(child.value)) &&
-        (!ctx.nonReactiveScopeDepth || ctx.nonReactiveScopeDepth === 0) &&
         helpers.expressionUsesTracked(child.source, ctx),
     )
     const childValues = children.map(child => wrapNonReactiveFunction(child.value))

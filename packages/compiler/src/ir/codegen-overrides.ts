@@ -57,6 +57,22 @@ function getDependencyPathFromNode(
   return null
 }
 
+function hasOptionalChainSegment(node: BabelCore.types.Node, t: typeof BabelCore.types): boolean {
+  if (t.isOptionalMemberExpression(node)) {
+    return node.optional === true || hasOptionalChainSegment(node.object as BabelCore.types.Node, t)
+  }
+  if (t.isMemberExpression(node)) {
+    return hasOptionalChainSegment(node.object as BabelCore.types.Node, t)
+  }
+  if (t.isOptionalCallExpression(node)) {
+    return node.optional === true || hasOptionalChainSegment(node.callee as BabelCore.types.Node, t)
+  }
+  if (t.isCallExpression(node)) {
+    return hasOptionalChainSegment(node.callee as BabelCore.types.Node, t)
+  }
+  return false
+}
+
 /**
  * Replace identifiers using overrides while skipping call/optional call callees.
  * This is adapted from fine-grained-dom's replaceIdentifiers helper.
@@ -427,7 +443,11 @@ export function replaceIdentifiersWithOverrides(
     return
   }
 
-  if (!skipCurrentNode && (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))) {
+  if (
+    !skipCurrentNode &&
+    (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
+    !hasOptionalChainSegment(node, t)
+  ) {
     const propertyNode = node.property as BabelCore.types.Node
     const isDynamicComputed =
       (node.computed ?? false) &&

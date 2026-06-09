@@ -17,6 +17,7 @@ export interface ConditionalChildOps {
   ) => BabelCore.types.Expression | null
   genTemp: (ctx: CodegenContext, prefix?: string) => BabelCore.types.Identifier
   lowerDomExpression: (expr: Expression, ctx: CodegenContext) => BabelCore.types.Expression
+  expressionUsesTracked: (expr: Expression, ctx: CodegenContext) => boolean
 }
 
 /**
@@ -78,6 +79,21 @@ export function emitConditionalChild(
     args.push(voidZero(t))
   }
   args.push(startMarkerId, endMarkerId)
+
+  const shouldTrackBranchReads =
+    expr.kind === 'ConditionalExpression'
+      ? ops.expressionUsesTracked(expr.consequent, ctx) ||
+        ops.expressionUsesTracked(expr.alternate, ctx)
+      : expr.kind === 'LogicalExpression'
+        ? ops.expressionUsesTracked(expr.right, ctx)
+        : false
+  if (shouldTrackBranchReads) {
+    args.push(
+      t.objectExpression([
+        t.objectProperty(t.identifier('trackBranchReads'), t.booleanLiteral(true)),
+      ]),
+    )
+  }
 
   statements.push(
     t.variableDeclaration('const', [

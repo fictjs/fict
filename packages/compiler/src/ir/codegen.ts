@@ -1172,6 +1172,7 @@ function createHIRChildBindingOps(): HIRChildBindingOps {
           buildListCallExpression(candidate, childStatements, childCtx, listOps),
         genTemp,
         lowerDomExpression,
+        expressionUsesTracked,
       }),
     emitListChild: (startMarkerId, endMarkerId, expr, statements, ctx) =>
       emitListChild(startMarkerId, endMarkerId, expr, statements, ctx, listOps),
@@ -1297,6 +1298,10 @@ export interface CodegenContext {
   externalTracked?: Set<string> | undefined
   /** Variables initialized with $store (need path-level reactivity, no getter transformation) */
   storeVars?: Set<string> | undefined
+  /** Variables initialized by the `resource()` helper. */
+  resourceVars?: Set<string> | undefined
+  /** Variables returned from a resource `.read()` call. */
+  resourceResultVars?: Set<string> | undefined
   /** Local aliases that forward namespace-imported store proxies. */
   namespaceStoreAliasVars?: Set<string> | undefined
   /** Namespace import metadata for reactive exports (used for obj.signal access) */
@@ -1493,6 +1498,8 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     aliasVars: new Set(),
     externalTracked: new Set(),
     storeVars: new Set(),
+    resourceVars: new Set(),
+    resourceResultVars: new Set(),
     namespaceStoreAliasVars: new Set(),
     importedNamespaces: new Map(),
     staticRestExclusionKeys: new Map(),
@@ -2600,6 +2607,62 @@ function isFunctionExpressionValue(expr: Expression | undefined): boolean {
 function isCallableSignalInitializer(expr: Expression, ctx: CodegenContext): boolean {
   if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
   return getReactiveCallKind(expr, ctx) === 'signal' && isFunctionExpressionValue(expr.arguments[0])
+}
+
+function isRuntimeResourceImport(name: string, ctx: CodegenContext): boolean {
+  const imported = ctx.moduleRuntimeImportMap?.get(name)
+  const source = ctx.moduleRuntimeImportSources?.get(name)
+  return imported === 'resource' && (source === 'fict/plus' || source === 'fict')
+}
+
+function isRuntimeResourceNamespaceMember(expr: Expression, ctx: CodegenContext): boolean {
+  if (expr.kind !== 'MemberExpression' && expr.kind !== 'OptionalMemberExpression') return false
+  if (expr.object.kind !== 'Identifier') return false
+  const source = ctx.moduleRuntimeNamespaceImportSources?.get(deSSAVarName(expr.object.name))
+  if (source !== 'fict/plus' && source !== 'fict') return false
+  const propName = getStaticMemberMetadataKey(expr.property as Expression, expr.computed)
+  return propName === 'resource'
+}
+
+function isResourceFactoryCall(expr: Expression, ctx: CodegenContext): boolean {
+  if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
+  const callee = expr.callee
+  if (callee.kind === 'Identifier') {
+    return isRuntimeResourceImport(deSSAVarName(callee.name), ctx)
+  }
+  return isRuntimeResourceNamespaceMember(callee as Expression, ctx)
+}
+
+function isResourceFactoryCallFromBabel(
+  expr: BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression,
+  ctx: CodegenContext,
+  t: typeof BabelCore.types,
+): boolean {
+  const callee = expr.callee
+  if (t.isIdentifier(callee)) {
+    return isRuntimeResourceImport(deSSAVarName(callee.name), ctx)
+  }
+  if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee)) {
+    return false
+  }
+  if (!t.isIdentifier(callee.object)) return false
+  const source = ctx.moduleRuntimeNamespaceImportSources?.get(deSSAVarName(callee.object.name))
+  if (source !== 'fict/plus' && source !== 'fict') return false
+  const propName = getStaticBabelMetadataPropertyName(callee.property, callee.computed, t)
+  return propName === 'resource'
+}
+
+function isResourceReadCall(expr: Expression, ctx: CodegenContext): boolean {
+  if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
+  const callee = expr.callee
+  if (callee.kind !== 'MemberExpression' && callee.kind !== 'OptionalMemberExpression') {
+    return false
+  }
+  const propName = getStaticMemberMetadataKey(callee.property as Expression, callee.computed)
+  if (propName !== 'read') return false
+  return (
+    callee.object.kind === 'Identifier' && !!ctx.resourceVars?.has(deSSAVarName(callee.object.name))
+  )
 }
 
 function expressionContainsNonSerializableFunctionValue(
@@ -7556,6 +7619,14 @@ function lowerInstructionWithScopes(
         ctx.componentWrapperName = prevComponentWrapperName
       }
     }
+    if (instr.value.kind === 'CallExpression' || instr.value.kind === 'OptionalCallExpression') {
+      if (isResourceFactoryCall(instr.value, ctx)) {
+        ctx.resourceVars?.add(targetBase)
+      }
+      if (isResourceReadCall(instr.value, ctx)) {
+        ctx.resourceResultVars?.add(targetBase)
+      }
+    }
     if (declKind && getReactiveCallKind(instr.value, ctx) === 'signal') {
       ctx.signalVars?.add(targetBase)
       ctx.trackedVars.add(targetBase)
@@ -7796,6 +7867,9 @@ export function lowerHIRWithRegions(
         decl.init &&
         (t.isCallExpression(decl.init) || t.isOptionalCallExpression(decl.init))
       ) {
+        if (isResourceFactoryCallFromBabel(decl.init, ctx, t)) {
+          ctx.resourceVars?.add(deSSAVarName(decl.id.name))
+        }
         const callKind = getReactiveCallKindFromBabel(decl.init, ctx, t)
         markHookReactiveLocal(decl.id.name, callKind, ctx)
       }
@@ -8233,6 +8307,12 @@ function lowerTopLevelStatementBlock(
           instr.value.kind === 'CallExpression' ||
           instr.value.kind === 'OptionalCallExpression'
         ) {
+          if (isResourceFactoryCall(instr.value, ctx)) {
+            ctx.resourceVars?.add(target)
+          }
+          if (isResourceReadCall(instr.value, ctx)) {
+            ctx.resourceResultVars?.add(target)
+          }
           const callKind = getReactiveCallKind(instr.value, ctx)
           if (callKind === 'signal') {
             signalVars.add(target)
@@ -8312,6 +8392,7 @@ function transformControlFlowReturns(
     ...(ctx.memoVars ?? []),
     ...(ctx.aliasVars ?? []),
     ...(ctx.storeVars ?? []),
+    ...(ctx.resourceResultVars ?? []),
   ])
 
   const toStatements = (node: BabelCore.types.Statement | BabelCore.types.BlockStatement) =>
@@ -9686,6 +9767,12 @@ function lowerFunctionWithRegions(
           instr.value.kind === 'CallExpression' ||
           instr.value.kind === 'OptionalCallExpression'
         ) {
+          if (isResourceFactoryCall(instr.value, ctx)) {
+            ctx.resourceVars?.add(target)
+          }
+          if (isResourceReadCall(instr.value, ctx)) {
+            ctx.resourceResultVars?.add(target)
+          }
           const callKind = getReactiveCallKind(instr.value, ctx)
           if (callKind === 'signal') {
             ctx.signalVars?.add(target)

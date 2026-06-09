@@ -1082,7 +1082,8 @@ export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): bo
         ctx.trackedVars.has(deSSAVarName(expr.name)) ||
         (ctx.externalTracked?.has(deSSAVarName(expr.name)) ?? false) ||
         (ctx.memoVars?.has(deSSAVarName(expr.name)) ?? false) ||
-        (ctx.aliasVars?.has(deSSAVarName(expr.name)) ?? false)
+        (ctx.aliasVars?.has(deSSAVarName(expr.name)) ?? false) ||
+        (ctx.resourceResultVars?.has(deSSAVarName(expr.name)) ?? false)
       )
     case 'MemberExpression':
     case 'OptionalMemberExpression':
