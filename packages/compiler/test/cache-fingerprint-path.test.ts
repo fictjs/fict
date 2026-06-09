@@ -119,6 +119,55 @@ describe('compiler cache fingerprint stack parsing', () => {
     expect(first).not.toBe(second)
   })
 
+  it('changes when nested compiler source artifacts change while dist is stale', async () => {
+    const firstRoot = await makePackageFixture({
+      cacheSource: 'same compiler cache helper',
+      indexSource: 'same compiler index source',
+      extraSources: {
+        'ir/regions.ts': 'region lowering source v1',
+      },
+      esm: 'same esm compiler artifact',
+      cjs: 'same cjs compiler artifact',
+    })
+    const secondRoot = await makePackageFixture({
+      cacheSource: 'same compiler cache helper',
+      indexSource: 'same compiler index source',
+      extraSources: {
+        'ir/regions.ts': 'region lowering source v2',
+      },
+      esm: 'same esm compiler artifact',
+      cjs: 'same cjs compiler artifact',
+    })
+
+    const first = readLoadedCompilerArtifact(cacheHelperStack(firstRoot))
+    const second = readLoadedCompilerArtifact(cacheHelperStack(secondRoot))
+
+    expect(first).toContain('src/ir/regions.ts')
+    expect(second).toContain('src/ir/regions.ts')
+    expect(first).not.toBe(second)
+  })
+
+  it('reads source artifacts for nested remapped compiler frames', async () => {
+    const root = await makePackageFixture({
+      cacheSource: 'compiler cache helper',
+      indexSource: 'compiler index source',
+      extraSources: {
+        'ir/codegen.ts': 'codegen source',
+      },
+      esm: 'esm compiler artifact',
+      cjs: 'cjs compiler artifact',
+    })
+    const stack = [
+      'Error',
+      `    at generateRegionCode (${path.join(root, 'src', 'ir', 'codegen.ts')}:10:5)`,
+    ].join('\n')
+
+    const artifact = readLoadedCompilerArtifact(stack)
+
+    expect(artifact).toContain('src/ir/codegen.ts')
+    expect(artifact).toContain('codegen source')
+  })
+
   it('changes when compiler cache helper source changes from index remapped frames', async () => {
     const firstRoot = await makePackageFixture({
       cacheSource: 'compiler cache helper v1',
@@ -144,6 +193,7 @@ async function makePackageFixture(files: {
   source?: string | null
   cacheSource?: string | null
   indexSource?: string | null
+  extraSources?: Record<string, string | null>
   esm: string
   cjs: string
 }): Promise<string> {
@@ -158,6 +208,12 @@ async function makePackageFixture(files: {
   }
   if (indexSource !== null) {
     await writeFile(path.join(root, 'src', 'index.ts'), indexSource)
+  }
+  for (const [relativePath, content] of Object.entries(files.extraSources ?? {})) {
+    if (content === null) continue
+    const target = path.join(root, 'src', relativePath)
+    await mkdir(path.dirname(target), { recursive: true })
+    await writeFile(target, content)
   }
   await writeFile(path.join(root, 'dist', 'index.js'), files.esm)
   await writeFile(path.join(root, 'dist', 'index.cjs'), files.cjs)

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -39,22 +39,51 @@ function readSourceMapRemappedDistArtifacts(modulePath: string): string | null {
   if (srcIndex === -1) return null
 
   const sourceFile = normalized.slice(srcIndex + srcMarker.length)
-  if (sourceFile !== 'cache-fingerprint.ts' && sourceFile !== 'index.ts') return null
+  if (!/\.(?:d\.)?tsx?$/.test(sourceFile)) return null
 
   const packageRoot = modulePath.slice(0, srcIndex)
-  const artifacts = [
-    path.join(packageRoot, 'src', 'index.ts'),
-    path.join(packageRoot, 'src', 'cache-fingerprint.ts'),
+  const sourceRoot = path.join(packageRoot, 'src')
+  const sourceArtifacts = collectCompilerSourceFiles(sourceRoot).map(filePath =>
+    readArtifactWithRelativePath(packageRoot, filePath),
+  )
+  const distArtifacts = [
     path.join(packageRoot, 'dist', 'index.js'),
     path.join(packageRoot, 'dist', 'index.cjs'),
   ]
-    .map(filePath => {
-      const content = readText(filePath)
-      return content ? `${path.basename(filePath)}\n${content}` : null
-    })
+    .map(filePath => readArtifactWithRelativePath(packageRoot, filePath))
     .filter((content): content is string => content !== null)
+  const artifacts = [...sourceArtifacts, ...distArtifacts]
 
   return artifacts.length > 0 ? artifacts.join('\n') : null
+}
+
+function readArtifactWithRelativePath(packageRoot: string, filePath: string): string | null {
+  const content = readText(filePath)
+  if (content === null) return null
+  const relativePath = path.relative(packageRoot, filePath).replace(/\\/g, '/')
+  return `${relativePath}\n${content}`
+}
+
+function collectCompilerSourceFiles(sourceRoot: string): string[] {
+  const files: string[] = []
+  const visit = (dir: string): void => {
+    let entries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      const entryPath = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        visit(entryPath)
+      } else if (entry.isFile() && /\.(?:d\.)?tsx?$/.test(entry.name)) {
+        files.push(entryPath)
+      }
+    }
+  }
+  visit(sourceRoot)
+  return files.sort((a, b) => a.localeCompare(b))
 }
 
 export function getLoadedModulePathFromStack(stack: string | undefined): string | null {
