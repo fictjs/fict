@@ -21,7 +21,7 @@ import type { To, NavigateOptions } from './types'
 import { parseURL, stripBasePath } from './utils'
 
 // CSS Properties type for styles
-type CSSProperties = StyleProp
+type CSSProperties = NonNullable<StyleProp>
 
 const joinClassNames = (
   base: string | undefined,
@@ -39,8 +39,7 @@ const mergeStyles = (
 ): CSSProperties | undefined => {
   const isStyleObject = (
     style: CSSProperties | undefined,
-  ): style is Exclude<CSSProperties, string | null | undefined> =>
-    style !== null && style !== undefined && typeof style === 'object'
+  ): style is Exclude<CSSProperties, string> => style !== undefined && typeof style === 'object'
 
   if (!isStyleObject(base) && !isStyleObject(active) && !isStyleObject(pending)) {
     return pending ?? active ?? base ?? undefined
@@ -444,7 +443,11 @@ export function NavLink(props: NavLinkProps): FictNode {
     const disabledClassName = computedClassName()
     const disabledStyle = computedStyle()
     return (
-      <span ref={spanRef} class={disabledClassName} style={disabledStyle}>
+      <span
+        ref={spanRef}
+        class={disabledClassName as string}
+        style={disabledStyle as NonNullable<JSX.IntrinsicElements['span']['style']>}
+      >
         {computedChildren()}
       </span>
     )
@@ -454,9 +457,9 @@ export function NavLink(props: NavLinkProps): FictNode {
     <a
       ref={anchorRef}
       href={getHrefValue()}
-      class={computedClassName()}
-      style={computedStyle()}
-      aria-current={ariaCurrent()}
+      class={computedClassName() as string}
+      style={computedStyle() as NonNullable<JSX.IntrinsicElements['a']['style']>}
+      aria-current={ariaCurrent() as NonNullable<JSX.IntrinsicElements['a']['aria-current']>}
       onClick={handleClick}
     >
       {computedChildren()}
@@ -639,7 +642,12 @@ export function Form(props: FormProps): FictNode {
     methodProp && ['get', 'post'].includes(methodProp) ? (methodProp as 'get' | 'post') : undefined
 
   return (
-    <form ref={formRef} action={actionProp} method={htmlMethod} onSubmit={handleSubmit}>
+    <form
+      ref={formRef}
+      action={actionProp as string}
+      method={htmlMethod as 'get' | 'post'}
+      onSubmit={handleSubmit}
+    >
       {children}
     </form>
   )
