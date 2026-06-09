@@ -1058,6 +1058,47 @@ describe('compiled templates DOM integration', () => {
     expect(varDecl).toBeLessThan(varEffect)
   })
 
+  it('preserves ordinary side effects before later reactive region effects', () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function App() {
+        let count = $state(0)
+        console.log('index0')
+        const doubled = count * 2
+        console.log('index1', doubled)
+        return <span data-testid="value">{doubled}</span>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const logs: string[] = []
+    const originalLog = console.log
+    console.log = (...args: unknown[]) => {
+      logs.push(args.join(' '))
+    }
+
+    try {
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+      }>(source, { fineGrainedDom: true, strictGuarantee: true, dev: false })
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const teardown = mod.mount(container)
+
+      expect(container.querySelector('[data-testid="value"]')?.textContent).toBe('0')
+      expect(logs).toEqual(['index0', 'index1 0'])
+
+      teardown()
+      container.remove()
+    } finally {
+      console.log = originalLog
+    }
+  })
+
   it('throws impure reactive derived declaration initializers at declaration time', () => {
     const source = `
       import { $state, render } from 'fict'

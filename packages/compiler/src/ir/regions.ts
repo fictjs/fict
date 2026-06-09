@@ -4004,25 +4004,13 @@ function instructionHasOrderingEffects(instr: Instruction): boolean {
 
 function collectOrderingBarrierRegionIds(
   buffer: { instr: Instruction; region?: Region | undefined }[],
-  ctx: CodegenContext,
 ): Set<number> {
   const disabled = new Set<number>()
   const ranges = new Map<number, { first: number; last: number }>()
 
   buffer.forEach((item, index) => {
     const region = item.region
-    const hasTrackedDependency = region
-      ? Array.from(region.dependencies).some(dep => {
-          const name = deSSAVarName(dep)
-          return (
-            ctx.trackedVars.has(name) ||
-            (ctx.signalVars?.has(name) ?? false) ||
-            (ctx.memoVars?.has(name) ?? false) ||
-            (ctx.storeVars?.has(name) ?? false)
-          )
-        })
-      : false
-    if (!region || region.hasControlFlow || hasTrackedDependency) return
+    if (!region || region.hasControlFlow) return
     const range = ranges.get(region.id)
     if (range) {
       range.last = index
@@ -4034,7 +4022,7 @@ function collectOrderingBarrierRegionIds(
   if (ranges.size === 0) return disabled
 
   buffer.forEach((item, index) => {
-    if (!instructionHasOrderingEffects(item.instr)) return
+    if (item.instr.kind !== 'Expression' || !instructionHasOrderingEffects(item.instr)) return
     for (const [id, range] of ranges) {
       if (index <= range.first || index >= range.last) continue
       if (item.region?.id === id) continue
@@ -4063,7 +4051,7 @@ function flushInstructionBuffer(
   collectSignalWriteDeclarationBarrierRegionIds(buffer, ctx).forEach(id =>
     regionCtx?.disabledRegions.add(id),
   )
-  collectOrderingBarrierRegionIds(buffer, ctx).forEach(id => regionCtx?.disabledRegions.add(id))
+  collectOrderingBarrierRegionIds(buffer).forEach(id => regionCtx?.disabledRegions.add(id))
 
   for (const item of buffer) {
     if (regionCtx?.hoistedInstructions.has(item.instr)) {
