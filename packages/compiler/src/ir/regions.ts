@@ -6460,7 +6460,7 @@ function instructionToStatement(
       )
     }
 
-    if (aliasVars.has(baseName) && declaredVars.has(baseName)) {
+    if (!isSignal && aliasVars.has(baseName) && declaredVars.has(baseName)) {
       throwAliasReassignment()
     }
 
@@ -6471,7 +6471,7 @@ function instructionToStatement(
       )
     }
 
-    if (aliasVars.has(baseName) && !declaredVars.has(baseName)) {
+    if (!isSignal && aliasVars.has(baseName) && !declaredVars.has(baseName)) {
       throwAliasReassignment()
     }
 
@@ -6522,7 +6522,7 @@ function instructionToStatement(
     }
 
     if (declaredVars.has(baseName)) {
-      if (aliasVars.has(baseName)) {
+      if (!isSignal && aliasVars.has(baseName)) {
         throwAliasReassignment()
       }
 

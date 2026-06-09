@@ -4538,6 +4538,8 @@ function createHIREntrypointVisitor(
           const bindingId = getBindingIdentifier(path, name)
           return !!(bindingId && aliasBindingIds.has(bindingId))
         }
+        const isStateBinding = (path: BabelCore.NodePath, name: string): boolean =>
+          hasTrackedBinding(path, name, stateBindingIds)
         const isDestructuredAliasBinding = (path: BabelCore.NodePath, name: string): boolean => {
           const bindingId = getBindingIdentifier(path, name)
           return !!(bindingId && destructuredAliases.has(bindingId))
@@ -4594,7 +4596,10 @@ function createHIREntrypointVisitor(
                 }
                 return
               }
-              if (isAliasBinding(assignPath, targetName)) {
+              if (
+                isAliasBinding(assignPath, targetName) &&
+                !isStateBinding(assignPath, targetName)
+              ) {
                 if (isDestructuredAliasBinding(assignPath, targetName)) return
                 debugLog('alias', 'reassignment detected', targetName)
                 throw assignPath.buildCodeFrameError(
@@ -4619,6 +4624,7 @@ function createHIREntrypointVisitor(
               const reassigned = targets.find(
                 target =>
                   isAliasBinding(assignPath, target) &&
+                  !isStateBinding(assignPath, target) &&
                   !isDestructuredAliasBinding(assignPath, target),
               )
               if (reassigned) {
@@ -4634,6 +4640,7 @@ function createHIREntrypointVisitor(
             if (
               t.isIdentifier(arg) &&
               isAliasBinding(updatePath, arg.name) &&
+              !isStateBinding(updatePath, arg.name) &&
               !isDestructuredAliasBinding(updatePath, arg.name)
             ) {
               debugLog('alias', 'reassignment detected', arg.name)

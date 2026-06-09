@@ -84,6 +84,22 @@ describe('Alias-Safe Reactive Lowering', () => {
       expect(() => transform(source)).toThrow(/Alias reassignment is not supported/)
     })
 
+    it('allows state reassignment after assigning a derived local snapshot', () => {
+      const source = `
+        import { $state } from 'fict'
+        function Component() {
+          let items = $state<number[]>([])
+          const shuffled = [...items]
+          items = shuffled
+          items = []
+          return items.length
+        }
+      `
+      const output = transform(source)
+      expect(output).toContain('items(shuffled())')
+      expect(output).toContain('items([])')
+    })
+
     it('surfaces alias reassignment as HIRError during lowering', () => {
       const source = `
         import { $state } from 'fict'
