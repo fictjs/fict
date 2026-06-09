@@ -3439,6 +3439,7 @@ function lowerExpressionImpl(
     const prevCurrentFunctionDeclared = ctx.currentFunctionDeclaredNames
     const prevHookFunctionAliases = ctx.hookFunctionAliases
     const prevHookFunctionMemberAliases = ctx.hookFunctionMemberAliases
+    const prevHookResultVarMap = ctx.hookResultVarMap
     const scoped = new Set(ctx.trackedVars)
     paramNames.forEach(n => scoped.delete(deSSAVarName(n)))
     if (localDeclared) {
@@ -3476,6 +3477,7 @@ function lowerExpressionImpl(
       }
     }
     ctx.aliasVars = new Set(ctx.aliasVars)
+    ctx.hookResultVarMap = new Map(prevHookResultVarMap ?? [])
     ctx.hookFunctionAliases = new Map(prevHookFunctionAliases ?? [])
     ctx.hookFunctionMemberAliases = new Map(prevHookFunctionMemberAliases ?? [])
     ctx.externalTracked = new Set(prevTracked)
@@ -3510,6 +3512,7 @@ function lowerExpressionImpl(
     ctx.shadowedNames = prevShadowed
     ctx.localDeclaredNames = prevLocalDeclared
     ctx.currentFunctionDeclaredNames = prevCurrentFunctionDeclared
+    ctx.hookResultVarMap = prevHookResultVarMap
     ctx.hookFunctionAliases = prevHookFunctionAliases
     ctx.hookFunctionMemberAliases = prevHookFunctionMemberAliases
     return result
