@@ -928,9 +928,22 @@ function runEffect(e: EffectNode): void {
       inCleanup = false
     }
   }
+  const runCleanupOrDetach = () => {
+    try {
+      runCleanup()
+    } catch (err) {
+      // A throwing cleanup must not brick the effect: leave it subscribed
+      // with plain Watching flags so future writes re-queue it (this run is
+      // skipped), then let the error propagate.
+      if (e.flags !== 0) {
+        e.flags = Watching
+      }
+      throw err
+    }
+  }
   if (flags & Dirty) {
     // Run cleanup before re-run; values are still the previous commit.
-    runCleanup()
+    runCleanupOrDetach()
     ++cycle
     e.depsTail = undefined
     e.flags = WatchingRunning
@@ -971,7 +984,7 @@ function runEffect(e: EffectNode): void {
     if (isDirty) {
       // Only run cleanup if the effect will actually re-run.
       // Cleanup reads should observe previous values for this flush.
-      runCleanup()
+      runCleanupOrDetach()
       ++cycle
       e.depsTail = undefined
       e.flags = WatchingRunning
