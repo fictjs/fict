@@ -945,4 +945,90 @@ describe('resource', () => {
     expect(result.data).toBe('fresh')
     expect(fetcher).toHaveBeenCalledTimes(2)
   })
+
+  it('shares one cache entry across structurally equal object args', async () => {
+    const fetcher = vi.fn(({ signal: _signal }, args: { userId: number }) =>
+      Promise.resolve(`user:${args.userId}`),
+    )
+    const r = resource<string, { userId: number }>({ fetch: fetcher })
+
+    let first: any
+    let second: any
+    createRoot(() => {
+      // Fresh object literals with equal contents must hit the same entry.
+      first = r.read({ userId: 1 })
+      second = r.read({ userId: 1 })
+    })
+
+    await vi.runAllTimersAsync()
+    await tick()
+    expect(first.data).toBe('user:1')
+    expect(second.data).toBe('user:1')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not abort in-flight fetches when equal args objects are re-read', async () => {
+    const abortSpy = vi.fn()
+    let resolveFetch: ((value: string) => void) | undefined
+    const fetcher = vi.fn(({ signal }, _args: { id: number }) => {
+      signal.addEventListener('abort', abortSpy)
+      return new Promise<string>(resolve => {
+        resolveFetch = resolve
+      })
+    })
+    const r = resource<string, { id: number }>({ fetch: fetcher })
+    const bump = createSignal(0)
+
+    let result: any
+    createRoot(() => {
+      // The getter re-evaluates per dependency change, producing a fresh
+      // (but structurally equal) args object each time.
+      result = r.read(reactive(() => (bump(), { id: 7 })))
+    })
+
+    bump(1)
+    await tick()
+    bump(2)
+    await tick()
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(abortSpy).not.toHaveBeenCalled()
+
+    resolveFetch?.('done')
+    await vi.runAllTimersAsync()
+    await tick()
+    expect(result.data).toBe('done')
+  })
+
+  it('evicts least-recently-used entries beyond maxEntries', async () => {
+    const fetcher = vi.fn((_, id: number) => Promise.resolve(`v:${id}`))
+    const r = resource<string, number>({ fetch: fetcher, cache: { maxEntries: 2 } })
+
+    for (const id of [1, 2, 3]) {
+      r.prefetch(id)
+      await vi.runAllTimersAsync()
+      await tick()
+    }
+    expect(fetcher).toHaveBeenCalledTimes(3)
+
+    // Entry 1 was evicted (LRU): reading it must refetch.
+    let result: any
+    const { dispose } = createRoot(() => {
+      result = r.read(1)
+    })
+    await vi.runAllTimersAsync()
+    await tick()
+    expect(result.data).toBe('v:1')
+    expect(fetcher).toHaveBeenCalledTimes(4)
+    dispose()
+
+    // Entry 3 stayed cached: reading it must not refetch.
+    const { dispose: dispose3 } = createRoot(() => {
+      result = r.read(3)
+    })
+    await tick()
+    expect(result.data).toBe('v:3')
+    expect(fetcher).toHaveBeenCalledTimes(4)
+    dispose3()
+  })
 })

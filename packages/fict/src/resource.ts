@@ -59,6 +59,13 @@ export interface ResourceCacheOptions {
    * @default false
    */
   cacheErrors?: boolean
+
+  /**
+   * Maximum number of cached entries. Least-recently-used entries beyond
+   * this bound are evicted (in-flight entries are never evicted).
+   * @default 256
+   */
+  maxEntries?: number
 }
 
 /**
@@ -195,6 +202,62 @@ const defaultCacheOptions: Required<ResourceCacheOptions> = {
   ttlMs: Number.POSITIVE_INFINITY,
   staleWhileRevalidate: false,
   cacheErrors: false,
+  maxEntries: 256,
+}
+
+const STRUCTURAL_KEY_PREFIX = '\u0000fict:args:'
+
+/**
+ * Deterministic serialization for plain-data args (sorted object keys).
+ * Throws on cycles and non-plain objects so the caller can fall back to
+ * identity keying.
+ */
+function stableStringify(value: unknown, seen: WeakSet<object>): string {
+  if (value === null || typeof value !== 'object') {
+    if (typeof value === 'function' || typeof value === 'symbol') {
+      throw new Error('non-serializable')
+    }
+    return value === undefined ? 'undefined' : (JSON.stringify(value) ?? 'null')
+  }
+  if (seen.has(value)) throw new Error('cyclic')
+  seen.add(value)
+  try {
+    if (Array.isArray(value)) {
+      return '[' + value.map(item => stableStringify(item, seen)).join(',') + ']'
+    }
+    const proto = Object.getPrototypeOf(value)
+    if (proto !== Object.prototype && proto !== null) throw new Error('non-plain')
+    const keys = Object.keys(value).sort()
+    return (
+      '{' +
+      keys
+        .map(
+          key =>
+            JSON.stringify(key) +
+            ':' +
+            stableStringify((value as Record<string, unknown>)[key], seen),
+        )
+        .join(',') +
+      '}'
+    )
+  } finally {
+    seen.delete(value)
+  }
+}
+
+/**
+ * Derive a stable cache key for default (key-less) resources. Plain data
+ * objects with equal contents share a key, so fresh `{ id }` literals hit
+ * the cache instead of growing it; non-plain or cyclic args fall back to
+ * identity keying.
+ */
+function structuralArgsKey(argsValue: unknown): unknown {
+  if (argsValue === null || typeof argsValue !== 'object') return argsValue
+  try {
+    return STRUCTURAL_KEY_PREFIX + stableStringify(argsValue, new WeakSet())
+  } catch {
+    return argsValue
+  }
 }
 
 /**
@@ -255,13 +318,17 @@ export function resource<T, Args = void>(
   const readArgs = (argsAccessor: (() => Args) | Args): Args =>
     isReactive(argsAccessor) ? (argsAccessor as () => Args)() : (argsAccessor as Args)
 
+  const hasCustomKey = typeof optionsOrFetcher === 'object' && optionsOrFetcher.key !== undefined
+
   const computeKey = (argsAccessor: (() => Args) | Args): unknown => {
     const argsValue = readArgs(argsAccessor)
-    if (typeof optionsOrFetcher === 'object' && optionsOrFetcher.key !== undefined) {
-      const key = optionsOrFetcher.key
-      return typeof key === 'function' ? (key as (args: Args) => unknown)(argsValue) : key
+    if (hasCustomKey) {
+      const key = (optionsOrFetcher as ResourceOptions<T, Args>).key
+      return structuralArgsKey(
+        typeof key === 'function' ? (key as (args: Args) => unknown)(argsValue) : key,
+      )
     }
-    return argsValue
+    return structuralArgsKey(argsValue)
   }
 
   const readResetToken = (): unknown => {
@@ -273,29 +340,46 @@ export function resource<T, Args = void>(
     return reset
   }
 
+  const evictOverflowEntries = () => {
+    const maxEntries = resolvedCacheOptions.maxEntries
+    if (!Number.isFinite(maxEntries) || maxEntries <= 0) return
+    if (cache.size <= maxEntries) return
+    for (const [entryKey, entry] of cache) {
+      if (cache.size <= maxEntries) break
+      // Never evict entries with work in progress.
+      if (entry.inFlight || entry.pendingToken) continue
+      cache.delete(entryKey)
+    }
+  }
+
   const ensureEntry = (key: unknown): ResourceEntry<T, Args> => {
     let state = cache.get(key)
-    if (!state) {
-      state = {
-        data: createSignal<T | undefined>(undefined),
-        loading: createSignal<boolean>(false),
-        error: createSignal<unknown>(undefined),
-        version: createSignal(0),
-        pendingToken: null,
-        lastArgs: undefined,
-        lastVersion: -1,
-        lastReset: undefined,
-        hasValue: false,
-        status: 'idle',
-        generation: 0,
-        expiresAt: undefined,
-        inFlight: undefined,
-        inFlightArgs: undefined,
-        controller: undefined,
-      }
+    if (state) {
+      // Refresh recency so eviction drops the least-recently-used entries.
+      cache.delete(key)
       cache.set(key, state)
+      return state
     }
-    return state!
+    state = {
+      data: createSignal<T | undefined>(undefined),
+      loading: createSignal<boolean>(false),
+      error: createSignal<unknown>(undefined),
+      version: createSignal(0),
+      pendingToken: null,
+      lastArgs: undefined,
+      lastVersion: -1,
+      lastReset: undefined,
+      hasValue: false,
+      status: 'idle',
+      generation: 0,
+      expiresAt: undefined,
+      inFlight: undefined,
+      inFlightArgs: undefined,
+      controller: undefined,
+    }
+    cache.set(key, state)
+    evictOverflowEntries()
+    return state
   }
 
   const isExpired = (entry: ResourceEntry<T, Args>): boolean => {
@@ -323,7 +407,11 @@ export function resource<T, Args = void>(
   ) => {
     const createToken = options.createToken !== false
     const isRevalidating = options.isRevalidating === true
-    if (entry.inFlight && entry.inFlightArgs === args) {
+    // The entry is keyed by request identity, so any in-flight fetch already
+    // serves these args - reuse it instead of abort/restart churn. Callers
+    // that genuinely need a fresh fetch (refresh, mutate) abort explicitly
+    // before calling startFetch.
+    if (entry.inFlight) {
       if (createToken && useSuspense && !entry.hasValue && !entry.pendingToken) {
         entry.pendingToken = createSuspenseToken()
       }
@@ -413,19 +501,20 @@ export function resource<T, Args = void>(
       cache.clear()
       return
     }
-    const entry = cache.get(key)
+    const normalizedKey = structuralArgsKey(key)
+    const entry = cache.get(normalizedKey)
     if (entry) {
       entry.controller?.abort()
       resolvePendingToken(entry)
       entry.version(entry.version() + 1)
       entry.expiresAt = Date.now() - 1
-      cache.delete(key)
+      cache.delete(normalizedKey)
     }
   }
 
   function prefetch(args: Args, keyOverride?: unknown) {
     const hasKeyOverride = arguments.length >= 2
-    const key = hasKeyOverride ? keyOverride : computeKey(args)
+    const key = hasKeyOverride ? structuralArgsKey(keyOverride) : computeKey(args)
     const entry = ensureEntry(key)
     const usableData = entry.hasValue && !isExpired(entry)
     if (!usableData) {
@@ -442,7 +531,7 @@ export function resource<T, Args = void>(
   ) => {
     const args = readArgs(argsAccessor)
     const hasKeyOverride = !!options && Object.prototype.hasOwnProperty.call(options, 'key')
-    const key = hasKeyOverride ? options.key : computeKey(args)
+    const key = hasKeyOverride ? structuralArgsKey(options.key) : computeKey(args)
     const entry = ensureEntry(key)
     const prevValue = entry.data()
     const nextValue =
@@ -483,7 +572,14 @@ export function resource<T, Args = void>(
         const args = readArgs(argsAccessor)
         const currentVersion = entry.version()
         const expired = isExpired(entry)
-        const argsChanged = entry.lastArgs !== args
+        // The cache key is the request identity: a fresh args object that maps
+        // to the same key is the same request, so default-keyed resources never
+        // treat it as a change. Custom-keyed resources can see different args
+        // under one key; compare those structurally, not by reference.
+        const neverFetched = entry.status === 'idle' && !entry.hasValue && !entry.inFlight
+        const argsChanged = hasCustomKey
+          ? structuralArgsKey(args) !== structuralArgsKey(entry.lastArgs)
+          : false
         const versionChanged = entry.lastVersion !== currentVersion
         const resetToken = readResetToken()
         const resetChanged = entry.lastReset !== resetToken
@@ -492,6 +588,7 @@ export function resource<T, Args = void>(
         const canUseStaleData =
           resolvedCacheOptions.staleWhileRevalidate && entry.hasValue && expired
         const shouldRefetch =
+          neverFetched ||
           (expired && !canUseStaleData) ||
           argsChanged ||
           versionChanged ||
