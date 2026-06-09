@@ -13,6 +13,17 @@ import { type FictCompilerOptions } from '../src/index'
 
 import { transformCommonJS } from './test-utils'
 
+const fictTestRuntime = {
+  ...runtime,
+  $store<T extends object>(initialValue: T): T {
+    return runtimeInternal.createStore(initialValue)[0] as T
+  },
+  store<T extends object>(initialValue: T): T {
+    return runtimeInternal.createStore(initialValue)[0] as T
+  },
+  createStore: runtimeInternal.createStore,
+}
+
 function compileAndLoad<TModule extends Record<string, any>>(
   source: string,
   options?: FictCompilerOptions,
@@ -41,7 +52,7 @@ function compileAndLoad<TModule extends Record<string, any>>(
       }
       if (id === '@fictjs/runtime') return runtime
       if (id === '@fictjs/runtime/jsx-runtime' || id === 'fict/jsx-runtime') return runtimeJsx
-      if (id === 'fict') return runtime
+      if (id === 'fict') return fictTestRuntime
       return dynamicRequire(id)
     },
     module,
@@ -124,7 +135,7 @@ describe('compiled templates DOM integration', () => {
 
     const mod = compileAndLoad<{
       mount: (el: HTMLElement) => () => void
-    }>(source, { fineGrainedDom: true })
+    }>(source, { fineGrainedDom: true, strictGuarantee: true, dev: false })
     const container = document.createElement('div')
     document.body.appendChild(container)
     const teardown = mod.mount(container)
@@ -274,6 +285,55 @@ describe('compiled templates DOM integration', () => {
     const teardown = mod.mount(container)
 
     expect(container.querySelector('[data-testid="value"]')?.textContent).toBe('2')
+
+    teardown()
+    container.remove()
+  })
+
+  it('runs imported $store macros through the fict test sandbox', async () => {
+    const source = `
+      import { $store, render } from 'fict'
+
+      export let api: { rename(): void; increment(): void }
+
+      function App() {
+        const user = $store({ name: 'Ada', clicks: 0 })
+
+        api = {
+          rename() {
+            user.name = 'Grace'
+          },
+          increment() {
+            user.clicks++
+          },
+        }
+
+        return <button data-testid="user" onClick={api.increment}>{user.name}:{user.clicks}</button>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { rename(): void; increment(): void }
+    }>(source, { fineGrainedDom: true, strictGuarantee: true, dev: false })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const button = () => container.querySelector('[data-testid="user"]') as HTMLButtonElement
+
+    expect(button().textContent).toBe('Ada:0')
+
+    mod.api.rename()
+    await flushUpdates()
+    expect(button().textContent).toBe('Grace:0')
+
+    button().click()
+    await flushUpdates()
+    expect(button().textContent).toBe('Grace:1')
 
     teardown()
     container.remove()
