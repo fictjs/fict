@@ -1041,91 +1041,96 @@ function flush(): void {
     flushReported = true
   }
 
-  // 1. Process all high-priority effects first
-  let highIndex = 0
-  while (highIndex < highPriorityQueue.length) {
-    const e = highPriorityQueue[highIndex]!
-    if (e.queuedPriority !== QueuedHigh) {
-      highIndex++
-      continue
-    }
-    if (!beforeEffectRunGuard()) {
-      // fix: When cycle guard fails, drop the current queues to avoid microtask spin.
-      // Dev mode will throw inside beforeEffectRunGuard; this branch is for prod warnings.
-      for (let i = 0; i < highPriorityQueue.length; i++) {
-        const queued = highPriorityQueue[i]
-        if (queued && queued.flags !== 0) {
-          queued.flags = Watching
-          queued.queuedPriority = undefined
-        }
+  const dropQueuesAfterGuardFailure = () => {
+    // fix: When cycle guard fails, drop the current queues to avoid microtask spin.
+    // Dev mode will throw inside beforeEffectRunGuard; this branch is for prod warnings.
+    for (let i = 0; i < highPriorityQueue.length; i++) {
+      const queued = highPriorityQueue[i]
+      if (queued && queued.flags !== 0) {
+        queued.flags = Watching
+        queued.queuedPriority = undefined
       }
-      for (let i = 0; i < lowPriorityQueue.length; i++) {
-        const queued = lowPriorityQueue[i]
-        if (queued && queued.flags !== 0) {
-          queued.flags = Watching
-          queued.queuedPriority = undefined
-        }
-      }
-      highPriorityQueue.length = 0
-      lowPriorityQueue.length = 0
-      flushScheduled = false
-      finishFlush()
-      return
     }
-    highIndex++
-    e.queuedPriority = undefined
-    runEffect(e)
+    for (let i = 0; i < lowPriorityQueue.length; i++) {
+      const queued = lowPriorityQueue[i]
+      if (queued && queued.flags !== 0) {
+        queued.flags = Watching
+        queued.queuedPriority = undefined
+      }
+    }
+    highPriorityQueue.length = 0
+    lowPriorityQueue.length = 0
+    flushScheduled = false
   }
-  highPriorityQueue.length = 0
 
-  // 2. Process low-priority effects, interruptible by high priority
+  let highIndex = 0
   let lowIndex = 0
-  while (lowIndex < lowPriorityQueue.length) {
-    // Check if high priority work arrived during low priority execution
-    if (highPriorityQueue.length > 0) {
-      if (lowIndex > 0) {
+  let completed = false
+  try {
+    // 1. Process all high-priority effects first
+    while (highIndex < highPriorityQueue.length) {
+      const e = highPriorityQueue[highIndex]!
+      if (e.queuedPriority !== QueuedHigh) {
+        highIndex++
+        continue
+      }
+      if (!beforeEffectRunGuard()) {
+        dropQueuesAfterGuardFailure()
+        completed = true
+        return
+      }
+      highIndex++
+      e.queuedPriority = undefined
+      runEffect(e)
+    }
+    highPriorityQueue.length = 0
+    highIndex = 0
+
+    // 2. Process low-priority effects, interruptible by high priority
+    while (lowIndex < lowPriorityQueue.length) {
+      // Check if high priority work arrived during low priority execution
+      if (highPriorityQueue.length > 0) {
+        if (lowIndex > 0) {
+          lowPriorityQueue.copyWithin(0, lowIndex)
+          lowPriorityQueue.length -= lowIndex
+        }
+        scheduleFlush()
+        completed = true
+        return
+      }
+      const e = lowPriorityQueue[lowIndex]!
+      if (e.queuedPriority !== QueuedLow) {
+        lowIndex++
+        continue
+      }
+      if (!beforeEffectRunGuard()) {
+        dropQueuesAfterGuardFailure()
+        completed = true
+        return
+      }
+      lowIndex++
+      e.queuedPriority = undefined
+      runEffect(e)
+    }
+    lowPriorityQueue.length = 0
+    completed = true
+  } finally {
+    if (!completed) {
+      // An effect threw out of the flush. Drop the already-processed prefix
+      // and reschedule the remainder so sibling effects still observe this
+      // update instead of being silently stranded until the next write.
+      if (highIndex > 0 && highIndex <= highPriorityQueue.length) {
+        highPriorityQueue.copyWithin(0, highIndex)
+        highPriorityQueue.length -= highIndex
+      }
+      if (lowIndex > 0 && lowIndex <= lowPriorityQueue.length) {
         lowPriorityQueue.copyWithin(0, lowIndex)
         lowPriorityQueue.length -= lowIndex
       }
       scheduleFlush()
-      finishFlush()
-      return
     }
-    const e = lowPriorityQueue[lowIndex]!
-    if (e.queuedPriority !== QueuedLow) {
-      lowIndex++
-      continue
-    }
-    if (!beforeEffectRunGuard()) {
-      // fix: When cycle guard fails, drop the current queues to avoid microtask spin.
-      // Dev mode will throw inside beforeEffectRunGuard; this branch is for prod warnings.
-      for (let i = 0; i < highPriorityQueue.length; i++) {
-        const queued = highPriorityQueue[i]
-        if (queued && queued.flags !== 0) {
-          queued.flags = Watching
-          queued.queuedPriority = undefined
-        }
-      }
-      for (let i = 0; i < lowPriorityQueue.length; i++) {
-        const queued = lowPriorityQueue[i]
-        if (queued && queued.flags !== 0) {
-          queued.flags = Watching
-          queued.queuedPriority = undefined
-        }
-      }
-      highPriorityQueue.length = 0
-      lowPriorityQueue.length = 0
-      flushScheduled = false
-      finishFlush()
-      return
-    }
-    lowIndex++
-    e.queuedPriority = undefined
-    runEffect(e)
+    finishFlush()
   }
-  lowPriorityQueue.length = 0
-
-  finishFlush()
 }
 // ============================================================================
 // Signal - Inline optimized version
