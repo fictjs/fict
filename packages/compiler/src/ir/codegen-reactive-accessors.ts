@@ -1228,6 +1228,51 @@ function getExpressionIdentifiersDeep(expr?: Expression | null): Set<string> {
   return deps
 }
 
+function collectReturnedFunctionIdentifiers(expr: Expression, into: Set<string>): void {
+  switch (expr.kind) {
+    case 'ObjectExpression':
+      expr.properties.forEach(prop => {
+        if (prop.kind === 'SpreadElement') {
+          collectReturnedFunctionIdentifiers(prop.argument as Expression, into)
+          return
+        }
+        if (prop.computed) {
+          collectExpressionIdentifiersDeep(prop.key as Expression, into)
+        }
+        const value = prop.value as Expression
+        if (isFunctionExpressionValue(value)) {
+          collectExpressionIdentifiersDeep(value, into, new Set(), true, true)
+          return
+        }
+        collectReturnedFunctionIdentifiers(value, into)
+      })
+      return
+    case 'ArrayExpression':
+      expr.elements.forEach(element => {
+        if (!element) return
+        const value = element as Expression
+        if (isFunctionExpressionValue(value)) {
+          collectExpressionIdentifiersDeep(value, into, new Set(), true, true)
+          return
+        }
+        collectReturnedFunctionIdentifiers(value, into)
+      })
+      return
+    case 'ConditionalExpression':
+      collectExpressionIdentifiersDeep(expr.test as Expression, into)
+      collectReturnedFunctionIdentifiers(expr.consequent as Expression, into)
+      collectReturnedFunctionIdentifiers(expr.alternate as Expression, into)
+      return
+    case 'LogicalExpression':
+      collectExpressionIdentifiersDeep(expr.left as Expression, into)
+      collectReturnedFunctionIdentifiers(expr.right as Expression, into)
+      return
+    default:
+      collectExpressionIdentifiersDeep(expr, into)
+      return
+  }
+}
+
 function getControlExpressionIdentifiers(expr?: Expression | null): Set<string> {
   const deps = new Set<string>()
   if (expr) {
@@ -1371,6 +1416,7 @@ export function computeReactiveAccessors(
   ctx: CodegenContext,
 ): { tracked: Set<string>; memo: Set<string>; controlDepsByInstr: Map<Instruction, Set<string>> } {
   const activeReadVars = new Set<string>()
+  const returnedFunctionReadVars = new Set<string>()
   const dataDepsByTarget = new Map<string, Set<string>>()
   const controlDepsByTarget = new Map<string, Set<string>>()
   const controlDepsByInstr = buildControlDependencyMap(fn)
@@ -1425,6 +1471,10 @@ export function computeReactiveAccessors(
       addActiveReads(term.object)
     } else if (term.kind === 'Return') {
       addActiveReads(term.argument ?? null, true)
+      if (term.argument) {
+        collectReturnedFunctionIdentifiers(term.argument, returnedFunctionReadVars)
+        returnedFunctionReadVars.forEach(dep => activeReadVars.add(dep))
+      }
     } else if (term.kind === 'Throw') {
       addActiveReads(term.argument)
     }
@@ -1470,6 +1520,7 @@ export function computeReactiveAccessors(
   }
   const isMutableLocal = (name: string) =>
     (ctx.mutatedVars?.has(name) ?? false) &&
+    !returnedFunctionReadVars.has(name) &&
     !isSignal(name) &&
     !isStore(name) &&
     !isAlias(name) &&
