@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 import { createEffect } from '../src/effect'
 import { createKeyedList } from '../src/list-helpers'
@@ -20,7 +20,8 @@ describe('Keyed List Edge Cases', () => {
   })
 
   describe('Duplicate Keys', () => {
-    it('handles duplicate keys by using last occurrence (Map behavior)', async () => {
+    it('preserves duplicate keyed items while warning', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
       interface Item {
         id: number
         name: string
@@ -32,34 +33,42 @@ describe('Keyed List Edge Cases', () => {
         { id: 1, name: 'Duplicate' }, // Same id as first
       ])
 
-      const listBinding = createKeyedList(
-        () => items(),
-        item => item.id,
-        itemSig => {
-          const li = document.createElement('li')
-          li.setAttribute('data-id', String(itemSig().id))
-          createEffect(() => {
-            li.textContent = itemSig().name
-          })
-          return [li]
-        },
-      )
+      try {
+        const listBinding = createKeyedList(
+          () => items(),
+          item => item.id,
+          itemSig => {
+            const li = document.createElement('li')
+            li.setAttribute('data-id', String(itemSig().id))
+            createEffect(() => {
+              li.textContent = itemSig().name
+            })
+            return [li]
+          },
+        )
 
-      container.appendChild(listBinding.marker)
-      await tick()
+        container.appendChild(listBinding.marker)
+        await tick()
 
-      const listItems = container.querySelectorAll('li')
-      // Only 2 items because duplicate key overwrites in Map
-      expect(listItems.length).toBe(2)
+        const listItems = container.querySelectorAll('li')
+        expect(listItems.length).toBe(3)
+        expect(Array.from(listItems).map(item => item.textContent)).toEqual([
+          'First',
+          'Second',
+          'Duplicate',
+        ])
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Duplicate key "1" detected in list rendering'),
+        )
 
-      // Last item with key=1 wins (Duplicate), plus key=2
-      expect(listItems[0]!.textContent).toBe('Duplicate')
-      expect(listItems[1]!.textContent).toBe('Second')
-
-      listBinding.dispose()
+        listBinding.dispose()
+      } finally {
+        warnSpy.mockRestore()
+      }
     })
 
-    it('handles all items having the same key (only last item rendered)', async () => {
+    it('preserves all items having the same key', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
       interface Item {
         id: number
         value: string
@@ -71,44 +80,48 @@ describe('Keyed List Edge Cases', () => {
         { id: 1, value: 'C' },
       ])
 
-      const listBinding = createKeyedList(
-        () => items(),
-        item => item.id,
-        itemSig => {
-          const li = document.createElement('li')
-          createEffect(() => {
-            li.textContent = itemSig().value
-          })
-          return [li]
-        },
-      )
+      try {
+        const listBinding = createKeyedList(
+          () => items(),
+          item => item.id,
+          itemSig => {
+            const li = document.createElement('li')
+            createEffect(() => {
+              li.textContent = itemSig().value
+            })
+            return [li]
+          },
+        )
 
-      container.appendChild(listBinding.marker)
-      await tick()
+        container.appendChild(listBinding.marker)
+        await tick()
 
-      const listItems = container.querySelectorAll('li')
-      // Only 1 item because all have same key - last one wins
-      expect(listItems.length).toBe(1)
-      expect(listItems[0]!.textContent).toBe('C')
+        const listItems = container.querySelectorAll('li')
+        expect(Array.from(listItems).map(item => item.textContent)).toEqual(['A', 'B', 'C'])
 
-      // Update all items - still same key
-      items([
-        { id: 1, value: 'X' },
-        { id: 1, value: 'Y' },
-        { id: 1, value: 'Z' },
-      ])
-      await tick()
+        items([
+          { id: 1, value: 'X' },
+          { id: 1, value: 'Y' },
+          { id: 1, value: 'Z' },
+        ])
+        await tick()
 
-      const updatedItems = container.querySelectorAll('li')
-      expect(updatedItems.length).toBe(1)
-      expect(updatedItems[0]!.textContent).toBe('Z')
+        const updatedItems = container.querySelectorAll('li')
+        expect(Array.from(updatedItems).map(item => item.textContent)).toEqual(['X', 'Y', 'Z'])
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Duplicate key "1" detected in list rendering'),
+        )
 
-      listBinding.dispose()
+        listBinding.dispose()
+      } finally {
+        warnSpy.mockRestore()
+      }
     })
   })
 
   describe('Null and Undefined Keys', () => {
-    it('handles items with null as key (Map treats as single key)', async () => {
+    it('preserves duplicate null keyed items', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
       interface Item {
         id: number | null
         name: string
@@ -120,28 +133,36 @@ describe('Keyed List Edge Cases', () => {
         { id: 1, name: 'Valid Key' },
       ])
 
-      const listBinding = createKeyedList(
-        () => items(),
-        item => item.id as any,
-        itemSig => {
-          const li = document.createElement('li')
-          createEffect(() => {
-            li.textContent = itemSig().name
-          })
-          return [li]
-        },
-      )
+      try {
+        const listBinding = createKeyedList(
+          () => items(),
+          item => item.id as any,
+          itemSig => {
+            const li = document.createElement('li')
+            createEffect(() => {
+              li.textContent = itemSig().name
+            })
+            return [li]
+          },
+        )
 
-      container.appendChild(listBinding.marker)
-      await tick()
+        container.appendChild(listBinding.marker)
+        await tick()
 
-      const listItems = container.querySelectorAll('li')
-      // Only 2 items: last null key (Null Key 2) + valid key (Valid Key)
-      expect(listItems.length).toBe(2)
-      expect(listItems[0]!.textContent).toBe('Null Key 2')
-      expect(listItems[1]!.textContent).toBe('Valid Key')
+        const listItems = container.querySelectorAll('li')
+        expect(Array.from(listItems).map(item => item.textContent)).toEqual([
+          'Null Key 1',
+          'Null Key 2',
+          'Valid Key',
+        ])
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Duplicate key "null" detected in list rendering'),
+        )
 
-      listBinding.dispose()
+        listBinding.dispose()
+      } finally {
+        warnSpy.mockRestore()
+      }
     })
 
     it('handles items with undefined as key', async () => {

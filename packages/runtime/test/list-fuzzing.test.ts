@@ -4,7 +4,7 @@
  * Uses randomized inputs to stress-test list diff algorithm
  * and verify invariants hold under all conditions.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 import { createEffect, onCleanup } from '../src/index'
 import { createSignal } from '../src/advanced'
@@ -522,31 +522,42 @@ describe('List Fuzzing Tests', () => {
 
   describe('Edge Cases', () => {
     it('handles duplicate keys gracefully', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
       const items = createSignal([
         { id: 1, value: 'a' },
         { id: 1, value: 'b' }, // Duplicate key
         { id: 2, value: 'c' },
       ])
 
-      const list = createKeyedList(
-        () => items(),
-        item => item.id,
-        (itemSig, _indexSig) => {
-          const div = document.createElement('div')
-          createEffect(() => {
-            div.textContent = itemSig().value
-          })
-          return [div]
-        },
-      )
+      try {
+        const list = createKeyedList(
+          () => items(),
+          item => item.id,
+          (itemSig, _indexSig) => {
+            const div = document.createElement('div')
+            createEffect(() => {
+              div.textContent = itemSig().value
+            })
+            return [div]
+          },
+        )
 
-      container.appendChild(list.marker)
-      await tick()
+        container.appendChild(list.marker)
+        await tick()
 
-      // Should handle duplicates (exact behavior may vary)
-      expect(container.querySelectorAll('div').length).toBeGreaterThan(0)
+        expect(Array.from(container.querySelectorAll('div')).map(div => div.textContent)).toEqual([
+          'a',
+          'b',
+          'c',
+        ])
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Duplicate key "1" detected in list rendering'),
+        )
 
-      list.dispose()
+        list.dispose()
+      } finally {
+        warnSpy.mockRestore()
+      }
     })
 
     it('handles null/undefined values in items', async () => {

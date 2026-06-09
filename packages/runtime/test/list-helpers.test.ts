@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 import { createEffect } from '../src/effect'
 import { onMount } from '../src/lifecycle'
@@ -267,6 +267,66 @@ describe('List Helpers', () => {
       expect(container.children.length).toBe(2)
       expect(container.children[0].textContent).toBe('Alice-0')
       expect(container.children[1].textContent).toBe('Bob-1')
+    })
+
+    it('preserves duplicate keyed items while warning in dev', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const items = createSignal([
+        { id: 'a', name: 'A1' },
+        { id: 'a', name: 'A2' },
+        { id: 'b', name: 'B' },
+      ])
+
+      try {
+        const listBinding = createKeyedList(
+          () => items(),
+          item => item.id,
+          (itemSig, indexSig) => {
+            const div = document.createElement('div')
+            createEffect(() => {
+              div.textContent = `${itemSig().name}-${indexSig()}`
+            })
+            return [div]
+          },
+        )
+
+        container.appendChild(listBinding.marker)
+        listBinding.flush?.()
+        await tick()
+
+        expect(Array.from(container.children).map(child => child.textContent)).toEqual([
+          'A1-0',
+          'A2-1',
+          'B-2',
+        ])
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Duplicate key "a" detected in list rendering'),
+        )
+
+        const firstNode = container.children[0]
+        const secondNode = container.children[1]
+        const thirdNode = container.children[2]
+
+        items([
+          { id: 'a', name: 'A1 updated' },
+          { id: 'a', name: 'A2 updated' },
+          { id: 'b', name: 'B updated' },
+        ])
+        await tick()
+
+        expect(Array.from(container.children).map(child => child.textContent)).toEqual([
+          'A1 updated-0',
+          'A2 updated-1',
+          'B updated-2',
+        ])
+        expect(container.children[0]).toBe(firstNode)
+        expect(container.children[1]).toBe(secondNode)
+        expect(container.children[2]).toBe(thirdNode)
+
+        listBinding.dispose()
+      } finally {
+        warnSpy.mockRestore()
+      }
     })
 
     it('keeps index getter stable when needsIndex is false', async () => {

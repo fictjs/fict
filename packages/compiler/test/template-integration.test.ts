@@ -7,7 +7,7 @@ import * as runtimeInternal from '@fictjs/runtime/internal'
 import * as runtimeInternalList from '@fictjs/runtime/internal/list'
 import * as runtimeJsx from '@fictjs/runtime/jsx-runtime'
 import { clearDelegatedEvents, __fictResetContext } from '@fictjs/runtime/internal'
-import { describe, expect, it, beforeEach, afterEach } from 'vitest'
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 
 import { type FictCompilerOptions } from '../src/index'
 
@@ -9197,6 +9197,78 @@ describe('compiled templates DOM integration', () => {
 
     teardown()
     container.remove()
+  })
+
+  it('preserves duplicate keyed list items in fine-grained mode', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      type Item = { id: string; text: string }
+
+      export let api: { refresh(): void }
+
+      export function App() {
+        let items = $state<Item[]>([
+          { id: 'a', text: 'A1' },
+          { id: 'a', text: 'A2' },
+          { id: 'b', text: 'B' },
+        ])
+
+        api = {
+          refresh() {
+            items = [
+              { id: 'a', text: 'A1 updated' },
+              { id: 'a', text: 'A2 updated' },
+              { id: 'b', text: 'B updated' },
+            ]
+          },
+        }
+
+        return (
+          <ul>
+            {items.map((item, index) => (
+              <li key={item.id}>{item.text}:{index}</li>
+            ))}
+          </ul>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+        api: { refresh(): void }
+      }>(source, { fineGrainedDom: true })
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const teardown = mod.mount(container)
+      const readItems = () => Array.from(container.querySelectorAll('li')).map(li => li.textContent)
+
+      await flushUpdates()
+      expect(readItems()).toEqual(['A1:0', 'A2:1', 'B:2'])
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Duplicate key "a" detected in list rendering'),
+      )
+
+      const first = container.querySelectorAll('li')[0]
+      const second = container.querySelectorAll('li')[1]
+
+      mod.api.refresh()
+      await flushUpdates()
+      expect(readItems()).toEqual(['A1 updated:0', 'A2 updated:1', 'B updated:2'])
+      expect(container.querySelectorAll('li')[0]).toBe(first)
+      expect(container.querySelectorAll('li')[1]).toBe(second)
+
+      teardown()
+      container.remove()
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 
   it('evaluates inline keyed list keys once per rendered item', async () => {

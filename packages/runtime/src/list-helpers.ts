@@ -26,6 +26,13 @@ import { createSignal, effectScope, flush, setActiveSub, type Signal } from './s
 import type { FictNode } from './types'
 
 type ListNamespaceContext = 'svg' | 'mathml' | null | undefined
+type ListKey = string | number
+type InternalListKey = ListKey | DuplicateListKey
+
+interface DuplicateListKey {
+  readonly key: ListKey
+  readonly occurrence: number
+}
 
 // Re-export shared DOM helpers for compiler-generated code
 export { insertNodesBefore, removeNodes, toNodeArray }
@@ -47,7 +54,9 @@ const isShadowRoot = (node: Node): node is ShadowRoot =>
  */
 interface KeyedBlock<T = unknown> {
   /** Unique key for this block */
-  key: string | number
+  key: ListKey
+  /** Internal key used for nth-occurrence matching when public keys duplicate */
+  identityKey: InternalListKey
   /** DOM nodes belonging to this block */
   nodes: Node[]
   /** Root context for lifecycle management */
@@ -71,9 +80,9 @@ interface KeyedListContainer<T = unknown> {
   /** End marker comment node */
   endMarker: Comment
   /** Map of key to block */
-  blocks: Map<string | number, KeyedBlock<T>>
+  blocks: Map<InternalListKey, KeyedBlock<T>>
   /** Scratch map reused for the next render */
-  nextBlocks: Map<string | number, KeyedBlock<T>>
+  nextBlocks: Map<InternalListKey, KeyedBlock<T>>
   /** Current nodes in DOM order (including markers) */
   currentNodes: Node[]
   /** Next-frame node buffer to avoid reallocations */
@@ -83,7 +92,9 @@ interface KeyedListContainer<T = unknown> {
   /** Next-frame ordered block buffer to avoid reallocations */
   nextOrderedBlocks: KeyedBlock<T>[]
   /** Track position of keys in the ordered buffer to handle duplicates */
-  orderedIndexByKey: Map<string | number, number>
+  orderedIndexByKey: Map<InternalListKey, number>
+  /** Stable identities for duplicate key occurrences beyond the first */
+  duplicateKeyIdentities: Map<ListKey, DuplicateListKey[]>
   /** Cleanup function */
   dispose: () => void
 }
@@ -107,12 +118,18 @@ export interface KeyedListBinding {
 type FineGrainedRenderItem<T> = (
   itemSig: Signal<T>,
   indexSig: Signal<number>,
-  key: string | number,
+  key: ListKey,
 ) => Node[]
 
 interface ListEntry<T> {
   item: T
   index: number
+}
+
+interface ResolvedListKey {
+  key: ListKey
+  identityKey: InternalListKey
+  occurrence: number
 }
 
 function collectListEntries<T>(items: T[], skipHoles: boolean): ListEntry<T>[] {
@@ -122,6 +139,40 @@ function collectListEntries<T>(items: T[], skipHoles: boolean): ListEntry<T>[] {
     entries.push({ item: items[index]!, index })
   }
   return entries
+}
+
+function resolveListKey<T>(
+  container: KeyedListContainer<T>,
+  keyFn: (item: T, index: number) => ListKey,
+  item: T,
+  index: number,
+  keyOccurrences: Map<ListKey, number>,
+): ResolvedListKey {
+  const key = keyFn(item, index)
+  const occurrence = keyOccurrences.get(key) ?? 0
+  keyOccurrences.set(key, occurrence + 1)
+  if (occurrence === 0) {
+    return { key, identityKey: key, occurrence }
+  }
+
+  let identities = container.duplicateKeyIdentities.get(key)
+  if (!identities) {
+    identities = []
+    container.duplicateKeyIdentities.set(key, identities)
+  }
+  while (identities.length < occurrence) {
+    identities.push({ key, occurrence: identities.length + 1 })
+  }
+
+  return { key, identityKey: identities[occurrence - 1]!, occurrence }
+}
+
+function warnDuplicateListKey(key: ListKey, phase: 'hydration' | 'rendering'): void {
+  if (!isDev) return
+  console.warn(
+    `[fict] Duplicate key "${String(key)}" detected in list ${phase}. ` +
+      `Each item should have a unique key. Duplicate items will be matched by occurrence.`,
+  )
 }
 
 // ============================================================================
@@ -236,6 +287,7 @@ function createKeyedListContainer<T = unknown>(
     }
     container.blocks.clear()
     container.nextBlocks.clear()
+    container.duplicateKeyIdentities.clear()
 
     // Remove nodes (including markers)
     // Check if markers are still in DOM before using Range
@@ -246,6 +298,7 @@ function createKeyedListContainer<T = unknown>(
       container.orderedBlocks.length = 0
       container.nextOrderedBlocks.length = 0
       container.orderedIndexByKey.clear()
+      container.duplicateKeyIdentities.clear()
       return
     }
     const rangeOwnerDocument =
@@ -262,18 +315,20 @@ function createKeyedListContainer<T = unknown>(
     container.orderedBlocks.length = 0
     container.nextOrderedBlocks.length = 0
     container.orderedIndexByKey.clear()
+    container.duplicateKeyIdentities.clear()
   }
 
   const container: KeyedListContainer<T> = {
     startMarker,
     endMarker,
-    blocks: new Map<string | number, KeyedBlock<T>>(),
-    nextBlocks: new Map<string | number, KeyedBlock<T>>(),
+    blocks: new Map<InternalListKey, KeyedBlock<T>>(),
+    nextBlocks: new Map<InternalListKey, KeyedBlock<T>>(),
     currentNodes: [startMarker, endMarker],
     nextNodes: [],
     orderedBlocks: [],
     nextOrderedBlocks: [],
-    orderedIndexByKey: new Map<string | number, number>(),
+    orderedIndexByKey: new Map<InternalListKey, number>(),
+    duplicateKeyIdentities: new Map<ListKey, DuplicateListKey[]>(),
     dispose,
   }
 
@@ -294,10 +349,11 @@ function createKeyedListContainer<T = unknown>(
  * @returns New KeyedBlock
  */
 function createKeyedBlock<T>(
-  key: string | number,
+  key: ListKey,
+  identityKey: InternalListKey,
   item: T,
   index: number,
-  render: (item: Signal<T>, index: Signal<number>, key: string | number) => Node[],
+  render: (item: Signal<T>, index: Signal<number>, key: ListKey) => Node[],
   needsIndex = true,
   hostRoot?: RootContext,
   namespace?: ListNamespaceContext,
@@ -356,6 +412,7 @@ function createKeyedBlock<T>(
 
   return {
     key,
+    identityKey,
     nodes,
     root,
     item: itemSig,
@@ -606,6 +663,7 @@ function createFineGrainedKeyedList<T>(
         newBlocks.clear()
         nextOrderedBlocks.length = 0
         orderedIndexByKey.clear()
+        const hydrateKeyOccurrences = new Map<ListKey, number>()
 
         if (newCount === 0) {
           oldBlocks.clear()
@@ -623,22 +681,19 @@ function createFineGrainedKeyedList<T>(
           () => {
             for (let entryIndex = 0; entryIndex < newEntries.length; entryIndex++) {
               const { item, index } = newEntries[entryIndex]!
-              const key = keyFn(item, index)
-              if (newBlocks.has(key)) {
-                if (isDev) {
-                  console.warn(
-                    `[fict] Duplicate key "${String(key)}" detected in list hydration. ` +
-                      `Each item should have a unique key.`,
-                  )
-                }
-                const existing = newBlocks.get(key)
-                if (existing) {
-                  destroyRoot(existing.root)
-                  removeNodes(existing.nodes)
-                }
+              const { key, identityKey, occurrence } = resolveListKey(
+                container,
+                keyFn,
+                item,
+                index,
+                hydrateKeyOccurrences,
+              )
+              if (occurrence > 0) {
+                warnDuplicateListKey(key, 'hydration')
               }
               const block = createKeyedBlock<T>(
                 key,
+                identityKey,
                 item,
                 index,
                 renderItem,
@@ -647,8 +702,8 @@ function createFineGrainedKeyedList<T>(
                 namespace,
               )
               createdBlocks.push(block)
-              newBlocks.set(key, block)
-              orderedIndexByKey.set(key, nextOrderedBlocks.length)
+              newBlocks.set(identityKey, block)
+              orderedIndexByKey.set(identityKey, nextOrderedBlocks.length)
               nextOrderedBlocks.push(block)
             }
           },
@@ -664,7 +719,7 @@ function createFineGrainedKeyedList<T>(
         container.nextNodes.length = 0
 
         for (const block of createdBlocks) {
-          if (newBlocks.get(block.key) === block) {
+          if (newBlocks.get(block.identityKey) === block) {
             flushOnMount(block.root)
           }
         }
@@ -689,6 +744,7 @@ function createFineGrainedKeyedList<T>(
         prevOrderedBlocks.length = 0
         nextOrderedBlocks.length = 0
         orderedIndexByKey.clear()
+        container.duplicateKeyIdentities.clear()
         container.currentNodes.length = 0
         container.currentNodes.push(container.startMarker, container.endMarker)
         container.nextNodes.length = 0
@@ -698,15 +754,23 @@ function createFineGrainedKeyedList<T>(
       const prevCount = prevOrderedBlocks.length
       if (prevCount > 0 && newCount === prevCount && orderedIndexByKey.size === prevCount) {
         let stableOrder = true
-        const seen = new Set<string | number>()
+        const stableKeyOccurrences = new Map<ListKey, number>()
         for (let i = 0; i < prevCount; i++) {
           const { item, index } = newEntries[i]!
-          const key = keyFn(item, index)
-          if (seen.has(key) || prevOrderedBlocks[i]!.key !== key) {
+          const { key, identityKey, occurrence } = resolveListKey(
+            container,
+            keyFn,
+            item,
+            index,
+            stableKeyOccurrences,
+          )
+          if (occurrence > 0) {
+            warnDuplicateListKey(key, 'rendering')
+          }
+          if (prevOrderedBlocks[i]!.identityKey !== identityKey) {
             stableOrder = false
             break
           }
-          seen.add(key)
         }
         if (stableOrder) {
           for (let i = 0; i < prevCount; i++) {
@@ -735,12 +799,23 @@ function createFineGrainedKeyedList<T>(
       let mismatchFirst = -1
       let mismatchSecond = -1
       let hasDuplicateKey = false
+      const keyOccurrences = new Map<ListKey, number>()
 
       // Phase 1: Build new blocks map (reuse or create)
       newEntries.forEach(({ item, index }) => {
-        const key = keyFn(item, index)
+        const { key, identityKey, occurrence } = resolveListKey(
+          container,
+          keyFn,
+          item,
+          index,
+          keyOccurrences,
+        )
+        if (occurrence > 0) {
+          warnDuplicateListKey(key, 'rendering')
+          hasDuplicateKey = true
+        }
         // Micro-optimization: single Map.get instead of has+get
-        let block = oldBlocks.get(key)
+        let block = oldBlocks.get(identityKey)
         const existed = block !== undefined
 
         if (block) {
@@ -756,35 +831,31 @@ function createFineGrainedKeyedList<T>(
 
         if (block) {
           // Reusing existing block from oldBlocks
-          newBlocks.set(key, block)
-          oldBlocks.delete(key)
+          newBlocks.set(identityKey, block)
+          oldBlocks.delete(identityKey)
         } else {
-          // If newBlocks already has this key (duplicate key case), clean up the previous block
-          const existingBlock = newBlocks.get(key)
-          if (existingBlock) {
-            if (isDev) {
-              console.warn(
-                `[fict] Duplicate key "${String(key)}" detected in list rendering. ` +
-                  `Each item should have a unique key. The previous item with this key will be replaced.`,
-              )
-            }
-            destroyRoot(existingBlock.root)
-            removeNodes(existingBlock.nodes)
-          }
           // Create new block
-          block = createKeyedBlock<T>(key, item, index, renderItem, needsIndex, hostRoot, namespace)
+          block = createKeyedBlock<T>(
+            key,
+            identityKey,
+            item,
+            index,
+            renderItem,
+            needsIndex,
+            hostRoot,
+            namespace,
+          )
           createdBlocks.push(block)
         }
 
         const resolvedBlock = block
 
-        newBlocks.set(key, resolvedBlock)
+        newBlocks.set(identityKey, resolvedBlock)
 
         // Micro-optimization: single Map.get instead of checking position multiple times
-        const position = orderedIndexByKey.get(key)
+        const position = orderedIndexByKey.get(identityKey)
         if (position !== undefined) {
           appendCandidate = false
-          hasDuplicateKey = true
           const prior = nextOrderedBlocks[position]
           if (prior && prior !== resolvedBlock) {
             destroyRoot(prior.root)
@@ -794,7 +865,10 @@ function createFineGrainedKeyedList<T>(
         } else {
           if (appendCandidate) {
             if (index < prevCount) {
-              if (!prevOrderedBlocks[index] || prevOrderedBlocks[index]!.key !== key) {
+              if (
+                !prevOrderedBlocks[index] ||
+                prevOrderedBlocks[index]!.identityKey !== identityKey
+              ) {
                 appendCandidate = false
               }
             } else if (existed) {
@@ -802,7 +876,7 @@ function createFineGrainedKeyedList<T>(
             }
           }
           const nextIndex = nextOrderedBlocks.length
-          orderedIndexByKey.set(key, nextIndex)
+          orderedIndexByKey.set(identityKey, nextIndex)
           nextOrderedBlocks.push(resolvedBlock)
           if (
             mismatchCount < 3 &&
@@ -861,7 +935,7 @@ function createFineGrainedKeyedList<T>(
         container.orderedBlocks = nextOrderedBlocks
         container.nextOrderedBlocks = prevOrderedBlocks
         for (const block of createdBlocks) {
-          if (newBlocks.get(block.key) === block) {
+          if (newBlocks.get(block.identityKey) === block) {
             flushOnMount(block.root)
           }
         }
@@ -953,7 +1027,7 @@ function createFineGrainedKeyedList<T>(
       container.orderedBlocks = nextOrderedBlocks
       container.nextOrderedBlocks = prevOrderedBlocks
       for (const block of createdBlocks) {
-        if (newBlocks.get(block.key) === block) {
+        if (newBlocks.get(block.identityKey) === block) {
           flushOnMount(block.root)
         }
       }
