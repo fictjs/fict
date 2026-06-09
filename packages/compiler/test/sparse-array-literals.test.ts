@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { transformCommonJS } from './test-utils'
+import { transform, transformCommonJS } from './test-utils'
 
 function compileAndLoad<TModule extends Record<string, unknown>>(
   source: string,
@@ -19,6 +19,20 @@ function compileAndLoad<TModule extends Record<string, unknown>>(
 }
 
 describe('sparse array literal semantics', () => {
+  it('does not crash optimizing sparse arrays in reactive components', () => {
+    expect(() =>
+      transform(`
+        import { $state } from 'fict'
+
+        export function App() {
+          let state = $state({ user: { name: 'a' } })
+          const arr = [, 1]
+          return <div>{state.user.name}{arr.length}</div>
+        }
+      `),
+    ).not.toThrow()
+  })
+
   it('preserves ordinary sparse array holes through transform and runtime', () => {
     const { output, mod } = compileAndLoad<{
       inspectSparse: () => {

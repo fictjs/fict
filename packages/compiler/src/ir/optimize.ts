@@ -3761,7 +3761,7 @@ function replaceConstMemberExpressions(
       return {
         ...expr,
         elements: expr.elements.map(el =>
-          replaceConstMemberExpressions(el as Expression, constObjects, constArrays),
+          el ? replaceConstMemberExpressions(el as Expression, constObjects, constArrays) : null,
         ),
       }
     case 'ObjectExpression':
