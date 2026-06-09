@@ -5490,13 +5490,15 @@ export function applyRegionMetadataToExpression(
   const _isReactiveAccessor = (name: string): boolean =>
     ctx.trackedVars.has(name) ||
     !!(ctx.signalVars?.has(name) || ctx.memoVars?.has(name) || ctx.aliasVars?.has(name))
+  const isCurrentFunctionReactiveBinding = (name: string): boolean =>
+    (ctx.currentFunctionDeclaredNames?.has(name) ?? false) && _isReactiveAccessor(name)
   const isNonReactiveFunction = (name: string): boolean =>
     (ctx.functionVars?.has(name) ?? false) && !(ctx.resumablePropAccessors?.has(name) ?? false)
 
   if (shadowed && Object.keys(overrides).length > 0) {
     for (const key of Object.keys(overrides)) {
       const base = normalizeDependencyKey(key).split('.')[0] ?? key
-      if (shadowed.has(base)) {
+      if (shadowed.has(base) && !isCurrentFunctionReactiveBinding(base)) {
         delete overrides[key]
       }
     }
