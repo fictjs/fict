@@ -1,5 +1,3 @@
-import { debugWarn } from '../debug'
-
 import type {
   BasicBlock,
   BlockId,
@@ -10,7 +8,7 @@ import type {
   Instruction,
   Terminator,
 } from './hir'
-import { makeSSAName, getSSABaseName } from './hir'
+import { HIRError, makeSSAName, getSSABaseName } from './hir'
 
 /**
  * SSA conversion with optimizations:
@@ -890,7 +888,7 @@ function renameTerminator(
  * Validate that all phi nodes have sources from all predecessors.
  * This ensures the SSA form is well-formed.
  */
-function validatePhiSources(fn: HIRFunction): void {
+export function validatePhiSources(fn: HIRFunction): void {
   const preds = computePredecessors(fn.blocks)
 
   for (const block of fn.blocks) {
@@ -910,11 +908,10 @@ function validatePhiSources(fn: HIRFunction): void {
       const missingPreds = blockPreds.filter(pred => !sourceBlocks.has(pred))
 
       if (missingPreds.length > 0) {
-        // Log warning but don't fail - some predecessors may be unreachable
-        // This is not an error in valid SSA, just a diagnostic
-        debugWarn(
-          'ssa',
+        throw new HIRError(
           `Phi node for '${instr.variable}' in block ${block.id} missing sources from predecessors: ${missingPreds.join(', ')}`,
+          'SSA_ERROR',
+          { blockId: block.id, variable: instr.variable },
         )
       }
     }

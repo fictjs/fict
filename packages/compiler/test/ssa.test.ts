@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { parseSync } from '@babel/core'
 import { buildHIR } from '../src/ir/build-hir'
 import { getSSABaseName, makeSSAName, resetGeneratedSSANames } from '../src/ir/hir'
-import { enterSSA, analyzeCFG } from '../src/ir/ssa'
+import { enterSSA, analyzeCFG, validatePhiSources } from '../src/ir/ssa'
 import { printHIR } from '../src/ir/printer'
 import { firstFunction } from './hir-test-utils'
 
@@ -82,6 +82,52 @@ describe('enterSSA', () => {
     const printed = printHIR(ssa)
     expect(printed).toMatch(/value\$\$ssa1\$\$ssa1/)
     expect(printed).toMatch(/value\$\$ssa1\$\$ssa2/)
+  })
+
+  it('rejects phi nodes missing predecessor sources', () => {
+    expect(() =>
+      validatePhiSources({
+        name: 'MalformedPhi',
+        params: [],
+        blocks: [
+          {
+            id: 0,
+            instructions: [],
+            terminator: {
+              kind: 'Branch',
+              test: { kind: 'Identifier', name: 'cond' },
+              consequent: 1,
+              alternate: 2,
+            },
+          },
+          {
+            id: 1,
+            instructions: [],
+            terminator: { kind: 'Jump', target: 3 },
+          },
+          {
+            id: 2,
+            instructions: [],
+            terminator: { kind: 'Jump', target: 3 },
+          },
+          {
+            id: 3,
+            instructions: [
+              {
+                kind: 'Phi',
+                variable: 'value',
+                target: { kind: 'Identifier', name: 'value$$ssa3' },
+                sources: [{ block: 1, id: { kind: 'Identifier', name: 'value$$ssa1' } }],
+              },
+            ],
+            terminator: {
+              kind: 'Return',
+              argument: { kind: 'Identifier', name: 'value$$ssa3' },
+            },
+          },
+        ],
+      }),
+    ).toThrow(/missing sources from predecessors: 2/)
   })
 })
 
