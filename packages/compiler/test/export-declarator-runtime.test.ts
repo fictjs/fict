@@ -60,14 +60,14 @@ describe('exported function declarator regressions', () => {
   it('preserves exported async arrows and generator function expressions', () => {
     const exports = compileModule(`
       export const useAsync = async () => 2,
-        useGen = function* () {
+        makeGen = function* () {
           yield 3
         }
 
       export function useProbe() {
         return {
           asyncIsPromise: useAsync() instanceof Promise,
-          genValue: useGen().next().value,
+          genValue: makeGen().next().value,
         }
       }
     `)
