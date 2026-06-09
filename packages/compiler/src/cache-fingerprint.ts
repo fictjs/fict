@@ -43,8 +43,13 @@ function readSourceMapRemappedDistArtifacts(modulePath: string): string | null {
 
   const packageRoot = modulePath.slice(0, srcIndex)
   const sourceRoot = path.join(packageRoot, 'src')
-  const sourceArtifacts = collectCompilerSourceFiles(sourceRoot).map(filePath =>
-    readArtifactWithRelativePath(packageRoot, filePath),
+  const sourceArtifacts = collectCompilerSourceFiles(sourceRoot).map(
+    filePath =>
+      // Keep enumerated-but-unreadable files visible in the fingerprint with a
+      // deterministic marker instead of letting a null literal corrupt the
+      // joined artifact text.
+      readArtifactWithRelativePath(packageRoot, filePath) ??
+      `${relativeArtifactPath(packageRoot, filePath)}\n<unreadable>`,
   )
   const distArtifacts = [
     path.join(packageRoot, 'dist', 'index.js'),
@@ -60,8 +65,11 @@ function readSourceMapRemappedDistArtifacts(modulePath: string): string | null {
 function readArtifactWithRelativePath(packageRoot: string, filePath: string): string | null {
   const content = readText(filePath)
   if (content === null) return null
-  const relativePath = path.relative(packageRoot, filePath).replace(/\\/g, '/')
-  return `${relativePath}\n${content}`
+  return `${relativeArtifactPath(packageRoot, filePath)}\n${content}`
+}
+
+function relativeArtifactPath(packageRoot: string, filePath: string): string {
+  return path.relative(packageRoot, filePath).replace(/\\/g, '/')
 }
 
 function collectCompilerSourceFiles(sourceRoot: string): string[] {

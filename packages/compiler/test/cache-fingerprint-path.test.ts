@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -166,6 +166,27 @@ describe('compiler cache fingerprint stack parsing', () => {
 
     expect(artifact).toContain('src/ir/codegen.ts')
     expect(artifact).toContain('codegen source')
+  })
+
+  it('fingerprints unreadable source artifacts deterministically', async () => {
+    if (process.platform === 'win32') return
+    if (typeof process.getuid === 'function' && process.getuid() === 0) return
+    const root = await makePackageFixture({
+      cacheSource: 'compiler cache helper',
+      indexSource: 'compiler index source',
+      extraSources: {
+        'ir/broken.ts': 'hidden source',
+      },
+      esm: 'esm compiler artifact',
+      cjs: 'cjs compiler artifact',
+    })
+    await chmod(path.join(root, 'src', 'ir', 'broken.ts'), 0o000)
+
+    const artifact = readLoadedCompilerArtifact(cacheHelperStack(root))
+
+    expect(artifact).toContain('src/ir/broken.ts\n<unreadable>')
+    expect(artifact).not.toContain('hidden source')
+    expect(artifact).toContain('compiler index source')
   })
 
   it('changes when compiler cache helper source changes from index remapped frames', async () => {
