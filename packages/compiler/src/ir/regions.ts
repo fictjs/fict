@@ -2458,6 +2458,9 @@ function lowerNodeWithRegionContext(
           ) {
             continue
           }
+          if (allOwnedControlFlowRegionsAreHandled(controlFlowState, regionCtx)) {
+            continue
+          }
           stmts.push(...lowerNodeWithRegionContext(child, t, ctx, declaredVars, regionCtx))
         }
       }
@@ -2512,6 +2515,7 @@ function lowerNodeWithRegionContext(
 
     case 'instruction': {
       // Single instruction - check if it belongs to a region
+      if (instructionWritesHandledRegionOutput(node.instruction, regionCtx)) return []
       const region = findRegionForInstruction(node.instruction, regionCtx)
       if (region && regionRequiresEagerDerivedLowering(region, ctx)) {
         regionCtx?.disabledRegions.add(region.id)
@@ -2526,6 +2530,9 @@ function lowerNodeWithRegionContext(
         // Emit the entire region with memo
         regionCtx?.emittedRegions.add(region.id)
         return generateRegionStatements(region, t, declaredVars, ctx, regionCtx)
+      }
+      if (region && region.shouldMemoize && regionCtx?.emittedRegions.has(region.id)) {
+        return []
       }
       if (regionCtx?.hoistedInstructions.has(node.instruction)) return []
       // Not in a memoized region or region already emitted
@@ -2583,6 +2590,9 @@ function lowerNodeWithRegionContext(
         (regionCtx?.emittedRegions.has(memoizedControlFlowRegion.id) ||
           !regionCtx?.disabledRegions.has(memoizedControlFlowRegion.id))
       ) {
+        return []
+      }
+      if (allOwnedControlFlowRegionsAreHandled(controlFlowState, regionCtx)) {
         return []
       }
 
@@ -3309,11 +3319,13 @@ function lowerStructuredNodeForRegion(
 
     case 'if': {
       const inNonReactiveScope = !!(ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0)
+      const controlFlowState = regionCtx ? analyzeControlFlowRegion(node, regionCtx) : undefined
       const shouldInlineUnownedInstructions =
         regionCtx?.inlineUnownedInRegionBody === true ||
-        (regionCtx
-          ? analyzeControlFlowRegion(node, regionCtx).hasUnownedInstructions === true
-          : false)
+        (controlFlowState?.hasUnownedInstructions === true &&
+          ((controlFlowState.region !== undefined &&
+            controlFlowState.partialRegionIds.size === 0) ||
+            controlFlowState.partialRegionIds.size <= 1))
       const childRegionCtx =
         shouldInlineUnownedInstructions && regionCtx && !regionCtx.inlineUnownedInRegionBody
           ? { ...regionCtx, inlineUnownedInRegionBody: true }
@@ -3838,6 +3850,47 @@ function analyzeControlFlowRegion(
   }
 }
 
+function allOwnedControlFlowRegionsAreHandled(
+  state: ControlFlowRegionState,
+  regionCtx?: RegionEmitContext,
+): boolean {
+  if (!regionCtx || state.hasUnownedInstructions) return false
+  const ownedRegionIds = Array.from(state.ownedInstructionsByRegion?.keys() ?? [])
+  if (ownedRegionIds.length === 0) return false
+
+  return ownedRegionIds.every(id => {
+    const region = regionCtx.regionResult.regions.find(candidate => candidate.id === id)
+    if (!region?.shouldMemoize) return false
+    return regionCtx.emittedRegions.has(id)
+  })
+}
+
+function assignmentExpressionTargetName(expr: Expression): string | null {
+  if (expr.kind !== 'AssignmentExpression') return null
+  return expr.left.kind === 'Identifier' ? deSSAVarName(expr.left.name) : null
+}
+
+function instructionWritesHandledRegionOutput(
+  instr: Instruction,
+  regionCtx?: RegionEmitContext,
+): boolean {
+  if (!regionCtx) return false
+  const target =
+    instr.kind === 'Assign'
+      ? deSSAVarName(instr.target.name)
+      : instr.kind === 'Expression'
+        ? assignmentExpressionTargetName(instr.value)
+        : null
+  if (!target) return false
+
+  return regionCtx.regionResult.regions.some(
+    region =>
+      region.shouldMemoize &&
+      regionCtx.emittedRegions.has(region.id) &&
+      Array.from(region.declarations).some(declaration => deSSAVarName(declaration) === target),
+  )
+}
+
 /**
  * Check if two instructions are the same
  */
@@ -3999,6 +4052,10 @@ function flushInstructionBuffer(
       }
       regionCtx?.emittedRegions.add(item.region.id)
       stmts.push(...generateRegionStatements(item.region, t, declaredVars, ctx, regionCtx))
+      continue
+    }
+
+    if (instructionWritesHandledRegionOutput(item.instr, regionCtx)) {
       continue
     }
 
