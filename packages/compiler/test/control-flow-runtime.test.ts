@@ -46,6 +46,13 @@ function compileAndRunHook<T>(
 }
 
 const optimizeModes = [true, false] as const
+const generatorHookError = /Generator hook "useRun"/
+
+function expectGeneratorHookRejected(source: string): void {
+  expect(() => compileAndRunHook<unknown>(source, 'useRun', { optimize: true })).toThrow(
+    generatorHookError,
+  )
+}
 
 describe('control flow runtime regressions', () => {
   beforeEach(() => {
@@ -3087,7 +3094,7 @@ describe('control flow runtime regressions', () => {
     )
     expect(awaited).toBe(2)
 
-    const yielded = compileAndRunHook<Generator<number, void, unknown>>(
+    expectGeneratorHookRejected(
       `
         export function* useRun() {
           "use pure"
@@ -3096,44 +3103,33 @@ describe('control flow runtime regressions', () => {
           yield x
         }
       `,
-      'useRun',
-      { optimize: true },
     )
-    expect(yielded.next()).toEqual({ value: 2, done: false })
   })
 
-  it('preserves yield argument locals with optimization', () => {
-    const result = compileAndRunHook<Generator<number, void, unknown>>(
+  it('rejects generator hook yield argument locals under the synchronous ABI', () => {
+    expectGeneratorHookRejected(
       `
         export function* useRun() {
           const x = 1
           yield x
         }
       `,
-      'useRun',
-      { optimize: true },
     )
-
-    expect(result.next()).toEqual({ value: 1, done: false })
   })
 
-  it('preserves yield delegate locals with optimization', () => {
-    const result = compileAndRunHook<Generator<number, void, unknown>>(
+  it('rejects generator hook yield delegates under the synchronous ABI', () => {
+    expectGeneratorHookRejected(
       `
         export function* useRun() {
           const xs = [1, 2]
           yield* xs
         }
       `,
-      'useRun',
-      { optimize: true },
     )
-
-    expect([...result]).toEqual([1, 2])
   })
 
-  it('preserves yield assignment and update writes with optimization', () => {
-    const result = compileAndRunHook<Generator<number, string, unknown>>(
+  it('rejects generator hook yield assignment writes under the synchronous ABI', () => {
+    expectGeneratorHookRejected(
       `
         export function* useRun() {
           "use pure"
@@ -3144,17 +3140,11 @@ describe('control flow runtime regressions', () => {
           return x + ':' + y
         }
       `,
-      'useRun',
-      { optimize: true },
     )
-
-    expect(result.next()).toEqual({ value: 2, done: false })
-    expect(result.next()).toEqual({ value: 1, done: false })
-    expect(result.next()).toEqual({ value: '2:2', done: true })
   })
 
-  it('preserves yield member mutators with optimization', () => {
-    const result = compileAndRunHook<Generator<number, number, unknown>>(
+  it('rejects generator hook yield member mutators under the synchronous ABI', () => {
+    expectGeneratorHookRejected(
       `
         export function* useRun() {
           "use pure"
@@ -3163,12 +3153,7 @@ describe('control flow runtime regressions', () => {
           return arr.length
         }
       `,
-      'useRun',
-      { optimize: true },
     )
-
-    expect(result.next()).toEqual({ value: 2, done: false })
-    expect(result.next()).toEqual({ value: 2, done: true })
   })
 
   it('preserves class expression extends locals with optimization', () => {
