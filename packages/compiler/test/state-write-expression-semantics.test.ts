@@ -79,6 +79,10 @@ function compiledFunction(
   return fn
 }
 
+function readMaybeAccessor<T>(value: T | (() => T)): T {
+  return typeof value === 'function' ? (value as () => T)() : value
+}
+
 describe('state write expression semantics', () => {
   it('preserves module-local identifier assignment side effects', () => {
     const source = `
@@ -1118,9 +1122,9 @@ describe('state write expression semantics', () => {
     const output = transformCommonJS(source)
     const mod = runCompiled(output)
     const raw = compiledFunction(mod, 'useLogicalAssignmentStateShortCircuit')() as [
-      () => number,
-      () => number,
-      () => number,
+      number | (() => number),
+      number | (() => number),
+      number | (() => number),
       TestSignal<number>,
       TestSignal<number>,
       TestSignal<number>,
@@ -1128,9 +1132,15 @@ describe('state write expression semantics', () => {
     ]
     const [orValue, andValue, nullishValue, truthy, falsy, zero, getCalls] = raw
 
-    expect([orValue(), andValue(), nullishValue(), truthy(), falsy(), zero(), getCalls()]).toEqual([
-      2, 0, 0, 2, 0, 0, 0,
-    ])
+    expect([
+      readMaybeAccessor(orValue),
+      readMaybeAccessor(andValue),
+      readMaybeAccessor(nullishValue),
+      truthy(),
+      falsy(),
+      zero(),
+      getCalls(),
+    ]).toEqual([2, 0, 0, 2, 0, 0, 0])
     expect([truthy.__writes(), falsy.__writes(), zero.__writes()]).toEqual([0, 0, 0])
   })
 
@@ -1159,9 +1169,9 @@ describe('state write expression semantics', () => {
     const output = transformCommonJS(source)
     const mod = runCompiled(output)
     const raw = compiledFunction(mod, 'useLogicalAssignmentStateWrites')() as [
-      () => number,
-      () => number,
-      () => number,
+      number | (() => number),
+      number | (() => number),
+      number | (() => number),
       TestSignal<number>,
       TestSignal<number>,
       TestSignal<number | null>,
@@ -1170,9 +1180,9 @@ describe('state write expression semantics', () => {
     const [orValue, andValue, nullishValue, falsy, truthy, missing, getCalls] = raw
 
     expect([
-      orValue(),
-      andValue(),
-      nullishValue(),
+      readMaybeAccessor(orValue),
+      readMaybeAccessor(andValue),
+      readMaybeAccessor(nullishValue),
       falsy(),
       truthy(),
       missing(),

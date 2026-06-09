@@ -1654,6 +1654,52 @@ function collectExpressionWrites(expr: Expression): Set<string> {
   return writes
 }
 
+function expressionContainsWriteExpression(expr: Expression): boolean {
+  const visit = (current: Expression): boolean => {
+    switch (current.kind) {
+      case 'AssignmentExpression':
+      case 'UpdateExpression':
+        return true
+      case 'SequenceExpression':
+        return current.expressions.some(visit)
+      case 'ConditionalExpression':
+        return visit(current.test) || visit(current.consequent) || visit(current.alternate)
+      case 'LogicalExpression':
+      case 'BinaryExpression':
+        return visit(current.left) || visit(current.right)
+      case 'UnaryExpression':
+      case 'AwaitExpression':
+      case 'SpreadElement':
+        return visit(current.argument)
+      case 'CallExpression':
+      case 'OptionalCallExpression':
+        return visit(current.callee) || current.arguments.some(visit)
+      case 'MemberExpression':
+      case 'OptionalMemberExpression':
+        return visit(current.object) || (current.computed ? visit(current.property) : false)
+      case 'ArrayExpression':
+        return current.elements.some(element => !!element && visit(element))
+      case 'ObjectExpression':
+        return current.properties.some(prop =>
+          prop.kind === 'SpreadElement'
+            ? visit(prop.argument)
+            : (prop.computed && visit(prop.key)) || visit(prop.value),
+        )
+      case 'TemplateLiteral':
+        return current.expressions.some(visit)
+      case 'TaggedTemplateExpression':
+        return visit(current.tag) || current.quasi.expressions.some(visit)
+      case 'NewExpression':
+        return visit(current.callee) || current.arguments.some(visit)
+      case 'YieldExpression':
+        return current.argument ? visit(current.argument) : false
+      default:
+        return false
+    }
+  }
+  return visit(expr)
+}
+
 function collectInstructionWrites(instr: Instruction): Set<string> {
   const writes = new Set<string>()
   if (instr.kind === 'Assign') {
@@ -6131,6 +6177,15 @@ function instructionToStatement(
       const localValueVars = ctx.localValueVars ?? (ctx.localValueVars = new Set())
       localValueVars.add(baseName)
     }
+    type VarDecl = 'const' | 'let' | 'var'
+    const hasWriteExpression = expressionContainsWriteExpression(instr.value)
+    const lowerPlainDerivedDeclaration = (kind: VarDecl): BabelCore.types.VariableDeclaration => {
+      ctx.memoVars?.delete(baseName)
+      markLocalValue()
+      return t.variableDeclaration(kind, [
+        t.variableDeclarator(t.identifier(baseName), lowerAssignedValue(true)),
+      ])
+    }
     // Detect accessor-returning calls ($memo, createMemo, runtime prop).
     const isAccessorReturningCall = callKind === 'memo' || isRuntimePropCall(instr.value, ctx)
     // Combined check for skipping memo wrapping
@@ -6304,6 +6359,11 @@ function instructionToStatement(
           ctx.memoVars?.delete(baseName)
           return lowerAssignedValue(true)
         }
+        if (hasWriteExpression) {
+          ctx.memoVars?.delete(baseName)
+          markLocalValue()
+          return lowerAssignedValue(true)
+        }
         if (shouldEagerDerivedValue) {
           return lowerEagerDerivedValue()
         }
@@ -6342,7 +6402,6 @@ function instructionToStatement(
     }
 
     if (declKind) {
-      type VarDecl = 'const' | 'let' | 'var'
       const normalizedDecl: VarDecl =
         isStateCall || (dependsOnTracked && !isDestructuringTemp) ? 'const' : declKind
       const isExternalAlias =
@@ -6387,6 +6446,9 @@ function instructionToStatement(
               t.variableDeclarator(t.identifier(baseName), derivedExpr),
             ])
           }
+          if (hasWriteExpression) {
+            return lowerPlainDerivedDeclaration(normalizedDecl)
+          }
           if (shouldEagerDerivedValue) {
             return t.variableDeclaration(normalizedDecl, [
               t.variableDeclarator(t.identifier(baseName), lowerEagerDerivedValue()),
@@ -6426,6 +6488,9 @@ function instructionToStatement(
           return t.variableDeclaration('let', [
             t.variableDeclarator(t.identifier(baseName), derivedExpr),
           ])
+        }
+        if (hasWriteExpression) {
+          return lowerPlainDerivedDeclaration(normalizedDecl)
         }
         if (shouldEagerDerivedValue) {
           return t.variableDeclaration(normalizedDecl, [
@@ -6573,6 +6638,9 @@ function instructionToStatement(
             t.variableDeclarator(t.identifier(baseName), derivedExpr),
           ])
         }
+        if (hasWriteExpression) {
+          return lowerPlainDerivedDeclaration('const')
+        }
         if (shouldEagerDerivedValue) {
           return t.variableDeclaration('const', [
             t.variableDeclarator(t.identifier(baseName), lowerEagerDerivedValue()),
@@ -6612,6 +6680,9 @@ function instructionToStatement(
         return t.variableDeclaration('let', [
           t.variableDeclarator(t.identifier(baseName), derivedExpr),
         ])
+      }
+      if (hasWriteExpression) {
+        return lowerPlainDerivedDeclaration('const')
       }
       if (shouldEagerDerivedValue) {
         return t.variableDeclaration('const', [
