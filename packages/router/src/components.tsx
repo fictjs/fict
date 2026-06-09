@@ -156,27 +156,29 @@ export function Routes(props: RoutesProps) {
   const compiledRoutes = routes.map(r => compileRoute(r))
   const branches = createBranches(compiledRoutes)
 
-  // Create reactive memo for current matches
-  const currentMatches = createMemo(() => {
+  const currentMatches = createSignal<RouteMatch[]>([])
+
+  // Update the active matches when router state changes.
+  createEffect(() => {
     const pendingLocation = readAccessor(router.pendingLocation)
     const location = pendingLocation ?? readAccessor(router.location)
     const parentMatch = readAccessor(parentRoute.match)
     const base = readAccessor(router.base)
     const locationPath = stripBaseOrWarn(location.pathname, base)
-    if (locationPath == null) return []
+    if (locationPath == null) {
+      currentMatches([])
+      return
+    }
 
     // Calculate the remaining path after parent route
-    let basePath = '/'
-    if (parentMatch) {
-      basePath = parentMatch.pathname
-    }
+    const basePath = parentMatch ? parentMatch.pathname : '/'
 
     // Get path relative to parent
     const relativePath = locationPath.startsWith(basePath)
       ? locationPath.slice(basePath.length) || '/'
       : locationPath
 
-    return matchRoutes(branches, relativePath) || []
+    currentMatches(matchRoutes(branches, relativePath) || [])
   })
 
   return <CurrentMatchesView matches={currentMatches} />
