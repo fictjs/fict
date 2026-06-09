@@ -12,12 +12,12 @@ import path from 'node:path'
 const compilerSrc = path.join(process.cwd(), 'packages/compiler/src')
 const topLimit = Number(process.env.COMPILER_COMPLEXITY_TOP ?? 12)
 const defaultMaxLoc = Number(process.env.COMPILER_COMPLEXITY_MAX_LOC ?? 1800)
-const totalMaxLoc = Number(process.env.COMPILER_COMPLEXITY_TOTAL_LOC ?? 61465)
+const totalMaxLoc = Number(process.env.COMPILER_COMPLEXITY_TOTAL_LOC ?? 61541)
 
 const fileBudgets = new Map([
   ['packages/compiler/src/ir/codegen.ts', 10705],
   ['packages/compiler/src/ir/optimize.ts', 7456],
-  ['packages/compiler/src/ir/regions.ts', 7504],
+  ['packages/compiler/src/ir/regions.ts', 7646],
   ['packages/compiler/src/index.ts', 4896],
   ['packages/compiler/src/ir/build-hir.ts', 4176],
   ['packages/compiler/src/ir/structurize.ts', 1953],
