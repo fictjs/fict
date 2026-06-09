@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -24,6 +25,27 @@ function escapeRegExp(value) {
 
 function containsStandaloneToken(text, token) {
   return new RegExp(`(^|[^\\w$])${escapeRegExp(token)}(?=$|[^\\w$])`).test(text)
+}
+
+function trackedFiles() {
+  try {
+    return execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' })
+      .split('\n')
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+const generatedArtifactFiles = trackedFiles().filter(
+  file => file.endsWith('.fict.meta.json') || file.split('/').includes('__fict_cross_module__'),
+)
+if (generatedArtifactFiles.length > 0) {
+  fail(
+    `generated compiler artifacts must not be tracked: ${generatedArtifactFiles
+      .slice(0, 10)
+      .join(', ')}`,
+  )
 }
 
 for (const [text, token, expected] of [
