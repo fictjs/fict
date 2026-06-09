@@ -25,6 +25,7 @@ boundary lives in [SCOPE.md](../SCOPE.md); Preview policy lives in
 
 - `architecture.md` — Runtime and compiler architecture notes
 - `compiler-maintenance.md` — Compiler complexity budgets and profiling workflow
+- `compiler-pass-invariants.md` — Internal compiler pass ownership and invariant checklist
 - `metadata-packaging-architecture.md` — Architecture decision for compiler-generated metadata and build-time packaging
 - `typecheck-hardening.md` — Typecheck hardening notes and policy
 - `cycle-protection.md` — Runtime cycle protection semantics

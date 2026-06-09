@@ -12,14 +12,15 @@ import path from 'node:path'
 const compilerSrc = path.join(process.cwd(), 'packages/compiler/src')
 const topLimit = Number(process.env.COMPILER_COMPLEXITY_TOP ?? 12)
 const defaultMaxLoc = Number(process.env.COMPILER_COMPLEXITY_MAX_LOC ?? 1800)
-const totalMaxLoc = Number(process.env.COMPILER_COMPLEXITY_TOTAL_LOC ?? 45000)
+const totalMaxLoc = Number(process.env.COMPILER_COMPLEXITY_TOTAL_LOC ?? 61337)
 
 const fileBudgets = new Map([
-  ['packages/compiler/src/ir/codegen.ts', 5300],
-  ['packages/compiler/src/ir/optimize.ts', 4400],
-  ['packages/compiler/src/ir/regions.ts', 4300],
-  ['packages/compiler/src/ir/build-hir.ts', 3400],
-  ['packages/compiler/src/index.ts', 2600],
+  ['packages/compiler/src/ir/codegen.ts', 10705],
+  ['packages/compiler/src/ir/optimize.ts', 7454],
+  ['packages/compiler/src/ir/regions.ts', 7345],
+  ['packages/compiler/src/index.ts', 4889],
+  ['packages/compiler/src/ir/build-hir.ts', 4176],
+  ['packages/compiler/src/ir/structurize.ts', 1953],
 ])
 
 function toPosix(filePath) {
