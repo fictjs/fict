@@ -1258,6 +1258,89 @@ describe('compiled templates DOM integration', () => {
     }
   })
 
+  it('keeps try/catch story blocks reactive across a state-guarded throw', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function App() {
+        let n = $state(0)
+        let msg = 'init'
+        try {
+          if (n > 0) { throw new Error('boom') }
+          msg = 'ok:' + n
+        } catch (e: any) {
+          msg = 'caught:' + e.message
+        }
+        return <div>
+          <span data-testid="msg">{msg}</span>
+          <button data-testid="inc" onClick={() => n++}>inc</button>
+        </div>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true, strictGuarantee: true, dev: false })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const read = () => container.querySelector('[data-testid="msg"]')?.textContent
+
+    expect(read()).toBe('ok:0')
+    ;(container.querySelector('[data-testid="inc"]') as HTMLButtonElement).click()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(read()).toBe('caught:boom')
+
+    teardown()
+    container.remove()
+  })
+
+  it('keeps try/catch story blocks without throws reactive', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function App() {
+        let n = $state(0)
+        let msg = 'init'
+        try {
+          if (n > 0) { msg = 'big' } else { msg = 'ok:' + n }
+        } catch (e: any) {
+          msg = 'caught:' + e.message
+        }
+        return <div>
+          <span data-testid="msg">{msg}</span>
+          <button data-testid="inc" onClick={() => n++}>inc</button>
+        </div>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true, strictGuarantee: true, dev: false })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const read = () => container.querySelector('[data-testid="msg"]')?.textContent
+
+    expect(read()).toBe('ok:0')
+    ;(container.querySelector('[data-testid="inc"]') as HTMLButtonElement).click()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(read()).toBe('big')
+
+    teardown()
+    container.remove()
+  })
+
   it('preserves assigned side-effect call results before region memo execution', () => {
     const source = `
       import { $state, render } from 'fict'

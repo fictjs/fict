@@ -845,11 +845,19 @@ export function findNextRegion(
 }
 
 function containsEarlyReturn(stmt: BabelCore.types.Statement, t: typeof BabelCore.types): boolean {
-  let hasReturn = false
-  const visit = (node: BabelCore.types.Node): void => {
-    if (hasReturn) return
-    if (t.isReturnStatement(node) || t.isThrowStatement(node)) {
-      hasReturn = true
+  let hasEarlyExit = false
+  const visit = (node: BabelCore.types.Node, inTryWithCatch: boolean): void => {
+    if (hasEarlyExit) return
+    if (t.isReturnStatement(node)) {
+      hasEarlyExit = true
+      return
+    }
+    if (t.isThrowStatement(node)) {
+      // A throw caught by a catch clause inside this same statement never
+      // escapes a region memo body; only uncaught throws are early exits.
+      if (!inTryWithCatch) {
+        hasEarlyExit = true
+      }
       return
     }
     if (
@@ -857,6 +865,12 @@ function containsEarlyReturn(stmt: BabelCore.types.Statement, t: typeof BabelCor
       t.isFunctionExpression(node) ||
       t.isArrowFunctionExpression(node)
     ) {
+      return
+    }
+    if (t.isTryStatement(node)) {
+      visit(node.block, inTryWithCatch || node.handler !== null)
+      if (node.handler) visit(node.handler, inTryWithCatch)
+      if (node.finalizer) visit(node.finalizer, inTryWithCatch)
       return
     }
     for (const key of Object.keys(node) as (keyof typeof node)[]) {
@@ -869,7 +883,7 @@ function containsEarlyReturn(stmt: BabelCore.types.Statement, t: typeof BabelCor
             'type' in c &&
             typeof (c as { type: unknown }).type === 'string'
           ) {
-            visit(c as BabelCore.types.Node)
+            visit(c as BabelCore.types.Node, inTryWithCatch)
           }
         }
       } else if (
@@ -878,12 +892,12 @@ function containsEarlyReturn(stmt: BabelCore.types.Statement, t: typeof BabelCor
         'type' in child &&
         typeof (child as { type: unknown }).type === 'string'
       ) {
-        visit(child as BabelCore.types.Node)
+        visit(child as BabelCore.types.Node, inTryWithCatch)
       }
     }
   }
-  visit(stmt)
-  return hasReturn
+  visit(stmt, false)
+  return hasEarlyExit
 }
 
 /**

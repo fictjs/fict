@@ -2473,7 +2473,14 @@ function lowerNodeWithRegionContext(
               : undefined
           const controlFlowRegion =
             directEmitCandidate?.region ?? controlFlowState.region ?? partialRegion
-          if (controlFlowRegion && regionRequiresEagerDerivedLowering(controlFlowRegion, ctx)) {
+          if (
+            controlFlowRegion &&
+            regionRequiresEagerDerivedLowering(
+              controlFlowRegion,
+              ctx,
+              regionCtx ? collectCatchParamNames(regionCtx.fullRootNode) : undefined,
+            )
+          ) {
             regionCtx?.disabledRegions.add(controlFlowRegion.id)
           }
           const canDirectlyEmitRegion =
@@ -2620,7 +2627,14 @@ function lowerNodeWithRegionContext(
       // Single instruction - check if it belongs to a region
       if (instructionWritesHandledRegionOutput(node.instruction, regionCtx)) return []
       const region = findRegionForInstruction(node.instruction, regionCtx)
-      if (region && regionRequiresEagerDerivedLowering(region, ctx)) {
+      if (
+        region &&
+        regionRequiresEagerDerivedLowering(
+          region,
+          ctx,
+          regionCtx ? collectCatchParamNames(regionCtx.fullRootNode) : undefined,
+        )
+      ) {
         regionCtx?.disabledRegions.add(region.id)
       }
       if (
@@ -4138,7 +4152,14 @@ function flushInstructionBuffer(
     if (deferredInstructions?.has(item.instr)) {
       continue
     }
-    if (item.region && regionRequiresEagerDerivedLowering(item.region, ctx)) {
+    if (
+      item.region &&
+      regionRequiresEagerDerivedLowering(
+        item.region,
+        ctx,
+        regionCtx ? collectCatchParamNames(regionCtx.fullRootNode) : undefined,
+      )
+    ) {
       regionCtx?.disabledRegions.add(item.region.id)
     }
     if (item.region && deferredRegionIds?.has(item.region.id)) {
@@ -4418,15 +4439,22 @@ function statementHasEarlyExit(
  */
 function _structuredNodeHasEarlyExit(
   node: StructuredNode | null | undefined,
-  options?: { ignoreBreak?: boolean; ignoreBreakLabel?: string },
+  options?: {
+    ignoreBreak?: boolean | undefined
+    ignoreBreakLabel?: string | undefined
+    throwsContained?: boolean | undefined
+  },
 ): boolean {
   if (!node) return false
 
   switch (node.kind) {
     case 'return':
-    case 'throw':
     case 'continue':
       return true
+    case 'throw':
+      // A throw caught by a catch clause inside this same subtree never
+      // escapes the lowered region body.
+      return options?.throwsContained !== true
     case 'break':
       return !(
         options?.ignoreBreak === true ||
@@ -4456,16 +4484,28 @@ function _structuredNodeHasEarlyExit(
     case 'for':
     case 'forOf':
     case 'forIn':
-      return _structuredNodeHasEarlyExit(node.body)
+      // break/continue bind to the loop itself, but throw containment from an
+      // enclosing try/catch still applies inside the loop body.
+      return _structuredNodeHasEarlyExit(node.body, {
+        throwsContained: options?.throwsContained,
+      })
 
     case 'switch':
       // `break` is the normal terminator for a switch case and should not disable
       // region lowering for a trailing return that consumes case-assigned locals.
-      return node.cases.some(c => _structuredNodeHasEarlyExit(c.body, { ignoreBreak: true }))
+      return node.cases.some(c =>
+        _structuredNodeHasEarlyExit(c.body, {
+          ignoreBreak: true,
+          throwsContained: options?.throwsContained,
+        }),
+      )
 
     case 'try':
       return (
-        _structuredNodeHasEarlyExit(node.block, options) ||
+        _structuredNodeHasEarlyExit(
+          node.block,
+          node.handler ? { ...options, throwsContained: true } : options,
+        ) ||
         _structuredNodeHasEarlyExit(node.handler?.body, options) ||
         _structuredNodeHasEarlyExit(node.finalizer, options)
       )
@@ -4475,27 +4515,33 @@ function _structuredNodeHasEarlyExit(
   }
 }
 
-function _structuredNodeHasReturnOrThrow(node: StructuredNode | null | undefined): boolean {
+function _structuredNodeHasReturnOrThrow(
+  node: StructuredNode | null | undefined,
+  throwsContained = false,
+): boolean {
   if (!node) return false
 
   switch (node.kind) {
     case 'return':
-    case 'throw':
       return true
+    case 'throw':
+      // A throw caught by a catch clause inside this same subtree never
+      // escapes the lowered region body.
+      return !throwsContained
 
     case 'block':
-      return node.statements.some(stmt => _structuredNodeHasReturnOrThrow(stmt))
+      return node.statements.some(stmt => _structuredNodeHasReturnOrThrow(stmt, throwsContained))
 
     case 'sequence':
-      return node.nodes.some(child => _structuredNodeHasReturnOrThrow(child))
+      return node.nodes.some(child => _structuredNodeHasReturnOrThrow(child, throwsContained))
 
     case 'labeled':
-      return _structuredNodeHasReturnOrThrow(node.statement)
+      return _structuredNodeHasReturnOrThrow(node.statement, throwsContained)
 
     case 'if':
       return (
-        _structuredNodeHasReturnOrThrow(node.consequent) ||
-        _structuredNodeHasReturnOrThrow(node.alternate)
+        _structuredNodeHasReturnOrThrow(node.consequent, throwsContained) ||
+        _structuredNodeHasReturnOrThrow(node.alternate, throwsContained)
       )
 
     case 'while':
@@ -4503,16 +4549,16 @@ function _structuredNodeHasReturnOrThrow(node: StructuredNode | null | undefined
     case 'for':
     case 'forOf':
     case 'forIn':
-      return _structuredNodeHasReturnOrThrow(node.body)
+      return _structuredNodeHasReturnOrThrow(node.body, throwsContained)
 
     case 'switch':
-      return node.cases.some(c => _structuredNodeHasReturnOrThrow(c.body))
+      return node.cases.some(c => _structuredNodeHasReturnOrThrow(c.body, throwsContained))
 
     case 'try':
       return (
-        _structuredNodeHasReturnOrThrow(node.block) ||
-        _structuredNodeHasReturnOrThrow(node.handler?.body) ||
-        _structuredNodeHasReturnOrThrow(node.finalizer)
+        _structuredNodeHasReturnOrThrow(node.block, throwsContained || node.handler !== null) ||
+        _structuredNodeHasReturnOrThrow(node.handler?.body, throwsContained) ||
+        _structuredNodeHasReturnOrThrow(node.finalizer, throwsContained)
       )
 
     default:
@@ -5538,7 +5584,11 @@ function classExpressionNeedsReactiveMemo(instr: Instruction, ctx: CodegenContex
   return expressionUsesTracked(instr.value, ctx) || (ctx.memoVars?.has(baseName) ?? false)
 }
 
-function instructionRequiresEagerDerivedLowering(instr: Instruction, ctx: CodegenContext): boolean {
+function instructionRequiresEagerDerivedLowering(
+  instr: Instruction,
+  ctx: CodegenContext,
+  safeLocalRoots?: Set<string>,
+): boolean {
   if (instr.kind !== 'Assign') return false
   const baseName = deSSAVarName(instr.target.name)
   if (baseName.startsWith('__destruct_')) return false
@@ -5552,11 +5602,67 @@ function instructionRequiresEagerDerivedLowering(instr: Instruction, ctx: Codege
   if (expressionNeedsAsyncContext(instr.value)) return false
   if (expressionReturnsAccessorOrReactiveObject(instr.value, ctx)) return false
   if (classExpressionNeedsReactiveMemo(instr, ctx)) return false
-  return !expressionIsLazyMemoSafe(instr.value, ctx)
+  return !expressionIsLazyMemoSafe(instr.value, ctx, safeLocalRoots)
 }
 
-function regionRequiresEagerDerivedLowering(region: Region, ctx: CodegenContext): boolean {
-  return region.instructions.some(instr => instructionRequiresEagerDerivedLowering(instr, ctx))
+function regionRequiresEagerDerivedLowering(
+  region: Region,
+  ctx: CodegenContext,
+  safeLocalRoots?: Set<string>,
+): boolean {
+  return region.instructions.some(instr =>
+    instructionRequiresEagerDerivedLowering(instr, ctx, safeLocalRoots),
+  )
+}
+
+// Catch parameters are bindings created inside the lowered region body, so
+// member reads on them are deterministic per region execution and must not
+// disqualify the region from lazy memoization. Cached per structured root.
+const catchParamNamesCache = new WeakMap<StructuredNode, Set<string>>()
+
+function collectCatchParamNames(root: StructuredNode): Set<string> {
+  const cached = catchParamNamesCache.get(root)
+  if (cached) return cached
+  const names = new Set<string>()
+  const visit = (node: StructuredNode | null | undefined): void => {
+    if (!node) return
+    switch (node.kind) {
+      case 'try':
+        if (node.handler?.param) names.add(deSSAVarName(node.handler.param))
+        visit(node.block)
+        if (node.handler) visit(node.handler.body)
+        visit(node.finalizer)
+        return
+      case 'sequence':
+        node.nodes.forEach(visit)
+        return
+      case 'block':
+        node.statements.forEach(visit)
+        return
+      case 'labeled':
+        visit(node.statement)
+        return
+      case 'if':
+        visit(node.consequent)
+        visit(node.alternate)
+        return
+      case 'while':
+      case 'doWhile':
+      case 'for':
+      case 'forOf':
+      case 'forIn':
+        visit(node.body)
+        return
+      case 'switch':
+        node.cases.forEach(item => visit(item.body))
+        return
+      default:
+        return
+    }
+  }
+  visit(root)
+  catchParamNamesCache.set(root, names)
+  return names
 }
 
 function replaceMutableSnapshotIdentifiers(
