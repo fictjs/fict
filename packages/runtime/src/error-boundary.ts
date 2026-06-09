@@ -1,4 +1,4 @@
-import { isReactive } from './binding'
+import { isReactive, setEventErrorRoot } from './binding'
 import { createElement } from './dom'
 import { createEffect } from './effect'
 import {
@@ -73,6 +73,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
       if (parentNode) {
         nodes = insertNodesBefore(parentNode, nodes, marker)
       }
+      nodes.forEach(node => setEventErrorRoot(node, boundaryRoot))
       restoreRoot()
       flushOnMount(root)
     } catch (err) {

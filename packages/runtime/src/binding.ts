@@ -60,6 +60,7 @@ const EVENT_LISTENER_CACHE = Symbol('fict:event-listener-cache')
 const REF_ASSIGN_CACHE = Symbol('fict:ref-assign-cache')
 const CHILDREN_BINDING_CACHE = Symbol('fict:children-binding-cache')
 const SPREAD_STATE_CACHE = Symbol('fict:spread-state-cache')
+const EVENT_ERROR_ROOTS = new WeakMap<EventTarget, RootContext>()
 const NON_REACTIVE_FN_MARKER = Symbol.for('fict:non-reactive-fn')
 const REACTIVE_FN_MARKER = Symbol.for('fict:reactive-fn')
 const NON_REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:non-reactive-fn-registry')
@@ -107,6 +108,25 @@ interface SpreadState {
 }
 
 type EventListenerStore = Map<string, StoredEventListener>
+
+function asEventNode(value: unknown): Node | null {
+  return value && typeof (value as Node).nodeType === 'number' ? (value as Node) : null
+}
+
+export function setEventErrorRoot(node: Node, root: RootContext): void {
+  EVENT_ERROR_ROOTS.set(node, root)
+  node.childNodes.forEach(child => setEventErrorRoot(child, root))
+}
+
+function getEventErrorRoot(node: EventTarget | null | undefined): RootContext | undefined {
+  let current = asEventNode(node)
+  while (current) {
+    const root = EVENT_ERROR_ROOTS.get(current)
+    if (root) return root
+    current = current.parentNode
+  }
+  return undefined
+}
 
 const PROPERTY_BINDING_KEYS = new Set([
   'value',
@@ -1777,7 +1797,7 @@ function createEventInvoker(
       )
       callEventHandler(resolvedHandler, event, node)
     } catch (err) {
-      if (handleError(err, { source: 'event', eventName }, rootRef)) {
+      if (handleError(err, { source: 'event', eventName }, getEventErrorRoot(node) ?? rootRef)) {
         return
       }
       throw err
