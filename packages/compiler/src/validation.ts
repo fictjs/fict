@@ -125,7 +125,7 @@ export const DiagnosticMessages: Record<DiagnosticCode, string> = {
   [DiagnosticCode.FICT_R005]:
     'Function captures reactive variables from outer scope; pass them as parameters or memoize explicitly to avoid hidden dependencies.',
   [DiagnosticCode.FICT_R006]:
-    'Reactive control-flow reads force region re-execution; prefer expression-only branching in JSX for finer-grained updates.',
+    'Reactive control-flow fallback is not guaranteed; use supported branch returns, story blocks, or expression-only JSX branching.',
   [DiagnosticCode.FICT_R007]:
     'Reactive state writes in JSX children cannot be installed as DOM bindings; move the write into an event, effect, or statement before rendering.',
   [DiagnosticCode.FICT_M]:

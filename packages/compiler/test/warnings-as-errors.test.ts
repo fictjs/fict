@@ -114,7 +114,7 @@ describe('warnings as errors', () => {
       import { $state } from 'fict'
       function App() {
         const count = $state(0)
-        if (count > 0) {
+        if (count > 0 && maybe()) {
           return <div>High</div>
         }
         return <div>Low</div>

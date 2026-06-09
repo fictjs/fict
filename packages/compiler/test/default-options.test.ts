@@ -54,6 +54,53 @@ describe('compiler default options', () => {
     expect(() => transformWithCompilerDefaults(source, { dev: false })).toThrow(/FICT-P00[1-5]/)
   })
 
+  it('allows guaranteed branch-return control flow under default strictGuarantee', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const count = $state(0)
+        if (count > 0) {
+          return <div>High</div>
+        }
+        return <div>Low</div>
+      }
+    `
+
+    expect(() => transformWithCompilerDefaults(source, { dev: false })).not.toThrow()
+  })
+
+  it('allows guaranteed story-block control flow under default strictGuarantee', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        let count = $state(0)
+        let heading = 'empty'
+        if (count > 0) {
+          const noun = count > 1 ? 'items' : 'item'
+          heading = count + ' ' + noun
+        }
+        return <h1>{heading}</h1>
+      }
+    `
+
+    expect(() => transformWithCompilerDefaults(source, { dev: false })).not.toThrow()
+  })
+
+  it('keeps call-based control-flow fallbacks blocked by default strictGuarantee', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const count = $state(0)
+        if (count > 0 && maybe()) {
+          return <div>High</div>
+        }
+        return <div>Low</div>
+      }
+    `
+
+    expect(() => transformWithCompilerDefaults(source, { dev: false })).toThrow(/FICT-R006/)
+  })
+
   it('forces strictGuarantee on in production even when an integration opts out', () => {
     const previousNodeEnv = process.env.NODE_ENV
     process.env.NODE_ENV = 'production'

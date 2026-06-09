@@ -10371,7 +10371,6 @@ function lowerFunctionWithRegions(
     markHookReactiveLocal(varName, info?.directAccessor, ctx)
   })
 
-  emitReactiveControlFlowReexecutionWarning(fn, scopeResult, ctx, { hasJSX, isComponent })
   ctx.wrapTrackedExpressions = hasJSX
   const hasTrackedValues =
     ctx.trackedVars.size > 0 ||
@@ -10577,12 +10576,21 @@ function lowerFunctionWithRegions(
     statements.unshift(...propsDestructuring)
   }
 
+  let controlFlowReturnsLowered = false
   if (isComponent && !ctx.noMemo) {
     const transformed = transformControlFlowReturns(statements, ctx)
     if (transformed) {
       statements = transformed
+      controlFlowReturnsLowered = true
     }
   }
+
+  emitReactiveControlFlowReexecutionWarning(fn, scopeResult, ctx, {
+    hasJSX,
+    isComponent,
+    regionResult,
+    controlFlowReturnsLowered,
+  })
 
   // De-version param names for clean output
   const params = finalParams

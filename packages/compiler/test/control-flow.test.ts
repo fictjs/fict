@@ -1277,12 +1277,29 @@ describe('Fict Compiler - Control Flow', () => {
       ).toBe(true)
     })
 
-    it('emits FICT-R006 when reactive state is read in control-flow conditions', () => {
+    it('does not emit FICT-R006 for guaranteed branch-return control flow', () => {
       const input = `
         import { $state } from 'fict'
         function Component() {
           let count = $state(0)
           if (count > 10) {
+            return <Big />
+          }
+          return <Small />
+        }
+      `
+      const { warnings } = runTransformWithWarnings(input)
+      expect(
+        warnings.some(warning => warning.includes('FICT-R006') && warning.includes('count')),
+      ).toBe(false)
+    })
+
+    it('emits FICT-R006 when call-based control-flow reads reactive state', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let count = $state(0)
+          if (count > 10 && maybe()) {
             return <Big />
           }
           return <Small />

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Fict is a reactive UI library where developers write plain JavaScript and the compiler automatically handles reactivity, derived values, and DOM updates. It combines React's JSX syntax with Solid's fine-grained reactivity model, but with minimal boilerplate—no `.value` accessors, no dependency arrays, no `useMemo`.
 
-**Key mental model**: Component functions run once during initial render. Expressions using state auto-recompute reactively. Control flow reads (if/for) trigger re-execution; JSX-only usage triggers fine-grained DOM updates.
+**Key mental model**: Component functions run once during initial render. Expressions using state auto-recompute reactively. Supported branch returns and memoized story blocks trigger reactive branch/region updates; JSX-only usage triggers fine-grained DOM updates. Loop or call-based control-flow fallback remains fail-closed under default `strictGuarantee`.
 
 ## Common Commands
 

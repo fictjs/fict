@@ -582,12 +582,12 @@ describe('reactivity guarantee contract', () => {
         error: /FICT-R002/,
       },
       {
-        name: 'control-flow fallback diagnostics',
+        name: 'call-based control-flow fallback diagnostics',
         source: `
           import { $state } from 'fict'
           function App() {
             const count = $state(0)
-            if (count > 0) {
+            if (count > 0 && maybe()) {
               return <div>High</div>
             }
             return <div>Low</div>
