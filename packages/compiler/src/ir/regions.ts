@@ -3471,20 +3471,18 @@ function lowerStructuredNodeForRegion(
         })
       }
 
-      let consequent: BabelCore.types.Statement[] = []
-      let alternate: BabelCore.types.Statement[] = []
-      try {
-        // Lower children with forceNonReactive=true if we might wrap in effect
-        consequent = lowerChild(
-          node.consequent,
-          mightWrapInEffect || shouldInlineUnownedInstructions,
-        )
-        alternate = node.alternate
-          ? lowerChild(node.alternate, mightWrapInEffect || shouldInlineUnownedInstructions)
-          : []
-      } finally {
-        ctx.inConditional = prevConditional
-      }
+      const lowerBranches = (forceNonReactive: boolean) => ({
+        consequent: lowerChild(node.consequent, forceNonReactive),
+        alternate: node.alternate ? lowerChild(node.alternate, forceNonReactive) : [],
+      })
+      let { consequent, alternate } = (() => {
+        try {
+          // Lower children with forceNonReactive=true if we might wrap in effect.
+          return lowerBranches(mightWrapInEffect || shouldInlineUnownedInstructions)
+        } finally {
+          ctx.inConditional = prevConditional
+        }
+      })()
       if (consequent.length === 0 && alternate.length === 0) return []
       const buildIfStmt = (
         cons: BabelCore.types.Statement[],

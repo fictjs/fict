@@ -67,7 +67,7 @@ function readArtifactWithRelativePath(packageRoot: string, filePath: string): st
 function collectCompilerSourceFiles(sourceRoot: string): string[] {
   const files: string[] = []
   const visit = (dir: string): void => {
-    let entries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>
+    let entries: { name: string; isDirectory(): boolean; isFile(): boolean }[]
     try {
       entries = readdirSync(dir, { withFileTypes: true })
     } catch {
