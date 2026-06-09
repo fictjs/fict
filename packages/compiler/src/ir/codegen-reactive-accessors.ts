@@ -1229,15 +1229,16 @@ function getExpressionIdentifiersDeep(expr?: Expression | null): Set<string> {
 }
 
 function collectReturnedFunctionIdentifiers(expr: Expression, into: Set<string>): void {
+  if (isFunctionExpressionValue(expr)) {
+    collectExpressionIdentifiersDeep(expr, into, new Set(), true, true)
+    return
+  }
+
   switch (expr.kind) {
     case 'ObjectExpression':
       expr.properties.forEach(prop => {
         if (prop.kind === 'SpreadElement') {
-          collectReturnedFunctionIdentifiers(prop.argument as Expression, into)
           return
-        }
-        if (prop.computed) {
-          collectExpressionIdentifiersDeep(prop.key as Expression, into)
         }
         const value = prop.value as Expression
         if (isFunctionExpressionValue(value)) {
@@ -1259,16 +1260,13 @@ function collectReturnedFunctionIdentifiers(expr: Expression, into: Set<string>)
       })
       return
     case 'ConditionalExpression':
-      collectExpressionIdentifiersDeep(expr.test as Expression, into)
       collectReturnedFunctionIdentifiers(expr.consequent as Expression, into)
       collectReturnedFunctionIdentifiers(expr.alternate as Expression, into)
       return
     case 'LogicalExpression':
-      collectExpressionIdentifiersDeep(expr.left as Expression, into)
       collectReturnedFunctionIdentifiers(expr.right as Expression, into)
       return
     default:
-      collectExpressionIdentifiersDeep(expr, into)
       return
   }
 }
