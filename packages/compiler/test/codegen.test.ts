@@ -2094,6 +2094,46 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(code).not.toContain('const cb = prop(() => __props.cb)')
   })
 
+  it('keeps destructured function props unwrapped when called inside JSX event callbacks', () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      const Child = ({ count, update }) => {
+        const doubled = count * 2
+        return (
+          <div>
+            <h1>Count: {count}</h1>
+            <h2>Double: {doubled}</h2>
+            <button onClick={() => update()}>Increment</button>
+          </div>
+        )
+      }
+
+      function App() {
+        let counter = $state({ count: 0 })
+        return <Child count={counter.count} update={() => {
+          counter = { count: counter.count + 1 }
+        }} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+    const output = transform(source)
+    const ast = parseFile(source)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(output).toContain('const update = __props.update')
+    expect(output).not.toContain('const update = prop(() => __props.update)')
+    expect(code).toContain('const update = __props.update')
+    expect(code).toContain('(() => update())')
+    expect(code).not.toContain('const update = prop(() => __props.update)')
+    expect(code).not.toContain('update()(...')
+  })
+
   it('wraps optional-call accessor component spread sources lazily', () => {
     const output = transform(`
       import { $state } from 'fict'

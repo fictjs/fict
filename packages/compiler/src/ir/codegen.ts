@@ -9777,6 +9777,34 @@ function lowerFunctionWithRegions(
     ctx.propsParamName = undefined
   }
 
+  const markCalledPropMemberFunctionVars = (): void => {
+    if (!isComponent || !rawPropsParam || calledIdentifiers.size === 0) return
+
+    const isPropsMemberRead = (expr: Expression): boolean => {
+      if (expr.kind !== 'MemberExpression' && expr.kind !== 'OptionalMemberExpression') {
+        return false
+      }
+      let object = expr.object as Expression
+      while (object.kind === 'MemberExpression' || object.kind === 'OptionalMemberExpression') {
+        object = object.object as Expression
+      }
+      return object.kind === 'Identifier' && deSSAVarName(object.name) === rawPropsParam
+    }
+
+    for (const block of fn.blocks) {
+      for (const instr of block.instructions) {
+        if (instr.kind !== 'Assign') continue
+        const target = deSSAVarName(instr.target.name)
+        if (!calledIdentifiers.has(target)) continue
+        if (!isPropsMemberRead(instr.value)) continue
+        calledPropFunctionVars.add(target)
+        ctx.functionVars?.add(target)
+        ctx.localValueVars?.add(target)
+      }
+    }
+  }
+  markCalledPropMemberFunctionVars()
+
   // Build RegionInfo array for DOM integration (with de-versioned names, flattened with children)
   ctx.regions = flattenRegions(regionResult.topLevelRegions)
   if (ctx.nextHookSlot === undefined) {
@@ -10185,11 +10213,13 @@ function lowerFunctionWithRegions(
         calledPropValueNames.forEach(name => {
           calledPropFunctionVars.add(name)
           ctx.functionVars?.add(name)
+          ctx.localValueVars?.add(name)
         })
         collectIdentifierAliasesFromRoots(fn, calledPropValueNames, calledIdentifiers).forEach(
           name => {
             calledPropFunctionVars.add(name)
             ctx.functionVars?.add(name)
+            ctx.localValueVars?.add(name)
           },
         )
       } else {

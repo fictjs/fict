@@ -5916,10 +5916,14 @@ function instructionToStatement(
     if (preserveEagerEvaluation) {
       ctx.memoVars?.delete(baseName)
     }
+    const isLocalValue = ctx.localValueVars?.has(baseName) ?? false
+    const isFunctionBinding = ctx.functionVars?.has(baseName) ?? false
     // Check both expression-level dependencies AND pre-computed memoVars (from computeReactiveAccessors)
     // This handles cases where dependencies are inside callbacks (e.g., array.find(n => n === target))
     const dependsOnTracked =
       !preserveEagerEvaluation &&
+      !isLocalValue &&
+      !isFunctionBinding &&
       (expressionUsesTracked(instr.value, ctx) || (ctx.memoVars?.has(baseName) ?? false))
     const capturedTracked =
       ctx.externalTracked && ctx.externalTracked.has(baseName) && !declaredVars.has(baseName)

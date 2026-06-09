@@ -1055,6 +1055,7 @@ export function collectCalledIdentifiers(
   function visitBlocks(blocks: BasicBlock[], initialShadowed: Set<string>): void {
     const byId = new Map(blocks.map(block => [block.id, block]))
     const visited = new Set<string>()
+    const entryBlockId = blocks[0]?.id
     const visitBlockById = (id: number, shadowed: Set<string>): void => {
       const block = byId.get(id)
       if (!block) return
@@ -1067,7 +1068,10 @@ export function collectCalledIdentifiers(
         if (instr.kind === 'Assign') {
           visitExpr(instr.value, blockShadowed)
           if (instr.declarationKind) {
-            blockShadowed = withRootShadow(blockShadowed, deSSAVarName(instr.target.name))
+            const targetName = deSSAVarName(instr.target.name)
+            if (!(id === entryBlockId && shadowRoots.has(targetName))) {
+              blockShadowed = withRootShadow(blockShadowed, targetName)
+            }
           }
         } else if (instr.kind === 'Expression') {
           visitExpr(instr.value, blockShadowed)
