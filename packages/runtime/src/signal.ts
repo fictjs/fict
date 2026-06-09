@@ -915,6 +915,21 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
   }
 }
 /**
+ * Re-queue an effect that wrote one of its own dependencies while running.
+ * propagate() marks such effects Recursed|Pending without notifying; without
+ * a follow-up run the self-write would be silently dropped and the effect
+ * would diverge from committed state. The cycle guard still bounds runaway
+ * self-write loops.
+ */
+function requeueSelfNotifiedEffect(e: EffectNode): void {
+  e.flags = Pending
+  queueEffect(e, isInTransition ? QueuedLow : QueuedHigh)
+  scheduleFlush()
+}
+
+const SelfNotified = Recursed | Pending
+
+/**
  * Run an effect
  * @param e - The effect node
  */
@@ -958,8 +973,12 @@ function runEffect(e: EffectNode): void {
     try {
       e.fn()
       activeSub = prevSub
+      const ranFlags = e.flags
       e.flags = Watching
       purgeDeps(e)
+      if ((ranFlags & SelfNotified) === SelfNotified) {
+        requeueSelfNotifiedEffect(e)
+      }
     } catch (err) {
       activeSub = prevSub
       e.flags = Watching
@@ -999,8 +1018,12 @@ function runEffect(e: EffectNode): void {
       try {
         e.fn()
         activeSub = prevSub
+        const ranFlags = e.flags
         e.flags = Watching
         purgeDeps(e)
+        if ((ranFlags & SelfNotified) === SelfNotified) {
+          requeueSelfNotifiedEffect(e)
+        }
       } catch (err) {
         activeSub = prevSub
         e.flags = Watching
@@ -1355,6 +1378,9 @@ export function effect(fn: () => void, options?: EffectOptions): EffectDisposer 
     }
   }
   if (didThrow) throw thrown
+  if ((e.flags & SelfNotified) === SelfNotified) {
+    requeueSelfNotifiedEffect(e)
+  }
 
   const disposer = effectOper.bind(e) as EffectDisposer & Record<symbol, boolean>
   disposer[EFFECT_MARKER] = true
@@ -1417,6 +1443,9 @@ export function effectWithCleanup(
     }
   }
   if (didThrow) throw thrown
+  if ((e.flags & SelfNotified) === SelfNotified) {
+    requeueSelfNotifiedEffect(e)
+  }
 
   const disposer = effectOper.bind(e) as EffectDisposer & Record<symbol, boolean>
   disposer[EFFECT_MARKER] = true

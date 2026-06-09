@@ -16,6 +16,43 @@ const tick = () =>
       : Promise.resolve().then(resolve),
   )
 
+describe('effect self-write convergence', () => {
+  it('re-runs an effect that writes its own dependency until it converges', async () => {
+    __resetReactiveState()
+    const x = rawSignal(0)
+    let runs = 0
+
+    rawEffect(() => {
+      runs++
+      const value = x()
+      if (value >= 1 && value < 5) x(value + 1)
+    })
+
+    rawBatch(() => x(1))
+    for (let i = 0; i < 10; i++) await tick()
+
+    expect(x()).toBe(5)
+    expect(runs).toBeGreaterThanOrEqual(5)
+  })
+
+  it('observes a self-write made during the initial run', async () => {
+    __resetReactiveState()
+    const y = rawSignal(0)
+    const seen: number[] = []
+
+    rawEffect(() => {
+      const value = y()
+      seen.push(value)
+      if (value === 0) y(1)
+    })
+
+    for (let i = 0; i < 5; i++) await tick()
+
+    expect(seen[seen.length - 1]).toBe(1)
+    expect(y()).toBe(1)
+  })
+})
+
 describe('scheduler error recovery', () => {
   it('still delivers the update to sibling effects after one effect throws', async () => {
     __resetReactiveState()
