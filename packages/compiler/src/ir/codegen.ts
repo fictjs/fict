@@ -1467,6 +1467,8 @@ export interface CodegenContext {
   regionLoweringOps?: RegionLoweringOps | undefined
   /** Dedupe set for control-flow re-execution diagnostics */
   controlFlowReexecWarnings?: Set<string> | undefined
+  /** Dedupe set for static loop fallback diagnostics */
+  staticLoopFallbackWarnings?: Set<string> | undefined
 }
 
 /**

@@ -681,6 +681,47 @@ describe('reactivity guarantee contract', () => {
     })
   })
 
+  describe('Non-strict static loop fallback warnings', () => {
+    it('warns FICT-R006 when a loop body builds JSX as a static fallback', () => {
+      const warningCodes = collectWarningCodes(
+        `
+          import { $state } from 'fict'
+          function App() {
+            let count = $state(3)
+            const nodes = []
+            for (let i = 0; i < count; i++) {
+              nodes.push(<li>{i}</li>)
+            }
+            return <ul>{nodes}</ul>
+          }
+        `,
+      )
+      expect(warningCodes).toContain('FICT-R006')
+    })
+
+    it('does not emit the static-fallback message for loops without JSX', () => {
+      const warnings: Array<{ code: string; message: string }> = []
+      transform(
+        `
+          import { $state } from 'fict'
+          function App() {
+            let count = $state(3)
+            let total = 0
+            for (let i = 0; i < count; i++) {
+              total += i
+            }
+            return <p>{total}</p>
+          }
+        `,
+        {
+          strictGuarantee: false,
+          onWarn: warning => warnings.push(warning as { code: string; message: string }),
+        },
+      )
+      expect(warnings.some(warning => warning.message.includes('static fallback'))).toBe(false)
+    })
+  })
+
   describe('Non-strict callback boundary warnings', () => {
     it('warns FICT-R005 for inline closure escaping unknown callback boundary', () => {
       const warningCodes = collectWarningCodes(

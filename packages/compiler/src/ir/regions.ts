@@ -358,6 +358,92 @@ function shouldWrapTrackedControlInEffect(test: Expression, ctx: CodegenContext)
   )
 }
 
+type LoopStructuredNode = Extract<
+  StructuredNode,
+  { kind: 'while' | 'doWhile' | 'for' | 'forOf' | 'forIn' }
+>
+
+function loopNodeLoc(
+  node: LoopStructuredNode,
+): { start: { line: number; column: number } } | null | undefined {
+  switch (node.kind) {
+    case 'while':
+    case 'doWhile':
+      return node.test.loc
+    case 'for':
+      return node.test?.loc
+    case 'forOf':
+      return node.iterable.loc
+    case 'forIn':
+      return node.object.loc
+  }
+}
+
+function structuredNodeContainsJSX(node: StructuredNode | null | undefined): boolean {
+  if (!node) return false
+  switch (node.kind) {
+    case 'instruction':
+      return (
+        (node.instruction.kind === 'Assign' || node.instruction.kind === 'Expression') &&
+        containsJSXExpr(node.instruction.value)
+      )
+    case 'return':
+    case 'throw':
+      return containsJSXExpr(node.argument)
+    case 'sequence':
+      return node.nodes.some(child => structuredNodeContainsJSX(child))
+    case 'block':
+      return node.statements.some(child => structuredNodeContainsJSX(child))
+    case 'labeled':
+      return structuredNodeContainsJSX(node.statement)
+    case 'if':
+      return structuredNodeContainsJSX(node.consequent) || structuredNodeContainsJSX(node.alternate)
+    case 'while':
+    case 'doWhile':
+    case 'for':
+    case 'forOf':
+    case 'forIn':
+      return structuredNodeContainsJSX(node.body)
+    case 'switch':
+      return node.cases.some(item => structuredNodeContainsJSX(item.body))
+    case 'try':
+      return (
+        structuredNodeContainsJSX(node.block) ||
+        structuredNodeContainsJSX(node.handler?.body) ||
+        structuredNodeContainsJSX(node.finalizer)
+      )
+    default:
+      return false
+  }
+}
+
+/**
+ * Non-strict builds lower JSX-building loop bodies as one-shot static
+ * fallbacks (strict mode rejects the shape via FICT-R006 errors). Tell the
+ * user the section will not react to state changes instead of degrading
+ * silently.
+ */
+function emitStaticLoopFallbackWarning(
+  ctx: CodegenContext,
+  loc: { start: { line: number; column: number } } | null | undefined,
+): void {
+  const onWarn = ctx.options?.onWarn
+  if (!onWarn) return
+  const key = `${ctx.options?.filename ?? ''}:${loc?.start.line ?? 0}:${loc?.start.column ?? 0}`
+  const warned = ctx.staticLoopFallbackWarnings ?? (ctx.staticLoopFallbackWarnings = new Set())
+  if (warned.has(key)) return
+  warned.add(key)
+  onWarn({
+    code: 'FICT-R006',
+    message:
+      'Loop body building JSX is lowered as a one-shot static fallback and will not update when reactive state changes. ' +
+      'Render reactive lists with an expression (e.g. items.map(...) inside JSX) instead.',
+    fileName: ctx.options?.filename ?? '<unknown>',
+    line: loc?.start.line ?? 0,
+    column: loc ? loc.start.column + 1 : 0,
+  })
+}
+
 /**
  * Loop bodies in the fallback (non-region) path execute once per iteration,
  * so render-period hooks with static slot ids must not be emitted inside
@@ -365,10 +451,21 @@ function shouldWrapTrackedControlInEffect(test: Expression, ctx: CodegenContext)
  * be silently dropped, corrupting even the initial render. Lower loop bodies
  * with dynamic hook slots and without render memos instead.
  */
-function lowerLoopBodyWithDynamicHooks<T>(ctx: CodegenContext, fn: () => T): T {
+function lowerLoopBodyWithDynamicHooks<T>(
+  ctx: CodegenContext,
+  node: LoopStructuredNode,
+  fn: () => T,
+): T {
   if (ctx.inRegionMemo) return fn()
   const prevNoMemo = ctx.noMemo
   const prevDynamic = ctx.dynamicHookSlotDepth ?? 0
+  if (
+    prevDynamic === 0 &&
+    ctx.options?.strictGuarantee === false &&
+    structuredNodeContainsJSX(node.body)
+  ) {
+    emitStaticLoopFallbackWarning(ctx, loopNodeLoc(node))
+  }
   ctx.noMemo = true
   ctx.dynamicHookSlotDepth = prevDynamic + 1
   try {
@@ -2849,7 +2946,7 @@ function lowerNodeWithRegionContext(
       const body = t.blockStatement(
         withShadowedBindings(ctx, bodyBindings, () =>
           withTrackedControlEffectScope(ctx, shouldWrap, () =>
-            lowerLoopBodyWithDynamicHooks(ctx, () =>
+            lowerLoopBodyWithDynamicHooks(ctx, node, () =>
               lowerNodeWithRegionContext(node.body, t, ctx, scopedDeclared, regionCtx),
             ),
           ),
@@ -2866,7 +2963,7 @@ function lowerNodeWithRegionContext(
       const body = t.blockStatement(
         withShadowedBindings(ctx, bodyBindings, () =>
           withTrackedControlEffectScope(ctx, shouldWrap, () =>
-            lowerLoopBodyWithDynamicHooks(ctx, () =>
+            lowerLoopBodyWithDynamicHooks(ctx, node, () =>
               lowerNodeWithRegionContext(node.body, t, ctx, scopedDeclared, regionCtx),
             ),
           ),
@@ -2899,7 +2996,7 @@ function lowerNodeWithRegionContext(
         const bodyBindings = collectDirectStructuredBindingNames(node.body, t)
         body = t.blockStatement(
           withShadowedBindings(ctx, bodyBindings, () =>
-            lowerLoopBodyWithDynamicHooks(ctx, () =>
+            lowerLoopBodyWithDynamicHooks(ctx, node, () =>
               lowerNodeWithRegionContext(node.body, t, ctx, bodyDeclared, regionCtx),
             ),
           ),
@@ -2925,7 +3022,7 @@ function lowerNodeWithRegionContext(
         const bodyDeclared = new Set(declaredVars)
         const bodyBindings = collectDirectStructuredBindingNames(node.body, t)
         return withShadowedBindings(ctx, bodyBindings, () =>
-          lowerLoopBodyWithDynamicHooks(ctx, () =>
+          lowerLoopBodyWithDynamicHooks(ctx, node, () =>
             lowerNodeWithRegionContext(node.body, t, ctx, bodyDeclared, regionCtx),
           ),
         )
@@ -2995,7 +3092,7 @@ function lowerNodeWithRegionContext(
         const bodyDeclared = new Set(declaredVars)
         const bodyBindings = collectDirectStructuredBindingNames(node.body, t)
         return withShadowedBindings(ctx, bodyBindings, () =>
-          lowerLoopBodyWithDynamicHooks(ctx, () =>
+          lowerLoopBodyWithDynamicHooks(ctx, node, () =>
             lowerNodeWithRegionContext(node.body, t, ctx, bodyDeclared, regionCtx),
           ),
         )
