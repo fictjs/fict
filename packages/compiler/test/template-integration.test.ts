@@ -1258,6 +1258,39 @@ describe('compiled templates DOM integration', () => {
     }
   })
 
+  it('renders every loop iteration under the non-strict fallback', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function App() {
+        let count = $state(3)
+        const nodes = []
+        for (let i = 0; i < count; i++) {
+          nodes.push(<li data-row={i}>{i}</li>)
+        }
+        return <ul data-testid="list">{nodes}</ul>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true, strictGuarantee: false, dev: false })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await Promise.resolve()
+
+    const rows = Array.from(container.querySelectorAll('li')).map(li => li.textContent)
+    expect(rows).toEqual(['0', '1', '2'])
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps try/catch story blocks reactive across a state-guarded throw', async () => {
     const source = `
       import { $state, render } from 'fict'

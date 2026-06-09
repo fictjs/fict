@@ -358,6 +358,27 @@ function shouldWrapTrackedControlInEffect(test: Expression, ctx: CodegenContext)
   )
 }
 
+/**
+ * Loop bodies in the fallback (non-region) path execute once per iteration,
+ * so render-period hooks with static slot ids must not be emitted inside
+ * them: every iteration after the first would resolve to the same slot and
+ * be silently dropped, corrupting even the initial render. Lower loop bodies
+ * with dynamic hook slots and without render memos instead.
+ */
+function lowerLoopBodyWithDynamicHooks<T>(ctx: CodegenContext, fn: () => T): T {
+  if (ctx.inRegionMemo) return fn()
+  const prevNoMemo = ctx.noMemo
+  const prevDynamic = ctx.dynamicHookSlotDepth ?? 0
+  ctx.noMemo = true
+  ctx.dynamicHookSlotDepth = prevDynamic + 1
+  try {
+    return fn()
+  } finally {
+    ctx.noMemo = prevNoMemo
+    ctx.dynamicHookSlotDepth = prevDynamic
+  }
+}
+
 function withTrackedControlEffectScope<T>(ctx: CodegenContext, enabled: boolean, fn: () => T): T {
   if (!enabled) return fn()
   const prevDepth = ctx.nonReactiveScopeDepth ?? 0
@@ -2828,7 +2849,9 @@ function lowerNodeWithRegionContext(
       const body = t.blockStatement(
         withShadowedBindings(ctx, bodyBindings, () =>
           withTrackedControlEffectScope(ctx, shouldWrap, () =>
-            lowerNodeWithRegionContext(node.body, t, ctx, scopedDeclared, regionCtx),
+            lowerLoopBodyWithDynamicHooks(ctx, () =>
+              lowerNodeWithRegionContext(node.body, t, ctx, scopedDeclared, regionCtx),
+            ),
           ),
         ),
       )
@@ -2843,7 +2866,9 @@ function lowerNodeWithRegionContext(
       const body = t.blockStatement(
         withShadowedBindings(ctx, bodyBindings, () =>
           withTrackedControlEffectScope(ctx, shouldWrap, () =>
-            lowerNodeWithRegionContext(node.body, t, ctx, scopedDeclared, regionCtx),
+            lowerLoopBodyWithDynamicHooks(ctx, () =>
+              lowerNodeWithRegionContext(node.body, t, ctx, scopedDeclared, regionCtx),
+            ),
           ),
         ),
       )
@@ -2874,7 +2899,9 @@ function lowerNodeWithRegionContext(
         const bodyBindings = collectDirectStructuredBindingNames(node.body, t)
         body = t.blockStatement(
           withShadowedBindings(ctx, bodyBindings, () =>
-            lowerNodeWithRegionContext(node.body, t, ctx, bodyDeclared, regionCtx),
+            lowerLoopBodyWithDynamicHooks(ctx, () =>
+              lowerNodeWithRegionContext(node.body, t, ctx, bodyDeclared, regionCtx),
+            ),
           ),
         )
       })
@@ -2898,7 +2925,9 @@ function lowerNodeWithRegionContext(
         const bodyDeclared = new Set(declaredVars)
         const bodyBindings = collectDirectStructuredBindingNames(node.body, t)
         return withShadowedBindings(ctx, bodyBindings, () =>
-          lowerNodeWithRegionContext(node.body, t, ctx, bodyDeclared, regionCtx),
+          lowerLoopBodyWithDynamicHooks(ctx, () =>
+            lowerNodeWithRegionContext(node.body, t, ctx, bodyDeclared, regionCtx),
+          ),
         )
       }
       if (isAssignmentTarget && node.assignmentTarget) {
@@ -2966,7 +2995,9 @@ function lowerNodeWithRegionContext(
         const bodyDeclared = new Set(declaredVars)
         const bodyBindings = collectDirectStructuredBindingNames(node.body, t)
         return withShadowedBindings(ctx, bodyBindings, () =>
-          lowerNodeWithRegionContext(node.body, t, ctx, bodyDeclared, regionCtx),
+          lowerLoopBodyWithDynamicHooks(ctx, () =>
+            lowerNodeWithRegionContext(node.body, t, ctx, bodyDeclared, regionCtx),
+          ),
         )
       }
       if (isAssignmentTarget && node.assignmentTarget) {
@@ -6919,9 +6950,14 @@ function instructionToStatement(
     )
     const usesTracked = expressionUsesTracked(instr.value, ctx)
     const inNonReactiveScope = !!(ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0)
+    // Inside dynamic-hook scopes (loop-body fallback) an effect wrapper would
+    // re-run per write and replay the statement's side effects without any
+    // reactive consumer - emit the statement plainly instead.
+    const inDynamicHookScope = !!(ctx.dynamicHookSlotDepth && ctx.dynamicHookSlotDepth > 0)
     const shouldWrapExpr =
       ctx.wrapTrackedExpressions !== false &&
       !inNonReactiveScope &&
+      !inDynamicHookScope &&
       (usesTracked || hasTrackedControlDep)
     if (shouldWrapExpr) {
       const depReads: BabelCore.types.Statement[] = []
