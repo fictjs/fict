@@ -3446,7 +3446,9 @@ function computeConstantMap(fn: HIRFunction, options: OptimizeOptions): Map<stri
   }
   let changed = true
   let iterations = 0
-  const maxIterations = Math.max(0, options.constantPropagationMaxIterations ?? 10)
+  // Clamp to at least one pass: a zero budget would leave `changed` true and
+  // report spurious non-convergence for every input, including empty programs.
+  const maxIterations = Math.max(1, options.constantPropagationMaxIterations ?? 10)
   while (changed && iterations < maxIterations) {
     iterations += 1
     changed = false
