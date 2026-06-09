@@ -74,12 +74,9 @@ describe('Fict Compiler - Control Flow', () => {
         }
       `
       const output = runTransform(input)
-      // Should use fine-grained list helpers
-      expect(output).toContain('createKeyedList')
-      // Should have getItems arrow function
-      expect(output).toContain('() => items()')
-      // Keyed list callback should have __key as third parameter for key constification
-      expect(output).toContain('__key')
+      expect(output).not.toContain('createKeyedList')
+      expect(output).toContain('children: __fictReactive(() => items().map')
+      expect(output).toContain('key: item')
     })
 
     it('handles keyed list with object property as key', () => {
@@ -92,10 +89,10 @@ describe('Fict Compiler - Control Flow', () => {
         }
       `
       const output = runTransform(input)
-      // Should use fine-grained list helpers
-      expect(output).toContain('createKeyedList')
-      // Should access user property with getter pattern
-      expect(output).toContain('user()')
+      expect(output).not.toContain('createKeyedList')
+      expect(output).toContain('children: __fictReactive(() => users().map')
+      expect(output).toContain('key: user.id')
+      expect(output).toContain('children: user.name')
     })
 
     it('does not emit unresolved key identifiers for block-bodied map callbacks', () => {
@@ -115,8 +112,9 @@ describe('Fict Compiler - Control Flow', () => {
         }
       `
       const output = runTransform(input)
-      expect(output).toContain('createKeyedList')
-      expect(output).not.toMatch(/createKeyedList\([\s\S]*?=>\s*id\b/)
+      expect(output).not.toContain('createKeyedList')
+      expect(output).toContain('const id = user.id')
+      expect(output).toContain('key: id')
     })
 
     it('does not emit unresolved key member aliases for block-bodied map callbacks', () => {
@@ -136,8 +134,9 @@ describe('Fict Compiler - Control Flow', () => {
         }
       `
       const output = runTransform(input)
-      expect(output).toContain('createKeyedList')
-      expect(output).not.toMatch(/createKeyedList\([\s\S]*?=>\s*meta\.id\b/)
+      expect(output).not.toContain('createKeyedList')
+      expect(output).toContain('const meta = {')
+      expect(output).toContain('key: meta.id')
     })
 
     it('falls back for reassigned key aliases in block-bodied map callbacks', () => {
@@ -180,8 +179,9 @@ describe('Fict Compiler - Control Flow', () => {
         }
       `
       const output = runTransform(input)
-      expect(output).toContain('createKeyedList')
-      expect(output).not.toMatch(/createKeyedList\([\s\S]*?=>\s*makeKey\s*\(/)
+      expect(output).not.toContain('createKeyedList')
+      expect(output).toContain('const makeKey = value => value.id')
+      expect(output).toContain('key: makeKey(user)')
     })
 
     it('falls back for control-flow-derived key aliases in map callbacks', () => {
@@ -334,7 +334,7 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).not.toContain('() => item()')
     })
 
-    it('handles list without key via keyed list with index keys', () => {
+    it('handles returned JSX local list without key on reactive vnode path', () => {
       const input = `
         import { $state } from 'fict'
         function Component() {
@@ -344,10 +344,9 @@ describe('Fict Compiler - Control Flow', () => {
         }
       `
       const output = runTransform(input)
-      expect(output).toContain('createKeyedList')
-      expect(output).toContain('() => items()')
-      // Index signal should be threaded through when requested
-      expect(output).toContain('__index')
+      expect(output).not.toContain('createKeyedList')
+      expect(output).toContain('children: __fictReactive(() => items().map')
+      expect(output).not.toContain('__index')
     })
 
     it('keeps stable key extraction for ternary callbacks when all branches are keyed', () => {
