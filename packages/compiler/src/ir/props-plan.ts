@@ -417,7 +417,11 @@ export function buildPropsPlan(
         if (pushArrayLiteralSpread(attr.spreadExpr)) {
           continue
         }
-        const needsLazyObjectSource = objectSpreadHasTrackedComputedKey(attr.spreadExpr)
+        const needsLazyObjectSource =
+          objectSpreadHasTrackedComputedKey(attr.spreadExpr) ||
+          (isDynamicPropsSpread(attr.spreadExpr) &&
+            (!ctx.nonReactiveScopeDepth || ctx.nonReactiveScopeDepth === 0) &&
+            helpers.expressionUsesTracked(attr.spreadExpr, ctx))
         let spreadExpr = helpers.lowerDomExpression(attr.spreadExpr, ctx)
         spreadExpr = needsLazyObjectSource
           ? markLazySource(t.arrowFunctionExpression([], spreadExpr))

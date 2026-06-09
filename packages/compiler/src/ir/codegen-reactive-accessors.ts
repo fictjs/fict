@@ -1228,6 +1228,22 @@ function getExpressionIdentifiersDeep(expr?: Expression | null): Set<string> {
   return deps
 }
 
+function getAccessorPromotionDependencies(expr?: Expression | null): Set<string> {
+  const deps = new Set<string>()
+  if (!expr) return deps
+
+  if (
+    (expr.kind === 'CallExpression' || expr.kind === 'OptionalCallExpression') &&
+    (expr.callee.kind === 'ArrowFunction' || expr.callee.kind === 'FunctionExpression')
+  ) {
+    expr.arguments.forEach(arg => collectExpressionIdentifiersDeep(arg as Expression, deps))
+    return deps
+  }
+
+  collectExpressionIdentifiersDeep(expr, deps)
+  return deps
+}
+
 function collectReturnedFunctionIdentifiers(expr: Expression, into: Set<string>): void {
   if (isFunctionExpressionValue(expr)) {
     collectExpressionIdentifiersDeep(expr, into, new Set(), true, true)
@@ -1445,7 +1461,7 @@ export function computeReactiveAccessors(
       if (instr.kind === 'Assign') {
         const target = deSSAVarName(instr.target.name)
         // Use deep traversal to capture dependencies inside callbacks (e.g., array.find(n => n === state))
-        const dataDeps = getExpressionIdentifiersDeep(instr.value)
+        const dataDeps = getAccessorPromotionDependencies(instr.value)
         addDepsToTarget(target, dataDeps, dataDepsByTarget)
         const controlDeps = controlDepsByInstr.get(instr) ?? new Set<string>()
         addDepsToTarget(target, controlDeps, controlDepsByTarget)
@@ -1534,7 +1550,7 @@ export function computeReactiveAccessors(
           if (isFunctionVar(target)) continue
 
           // Use deep traversal to capture dependencies inside callbacks
-          const dataDeps = getExpressionIdentifiersDeep(instr.value)
+          const dataDeps = getAccessorPromotionDependencies(instr.value)
           const controlDepsForInstr = controlDepsByInstr.get(instr) ?? new Set<string>()
           const hasDataDep = Array.from(dataDeps).some(dep => tracked.has(dep))
           const hasControlDep = Array.from(controlDepsForInstr).some(dep => tracked.has(dep))
