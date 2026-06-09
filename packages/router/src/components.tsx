@@ -7,10 +7,10 @@
 
 import {
   createEffect,
-  createMemo,
   Fragment,
   Suspense,
   ErrorBoundary,
+  untrack,
   type FictNode,
   type Component,
 } from '@fictjs/runtime'
@@ -72,7 +72,8 @@ interface StaticRouterProps extends BaseRouterProps {
  */
 export function Router(props: BrowserRouterProps & { children?: FictNode }) {
   const history = props.history || createBrowserHistory()
-  const routes = extractRoutes(props.children)
+  const children = untrack(() => props.children)
+  const routes = extractRoutes(children)
 
   return (
     <RouterProvider history={history} routes={routes} base={props.base}>
@@ -87,7 +88,8 @@ export function Router(props: BrowserRouterProps & { children?: FictNode }) {
 export function HashRouter(props: HashRouterProps & { children?: FictNode }) {
   const hashOptions = props.hashType ? { hashType: props.hashType } : undefined
   const history = createHashHistory(hashOptions)
-  const routes = extractRoutes(props.children)
+  const children = untrack(() => props.children)
+  const routes = extractRoutes(children)
 
   return (
     <RouterProvider history={history} routes={routes} base={props.base}>
@@ -100,17 +102,18 @@ export function HashRouter(props: HashRouterProps & { children?: FictNode }) {
  * Memory Router - keeps history in memory (for testing/SSR)
  */
 export function MemoryRouter(props: MemoryRouterProps & { children?: FictNode }) {
-  const memoryOptions: { initialEntries?: string[]; initialIndex?: number } = {}
-  if (props.initialEntries !== undefined) {
-    memoryOptions.initialEntries = props.initialEntries
-  }
-  if (props.initialIndex !== undefined) {
-    memoryOptions.initialIndex = props.initialIndex
-  }
-  const history = createMemoryHistory(
-    Object.keys(memoryOptions).length > 0 ? memoryOptions : undefined,
-  )
-  const routes = extractRoutes(props.children)
+  const initialEntries = untrack(() => props.initialEntries)
+  const initialIndex = untrack(() => props.initialIndex)
+  const memoryOptions =
+    initialEntries !== undefined || initialIndex !== undefined
+      ? {
+          ...(initialEntries !== undefined ? { initialEntries } : {}),
+          ...(initialIndex !== undefined ? { initialIndex } : {}),
+        }
+      : undefined
+  const history = createMemoryHistory(memoryOptions)
+  const children = untrack(() => props.children)
+  const routes = extractRoutes(children)
 
   return (
     <RouterProvider history={history} routes={routes} base={props.base}>
@@ -123,8 +126,10 @@ export function MemoryRouter(props: MemoryRouterProps & { children?: FictNode })
  * Static Router - for server-side rendering
  */
 export function StaticRouter(props: StaticRouterProps & { children?: FictNode }) {
-  const history = createStaticHistory(props.url)
-  const routes = extractRoutes(props.children)
+  const url = untrack(() => props.url)
+  const history = createStaticHistory(url)
+  const children = untrack(() => props.children)
+  const routes = extractRoutes(children)
 
   return (
     <RouterProvider history={history} routes={routes} base={props.base}>
@@ -150,7 +155,8 @@ export function Routes(props: RoutesProps) {
   const parentRoute = useRoute()
 
   // Get routes from children
-  const routes = props.routes ?? extractRoutes(props.children)
+  const children = untrack(() => props.children)
+  const routes = props.routes ?? extractRoutes(children)
 
   // Compile routes for matching
   const compiledRoutes = routes.map(r => compileRoute(r))
@@ -167,18 +173,17 @@ export function Routes(props: RoutesProps) {
     const locationPath = stripBaseOrWarn(location.pathname, base)
     if (locationPath == null) {
       currentMatches([])
-      return
+    } else {
+      // Calculate the remaining path after parent route
+      const basePath = parentMatch ? parentMatch.pathname : '/'
+
+      // Get path relative to parent
+      const relativePath = locationPath.startsWith(basePath)
+        ? locationPath.slice(basePath.length) || '/'
+        : locationPath
+
+      currentMatches(matchRoutes(branches, relativePath) || [])
     }
-
-    // Calculate the remaining path after parent route
-    const basePath = parentMatch ? parentMatch.pathname : '/'
-
-    // Get path relative to parent
-    const relativePath = locationPath.startsWith(basePath)
-      ? locationPath.slice(basePath.length) || '/'
-      : locationPath
-
-    currentMatches(matchRoutes(branches, relativePath) || [])
   })
 
   return <CurrentMatchesView matches={currentMatches} />
@@ -194,17 +199,18 @@ interface RenderMatchesProps {
 }
 
 interface CurrentMatchesProps {
-  matches: RouteMatch[] | (() => RouteMatch[])
+  matches: () => RouteMatch[]
 }
 
 function CurrentMatchesView(props: CurrentMatchesProps): FictNode {
-  const matches = () => readAccessor(props.matches)
+  const matches = untrack(() => props.matches)
 
   return <>{matches().length > 0 ? renderMatches(matches(), 0) : null}</>
 }
 
 function RenderMatchesView(props: RenderMatchesProps): FictNode {
-  const match = props.matches[props.index]!
+  const index = untrack(() => props.index)
+  const match = props.matches.at(index)!
   const route = match.route
   const router = useRouter()
   const hasPreload = typeof route.preload === 'function'
@@ -230,26 +236,26 @@ function RenderMatchesView(props: RenderMatchesProps): FictNode {
         intent: 'navigate' as const,
       }
       const preload = route.preload
-      if (typeof preload !== 'function') return
+      if (typeof preload === 'function') {
+        // Increment token to invalidate any pending preloads
+        const currentToken = ++preloadToken
 
-      // Increment token to invalidate any pending preloads
-      const currentToken = ++preloadToken
+        dataState({ data: undefined, error: undefined, loading: true })
 
-      dataState({ data: undefined, error: undefined, loading: true })
-
-      Promise.resolve(preload(preloadArgs))
-        .then(result => {
-          // Only apply result if this preload is still current
-          if (currentToken === preloadToken) {
-            dataState({ data: result, error: undefined, loading: false })
-          }
-        })
-        .catch(error => {
-          // Only apply error if this preload is still current
-          if (currentToken === preloadToken) {
-            dataState({ data: undefined, error, loading: false })
-          }
-        })
+        Promise.resolve(preload(preloadArgs))
+          .then(result => {
+            // Only apply result if this preload is still current
+            if (currentToken === preloadToken) {
+              dataState({ data: result, error: undefined, loading: false })
+            }
+          })
+          .catch(error => {
+            // Only apply error if this preload is still current
+            if (currentToken === preloadToken) {
+              dataState({ data: undefined, error, loading: false })
+            }
+          })
+      }
     })
   })
 
@@ -258,40 +264,28 @@ function RenderMatchesView(props: RenderMatchesProps): FictNode {
   // Determine what to render
   const renderContent = (): FictNode => {
     const state = dataState()
+    const Component = route.component as
+      | Component<{
+          params: Params
+          location: Location
+          data: unknown
+          children?: FictNode
+        }>
+      | undefined
 
-    // If there's an error and an errorElement, render it
-    if (state.error !== undefined && route.errorElement) {
-      return route.errorElement
-    }
-
-    // If loading and there's a loadingElement, render it
-    if (state.loading && route.loadingElement) {
-      return route.loadingElement
-    }
-
-    // Render the normal content
-    if (route.component) {
-      const Component = route.component as Component<{
-        params: Params
-        location: Location
-        data: unknown
-        children?: FictNode
-      }>
-      return (
-        <Component params={match.params} location={readAccessor(router.location)} data={state.data}>
-          {outletNode}
-        </Component>
-      )
-    }
-    if (route.element) {
-      return route.element
-    }
-    if (route.children) {
-      // Layout route without component - just render outlet
-      return outletNode
-    }
-
-    return null
+    return state.error !== undefined && route.errorElement ? (
+      route.errorElement
+    ) : state.loading && route.loadingElement ? (
+      route.loadingElement
+    ) : Component ? (
+      <Component params={match.params} location={readAccessor(router.location)} data={state.data}>
+        {outletNode}
+      </Component>
+    ) : route.element ? (
+      route.element
+    ) : route.children ? (
+      outletNode
+    ) : null
   }
 
   // Create route context for this level
@@ -300,8 +294,8 @@ function RenderMatchesView(props: RenderMatchesProps): FictNode {
     data: () => dataState().data,
     error: () => dataState().error,
     outlet: () =>
-      props.index + 1 < props.matches.length ? (
-        <RenderMatchesView matches={props.matches} index={props.index + 1} />
+      index + 1 < props.matches.length ? (
+        <RenderMatchesView matches={props.matches} index={index + 1} />
       ) : null,
     resolvePath: wrapAccessor((to: To) => {
       const basePath = match.pathname
@@ -388,12 +382,15 @@ interface NavigateComponentProps {
  */
 export function Navigate(props: NavigateComponentProps): FictNode {
   const router = useRouter()
+  const to = untrack(() => props.to)
+  const replace = untrack(() => props.replace)
+  const state = untrack(() => props.state)
 
   // Navigate on mount
   createEffect(() => {
-    router.navigate(props.to, {
-      replace: props.replace ?? true,
-      state: props.state,
+    router.navigate(to, {
+      replace: replace ?? true,
+      state,
     })
   })
 
@@ -440,12 +437,15 @@ interface RedirectProps {
  */
 export function Redirect(props: RedirectProps): FictNode {
   const router = useRouter()
+  const to = untrack(() => props.to)
+  const push = untrack(() => props.push)
+  const state = untrack(() => props.state)
 
   // Redirect on mount
   createEffect(() => {
-    router.navigate(props.to, {
-      replace: props.push !== true, // Replace by default, push only if explicitly requested
-      state: props.state,
+    router.navigate(to, {
+      replace: push !== true, // Replace by default, push only if explicitly requested
+      state,
     })
   })
 
