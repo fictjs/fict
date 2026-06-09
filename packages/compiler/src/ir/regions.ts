@@ -4085,7 +4085,11 @@ function collectOrderingBarrierRegionIds(
   if (ranges.size === 0) return disabled
 
   buffer.forEach((item, index) => {
-    if (item.instr.kind !== 'Expression' || !instructionHasOrderingEffects(item.instr)) return
+    // Region-owned assigns are ordered by region emission itself; everything
+    // else defers to instructionHasOrderingEffects, including region-less
+    // assigns whose initializer has observable effects (e.g. `const x = arr.push(v)`).
+    if (item.instr.kind === 'Assign' && item.region) return
+    if (!instructionHasOrderingEffects(item.instr)) return
     for (const [id, range] of ranges) {
       if (index <= range.first || index >= range.last) continue
       if (item.region?.id === id) continue

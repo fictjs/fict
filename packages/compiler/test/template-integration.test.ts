@@ -1258,6 +1258,68 @@ describe('compiled templates DOM integration', () => {
     }
   })
 
+  it('preserves assigned side-effect call results before region memo execution', () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function App() {
+        let count = $state(0)
+        const items: number[] = []
+        const pushed = items.push(1)
+        const total = items.length + count
+        return <span data-testid="value">{total}:{pushed}</span>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true, strictGuarantee: true, dev: false })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-testid="value"]')?.textContent).toBe('1:1')
+
+    teardown()
+    container.remove()
+  })
+
+  it('preserves assigned side-effect ordering between region memo instructions', () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      const seen: number[] = []
+
+      function App() {
+        let count = $state(0)
+        const first = count + 1
+        const pushed = seen.push(99)
+        const second = count * 10 + seen.length
+        return <span data-testid="value">{first}:{second}:{pushed}</span>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true, strictGuarantee: true, dev: false })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-testid="value"]')?.textContent).toBe('1:1:1')
+
+    teardown()
+    container.remove()
+  })
+
   it('hoists prior local dependencies before region memo execution', () => {
     const source = `
       import { render, untrack } from 'fict'
