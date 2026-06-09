@@ -20,9 +20,9 @@ Current large-file budgets intentionally reflect the existing codebase:
 | File                                      | Budget |
 | ----------------------------------------- | ------ |
 | `packages/compiler/src/ir/codegen.ts`     | 10705  |
-| `packages/compiler/src/ir/optimize.ts`    | 7454   |
-| `packages/compiler/src/ir/regions.ts`     | 7473   |
-| `packages/compiler/src/index.ts`          | 4889   |
+| `packages/compiler/src/ir/optimize.ts`    | 7456   |
+| `packages/compiler/src/ir/regions.ts`     | 7504   |
+| `packages/compiler/src/index.ts`          | 4896   |
 | `packages/compiler/src/ir/build-hir.ts`   | 4176   |
 | `packages/compiler/src/ir/structurize.ts` | 1953   |
 
