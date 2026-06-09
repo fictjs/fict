@@ -11,6 +11,7 @@ import {
   onDestroy,
 } from '../src/index'
 import { createSignal, reactive } from '../src/advanced'
+import { __fictProp } from '../src/internal'
 
 const tick = () => Promise.resolve()
 
@@ -290,10 +291,7 @@ describe('Context', () => {
       dispose()
     })
 
-    it('static value is captured at mount time (Fict fine-grained model)', async () => {
-      // In Fict's fine-grained model, component functions execute only once.
-      // Provider's value is captured at mount time and is static.
-      // For reactive context values, use a store inside the Provider.
+    it('static value is available at mount time', async () => {
       const CountContext = createContext(0)
       const container = document.createElement('div')
       let capturedCount: number | undefined
@@ -316,6 +314,40 @@ describe('Context', () => {
 
       expect(capturedCount).toBe(42)
       expect(container.textContent).toBe('42')
+
+      dispose()
+    })
+
+    it('updates consumers when a reactive provider prop changes', async () => {
+      const ThemeContext = createContext('light')
+      const container = document.createElement('div')
+      const theme = createSignal('light')
+      let capturedTheme: string | undefined
+
+      const Child = () => {
+        capturedTheme = useContext(ThemeContext)
+        return { type: 'span', props: { children: capturedTheme } }
+      }
+
+      const dispose = render(
+        () => ({
+          type: ThemeContext.Provider,
+          props: {
+            value: __fictProp(() => theme()),
+            children: { type: Child, props: {} },
+          },
+        }),
+        container,
+      )
+
+      expect(capturedTheme).toBe('light')
+      expect(container.textContent).toBe('light')
+
+      theme('dark')
+      await tick()
+
+      expect(capturedTheme).toBe('dark')
+      expect(container.textContent).toBe('dark')
 
       dispose()
     })

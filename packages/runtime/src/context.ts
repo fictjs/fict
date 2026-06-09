@@ -188,7 +188,7 @@ export function createContext<T>(defaultValue: T): Context<T> {
       }
     }
 
-    const renderChildren = (children: FictNode) => {
+    const renderChildren = (children: FictNode, value: T) => {
       // Cleanup previous render
       cleanupActive()
 
@@ -200,7 +200,7 @@ export function createContext<T>(defaultValue: T): Context<T> {
       // provider boundary; children will look up from here.
       const providerRoot = createRootContext(hostRoot)
       const contextMap = getContextMap(providerRoot)
-      contextMap.set(id, props.value)
+      contextMap.set(id, value)
 
       const prev = pushRoot(providerRoot)
       let nodes: Node[] = []
@@ -241,11 +241,14 @@ export function createContext<T>(defaultValue: T): Context<T> {
 
     // Initial render
     createRenderEffect(() => {
+      const value = props.value
+      const children = props.children
+
       // Provider value updates should not subscribe this effect to arbitrary
       // signal reads that happen while rendering descendants. Child trees own
       // their own reactivity; the provider only needs to react to its props.
       untrack(() => {
-        renderChildren(props.children)
+        renderChildren(children, value)
       })
 
       return cleanupActive
