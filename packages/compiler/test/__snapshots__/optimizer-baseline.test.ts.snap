@@ -1,7 +1,7 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
 exports[`optimizer output baselines > hook + derived accessors 1`] = `
-"import { __fictUseSignal, __fictUseMemo, __fictUseContext, template, resolvePath, getSlotEnd, insertBetween, createElement } from "fict/internal";
+"import { __fictUseSignal, __fictUseMemo, __fictUseContext, __fictUseEffect, template, resolvePath, getSlotEnd, createElement, insertBetween } from "fict/internal";
 export function useCounter() {
   const __fictCtx = __fictUseContext();
   const count = __fictUseSignal(__fictCtx, 0, {
@@ -27,23 +27,10 @@ export function useCounter() {
 }
 export function View() {
   const __fictCtx = __fictUseContext();
-  const __region_0 = __fictUseMemo(__fictCtx, () => {
-    const _useCounter = useCounter();
-    const count = _useCounter.count;
-    const double = _useCounter.double;
-    return {
-      _useCounter,
-      count,
-      double
-    };
-  }, {
-    internal: true
-  }, 1002);
-  const {
-    _useCounter,
-    count,
-    double
-  } = __region_0();
+  const _useCounter = useCounter();
+  const count = _useCounter.count;
+  const double = _useCounter.double;
+  __fictUseEffect(__fictCtx, () => {}, 1002);
   return __fictUseMemo(__fictCtx, () => {
     const __tmpl_1 = template("<div><!--fict:slot:start--><!--fict:slot:end--> / <!--fict:slot:start--><!--fict:slot:end--></div>");
     const __root_0 = __tmpl_1();
@@ -94,7 +81,7 @@ export default __default_export_value_0;"
 `;
 
 exports[`optimizer output baselines > props destructuring + defaults 1`] = `
-"import { __fictUseMemo, template, resolvePath, getSlotEnd, insertBetween, createElement, __fictUseContext, prop } from "fict/internal";
+"import { __fictUseMemo, template, resolvePath, getSlotEnd, createElement, insertBetween, __fictUseContext, prop } from "fict/internal";
 function Card(__props) {
   __props.title;
   const title = prop(() => __props.title);
@@ -118,7 +105,7 @@ export default __default_export_value_0;"
 `;
 
 exports[`optimizer output baselines > region grouping across control flow 1`] = `
-"import { __fictUseSignal, __fictUseMemo, template, resolvePath, getSlotEnd, insertBetween, createElement, __fictUseContext } from "fict/internal";
+"import { __fictUseSignal, __fictUseMemo, template, resolvePath, getSlotEnd, createElement, insertBetween, __fictUseContext } from "fict/internal";
 function Summary() {
   const __fictCtx = __fictUseContext();
   const count = __fictUseSignal(__fictCtx, 0, {
@@ -136,15 +123,11 @@ function Summary() {
     }
     return {
       heading: heading !== void 0 ? heading : void 0,
-      extra: extra !== void 0 ? extra : void 0,
-      noun: noun !== void 0 ? noun : void 0
+      extra: extra !== void 0 ? extra : void 0
     };
   }, {
     internal: true
   }, 1001);
-  const {
-    noun
-  } = __region_0();
   const heading = () => __region_0().heading;
   const extra = () => __region_0().extra;
   return __fictUseMemo(__fictCtx, () => {

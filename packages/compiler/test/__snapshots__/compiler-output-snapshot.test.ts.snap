@@ -1,7 +1,7 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
 exports[`compiler output golden snapshots > stabilizes control-flow fallback output shape 1`] = `
-"import { __fictUseSignal, template, resolvePath, addEventListener, getSlotEnd, insertBetween, createElement, __fictUseContext, createConditional, onDestroy } from "fict/internal";
+"import { __fictUseSignal, template, resolvePath, addEventListener, getSlotEnd, createElement, insertBetween, __fictUseContext, createConditional, onDestroy } from "fict/internal";
 export function Branch() {
   const __fictCtx = __fictUseContext();
   const count = __fictUseSignal(__fictCtx, 0, {
@@ -13,7 +13,9 @@ export function Branch() {
         const __tmpl_1 = template("<button>High <!--fict:slot:start--><!--fict:slot:end--></button>");
         const __root_0 = __tmpl_1();
         const __el_2 = resolvePath(__root_0, [1]);
-        addEventListener(__root_0, "click", () => (__prev_3 => (__old_4 => (count(__prev_3), __old_4))(__prev_3++))(count()), true);
+        addEventListener(__root_0, "click", (...__fictArgs) => {
+          (() => (__prev_3 => (__old_4 => (count(__prev_3), __old_4))(__prev_3++))(count()))(...__fictArgs);
+        }, true);
         const __end_5 = getSlotEnd(__el_2);
         insertBetween(__el_2, __end_5, () => count(), createElement);
         return __root_0;
@@ -23,7 +25,9 @@ export function Branch() {
         const __tmpl_7 = template("<button>Low <!--fict:slot:start--><!--fict:slot:end--></button>");
         const __root_6 = __tmpl_7();
         const __el_8 = resolvePath(__root_6, [1]);
-        addEventListener(__root_6, "click", () => (__prev_9 => (__old_10 => (count(__prev_9), __old_10))(__prev_9++))(count()), true);
+        addEventListener(__root_6, "click", (...__fictArgs) => {
+          (() => (__prev_9 => (__old_10 => (count(__prev_9), __old_10))(__prev_9++))(count()))(...__fictArgs);
+        }, true);
         const __end_11 = getSlotEnd(__el_8);
         insertBetween(__el_8, __end_11, () => count(), createElement);
         return __root_6;
@@ -36,7 +40,7 @@ export function Branch() {
 `;
 
 exports[`compiler output golden snapshots > stabilizes cross-module direct accessor metadata output 1`] = `
-"import { __fictUseMemo, template, resolvePath, getSlotEnd, insertBetween, createElement, __fictUseContext } from "fict/internal";
+"import { __fictUseMemo, template, resolvePath, getSlotEnd, createElement, insertBetween, __fictUseContext } from "fict/internal";
 import { useCounter } from 'counter-lib';
 export function App() {
   const __fictCtx = __fictUseContext();
