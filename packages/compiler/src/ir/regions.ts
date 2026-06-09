@@ -5809,14 +5809,44 @@ function collectControlFlowLocalRegionDeclarations(
   return localNames
 }
 
+// Structured trees are not mutated during lowering, so the per-root
+// declaration index can be cached for the lifetime of the tree. Hoisting
+// looks up producers per dependency; without this index every lookup
+// re-walked the whole tree.
+const structuredAssignDeclarationIndexCache = new WeakMap<
+  StructuredNode,
+  Map<string, AssignInstruction[]>
+>()
+
+function getStructuredAssignDeclarationIndex(
+  rootNode: StructuredNode,
+): Map<string, AssignInstruction[]> {
+  let index = structuredAssignDeclarationIndexCache.get(rootNode)
+  if (!index) {
+    index = new Map()
+    for (const declaration of collectStructuredAssignDeclarations(rootNode)) {
+      const name = deSSAVarName(declaration.target.name)
+      const existing = index.get(name)
+      if (existing) {
+        existing.push(declaration)
+      } else {
+        index.set(name, [declaration])
+      }
+    }
+    structuredAssignDeclarationIndexCache.set(rootNode, index)
+  }
+  return index
+}
+
 function findPriorDeclarationInstruction(
   rootNode: StructuredNode,
   name: string,
   before: Instruction,
 ): AssignInstruction | null {
+  const declarations = getStructuredAssignDeclarationIndex(rootNode).get(name)
+  if (!declarations) return null
   let best: AssignInstruction | null = null
-  for (const declaration of collectStructuredAssignDeclarations(rootNode)) {
-    if (deSSAVarName(declaration.target.name) !== name) continue
+  for (const declaration of declarations) {
     if (!instructionSourceBefore(declaration, before)) continue
     if (!best || instructionSourceBefore(best, declaration)) {
       best = declaration
