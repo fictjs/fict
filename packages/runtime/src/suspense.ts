@@ -2,6 +2,7 @@ import { isReactive } from './binding'
 import { createElement } from './dom'
 import { isCommentLike } from './dom-guards'
 import { createEffect } from './effect'
+import { resetKeysChanged } from './reset-keys'
 import {
   createRootContext,
   destroyRoot,
@@ -284,7 +285,7 @@ export function Suspense(props: SuspenseProps): FictNode {
     let prev = getter ? getter() : props.resetKeys
     createEffect(() => {
       const next = getter ? getter() : props.resetKeys
-      if (prev !== next) {
+      if (resetKeysChanged(prev, next)) {
         prev = next
         epoch++
         pending(0)

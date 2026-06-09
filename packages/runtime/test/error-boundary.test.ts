@@ -926,6 +926,54 @@ describe('ErrorBoundary', () => {
     dispose()
   })
 
+  it('compares array resetKeys element-wise instead of by identity', async () => {
+    const container = document.createElement('div')
+    const shouldThrow = createSignal(true)
+    const resetKey = createSignal(0)
+    const unrelated = createSignal(0)
+    let renders = 0
+
+    const MaybeThrow = () => {
+      renders++
+      if (shouldThrow()) {
+        throw new Error('render boom')
+      }
+      return { type: 'span', props: { children: 'recovered' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'render-fallback',
+          // Fresh array each evaluation, like a compiled `resetKeys={[key]}`
+          // prop; unrelated() makes the getter re-run without a key change.
+          resetKeys: reactive(() => (unrelated(), [resetKey()])),
+          children: { type: MaybeThrow, props: {} },
+        },
+      }),
+      container,
+    )
+
+    await nextTick()
+    expect(container.textContent).toBe('render-fallback')
+    const rendersAfterError = renders
+
+    // Unrelated dependency change: fresh-but-equal array must not reset.
+    unrelated(1)
+    await nextTick()
+    expect(container.textContent).toBe('render-fallback')
+    expect(renders).toBe(rendersAfterError)
+
+    // Real key change still resets.
+    shouldThrow(false)
+    resetKey(1)
+    await nextTick()
+    expect(container.textContent).toBe('recovered')
+
+    dispose()
+  })
+
   it('does not remove sibling nodes when rendering fallback', () => {
     const Crash = () => {
       throw new Error('boom')

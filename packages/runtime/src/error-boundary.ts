@@ -13,6 +13,7 @@ import {
   withRootContext,
 } from './lifecycle'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
+import { resetKeysChanged } from './reset-keys'
 import type { BaseProps, FictNode } from './types'
 
 interface ErrorBoundaryProps extends BaseProps {
@@ -138,9 +139,11 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
     let prev = getter ? getter() : props.resetKeys
     createEffect(() => {
       const next = getter ? getter() : props.resetKeys
-      if (prev !== next) {
+      if (resetKeysChanged(prev, next)) {
         prev = next
         renderValue(toView(null))
+      } else {
+        prev = next
       }
     })
   }
