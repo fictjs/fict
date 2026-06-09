@@ -199,11 +199,12 @@ interface RenderMatchesProps {
 }
 
 interface CurrentMatchesProps {
-  matches: () => RouteMatch[]
+  matches: RouteMatch[] | (() => RouteMatch[])
 }
 
 function CurrentMatchesView(props: CurrentMatchesProps): FictNode {
-  const matches = untrack(() => props.matches)
+  const matchesInput = untrack(() => props.matches)
+  const matches = () => (typeof matchesInput === 'function' ? matchesInput() : matchesInput)
 
   return <>{matches().length > 0 ? renderMatches(matches(), 0) : null}</>
 }
