@@ -450,17 +450,13 @@ export function NavLink(props: NavLinkProps): FictNode {
     )
   }
 
-  const finalClassName = computedClassName()
-  const finalStyle = computedStyle()
-  const finalAriaCurrent = ariaCurrent()
-
   return (
     <a
       ref={anchorRef}
       href={getHrefValue()}
-      class={finalClassName}
-      style={finalStyle}
-      aria-current={finalAriaCurrent}
+      class={computedClassName()}
+      style={computedStyle()}
+      aria-current={ariaCurrent()}
       onClick={handleClick}
     >
       {computedChildren()}
