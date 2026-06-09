@@ -14,7 +14,7 @@ import {
   type FictNode,
   type Component,
 } from '@fictjs/runtime'
-import { createSignal } from '@fictjs/runtime/advanced'
+import { createSignal, runInScope } from '@fictjs/runtime/advanced'
 
 import { wrapAccessor } from './accessor-utils'
 import { RouteContext, RouteErrorContext, useRouter, useRoute, readAccessor } from './context'
@@ -218,7 +218,7 @@ function RenderMatchesView(props: RenderMatchesProps): FictNode {
   let preloadToken = 0
 
   // Load data if preload is defined
-  if (hasPreload) {
+  runInScope(hasPreload, () => {
     // Trigger preload on initial render and when location changes
     createEffect(() => {
       const location = readAccessor(router.location)
@@ -249,7 +249,7 @@ function RenderMatchesView(props: RenderMatchesProps): FictNode {
           }
         })
     })
-  }
+  })
 
   const outletNode = <Outlet />
 
