@@ -113,6 +113,8 @@ export interface KeyedListBinding {
   flush?: () => void
   /** Cleanup function */
   dispose: () => void
+  /** Internal: number of duplicate-key identity entries currently retained */
+  __duplicateKeyIdentitySize?: () => number
 }
 
 type FineGrainedRenderItem<T> = (
@@ -160,7 +162,8 @@ function resolveListKey<T>(
   // blocks are keyed by them. Slots are addressed purely by occurrence, so a
   // partially-populated map left behind by an abandoned stable-order scan is
   // reused or extended deterministically on the next resolve — do not clear it
-  // between passes; only the discard-all paths may clear the map.
+  // mid-pass. pruneDuplicateKeyIdentities trims departed keys after a completed
+  // diff; the discard-all paths clear the whole map.
   let identities = container.duplicateKeyIdentities.get(key)
   if (!identities) {
     identities = []
@@ -171,6 +174,29 @@ function resolveListKey<T>(
   }
 
   return { key, identityKey: identities[occurrence - 1]!, occurrence }
+}
+
+/**
+ * Drop identity slots for keys that left the list (and excess occurrence
+ * slots for keys that shrank) after a completed diff. Without pruning the
+ * map grows for the lifetime of the list as duplicated keys churn. Slots
+ * still referenced by live blocks are exactly the ones kept: a key present
+ * `c` times uses identities[0..c-2].
+ */
+function pruneDuplicateKeyIdentities<T>(
+  container: KeyedListContainer<T>,
+  keyOccurrences: Map<ListKey, number>,
+): void {
+  const identitiesByKey = container.duplicateKeyIdentities
+  if (identitiesByKey.size === 0) return
+  for (const [key, identities] of identitiesByKey) {
+    const occurrences = keyOccurrences.get(key) ?? 0
+    if (occurrences <= 1) {
+      identitiesByKey.delete(key)
+    } else if (identities.length > occurrences - 1) {
+      identities.length = occurrences - 1
+    }
+  }
 }
 
 function warnDuplicateListKey(key: ListKey, phase: 'hydration' | 'rendering'): void {
@@ -1032,6 +1058,7 @@ function createFineGrainedKeyedList<T>(
       container.nextBlocks = oldBlocks
       container.orderedBlocks = nextOrderedBlocks
       container.nextOrderedBlocks = prevOrderedBlocks
+      pruneDuplicateKeyIdentities(container, keyOccurrences)
       for (const block of createdBlocks) {
         if (newBlocks.get(block.identityKey) === block) {
           flushOnMount(block.root)
@@ -1136,5 +1163,6 @@ function createFineGrainedKeyedList<T>(
       disconnectObserver()
       container.dispose()
     },
+    __duplicateKeyIdentitySize: () => container.duplicateKeyIdentities.size,
   }
 }

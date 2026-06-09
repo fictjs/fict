@@ -329,6 +329,55 @@ describe('List Helpers', () => {
       }
     })
 
+    it('prunes duplicate-key identities for keys that leave the list', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const items = createSignal([
+        { id: 'a', name: 'A1' },
+        { id: 'a', name: 'A2' },
+      ])
+
+      try {
+        const listBinding = createKeyedList(
+          () => items(),
+          item => item.id,
+          itemSig => {
+            const div = document.createElement('div')
+            createEffect(() => {
+              div.textContent = itemSig().name
+            })
+            return [div]
+          },
+        )
+
+        container.appendChild(listBinding.marker)
+        listBinding.flush?.()
+        await tick()
+        expect(listBinding.__duplicateKeyIdentitySize?.()).toBe(1)
+
+        // Churn through many renders, each with a fresh duplicated key plus
+        // one stable duplicate pair: departed keys must not accumulate.
+        for (let i = 0; i < 50; i++) {
+          items([
+            { id: `k${i}`, name: 'fresh-1' },
+            { id: `k${i}`, name: 'fresh-2' },
+            { id: 'dup', name: 'stable-1' },
+            { id: 'dup', name: 'stable-2' },
+          ])
+          await tick()
+        }
+        expect(listBinding.__duplicateKeyIdentitySize?.()).toBe(2)
+
+        // All duplicates gone: the map empties entirely.
+        items([{ id: 'solo', name: 'only' }])
+        await tick()
+        expect(listBinding.__duplicateKeyIdentitySize?.()).toBe(0)
+
+        listBinding.dispose()
+      } finally {
+        warnSpy.mockRestore()
+      }
+    })
+
     it('keeps index getter stable when needsIndex is false', async () => {
       const items = createSignal([{ id: 1, name: 'Alice' }])
       const reads: number[] = []
