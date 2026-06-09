@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
+import { isRegionMemoizable } from '../src/ir/regions'
+import type { Region } from '../src/ir/regions'
+
 import { transform } from './test-utils'
 
 const STRICT_GUARANTEE_OPTIONS = { strictGuarantee: true, dev: false } as const
@@ -957,5 +960,49 @@ describe('reactivity guarantee contract', () => {
         expect(() => transform(testCase.source, STRICT_GUARANTEE_OPTIONS)).toThrow(testCase.error)
       })
     }
+  })
+
+  describe('diagnostic and lowering conformance', () => {
+    const makeRegion = (overrides: Partial<Region>): Region => ({
+      id: 0,
+      scopeId: 0,
+      blocks: new Set(),
+      instructions: [],
+      dependencies: new Set(),
+      declarations: new Set(),
+      hasControlFlow: true,
+      hasJSX: false,
+      hasAsyncSyntax: false,
+      shouldMemoize: true,
+      children: [],
+      ...overrides,
+    })
+
+    it('shares one memoization predicate between diagnostics and lowering', () => {
+      expect(isRegionMemoizable(makeRegion({}))).toBe(true)
+      expect(isRegionMemoizable(makeRegion({ shouldMemoize: false }))).toBe(false)
+      expect(isRegionMemoizable(makeRegion({ hasAsyncSyntax: true }))).toBe(false)
+    })
+
+    it('memoized story blocks emit a region memo without FICT-R006', () => {
+      const source = `
+        import { $state } from 'fict'
+        function App() {
+          let count = $state(0)
+          let heading = 'empty'
+          if (count > 0) {
+            heading = count + ' items'
+          }
+          return <h1>{heading}</h1>
+        }
+      `
+      const warnings: Array<{ code: string }> = []
+      const output = transform(source, {
+        ...STRICT_GUARANTEE_OPTIONS,
+        onWarn: warning => warnings.push(warning as { code: string }),
+      })
+      expect(warnings.map(warning => warning.code)).not.toContain('FICT-R006')
+      expect(output).toContain('__region_')
+    })
   })
 })

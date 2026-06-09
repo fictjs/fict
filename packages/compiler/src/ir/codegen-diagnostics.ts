@@ -1,6 +1,6 @@
 import type { CodegenContext } from './codegen'
 import type { Expression, HIRFunction } from './hir'
-import { deSSAVarName } from './regions'
+import { deSSAVarName, isRegionMemoizable } from './regions'
 import type { RegionResult } from './regions'
 import type { SSAEnhancedScopeResult } from './scopes'
 
@@ -91,7 +91,7 @@ function collectGuaranteedControlFlowReads(regionResult: RegionResult | undefine
   const reads = new Set<string>()
   if (!regionResult) return reads
   for (const region of regionResult.regions) {
-    if (!region.hasControlFlow || !region.shouldMemoize || region.hasAsyncSyntax) continue
+    if (!region.hasControlFlow || !isRegionMemoizable(region)) continue
     for (const dependency of region.dependencies) {
       const base = deSSAVarName(dependency.split('.')[0] ?? dependency)
       reads.add(base)

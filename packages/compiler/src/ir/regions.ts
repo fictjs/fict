@@ -115,6 +115,17 @@ export interface Region {
   parentId?: number | undefined
 }
 
+/**
+ * A region's intrinsic eligibility for memoized lowering. Context-specific
+ * opt-outs (`use no memo`, non-reactive scopes, dependency-less regions) are
+ * layered on top by the emitter; diagnostics must not classify a region's
+ * reads as guaranteed unless this base predicate holds, so both sides share
+ * this single source of truth.
+ */
+export function isRegionMemoizable(region: Region): boolean {
+  return region.shouldMemoize && !region.hasAsyncSyntax
+}
+
 type ReactiveCreationInstruction = AssignInstruction & {
   value: Extract<Expression, { kind: 'CallExpression' }>
   declarationKind: NonNullable<AssignInstruction['declarationKind']>
@@ -4548,8 +4559,7 @@ function generateRegionStatements(
   const shouldInline =
     (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) ||
     ctx.noMemo ||
-    region.hasAsyncSyntax ||
-    !region.shouldMemoize ||
+    !isRegionMemoizable(region) ||
     (region.dependencies.size === 0 && !hasTrackedOutputs)
 
   const hoistedStatements: BabelCore.types.Statement[] = []
