@@ -3,6 +3,7 @@ import type { Expression, HIRFunction } from './hir'
 import { deSSAVarName, isRegionMemoizable } from './regions'
 import type { RegionResult } from './regions'
 import type { SSAEnhancedScopeResult } from './scopes'
+import { walkExpression } from './walk-expression'
 
 export function emitReactiveControlFlowReexecutionWarning(
   fn: HIRFunction,
@@ -129,162 +130,33 @@ function collectUnsupportedControlFlowReads(fn: HIRFunction): Set<string> {
 }
 
 function containsCallLikeExpression(expr: Expression): boolean {
-  switch (expr.kind) {
-    case 'CallExpression':
-    case 'OptionalCallExpression':
-    case 'NewExpression':
-    case 'ImportExpression':
-    case 'TaggedTemplateExpression':
-      return true
-    case 'MemberExpression':
-    case 'OptionalMemberExpression':
-      return containsCallLikeExpression(expr.object) || containsCallLikeExpression(expr.property)
-    case 'BinaryExpression':
-    case 'LogicalExpression':
-      return containsCallLikeExpression(expr.left) || containsCallLikeExpression(expr.right)
-    case 'UnaryExpression':
-      return containsCallLikeExpression(expr.argument)
-    case 'ConditionalExpression':
-      return (
-        containsCallLikeExpression(expr.test) ||
-        containsCallLikeExpression(expr.consequent) ||
-        containsCallLikeExpression(expr.alternate)
-      )
-    case 'ArrayExpression':
-      return expr.elements.some(element => element && containsCallLikeExpression(element))
-    case 'ObjectExpression':
-      return expr.properties.some(prop => {
-        if (prop.kind === 'Property') {
-          return containsCallLikeExpression(prop.key) || containsCallLikeExpression(prop.value)
-        }
-        if (prop.kind === 'SpreadElement') return containsCallLikeExpression(prop.argument)
-        return false
-      })
-    case 'JSXElement':
-      return (
-        (typeof expr.tagName !== 'string' && containsCallLikeExpression(expr.tagName)) ||
-        expr.attributes.some(attr =>
-          attr.isSpread
-            ? !!attr.spreadExpr && containsCallLikeExpression(attr.spreadExpr)
-            : !!attr.value && containsCallLikeExpression(attr.value),
-        ) ||
-        expr.children.some(child =>
-          child.kind === 'text' ? false : containsCallLikeExpression(child.value),
-        )
-      )
-    case 'AssignmentExpression':
-      return containsCallLikeExpression(expr.left) || containsCallLikeExpression(expr.right)
-    case 'UpdateExpression':
-      return containsCallLikeExpression(expr.argument)
-    case 'AwaitExpression':
-      return containsCallLikeExpression(expr.argument)
-    case 'SequenceExpression':
-      return expr.expressions.some(containsCallLikeExpression)
-    case 'YieldExpression':
-      return !!expr.argument && containsCallLikeExpression(expr.argument)
-    case 'TemplateLiteral':
-      return expr.expressions.some(containsCallLikeExpression)
-    case 'ClassExpression':
-      return !!expr.superClass && containsCallLikeExpression(expr.superClass)
-    default:
-      return false
-  }
+  let found = false
+  walkExpression(
+    expr,
+    node => {
+      switch (node.kind) {
+        case 'CallExpression':
+        case 'OptionalCallExpression':
+        case 'NewExpression':
+        case 'ImportExpression':
+        case 'TaggedTemplateExpression':
+          found = true
+          break
+        default:
+          break
+      }
+    },
+    { includeFunctionBodies: false },
+  )
+  return found
 }
 
 function collectExpressionReads(expr: Expression, reads: Set<string>): void {
-  switch (expr.kind) {
-    case 'Identifier':
-      reads.add(deSSAVarName(expr.name))
-      return
-    case 'CallExpression':
-    case 'OptionalCallExpression':
-      collectExpressionReads(expr.callee, reads)
-      expr.arguments.forEach(arg => collectExpressionReads(arg, reads))
-      return
-    case 'NewExpression':
-      collectExpressionReads(expr.callee, reads)
-      expr.arguments.forEach(arg => collectExpressionReads(arg, reads))
-      return
-    case 'ImportExpression':
-      collectExpressionReads(expr.source, reads)
-      if (expr.options) collectExpressionReads(expr.options, reads)
-      return
-    case 'MemberExpression':
-    case 'OptionalMemberExpression':
-      collectExpressionReads(expr.object, reads)
-      if (expr.computed) collectExpressionReads(expr.property, reads)
-      return
-    case 'BinaryExpression':
-    case 'LogicalExpression':
-      collectExpressionReads(expr.left, reads)
-      collectExpressionReads(expr.right, reads)
-      return
-    case 'UnaryExpression':
-      collectExpressionReads(expr.argument, reads)
-      return
-    case 'ConditionalExpression':
-      collectExpressionReads(expr.test, reads)
-      collectExpressionReads(expr.consequent, reads)
-      collectExpressionReads(expr.alternate, reads)
-      return
-    case 'ArrayExpression':
-      expr.elements.forEach(element => {
-        if (element) collectExpressionReads(element, reads)
-      })
-      return
-    case 'ObjectExpression':
-      expr.properties.forEach(prop => {
-        if (prop.kind === 'Property') {
-          if (prop.computed) collectExpressionReads(prop.key, reads)
-          collectExpressionReads(prop.value, reads)
-        } else if (prop.kind === 'SpreadElement') {
-          collectExpressionReads(prop.argument, reads)
-        }
-      })
-      return
-    case 'JSXElement':
-      if (typeof expr.tagName !== 'string') collectExpressionReads(expr.tagName, reads)
-      expr.children.forEach(child => {
-        if (child.kind !== 'text') collectExpressionReads(child.value, reads)
-      })
-      expr.attributes.forEach(attr => {
-        if (attr.isSpread) {
-          if (attr.spreadExpr) collectExpressionReads(attr.spreadExpr, reads)
-        } else if (attr.value) {
-          collectExpressionReads(attr.value, reads)
-        }
-      })
-      return
-    case 'ArrowFunction':
-    case 'FunctionExpression':
-      return
-    case 'ClassExpression':
-      if (expr.superClass) collectExpressionReads(expr.superClass, reads)
-      return
-    case 'AssignmentExpression':
-      collectExpressionReads(expr.left, reads)
-      collectExpressionReads(expr.right, reads)
-      return
-    case 'UpdateExpression':
-      collectExpressionReads(expr.argument, reads)
-      return
-    case 'AwaitExpression':
-      collectExpressionReads(expr.argument, reads)
-      return
-    case 'SequenceExpression':
-      expr.expressions.forEach(item => collectExpressionReads(item, reads))
-      return
-    case 'YieldExpression':
-      if (expr.argument) collectExpressionReads(expr.argument, reads)
-      return
-    case 'TaggedTemplateExpression':
-      collectExpressionReads(expr.tag, reads)
-      expr.quasi.expressions.forEach(item => collectExpressionReads(item, reads))
-      return
-    case 'TemplateLiteral':
-      expr.expressions.forEach(item => collectExpressionReads(item, reads))
-      return
-    default:
-      return
-  }
+  walkExpression(
+    expr,
+    node => {
+      if (node.kind === 'Identifier') reads.add(deSSAVarName(node.name))
+    },
+    { includeFunctionBodies: false },
+  )
 }
