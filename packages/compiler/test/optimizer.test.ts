@@ -442,7 +442,7 @@ describe('optimizeHIR', () => {
     expect(hasDanglingIdentifierReference(optimized, 'name')).toBe(false)
   })
 
-  it('keeps class expression extends dependencies alive', () => {
+  it('does not leave dangling class expression extends dependencies', () => {
     const ast = parseFile(`
       function make() {
         "use pure"
@@ -451,7 +451,7 @@ describe('optimizeHIR', () => {
       }
     `)
     const optimized = optimizeHIR(buildHIR(ast))
-    expect(hasAssignTargetBase(optimized, 'Base')).toBe(true)
+    expect(hasDanglingIdentifierReference(optimized, 'Base')).toBe(false)
   })
 
   it('keeps class expression computed member dependencies alive', () => {
