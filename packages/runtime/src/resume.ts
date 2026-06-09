@@ -445,16 +445,6 @@ function serializeSlots(ctx: HookContext, seen = new Map<object, string>()): Slo
     }
 
     const value = values[i]
-    if (typeof value === 'function') {
-      continue
-    }
-
-    // Note: we don't skip undefined anymore since we can serialize it
-    if (value === undefined) {
-      slots.push([i, 'raw', serializeValue(undefined, seen, `$[${i}]`)])
-      continue
-    }
-
     if (isSignal(value)) {
       try {
         const raw = (value as () => unknown)()
@@ -468,6 +458,16 @@ function serializeSlots(ctx: HookContext, seen = new Map<object, string>()): Slo
     if (isStoreProxy(value)) {
       const raw = unwrapStore(value)
       slots.push([i, 'store', serializeValue(raw, seen, `$[${i}]`)])
+      continue
+    }
+
+    if (typeof value === 'function') {
+      continue
+    }
+
+    // Note: we don't skip undefined anymore since we can serialize it
+    if (value === undefined) {
+      slots.push([i, 'raw', serializeValue(undefined, seen, `$[${i}]`)])
       continue
     }
 
