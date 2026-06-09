@@ -198,7 +198,7 @@ describe('getDiagnosticInfo', () => {
     expect(info.code).toBe(DiagnosticCode.FICT_R006)
     expect(info.severity).toBe(DiagnosticSeverity.Error)
     expect(info.message).toContain('control-flow')
-    expect(info.message).toContain('region re-execution')
+    expect(info.message).toContain('supported branch returns')
   })
 
   it('returns info for legacy compiler diagnostics', () => {

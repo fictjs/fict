@@ -115,19 +115,17 @@ function Summary() {
     let heading = void 0;
     let extra = 0;
     if (count() > 0) {
-      const noun = __fictUseMemo(__fictCtx, () => count() > 1 ? "Items" : "Item", {
-        name: "noun"
-      }, 1000);
-      heading = noun() + ": " + count();
+      const noun = count() > 1 ? "Items" : "Item";
+      heading = noun + ": " + count();
       extra = count() * 10;
     }
     return {
-      heading: heading !== void 0 ? heading : void 0,
-      extra: extra !== void 0 ? extra : void 0
+      heading,
+      extra
     };
   }, {
     internal: true
-  }, 1001);
+  }, 1000);
   const heading = () => __region_0().heading;
   const extra = () => __region_0().extra;
   return __fictUseMemo(__fictCtx, () => {
@@ -140,7 +138,7 @@ function Summary() {
     const __end_5 = getSlotEnd(__el_3);
     insertBetween(__el_3, __end_5, () => extra(), createElement);
     return __root_0;
-  }, 1002)();
+  }, 1001)();
 }
 let __default_export_value_0 = Summary;
 export default __default_export_value_0;"

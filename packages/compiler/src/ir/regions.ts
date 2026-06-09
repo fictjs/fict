@@ -6195,6 +6195,8 @@ function instructionToStatement(
     const derivedValueContainsJSX = containsJSXExpr(instr.value)
     // fix: Check if variable will be mutated (assigned to later without declaration)
     const needsMutable = ctx.mutatedVars?.has(baseName) ?? false
+    const shouldUsePlainRegionLocalDerivedValue =
+      inRegionMemo && (ctx.inConditional ?? 0) > 0 && !derivedValueContainsJSX
     const lowerWithoutRenderMemo = <T>(fn: () => T): T => {
       const prevNoMemo = ctx.noMemo
       const prevDynamicHookSlotDepth = ctx.dynamicHookSlotDepth ?? 0
@@ -6227,8 +6229,7 @@ function instructionToStatement(
     }
     const needsAsyncContext = expressionNeedsAsyncContext(instr.value)
     const isLocalFunctionDerivedCall = expressionIsLocalFunctionDirectCall(instr.value, ctx)
-    const shouldUseNoMemoDerivedValue =
-      ctx.noMemo || (inRegionMemo && (derivedValueContainsJSX || (ctx.inConditional ?? 0) > 0))
+    const shouldUseNoMemoDerivedValue = ctx.noMemo || (inRegionMemo && derivedValueContainsJSX)
     const shouldEagerDerivedValue =
       !shouldUseNoMemoDerivedValue &&
       !needsAsyncContext &&
@@ -6364,6 +6365,11 @@ function instructionToStatement(
           markLocalValue()
           return lowerAssignedValue(true)
         }
+        if (shouldUsePlainRegionLocalDerivedValue) {
+          ctx.memoVars?.delete(baseName)
+          markLocalValue()
+          return lowerAssignedValue(true)
+        }
         if (shouldEagerDerivedValue) {
           return lowerEagerDerivedValue()
         }
@@ -6449,6 +6455,9 @@ function instructionToStatement(
           if (hasWriteExpression) {
             return lowerPlainDerivedDeclaration(normalizedDecl)
           }
+          if (shouldUsePlainRegionLocalDerivedValue) {
+            return lowerPlainDerivedDeclaration(normalizedDecl)
+          }
           if (shouldEagerDerivedValue) {
             return t.variableDeclaration(normalizedDecl, [
               t.variableDeclarator(t.identifier(baseName), lowerEagerDerivedValue()),
@@ -6490,6 +6499,9 @@ function instructionToStatement(
           ])
         }
         if (hasWriteExpression) {
+          return lowerPlainDerivedDeclaration(normalizedDecl)
+        }
+        if (shouldUsePlainRegionLocalDerivedValue) {
           return lowerPlainDerivedDeclaration(normalizedDecl)
         }
         if (shouldEagerDerivedValue) {
@@ -6641,6 +6653,9 @@ function instructionToStatement(
         if (hasWriteExpression) {
           return lowerPlainDerivedDeclaration('const')
         }
+        if (shouldUsePlainRegionLocalDerivedValue) {
+          return lowerPlainDerivedDeclaration('const')
+        }
         if (shouldEagerDerivedValue) {
           return t.variableDeclaration('const', [
             t.variableDeclarator(t.identifier(baseName), lowerEagerDerivedValue()),
@@ -6682,6 +6697,9 @@ function instructionToStatement(
         ])
       }
       if (hasWriteExpression) {
+        return lowerPlainDerivedDeclaration('const')
+      }
+      if (shouldUsePlainRegionLocalDerivedValue) {
         return lowerPlainDerivedDeclaration('const')
       }
       if (shouldEagerDerivedValue) {

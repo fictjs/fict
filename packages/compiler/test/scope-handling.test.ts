@@ -129,8 +129,9 @@ describe('Scope Handling', () => {
       `
       const output = transform(input)
 
-      expect(output).toContain('a: a !== void 0')
-      expect(output).toContain('b: b !== void 0')
+      expect(output).toMatch(/return \{\s+a,\s+b\s+\};/)
+      expect(output).not.toContain('a: a !== void 0')
+      expect(output).not.toContain('b: b !== void 0')
     })
   })
 
