@@ -9490,6 +9490,64 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('passes list index values into non-delegated event handlers', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export const selected: unknown[] = []
+
+      export function App() {
+        const items = ['A', 'B']
+        let current = $state<unknown>(null)
+        const select = (index: number) => {
+          current = index
+          selected.push(index)
+        }
+
+        return (
+          <div>
+            <p data-id="current">{String(current)}</p>
+            {items.map((item, index) => (
+              <div
+                key={item}
+                data-id={item}
+                draggable={true}
+                onDragStart={() => select(index)}
+              >
+                {item}
+              </div>
+            ))}
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        selected.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      selected: unknown[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+    container
+      .querySelector('[data-id="B"]')
+      ?.dispatchEvent(new Event('dragstart', { bubbles: true }))
+    await flushUpdates()
+
+    expect(mod.selected).toEqual([1])
+    expect(container.querySelector('[data-id="current"]')?.textContent).toBe('1')
+
+    teardown()
+    container.remove()
+  })
+
   it('invokes function-valued list items used as event handlers', async () => {
     const source = `
       import { render } from 'fict'

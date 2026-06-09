@@ -1004,6 +1004,9 @@ export function buildListCallExpression(
   if (mapCallback.params[0]) {
     ctx.listItemAccessorParamNames = new Set(prevListItemAccessorParamNames ?? [])
     ctx.listItemAccessorParamNames.add(deSSAVarName(mapCallback.params[0].name))
+    if (mapCallback.params[1]) {
+      ctx.listItemAccessorParamNames.add(deSSAVarName(mapCallback.params[1].name))
+    }
   }
   let callbackExpr: BabelCore.types.Expression
   try {

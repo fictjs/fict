@@ -5273,6 +5273,22 @@ function lowerDomExpression(
   })
 }
 
+function replaceListAccessorParamsInHandler(
+  expr: BabelCore.types.Expression,
+  ctx: CodegenContext,
+): BabelCore.types.Expression {
+  if (!ctx.inListRender || !ctx.listItemAccessorParamNames?.size) return expr
+
+  const overrides = Object.create(null) as RegionOverrideMap
+  for (const name of ctx.listItemAccessorParamNames) {
+    overrides[name] = () => ctx.t.callExpression(ctx.t.identifier(name), [])
+  }
+
+  const cloned = ctx.t.cloneNode(expr, true) as BabelCore.types.Expression
+  replaceIdentifiersWithOverrides(cloned, overrides, ctx.t, undefined, undefined, true)
+  return cloned
+}
+
 function lowerJSXChildNonFineGrained(
   child: JSXChild,
   ctx: CodegenContext,
@@ -6815,11 +6831,12 @@ function lowerIntrinsicElement(
         const shouldWrapHandler = eventHandlerExpressionNeedsReactiveGetter(binding.expr, ctx)
         const prevWrapTracked = ctx.wrapTrackedExpressions
         ctx.wrapTrackedExpressions = false
-        const valueExpr = lowerDomExpression(binding.expr, ctx, containingRegion, {
+        let valueExpr = lowerDomExpression(binding.expr, ctx, containingRegion, {
           skipHookAccessors: true,
           skipRegionRootOverride: true,
         })
         ctx.wrapTrackedExpressions = prevWrapTracked
+        valueExpr = replaceListAccessorParamsInHandler(valueExpr, ctx)
         const eventParam = t.identifier('_e')
         const isFn = t.isArrowFunctionExpression(valueExpr) || t.isFunctionExpression(valueExpr)
         const isReactiveGetterName = (name: string): boolean =>
