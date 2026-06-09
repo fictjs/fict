@@ -1220,14 +1220,6 @@ export function collectExpressionIdentifiersDeep(
   }
 }
 
-function getExpressionIdentifiersDeep(expr?: Expression | null): Set<string> {
-  const deps = new Set<string>()
-  if (expr) {
-    collectExpressionIdentifiersDeep(expr, deps)
-  }
-  return deps
-}
-
 function expressionIsContainerSnapshotValue(expr: Expression): boolean {
   switch (expr.kind) {
     case 'ObjectExpression':
