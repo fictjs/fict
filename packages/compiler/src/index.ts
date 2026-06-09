@@ -4844,16 +4844,23 @@ export const createFictPlugin = declare(
   },
 )
 
-export const COMPILER_CACHE_FINGERPRINT = createCompilerCacheFingerprint([
-  String(createFictPlugin),
-  String(createHIREntrypointVisitor),
-  String(buildHIR),
-  String(optimizeHIR),
-  String(lowerHIRWithRegions),
-  String(resolveModuleMetadata),
-  String(MODULE_REACTIVE_METADATA_VERSION),
-  JSON.stringify(Array.from(SAFE_FUNCTIONS).sort()),
-])
+let compilerCacheFingerprint: string | undefined
+
+// Computed lazily: fingerprinting reads every compiler artifact from disk
+// (the whole src tree in source-loaded monorepo dev/test processes), which
+// is too expensive to pay at module load for consumers that never cache.
+export function getCompilerCacheFingerprint(): string {
+  return (compilerCacheFingerprint ??= createCompilerCacheFingerprint([
+    String(createFictPlugin),
+    String(createHIREntrypointVisitor),
+    String(buildHIR),
+    String(optimizeHIR),
+    String(lowerHIRWithRegions),
+    String(resolveModuleMetadata),
+    String(MODULE_REACTIVE_METADATA_VERSION),
+    JSON.stringify(Array.from(SAFE_FUNCTIONS).sort()),
+  ]))
+}
 
 export {
   clearModuleMetadata,

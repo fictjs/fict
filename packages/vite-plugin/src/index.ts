@@ -10,8 +10,8 @@ import _traverse from '@babel/traverse'
 import type { NodePath, Scope } from '@babel/traverse'
 import * as t from '@babel/types'
 import {
-  COMPILER_CACHE_FINGERPRINT,
   createFictPlugin,
+  getCompilerCacheFingerprint,
   resolvePackageModuleMetadata,
   type FictCompilerOptions,
   type ModuleReactiveMetadata,
@@ -219,12 +219,18 @@ interface TypeScriptApi {
 }
 
 const CACHE_VERSION = 3
-const VITE_PLUGIN_CACHE_FINGERPRINT = createVitePluginCacheFingerprint([
-  String(extractAndRewriteHandlers),
-])
-const TRANSFORM_CACHE_FINGERPRINT = hashString(
-  [getCompilerCacheFingerprint(), VITE_PLUGIN_CACHE_FINGERPRINT].join('|'),
-)
+let transformCacheFingerprint: string | undefined
+
+// Lazy: both fingerprints read package artifacts from disk, so the cost is
+// deferred from module load to the first cache-key computation.
+function getTransformCacheFingerprint(): string {
+  return (transformCacheFingerprint ??= hashString(
+    [
+      hashString(getCompilerCacheFingerprint()),
+      createVitePluginCacheFingerprint([String(extractAndRewriteHandlers)]),
+    ].join('|'),
+  ))
+}
 const MODULE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts']
 const DEFAULT_APP_INCLUDE = ['**/*.tsx', '**/*.jsx']
 const DEFAULT_LIBRARY_INCLUDE = ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx']
@@ -1501,10 +1507,6 @@ function hashString(value: string): string {
   return createHash('sha256').update(value).digest('hex')
 }
 
-function getCompilerCacheFingerprint(): string {
-  return hashString(COMPILER_CACHE_FINGERPRINT)
-}
-
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== 'object') {
     return JSON.stringify(value)
@@ -1559,7 +1561,7 @@ function buildCacheKey(
   return hashString(
     [
       CACHE_VERSION,
-      TRANSFORM_CACHE_FINGERPRINT,
+      getTransformCacheFingerprint(),
       filename,
       codeHash,
       optionsHash,

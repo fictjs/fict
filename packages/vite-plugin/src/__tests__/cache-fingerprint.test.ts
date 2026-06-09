@@ -112,7 +112,7 @@ async function transformWithFingerprints(
 ) {
   vi.resetModules()
   vi.doMock('@fictjs/compiler', () => ({
-    COMPILER_CACHE_FINGERPRINT: compilerFingerprint,
+    getCompilerCacheFingerprint: () => compilerFingerprint,
     createFictPlugin: () => ({
       name: 'mock-fict-compiler',
       visitor: {},

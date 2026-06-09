@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-import { COMPILER_CACHE_FINGERPRINT } from '@fictjs/compiler'
+import { getCompilerCacheFingerprint } from '@fictjs/compiler'
 import { describe, expect, it } from 'vitest'
 
 describe('compiler cache fingerprint', () => {
@@ -14,6 +14,6 @@ describe('compiler cache fingerprint', () => {
       .update(['fict-compiler-cache-v2', artifact].join('|'))
       .digest('hex')
 
-    expect(COMPILER_CACHE_FINGERPRINT).toBe(expected)
+    expect(getCompilerCacheFingerprint()).toBe(expected)
   })
 })
