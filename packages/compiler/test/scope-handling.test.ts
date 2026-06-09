@@ -227,7 +227,8 @@ describe('Scope Handling', () => {
 
       // Loop variables should not be exposed
       expect(output).not.toContain('const item = ()')
-      expect(output).toContain('const doubled = () =>')
+      expect(output).toContain('const doubled = item * 2')
+      expect(output).toContain('const sum = () =>')
     })
   })
 })

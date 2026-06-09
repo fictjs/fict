@@ -157,8 +157,17 @@ describe('Hook Return Annotation (@fictReturn)', () => {
       expect(result?.objectProps).toBeUndefined()
     })
 
-    it('ignores invalid object-style direct accessor values', () => {
+    it('parses object-style direct store annotation', () => {
       const node = createAnnotatedNode('* @fictReturn { directAccessor: "store" } ')
+
+      const result = parseFictReturnAnnotation(node)
+      expect(result).not.toBeNull()
+      expect(result?.directAccessor).toBe('store')
+      expect(result?.objectProps).toBeUndefined()
+    })
+
+    it('ignores invalid object-style direct accessor values', () => {
+      const node = createAnnotatedNode('* @fictReturn { directAccessor: "effect" } ')
 
       const result = parseFictReturnAnnotation(node)
       expect(result).toBeNull()

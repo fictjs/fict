@@ -2178,8 +2178,7 @@ describe('Cross-Module Reactivity', () => {
         path.join(baseDir, 'app-hook-direct-computed-write.tsx'),
       )
 
-      expect(output).toContain('=== "count"')
-      expect(output).toContain('() + 2')
+      expect(output).toMatch(/__hook_\d+\["count"\]\(__hook_\d+\["count"\]\(\) \+ 2\)/)
       expect(output.match(/useCounter\(\)/g)).toHaveLength(1)
       expect(output).not.toContain('useCounter()[key] += 2')
     })
@@ -2212,7 +2211,7 @@ describe('Cross-Module Reactivity', () => {
 
       expect(output).toContain('useCounter()')
       expect(output).toContain('.count()')
-      expect(output).toContain('.count(__prev_')
+      expect(output).toMatch(/__hook_\d+\.count\(\+\+__prev_\d+\)/)
       expect(output.match(/useCounter\(\)/g)).toHaveLength(1)
       expect(output).not.toContain('useCounter().count++')
     })
@@ -2248,7 +2247,7 @@ describe('Cross-Module Reactivity', () => {
       )
 
       expect(output).toContain('hooks.useCounter()')
-      expect(output).toContain('.count(__prev_')
+      expect(output).toMatch(/__hook_\d+\.count\(--__prev_\d+\)/)
       expect(output.match(/hooks\.useCounter\(\)/g)).toHaveLength(1)
       expect(output).not.toContain('hooks.useCounter().count--')
     })
@@ -2576,6 +2575,7 @@ describe('Cross-Module Reactivity', () => {
         path.join(baseDir, 'app-hook-destructure-object.tsx'),
       )
 
+      expect(output).toContain('const count = _useCounter.count;')
       expect(output).toContain('return count();')
       expect(output).not.toContain('return count;')
     })
@@ -2646,6 +2646,7 @@ describe('Cross-Module Reactivity', () => {
         path.join(baseDir, 'app-hook-destructure-array.tsx'),
       )
 
+      expect(output).toContain('const count = _useCounter2[0];')
       expect(output).toContain('return count();')
       expect(output).not.toContain('return count;')
     })
@@ -2938,8 +2939,11 @@ describe('Cross-Module Reactivity', () => {
         path.join(baseDir, 'app-hook-destructure-default-value.tsx'),
       )
 
-      expect(output).toContain('return count();')
-      expect(output).not.toContain('return count;')
+      expect(output).toContain(
+        'const count = _useCounter$count() === void 0 ? fallback : _useCounter$count();',
+      )
+      expect(output).toContain('return count;')
+      expect(output).not.toContain('return count();')
     })
 
     it('preserves hook-return array rest destructuring aliases', () => {
@@ -6045,7 +6049,7 @@ describe('Cross-Module Reactivity', () => {
 
         const output = transform(appSource, { fineGrainedDom: true }, appPath)
         expect(output).toMatch(/state\.count\(\)/)
-        expect(output).toMatch(/state\.count\(__prev_/)
+        expect(output).toMatch(/state\.count\(\+\+__prev_/)
         expect(output).toMatch(/state\["count"\]/)
         expect(output).toMatch(/next\(\)/)
         expect(output).toMatch(/state\[0\]/)

@@ -11,12 +11,15 @@ const regionCollisionRead = Array.from({ length: 24 }, (_, index) => `__region_$
   ` + '|' + `,
 )
 
-function suffixedRegionMemos(output: string): string[] {
-  return Array.from(output.matchAll(/const (__region_\d+_1) = __fictUseMemo/g), match => match[1]!)
+function generatedRegionMemos(output: string): string[] {
+  return Array.from(output.matchAll(/const (__region_\d+) = __fictUseMemo/g), match => match[1]!)
 }
 
-function expectSuffixedRegionMemo(output: string): string {
-  const regionName = suffixedRegionMemos(output)[0]
+function expectNonCollidingRegionMemo(output: string): string {
+  const regionName = generatedRegionMemos(output).find(name => {
+    const index = Number(name.replace('__region_', ''))
+    return Number.isInteger(index) && index >= 24
+  })
   expect(regionName).toBeTruthy()
   return regionName as string
 }
@@ -39,7 +42,7 @@ describe('region memo generated name collisions', () => {
       { dev: false, optimize: true, lazyConditional: true },
     )
 
-    const regionName = expectSuffixedRegionMemo(output)
+    const regionName = expectNonCollidingRegionMemo(output)
     expect(output).toContain(`} = ${regionName}();`)
     expect(output).toContain('const __region_0 = globalThis.__fictRegion0 ?? "r0";')
   })
@@ -68,7 +71,7 @@ describe('region memo generated name collisions', () => {
       { dev: false, optimize: true, lazyConditional: true },
     )
 
-    const regionName = expectSuffixedRegionMemo(output)
+    const regionName = expectNonCollidingRegionMemo(output)
     expect(output).toContain(`const {`)
     expect(output).toContain(`} = ${regionName}();`)
     expect(output).toContain('show() ? rich() : fallback()')
@@ -95,6 +98,7 @@ describe('region memo generated name collisions', () => {
     )
 
     expect(output).toMatch(/const __region_\d+ = __fictUseMemo/)
+    expect(generatedRegionMemos(output).length).toBeGreaterThan(0)
     expect(output).not.toMatch(/const __region_\d+_1 = __fictUseMemo/)
   })
 })

@@ -459,9 +459,8 @@ describe('Fict Compiler - Basic Transforms', () => {
       const output = transform(input)
       // Event handler should not be wrapped in an additional arrow function
       // Non fine-grained path keeps handlers as direct props.
-      expect(output).toMatch(
-        /onClick:\s*\(\)\s*=>\s*\(__prev_\d+\s*=>\s*\(__old_\d+\s*=>\s*\(count\(__prev_\d+\),\s*__old_\d+\)\)\(__prev_\d+\+\+\)\)\(count\(\)\)/,
-      )
+      expect(output).toMatch(/onClick:\s*\(\.\.\.__fictArgs\)\s*=>\s*\{/)
+      expect(output).toMatch(/count\(__prev_\d+\)/)
       expect(output).not.toContain('onClick: () => () =>')
     })
 
