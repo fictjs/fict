@@ -16,6 +16,7 @@ boundary lives in [SCOPE.md](../SCOPE.md); Preview policy lives in
 - `compiler-spec.md` — Compiler rules, lowering details, and formal semantics (v1.0)
 - `reactivity-semantics.md` — Semantic rules for Fict reactivity (memoization, closures, call-site expansion)
 - `reactivity-guarantee-matrix.md` — Guarantee matrix for compiler/runtime behavior
+- `error-semantics.md` — Runtime contract for errors thrown in effects, cleanups, and memos
 - `diagnostic-codes.md` — Complete reference for compiler warnings and errors with fixes
 - `api-freeze-v1.md` — v1 API freeze map for stable public and compiler-dependent surfaces
 - `config-profiles.md` — Recommended dev/CI/prod compiler + runtime profiles
