@@ -155,6 +155,12 @@ function resolveListKey<T>(
     return { key, identityKey: key, occurrence }
   }
 
+  // Invariant: identities is append-only with identities[i].occurrence === i + 1,
+  // and its objects must stay reference-stable across renders because existing
+  // blocks are keyed by them. Slots are addressed purely by occurrence, so a
+  // partially-populated map left behind by an abandoned stable-order scan is
+  // reused or extended deterministically on the next resolve — do not clear it
+  // between passes; only the discard-all paths may clear the map.
   let identities = container.duplicateKeyIdentities.get(key)
   if (!identities) {
     identities = []
