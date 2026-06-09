@@ -3,19 +3,17 @@ import { describe, expect, it } from 'vitest'
 import { analyzeDocument, extractLocationFromCompilerMessage } from '../src/analysis/analyzerClient'
 
 const UNSUPPORTED_HIR_SOURCE = `
-import { $state } from 'fict'
-
-export function App() {
-  let state = $state({ user: { name: 'a' } })
-  const arr = [, 1]
-  return <div>{state.user.name}{arr.length}</div>
+export function App(props) {
+  return <div>{...props.children}</div>
 }
 `
 
-const UNSUPPORTED_STATEMENT_SOURCE = `
+const COMPILER_DIAGNOSTIC_SOURCE = `
+import { $state } from 'fict'
+let count = $state(0)
+
 export function App() {
-  debugger
-  return <div />
+  return <div>{count}</div>
 }
 `
 
@@ -75,12 +73,12 @@ describe('analyzer client', () => {
     )
   })
 
-  it('falls back to static components for other compiler analysis errors', async () => {
+  it('returns components with non-HIR compiler analysis diagnostics', async () => {
     const document = {
       languageId: 'typescriptreact',
-      fileName: '/tmp/debugger.tsx',
-      uri: { fsPath: '/tmp/debugger.tsx' },
-      getText: () => UNSUPPORTED_STATEMENT_SOURCE,
+      fileName: '/tmp/module-state.tsx',
+      uri: { fsPath: '/tmp/module-state.tsx' },
+      getText: () => COMPILER_DIAGNOSTIC_SOURCE,
     } as const
 
     const result = await analyzeDocument(document as never, {
