@@ -5,7 +5,8 @@
  * Integrates with Fict's reactive system for active state tracking.
  */
 
-import { createMemo, type FictNode, type JSX, type StyleProp } from '@fictjs/runtime'
+import { createEffect, untrack, type FictNode, type JSX, type StyleProp } from '@fictjs/runtime'
+import { createSignal } from '@fictjs/runtime/advanced'
 import { spread } from '@fictjs/runtime/internal'
 
 import {
@@ -21,6 +22,37 @@ import { parseURL, stripBasePath } from './utils'
 
 // CSS Properties type for styles
 type CSSProperties = StyleProp
+
+const joinClassNames = (
+  base: string | undefined,
+  active: string | undefined,
+  pending: string | undefined,
+): string | undefined => {
+  const className = `${base ?? ''} ${active ?? ''} ${pending ?? ''}`.trim()
+  return className || undefined
+}
+
+const mergeStyles = (
+  base: CSSProperties | undefined,
+  active: CSSProperties | undefined,
+  pending: CSSProperties | undefined,
+): CSSProperties | undefined => {
+  const isStyleObject = (
+    style: CSSProperties | undefined,
+  ): style is Exclude<CSSProperties, string | null | undefined> =>
+    style !== null && style !== undefined && typeof style === 'object'
+
+  if (!isStyleObject(base) && !isStyleObject(active) && !isStyleObject(pending)) {
+    return pending ?? active ?? base ?? undefined
+  }
+
+  const style = {
+    ...(isStyleObject(base) ? base : {}),
+    ...(isStyleObject(active) ? active : {}),
+    ...(isStyleObject(pending) ? pending : {}),
+  }
+  return Object.keys(style).length > 0 ? style : undefined
+}
 
 const createSpreadRef = <T extends Element>(props: Record<string, unknown>) => {
   let current: T | null = null
@@ -73,15 +105,24 @@ export interface LinkProps extends Omit<JSX.IntrinsicElements['a'], 'href'> {
  */
 export function Link(props: LinkProps): FictNode {
   const router = useRouter()
-  const href = useHref(() => props.to)
+  const to = untrack(() => props.to)
+  const replace = untrack(() => props.replace)
+  const state = untrack(() => props.state)
+  const scroll = untrack(() => props.scroll)
+  const relative = untrack(() => props.relative)
+  const reloadDocument = untrack(() => props.reloadDocument)
+  const prefetchMode = untrack(() => props.prefetch)
+  const isDisabled = untrack(() => props.disabled)
+  const onClick = untrack(() => props.onClick)
+  const href = useHref(() => to)
   const getHrefValue = () =>
     readAccessor(readAccessor(href as MaybeAccessor<MaybeAccessor<string>>))
   let preloadTriggered = false
 
   const handleClick = (event: MouseEvent) => {
     // Call custom onClick handler first
-    if (props.onClick) {
-      props.onClick(event)
+    if (onClick) {
+      onClick(event)
     }
 
     // Don't handle if default was prevented
@@ -94,10 +135,10 @@ export function Link(props: LinkProps): FictNode {
     if (event.button !== 0) return
 
     // Don't handle if reloadDocument is set
-    if (props.reloadDocument) return
+    if (reloadDocument) return
 
     // Don't handle if disabled
-    if (props.disabled) return
+    if (isDisabled) return
 
     // Don't handle external links
     const target = (event.currentTarget as HTMLAnchorElement).target
@@ -108,18 +149,18 @@ export function Link(props: LinkProps): FictNode {
 
     // Navigate using the router
     const options: NavigateOptions = {
-      replace: props.replace,
-      state: props.state,
-      scroll: props.scroll,
-      relative: props.relative,
+      replace,
+      state,
+      scroll,
+      relative,
     }
 
-    router.navigate(props.to, options)
+    router.navigate(to, options)
   }
 
   // Preload handler for hover/focus
   const triggerPreload = () => {
-    if (preloadTriggered || props.disabled || props.prefetch === 'none') return
+    if (preloadTriggered || isDisabled || prefetchMode === 'none') return
     preloadTriggered = true
 
     // Emit a preload event that can be handled by route preloaders
@@ -127,14 +168,14 @@ export function Link(props: LinkProps): FictNode {
     if (typeof window !== 'undefined' && window.dispatchEvent) {
       window.dispatchEvent(
         new CustomEvent('fict-router:preload', {
-          detail: { href: hrefValue, to: props.to },
+          detail: { href: hrefValue, to },
         }),
       )
     }
   }
 
   const handleMouseEnter = (event: MouseEvent) => {
-    if (props.prefetch === 'intent' || props.prefetch === undefined) {
+    if (prefetchMode === 'intent' || prefetchMode === undefined) {
       triggerPreload()
     }
     // Call original handler if provided
@@ -144,7 +185,7 @@ export function Link(props: LinkProps): FictNode {
   }
 
   const handleFocus = (event: FocusEvent) => {
-    if (props.prefetch === 'intent' || props.prefetch === undefined) {
+    if (prefetchMode === 'intent' || prefetchMode === undefined) {
       triggerPreload()
     }
     // Call original handler if provided
@@ -161,8 +202,8 @@ export function Link(props: LinkProps): FictNode {
     scroll: _scroll,
     relative: _relative,
     reloadDocument: _reloadDocument,
-    prefetch,
-    disabled,
+    prefetch: _prefetch,
+    disabled: _disabled,
     onClick: _onClick,
     onMouseEnter: _onMouseEnter,
     onFocus: _onFocus,
@@ -172,13 +213,13 @@ export function Link(props: LinkProps): FictNode {
   const anchorRef = createSpreadRef<HTMLAnchorElement>(anchorProps as Record<string, unknown>)
   const spanRef = createSpreadRef<HTMLSpanElement>(anchorProps as Record<string, unknown>)
 
-  if (disabled) {
+  if (isDisabled) {
     // Render as span when disabled
     return <span ref={spanRef}>{children}</span>
   }
 
   // Trigger preload immediately if prefetch='render'
-  if (prefetch === 'render') {
+  if (prefetchMode === 'render') {
     triggerPreload()
   }
 
@@ -254,8 +295,25 @@ export interface NavLinkProps extends Omit<LinkProps, 'className' | 'style' | 'c
  */
 export function NavLink(props: NavLinkProps): FictNode {
   const router = useRouter()
-  const isActive = useIsActive(() => props.to, { end: props.end })
-  const href = useHref(() => props.to)
+  const to = untrack(() => props.to)
+  const end = untrack(() => props.end)
+  const replace = untrack(() => props.replace)
+  const state = untrack(() => props.state)
+  const scroll = untrack(() => props.scroll)
+  const relative = untrack(() => props.relative)
+  const reloadDocument = untrack(() => props.reloadDocument)
+  const isDisabled = untrack(() => props.disabled)
+  const onClick = untrack(() => props.onClick)
+  const classNameProp = untrack(() => props.className)
+  const styleProp = untrack(() => props.style)
+  const childrenProp = untrack(() => props.children)
+  const activeClassNameProp = untrack(() => props.activeClassName)
+  const pendingClassNameProp = untrack(() => props.pendingClassName)
+  const activeStyleProp = untrack(() => props.activeStyle)
+  const pendingStyleProp = untrack(() => props.pendingStyle)
+  const ariaCurrentProp = untrack(() => props['aria-current'])
+  const isActive = useIsActive(() => to, { end })
+  const href = useHref(() => to)
   const getHrefValue = () =>
     readAccessor(readAccessor(href as MaybeAccessor<MaybeAccessor<string>>))
   const pendingLocation = usePendingLocation()
@@ -278,7 +336,7 @@ export function NavLink(props: NavLinkProps): FictNode {
     const targetPathWithoutBase = stripBasePath(parsed.pathname, baseToStrip)
 
     // Check if the pending navigation is to this link's destination
-    if (props.end) {
+    if (end) {
       return pendingPathWithoutBase === targetPathWithoutBase
     }
 
@@ -288,87 +346,41 @@ export function NavLink(props: NavLinkProps): FictNode {
     )
   }
 
-  // Compute render props
-  const getRenderProps = (): NavLinkRenderProps => ({
-    isActive: isActive(),
-    isPending: computeIsPending(),
-    isTransitioning: readAccessor(router.isRouting),
-  })
+  const renderProps: NavLinkRenderProps = {
+    isActive: false,
+    isPending: false,
+    isTransitioning: false,
+  }
 
-  // Compute className
-  const computedClassName = createMemo(() => {
-    const renderProps = getRenderProps()
-    const classes: string[] = []
+  const computedClassName = createSignal<string | undefined>(undefined)
+  const computedStyle = createSignal<CSSProperties | undefined>(undefined)
+  const computedChildren = createSignal<FictNode>(undefined)
+  const ariaCurrent = createSignal<NavLinkProps['aria-current'] | undefined>(undefined)
 
-    // Base className
-    if (typeof props.className === 'function') {
-      const result = props.className(renderProps)
-      if (result) classes.push(result)
-    } else if (props.className) {
-      classes.push(props.className)
-    }
+  createEffect(() => {
+    renderProps.isActive = isActive()
+    renderProps.isPending = computeIsPending()
+    renderProps.isTransitioning = readAccessor(router.isRouting)
 
-    // Active className
-    if (renderProps.isActive && props.activeClassName) {
-      classes.push(props.activeClassName)
-    }
+    const baseClassName =
+      typeof classNameProp === 'function' ? classNameProp(renderProps) : classNameProp
+    const activeClassName = renderProps.isActive ? activeClassNameProp : undefined
+    const pendingClassName = renderProps.isPending ? pendingClassNameProp : undefined
 
-    // Pending className
-    if (renderProps.isPending && props.pendingClassName) {
-      classes.push(props.pendingClassName)
-    }
+    const baseStyle = typeof styleProp === 'function' ? styleProp(renderProps) : styleProp
+    const activeStyle = renderProps.isActive ? activeStyleProp : undefined
+    const pendingStyle = renderProps.isPending ? pendingStyleProp : undefined
 
-    return classes.join(' ') || undefined
-  })
-
-  // Compute style
-  const computedStyle = createMemo(() => {
-    const renderProps = getRenderProps()
-    const style: CSSProperties = {}
-
-    // Base style
-    if (typeof props.style === 'function') {
-      const result = props.style(renderProps)
-      if (result) Object.assign(style, result)
-    } else if (props.style) {
-      Object.assign(style, props.style)
-    }
-
-    // Active style
-    if (renderProps.isActive && props.activeStyle) {
-      Object.assign(style, props.activeStyle)
-    }
-
-    // Pending style
-    if (renderProps.isPending && props.pendingStyle) {
-      Object.assign(style, props.pendingStyle)
-    }
-
-    return Object.keys(style).length > 0 ? style : undefined
-  })
-
-  // Compute children
-  const computedChildren = createMemo(() => {
-    const renderProps = getRenderProps()
-
-    if (typeof props.children === 'function') {
-      return props.children(renderProps)
-    }
-
-    return props.children
-  })
-
-  // Compute aria-current
-  const ariaCurrent = createMemo(() => {
-    const renderProps = getRenderProps()
-    if (!renderProps.isActive) return undefined
-    return props['aria-current'] || 'page'
+    computedClassName(joinClassNames(baseClassName, activeClassName, pendingClassName))
+    computedStyle(mergeStyles(baseStyle, activeStyle, pendingStyle))
+    computedChildren(typeof childrenProp === 'function' ? childrenProp(renderProps) : childrenProp)
+    ariaCurrent(renderProps.isActive ? (ariaCurrentProp ?? 'page') : undefined)
   })
 
   const handleClick = (event: MouseEvent) => {
     // Call custom onClick handler first
-    if (props.onClick) {
-      props.onClick(event)
+    if (onClick) {
+      onClick(event)
     }
 
     // Don't handle if default was prevented
@@ -381,10 +393,10 @@ export function NavLink(props: NavLinkProps): FictNode {
     if (event.button !== 0) return
 
     // Don't handle if reloadDocument is set
-    if (props.reloadDocument) return
+    if (reloadDocument) return
 
     // Don't handle if disabled
-    if (props.disabled) return
+    if (isDisabled) return
 
     // Don't handle external links
     const target = (event.currentTarget as HTMLAnchorElement).target
@@ -394,11 +406,11 @@ export function NavLink(props: NavLinkProps): FictNode {
     event.preventDefault()
 
     // Navigate using the router
-    router.navigate(props.to, {
-      replace: props.replace,
-      state: props.state,
-      scroll: props.scroll,
-      relative: props.relative,
+    router.navigate(to, {
+      replace,
+      state,
+      scroll,
+      relative,
     })
   }
 
@@ -411,7 +423,7 @@ export function NavLink(props: NavLinkProps): FictNode {
     relative: _relative,
     reloadDocument: _reloadDocument,
     prefetch: _prefetch,
-    disabled,
+    disabled: _disabled,
     onClick: _onClick,
     children: _children,
     className: _className,
@@ -428,7 +440,7 @@ export function NavLink(props: NavLinkProps): FictNode {
   const anchorRef = createSpreadRef<HTMLAnchorElement>(anchorProps as Record<string, unknown>)
   const spanRef = createSpreadRef<HTMLSpanElement>(anchorProps as Record<string, unknown>)
 
-  if (disabled) {
+  if (isDisabled) {
     const disabledClassName = computedClassName()
     const disabledStyle = computedStyle()
     return (
@@ -492,11 +504,16 @@ export interface FormProps extends Omit<JSX.IntrinsicElements['form'], 'action' 
  */
 export function Form(props: FormProps): FictNode {
   const router = useRouter()
+  const actionProp = untrack(() => props.action)
+  const methodProp = untrack(() => props.method)
+  const replace = untrack(() => props.replace)
+  const shouldNavigate = untrack(() => props.navigate)
+  const onSubmit = untrack(() => props.onSubmit)
 
   const handleSubmit = (event: SubmitEvent) => {
     // Call custom onSubmit
-    if (props.onSubmit) {
-      props.onSubmit(event)
+    if (onSubmit) {
+      onSubmit(event)
     }
 
     // Don't handle if prevented
@@ -512,9 +529,9 @@ export function Form(props: FormProps): FictNode {
     event.preventDefault()
 
     const formData = new FormData(form)
-    const method = props.method?.toUpperCase() || 'GET'
+    const method = methodProp?.toUpperCase() || 'GET'
 
-    const actionUrl = props.action || readAccessor(router.location).pathname
+    const actionUrl = actionProp || readAccessor(router.location).pathname
 
     if (method === 'GET') {
       // For GET, navigate with search params
@@ -530,13 +547,13 @@ export function Form(props: FormProps): FictNode {
           pathname: actionUrl,
           search: '?' + searchParams.toString(),
         },
-        { replace: props.replace },
+        { replace },
       )
     } else {
       // For POST/PUT/PATCH/DELETE, submit via fetch
       submitFormAction(form, actionUrl, method, formData, {
-        navigate: props.navigate !== false,
-        replace: props.replace ?? false,
+        navigate: shouldNavigate !== false,
+        replace: replace ?? false,
         router,
       })
     }
@@ -607,8 +624,8 @@ export function Form(props: FormProps): FictNode {
   }
 
   const {
-    action,
-    method,
+    action: _action,
+    method: _method,
     replace: _replace,
     relative: _relative,
     preventScrollReset: _preventScrollReset,
@@ -623,10 +640,10 @@ export function Form(props: FormProps): FictNode {
   // Only use standard form methods (get, post) for the HTML attribute
   // Other methods (put, patch, delete) are handled via fetch in handleSubmit
   const htmlMethod =
-    method && ['get', 'post'].includes(method) ? (method as 'get' | 'post') : undefined
+    methodProp && ['get', 'post'].includes(methodProp) ? (methodProp as 'get' | 'post') : undefined
 
   return (
-    <form ref={formRef} action={action} method={htmlMethod} onSubmit={handleSubmit}>
+    <form ref={formRef} action={actionProp} method={htmlMethod} onSubmit={handleSubmit}>
       {children}
     </form>
   )
