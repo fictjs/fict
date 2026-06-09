@@ -3166,6 +3166,18 @@ function lowerMemberObjectForAssignmentTarget(
   if (object.kind === 'MemberExpression' || object.kind === 'OptionalMemberExpression') {
     return lowerMemberExpressionForAssignmentTarget(object, ctx)
   }
+  if (object.kind === 'NewExpression') {
+    const calleeAccessor = isAccessorObjectRoot(object.callee, ctx)
+    const callee = calleeAccessor
+      ? ctx.t.callExpression(ctx.t.identifier(calleeAccessor), [])
+      : lowerExpression(object.callee, ctx)
+    const args = object.arguments.map(arg =>
+      arg.kind === 'SpreadElement'
+        ? ctx.t.spreadElement(lowerExpression(arg.argument as Expression, ctx))
+        : lowerExpression(arg, ctx),
+    )
+    return ctx.t.newExpression(callee, args)
+  }
   return lowerExpression(object, ctx)
 }
 
