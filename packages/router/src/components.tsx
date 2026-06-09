@@ -211,7 +211,7 @@ function CurrentMatchesView(props: CurrentMatchesProps): FictNode {
 
 function RenderMatchesView(props: RenderMatchesProps): FictNode {
   const index = untrack(() => props.index)
-  const match = props.matches.at(index)!
+  const match = props.matches.slice(index, index + 1)[0]!
   const route = match.route
   const router = useRouter()
   const hasPreload = typeof route.preload === 'function'
