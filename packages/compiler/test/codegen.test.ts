@@ -495,7 +495,8 @@ describe('lowerHIRWithRegions', () => {
     `)
 
     expect(output).toMatch(/if \(count\(\)\) \{\s+const x = side\(\);\s+out = x;/)
-    expect(output).toMatch(/return \{\s+out: out !== void 0 \? out : void 0\s+\};/)
+    expect(output).toMatch(/return \{\s+out\s+\};/)
+    expect(output).not.toMatch(/out: out !== void 0 \? out : void 0/)
     expect(output).not.toMatch(/x: x !== void 0 \? x : void 0/)
     expect(output).not.toMatch(/const x = \(\) => __region_\d+\(\)\.x/)
   })
@@ -613,7 +614,8 @@ describe('lowerHIRWithRegions', () => {
       }
     `)
 
-    expect(output).toMatch(/branchVar: branchVar !== void 0 \? branchVar : void 0/)
+    expect(output).toMatch(/return \{\s+out,\s+branchVar\s+\};/)
+    expect(output).not.toMatch(/branchVar: branchVar !== void 0 \? branchVar : void 0/)
     expect(output).toMatch(/const branchVar = \(\) => __region_\d+\(\)\.branchVar/)
   })
 

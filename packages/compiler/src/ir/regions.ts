@@ -4735,12 +4735,7 @@ function wrapInMemo(
 
     // Has outputs - memo with destructuring
     const buildOutputProperty = (name: string): BabelCore.types.ObjectProperty => {
-      if (!region.hasControlFlow) {
-        return regionOutputProperty(t, name, t.identifier(name), true)
-      }
-      const guard = t.binaryExpression('!==', t.identifier(name), voidZero(t))
-      const valueExpr = t.conditionalExpression(guard, t.identifier(name), voidZero(t))
-      return regionOutputProperty(t, name, valueExpr)
+      return regionOutputProperty(t, name, t.identifier(name), true)
     }
     const returnObj = t.objectExpression(uniqueOutputNames.map(name => buildOutputProperty(name)))
 

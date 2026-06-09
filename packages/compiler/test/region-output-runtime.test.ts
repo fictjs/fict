@@ -105,7 +105,9 @@ describe('region output runtime regressions', () => {
       strictGuarantee: false,
       optimize: true,
     })
-    expect(output).toMatch(/missing:\s*missing\s*!==\s*void 0\s*\?\s*missing\s*:\s*void 0/)
+    expect(output).toMatch(/return \{\s*missing\s*\}/)
+    expect(output).toMatch(/return \{\s*explicit\s*\}/)
+    expect(output).not.toMatch(/missing:\s*missing\s*!==\s*void 0\s*\?\s*missing\s*:\s*void 0/)
     expect(output).not.toMatch(/missing:\s*missing\s*!==\s*undefined\s*\?/)
     expect(output).not.toContain('let missing = undefined')
 
