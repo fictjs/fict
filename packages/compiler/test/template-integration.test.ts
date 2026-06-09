@@ -1258,6 +1258,44 @@ describe('compiled templates DOM integration', () => {
     }
   })
 
+  it('hoists prior local dependencies before region memo execution', () => {
+    const source = `
+      import { render, untrack } from 'fict'
+
+      function App(props: { first?: string; second?: string }) {
+        const first = untrack(() => props.first)
+        const second = untrack(() => props.second)
+        const options =
+          first !== undefined || second !== undefined ? first + ':' + second : 'none'
+
+        return <span data-testid="value">{options}</span>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App first="a" second="b" />, el)
+      }
+    `
+
+    const output = transformCommonJS(source, { fineGrainedDom: true, dev: false })
+    const secondDecl = output.search(/const second\s*=/)
+    const regionDecl = output.indexOf('const __region_')
+    expect(secondDecl).toBeGreaterThanOrEqual(0)
+    expect(regionDecl).toBeGreaterThanOrEqual(0)
+    expect(secondDecl).toBeLessThan(regionDecl)
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true, dev: false })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-testid="value"]')?.textContent).toBe('a:b')
+
+    teardown()
+    container.remove()
+  })
+
   it('throws impure reactive derived declaration initializers at declaration time', () => {
     const source = `
       import { $state, render } from 'fict'

@@ -1654,12 +1654,31 @@ function collectExpressionWrites(expr: Expression): Set<string> {
   return writes
 }
 
-function expressionContainsWriteExpression(expr: Expression): boolean {
+function expressionContainsReactiveWriteExpression(expr: Expression, ctx: CodegenContext): boolean {
+  const targetWritesReactiveValue = (target: Expression): boolean => {
+    switch (target.kind) {
+      case 'Identifier': {
+        const name = deSSAVarName(target.name)
+        return isReactiveSnapshotExcludedName(name, ctx, ctx.localValueVars)
+      }
+      case 'MemberExpression':
+      case 'OptionalMemberExpression':
+        return (
+          getNamespaceReactiveMemberKind(target, ctx) !== null ||
+          resolveHookReturnMemberAccessorKind(target, ctx) !== null ||
+          expressionUsesTracked(target.object as Expression, ctx)
+        )
+      default:
+        return expressionUsesTracked(target, ctx)
+    }
+  }
+
   const visit = (current: Expression): boolean => {
     switch (current.kind) {
       case 'AssignmentExpression':
+        return targetWritesReactiveValue(current.left) || visit(current.right)
       case 'UpdateExpression':
-        return true
+        return targetWritesReactiveValue(current.argument) || visit(current.argument)
       case 'SequenceExpression':
         return current.expressions.some(visit)
       case 'ConditionalExpression':
@@ -4592,6 +4611,26 @@ function generateRegionStatements(
       visiting.delete(producer)
     }
   }
+  const hoistPriorMemoDependencies = (
+    instr: AssignInstruction,
+    visiting = new Set<Instruction>(),
+  ): void => {
+    if (region.hasControlFlow || !regionCtx) return
+    for (const dep of collectExprDependencies(instr.value)) {
+      const name = deSSAVarName(dep)
+      if (declaredVars.has(name)) continue
+      const producer = findPriorDeclarationInstruction(regionCtx.rootNode, name, instr)
+      if (!producer || producer === instr) continue
+      if (isReactiveCreationInstruction(producer) || expressionUsesTracked(producer.value, ctx)) {
+        continue
+      }
+      if (hoistedInstructionSet.has(producer) || visiting.has(producer)) continue
+      visiting.add(producer)
+      hoistPriorMemoDependencies(producer, visiting)
+      emitHoistedInstruction(producer)
+      visiting.delete(producer)
+    }
+  }
 
   for (const instr of region.instructions) {
     if (regionCtx?.hoistedInstructions.has(instr)) {
@@ -4618,6 +4657,12 @@ function generateRegionStatements(
       instr.value.arguments.forEach(arg => hoistPriorLocalDependencies(arg, index))
       emitHoistedInstruction(instr)
       continue
+    }
+    if (instr.kind === 'Assign') {
+      hoistPriorMemoDependencies(instr)
+      if (hoistedInstructionSet.has(instr)) {
+        continue
+      }
     }
     memoInstructions.push(instr)
   }
@@ -4678,7 +4723,7 @@ function generateRegionStatements(
     // Wrap in memo
     const outputNamesOverride = Array.from(memoDeclarations).map(name => deSSAVarName(name))
     let bodyStatementsOverride: BabelCore.types.Statement[] | undefined
-    if (memoInstructions.length !== region.instructions.length) {
+    if (memoInstructions.length !== region.instructions.length || hoistedInstructionSet.size > 0) {
       const localDeclared = new Set<string>()
       bodyStatementsOverride = []
       const prevInRegionMemo = ctx.inRegionMemo
@@ -4686,6 +4731,7 @@ function generateRegionStatements(
       ctx.inRegionMemo = true
       ctx.localValueVars = new Set(prevLocalValueVars ?? [])
       for (const instr of memoInstructions) {
+        if (hoistedInstructionSet.has(instr)) continue
         const stmt = instructionToStatement(instr, t, localDeclared, ctx)
         if (stmt) bodyStatementsOverride.push(stmt)
       }
@@ -6178,7 +6224,7 @@ function instructionToStatement(
       localValueVars.add(baseName)
     }
     type VarDecl = 'const' | 'let' | 'var'
-    const hasWriteExpression = expressionContainsWriteExpression(instr.value)
+    const hasReactiveWriteExpression = expressionContainsReactiveWriteExpression(instr.value, ctx)
     const lowerPlainDerivedDeclaration = (kind: VarDecl): BabelCore.types.VariableDeclaration => {
       ctx.memoVars?.delete(baseName)
       markLocalValue()
@@ -6360,7 +6406,7 @@ function instructionToStatement(
           ctx.memoVars?.delete(baseName)
           return lowerAssignedValue(true)
         }
-        if (hasWriteExpression) {
+        if (hasReactiveWriteExpression) {
           ctx.memoVars?.delete(baseName)
           markLocalValue()
           return lowerAssignedValue(true)
@@ -6452,7 +6498,7 @@ function instructionToStatement(
               t.variableDeclarator(t.identifier(baseName), derivedExpr),
             ])
           }
-          if (hasWriteExpression) {
+          if (hasReactiveWriteExpression) {
             return lowerPlainDerivedDeclaration(normalizedDecl)
           }
           if (shouldUsePlainRegionLocalDerivedValue) {
@@ -6498,7 +6544,7 @@ function instructionToStatement(
             t.variableDeclarator(t.identifier(baseName), derivedExpr),
           ])
         }
-        if (hasWriteExpression) {
+        if (hasReactiveWriteExpression) {
           return lowerPlainDerivedDeclaration(normalizedDecl)
         }
         if (shouldUsePlainRegionLocalDerivedValue) {
@@ -6650,7 +6696,7 @@ function instructionToStatement(
             t.variableDeclarator(t.identifier(baseName), derivedExpr),
           ])
         }
-        if (hasWriteExpression) {
+        if (hasReactiveWriteExpression) {
           return lowerPlainDerivedDeclaration('const')
         }
         if (shouldUsePlainRegionLocalDerivedValue) {
@@ -6696,7 +6742,7 @@ function instructionToStatement(
           t.variableDeclarator(t.identifier(baseName), derivedExpr),
         ])
       }
-      if (hasWriteExpression) {
+      if (hasReactiveWriteExpression) {
         return lowerPlainDerivedDeclaration('const')
       }
       if (shouldUsePlainRegionLocalDerivedValue) {
