@@ -7,20 +7,22 @@ import { transform } from './test-utils'
 
 const STRICT_GUARANTEE_OPTIONS = { strictGuarantee: true, dev: false } as const
 
-function collectWarningCodes(
+type CollectedWarning = { code: string; message: string }
+
+function collectWarnings(
   source: string,
   options: Parameters<typeof transform>[1] = {},
-): string[] {
+): CollectedWarning[] {
   const previousStrictGuaranteeEnv = process.env.FICT_STRICT_GUARANTEE
   delete process.env.FICT_STRICT_GUARANTEE
-  const warnings: Array<{ code: string }> = []
+  const warnings: CollectedWarning[] = []
   try {
     transform(source, {
       strictGuarantee: false,
       ...options,
-      onWarn: warning => warnings.push(warning as { code: string }),
+      onWarn: warning => warnings.push(warning as CollectedWarning),
     })
-    return warnings.map(warning => warning.code)
+    return warnings
   } finally {
     if (previousStrictGuaranteeEnv === undefined) {
       delete process.env.FICT_STRICT_GUARANTEE
@@ -28,6 +30,13 @@ function collectWarningCodes(
       process.env.FICT_STRICT_GUARANTEE = previousStrictGuaranteeEnv
     }
   }
+}
+
+function collectWarningCodes(
+  source: string,
+  options: Parameters<typeof transform>[1] = {},
+): string[] {
+  return collectWarnings(source, options).map(warning => warning.code)
 }
 
 describe('reactivity guarantee contract', () => {
@@ -700,8 +709,7 @@ describe('reactivity guarantee contract', () => {
     })
 
     it('does not emit the static-fallback message for loops without JSX', () => {
-      const warnings: Array<{ code: string; message: string }> = []
-      transform(
+      const warnings = collectWarnings(
         `
           import { $state } from 'fict'
           function App() {
@@ -713,10 +721,6 @@ describe('reactivity guarantee contract', () => {
             return <p>{total}</p>
           }
         `,
-        {
-          strictGuarantee: false,
-          onWarn: warning => warnings.push(warning as { code: string; message: string }),
-        },
       )
       expect(warnings.some(warning => warning.message.includes('static fallback'))).toBe(false)
     })
