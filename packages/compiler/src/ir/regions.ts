@@ -6534,8 +6534,7 @@ function instructionToStatement(
     // fix: Check if variable will be mutated (assigned to later without declaration)
     const needsMutable = ctx.mutatedVars?.has(baseName) ?? false
     const shouldUsePlainRegionLocalDerivedValue =
-      inRegionMemo &&
-      ((ctx.inConditional ?? 0) > 0 || ctx.currentFnIsHook === true) &&
+      ((ctx.inConditional ?? 0) > 0 || (inRegionMemo && ctx.currentFnIsHook === true)) &&
       !isDirectTrackedAlias &&
       !isNamespaceAccessorAlias &&
       !derivedValueContainsJSX

@@ -10500,6 +10500,66 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps mixed switch return branch locals visible to JSX bindings', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: {
+        log: string[]
+        setMode(value: 'a' | 'b'): void
+      }
+
+      function SwitchReturn() {
+        let mode = $state<'a' | 'b'>('a')
+        api.setMode = value => (mode = value)
+        switch (mode) {
+          case 'a': {
+            const labelA = mode + '!'
+            api.log.push('a:' + labelA)
+            return <div data-id="a">{labelA}</div>
+          }
+          default: {
+            const labelB = mode + '?'
+            api.log.push('b:' + labelB)
+            return <span data-id="b">{labelB}</span>
+          }
+        }
+      }
+
+      export function App() {
+        api = { log: [], setMode() {} }
+        return <SwitchReturn />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: {
+        log: string[]
+        setMode(value: 'a' | 'b'): void
+      }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-id="a"]')?.textContent).toBe('a!')
+    expect(mod.api.log).toEqual(['a:a!'])
+
+    mod.api.setMode('b')
+    await flushUpdates()
+    expect(container.querySelector('[data-id="a"]')).toBeNull()
+    expect(container.querySelector('[data-id="b"]')?.textContent).toBe('b?')
+    expect(mod.api.log).toEqual(['a:a!', 'b:b?'])
+
+    teardown()
+    container.remove()
+  })
+
   it('renders and cleans up a portal in fine-grained mode', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render, createPortal, createElement } from 'fict'
