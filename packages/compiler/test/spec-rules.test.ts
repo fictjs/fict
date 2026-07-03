@@ -3001,17 +3001,16 @@ describe('Rule I: Component-only state placement', () => {
     expect(output).toContain('useCounter')
   })
 
-  it('allows lowercase use-prefix hook definitions with $state', () => {
-    const output = transform(`
+  it('rejects lowercase use-prefix functions with $state', () => {
+    const input = `
       import { $state } from 'fict'
       export function usecounter() {
         let count = $state(0)
         return count
       }
-    `)
+    `
 
-    expect(output).toContain('__fictUseSignal')
-    expect(output).toContain('usecounter')
+    expect(() => transform(input)).toThrow(/must be declared inside a component or hook/)
   })
 
   it('rejects non-use lowercase functions with $state', () => {
@@ -3202,6 +3201,37 @@ describe('Rule I: Component-only state placement', () => {
         function Component() {
           if (true) {
             api.utility()
+          }
+          return null
+        }
+      `),
+    ).not.toThrow()
+
+    expect(() =>
+      transform(`
+        import { $state } from 'fict'
+        function Component(props: { app: { use(value: unknown): void } }) {
+          let count = $state(0)
+          if (count > 0) {
+            props.app.use(count)
+          }
+          return <div>{count}</div>
+        }
+      `),
+    ).not.toThrow()
+
+    expect(() =>
+      transform(`
+        function user() {
+          return 1
+        }
+        function useful() {
+          return 2
+        }
+        function Component() {
+          if (true) {
+            user()
+            useful()
           }
           return null
         }
