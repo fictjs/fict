@@ -3448,6 +3448,54 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps sibling binding paths aligned after HTML void elements', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { inc(): void }
+
+      export function App() {
+        let count = $state(1)
+        api = {
+          inc() {
+            count = count + 1
+          },
+        }
+        return (
+          <div data-testid="root">
+            <br />
+            <span data-testid="value">{count}</span>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const output = transformCommonJS(source, { fineGrainedDom: true, strictGuarantee: true })
+    expect(output).toMatch(/<br><span\b/)
+    expect(output).not.toContain('</br>')
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { inc(): void }
+    }>(source, { fineGrainedDom: true, strictGuarantee: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-testid="value"]')?.textContent).toBe('1')
+
+    mod.api.inc()
+    await flushUpdates()
+    expect(container.querySelector('[data-testid="value"]')?.textContent).toBe('2')
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps bindings on elements that HTML parsing would otherwise auto-close', async () => {
     const source = `
       import { $state, render } from 'fict'

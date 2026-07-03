@@ -197,6 +197,22 @@ const MATHML_TEXT_INTEGRATION_POINTS = new Set(['mi', 'mo', 'mn', 'ms', 'mtext']
 const MATHML_TEXT_INTEGRATION_EXCEPTIONS = new Set(['mglyph', 'malignmark'])
 const SVG_HTML_INTEGRATION_POINTS = new Set(['foreignObject', 'title', 'desc'])
 const HTML_RAW_TEXT_CONTENT_ELEMENTS = new Set(['script', 'style', 'title'])
+const HTML_VOID_ELEMENTS = new Set([
+  'area',
+  'base',
+  'br',
+  'col',
+  'embed',
+  'hr',
+  'img',
+  'input',
+  'link',
+  'meta',
+  'param',
+  'source',
+  'track',
+  'wbr',
+])
 const STANDALONE_SVG_INTRINSIC_ELEMENTS = new Set([
   'animate',
   'animateMotion',
@@ -922,7 +938,9 @@ export function extractHIRStaticHtml(
     }
   }
 
-  html += `</${tagName}>`
+  if (!(resolvedNamespace === null && HTML_VOID_ELEMENTS.has(tagName))) {
+    html += `</${tagName}>`
+  }
 
   // Determine if this template needs SVG/MathML namespace wrapping.
   // This is needed when:
