@@ -8,18 +8,14 @@ export function useCounter() {
     name: "count"
   });
   const __region_0 = __fictUseMemo(__fictCtx, () => {
-    const double = __fictUseMemo(__fictCtx, () => count() * 2, {
-      name: "double"
-    }, 1000);
+    const double = count() * 2;
     return {
       double
     };
   }, {
     internal: true
-  }, 1001);
-  const {
-    double
-  } = __region_0();
+  });
+  const double = () => __region_0().double;
   return {
     count,
     double
@@ -30,7 +26,7 @@ export function View() {
   const _useCounter = useCounter();
   const count = _useCounter.count;
   const double = _useCounter.double;
-  __fictUseEffect(__fictCtx, () => {}, 1002);
+  __fictUseEffect(__fictCtx, () => {}, 1000);
   return __fictUseMemo(__fictCtx, () => {
     const __tmpl_1 = template("<div><!--fict:slot:start--><!--fict:slot:end--> / <!--fict:slot:start--><!--fict:slot:end--></div>");
     const __root_0 = __tmpl_1();
@@ -41,7 +37,7 @@ export function View() {
     const __end_5 = getSlotEnd(__el_3);
     insertBetween(__el_3, __end_5, () => double(), createElement);
     return __root_0;
-  }, 1003)();
+  }, 1001)();
 }"
 `;
 

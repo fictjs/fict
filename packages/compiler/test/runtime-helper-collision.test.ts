@@ -29,7 +29,8 @@ describe('runtime helper name collisions', () => {
     expect(output).toContain('const __fictUseMemo = () => "local memo";')
     expect(output).toMatch(/const __fictCtx = __fictUseContext_1\(\)/)
     expect(output).toMatch(/const count = __fictUseSignal_1\(__fictCtx, 1/)
-    expect(output).toMatch(/const doubled = __fictUseMemo_1\(__fictCtx, \(\) => count\(\) \* 2/)
+    expect(output).toMatch(/const __region_0 = __fictUseMemo_1\(__fictCtx/)
+    expect(output).toMatch(/const doubled = count\(\) \* 2/)
   })
 
   it('aliases helper imports when named default function exports declare helper names', () => {

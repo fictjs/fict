@@ -6474,6 +6474,8 @@ function instructionToStatement(
     const namespaceMemberKind = getNamespaceReactiveMemberKind(instr.value, ctx)
     const isNamespaceAccessorAlias =
       namespaceMemberKind === 'signal' || namespaceMemberKind === 'memo'
+    const isDirectTrackedAlias =
+      instr.value.kind === 'Identifier' && ctx.trackedVars.has(deSSAVarName(instr.value.name))
     const isNamespaceStoreAlias =
       namespaceMemberKind === 'store' ||
       (instr.value.kind === 'Identifier' &&
@@ -6532,7 +6534,11 @@ function instructionToStatement(
     // fix: Check if variable will be mutated (assigned to later without declaration)
     const needsMutable = ctx.mutatedVars?.has(baseName) ?? false
     const shouldUsePlainRegionLocalDerivedValue =
-      inRegionMemo && (ctx.inConditional ?? 0) > 0 && !derivedValueContainsJSX
+      inRegionMemo &&
+      ((ctx.inConditional ?? 0) > 0 || ctx.currentFnIsHook === true) &&
+      !isDirectTrackedAlias &&
+      !isNamespaceAccessorAlias &&
+      !derivedValueContainsJSX
     // Initializers with embedded reactive writes and conditional region-local
     // derivations both lower as plain (non-memoized) values.
     const shouldLowerDerivedAsPlainValue =
