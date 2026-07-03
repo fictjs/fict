@@ -47,6 +47,7 @@ describe('DiagnosticCode', () => {
     expect(DiagnosticSeverities[DiagnosticCode.FICT_R006]).toBe(DiagnosticSeverity.Error)
     expect(DiagnosticSeverities[DiagnosticCode.FICT_R007]).toBe(DiagnosticSeverity.Error)
     expect(DiagnosticSeverities[DiagnosticCode.FICT_M]).toBe(DiagnosticSeverity.Error)
+    expect(DiagnosticSeverities[DiagnosticCode.FICT_M003]).toBe(DiagnosticSeverity.Error)
     expect(DiagnosticSeverities[DiagnosticCode.FICT_H]).toBe(DiagnosticSeverity.Error)
   })
 
@@ -199,6 +200,14 @@ describe('getDiagnosticInfo', () => {
     expect(info.severity).toBe(DiagnosticSeverity.Error)
     expect(info.message).toContain('control-flow')
     expect(info.message).toContain('supported branch returns')
+  })
+
+  it('does not escalate memo no-dependency hints under strictGuarantee', () => {
+    const noDependencyInfo = getDiagnosticInfo(DiagnosticCode.FICT_M001)
+    const sideEffectInfo = getDiagnosticInfo(DiagnosticCode.FICT_M003)
+
+    expect(noDependencyInfo.severity).toBe(DiagnosticSeverity.Info)
+    expect(sideEffectInfo.severity).toBe(DiagnosticSeverity.Error)
   })
 
   it('returns info for legacy compiler diagnostics', () => {

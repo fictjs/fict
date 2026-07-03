@@ -179,6 +179,7 @@ const STRICT_REACTIVITY_DIAGNOSTICS = new Set<DiagnosticCode>([
   DiagnosticCode.FICT_R006,
 ])
 
+const STRICT_GUARANTEE_EXACT_DIAGNOSTICS = new Set<DiagnosticCode>([DiagnosticCode.FICT_M])
 const STRICT_GUARANTEE_DIAGNOSTICS = new Set<DiagnosticCode>([
   DiagnosticCode.FICT_P001,
   DiagnosticCode.FICT_P002,
@@ -186,7 +187,7 @@ const STRICT_GUARANTEE_DIAGNOSTICS = new Set<DiagnosticCode>([
   DiagnosticCode.FICT_P004,
   DiagnosticCode.FICT_P005,
   DiagnosticCode.FICT_J003,
-  DiagnosticCode.FICT_M,
+  DiagnosticCode.FICT_M003,
   DiagnosticCode.FICT_S002,
   DiagnosticCode.FICT_H,
   DiagnosticCode.FICT_R002,
@@ -196,10 +197,17 @@ const STRICT_GUARANTEE_DIAGNOSTICS = new Set<DiagnosticCode>([
   DiagnosticCode.FICT_R007,
 ])
 
+function matchesStrictGuaranteeDiagnosticCode(code: string): boolean {
+  return (
+    STRICT_GUARANTEE_EXACT_DIAGNOSTICS.has(code as DiagnosticCode) ||
+    matchesAnyDiagnosticCode(code, STRICT_GUARANTEE_DIAGNOSTICS)
+  )
+}
+
 export const DiagnosticSeverities: Record<DiagnosticCode, DiagnosticSeverity> = Object.fromEntries(
   (Object.values(DiagnosticCode) as DiagnosticCode[]).map(code => [
     code,
-    STRICT_GUARANTEE_DIAGNOSTICS.has(code)
+    matchesStrictGuaranteeDiagnosticCode(code)
       ? DiagnosticSeverity.Error
       : BaseDiagnosticSeverities[code],
   ]),
@@ -227,7 +235,7 @@ export function resolveDiagnosticSeverity(
     process.env.NODE_ENV === 'production' ||
     options.strictGuarantee !== false
 
-  if (strictGuaranteeEnabled && matchesAnyDiagnosticCode(code, STRICT_GUARANTEE_DIAGNOSTICS)) {
+  if (strictGuaranteeEnabled && matchesStrictGuaranteeDiagnosticCode(code)) {
     return DiagnosticSeverity.Error
   }
 
