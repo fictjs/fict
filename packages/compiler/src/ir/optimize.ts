@@ -19,6 +19,7 @@ import { getSSABaseName, HIRError, makeSSAName, resetGeneratedSSANames } from '.
 import { isHookLikeFunction } from './hook-utils'
 import { analyzeReactiveScopesWithSSA, type ReactiveScopeResult } from './scopes'
 import { analyzeCFG, enterSSA } from './ssa'
+import { structurizeCFG, type StructuredNode } from './structurize'
 
 type ConstantValue = string | number | boolean | null | undefined
 type ConstObjectFields = Map<string, ConstantValue>
@@ -1980,6 +1981,196 @@ function isPureOptimizationCandidate(fn: HIRFunction): boolean {
 }
 
 function functionHasLexicalBindingCollision(fn: HIRFunction): boolean {
+  const structuredCollision = functionHasStructuredLexicalBindingCollision(fn)
+  if (structuredCollision !== null) return structuredCollision
+  return functionHasFlatLexicalBindingCollision(fn)
+}
+
+interface BindingScope {
+  kind: 'function' | 'block'
+  bindings: Set<string>
+  functionScope: BindingScope
+  parent?: BindingScope | undefined
+}
+
+function createFunctionBindingScope(): BindingScope {
+  const scope = {
+    kind: 'function',
+    bindings: new Set<string>(),
+  } as BindingScope
+  scope.functionScope = scope
+  return scope
+}
+
+function createBlockBindingScope(parent: BindingScope): BindingScope {
+  return {
+    kind: 'block',
+    bindings: new Set<string>(),
+    functionScope: parent.functionScope,
+    parent,
+  }
+}
+
+function scopeHasBinding(scope: BindingScope | undefined, name: string): boolean {
+  for (let current = scope; current; current = current.parent) {
+    if (current.bindings.has(name)) return true
+  }
+  return false
+}
+
+function activeBlockScopeHasBinding(scope: BindingScope, name: string): boolean {
+  for (let current: BindingScope | undefined = scope; current; current = current.parent) {
+    if (current === scope.functionScope) return false
+    if (current.bindings.has(name)) return true
+  }
+  return false
+}
+
+function declareLexicalBinding(scope: BindingScope, name: string): boolean {
+  const base = getSSABaseName(name)
+  if (scopeHasBinding(scope, base)) return true
+  scope.bindings.add(base)
+  return false
+}
+
+function declareFunctionBinding(scope: BindingScope, name: string): boolean {
+  const base = getSSABaseName(name)
+  if (activeBlockScopeHasBinding(scope, base)) return true
+  scope.functionScope.bindings.add(base)
+  return false
+}
+
+function declarePatternLexicalBindings(scope: BindingScope, pattern: t.PatternLike): boolean {
+  const names = new Set<string>()
+  collectPatternNames(pattern, names)
+  for (const name of names) {
+    if (declareLexicalBinding(scope, name)) return true
+  }
+  return false
+}
+
+function declareInstructionBinding(instr: Instruction, scope: BindingScope): boolean {
+  if (instr.kind !== 'Assign' || !instr.declarationKind) return false
+  const isFunctionScoped =
+    instr.declarationKind === 'var' ||
+    (instr.declarationKind === 'function' && !instr.blockScopedFunction)
+  return isFunctionScoped
+    ? declareFunctionBinding(scope, instr.target.name)
+    : declareLexicalBinding(scope, instr.target.name)
+}
+
+function declareLoopBinding(
+  scope: BindingScope,
+  kind: 'const' | 'let' | 'var',
+  name: string,
+  pattern?: t.LVal | undefined,
+): boolean {
+  if (kind === 'var') return declareFunctionBinding(scope, name)
+  if (pattern) return declarePatternLexicalBindings(scope, pattern as t.PatternLike)
+  return declareLexicalBinding(scope, name)
+}
+
+function functionHasStructuredLexicalBindingCollision(fn: HIRFunction): boolean | null {
+  let root: StructuredNode
+  try {
+    root = structurizeCFG(fn, {
+      warnOnIssues: false,
+      throwOnIssues: false,
+      useFallback: true,
+    })
+  } catch {
+    return null
+  }
+
+  const rootScope = createFunctionBindingScope()
+  for (const param of fn.params) {
+    rootScope.bindings.add(getSSABaseName(param.name))
+  }
+  if (fn.rawParams) {
+    for (const param of fn.rawParams) {
+      const names = new Set<string>()
+      collectPatternNames(param as t.PatternLike, names)
+      names.forEach(name => rootScope.bindings.add(getSSABaseName(name)))
+    }
+  }
+
+  const visit = (node: StructuredNode, scope: BindingScope): boolean => {
+    switch (node.kind) {
+      case 'stateMachine':
+        return functionHasFlatLexicalBindingCollision(fn)
+      case 'sequence':
+        return node.nodes.some(child => visit(child, scope))
+      case 'block': {
+        const blockScope = createBlockBindingScope(scope)
+        return node.statements.some(child => visit(child, blockScope))
+      }
+      case 'labeled':
+        return visit(node.statement, scope)
+      case 'instruction':
+        return declareInstructionBinding(node.instruction, scope)
+      case 'if':
+        return (
+          visit(node.consequent, scope) || (node.alternate ? visit(node.alternate, scope) : false)
+        )
+      case 'while':
+      case 'doWhile':
+        return visit(node.body, scope)
+      case 'for': {
+        const loopScope = createBlockBindingScope(scope)
+        if (node.init?.some(instr => declareInstructionBinding(instr, loopScope))) return true
+        return visit(node.body, loopScope)
+      }
+      case 'forOf': {
+        const loopScope = createBlockBindingScope(scope)
+        if (
+          node.leftKind !== 'assignment' &&
+          declareLoopBinding(loopScope, node.variableKind, node.variable, node.pattern)
+        ) {
+          return true
+        }
+        return visit(node.body, loopScope)
+      }
+      case 'forIn': {
+        const loopScope = createBlockBindingScope(scope)
+        if (
+          node.leftKind !== 'assignment' &&
+          declareLoopBinding(loopScope, node.variableKind, node.variable, node.pattern)
+        ) {
+          return true
+        }
+        return visit(node.body, loopScope)
+      }
+      case 'switch': {
+        const switchScope = createBlockBindingScope(scope)
+        return node.cases.some(item => visit(item.body, switchScope))
+      }
+      case 'try': {
+        if (visit(node.block, scope)) return true
+        if (node.handler) {
+          const catchScope = createBlockBindingScope(scope)
+          if (node.handler.pattern) {
+            if (declarePatternLexicalBindings(catchScope, node.handler.pattern as t.PatternLike)) {
+              return true
+            }
+          } else if (node.handler.param && declareLexicalBinding(catchScope, node.handler.param)) {
+            return true
+          }
+          if (visit(node.handler.body, catchScope)) return true
+        }
+        return node.finalizer ? visit(node.finalizer, scope) : false
+      }
+      case 'return':
+      case 'throw':
+      case 'break':
+      case 'continue':
+        return false
+    }
+  }
+
+  return visit(root, rootScope)
+}
+
+function functionHasFlatLexicalBindingCollision(fn: HIRFunction): boolean {
   const functionScopeBases = new Set<string>()
   const lexicalBases = new Set<string>()
 

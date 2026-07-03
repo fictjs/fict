@@ -123,4 +123,27 @@ describe('optimizer semantics safety', () => {
     expect(output).not.toMatch(/true\s*&&/)
     expect(output).toMatch(/return\s+x/)
   })
+
+  it('keeps optimizing constants when lexical names repeat in sibling scopes', () => {
+    const blockOutput = transform(
+      `
+        export function f(p, q) {
+          const a = 2
+          const b = a + 3
+          {
+            const x = p
+            void x
+          }
+          {
+            const x = q
+            void x
+          }
+          return b
+        }
+      `,
+      { optimize: true, dev: false },
+    )
+
+    expect(blockOutput).toMatch(/return\s+5/)
+  })
 })
