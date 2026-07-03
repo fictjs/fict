@@ -1270,15 +1270,21 @@ function optimizeReactiveBlock(
         cseMap.set(hash, { name: target, deps })
       }
 
+      // A base written from inside a closure can be mutated by any later opaque
+      // call, which the positional invalidation below cannot observe. Never
+      // register such a base as a constant. (The SSA path is protected by
+      // collectMutableConstantBases; this mirrors it for the reactive path.)
+      const targetClosureWritten = reactive.closureWrittenBases.has(getSSABaseName(target))
       const constValue = evaluateLiteral(value, constants)
       if (
         constValue !== UNKNOWN_CONST &&
         isPureExpression(value, purity) &&
-        !dependsOnReactiveValue
+        !dependsOnReactiveValue &&
+        !targetClosureWritten
       ) {
         constants.set(target, constValue as ConstantValue)
       }
-      if (!dependsOnReactiveValue && declKind === 'const') {
+      if (!dependsOnReactiveValue && !targetClosureWritten && declKind === 'const') {
         const objectFields = extractConstObjectFields(value, constants)
         if (objectFields) {
           constObjects.set(target, objectFields)
@@ -2339,6 +2345,33 @@ interface ReactiveContext {
   reactiveSources: Set<string>
   reactiveVars: Set<string>
   storeVars: Set<string>
+  /**
+   * Base names written inside nested function bodies (closures). An opaque call
+   * may invoke such a closure, so these bases must never be treated as
+   * constants across a call boundary in the reactive optimization path.
+   */
+  closureWrittenBases: Set<string>
+}
+
+/**
+ * Collect base names that are assigned from inside nested function/arrow bodies
+ * anywhere in `fn`. Unlike direct writes (handled incrementally as the block is
+ * walked), closure-mediated writes can be triggered by an opaque later call and
+ * cannot be tracked positionally, so const propagation must exclude them.
+ */
+function collectClosureWrittenBases(fn: HIRFunction): Set<string> {
+  const bases = new Set<string>()
+  const add = (name: string): void => {
+    bases.add(getSSABaseName(name))
+  }
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign' || instr.kind === 'Expression') {
+        collectWriteTargets(instr.value, true).forEach(add)
+      }
+    }
+  }
+  return bases
 }
 
 function buildReactiveContext(fn: HIRFunction, options: OptimizeOptions = {}): ReactiveContext {
@@ -2392,7 +2425,12 @@ function buildReactiveContext(fn: HIRFunction, options: OptimizeOptions = {}): R
     }
   }
 
-  return { reactiveSources, reactiveVars, storeVars }
+  return {
+    reactiveSources,
+    reactiveVars,
+    storeVars,
+    closureWrittenBases: collectClosureWrittenBases(fn),
+  }
 }
 
 function getAssignedCalleeName(expr: Expression): string | null {
@@ -2401,7 +2439,10 @@ function getAssignedCalleeName(expr: Expression): string | null {
   return getCalleeName(expr.callee) ?? null
 }
 
-function expressionDependsOnReactive(expr: Expression, ctx: ReactiveContext): boolean {
+function expressionDependsOnReactive(
+  expr: Expression,
+  ctx: Pick<ReactiveContext, 'reactiveSources' | 'reactiveVars' | 'storeVars'>,
+): boolean {
   switch (expr.kind) {
     case 'Identifier':
       return ctx.reactiveVars.has(expr.name)
@@ -2495,9 +2536,14 @@ function getMemberBaseIdentifier(expr: Expression): Identifier | null {
   return current.kind === 'Identifier' ? current : null
 }
 
-function collectWriteTargets(expr: Expression): Set<string> {
+function collectWriteTargets(expr: Expression, closureOnly = false): Set<string> {
   const writes = new Set<string>()
+  // Tracks how many nested function literals we are currently inside. In
+  // `closureOnly` mode only writes observed with `functionDepth > 0` are
+  // recorded, i.e. writes that a later call to the closure could perform.
+  let functionDepth = 0
   const addWrite = (name: string, shadowed: Set<string>): void => {
+    if (closureOnly && functionDepth === 0) return
     if (!shadowed.has(getSSABaseName(name))) {
       writes.add(name)
     }
@@ -2644,11 +2690,16 @@ function collectWriteTargets(expr: Expression): Set<string> {
     params?.forEach(param => collectBabelBindingBases(param, functionShadowed))
     collectFromRawParams(params, functionShadowed)
     if (!body) return
-    if (t.isBlockStatement(body)) {
-      collectFromBabelStatements(body.body, functionShadowed)
-      return
+    functionDepth++
+    try {
+      if (t.isBlockStatement(body)) {
+        collectFromBabelStatements(body.body, functionShadowed)
+        return
+      }
+      collectFromBabelNode(body, functionShadowed)
+    } finally {
+      functionDepth--
     }
-    collectFromBabelNode(body, functionShadowed)
   }
   const collectFromBabelClassBody = (members: t.ClassBody['body'], shadowed: Set<string>): void => {
     members.forEach(member => {
@@ -2980,10 +3031,15 @@ function collectWriteTargets(expr: Expression): Set<string> {
         const paramShadowed = new Set(shadowed)
         node.params.forEach(param => paramShadowed.add(getSSABaseName(param.name)))
         collectFromRawParams(node.rawParams, paramShadowed)
-        if (node.isExpression) {
-          visit(node.body as Expression, paramShadowed)
-        } else {
-          visitBlocks(node.body as BasicBlock[], paramShadowed)
+        functionDepth++
+        try {
+          if (node.isExpression) {
+            visit(node.body as Expression, paramShadowed)
+          } else {
+            visitBlocks(node.body as BasicBlock[], paramShadowed)
+          }
+        } finally {
+          functionDepth--
         }
         return
       }
@@ -2992,7 +3048,12 @@ function collectWriteTargets(expr: Expression): Set<string> {
         if (node.name) paramShadowed.add(getSSABaseName(node.name))
         node.params.forEach(param => paramShadowed.add(getSSABaseName(param.name)))
         collectFromRawParams(node.rawParams, paramShadowed)
-        visitBlocks(node.body, paramShadowed)
+        functionDepth++
+        try {
+          visitBlocks(node.body, paramShadowed)
+        } finally {
+          functionDepth--
+        }
         return
       }
       case 'ClassExpression': {

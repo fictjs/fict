@@ -1,6 +1,30 @@
 import { describe, expect, it } from 'vitest'
 
-import { transform } from './test-utils'
+import * as runtimeInternal from '../../runtime/src/internal'
+
+import { transform, transformCommonJS } from './test-utils'
+
+function compileAndRun<T>(source: string, exportName: string): T {
+  const output = transformCommonJS(source, {
+    dev: false,
+    emitModuleMetadata: false,
+    strictGuarantee: false,
+  })
+  const module: { exports: Record<string, unknown> } = { exports: {} }
+  new Function('require', 'module', 'exports', output)(
+    (id: string) => {
+      if (id === '@fictjs/runtime/internal' || id === 'fict/internal' || id === 'fict') {
+        return runtimeInternal
+      }
+      throw new Error(`Unexpected import in optimizer semantics test: ${id}`)
+    },
+    module,
+    module.exports,
+  )
+  return runtimeInternal.__fictRender({ slots: [], cursor: 0 }, () =>
+    (module.exports[exportName] as () => T)(),
+  )
+}
 
 describe('optimizer semantics safety', () => {
   it('keeps logical AND with true in safe mode', () => {
@@ -145,5 +169,43 @@ describe('optimizer semantics safety', () => {
     )
 
     expect(blockOutput).toMatch(/return\s+5/)
+  })
+
+  it('does not constant-fold a value mutated through a closure call', () => {
+    // `bump()` writes `x`, so `x + 1` must not fold using the stale `x = 1`.
+    expect(
+      compileAndRun<number>(
+        `
+          export function probe() {
+            const bump = () => {
+              x = 5
+            }
+            let x = 1
+            bump()
+            const z = x + 1
+            return z
+          }
+        `,
+        'probe',
+      ),
+    ).toBe(6)
+  })
+
+  it('does not constant-fold an object member mutated through a closure call', () => {
+    expect(
+      compileAndRun<number>(
+        `
+          export function probe() {
+            const o = { a: 1 }
+            const bump = () => {
+              o.a = 9
+            }
+            bump()
+            return o.a
+          }
+        `,
+        'probe',
+      ),
+    ).toBe(9)
   })
 })
