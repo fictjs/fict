@@ -8745,7 +8745,23 @@ function transformControlFlowReturns(
   ): BabelCore.types.ArrowFunctionExpression | null {
     const block = buildReturnBlock(stmts)
     if (!block) return null
-    if (options?.disallowRenderHooks && containsRenderOnlyHooks(block)) return null
+    const hasRenderHooks = containsRenderOnlyHooks(block)
+    if (options?.disallowRenderHooks && hasRenderHooks) return null
+    if (hasRenderHooks) {
+      ctx.helpersUsed.add('render')
+      ctx.needsCtx = true
+      return t.arrowFunctionExpression(
+        [],
+        t.blockStatement([
+          t.returnStatement(
+            t.callExpression(runtimeIdentifier(ctx, 'render'), [
+              contextIdentifier(ctx),
+              t.arrowFunctionExpression([], t.blockStatement(block)),
+            ]),
+          ),
+        ]),
+      )
+    }
     return t.arrowFunctionExpression([], t.blockStatement(block))
   }
 
@@ -8848,9 +8864,12 @@ function transformControlFlowReturns(
   function buildExpressionReturnFunction(
     expr: BabelCore.types.Expression,
   ): BabelCore.types.ArrowFunctionExpression {
-    return t.arrowFunctionExpression(
-      [],
-      t.blockStatement([t.returnStatement(buildExpressionReturnValue(expr))]),
+    return (
+      buildBranchFunction([t.returnStatement(buildExpressionReturnValue(expr))]) ??
+      t.arrowFunctionExpression(
+        [],
+        t.blockStatement([t.returnStatement(buildExpressionReturnValue(expr))]),
+      )
     )
   }
 

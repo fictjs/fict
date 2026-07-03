@@ -10392,6 +10392,64 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('switches expression return branches with derived JSX bindings', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: {
+        setVisible(value: boolean): void
+        inc(): void
+      }
+
+      function BranchReturn() {
+        let visible = $state(false)
+        let count = $state(1)
+        api.setVisible = value => (visible = value)
+        api.inc = () => (count = count + 1)
+        return visible ? <div data-id="on">{count * 2}</div> : <span data-id="off">off</span>
+      }
+
+      export function App() {
+        api = {} as typeof api
+        return <BranchReturn />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: {
+        setVisible(value: boolean): void
+        inc(): void
+      }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-id="off"]')).toBeTruthy()
+
+    mod.api.setVisible(true)
+    await flushUpdates()
+    expect(container.querySelector('[data-id="off"]')).toBeNull()
+    expect(container.querySelector('[data-id="on"]')?.textContent).toBe('2')
+
+    mod.api.inc()
+    await flushUpdates()
+    expect(container.querySelector('[data-id="on"]')?.textContent).toBe('4')
+
+    mod.api.setVisible(false)
+    await flushUpdates()
+    expect(container.querySelector('[data-id="on"]')).toBeNull()
+    expect(container.querySelector('[data-id="off"]')).toBeTruthy()
+
+    teardown()
+    container.remove()
+  })
+
   it('renders and cleans up a portal in fine-grained mode', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render, createPortal, createElement } from 'fict'
