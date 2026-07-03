@@ -1070,5 +1070,24 @@ describe('reactivity guarantee contract', () => {
 
       expect(() => transform(source, STRICT_GUARANTEE_OPTIONS)).toThrow(/FICT-R006/)
     })
+
+    it('strictGuarantee rejects try/catch story blocks that rethrow', () => {
+      const source = `
+        import { $state } from 'fict'
+        function App() {
+          let n = $state(0)
+          let msg = 'init'
+          try {
+            if (n > 0) throw new Error('boom')
+            msg = 'ok:' + n
+          } catch (e) {
+            throw e
+          }
+          return <span>{msg}</span>
+        }
+      `
+
+      expect(() => transform(source, STRICT_GUARANTEE_OPTIONS)).toThrow(/FICT-R006/)
+    })
   })
 })
