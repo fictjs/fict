@@ -4921,8 +4921,36 @@ function foldTerminatorWithConstants(
 
 function eliminateCommonSubexpressions(fn: HIRFunction, purity: PurityContext): HIRFunction {
   const blocks = fn.blocks.map(block => {
-    const cseMap = new Map<string, string>()
+    const cseMap = new Map<string, { name: string; deps: Set<string> }>()
+    // Member reads such as `obj.x` are not SSA-versioned, so a write to the base
+    // (or the base itself) must drop any cached subexpression that depends on it.
+    // `"use pure"` licenses treating unknown calls as side-effect-free, but never
+    // ignoring a visible write.
+    const invalidate = (writtenNames: Iterable<string>): void => {
+      for (const written of writtenNames) {
+        const base = getSSABaseName(written)
+        for (const [hash, entry] of Array.from(cseMap.entries())) {
+          if (getSSABaseName(entry.name) === base) {
+            cseMap.delete(hash)
+            continue
+          }
+          for (const dep of entry.deps) {
+            if (getSSABaseName(dep) === base) {
+              cseMap.delete(hash)
+              break
+            }
+          }
+        }
+      }
+    }
     const newInstructions = block.instructions.map(instr => {
+      if (instr.kind === 'Assign' || instr.kind === 'Expression') {
+        const writes = new Set<string>()
+        collectWriteTargets(instr.value).forEach(name => writes.add(name))
+        collectMemberMutationTargets(instr.value).forEach(name => writes.add(name))
+        if (instr.kind === 'Assign' && instr.isMutation) writes.add(instr.target.name)
+        if (writes.size > 0) invalidate(writes)
+      }
       if (instr.kind !== 'Assign') return instr
       if (isSourceMutationAssign(instr)) return instr
       if (!isPureExpression(instr.value, purity)) return instr
@@ -4931,13 +4959,13 @@ function eliminateCommonSubexpressions(fn: HIRFunction, purity: PurityContext): 
       const deps = collectExpressionIdentifiers(instr.value)
       const hash = `${hashExpression(instr.value)}|${[...deps].sort().join(',')}`
       const existing = cseMap.get(hash)
-      if (existing && existing !== instr.target.name) {
+      if (existing && existing.name !== instr.target.name) {
         return {
           ...instr,
-          value: { kind: 'Identifier', name: existing, loc: instr.value.loc } as Identifier,
+          value: { kind: 'Identifier', name: existing.name, loc: instr.value.loc } as Identifier,
         }
       }
-      cseMap.set(hash, instr.target.name)
+      cseMap.set(hash, { name: instr.target.name, deps })
       return instr
     })
     return { ...block, instructions: newInstructions }

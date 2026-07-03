@@ -191,6 +191,24 @@ describe('optimizer semantics safety', () => {
     ).toBe(6)
   })
 
+  it('does not CSE a member read across a write to the same member under "use pure"', () => {
+    expect(
+      compileAndRun<number[]>(
+        `
+          "use pure"
+          export function probe() {
+            const obj = { x: 1 }
+            const a = obj.x
+            obj.x = 99
+            const b = obj.x
+            return [a, b]
+          }
+        `,
+        'probe',
+      ),
+    ).toEqual([1, 99])
+  })
+
   it('does not drop calls to a module-scope binding that shadows a builtin', () => {
     // `String` is a user function with side effects, not the pure builtin, so
     // the call must survive DCE.
