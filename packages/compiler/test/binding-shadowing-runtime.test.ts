@@ -140,6 +140,44 @@ describe('binding shadowing runtime regressions', () => {
     expect(value).toBe('undefined')
   })
 
+  it('preserves user variables with double-underscore prefixes across branches', () => {
+    expect(
+      compileAndRun<number>(
+        `
+          export function Comp(flag: boolean) {
+            let __acc = 0
+            if (flag) {
+              __acc = 1
+            } else {
+              __acc = 2
+            }
+            return __acc
+          }
+        `,
+        'Comp',
+        [true],
+      ),
+    ).toBe(1)
+
+    expect(
+      compileAndRun<number>(
+        `
+          export function Comp(flag: boolean) {
+            let __acc = 0
+            if (flag) {
+              __acc = 1
+            } else {
+              __acc = 2
+            }
+            return __acc
+          }
+        `,
+        'Comp',
+        [false],
+      ),
+    ).toBe(2)
+  })
+
   it('keeps untaken branch class declarations from leaking or throwing', () => {
     const value = compileAndRun<string>(
       `

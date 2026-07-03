@@ -165,8 +165,6 @@ export function resetGeneratedSSANames(): void {
  * @param name - The potentially SSA-versioned variable name
  */
 export function getSSABaseName(name: string): string {
-  // Skip internal names that start with __ (these are compiler-generated)
-  if (name.startsWith('__')) return name
   if (GENERATED_SSA_NAMES.has(name)) {
     return name.replace(SSA_PATTERN, '')
   }
