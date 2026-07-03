@@ -1199,7 +1199,7 @@ function createResumableEventBindingOps(): ResumableEventBindingOps {
 }
 
 function reserveHookSlot(ctx: CodegenContext): number {
-  if (ctx.dynamicHookSlotDepth && ctx.dynamicHookSlotDepth > 0) {
+  if (ctx.currentFnIsHook || (ctx.dynamicHookSlotDepth && ctx.dynamicHookSlotDepth > 0)) {
     return -1
   }
   const slot = ctx.nextHookSlot ?? HOOK_SLOT_BASE

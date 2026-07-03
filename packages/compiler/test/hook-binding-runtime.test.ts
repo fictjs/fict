@@ -198,4 +198,27 @@ describe('hook binding regressions', () => {
       methodValue: 9,
     })
   })
+
+  it('keeps derived hook slots isolated per custom hook call', () => {
+    const result = compileAndRunHook<string>(
+      `
+        import { $state } from 'fict'
+
+        function useCounter(initial) {
+          let count = $state(initial)
+          const doubled = count * 2
+          return { doubled }
+        }
+
+        export function useProbe() {
+          const left = useCounter(1)
+          const right = useCounter(10)
+          return left.doubled + '-' + right.doubled
+        }
+      `,
+      'useProbe',
+    )
+
+    expect(result).toBe('2-20')
+  })
 })
