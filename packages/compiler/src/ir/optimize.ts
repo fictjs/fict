@@ -1896,11 +1896,39 @@ function collectBlockUseInfo(
 
 function collectModuleBindings(program: HIRProgram): Set<string> {
   const bindings = new Set<string>()
-  for (const stmt of program.preamble) {
-    if (!t.isImportDeclaration(stmt)) continue
-    for (const spec of stmt.specifiers) {
-      bindings.add(spec.local.name)
+  const addFromNode = (node: unknown): void => {
+    if (!node || typeof node !== 'object' || !('type' in node)) return
+    const stmt = node as t.Node
+    if (t.isImportDeclaration(stmt)) {
+      for (const spec of stmt.specifiers) bindings.add(spec.local.name)
+      return
     }
+    if (
+      t.isFunctionDeclaration(stmt) ||
+      t.isClassDeclaration(stmt) ||
+      t.isVariableDeclaration(stmt)
+    ) {
+      collectDeclaredNames(stmt, bindings)
+      return
+    }
+    if (t.isExportNamedDeclaration(stmt) && stmt.declaration) {
+      collectDeclaredNames(stmt.declaration, bindings)
+      return
+    }
+    if (t.isExportDefaultDeclaration(stmt)) {
+      const decl = stmt.declaration
+      if (t.isFunctionDeclaration(decl) && decl.id) bindings.add(decl.id.name)
+      else if (t.isClassDeclaration(decl) && decl.id) bindings.add(decl.id.name)
+    }
+  }
+  // Module-scope declarations (not just imports) can shadow builtins such as
+  // `String`/`Number` and must be recorded so their calls stay impure.
+  for (const stmt of program.preamble) addFromNode(stmt)
+  for (const item of program.postamble ?? []) addFromNode(item)
+  // Module-scope `const x = () => {}` / `function x` bindings are lowered into
+  // program.functions rather than the preamble, so include their names too.
+  for (const fn of program.functions) {
+    if (fn.name) bindings.add(fn.name)
   }
   return bindings
 }

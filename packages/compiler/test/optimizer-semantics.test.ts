@@ -191,6 +191,52 @@ describe('optimizer semantics safety', () => {
     ).toBe(6)
   })
 
+  it('does not drop calls to a module-scope binding that shadows a builtin', () => {
+    // `String` is a user function with side effects, not the pure builtin, so
+    // the call must survive DCE.
+    const constArrow = transform(
+      `
+        const String = v => {
+          sideEffect(v)
+          return 'x'
+        }
+        export function f() {
+          const unused = String(5)
+          return 1
+        }
+      `,
+      { dev: false, optimize: true },
+    )
+    expect(constArrow).toMatch(/String\(5\)/)
+
+    const funcDecl = transform(
+      `
+        function Number(v) {
+          sideEffect(v)
+          return 0
+        }
+        export function f() {
+          const unused = Number(5)
+          return 1
+        }
+      `,
+      { dev: false, optimize: true },
+    )
+    expect(funcDecl).toMatch(/Number\(5\)/)
+
+    // A genuine builtin call is still pure and removable.
+    const genuine = transform(
+      `
+        export function f() {
+          const unused = String(5)
+          return 1
+        }
+      `,
+      { dev: false, optimize: true },
+    )
+    expect(genuine).not.toMatch(/const unused\b/)
+  })
+
   it('does not constant-fold an object member mutated through a closure call', () => {
     expect(
       compileAndRun<number>(
