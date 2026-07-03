@@ -57,6 +57,49 @@ describe('Object Shape Lattice Analysis', () => {
       expect(subscriptions!.has('bar')).toBe(true)
     })
 
+    it('widens key narrowing when the key is reassigned in a branch', () => {
+      const result = analyzeObjectShapes(
+        firstFunction(
+          buildHIR(
+            parseFile(`
+              function test(props, flag) {
+                let key = 'a'
+                if (flag) {
+                  key = 'b'
+                }
+                return props[key]
+              }
+            `),
+          ),
+        ),
+      )
+
+      // `key` could be 'a' or 'b' after the branch, so props must not narrow to
+      // just 'a' (which would miss updates to props.b).
+      const subscriptions = getPropertySubscription('props', result)
+      const narrowedToOnlyA = subscriptions?.size === 1 && subscriptions.has('a')
+      expect(narrowedToOnlyA).toBe(false)
+      expect(shouldUseWholeObjectSubscription('props', result)).toBe(true)
+    })
+
+    it('keeps precise narrowing when the key is never reassigned', () => {
+      const result = analyzeObjectShapes(
+        firstFunction(
+          buildHIR(
+            parseFile(`
+              function test(props) {
+                const key = 'a'
+                return props[key]
+              }
+            `),
+          ),
+        ),
+      )
+
+      expect(getPropertySubscription('props', result)?.has('a')).toBe(true)
+      expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
+    })
+
     it('tracks store properties without forcing whole-object subscription', () => {
       const ast = parseFile(`
         import { $store } from 'fict'

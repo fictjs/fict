@@ -127,6 +127,51 @@ function cloneKeyContext(ctx: KeyNarrowingContext): KeyNarrowingContext {
   }
 }
 
+function keyNarrowingValuesEqual(
+  a: KeyNarrowingValue | undefined,
+  b: KeyNarrowingValue | undefined,
+): boolean {
+  if (a === b) return true
+  if (!a || !b || a.size !== b.size) return false
+  for (const value of a) {
+    if (!b.has(value)) return false
+  }
+  return true
+}
+
+/**
+ * After a control-flow join, a key variable that was reassigned (or narrowed
+ * differently) in any branch may hold a different value afterwards. Widen — drop
+ * the outer narrowing for every such key — so that a later dynamic read
+ * (`props[key]`) falls back to whole-object subscription instead of a stale
+ * narrowed key set that would under-subscribe. Widening only ever adds
+ * subscriptions, never removes them, keeping the analysis fail-closed.
+ */
+function widenDivergentKeys(outer: KeyNarrowingContext, branches: KeyNarrowingContext[]): void {
+  if (branches.length === 0) return
+  const names = new Set<string>()
+  for (const map of [outer.values, outer.keySets]) {
+    for (const key of map.keys()) names.add(key)
+  }
+  for (const branch of branches) {
+    for (const map of [branch.values, branch.keySets]) {
+      for (const key of map.keys()) names.add(key)
+    }
+  }
+  for (const name of names) {
+    const valuesAgree = branches.every(branch =>
+      keyNarrowingValuesEqual(branch.values.get(name), outer.values.get(name)),
+    )
+    const keySetsAgree = branches.every(branch =>
+      keyNarrowingValuesEqual(branch.keySets.get(name), outer.keySets.get(name)),
+    )
+    if (!valuesAgree || !keySetsAgree) {
+      outer.values.delete(name)
+      outer.keySets.delete(name)
+    }
+  }
+}
+
 type BabelPattern = t.PatternLike | t.LVal | null | undefined
 
 function isBabelNode(value: unknown): value is t.Node {
@@ -573,11 +618,13 @@ function analyzeStructuredNode(
       if (node.alternate) {
         analyzeStructuredNode(node.alternate, shapes, propertyReads, alternateCtx)
       }
+      widenDivergentKeys(ctx, node.alternate ? [consequentCtx, alternateCtx] : [consequentCtx])
       return
     }
     case 'switch': {
       analyzeExpression(node.discriminant, shapes, propertyReads, ctx)
       const discriminant = node.discriminant.kind === 'Identifier' ? node.discriminant.name : null
+      const caseCtxs: KeyNarrowingContext[] = []
       for (const caseNode of node.cases) {
         const caseCtx = cloneKeyContext(ctx)
         if (
@@ -588,17 +635,25 @@ function analyzeStructuredNode(
           applyNarrowing(caseCtx, discriminant, new Set([caseNode.test.value]))
         }
         analyzeStructuredNode(caseNode.body, shapes, propertyReads, caseCtx)
+        caseCtxs.push(caseCtx)
       }
+      widenDivergentKeys(ctx, caseCtxs)
       return
     }
-    case 'while':
+    case 'while': {
       analyzeExpression(node.test, shapes, propertyReads, ctx)
-      analyzeStructuredNode(node.body, shapes, propertyReads, cloneKeyContext(ctx))
+      const bodyCtx = cloneKeyContext(ctx)
+      analyzeStructuredNode(node.body, shapes, propertyReads, bodyCtx)
+      widenDivergentKeys(ctx, [bodyCtx])
       return
-    case 'doWhile':
-      analyzeStructuredNode(node.body, shapes, propertyReads, cloneKeyContext(ctx))
+    }
+    case 'doWhile': {
+      const bodyCtx = cloneKeyContext(ctx)
+      analyzeStructuredNode(node.body, shapes, propertyReads, bodyCtx)
+      widenDivergentKeys(ctx, [bodyCtx])
       analyzeExpression(node.test, shapes, propertyReads, ctx)
       return
+    }
     case 'for': {
       if (node.init) {
         node.init.forEach(instr => analyzeInstruction(instr, shapes, propertyReads, ctx))
@@ -606,7 +661,11 @@ function analyzeStructuredNode(
       if (node.test) {
         analyzeExpression(node.test, shapes, propertyReads, ctx)
       }
-      analyzeStructuredNode(node.body, shapes, propertyReads, cloneKeyContext(ctx))
+      {
+        const bodyCtx = cloneKeyContext(ctx)
+        analyzeStructuredNode(node.body, shapes, propertyReads, bodyCtx)
+        widenDivergentKeys(ctx, [bodyCtx])
+      }
       if (node.update) {
         node.update.forEach(instr => analyzeInstruction(instr, shapes, propertyReads, ctx))
       }
@@ -634,6 +693,7 @@ function analyzeStructuredNode(
           }
         }
         analyzeStructuredNode(node.body, shapes, propertyReads, bodyCtx)
+        widenDivergentKeys(ctx, [bodyCtx])
       }
       return
     case 'forIn':
@@ -666,10 +726,13 @@ function analyzeStructuredNode(
           }
         }
         analyzeStructuredNode(node.body, shapes, propertyReads, bodyCtx)
+        widenDivergentKeys(ctx, [bodyCtx])
       }
       return
-    case 'try':
-      analyzeStructuredNode(node.block, shapes, propertyReads, cloneKeyContext(ctx))
+    case 'try': {
+      const tryCtx = cloneKeyContext(ctx)
+      analyzeStructuredNode(node.block, shapes, propertyReads, tryCtx)
+      const joinCtxs: KeyNarrowingContext[] = [tryCtx]
       if (node.handler) {
         const handlerCtx = cloneKeyContext(ctx)
         if (node.handler.param) {
@@ -681,11 +744,16 @@ function analyzeStructuredNode(
           markPatternShadowedGlobals(node.handler.pattern, handlerCtx)
         }
         analyzeStructuredNode(node.handler.body, shapes, propertyReads, handlerCtx)
+        joinCtxs.push(handlerCtx)
       }
       if (node.finalizer) {
-        analyzeStructuredNode(node.finalizer, shapes, propertyReads, cloneKeyContext(ctx))
+        const finalizerCtx = cloneKeyContext(ctx)
+        analyzeStructuredNode(node.finalizer, shapes, propertyReads, finalizerCtx)
+        joinCtxs.push(finalizerCtx)
       }
+      widenDivergentKeys(ctx, joinCtxs)
       return
+    }
     case 'break':
     case 'continue':
       return
