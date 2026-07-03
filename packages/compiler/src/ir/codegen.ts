@@ -60,7 +60,11 @@ import {
   type HookReturnInfo,
   type HookReturnInfoAnalysisOps,
 } from './codegen-hook-returns'
-import { attachHelperImports, collectDeclaredNames } from './codegen-imports'
+import {
+  attachHelperImports,
+  collectDeclaredNames,
+  collectDeeplyDeclaredNames,
+} from './codegen-imports'
 import { buildListCallExpression, emitListChild, type ListChildOps } from './codegen-list-child'
 import {
   getListKeyAliasReplacementName,
@@ -1238,6 +1242,12 @@ export interface CodegenContext {
   options?: FictCompilerOptions | undefined
   /** Module-level declared names for helper shadowing checks. */
   moduleDeclaredNames?: Set<string> | undefined
+  /**
+   * Every binding declared anywhere in the module, including inside nested
+   * function bodies. Used to allocate runtime-helper aliases that never collide
+   * with a user local in any function.
+   */
+  moduleAllDeclaredNames?: Set<string> | undefined
   /** Module-level binding kinds for resumable stability checks. */
   moduleBindingKinds?: Map<string, ModuleBindingKind> | undefined
   /** Module-level runtime helper imports (e.g., from 'fict'). */
@@ -7845,6 +7855,7 @@ export function lowerHIRWithRegions(
   let topLevelCtxInjected = false
   const emittedFunctionNames = new Set<string>()
   ctx.moduleDeclaredNames = collectDeclaredNames(originalBody, t)
+  ctx.moduleAllDeclaredNames = collectDeeplyDeclaredNames(originalBody, t)
   ctx.moduleBindingKinds = collectModuleBindingKinds(originalBody, t)
   const runtimeImports = collectRuntimeImports(originalBody, t)
   ctx.moduleRuntimeNames = runtimeImports.names

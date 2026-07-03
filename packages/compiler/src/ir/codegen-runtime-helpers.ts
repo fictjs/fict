@@ -30,7 +30,13 @@ function isNameTaken(
 ): boolean {
   if (allocatedNames(ctx).has(name)) return true
   if (ctx.localDeclaredNames?.has(name) || ctx.shadowedNames?.has(name)) return true
-  if (!ctx.moduleDeclaredNames?.has(name)) return false
+  // A helper alias is chosen once per module, so it must also avoid names
+  // declared as locals in any *other* function in the module — unless the name
+  // is the module's own runtime-import of this exact helper, which is reusable.
+  const declaredInModule =
+    (ctx.moduleDeclaredNames?.has(name) ?? false) ||
+    (ctx.moduleAllDeclaredNames?.has(name) ?? false)
+  if (!declaredInModule) return false
   return helperKey ? !hasRuntimeImport(ctx, name, helperKey) : true
 }
 

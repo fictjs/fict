@@ -98,6 +98,33 @@ describe('runtime helper name collisions', () => {
     expect(output).toMatch(/const count = __fictUseSignal\(__fictCtx, 1/)
   })
 
+  it('aliases readable helper imports shadowed by a local in another function', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        export function A() {
+          let n = $state(0)
+          return <div>{n}</div>
+        }
+
+        export function B() {
+          const template = 5
+          const insertBetween = 6
+          let m = $state(0)
+          return <span>{m}</span>
+        }
+      `,
+      { dev: false },
+    )
+
+    // A emits template()/insertBetween(); B declares locals of the same name.
+    // The shared module import must be aliased so B's body does not shadow it.
+    expect(output).toMatch(/template as template_1/)
+    expect(output).toMatch(/insertBetween as insertBetween_1/)
+    expect(output).toMatch(/const __tmpl_\d+ = template_1\(/)
+  })
+
   it('does not alias helper imports for anonymous default exports', () => {
     const output = transform(
       `

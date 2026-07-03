@@ -101,6 +101,96 @@ export function collectDeclaredNames(
   return declared
 }
 
+/**
+ * Collect every binding identifier declared anywhere in the module, including
+ * inside nested function/arrow bodies, block scopes, loops and catch clauses.
+ *
+ * `collectDeclaredNames` only reports module-scope bindings, which is not enough
+ * to allocate collision-free runtime-helper aliases: a helper alias is chosen
+ * once per module, so it must avoid names declared as locals in *any* function
+ * (e.g. `function C(){ const template = 5; ... }` must not shadow the emitted
+ * `template` helper import).
+ */
+export function collectDeeplyDeclaredNames(
+  body: BabelCore.types.Statement[],
+  t: typeof BabelCore.types,
+): Set<string> {
+  const declared = new Set<string>()
+  const addPatternNames = (pattern: BabelCore.types.Node | null | undefined): void => {
+    if (!pattern) return
+    if (t.isIdentifier(pattern)) {
+      declared.add(pattern.name)
+      return
+    }
+    if (t.isAssignmentPattern(pattern)) {
+      addPatternNames(pattern.left)
+      return
+    }
+    if (t.isRestElement(pattern)) {
+      addPatternNames(pattern.argument)
+      return
+    }
+    if (t.isObjectPattern(pattern)) {
+      for (const prop of pattern.properties) {
+        if (t.isRestElement(prop)) addPatternNames(prop.argument)
+        else if (t.isObjectProperty(prop)) addPatternNames(prop.value)
+      }
+      return
+    }
+    if (t.isArrayPattern(pattern)) {
+      for (const el of pattern.elements) addPatternNames(el)
+    }
+  }
+
+  const visit = (node: BabelCore.types.Node): void => {
+    if (
+      t.isImportSpecifier(node) ||
+      t.isImportDefaultSpecifier(node) ||
+      t.isImportNamespaceSpecifier(node)
+    ) {
+      declared.add(node.local.name)
+      return
+    }
+    if (t.isVariableDeclarator(node)) {
+      addPatternNames(node.id)
+      return
+    }
+    if (
+      t.isFunctionDeclaration(node) ||
+      t.isFunctionExpression(node) ||
+      t.isArrowFunctionExpression(node) ||
+      t.isObjectMethod(node) ||
+      t.isClassMethod(node) ||
+      t.isClassPrivateMethod(node)
+    ) {
+      if ('id' in node && node.id) declared.add(node.id.name)
+      for (const param of node.params) {
+        addPatternNames(t.isTSParameterProperty(param) ? param.parameter : param)
+      }
+      return
+    }
+    if (t.isClassDeclaration(node) || t.isClassExpression(node)) {
+      if (node.id) declared.add(node.id.name)
+      return
+    }
+    if (t.isCatchClause(node)) {
+      addPatternNames(node.param)
+      return
+    }
+  }
+
+  const traverseFast = (
+    t as unknown as {
+      traverseFast: (node: BabelCore.types.Node, enter: (n: BabelCore.types.Node) => void) => void
+    }
+  ).traverseFast
+  for (const stmt of body) {
+    visit(stmt)
+    traverseFast(stmt, visit)
+  }
+  return declared
+}
+
 export function attachHelperImports(
   ctx: CodegenContext,
   body: BabelCore.types.Statement[],
