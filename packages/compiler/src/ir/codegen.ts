@@ -1292,6 +1292,8 @@ export interface CodegenContext {
   currentRegion?: RegionInfo | undefined
   /** All regions for the current function */
   regions?: RegionInfo[] | undefined
+  /** Region ids that lowering could not emit as memoized guarantees. */
+  disabledRegionIds?: Set<number> | undefined
   /** Alias variables that point to tracked signals (for reassignment guards) */
   aliasVars?: Set<string> | undefined
   /** Tracked bindings that exist outside the current lowering scope (e.g., captured signals) */

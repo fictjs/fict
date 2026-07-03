@@ -1049,5 +1049,26 @@ describe('reactivity guarantee contract', () => {
       expect(warnings.map(warning => warning.code)).not.toContain('FICT-R006')
       expect(output).toContain('__region_')
     })
+
+    it('strictGuarantee rejects story blocks whose region memo is disabled during lowering', () => {
+      const source = `
+        import { $state } from 'fict'
+        const external = {
+          fmt() {
+            return 'count:'
+          },
+        }
+        function App() {
+          let count = $state(0)
+          let heading = 'empty'
+          if (count > 0) {
+            heading = external.fmt() + count
+          }
+          return <h1>{heading}</h1>
+        }
+      `
+
+      expect(() => transform(source, STRICT_GUARANTEE_OPTIONS)).toThrow(/FICT-R006/)
+    })
   })
 })

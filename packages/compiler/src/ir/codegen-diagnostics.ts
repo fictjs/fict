@@ -31,7 +31,10 @@ export function emitReactiveControlFlowReexecutionWarning(
   ;(ctx.aliasVars ?? []).forEach(name => reactiveVars.add(name))
   if (reactiveVars.size === 0) return
 
-  const guaranteedControlFlowReads = collectGuaranteedControlFlowReads(options.regionResult)
+  const guaranteedControlFlowReads = collectGuaranteedControlFlowReads(
+    options.regionResult,
+    ctx.disabledRegionIds,
+  )
   if (options.controlFlowReturnsLowered) {
     collectSimpleBranchControlFlowReads(fn).forEach(name => guaranteedControlFlowReads.add(name))
   }
@@ -88,10 +91,14 @@ function collectSimpleBranchControlFlowReads(fn: HIRFunction): Set<string> {
   return reads
 }
 
-function collectGuaranteedControlFlowReads(regionResult: RegionResult | undefined): Set<string> {
+function collectGuaranteedControlFlowReads(
+  regionResult: RegionResult | undefined,
+  disabledRegionIds: Set<number> | undefined,
+): Set<string> {
   const reads = new Set<string>()
   if (!regionResult) return reads
   for (const region of regionResult.regions) {
+    if (disabledRegionIds?.has(region.id)) continue
     if (!region.hasControlFlow || !isRegionMemoizable(region)) continue
     for (const dependency of region.dependencies) {
       const base = deSSAVarName(dependency.split('.')[0] ?? dependency)

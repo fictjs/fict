@@ -1564,7 +1564,11 @@ function lowerStructuredNodeInternal(
       }
     : undefined
 
-  return lowerNodeWithRegionContext(node, t, ctx, declaredVars, regionCtx)
+  const statements = lowerNodeWithRegionContext(node, t, ctx, declaredVars, regionCtx)
+  if (regionCtx) {
+    ctx.disabledRegionIds = new Set(regionCtx.disabledRegions)
+  }
+  return statements
 }
 
 function ensureSwitchCaseBreak(
