@@ -69,6 +69,24 @@ describe('binding shadowing runtime regressions', () => {
     expect(value).toBe(2)
   })
 
+  it('keeps block-local let writes from mutating outer bindings after the block', () => {
+    const value = compileAndRun<number>(
+      `
+        export function Comp() {
+          let x = 1
+          {
+            let x = 2
+            x = x + 1
+          }
+          return x
+        }
+      `,
+      'Comp',
+    )
+
+    expect(value).toBe(1)
+  })
+
   it('keeps bare-block let bindings from leaking after the block', () => {
     expect(() =>
       compileAndRun<number>(

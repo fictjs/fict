@@ -200,6 +200,9 @@ export function optimizeHIR(program: HIRProgram, options: OptimizeOptions = {}):
   const moduleBindings = collectModuleBindings(program)
   const moduleShadowedBuiltins = collectModuleShadowedBuiltins(moduleBindings)
   const functions = program.functions.map(fn => {
+    if (functionHasLexicalBindingCollision(fn)) {
+      return fn
+    }
     if (isPureOptimizationCandidate(fn)) {
       const ssaProgram = enterSSA({
         functions: [fn],
@@ -1974,6 +1977,66 @@ function computeImpureIdentifiers(fn: HIRFunction, base: PurityContext): Set<str
 function isPureOptimizationCandidate(fn: HIRFunction): boolean {
   if (fn.meta?.pure) return true
   return !functionContainsImpureMarkers(fn)
+}
+
+function functionHasLexicalBindingCollision(fn: HIRFunction): boolean {
+  const functionScopeBases = new Set<string>()
+  const lexicalBases = new Set<string>()
+
+  const noteFunctionBinding = (name: string): boolean => {
+    const base = getSSABaseName(name)
+    if (lexicalBases.has(base)) return true
+    functionScopeBases.add(base)
+    return false
+  }
+  const noteLexicalBinding = (name: string): boolean => {
+    const base = getSSABaseName(name)
+    if (functionScopeBases.has(base) || lexicalBases.has(base)) return true
+    lexicalBases.add(base)
+    return false
+  }
+
+  for (const param of fn.params) {
+    if (noteFunctionBinding(param.name)) return true
+  }
+
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind !== 'Assign' || !instr.declarationKind) continue
+      const isFunctionScoped =
+        instr.declarationKind === 'var' ||
+        (instr.declarationKind === 'function' && !instr.blockScopedFunction)
+      if (isFunctionScoped) {
+        if (noteFunctionBinding(instr.target.name)) return true
+      } else if (noteLexicalBinding(instr.target.name)) {
+        return true
+      }
+    }
+
+    const term = block.terminator
+    if (term.kind === 'ForOf' || term.kind === 'ForIn') {
+      if (term.leftKind !== 'assignment') {
+        const isFunctionScoped = term.variableKind === 'var'
+        if (isFunctionScoped) {
+          if (noteFunctionBinding(term.variable)) return true
+        } else if (noteLexicalBinding(term.variable)) {
+          return true
+        }
+      }
+    } else if (term.kind === 'Try') {
+      if (term.catchPattern) {
+        const names = new Set<string>()
+        collectPatternNames(term.catchPattern as t.PatternLike, names)
+        for (const name of names) {
+          if (noteLexicalBinding(name)) return true
+        }
+      } else if (term.catchParam && noteLexicalBinding(term.catchParam)) {
+        return true
+      }
+    }
+  }
+
+  return false
 }
 
 function isReactiveOptimizationCandidate(_fn: HIRFunction): boolean {
