@@ -4987,7 +4987,17 @@ function wrapInMemo(
     outputs: uniqueOutputNames,
   })
 
-  if (uniqueOutputNames.length === 0) {
+  const declarationOnlyNoOutput =
+    uniqueOutputNames.length === 0 &&
+    bodyStatements.length > 0 &&
+    bodyStatements.every(stmt => t.isVariableDeclaration(stmt))
+
+  if (declarationOnlyNoOutput) {
+    for (const stmt of bodyStatements) {
+      collectBabelStatementBindingNames(stmt, t, declaredVars)
+    }
+    statements.push(...bodyStatements)
+  } else if (uniqueOutputNames.length === 0) {
     // No outputs - just execute for side effects
     const effectFn = t.arrowFunctionExpression([], t.blockStatement(bodyStatements))
     const slot = ctx.inModule ? undefined : reserveHookSlot(ctx)

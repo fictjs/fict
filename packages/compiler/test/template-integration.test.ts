@@ -10450,6 +10450,56 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps switch return branch locals visible to JSX bindings', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { setMode(value: 'a' | 'b'): void }
+
+      function SwitchReturn() {
+        let mode = $state<'a' | 'b'>('a')
+        api.setMode = value => (mode = value)
+        switch (mode) {
+          case 'a': {
+            const labelA = mode + '!'
+            return <div data-id="a">{labelA}</div>
+          }
+          default: {
+            const labelB = mode + '?'
+            return <span data-id="b">{labelB}</span>
+          }
+        }
+      }
+
+      export function App() {
+        api = {} as typeof api
+        return <SwitchReturn />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { setMode(value: 'a' | 'b'): void }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-id="a"]')?.textContent).toBe('a!')
+
+    mod.api.setMode('b')
+    await flushUpdates()
+    expect(container.querySelector('[data-id="a"]')).toBeNull()
+    expect(container.querySelector('[data-id="b"]')?.textContent).toBe('b?')
+
+    teardown()
+    container.remove()
+  })
+
   it('renders and cleans up a portal in fine-grained mode', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render, createPortal, createElement } from 'fict'
