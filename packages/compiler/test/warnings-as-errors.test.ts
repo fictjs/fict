@@ -18,6 +18,10 @@ describe('warnings as errors', () => {
       return 1
     })
   `
+  const memoNoDepsSource = `
+    import { $memo } from 'fict'
+    const value = $memo(() => 1)
+  `
 
   it('throws when warnings are escalated to errors (dev)', () => {
     expect(() => transform(source, { warningsAsErrors: true })).toThrow(
@@ -226,6 +230,10 @@ describe('warnings as errors', () => {
     expect(() => transform(memoSideEffectSource, { strictGuarantee: true, dev: false })).toThrow(
       /FICT-M003/,
     )
+  })
+
+  it('strictGuarantee does not escalate memo no-dependency hints', () => {
+    expect(() => transform(memoNoDepsSource, { strictGuarantee: true, dev: false })).not.toThrow()
   })
 
   it('strictGuarantee is enabled by default and escalates legacy non-guaranteed reactivity diagnostics', () => {

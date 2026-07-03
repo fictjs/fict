@@ -374,6 +374,7 @@ type WarningLevel = 'off' | 'warn' | 'error'
 
 const DEFAULT_ERROR_WARNING_CODES = new Set(['FICT-R004'])
 const STRICT_REACTIVITY_WARNING_CODES = new Set(['FICT-R003', 'FICT-R006'])
+const STRICT_GUARANTEE_EXACT_WARNING_CODES = new Set(['FICT-M'])
 const STRICT_GUARANTEE_WARNING_CODES = new Set([
   'FICT-P001',
   'FICT-P002',
@@ -381,7 +382,7 @@ const STRICT_GUARANTEE_WARNING_CODES = new Set([
   'FICT-P004',
   'FICT-P005',
   'FICT-J003',
-  'FICT-M',
+  'FICT-M003',
   'FICT-S002',
   'FICT-H',
   'FICT-R002',
@@ -390,6 +391,13 @@ const STRICT_GUARANTEE_WARNING_CODES = new Set([
   'FICT-R006',
   'FICT-R007',
 ])
+
+function matchesStrictGuaranteeWarningCode(code: string): boolean {
+  return (
+    STRICT_GUARANTEE_EXACT_WARNING_CODES.has(code) ||
+    matchesAnyDiagnosticCode(code, STRICT_GUARANTEE_WARNING_CODES)
+  )
+}
 
 function readBooleanEnv(name: string): boolean | undefined {
   const raw = process.env[name]
@@ -416,7 +424,7 @@ function validateStrictGuaranteeConfig(
   }
   if (!options.warningLevels) return
   for (const [code, level] of Object.entries(options.warningLevels)) {
-    if (!diagnosticCodeOverlaps(code, STRICT_GUARANTEE_WARNING_CODES)) continue
+    if (!strictGuaranteeDiagnosticCodeOverlaps(code)) continue
     if (level === 'error') continue
     throw new SyntaxError(
       `strictGuarantee does not allow downgrading ${code} to "${level}". Remove this warningLevels override.`,
@@ -429,6 +437,14 @@ function diagnosticCodeOverlaps(code: string, patterns: Iterable<string>): boole
     if (matchesDiagnosticCode(code, pattern) || matchesDiagnosticCode(pattern, code)) {
       return true
     }
+  }
+  return false
+}
+
+function strictGuaranteeDiagnosticCodeOverlaps(code: string): boolean {
+  if (diagnosticCodeOverlaps(code, STRICT_GUARANTEE_WARNING_CODES)) return true
+  for (const exactCode of STRICT_GUARANTEE_EXACT_WARNING_CODES) {
+    if (code === exactCode || matchesDiagnosticCode(exactCode, code)) return true
   }
   return false
 }
@@ -446,7 +462,7 @@ function hasErrorEscalation(options: FictCompilerOptions): boolean {
 }
 
 function resolveWarningLevel(code: string, options: FictCompilerOptions): WarningLevel {
-  if (options.strictGuarantee && matchesAnyDiagnosticCode(code, STRICT_GUARANTEE_WARNING_CODES)) {
+  if (options.strictGuarantee && matchesStrictGuaranteeWarningCode(code)) {
     return 'error'
   }
   const override =
