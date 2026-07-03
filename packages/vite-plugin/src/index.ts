@@ -1527,6 +1527,30 @@ function stableStringify(value: unknown): string {
   return `{${body}}`
 }
 
+function readBooleanEnv(name: string): boolean | undefined {
+  const raw = process.env[name]
+  if (!raw) return undefined
+  const normalized = raw.trim().toLowerCase()
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') {
+    return true
+  }
+  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
+    return false
+  }
+  return undefined
+}
+
+function compilerEnvironmentCacheInputs(options: FictCompilerOptions): Record<string, unknown> {
+  const strictGuaranteeFromEnv = readBooleanEnv('FICT_STRICT_GUARANTEE') === true
+  const nodeEnv = process.env.NODE_ENV
+  return {
+    nodeEnv,
+    strictGuaranteeEnv: process.env.FICT_STRICT_GUARANTEE,
+    effectiveStrictGuarantee:
+      strictGuaranteeFromEnv || nodeEnv === 'production' || options.strictGuarantee !== false,
+  }
+}
+
 function normalizeOptionsForCache(options: FictCompilerOptions): Record<string, unknown> {
   const normalized: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(options)) {
@@ -1544,6 +1568,7 @@ function normalizeOptionsForCache(options: FictCompilerOptions): Record<string, 
     }
     normalized[key] = value
   }
+  normalized.__fictCompilerEnv = compilerEnvironmentCacheInputs(options)
   return normalized
 }
 

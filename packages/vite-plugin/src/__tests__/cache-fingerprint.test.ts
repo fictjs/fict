@@ -30,11 +30,19 @@ function Counter() {
   el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
 }
 `
+const originalNodeEnv = process.env.NODE_ENV
+const originalStrictGuaranteeEnv = process.env.FICT_STRICT_GUARANTEE
 
 afterEach(() => {
   vi.doUnmock('@fictjs/compiler')
   vi.doUnmock('../cache-fingerprint')
   vi.resetModules()
+  process.env.NODE_ENV = originalNodeEnv
+  if (originalStrictGuaranteeEnv === undefined) {
+    delete process.env.FICT_STRICT_GUARANTEE
+  } else {
+    process.env.FICT_STRICT_GUARANTEE = originalStrictGuaranteeEnv
+  }
 })
 
 describe('vite-plugin transform cache fingerprint', () => {
@@ -99,6 +107,25 @@ describe('vite-plugin transform cache fingerprint', () => {
       expect(inline.code).toContain("__fictQrl(import.meta.url, '__fict_e0')")
       expect(split.code).toContain('virtual:fict-handler:')
       expect(entries).toHaveLength(2)
+    } finally {
+      await rm(cacheDir, { recursive: true, force: true })
+    }
+  })
+
+  it('invalidates persistent cache entries when strictGuarantee env changes', async () => {
+    const cacheDir = await mkdtemp(path.join(tmpdir(), 'fict-vite-cache-'))
+
+    try {
+      process.env.FICT_STRICT_GUARANTEE = '0'
+      await transformWithFingerprints('compiler-a', 'plugin-a', cacheDir)
+      const firstEntries = await readdir(cacheDir)
+      expect(firstEntries).toHaveLength(1)
+
+      process.env.FICT_STRICT_GUARANTEE = '1'
+      await transformWithFingerprints('compiler-a', 'plugin-a', cacheDir)
+      const secondEntries = await readdir(cacheDir)
+      expect(secondEntries).toHaveLength(2)
+      expect(new Set(secondEntries).size).toBe(2)
     } finally {
       await rm(cacheDir, { recursive: true, force: true })
     }
