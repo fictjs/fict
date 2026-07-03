@@ -3668,6 +3668,49 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('renders mixed static and dynamic raw-text children as literal textContent', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { setColor(value: string): void }
+
+      export function App() {
+        let color = $state('red')
+        api = { setColor: value => (color = value) }
+        return (
+          <div>
+            <style data-testid="style">{'.a > .b '}{'{'}{' color: '}{color}{' }'}</style>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { setColor(value: string): void }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const style = container.querySelector('[data-testid="style"]') as HTMLStyleElement
+    // Entities (>) are not escaped and no slot markers leak into raw text.
+    expect(style.textContent).toBe('.a > .b { color: red }')
+    expect(style.textContent).not.toContain('&gt;')
+    expect(style.textContent).not.toContain('fict:slot')
+
+    mod.api.setColor('blue')
+    await flushUpdates()
+    expect(style.textContent).toBe('.a > .b { color: blue }')
+
+    teardown()
+    container.remove()
+  })
+
   it('resolves dynamic bindings inside template element content', async () => {
     const source = `
       import { $state, render } from 'fict'

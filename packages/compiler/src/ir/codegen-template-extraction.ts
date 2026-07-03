@@ -6,7 +6,7 @@ import {
   isDOMTemplateProperty,
   toCustomElementPropertyName,
 } from './codegen-dom-utils'
-import type { Expression, JSXChild, JSXElementExpression } from './hir'
+import { HIRError, type Expression, type JSXChild, type JSXElementExpression } from './hir'
 
 export interface HIRBinding {
   type: 'attr' | 'child' | 'event' | 'key' | 'spread' | 'text' | 'textContent'
@@ -197,6 +197,11 @@ const MATHML_TEXT_INTEGRATION_POINTS = new Set(['mi', 'mo', 'mn', 'ms', 'mtext']
 const MATHML_TEXT_INTEGRATION_EXCEPTIONS = new Set(['mglyph', 'malignmark'])
 const SVG_HTML_INTEGRATION_POINTS = new Set(['foreignObject', 'title', 'desc'])
 const HTML_RAW_TEXT_CONTENT_ELEMENTS = new Set(['script', 'style', 'title'])
+// True RAWTEXT elements: the HTML parser does NOT decode entities inside them and
+// does not parse comment markers, so their content must be emitted verbatim (or
+// bound via textContent) rather than HTML-escaped with comment slots. `title`
+// is RCDATA (entities decode), so it is intentionally excluded here.
+const HTML_RAWTEXT_ELEMENTS = new Set(['script', 'style'])
 const HTML_VOID_ELEMENTS = new Set([
   'area',
   'base',
@@ -791,6 +796,29 @@ export function extractHIRStaticHtml(
     children[0]?.kind === 'expression'
       ? children[0].value
       : null
+  const isTrueRawText =
+    namespace === null && resolvedNamespace === null && HTML_RAWTEXT_ELEMENTS.has(tagName)
+  // Raw text cannot carry comment slot markers and its entities are not decoded,
+  // so a script/style element whose children mix static text with expressions
+  // (e.g. CSS braces written as {'{'}) must bind its whole textContent to a
+  // string concatenation instead of baking comment slots into the template.
+  const rawTextConcatExpr: Expression | null =
+    isTrueRawText &&
+    hasAuthoredChildren &&
+    children.length > 1 &&
+    children.some(child => child.kind === 'expression') &&
+    children.every(child => child.kind === 'text' || child.kind === 'expression')
+      ? children.reduce<Expression>(
+          (acc, child) => ({
+            kind: 'BinaryExpression',
+            operator: '+',
+            left: acc,
+            right: child.kind === 'text' ? literalExpression(child.value, child.loc) : child.value,
+            loc: child.loc,
+          }),
+          literalExpression(''),
+        )
+      : null
   const isNonEmptyText = (node: JSXChild): boolean => node.kind === 'text' && node.value.length > 0
   const isImplicitTableRow = (node: JSXChild | undefined): boolean =>
     tagName === 'table' &&
@@ -807,7 +835,13 @@ export function extractHIRStaticHtml(
     )
   }
 
-  if (textareaValueChild) {
+  if (rawTextConcatExpr) {
+    bindings.push({
+      type: 'textContent',
+      path: [...parentPath],
+      expr: rawTextConcatExpr,
+    })
+  } else if (textareaValueChild) {
     bindings.push({
       type: 'attr',
       path: [...parentPath],
@@ -840,14 +874,26 @@ export function extractHIRStaticHtml(
     }
   }
 
-  if (!textareaValueChild && !rawTextContentChild) {
+  if (!textareaValueChild && !rawTextContentChild && !rawTextConcatExpr) {
     let previousStaticTextChild = false
     for (let i = 0; i < children.length; i++) {
       const child = children[i]!
       if (child.kind === 'text') {
         const text = child.value
         if (text.length > 0) {
-          html += escapeHtmlText(text)
+          if (isTrueRawText) {
+            // RAWTEXT content is not entity-decoded by the parser; emit it
+            // verbatim, but reject an embedded closing tag that would break out.
+            if (new RegExp(`</${tagName}`, 'i').test(text)) {
+              throw new HIRError(
+                `Static <${tagName}> content may not contain a closing </${tagName}> sequence.`,
+                'CODEGEN_ERROR',
+              )
+            }
+            html += text
+          } else {
+            html += escapeHtmlText(text)
+          }
           if (!previousStaticTextChild) {
             childIndex++
           }
