@@ -544,6 +544,19 @@ describe('warnings as errors', () => {
     expect(() => transformWithCompilerDefaults(source, { dev: false })).toThrow(/FICT-R002/)
   })
 
+  it('strictGuarantee allows callbacks on aliased $store array receivers', () => {
+    const source = `
+      import { $state, $store as store } from 'fict'
+      function App() {
+        let selected = $state(0)
+        const rows = store([{ id: 1 }])
+        return <ul>{rows.map(row => <li class={selected === row.id ? 'sel' : ''}>{row.id}</li>)}</ul>
+      }
+    `
+
+    expect(() => transformWithCompilerDefaults(source, { dev: false })).not.toThrow()
+  })
+
   it('strictGuarantee disallows fict-ignore suppression comments', () => {
     const source = `
       // fict-ignore-next-line FICT-R006

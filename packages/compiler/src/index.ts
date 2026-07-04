@@ -998,6 +998,7 @@ function runWarningPass(
   reactiveBindingIds: Set<BabelCore.types.Identifier>,
   hookReturnBindingInfo: Map<BabelCore.types.Identifier, HookReturnInfoSerializable>,
   stateMacroNames: Set<string>,
+  storeMacroNames: Set<string>,
   memoMacroNames: Set<string>,
   effectMacroNames: Set<string>,
   strictMacroBindings: boolean,
@@ -1888,7 +1889,7 @@ function runWarningPass(
         initNode &&
         t.isCallExpression(initNode) &&
         t.isIdentifier(initNode.callee) &&
-        (stateMacroNames.has(initNode.callee.name) || initNode.callee.name === '$store') &&
+        (stateMacroNames.has(initNode.callee.name) || storeMacroNames.has(initNode.callee.name)) &&
         t.isArrayExpression(initNode.arguments[0])
       ) {
         return binding.constant
@@ -4810,6 +4811,7 @@ function createHIREntrypointVisitor(
             reactiveBindingIds,
             hookReturnBindingInfo,
             stateMacroNames,
+            storeMacroNames,
             memoMacroNames,
             effectMacroNames,
             true,
