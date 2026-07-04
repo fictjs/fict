@@ -37,9 +37,9 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup src/index.ts src/experimental.ts src/stream-runtime.ts --format cjs,esm --dts && pnpm run build:stream-runtime",
+    "build": "tsdown && pnpm run build:stream-runtime",
     "build:stream-runtime": "node scripts/write-stream-runtime-asset.mjs",
-    "dev": "tsup src/index.ts src/experimental.ts src/stream-runtime.ts --format cjs,esm --dts --watch --onSuccess \"pnpm run build:stream-runtime\"",
+    "dev": "tsdown --watch --on-success \"pnpm run build:stream-runtime\"",
     "test": "vitest run",
     "test:edge": "node test/edge-runtime.smoke.mjs",
     "test:matrix": "pnpm run test && pnpm run test:edge",
@@ -55,7 +55,7 @@
   },
   "devDependencies": {
     "fict": "workspace:*",
-    "tsup": "^8.5.1"
+    "tsdown": "^0.22.3"
   },
   "keywords": [
     "fict",
