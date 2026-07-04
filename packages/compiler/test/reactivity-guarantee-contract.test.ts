@@ -120,6 +120,24 @@ describe('reactivity guarantee contract', () => {
           }
         `,
       },
+      {
+        name: 'reactive value passed to a local hook is not an escape',
+        source: `
+          import { $state } from 'fict'
+          function useDouble(n) {
+            const doubled = n * 2
+            return { doubled }
+          }
+          function App({ factor = 1 }) {
+            let count = $state(0)
+            const derived = count * factor
+            const a = useDouble(count)
+            const b = useDouble(factor)
+            const c = useDouble(derived)
+            return <div>{a.doubled + b.doubled + c.doubled}</div>
+          }
+        `,
+      },
     ]
 
     for (const testCase of guaranteedCases) {

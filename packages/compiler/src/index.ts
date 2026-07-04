@@ -963,6 +963,34 @@ function isDynamicPropertyAccess(
   return !(t.isStringLiteral(node.property) || t.isNumericLiteral(node.property))
 }
 
+/**
+ * True when a call targets a hook (`useX`) defined locally in this module.
+ *
+ * Passing a reactive value to a local hook is a supported pattern (the compiler
+ * wraps the call in a re-running memo, so the hook re-computes when the argument
+ * changes). Such a known reactive boundary must not be flagged as a reactive
+ * escape (FICT-R002/S002), which targets *unknown* call boundaries. Unknown or
+ * imported hooks stay conservative (fail closed).
+ */
+function calleeResolvesToLocalHook(
+  callPath: BabelCore.NodePath<
+    BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
+  >,
+  t: typeof BabelCore.types,
+): boolean {
+  const callee = callPath.node.callee
+  if (!t.isIdentifier(callee) || !isHookName(callee.name)) return false
+  const binding = callPath.scope.getBinding(callee.name)
+  if (!binding) return false
+  const declPath = binding.path
+  if (declPath.isFunctionDeclaration()) return true
+  if (declPath.isVariableDeclarator()) {
+    const init = declPath.node.init
+    return !!init && (t.isArrowFunctionExpression(init) || t.isFunctionExpression(init))
+  }
+  return false
+}
+
 function runWarningPass(
   programPath: BabelCore.NodePath<BabelCore.types.Program>,
   stateBindingIds: Set<BabelCore.types.Identifier>,
@@ -1998,7 +2026,11 @@ function runWarningPass(
     const argPaths = callPath.get('arguments') as BabelCore.NodePath[]
     const nonEscapingCallbackHost = isNonEscapingCallbackHost(callPath, callee)
     if (nonEscapingCallbackHost) return
-    if (options.checkReactiveArguments) {
+    // A local hook is a known reactive boundary: reactive value arguments are
+    // re-evaluated by the re-running memo that wraps the call, so they do not
+    // escape. (Closure captures are still checked below.)
+    const localHookHost = calleeResolvesToLocalHook(callPath, t)
+    if (options.checkReactiveArguments && !localHookHost) {
       for (const argPath of argPaths) {
         if (
           isReactiveScopeBoundaryArgument(callPath, argPath) ||
@@ -4430,7 +4462,8 @@ function createHIREntrypointVisitor(
             const isAllowedStateCallee =
               macroKind === 'effect' ||
               macroKind === 'memo' ||
-              isImportedStateArgumentAllowedCall(callPath)
+              isImportedStateArgumentAllowedCall(callPath) ||
+              calleeResolvesToLocalHook(callPath, t)
             emitDirectStateArgumentWarnings(callPath, isAllowedStateCallee)
             if (
               macroKind === 'memo' &&
@@ -4545,7 +4578,11 @@ function createHIREntrypointVisitor(
             rejectUnsupportedNamespaceMacroCall(callPath)
             validateMemberHookPlacement(callPath)
             validateDirectHookPlacement(callPath)
-            emitDirectStateArgumentWarnings(callPath, isImportedStateArgumentAllowedCall(callPath))
+            emitDirectStateArgumentWarnings(
+              callPath,
+              isImportedStateArgumentAllowedCall(callPath) ||
+                calleeResolvesToLocalHook(callPath, t),
+            )
           },
         })
 
