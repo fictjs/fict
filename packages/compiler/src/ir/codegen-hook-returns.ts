@@ -234,7 +234,11 @@ export function analyzeHookReturnInfo(
         return
       }
       objectAccessorKinds.set(keyName, kind)
-      if (!objectPlainKeys.has(keyName) && !objectAccessorKindConflicts.has(keyName)) {
+      if (
+        !directPlainSeen &&
+        !objectPlainKeys.has(keyName) &&
+        !objectAccessorKindConflicts.has(keyName)
+      ) {
         if (!info.objectProps) info.objectProps = new Map()
         info.objectProps.set(keyName, kind)
       }
@@ -255,7 +259,11 @@ export function analyzeHookReturnInfo(
         return
       }
       arrayAccessorKinds.set(index, kind)
-      if (!arrayPlainIndexes.has(index) && !arrayAccessorKindConflicts.has(index)) {
+      if (
+        !directPlainSeen &&
+        !arrayPlainIndexes.has(index) &&
+        !arrayAccessorKindConflicts.has(index)
+      ) {
         if (!info.arrayProps) info.arrayProps = new Map()
         info.arrayProps.set(index, kind)
       }
@@ -281,6 +289,8 @@ export function analyzeHookReturnInfo(
     } else {
       directPlainSeen = true
       info.directAccessor = undefined
+      info.objectProps?.clear()
+      info.arrayProps?.clear()
       info.directPlain = true
     }
   }
@@ -593,12 +603,12 @@ export function analyzeHookReturnInfo(
 
   const conflictingSlots: string[] = []
   for (const key of objectAccessorKeys) {
-    if (objectPlainKeys.has(key) || objectAccessorKindConflicts.has(key)) {
+    if (directPlainSeen || objectPlainKeys.has(key) || objectAccessorKindConflicts.has(key)) {
       conflictingSlots.push(`"${key}"`)
     }
   }
   for (const index of arrayAccessorIndexes) {
-    if (arrayPlainIndexes.has(index) || arrayAccessorKindConflicts.has(index)) {
+    if (directPlainSeen || arrayPlainIndexes.has(index) || arrayAccessorKindConflicts.has(index)) {
       conflictingSlots.push(`[${index}]`)
     }
   }

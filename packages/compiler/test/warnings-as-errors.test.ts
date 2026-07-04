@@ -295,6 +295,44 @@ describe('warnings as errors', () => {
         return <div>{t.count}</div>
       }
     `
+    const nonHookPlainCallAlias = `
+      import { $state } from 'fict'
+      function useBase() {
+        let count = $state(0)
+        return { count }
+      }
+      function makePlain() {
+        return { count: 'static' }
+      }
+      function useThing(flag) {
+        const plain = makePlain()
+        const live = useBase()
+        return flag ? plain : live
+      }
+      export function C({ flag }) {
+        const t = useThing(flag)
+        return <div>{t.count}</div>
+      }
+    `
+    const nonHookPlainArrayCallAlias = `
+      import { $state } from 'fict'
+      function useBase() {
+        let count = $state(0)
+        return [count]
+      }
+      function makePlain() {
+        return ['static']
+      }
+      function useThing(flag) {
+        const plain = makePlain()
+        const live = useBase()
+        return flag ? plain : live
+      }
+      export function C({ flag }) {
+        const t = useThing(flag)
+        return <div>{t[0]}</div>
+      }
+    `
     const conditionalObject = `
       import { $state } from 'fict'
       function useThing(flag) {
@@ -384,6 +422,8 @@ describe('warnings as errors', () => {
     expect(collect(accessorFirst)).toContain('FICT-H002')
     expect(collect(copiedAccessor)).toContain('FICT-H002')
     expect(collect(copiedAccessorAlias)).toContain('FICT-H002')
+    expect(collect(nonHookPlainCallAlias)).toContain('FICT-H002')
+    expect(collect(nonHookPlainArrayCallAlias)).toContain('FICT-H002')
     expect(collect(conditionalObject)).toContain('FICT-H002')
     expect(collect(conditionalArray)).toContain('FICT-H002')
     expect(collect(conditionalDirect)).toContain('FICT-H002')
