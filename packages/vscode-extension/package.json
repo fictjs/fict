@@ -137,8 +137,8 @@
     }
   },
   "scripts": {
-    "build": "tsup src/extension.ts --format cjs --platform node --external vscode --out-dir dist --sourcemap",
-    "dev": "tsup src/extension.ts --format cjs --platform node --external vscode --out-dir dist --watch",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src",
@@ -158,7 +158,7 @@
     "@types/vscode": "^1.90.0",
     "@types/ws": "^8.18.1",
     "@vscode/vsce": "^3.6.2",
-    "tsup": "^8.5.1",
+    "tsdown": "^0.22.3",
     "vitest": "^4.0.18"
   }
 }
