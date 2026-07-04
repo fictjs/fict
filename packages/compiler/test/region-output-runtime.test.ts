@@ -368,4 +368,30 @@ describe('region output runtime regressions', () => {
 
     expect(result).toBe('1:1')
   })
+
+  it('runs a local-object mutation in a control-flow region in source order', () => {
+    // `arr.push(count)` inside the `if` must run before `arr.length` is read;
+    // a lazy region memo would defer it and report 0.
+    const exports = compileModule(`
+      import { $state } from 'fict'
+
+      export function useProbe() {
+        let count = $state(1)
+        const arr = []
+        let heading = 'none'
+        if (count > 0) {
+          heading = 'yes' + count
+          arr.push(count)
+        }
+        const snap = arr.length
+        return heading + ':' + snap
+      }
+    `)
+
+    const result = runtimeInternal.__fictRender({ slots: [], cursor: 0 }, () =>
+      (exports.useProbe as () => string)(),
+    )
+
+    expect(result).toBe('yes1:1')
+  })
 })

@@ -5726,11 +5726,66 @@ function classExpressionNeedsReactiveMemo(instr: Instruction, ctx: CodegenContex
   return expressionUsesTracked(instr.value, ctx) || (ctx.memoVars?.has(baseName) ?? false)
 }
 
+// Root identifier of a (possibly nested) member expression, e.g. `a.b.c` -> `a`.
+function memberChainRootName(expr: Expression): string | null {
+  let current: Expression = expr
+  while (current.kind === 'MemberExpression' || current.kind === 'OptionalMemberExpression') {
+    current = current.object as Expression
+  }
+  return current.kind === 'Identifier' ? deSSAVarName(current.name) : null
+}
+
+// A bare statement that mutates a component-local object — a member-method call
+// (`arr.push(x)`) or a member write (`arr[0] = x`) whose receiver root is a
+// component-scoped binding — must run once in source order. It cannot live in a
+// lazy, re-executable region memo (which would defer it past later readers such
+// as `arr.length` and re-run it on every dependency change). Calls on globals
+// (`console.log`) and non-member calls (`$effect(...)`) are not local-object
+// mutations and stay memoizable.
+function expressionMutatesLocalObject(expr: Expression, ctx: CodegenContext): boolean {
+  const isLocalRoot = (target: Expression): boolean => {
+    const root = memberChainRootName(target)
+    return root !== null && (ctx.currentFunctionDeclaredNames?.has(root) ?? false)
+  }
+  switch (expr.kind) {
+    case 'CallExpression':
+    case 'OptionalCallExpression': {
+      const callee = expr.callee
+      if (
+        (callee.kind === 'MemberExpression' || callee.kind === 'OptionalMemberExpression') &&
+        isLocalRoot(callee)
+      ) {
+        return true
+      }
+      return expr.arguments.some(arg => expressionMutatesLocalObject(arg as Expression, ctx))
+    }
+    case 'AssignmentExpression':
+    case 'UpdateExpression': {
+      const target = (
+        expr.kind === 'AssignmentExpression' ? expr.left : expr.argument
+      ) as Expression
+      return (
+        (target.kind === 'MemberExpression' || target.kind === 'OptionalMemberExpression') &&
+        isLocalRoot(target)
+      )
+    }
+    case 'SequenceExpression':
+      return expr.expressions.some(part => expressionMutatesLocalObject(part as Expression, ctx))
+    default:
+      return false
+  }
+}
+
 function instructionRequiresEagerDerivedLowering(
   instr: Instruction,
   ctx: CodegenContext,
   safeLocalRoots?: Set<string>,
 ): boolean {
+  // A bare side-effecting statement that mutates a component-local object must
+  // run once in source order, so a region containing it cannot be a lazy memo.
+  if (instr.kind === 'Expression') {
+    return expressionMutatesLocalObject(instr.value, ctx)
+  }
   if (instr.kind !== 'Assign') return false
   const baseName = deSSAVarName(instr.target.name)
   if (baseName.startsWith('__destruct_')) return false
