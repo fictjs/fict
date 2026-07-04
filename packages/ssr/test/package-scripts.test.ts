@@ -17,7 +17,7 @@ describe('@fictjs/ssr package scripts', () => {
 
     expect(scripts['build:stream-runtime']).toBe('node scripts/write-stream-runtime-asset.mjs')
     expect(scripts.build).toContain('pnpm run build:stream-runtime')
-    expect(scripts.dev).toContain('--onSuccess')
+    expect(scripts.dev).toContain('--on-success')
     expect(scripts.dev).toContain('pnpm run build:stream-runtime')
   })
 })
