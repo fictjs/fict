@@ -85,7 +85,19 @@ pnpm changeset version
 
 ## Security
 
-Make sure the following secrets are configured in GitHub:
+NPM publishing uses Trusted Publishing through GitHub Actions OIDC. Do not add a
+long-lived NPM publishing token to the workflow.
 
-- `NPM_TOKEN` - NPM authentication token for publishing
-- `GITHUB_TOKEN` - Automatically provided by GitHub Actions
+Before tagging a release, make sure each publishable NPM package is configured
+on npmjs.com with:
+
+- Publisher: GitHub Actions
+- Organization/repository: `fictjs/fict`
+- Workflow filename: `release.yml`
+- Allowed action: `npm publish`
+- Environment: leave blank unless the release job also declares the same GitHub
+  environment
+
+The Release workflow grants `id-token: write` so npm can exchange the GitHub OIDC
+identity for short-lived publish credentials. Package provenance is enabled by
+the workflow and each package's `publishConfig.provenance`.
