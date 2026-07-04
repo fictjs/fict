@@ -1,5 +1,22 @@
 # @fictjs/router
 
+## 0.22.0
+
+### Minor Changes
+
+- Harden router components for strict compiler output and the 0.22 runtime train.
+  - Route matches are updated through signals and accept materialized match
+    objects.
+  - Link/NavLink props avoid strict JSX diagnostics, bind computed props
+    directly, and keep optional props typed precisely.
+  - Route matching avoids `Array.prototype.at` so generated output stays
+    compatible with the supported runtime targets.
+
+### Patch Changes
+
+- Updated dependencies [df4ed26]
+  - @fictjs/runtime@0.22.0
+
 ## 0.21.0
 
 ### Minor Changes

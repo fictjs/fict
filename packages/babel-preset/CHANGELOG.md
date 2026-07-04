@@ -1,5 +1,18 @@
 # @fictjs/babel-preset
 
+## 0.22.0
+
+### Minor Changes
+
+- Publish the Babel preset with compiler 0.22 so Babel users pick up the strict
+  lowering, hook-return validation, raw-text, and cache-fingerprint fixes from
+  this release train.
+
+### Patch Changes
+
+- Updated dependencies [df4ed26]
+  - @fictjs/compiler@0.22.0
+
 ## 0.21.0
 
 ### Minor Changes

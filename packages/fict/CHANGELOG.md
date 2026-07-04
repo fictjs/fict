@@ -1,5 +1,20 @@
 # fict
 
+## 0.22.0
+
+### Minor Changes
+
+- df4ed26: Harden the public Fict package for the 0.22 release train.
+  - `resource` now uses structural cache keys, bounds its default cache with
+    `maxEntries: 256`, and reuses in-flight fetches for equivalent keys.
+  - The bundled runtime bridge picks up the 0.22 scheduler, store, keyed-list,
+    and reset-key recovery fixes.
+
+### Patch Changes
+
+- Updated dependencies [df4ed26]
+  - @fictjs/runtime@0.22.0
+
 ## 0.21.0
 
 ### Minor Changes

@@ -1,5 +1,20 @@
 # @fictjs/runtime
 
+## 0.22.0
+
+### Minor Changes
+
+- df4ed26: Harden runtime scheduling, store, and recovery semantics after the
+  release verification gate.
+  - Pending flush queues now survive throwing effects and cleanup callbacks, and
+    cached memo errors are rethrown instead of returning stale values.
+  - Effects that write their own dependencies are scheduled for another pass
+    instead of being skipped.
+  - Stores now support Map/Set-like collections and internal-slot objects with
+    coarse-grained notifications.
+  - Duplicate keyed-list identities are pruned after each diff, and
+    array-shaped `resetKeys` are compared element-by-element.
+
 ## 0.21.0
 
 ### Minor Changes

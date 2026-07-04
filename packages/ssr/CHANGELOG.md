@@ -1,5 +1,33 @@
 # @fictjs/ssr
 
+## 0.22.0
+
+### Minor Changes
+
+- 235e589: Move the Preview `renderToPartial` API off the `@fictjs/ssr` main export to a
+  dedicated `@fictjs/ssr/experimental` entrypoint.
+  - Import it from `@fictjs/ssr/experimental` instead of `@fictjs/ssr`.
+  - The supported surface — `renderToString`, `renderToStringAsync`,
+    `renderToStream`, `renderToPipeableStream`, `renderToDocument`,
+    `createSSRDocument` — is unchanged.
+
+  This aligns SSR with the Preview policy (`docs/PREVIEW.md`): Preview APIs are
+  reachable only via an `experimental` entrypoint, never a package's main export.
+  The implementation moved to an internal `render-core` module that is not part of
+  `package.json#exports`.
+
+### Patch Changes
+
+- 699ccae: Fix pipeable SSR streams so downstream writable errors abort the render instead
+  of hanging `allReady`.
+
+  When a piped Node writable fails after the shell has flushed, Fict now routes the
+  sink error into the render abort path, releases pending backpressure waits, runs
+  cleanup, and rejects readiness promises deterministically.
+
+- Updated dependencies [df4ed26]
+  - @fictjs/runtime@0.22.0
+
 ## 0.21.0
 
 ### Minor Changes

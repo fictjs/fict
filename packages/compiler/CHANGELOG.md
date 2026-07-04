@@ -1,5 +1,23 @@
 # @fictjs/compiler
 
+## 0.22.0
+
+### Minor Changes
+
+- df4ed26: Harden strict compiler semantics after the release verification gate.
+  - Compiler cache fingerprints now reflect current source artifacts more
+    reliably, including source-mode and unreadable-artifact cases.
+  - Supported `try`/`catch`, switch, loop, branch, and story-block lowering paths
+    preserve reactive behavior more consistently; unsupported static loop
+    fallbacks now produce diagnostics instead of silently losing reactivity.
+  - Region memoization keeps side effects, local object mutations, closure
+    mutations, member writes, and branch-local values ordered conservatively.
+  - Hook return analysis rejects inconsistent accessor shapes, opaque branches,
+    alias conflicts, and escaped hook accessors before codegen can emit unstable
+    output.
+  - JSX, portal, spread, optional-call, array-callback, and dependency-shape
+    analysis now covers more strict-mode edge cases with targeted diagnostics.
+
 ## 0.21.0
 
 ### Minor Changes

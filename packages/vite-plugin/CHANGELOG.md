@@ -1,5 +1,18 @@
 # @fictjs/vite-plugin
 
+## 0.22.0
+
+### Minor Changes
+
+- Include strict-guarantee environment flags in transform cache keys and publish
+  the Vite plugin with compiler 0.22 so strict and non-strict builds cannot reuse
+  stale transform output across modes.
+
+### Patch Changes
+
+- Updated dependencies [df4ed26]
+  - @fictjs/compiler@0.22.0
+
 ## 0.21.0
 
 ### Minor Changes
