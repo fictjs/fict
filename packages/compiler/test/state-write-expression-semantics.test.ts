@@ -50,6 +50,14 @@ function runCompiled(code: string): Record<string, (...args: unknown[]) => unkno
   const runtime = createRuntimeStub()
   const module = { exports: {} as Record<string, unknown> }
   const sandboxRequire = (id: string) => {
+    if (id === 'fict') {
+      return {
+        $memo: <T>(factory: () => T) => {
+          return () => factory()
+        },
+        $state: <T>(initial: T) => initial,
+      }
+    }
     if (id === '@fictjs/runtime/internal' || id === 'fict/internal') return runtime
     if (id === '@fictjs/runtime/internal/list' || id === 'fict/internal/list') return {}
     if (id.startsWith('@fictjs/runtime/internal/') || id.startsWith('fict/internal/')) {

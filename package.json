@@ -32,8 +32,8 @@
     "changeset": "changeset",
     "version": "changeset version",
     "release": "turbo run build && changeset publish",
-    "precommit": "pnpm test:api-boundaries && pnpm guardrails:typecheck-config && pnpm typecheck:strict-candidate && pnpm test && pnpm typecheck && pnpm typecheck:tests && pnpm format:check && pnpm lint && pnpm build",
-    "release:verify": "pnpm test:api-boundaries && pnpm guardrails:typecheck-config && pnpm typecheck:strict-candidate && pnpm test && pnpm typecheck && pnpm typecheck:tests && pnpm format:check && pnpm lint && pnpm build && pnpm test:ssr-matrix && pnpm test:bundlers && pnpm test:e2e && pnpm guardrails:perf",
+    "precommit": "pnpm test:api-boundaries && pnpm guardrails:typecheck-config && pnpm typecheck:strict-candidate && pnpm build && pnpm test && pnpm typecheck && pnpm typecheck:tests && pnpm format:check && pnpm lint",
+    "release:verify": "pnpm test:api-boundaries && pnpm guardrails:typecheck-config && pnpm typecheck:strict-candidate && pnpm build && pnpm test && pnpm typecheck && pnpm typecheck:tests && pnpm format:check && pnpm lint && pnpm test:ssr-matrix && pnpm test:bundlers && pnpm test:e2e && pnpm guardrails:perf",
     "prepare": "husky",
     "guardrails:compiler-complexity": "node scripts/compiler-complexity-report.mjs",
     "guardrails:hir": "node scripts/hir-guardrails.mjs",
@@ -46,10 +46,10 @@
     "perf:results": "cd js-framework-benchmark && npm run results",
     "stress:runtime": "pnpm --dir packages/runtime test:stress",
     "stress:runtime:long": "pnpm --dir packages/runtime test:stress:long",
-    "bench:optimizer": "pnpm --filter @fictjs/compiler build && node scripts/optimizer-bench.mjs",
-    "bench:optimizer:update": "pnpm --filter @fictjs/compiler build && node scripts/optimizer-bench.mjs --update",
-    "bench:optimizer:guard": "pnpm --filter @fictjs/compiler build && node scripts/optimizer-bench.mjs --compare",
-    "release:compiler:verify": "pnpm --dir packages/compiler lint && pnpm --dir packages/compiler typecheck && pnpm --dir packages/compiler test && pnpm guardrails:compiler-complexity && pnpm guardrails:hir && pnpm bench:optimizer:guard"
+    "bench:optimizer": "pnpm --filter @fictjs/compiler build && env -u FICT_STRICT_GUARANTEE node scripts/optimizer-bench.mjs",
+    "bench:optimizer:update": "pnpm --filter @fictjs/compiler build && env -u FICT_STRICT_GUARANTEE node scripts/optimizer-bench.mjs --update",
+    "bench:optimizer:guard": "pnpm --filter @fictjs/compiler build && env -u FICT_STRICT_GUARANTEE node scripts/optimizer-bench.mjs --compare",
+    "release:compiler:verify": "pnpm --filter @fictjs/runtime build && pnpm --filter fict build && pnpm --dir packages/compiler lint && pnpm --dir packages/compiler typecheck && pnpm --dir packages/compiler test && pnpm guardrails:compiler-complexity && pnpm guardrails:hir && pnpm bench:optimizer:guard"
   },
   "devDependencies": {
     "@babel/core": "^7.29.0",
