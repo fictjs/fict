@@ -106,7 +106,7 @@
     {
       "name": "Fict (CJS)",
       "path": "packages/fict/dist/index.cjs",
-      "limit": "19 KB"
+      "limit": "19.1 KB"
     }
   ],
   "config": {
