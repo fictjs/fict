@@ -34,8 +34,8 @@
     "directory": "packages/playground"
   },
   "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "start": "node dist/bin.js",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -54,7 +54,7 @@
     "vite": "^7.3.1"
   },
   "devDependencies": {
-    "tsup": "^8.5.1",
+    "tsdown": "^0.22.3",
     "vitest": "^4.0.18"
   },
   "keywords": [
