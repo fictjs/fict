@@ -15,8 +15,8 @@
     "no-jsx": {
       "helpers": 4,
       "regions": 1,
-      "sizeBytes": 535,
-      "gzipBytes": 250
+      "sizeBytes": 464,
+      "gzipBytes": 238
     }
   }
 }
