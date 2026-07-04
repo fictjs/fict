@@ -1,5 +1,19 @@
 # @fictjs/babel-preset
 
+## 0.23.0
+
+### Minor Changes
+
+- Migrate the Babel preset build from `tsup` to `tsdown` while preserving the
+  CJS/ESM preset entrypoints and declaration output.
+  - Babel and compiler dependency boundaries remain stable for consuming Babel
+    projects.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/compiler@0.23.0
+
 ## 0.22.0
 
 ### Minor Changes

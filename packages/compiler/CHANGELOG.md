@@ -1,5 +1,16 @@
 # @fictjs/compiler
 
+## 0.23.0
+
+### Minor Changes
+
+- Migrate the compiler build from `tsup` to `tsdown` while preserving the
+  published CJS/ESM entrypoints, declaration files, and sourcemaps.
+  - Babel runtime dependencies remain externalized where consumers provide them,
+    while required helper packages stay bundled into the compiler output.
+  - Cache fingerprint coverage now follows the source-mapped artifact that
+    tsdown loads during local verification.
+
 ## 0.22.0
 
 ### Minor Changes

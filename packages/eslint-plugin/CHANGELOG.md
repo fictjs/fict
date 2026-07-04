@@ -1,5 +1,13 @@
 # @fictjs/eslint-plugin
 
+## 0.23.0
+
+### Minor Changes
+
+- Migrate the ESLint plugin build from `tsup` to `tsdown` while preserving the
+  CJS/ESM plugin entrypoints and declaration output.
+  - No lint rule behavior changed in this release.
+
 ## 0.22.0
 
 ### Minor Changes

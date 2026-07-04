@@ -1,5 +1,15 @@
 # @fictjs/runtime
 
+## 0.23.0
+
+### Minor Changes
+
+- Migrate runtime package builds from `tsup` to `tsdown` while preserving the
+  public runtime, JSX runtime, JSX dev runtime, internal, loader, and development
+  entrypoints across CJS and ESM outputs.
+  - Clean builds continue to regenerate the full runtime artifact set before
+    publication.
+
 ## 0.22.0
 
 ### Minor Changes

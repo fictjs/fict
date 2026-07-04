@@ -1,5 +1,13 @@
 # @fictjs/testing-library
 
+## 0.23.0
+
+### Minor Changes
+
+- Migrate the testing library build from `tsup` to `tsdown` while preserving the
+  CJS/ESM testing utility entrypoints and declaration output.
+  - No testing utility API behavior changed in this release.
+
 ## 0.22.0
 
 ### Minor Changes

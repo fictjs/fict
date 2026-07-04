@@ -1,5 +1,18 @@
 # @fictjs/vite-plugin
 
+## 0.23.0
+
+### Minor Changes
+
+- Migrate the Vite plugin build from `tsup` to `tsdown` while preserving
+  CJS/ESM outputs, declaration files, sourcemaps, compiler externalization, and
+  package metadata support.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/compiler@0.23.0
+
 ## 0.22.0
 
 ### Minor Changes

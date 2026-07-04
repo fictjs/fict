@@ -1,5 +1,19 @@
 # fict
 
+## 0.23.0
+
+### Minor Changes
+
+- Migrate the public `fict` package build from `tsup` to `tsdown` while
+  preserving the main, internal, loader, JSX runtime, advanced, and development
+  export surfaces.
+  - Source maps and declaration outputs remain published with the package.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/runtime@0.23.0
+
 ## 0.22.0
 
 ### Minor Changes

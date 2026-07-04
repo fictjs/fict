@@ -1,5 +1,21 @@
 # @fictjs/ssr
 
+## 0.23.0
+
+### Minor Changes
+
+- Migrate SSR package builds from `tsup` to `tsdown` while preserving the main,
+  experimental, and stream-runtime entrypoints.
+  - The publish build still writes the standalone `fict-stream-runtime.js`
+    runtime asset after bundling.
+  - Development watch mode now uses tsdown's `--on-success` hook to refresh the
+    stream runtime asset.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/runtime@0.23.0
+
 ## 0.22.0
 
 ### Minor Changes

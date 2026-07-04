@@ -1,5 +1,19 @@
 # @fictjs/router
 
+## 0.23.0
+
+### Minor Changes
+
+- Migrate router package builds from `tsup` to `tsdown` while preserving CJS/ESM
+  outputs, declaration files, and JSX transform behavior.
+  - Router output keeps the existing runtime dependency boundary and build-time
+    handling for `import.meta` in CJS output.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/runtime@0.23.0
+
 ## 0.22.0
 
 ### Minor Changes
