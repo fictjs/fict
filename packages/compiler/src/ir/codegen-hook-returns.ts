@@ -2,6 +2,7 @@ import type * as BabelCore from '@babel/core'
 
 import { parseCanonicalArrayPropIndex } from '../metadata-indices'
 import type { HookReturnInfoSerializable, ReactiveExportKind } from '../types'
+import { DiagnosticCode } from '../validation'
 
 import type { CodegenContext } from './codegen'
 import { collectMutatedIdentifiers } from './codegen-analysis'
@@ -184,6 +185,56 @@ export function analyzeHookReturnInfo(
   const info: HookReturnInfo = {}
   let hasInfo = false
 
+  // Track which return slots appear as an accessor vs. a plain value across all
+  // reachable return branches. A slot seen as *both* has an inconsistent shape:
+  // it cannot be published as an accessor (consumers would call a plain value)
+  // nor safely rewritten, so it is dropped and reported via FICT-H002.
+  const objectAccessorKeys = new Set<string>()
+  const objectPlainKeys = new Set<string>()
+  const arrayAccessorIndexes = new Set<number>()
+  const arrayPlainIndexes = new Set<number>()
+  let directAccessorSeen = false
+  let directPlainSeen = false
+
+  const noteObjectKey = (keyName: string, kind: HookAccessorKind | undefined) => {
+    if (kind) {
+      objectAccessorKeys.add(keyName)
+      if (!objectPlainKeys.has(keyName)) {
+        if (!info.objectProps) info.objectProps = new Map()
+        info.objectProps.set(keyName, kind)
+        hasInfo = true
+      }
+    } else {
+      objectPlainKeys.add(keyName)
+      info.objectProps?.delete(keyName)
+    }
+  }
+  const noteArrayIndex = (index: number, kind: HookAccessorKind | undefined) => {
+    if (kind) {
+      arrayAccessorIndexes.add(index)
+      if (!arrayPlainIndexes.has(index)) {
+        if (!info.arrayProps) info.arrayProps = new Map()
+        info.arrayProps.set(index, kind)
+        hasInfo = true
+      }
+    } else {
+      arrayPlainIndexes.add(index)
+      info.arrayProps?.delete(index)
+    }
+  }
+  const noteDirect = (kind: HookAccessorKind | undefined) => {
+    if (kind) {
+      directAccessorSeen = true
+      if (!directPlainSeen) {
+        info.directAccessor = kind
+        hasInfo = true
+      }
+    } else {
+      directPlainSeen = true
+      info.directAccessor = undefined
+    }
+  }
+
   const recordAccessor = (kind: HookAccessorKind | undefined, handler: () => void) => {
     if (kind) {
       hasInfo = true
@@ -361,26 +412,25 @@ export function analyzeHookReturnInfo(
 
   const visitReturnExpr = (expr: Expression) => {
     if (expr.kind === 'ObjectExpression') {
+      // Duplicate keys within a single object literal follow JS last-wins
+      // semantics, not a cross-branch conflict. Resolve each key's final kind
+      // for this return first, then merge that into the cross-branch tracking.
+      const localKinds = new Map<string, HookAccessorKind | undefined>()
       expr.properties.forEach(prop => {
         if (prop.kind === 'SpreadElement') {
           info.objectProps?.clear()
+          localKinds.clear()
           return
         }
         if (prop.kind !== 'Property') return
         const propName = getStaticHookReturnPropName(prop.key as Expression, prop.computed === true)
         if (propName === null) return
         if (prop.computed !== true && propName === '__proto__') return
-        const keyName = String(propName)
-        const kind = returnExprAccessorKind(prop.value)
-        if (!kind) {
-          info.objectProps?.delete(keyName)
-          return
-        }
-        recordAccessor(kind, () => {
-          if (!info.objectProps) info.objectProps = new Map()
-          info.objectProps.set(keyName, kind!)
-        })
+        localKinds.set(String(propName), returnExprAccessorKind(prop.value))
       })
+      for (const [keyName, kind] of localKinds) {
+        noteObjectKey(keyName, kind)
+      }
     } else if (expr.kind === 'ArrayExpression') {
       let canRecordArrayProps = true
       expr.elements.forEach((el, idx) => {
@@ -390,11 +440,7 @@ export function analyzeHookReturnInfo(
           return
         }
         if (!canRecordArrayProps) return
-        const kind = returnExprAccessorKind(el)
-        recordAccessor(kind, () => {
-          if (!info.arrayProps) info.arrayProps = new Map()
-          info.arrayProps.set(idx, kind!)
-        })
+        noteArrayIndex(idx, returnExprAccessorKind(el))
       })
     } else if (expr.kind === 'CallExpression' || expr.kind === 'OptionalCallExpression') {
       const memberInfo = namespaceHookCallInfo(expr) ?? localHookMemberCallInfo(expr)
@@ -403,26 +449,60 @@ export function analyzeHookReturnInfo(
       } else if (expr.callee.kind === 'Identifier') {
         copyHookInfo(getHookReturnInfo(expr.callee.name, ctx, ops))
       } else {
-        const kind = returnExprAccessorKind(expr)
-        recordAccessor(kind, () => {
-          info.directAccessor = kind
-        })
+        noteDirect(returnExprAccessorKind(expr))
       }
     } else {
-      const kind = returnExprAccessorKind(expr)
-      recordAccessor(kind, () => {
-        info.directAccessor = kind
-      })
+      noteDirect(returnExprAccessorKind(expr))
     }
   }
 
+  let returnLoc: Expression['loc'] | undefined
   for (const block of fn.blocks) {
     if (block.terminator.kind === 'Return' && block.terminator.argument) {
+      returnLoc = returnLoc ?? block.terminator.argument.loc
       visitReturnExpr(block.terminator.argument)
     }
   }
 
+  const conflictingSlots: string[] = []
+  for (const key of objectAccessorKeys) {
+    if (objectPlainKeys.has(key)) conflictingSlots.push(`"${key}"`)
+  }
+  for (const index of arrayAccessorIndexes) {
+    if (arrayPlainIndexes.has(index)) conflictingSlots.push(`[${index}]`)
+  }
+  if (directAccessorSeen && directPlainSeen) conflictingSlots.push('the return value')
+  if (conflictingSlots.length > 0) {
+    reportHookReturnShapeConflict(fn, ctx, conflictingSlots, returnLoc)
+  }
+
   return hasInfo ? info : null
+}
+
+function reportHookReturnShapeConflict(
+  fn: HIRFunction,
+  ctx: CodegenContext,
+  slots: string[],
+  loc: Expression['loc'] | undefined,
+): void {
+  const onWarn = ctx.options?.onWarn
+  if (!onWarn) return
+  const hookName = fn.name ?? '<anonymous hook>'
+  if (!ctx.hookReturnShapeConflictWarned) ctx.hookReturnShapeConflictWarned = new Set()
+  if (ctx.hookReturnShapeConflictWarned.has(hookName)) return
+  ctx.hookReturnShapeConflictWarned.add(hookName)
+  const start = loc?.start
+  onWarn({
+    code: DiagnosticCode.FICT_H002,
+    message:
+      `Hook "${hookName}" returns ${slots.join(', ')} as a reactive accessor in one branch ` +
+      `and a plain value in another. The return shape must be consistent so consumers can be ` +
+      `rewritten safely: return a plain value from every branch (e.g. { count: count() }) or an ` +
+      `accessor from every branch (e.g. { count: () => 'off' }).`,
+    fileName: ctx.options?.filename ?? '<unknown>',
+    line: start?.line ?? 0,
+    column: start ? start.column + 1 : 0,
+  })
 }
 
 export function getHookReturnInfo(

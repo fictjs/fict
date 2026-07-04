@@ -491,6 +491,39 @@ state = { ...state, user: { ...state.user, name: 'Alice' } }
 
 **Fix:** Prefer static property access where possible.
 
+### FICT-H002: Inconsistent hook return accessor shape
+
+**Severity:** Error under `strictGuarantee` (default); Warning in opt-out builds.
+
+**Why:** A hook returns the same field (object key, array slot, or the direct
+return value) as a reactive accessor in one branch and as a plain value in
+another. The return shape is part of the hook's ABI — same-file consumer
+rewriting and cross-package metadata both require each slot to be consistently
+an accessor or consistently a plain value. A mixed shape is ambiguous: the
+consumer cannot both call `t.count()` and read `t.count`.
+
+```ts
+function useThing(flag) {
+  let count = $state(0)
+  if (flag) return { count } // accessor
+  return { count: 'off' } // plain value — FICT-H002
+}
+```
+
+**Impact:** Under `strictGuarantee` the build fails closed. In opt-out builds
+the conflicting slot is not published as an accessor (consumers read it as a
+plain value) and a warning is emitted.
+
+**Fix:** Return a consistent shape from every branch:
+
+```ts
+// Always a plain value:
+return flag ? { count: count() } : { count: 'off' }
+
+// Always an accessor:
+return flag ? { count } : { count: () => 'off' }
+```
+
 ### FICT-HIR-UNSUPPORTED: Unsupported syntax in HIR conversion
 
 **Severity:** Error

@@ -236,6 +236,95 @@ describe('warnings as errors', () => {
     expect(() => transform(memoNoDepsSource, { strictGuarantee: true, dev: false })).not.toThrow()
   })
 
+  it('reports FICT-H002 for inconsistent hook return accessor shape (order-independent)', () => {
+    const staticFirst = `
+      import { $state } from 'fict'
+      function useThing(flag) {
+        let count = $state(0)
+        if (flag) return { count: 'static' }
+        return { count }
+      }
+      export function C({ flag }) {
+        const t = useThing(flag)
+        return <div>{t.count}</div>
+      }
+    `
+    const accessorFirst = `
+      import { $state } from 'fict'
+      function useThing(flag) {
+        let count = $state(0)
+        if (flag) return { count }
+        return { count: 'static' }
+      }
+      export function C({ flag }) {
+        const t = useThing(flag)
+        return <div>{t.count}</div>
+      }
+    `
+    const collect = (src: string): string[] => {
+      const codes: string[] = []
+      transform(src, { strictGuarantee: false, dev: false, onWarn: w => codes.push(w.code) })
+      return codes
+    }
+    // Both return orderings must surface the same conflict diagnostic.
+    expect(collect(staticFirst)).toContain('FICT-H002')
+    expect(collect(accessorFirst)).toContain('FICT-H002')
+  })
+
+  it('does not report FICT-H002 for consistent hook return shapes', () => {
+    const collect = (src: string): string[] => {
+      const codes: string[] = []
+      transform(src, { strictGuarantee: false, dev: false, onWarn: w => codes.push(w.code) })
+      return codes
+    }
+    // Consistently plain, and a duplicate key within one object (last-wins),
+    // are both valid shapes.
+    expect(
+      collect(`
+        import { $state } from 'fict'
+        function useThing(flag) {
+          let count = $state(0)
+          if (flag) return { count: count() }
+          return { count: 'static' }
+        }
+        export function C({ flag }) {
+          const t = useThing(flag)
+          return <div>{t.count}</div>
+        }
+      `),
+    ).not.toContain('FICT-H002')
+    expect(
+      collect(`
+        import { $state } from 'fict'
+        function useObj() {
+          let count = $state(1)
+          return { count: 9, count }
+        }
+        export function C() {
+          const o = useObj()
+          return <div>{o.count}</div>
+        }
+      `),
+    ).not.toContain('FICT-H002')
+  })
+
+  it('escalates FICT-H002 to an error under strictGuarantee', () => {
+    const source = `
+      import { $state } from 'fict'
+      function useThing(flag) {
+        let count = $state(0)
+        if (flag) return { count }
+        return { count: 'static' }
+      }
+      export function C({ flag }) {
+        const t = useThing(flag)
+        return <div>{t.count}</div>
+      }
+    `
+    // The inconsistent shape must fail closed under strictGuarantee.
+    expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow()
+  })
+
   it('delivers warn-level diagnostics to onWarn in non-dev opt-out builds', () => {
     const listSource = `
       import { $state } from 'fict'

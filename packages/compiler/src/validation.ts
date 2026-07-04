@@ -67,6 +67,7 @@ export enum DiagnosticCode {
 
   FICT_M = 'FICT-M',
   FICT_H = 'FICT-H',
+  FICT_H002 = 'FICT-H002', // Inconsistent hook return accessor shape across branches
   FICT_HIR_UNSUPPORTED = 'FICT-HIR-UNSUPPORTED',
 
   // Performance (FICT-X*)
@@ -131,6 +132,8 @@ export const DiagnosticMessages: Record<DiagnosticCode, string> = {
   [DiagnosticCode.FICT_M]:
     'Direct mutation of nested $state properties is not tracked; use immutable updates or $store helpers.',
   [DiagnosticCode.FICT_H]: 'Dynamic property access widens dependency tracking.',
+  [DiagnosticCode.FICT_H002]:
+    'Hook returns a field as a reactive accessor in one branch and a plain value in another; the return shape must be consistent so consumers can be rewritten. Return the same shape from every branch.',
   [DiagnosticCode.FICT_HIR_UNSUPPORTED]:
     'The HIR conversion encountered syntax that it cannot faithfully represent.',
 
@@ -169,6 +172,7 @@ const BaseDiagnosticSeverities: Record<DiagnosticCode, DiagnosticSeverity> = {
   [DiagnosticCode.FICT_R007]: DiagnosticSeverity.Warning,
   [DiagnosticCode.FICT_M]: DiagnosticSeverity.Warning,
   [DiagnosticCode.FICT_H]: DiagnosticSeverity.Warning,
+  [DiagnosticCode.FICT_H002]: DiagnosticSeverity.Warning,
   [DiagnosticCode.FICT_HIR_UNSUPPORTED]: DiagnosticSeverity.Error,
 
   [DiagnosticCode.FICT_X003]: DiagnosticSeverity.Hint,

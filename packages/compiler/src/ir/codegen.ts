@@ -1417,6 +1417,8 @@ export interface CodegenContext {
   preserveHookReturnAccessors?: boolean | undefined
   /** Cache of hook return accessor metadata keyed by hook name */
   hookReturnInfo?: Map<string, HookReturnInfo> | undefined
+  /** Hook names already reported for inconsistent return accessor shape (FICT-H002). */
+  hookReturnShapeConflictWarned?: Set<string> | undefined
   /** Hook metadata cache keys that came from imported module metadata. */
   importedHookReturnInfoNames?: Set<string> | undefined
   /** Local function aliases that point at hook functions with known return metadata. */
