@@ -64,6 +64,7 @@ import {
 import {
   attachHelperImports,
   collectDeclaredNames,
+  collectDeeplyDeclaredNameCounts,
   collectDeeplyDeclaredNames,
 } from './codegen-imports'
 import { buildListCallExpression, emitListChild, type ListChildOps } from './codegen-list-child'
@@ -1249,6 +1250,8 @@ export interface CodegenContext {
    * with a user local in any function.
    */
   moduleAllDeclaredNames?: Set<string> | undefined
+  /** Number of declarations for each name anywhere in the module. */
+  moduleAllDeclaredNameCounts?: Map<string, number> | undefined
   /** Module-level binding kinds for resumable stability checks. */
   moduleBindingKinds?: Map<string, ModuleBindingKind> | undefined
   /** Module-level runtime helper imports (e.g., from 'fict'). */
@@ -1493,6 +1496,8 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
   return {
     t,
     moduleDeclaredNames: new Set(),
+    moduleAllDeclaredNames: new Set(),
+    moduleAllDeclaredNameCounts: new Map(),
     moduleBindingKinds: new Map(),
     moduleRuntimeNames: new Set(),
     moduleRuntimeImportMap: new Map(),
@@ -7859,6 +7864,7 @@ export function lowerHIRWithRegions(
   const emittedFunctionNames = new Set<string>()
   ctx.moduleDeclaredNames = collectDeclaredNames(originalBody, t)
   ctx.moduleAllDeclaredNames = collectDeeplyDeclaredNames(originalBody, t)
+  ctx.moduleAllDeclaredNameCounts = collectDeeplyDeclaredNameCounts(originalBody, t)
   ctx.moduleBindingKinds = collectModuleBindingKinds(originalBody, t)
   const runtimeImports = collectRuntimeImports(originalBody, t)
   ctx.moduleRuntimeNames = runtimeImports.names

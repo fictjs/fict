@@ -111,15 +111,18 @@ export function collectDeclaredNames(
  * (e.g. `function C(){ const template = 5; ... }` must not shadow the emitted
  * `template` helper import).
  */
-export function collectDeeplyDeclaredNames(
+export function collectDeeplyDeclaredNameCounts(
   body: BabelCore.types.Statement[],
   t: typeof BabelCore.types,
-): Set<string> {
-  const declared = new Set<string>()
+): Map<string, number> {
+  const declared = new Map<string, number>()
+  const addName = (name: string): void => {
+    declared.set(name, (declared.get(name) ?? 0) + 1)
+  }
   const addPatternNames = (pattern: BabelCore.types.Node | null | undefined): void => {
     if (!pattern) return
     if (t.isIdentifier(pattern)) {
-      declared.add(pattern.name)
+      addName(pattern.name)
       return
     }
     if (t.isAssignmentPattern(pattern)) {
@@ -148,7 +151,7 @@ export function collectDeeplyDeclaredNames(
       t.isImportDefaultSpecifier(node) ||
       t.isImportNamespaceSpecifier(node)
     ) {
-      declared.add(node.local.name)
+      addName(node.local.name)
       return
     }
     if (t.isVariableDeclarator(node)) {
@@ -163,14 +166,14 @@ export function collectDeeplyDeclaredNames(
       t.isClassMethod(node) ||
       t.isClassPrivateMethod(node)
     ) {
-      if ('id' in node && node.id) declared.add(node.id.name)
+      if ('id' in node && node.id) addName(node.id.name)
       for (const param of node.params) {
         addPatternNames(t.isTSParameterProperty(param) ? param.parameter : param)
       }
       return
     }
     if (t.isClassDeclaration(node) || t.isClassExpression(node)) {
-      if (node.id) declared.add(node.id.name)
+      if (node.id) addName(node.id.name)
       return
     }
     if (t.isCatchClause(node)) {
@@ -189,6 +192,13 @@ export function collectDeeplyDeclaredNames(
     traverseFast(stmt, visit)
   }
   return declared
+}
+
+export function collectDeeplyDeclaredNames(
+  body: BabelCore.types.Statement[],
+  t: typeof BabelCore.types,
+): Set<string> {
+  return new Set(collectDeeplyDeclaredNameCounts(body, t).keys())
 }
 
 export function attachHelperImports(

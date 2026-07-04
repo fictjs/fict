@@ -125,6 +125,32 @@ describe('runtime helper name collisions', () => {
     expect(output).toMatch(/const __tmpl_\d+ = template_1\(/)
   })
 
+  it('aliases explicit runtime helper imports shadowed by function locals', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+        import { template } from 'fict/internal'
+
+        export function A() {
+          let n = $state(0)
+          return <div>{n}</div>
+        }
+
+        export function B() {
+          const template = 5
+          let m = $state(0)
+          return <span>{m}</span>
+        }
+      `,
+      { dev: false },
+    )
+
+    expect(output).toMatch(/template as template_1/)
+    expect(output).toMatch(/const __tmpl_\d+ = template_1\(/)
+    expect(output).not.toMatch(/const __tmpl_\d+ = template\(/)
+    expect(output).toContain('const template = 5')
+  })
+
   it('does not alias helper imports for anonymous default exports', () => {
     const output = transform(
       `

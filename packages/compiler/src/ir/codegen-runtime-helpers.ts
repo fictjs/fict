@@ -37,7 +37,12 @@ function isNameTaken(
     (ctx.moduleDeclaredNames?.has(name) ?? false) ||
     (ctx.moduleAllDeclaredNames?.has(name) ?? false)
   if (!declaredInModule) return false
-  return helperKey ? !hasRuntimeImport(ctx, name, helperKey) : true
+  if (!helperKey || !hasRuntimeImport(ctx, name, helperKey)) return true
+  // Reusing an existing runtime import is safe only when that import is the sole
+  // declaration of the local helper name. If a nested function also declares the
+  // same name, generated calls inside that function would resolve to the user
+  // local instead of the import.
+  return (ctx.moduleAllDeclaredNameCounts?.get(name) ?? 0) > 1
 }
 
 function allocateLocalName(
