@@ -60,7 +60,7 @@ export default tseslint.config(
       '**/vite.config.ts',
       '**/vitest.config.ts',
       '**/vitest.workspace.ts',
-      '**/tsup.config.ts',
+      '**/tsdown.config.ts',
     ],
     languageOptions: {
       parserOptions: {

@@ -42,7 +42,7 @@ Responsibilities:
 - infer module metadata while compiling source;
 - emit per-module metadata when requested;
 - expose APIs such as `emitModuleMetadata`, `moduleMetadata`, and `resolveModuleMetadata`;
-- keep metadata generation independent of Vite, Rollup, Webpack, tsup, or esbuild;
+- keep metadata generation independent of Vite, Rollup, Webpack, tsdown, or esbuild;
 - fail closed for malformed metadata read from disk or packages.
 
 The compiler should answer: **"What reactive API does this module expose?"**
@@ -85,7 +85,7 @@ export default {
 }
 ```
 
-Equivalent adapters can exist for Rollup, Webpack, tsup, esbuild, or unbuild. They should all emit the same package metadata ABI.
+Equivalent adapters can exist for Rollup, Webpack, tsdown, esbuild, or unbuild. They should all emit the same package metadata ABI.
 
 ## Package ABI
 
@@ -192,7 +192,7 @@ The Vite plugin now provides a library publishing mode:
 What is still future work:
 
 - first-class standalone library build command;
-- bundler-specific adapters for Webpack/tsup/esbuild beyond the current Vite/Rollup integration;
+- bundler-specific adapters for Webpack/tsdown/esbuild beyond the current Vite/Rollup integration;
 - standalone pack-time validation for release pipelines that do not use the Vite/Rollup library publishing mode.
 
 ## Summary
