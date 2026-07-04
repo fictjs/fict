@@ -26,8 +26,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts",
-    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src",
@@ -38,10 +38,10 @@
     "eslint": ">=9.0.0"
   },
   "devDependencies": {
-    "eslint": "^10.0.2",
     "@types/eslint": "^9.0.0",
     "@types/estree": "^1.0.8",
-    "tsup": "^8.5.1"
+    "eslint": "^10.0.2",
+    "tsdown": "^0.22.3"
   },
   "keywords": [
     "fict",
