@@ -28,8 +28,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts",
-    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src",
@@ -58,6 +58,6 @@
     "@types/babel__core": "^7.20.5",
     "@types/babel__helper-plugin-utils": "^7.10.3",
     "@types/babel__traverse": "^7.28.0",
-    "tsup": "^8.5.1"
+    "tsdown": "^0.22.3"
   }
 }
