@@ -133,7 +133,7 @@ export const DiagnosticMessages: Record<DiagnosticCode, string> = {
     'Direct mutation of nested $state properties is not tracked; use immutable updates or $store helpers.',
   [DiagnosticCode.FICT_H]: 'Dynamic property access widens dependency tracking.',
   [DiagnosticCode.FICT_H002]:
-    'Hook returns a field as a reactive accessor in one branch and a plain value in another; the return shape must be consistent so consumers can be rewritten. Return the same shape from every branch.',
+    'Hook returns a field with an inconsistent shape across branches; each return slot must consistently be a plain value or the same reactive accessor kind so consumers can be rewritten.',
   [DiagnosticCode.FICT_HIR_UNSUPPORTED]:
     'The HIR conversion encountered syntax that it cannot faithfully represent.',
 

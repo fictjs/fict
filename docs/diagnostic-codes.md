@@ -496,11 +496,14 @@ state = { ...state, user: { ...state.user, name: 'Alice' } }
 **Severity:** Error under `strictGuarantee` (default); Warning in opt-out builds.
 
 **Why:** A hook returns the same field (object key, array slot, or the direct
-return value) as a reactive accessor in one branch and as a plain value in
-another. The return shape is part of the hook's ABI — same-file consumer
-rewriting and cross-package metadata both require each slot to be consistently
-an accessor or consistently a plain value. A mixed shape is ambiguous: the
-consumer cannot both call `t.count()` and read `t.count`.
+return value) with incompatible shapes across branches: a reactive accessor in
+one branch and a plain value in another, or different reactive accessor kinds
+such as a signal in one branch and a memo in another. The return shape is part
+of the hook's ABI — same-file consumer rewriting and cross-package metadata both
+require each slot to be consistently a plain value or consistently the same
+reactive accessor kind. A mixed shape is ambiguous: the consumer cannot both
+call `t.count()` and read `t.count`, and writable signal semantics are different
+from read-only memo semantics.
 
 ```ts
 function useThing(flag) {
@@ -511,8 +514,7 @@ function useThing(flag) {
 ```
 
 **Impact:** Under `strictGuarantee` the build fails closed. In opt-out builds
-the conflicting slot is not published as an accessor (consumers read it as a
-plain value) and a warning is emitted.
+the conflicting slot is not published as an accessor and a warning is emitted.
 
 **Fix:** Return a consistent shape from every branch:
 
@@ -520,7 +522,7 @@ plain value) and a warning is emitted.
 // Always a plain value:
 return flag ? { count: count() } : { count: 'off' }
 
-// Always an accessor:
+// Always the same accessor kind:
 return flag ? { count } : { count: () => 'off' }
 ```
 

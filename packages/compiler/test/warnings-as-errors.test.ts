@@ -331,6 +331,30 @@ describe('warnings as errors', () => {
         return <div>{t}</div>
       }
     `
+    const incompatibleAccessorKinds = `
+      import { $memo, $state } from 'fict'
+      function useThing(flag) {
+        let count = $state(0)
+        const doubled = $memo(() => count() * 2)
+        return flag ? { value: count } : { value: doubled }
+      }
+      export function C({ flag }) {
+        const t = useThing(flag)
+        return <div>{t.value}</div>
+      }
+    `
+    const incompatibleDirectAccessorKinds = `
+      import { $memo, $state } from 'fict'
+      function useThing(flag) {
+        let count = $state(0)
+        const doubled = $memo(() => count() * 2)
+        return flag ? count : doubled
+      }
+      export function C({ flag }) {
+        const t = useThing(flag)
+        return <div>{t}</div>
+      }
+    `
     const collect = (src: string): string[] => {
       const codes: string[] = []
       transform(src, { strictGuarantee: false, dev: false, onWarn: w => codes.push(w.code) })
@@ -345,6 +369,8 @@ describe('warnings as errors', () => {
     expect(collect(conditionalDirect)).toContain('FICT-H002')
     expect(collect(logicalAndDirect)).toContain('FICT-H002')
     expect(collect(logicalOrDirect)).toContain('FICT-H002')
+    expect(collect(incompatibleAccessorKinds)).toContain('FICT-H002')
+    expect(collect(incompatibleDirectAccessorKinds)).toContain('FICT-H002')
   })
 
   it('does not report FICT-H002 for consistent hook return shapes', () => {

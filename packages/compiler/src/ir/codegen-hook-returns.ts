@@ -183,26 +183,37 @@ export function analyzeHookReturnInfo(
   tmpCtx.memoVars = reactive.memo
 
   const info: HookReturnInfo = {}
-  let hasInfo = false
 
   // Track which return slots appear as an accessor vs. a plain value across all
   // reachable return branches. A slot seen as *both* has an inconsistent shape:
   // it cannot be published as an accessor (consumers would call a plain value)
   // nor safely rewritten, so it is dropped and reported via FICT-H002.
   const objectAccessorKeys = new Set<string>()
+  const objectAccessorKinds = new Map<string, HookAccessorKind>()
+  const objectAccessorKindConflicts = new Set<string>()
   const objectPlainKeys = new Set<string>()
   const arrayAccessorIndexes = new Set<number>()
+  const arrayAccessorKinds = new Map<number, HookAccessorKind>()
+  const arrayAccessorKindConflicts = new Set<number>()
   const arrayPlainIndexes = new Set<number>()
   let directAccessorSeen = false
+  let directAccessorKind: HookAccessorKind | undefined
+  let directAccessorKindConflict = false
   let directPlainSeen = false
 
   const noteObjectKey = (keyName: string, kind: HookAccessorKind | undefined) => {
     if (kind) {
       objectAccessorKeys.add(keyName)
-      if (!objectPlainKeys.has(keyName)) {
+      const existingKind = objectAccessorKinds.get(keyName)
+      if (existingKind && existingKind !== kind) {
+        objectAccessorKindConflicts.add(keyName)
+        info.objectProps?.delete(keyName)
+        return
+      }
+      objectAccessorKinds.set(keyName, kind)
+      if (!objectPlainKeys.has(keyName) && !objectAccessorKindConflicts.has(keyName)) {
         if (!info.objectProps) info.objectProps = new Map()
         info.objectProps.set(keyName, kind)
-        hasInfo = true
       }
     } else {
       objectPlainKeys.add(keyName)
@@ -212,10 +223,16 @@ export function analyzeHookReturnInfo(
   const noteArrayIndex = (index: number, kind: HookAccessorKind | undefined) => {
     if (kind) {
       arrayAccessorIndexes.add(index)
-      if (!arrayPlainIndexes.has(index)) {
+      const existingKind = arrayAccessorKinds.get(index)
+      if (existingKind && existingKind !== kind) {
+        arrayAccessorKindConflicts.add(index)
+        info.arrayProps?.delete(index)
+        return
+      }
+      arrayAccessorKinds.set(index, kind)
+      if (!arrayPlainIndexes.has(index) && !arrayAccessorKindConflicts.has(index)) {
         if (!info.arrayProps) info.arrayProps = new Map()
         info.arrayProps.set(index, kind)
-        hasInfo = true
       }
     } else {
       arrayPlainIndexes.add(index)
@@ -225,9 +242,14 @@ export function analyzeHookReturnInfo(
   const noteDirect = (kind: HookAccessorKind | undefined) => {
     if (kind) {
       directAccessorSeen = true
-      if (!directPlainSeen) {
+      if (directAccessorKind && directAccessorKind !== kind) {
+        directAccessorKindConflict = true
+        info.directAccessor = undefined
+        return
+      }
+      directAccessorKind = kind
+      if (!directPlainSeen && !directAccessorKindConflict) {
         info.directAccessor = kind
-        hasInfo = true
       }
     } else {
       directPlainSeen = true
@@ -501,17 +523,23 @@ export function analyzeHookReturnInfo(
 
   const conflictingSlots: string[] = []
   for (const key of objectAccessorKeys) {
-    if (objectPlainKeys.has(key)) conflictingSlots.push(`"${key}"`)
+    if (objectPlainKeys.has(key) || objectAccessorKindConflicts.has(key)) {
+      conflictingSlots.push(`"${key}"`)
+    }
   }
   for (const index of arrayAccessorIndexes) {
-    if (arrayPlainIndexes.has(index)) conflictingSlots.push(`[${index}]`)
+    if (arrayPlainIndexes.has(index) || arrayAccessorKindConflicts.has(index)) {
+      conflictingSlots.push(`[${index}]`)
+    }
   }
-  if (directAccessorSeen && directPlainSeen) conflictingSlots.push('the return value')
+  if ((directAccessorSeen && directPlainSeen) || directAccessorKindConflict) {
+    conflictingSlots.push('the return value')
+  }
   if (conflictingSlots.length > 0) {
     reportHookReturnShapeConflict(fn, ctx, conflictingSlots, returnLoc)
   }
 
-  return hasInfo ? info : null
+  return info.directAccessor || info.objectProps?.size || info.arrayProps?.size ? info : null
 }
 
 function reportHookReturnShapeConflict(
@@ -530,10 +558,11 @@ function reportHookReturnShapeConflict(
   onWarn({
     code: DiagnosticCode.FICT_H002,
     message:
-      `Hook "${hookName}" returns ${slots.join(', ')} as a reactive accessor in one branch ` +
-      `and a plain value in another. The return shape must be consistent so consumers can be ` +
-      `rewritten safely: return a plain value from every branch (e.g. { count: count() }) or an ` +
-      `accessor from every branch (e.g. { count: () => 'off' }).`,
+      `Hook "${hookName}" returns ${slots.join(', ')} with an inconsistent shape across ` +
+      `branches. Each slot must consistently be a plain value or the same reactive accessor kind ` +
+      `so consumers can be rewritten safely: return a plain value from every branch (e.g. ` +
+      `{ count: count() }) or a compatible accessor from every branch (e.g. { count: () => ` +
+      `'off' }).`,
     fileName: ctx.options?.filename ?? '<unknown>',
     line: start?.line ?? 0,
     column: start ? start.column + 1 : 0,
