@@ -5745,7 +5745,11 @@ function memberChainRootName(expr: Expression): string | null {
 function expressionMutatesLocalObject(expr: Expression, ctx: CodegenContext): boolean {
   const isLocalRoot = (target: Expression): boolean => {
     const root = memberChainRootName(target)
-    return root !== null && (ctx.currentFunctionDeclaredNames?.has(root) ?? false)
+    return (
+      root !== null &&
+      ((ctx.currentFunctionDeclaredNames?.has(root) ?? false) ||
+        (ctx.localDeclaredNames?.has(root) ?? false))
+    )
   }
   switch (expr.kind) {
     case 'CallExpression':
@@ -5787,6 +5791,7 @@ function instructionRequiresEagerDerivedLowering(
     return expressionMutatesLocalObject(instr.value, ctx)
   }
   if (instr.kind !== 'Assign') return false
+  if (expressionMutatesLocalObject(instr.value, ctx)) return true
   const baseName = deSSAVarName(instr.target.name)
   if (baseName.startsWith('__destruct_')) return false
   const mutableDeps = collectMutableNonReactiveDependencies(instr.value, ctx, baseName)
