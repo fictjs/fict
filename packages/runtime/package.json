@@ -64,8 +64,8 @@
     "src"
   ],
   "scripts": {
-    "build": "pnpm run clean && tsup",
-    "dev": "tsup --watch",
+    "build": "pnpm run clean && tsdown",
+    "dev": "tsdown --watch",
     "test": "vitest run",
     "test:stress": "FICT_RUNTIME_STRESS=1 vitest run test/runtime-stability.stress.test.ts",
     "test:stress:long": "FICT_RUNTIME_STRESS=1 FICT_RUNTIME_SOAK_ITERS=12000 FICT_RUNTIME_CHURN_CYCLES=500 FICT_RUNTIME_LEAK_ROUNDS=120 FICT_RUNTIME_LEAK_EFFECTS_PER_ROUND=200 FICT_RUNTIME_BACKPRESSURE_UPDATES=16000 FICT_RUNTIME_MAX_DRAIN_LATENCY_MS=2500 vitest run test/runtime-stability.stress.test.ts",
@@ -80,7 +80,7 @@
   },
   "devDependencies": {
     "jsdom": "^28.1.0",
-    "tsup": "^8.5.1"
+    "tsdown": "^0.22.3"
   },
   "author": "unadlib",
   "license": "MIT"
