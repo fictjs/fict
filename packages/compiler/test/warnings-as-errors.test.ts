@@ -236,6 +236,24 @@ describe('warnings as errors', () => {
     expect(() => transform(memoNoDepsSource, { strictGuarantee: true, dev: false })).not.toThrow()
   })
 
+  it('delivers warn-level diagnostics to onWarn in non-dev opt-out builds', () => {
+    const listSource = `
+      import { $state } from 'fict'
+      export function List() {
+        let items = $state([1, 2, 3])
+        return <ul>{items.map(item => <li>{item}</li>)}</ul>
+      }
+    `
+    const warnings: string[] = []
+    transform(listSource, {
+      dev: false,
+      strictGuarantee: false,
+      onWarn: warning => warnings.push(warning.code),
+    })
+    // The missing-key warning must still reach onWarn even though dev is off.
+    expect(warnings).toContain('FICT-J002')
+  })
+
   it('strictGuarantee is enabled by default and escalates legacy non-guaranteed reactivity diagnostics', () => {
     const source = `
       import { $state } from 'fict'

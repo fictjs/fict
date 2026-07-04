@@ -532,7 +532,11 @@ function createWarningDispatcher(
       }
       throw new SyntaxError(buildWarningAsErrorMessage(warning, sourceCode))
     }
-    if (dev && onWarn) {
+    // Deliver warn-level diagnostics whenever the integration opts in with an
+    // onWarn callback. Gating on `dev` silently dropped guarantee diagnostics
+    // (e.g. the FICT-R006 static-loop fallback the guarantee matrix promises to
+    // "warn" about) in non-dev opt-out builds such as staging bundles.
+    if (onWarn) {
       onWarn(warning)
     }
   }
