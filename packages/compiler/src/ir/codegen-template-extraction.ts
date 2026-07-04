@@ -6,7 +6,13 @@ import {
   isDOMTemplateProperty,
   toCustomElementPropertyName,
 } from './codegen-dom-utils'
-import { HIRError, type Expression, type JSXChild, type JSXElementExpression } from './hir'
+import {
+  HIRError,
+  type Expression,
+  type Identifier,
+  type JSXChild,
+  type JSXElementExpression,
+} from './hir'
 
 export interface HIRBinding {
   type: 'attr' | 'child' | 'event' | 'key' | 'spread' | 'text' | 'textContent'
@@ -485,6 +491,55 @@ function literalExpression(value: unknown, loc?: Expression['loc']): Expression 
   return { kind: 'Literal', value, loc } as Expression
 }
 
+function rawTextSegmentExpression(expr: Expression): Expression {
+  const valueName = '__fictRawTextPart'
+  const valueParam: Identifier = { kind: 'Identifier', name: valueName, loc: expr.loc }
+  const valueRef = (): Identifier => ({ kind: 'Identifier', name: valueName, loc: expr.loc })
+
+  return {
+    kind: 'CallExpression',
+    callee: {
+      kind: 'ArrowFunction',
+      params: [valueParam],
+      body: {
+        kind: 'ConditionalExpression',
+        test: {
+          kind: 'LogicalExpression',
+          operator: '||',
+          left: {
+            kind: 'BinaryExpression',
+            operator: '==',
+            left: valueRef(),
+            right: literalExpression(null, expr.loc),
+            loc: expr.loc,
+          },
+          right: {
+            kind: 'BinaryExpression',
+            operator: '===',
+            left: {
+              kind: 'UnaryExpression',
+              operator: 'typeof',
+              argument: valueRef(),
+              prefix: true,
+              loc: expr.loc,
+            },
+            right: literalExpression('boolean', expr.loc),
+            loc: expr.loc,
+          },
+          loc: expr.loc,
+        },
+        consequent: literalExpression('', expr.loc),
+        alternate: valueRef(),
+        loc: expr.loc,
+      },
+      isExpression: true,
+      loc: expr.loc,
+    },
+    arguments: [expr],
+    loc: expr.loc,
+  } as Expression
+}
+
 function hasExplicitIsAttribute(jsx: JSXElementExpression, namespace: NamespaceContext): boolean {
   return jsx.attributes.some(attr => {
     if (attr.isSpread) return false
@@ -813,7 +868,10 @@ export function extractHIRStaticHtml(
             kind: 'BinaryExpression',
             operator: '+',
             left: acc,
-            right: child.kind === 'text' ? literalExpression(child.value, child.loc) : child.value,
+            right:
+              child.kind === 'text'
+                ? literalExpression(child.value, child.loc)
+                : rawTextSegmentExpression(child.value),
             loc: child.loc,
           }),
           literalExpression(''),

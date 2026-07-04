@@ -3672,14 +3672,18 @@ describe('compiled templates DOM integration', () => {
     const source = `
       import { $state, render } from 'fict'
 
-      export let api: { setColor(value: string): void }
+      export let api: { setColor(value: string): void; show(): void }
 
       export function App() {
         let color = $state('red')
-        api = { setColor: value => (color = value) }
+        let enabled = $state(false)
+        api = {
+          setColor: value => (color = value),
+          show: () => (enabled = true),
+        }
         return (
           <div>
-            <style data-testid="style">{'.a > .b '}{'{'}{' color: '}{color}{' }'}</style>
+            <style data-testid="style">{'.a > .b '}{enabled && 'display:block; '}{'{'}{' color: '}{color}{null}{undefined}{false}{' }'}</style>
           </div>
         )
       }
@@ -3691,7 +3695,7 @@ describe('compiled templates DOM integration', () => {
 
     const mod = compileAndLoad<{
       mount: (el: HTMLElement) => () => void
-      api: { setColor(value: string): void }
+      api: { setColor(value: string): void; show(): void }
     }>(source, { fineGrainedDom: true })
     const container = document.createElement('div')
     document.body.appendChild(container)
@@ -3702,10 +3706,14 @@ describe('compiled templates DOM integration', () => {
     expect(style.textContent).toBe('.a > .b { color: red }')
     expect(style.textContent).not.toContain('&gt;')
     expect(style.textContent).not.toContain('fict:slot')
+    expect(style.textContent).not.toContain('false')
+    expect(style.textContent).not.toContain('null')
+    expect(style.textContent).not.toContain('undefined')
 
+    mod.api.show()
     mod.api.setColor('blue')
     await flushUpdates()
-    expect(style.textContent).toBe('.a > .b { color: blue }')
+    expect(style.textContent).toBe('.a > .b display:block; { color: blue }')
 
     teardown()
     container.remove()
