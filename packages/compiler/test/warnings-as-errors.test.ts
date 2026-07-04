@@ -529,6 +529,21 @@ describe('warnings as errors', () => {
     expect(() => transformWithCompilerDefaults(source, { dev: false })).not.toThrow()
   })
 
+  it('strictGuarantee rejects callbacks on reassigned reactive array receivers', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        let count = $state(0)
+        let rows = $state([1])
+        rows = { map(cb) { globalThis.saved = cb; return [] } }
+        rows.map(() => count)
+        return <div>{count}</div>
+      }
+    `
+
+    expect(() => transformWithCompilerDefaults(source, { dev: false })).toThrow(/FICT-R002/)
+  })
+
   it('strictGuarantee disallows fict-ignore suppression comments', () => {
     const source = `
       // fict-ignore-next-line FICT-R006

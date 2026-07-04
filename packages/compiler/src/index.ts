@@ -1891,7 +1891,7 @@ function runWarningPass(
         (stateMacroNames.has(initNode.callee.name) || initNode.callee.name === '$store') &&
         t.isArrayExpression(initNode.arguments[0])
       ) {
-        return true
+        return binding.constant
       }
       if (!binding.constant) return false
       return t.isArrayExpression(initNode)
