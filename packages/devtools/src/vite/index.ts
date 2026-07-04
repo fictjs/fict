@@ -72,7 +72,7 @@ export interface FictDevToolsOptions {
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 // Resolve to package root
-// When built with tsup, chunks are in dist/, so we go up 1 level
+// When built for package output, chunks are in dist/, so we go up 1 level
 // When running from source (src/vite/), we go up 2 levels
 const packageRoot = __dirname.includes('dist')
   ? resolve(__dirname, '..')

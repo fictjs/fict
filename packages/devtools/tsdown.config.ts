@@ -1,4 +1,6 @@
-import { defineConfig } from 'tsup'
+import { defineConfig } from 'tsdown'
+
+import { packageOutExtensions } from '../../scripts/tsdown-presets.mjs'
 
 export default defineConfig({
   entry: {
@@ -13,7 +15,10 @@ export default defineConfig({
       noImplicitReturns: false,
     },
   },
-  clean: false, // Don't clean - we also have extension build output
+  clean: false,
   sourcemap: true,
-  external: ['vite', '@fictjs/runtime'],
+  outExtensions: packageOutExtensions,
+  deps: {
+    neverBundle: ['vite', '@fictjs/runtime', 'open'],
+  },
 })
