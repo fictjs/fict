@@ -1850,10 +1850,23 @@ function runWarningPass(
       if (t.isArrayExpression(expr)) return true
       if (!t.isIdentifier(expr)) return false
       const binding = callPath.scope.getBinding(expr.name)
-      if (!binding?.constant) return false
-      if (!binding.path.isVariableDeclarator()) return false
-      const init = binding.path.get('init') as BabelCore.NodePath | null
-      return !!init?.isArrayExpression()
+      if (!binding?.path.isVariableDeclarator()) return false
+      const initNode = binding.path.node.init
+      // A reactive array created from an array literal (`$state([...])` /
+      // `$store([...])`) is still iterated synchronously by map/filter/forEach,
+      // so its callback does not escape. The guarantee matrix lists these as
+      // non-escaping hosts even though the receiver is reactive.
+      if (
+        initNode &&
+        t.isCallExpression(initNode) &&
+        t.isIdentifier(initNode.callee) &&
+        (stateMacroNames.has(initNode.callee.name) || initNode.callee.name === '$store') &&
+        t.isArrayExpression(initNode.arguments[0])
+      ) {
+        return true
+      }
+      if (!binding.constant) return false
+      return t.isArrayExpression(initNode)
     }
 
     if (t.isIdentifier(callee)) {

@@ -78,6 +78,31 @@ describe('reactivity guarantee contract', () => {
         `,
       },
       {
+        name: 'iterator callback over a reactive array capturing another signal',
+        source: `
+          import { $state } from 'fict'
+          function App() {
+            let selected = $state(0)
+            let rows = $state([{ id: 1 }, { id: 2 }])
+            return (
+              <ul>
+                {rows.map(row => (
+                  <li
+                    key={row.id}
+                    class={selected === row.id ? 'sel' : ''}
+                    onClick={() => {
+                      selected = row.id
+                    }}
+                  >
+                    {row.id}
+                  </li>
+                ))}
+              </ul>
+            )
+          }
+        `,
+      },
+      {
         name: 'supported nested props destructuring remains reactive',
         source: `
           function App({ user: { name } }) {
