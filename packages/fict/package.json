@@ -74,8 +74,8 @@
     "src"
   ],
   "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -87,7 +87,7 @@
   },
   "devDependencies": {
     "@fictjs/vite-plugin": "workspace:*",
-    "tsup": "^8.5.1",
+    "tsdown": "^0.22.3",
     "vite": "^7.3.1"
   },
   "author": "unadlib",

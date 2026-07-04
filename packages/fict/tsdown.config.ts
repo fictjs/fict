@@ -1,4 +1,6 @@
-import { defineConfig } from 'tsup'
+import { defineConfig } from 'tsdown'
+
+import { packageOutExtensions } from '../../scripts/tsdown-presets.mjs'
 
 export default defineConfig({
   entry: [
@@ -17,13 +19,8 @@ export default defineConfig({
   clean: true,
   sourcemap: true,
   treeshake: true,
-  external: [
-    '@fictjs/runtime',
-    '@fictjs/runtime/advanced',
-    '@fictjs/runtime/internal',
-    '@fictjs/runtime/internal/list',
-    '@fictjs/runtime/loader',
-    '@fictjs/runtime/jsx-runtime',
-    '@fictjs/runtime/jsx-dev-runtime',
-  ],
+  outExtensions: packageOutExtensions,
+  deps: {
+    neverBundle: ['@fictjs/runtime', /^@fictjs\/runtime\//],
+  },
 })
