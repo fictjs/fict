@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "fict"
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "../runtime/src/dev.d.ts"],
+  "exclude": ["node_modules", "dist", "coverage", "test"]
+}
