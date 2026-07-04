@@ -1234,6 +1234,9 @@ function optimizeReactiveBlock(
         deleteByBase(constArrays, name)
       }
       const memberWrites = collectMemberMutationTargets(instr.value)
+      if (memberWrites.size > 0) {
+        cseMap.clear()
+      }
       for (const name of memberWrites) {
         invalidateConstFieldCachesByAlias(name)
       }
@@ -1321,6 +1324,9 @@ function optimizeReactiveBlock(
         deleteByBase(constArrays, name)
       }
       const memberWrites = collectMemberMutationTargets(instr.value)
+      if (memberWrites.size > 0) {
+        cseMap.clear()
+      }
       for (const name of memberWrites) {
         invalidateConstFieldCachesByAlias(name)
       }
@@ -1357,6 +1363,7 @@ function optimizeReactiveBlock(
     deleteByBase(constArrays, name)
   }
   for (const name of terminatorEffects.memberWrites) {
+    cseMap.clear()
     invalidateConstFieldCachesByAlias(name)
   }
   for (const name of terminatorEffects.potentialMutations) {
@@ -1493,6 +1500,11 @@ function eliminateCrossBlockCSE(
 
         const writes = new Set<string>([target])
         collectWriteTargets(value).forEach(name => writes.add(name))
+        const memberWrites = collectMemberMutationTargets(value)
+        if (memberWrites.size > 0) {
+          cseMap.clear()
+        }
+        memberWrites.forEach(name => writes.add(name))
         collectPotentialMutationTargets(value).forEach(name => writes.add(name))
         invalidateCrossBlockCSE(cseMap, writes)
 
@@ -1510,6 +1522,11 @@ function eliminateCrossBlockCSE(
         }
       } else if (instr.kind === 'Expression') {
         const writes = collectWriteTargets(instr.value)
+        const memberWrites = collectMemberMutationTargets(instr.value)
+        if (memberWrites.size > 0) {
+          cseMap.clear()
+        }
+        memberWrites.forEach(name => writes.add(name))
         collectPotentialMutationTargets(instr.value).forEach(name => writes.add(name))
         invalidateCrossBlockCSE(cseMap, writes)
       } else if (instr.kind === 'Phi') {
@@ -1523,6 +1540,9 @@ function eliminateCrossBlockCSE(
       ...terminatorEffects.memberWrites,
       ...terminatorEffects.potentialMutations,
     ])
+    if (terminatorEffects.memberWrites.size > 0) {
+      cseMap.clear()
+    }
     invalidateCrossBlockCSE(cseMap, terminatorWrites)
 
     newBlocks.set(blockId, changed ? { ...block, instructions: updatedInstructions } : block)
@@ -4947,7 +4967,11 @@ function eliminateCommonSubexpressions(fn: HIRFunction, purity: PurityContext): 
       if (instr.kind === 'Assign' || instr.kind === 'Expression') {
         const writes = new Set<string>()
         collectWriteTargets(instr.value).forEach(name => writes.add(name))
-        collectMemberMutationTargets(instr.value).forEach(name => writes.add(name))
+        const memberWrites = collectMemberMutationTargets(instr.value)
+        if (memberWrites.size > 0) {
+          cseMap.clear()
+        }
+        memberWrites.forEach(name => writes.add(name))
         if (instr.kind === 'Assign' && instr.isMutation) writes.add(instr.target.name)
         if (writes.size > 0) invalidate(writes)
       }
