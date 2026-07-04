@@ -261,6 +261,21 @@ describe('warnings as errors', () => {
         return <div>{t.count}</div>
       }
     `
+    const copiedAccessor = `
+      import { $state } from 'fict'
+      function useBase() {
+        let count = $state(0)
+        return { count }
+      }
+      function useThing(flag) {
+        if (flag) return { count: 'static' }
+        return useBase()
+      }
+      export function C({ flag }) {
+        const t = useThing(flag)
+        return <div>{t.count}</div>
+      }
+    `
     const collect = (src: string): string[] => {
       const codes: string[] = []
       transform(src, { strictGuarantee: false, dev: false, onWarn: w => codes.push(w.code) })
@@ -269,6 +284,7 @@ describe('warnings as errors', () => {
     // Both return orderings must surface the same conflict diagnostic.
     expect(collect(staticFirst)).toContain('FICT-H002')
     expect(collect(accessorFirst)).toContain('FICT-H002')
+    expect(collect(copiedAccessor)).toContain('FICT-H002')
   })
 
   it('does not report FICT-H002 for consistent hook return shapes', () => {

@@ -235,26 +235,20 @@ export function analyzeHookReturnInfo(
     }
   }
 
-  const recordAccessor = (kind: HookAccessorKind | undefined, handler: () => void) => {
-    if (kind) {
-      hasInfo = true
-      handler()
-    }
-  }
-
-  const copyHookInfo = (source: HookReturnInfo | null) => {
+  const noteHookInfo = (source: HookReturnInfo | null) => {
     if (!source) return
     if (source.objectProps) {
-      info.objectProps = new Map(source.objectProps)
-      hasInfo = true
+      for (const [keyName, kind] of source.objectProps) {
+        noteObjectKey(keyName, kind)
+      }
     }
     if (source.arrayProps) {
-      info.arrayProps = new Map(source.arrayProps)
-      hasInfo = true
+      for (const [index, kind] of source.arrayProps) {
+        noteArrayIndex(index, kind)
+      }
     }
     if (source.directAccessor) {
-      info.directAccessor = source.directAccessor
-      hasInfo = true
+      noteDirect(source.directAccessor)
     }
   }
 
@@ -445,9 +439,9 @@ export function analyzeHookReturnInfo(
     } else if (expr.kind === 'CallExpression' || expr.kind === 'OptionalCallExpression') {
       const memberInfo = namespaceHookCallInfo(expr) ?? localHookMemberCallInfo(expr)
       if (memberInfo) {
-        copyHookInfo(memberInfo)
+        noteHookInfo(memberInfo)
       } else if (expr.callee.kind === 'Identifier') {
-        copyHookInfo(getHookReturnInfo(expr.callee.name, ctx, ops))
+        noteHookInfo(getHookReturnInfo(expr.callee.name, ctx, ops))
       } else {
         noteDirect(returnExprAccessorKind(expr))
       }
