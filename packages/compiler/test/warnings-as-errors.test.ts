@@ -276,6 +276,25 @@ describe('warnings as errors', () => {
         return <div>{t.count}</div>
       }
     `
+    const copiedAccessorAlias = `
+      import { $state } from 'fict'
+      function useBase() {
+        let count = $state(0)
+        return { count }
+      }
+      function usePlain() {
+        return { count: 'static' }
+      }
+      function useThing(flag) {
+        const plain = usePlain()
+        const live = useBase()
+        return flag ? plain : live
+      }
+      export function C({ flag }) {
+        const t = useThing(flag)
+        return <div>{t.count}</div>
+      }
+    `
     const conditionalObject = `
       import { $state } from 'fict'
       function useThing(flag) {
@@ -364,6 +383,7 @@ describe('warnings as errors', () => {
     expect(collect(staticFirst)).toContain('FICT-H002')
     expect(collect(accessorFirst)).toContain('FICT-H002')
     expect(collect(copiedAccessor)).toContain('FICT-H002')
+    expect(collect(copiedAccessorAlias)).toContain('FICT-H002')
     expect(collect(conditionalObject)).toContain('FICT-H002')
     expect(collect(conditionalArray)).toContain('FICT-H002')
     expect(collect(conditionalDirect)).toContain('FICT-H002')

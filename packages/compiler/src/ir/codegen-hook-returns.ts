@@ -19,6 +19,9 @@ export interface HookReturnInfo {
   objectProps?: Map<string, HookAccessorKind> | undefined
   arrayProps?: Map<number, HookAccessorKind> | undefined
   directAccessor?: HookAccessorKind | undefined
+  plainObjectProps?: Set<string> | undefined
+  plainArrayProps?: Set<number> | undefined
+  directPlain?: boolean | undefined
 }
 
 export interface HookReturnInfoAnalysisOps {
@@ -71,6 +74,19 @@ export function serializeHookReturnInfo(info: HookReturnInfo): HookReturnInfoSer
     arrayProps,
     directAccessor: info.directAccessor,
   }
+}
+
+export function hookReturnInfoHasAccessorShape(info: HookReturnInfo | null): boolean {
+  return !!(info?.directAccessor || info?.objectProps?.size || info?.arrayProps?.size)
+}
+
+function hookReturnInfoHasAnyShape(info: HookReturnInfo | null): boolean {
+  return !!(
+    hookReturnInfoHasAccessorShape(info) ||
+    info?.directPlain ||
+    info?.plainObjectProps?.size ||
+    info?.plainArrayProps?.size
+  )
 }
 
 export function deserializeHookReturnInfo(info: HookReturnInfoSerializable): HookReturnInfo {
@@ -150,6 +166,13 @@ export function analyzeHookReturnInfo(
   ops: HookReturnInfoAnalysisOps,
 ): HookReturnInfo | null {
   if (!isHookName(fn.name)) return null
+  if (fn.meta?.hookReturnInfo) {
+    return {
+      objectProps: fn.meta.hookReturnInfo.objectProps,
+      arrayProps: fn.meta.hookReturnInfo.arrayProps,
+      directAccessor: fn.meta.hookReturnInfo.directAccessor,
+    }
+  }
 
   const { signalVars, storeVars, memoVars, functionVars, mutatedVars, localVars } =
     collectHookReactiveVars(fn, ctx)
@@ -218,6 +241,8 @@ export function analyzeHookReturnInfo(
     } else {
       objectPlainKeys.add(keyName)
       info.objectProps?.delete(keyName)
+      if (!info.plainObjectProps) info.plainObjectProps = new Set()
+      info.plainObjectProps.add(keyName)
     }
   }
   const noteArrayIndex = (index: number, kind: HookAccessorKind | undefined) => {
@@ -237,6 +262,8 @@ export function analyzeHookReturnInfo(
     } else {
       arrayPlainIndexes.add(index)
       info.arrayProps?.delete(index)
+      if (!info.plainArrayProps) info.plainArrayProps = new Set()
+      info.plainArrayProps.add(index)
     }
   }
   const noteDirect = (kind: HookAccessorKind | undefined) => {
@@ -254,6 +281,7 @@ export function analyzeHookReturnInfo(
     } else {
       directPlainSeen = true
       info.directAccessor = undefined
+      info.directPlain = true
     }
   }
 
@@ -271,6 +299,19 @@ export function analyzeHookReturnInfo(
     }
     if (source.directAccessor) {
       noteDirect(source.directAccessor)
+    }
+    if (source.plainObjectProps) {
+      for (const keyName of source.plainObjectProps) {
+        noteObjectKey(keyName, undefined)
+      }
+    }
+    if (source.plainArrayProps) {
+      for (const index of source.plainArrayProps) {
+        noteArrayIndex(index, undefined)
+      }
+    }
+    if (source.directPlain) {
+      noteDirect(undefined)
     }
   }
 
@@ -328,12 +369,39 @@ export function analyzeHookReturnInfo(
     const hookName = ctx.hookFunctionMemberAliases?.get(path.join('.'))
     return hookName ? getHookReturnInfo(hookName, ctx, ops) : null
   }
-  const hookCallDirectAccessorKind = (expr: Expression): HookAccessorKind | undefined => {
-    if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return undefined
-    const info =
+  const directHookCallInfo = (expr: Expression): HookReturnInfo | null => {
+    if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return null
+    return (
       namespaceHookCallInfo(expr) ??
       localHookMemberCallInfo(expr) ??
       (expr.callee.kind === 'Identifier' ? getHookReturnInfo(expr.callee.name, ctx, ops) : null)
+    )
+  }
+  const hookResultVars = new Map<string, HookReturnInfo>()
+  const hookResultInfoForIdentifier = (name: string): HookReturnInfo | null =>
+    hookResultVars.get(deSSAVarName(name)) ?? null
+  const hookResultInfoFromExpression = (expr: Expression): HookReturnInfo | null => {
+    if (expr.kind === 'Identifier') return hookResultInfoForIdentifier(expr.name)
+    if (expr.kind === 'CallExpression' || expr.kind === 'OptionalCallExpression') {
+      return directHookCallInfo(expr)
+    }
+    if (expr.kind === 'SequenceExpression' && expr.expressions.length > 0) {
+      return hookResultInfoFromExpression(expr.expressions[expr.expressions.length - 1]!)
+    }
+    return null
+  }
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind !== 'Assign') continue
+      const hookInfo = hookResultInfoFromExpression(instr.value)
+      if (hookInfo) {
+        hookResultVars.set(deSSAVarName(instr.target.name), hookInfo)
+      }
+    }
+  }
+  const hookCallDirectAccessorKind = (expr: Expression): HookAccessorKind | undefined => {
+    if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return undefined
+    const info = directHookCallInfo(expr)
     const kind = info?.directAccessor
     return kind
   }
@@ -406,7 +474,9 @@ export function analyzeHookReturnInfo(
   }
 
   function returnExprAccessorKind(expr: Expression): HookAccessorKind | undefined {
-    if (expr.kind === 'Identifier') return exprAccessorKind(expr.name)
+    if (expr.kind === 'Identifier') {
+      return hookResultInfoForIdentifier(expr.name)?.directAccessor ?? exprAccessorKind(expr.name)
+    }
     const namespaceKind = namespaceMemberAccessorKind(expr)
     if (namespaceKind) return namespaceKind
     const hookCallKind = hookCallDirectAccessorKind(expr)
@@ -500,14 +570,14 @@ export function analyzeHookReturnInfo(
         noteArrayIndex(idx, returnExprAccessorKind(el))
       })
     } else if (expr.kind === 'CallExpression' || expr.kind === 'OptionalCallExpression') {
-      const memberInfo = namespaceHookCallInfo(expr) ?? localHookMemberCallInfo(expr)
-      if (memberInfo) {
-        noteHookInfo(memberInfo)
-      } else if (expr.callee.kind === 'Identifier') {
-        noteHookInfo(getHookReturnInfo(expr.callee.name, ctx, ops))
+      const hookInfo = directHookCallInfo(expr)
+      if (hookInfo) {
+        noteHookInfo(hookInfo)
       } else {
         noteDirect(returnExprAccessorKind(expr))
       }
+    } else if (expr.kind === 'Identifier' && hookResultInfoForIdentifier(expr.name)) {
+      noteHookInfo(hookResultInfoForIdentifier(expr.name))
     } else {
       noteDirect(returnExprAccessorKind(expr))
     }
@@ -539,7 +609,7 @@ export function analyzeHookReturnInfo(
     reportHookReturnShapeConflict(fn, ctx, conflictingSlots, returnLoc)
   }
 
-  return info.directAccessor || info.objectProps?.size || info.arrayProps?.size ? info : null
+  return hookReturnInfoHasAnyShape(info) ? info : null
 }
 
 function reportHookReturnShapeConflict(

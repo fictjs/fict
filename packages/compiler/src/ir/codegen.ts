@@ -55,6 +55,7 @@ import {
   analyzeHookReturnInfo as analyzeHookReturnInfoWithOps,
   deserializeHookReturnInfo,
   getHookReturnInfo as getHookReturnInfoWithOps,
+  hookReturnInfoHasAccessorShape,
   serializeHookReturnInfo,
   type HookAccessorKind,
   type HookReturnInfo,
@@ -8266,7 +8267,8 @@ export function lowerHIRWithRegions(
   const moduleMeta = buildModuleReactiveMetadata(originalBody, ctx, t, options, {
     getLocalHookInfo(localName) {
       const info = getHookReturnInfo(localName, ctx)
-      return info ? serializeHookReturnInfo(info) : undefined
+      if (!info || !hookReturnInfoHasAccessorShape(info)) return undefined
+      return serializeHookReturnInfo(info)
     },
   })
   setModuleMetadata(options?.filename, moduleMeta, options)
