@@ -276,6 +276,61 @@ describe('warnings as errors', () => {
         return <div>{t.count}</div>
       }
     `
+    const conditionalObject = `
+      import { $state } from 'fict'
+      function useThing(flag) {
+        let count = $state(0)
+        return flag ? { count } : { count: 'static' }
+      }
+      export function C({ flag }) {
+        const t = useThing(flag)
+        return <div>{t.count}</div>
+      }
+    `
+    const conditionalArray = `
+      import { $state } from 'fict'
+      function useThing(flag) {
+        let count = $state(0)
+        return flag ? [count] : ['static']
+      }
+      export function C({ flag }) {
+        const t = useThing(flag)
+        return <div>{t[0]}</div>
+      }
+    `
+    const conditionalDirect = `
+      import { $state } from 'fict'
+      function useThing(flag) {
+        let count = $state(0)
+        return flag ? count : 'static'
+      }
+      export function C({ flag }) {
+        const t = useThing(flag)
+        return <div>{t}</div>
+      }
+    `
+    const logicalAndDirect = `
+      import { $state } from 'fict'
+      function useThing(flag) {
+        let count = $state(0)
+        return flag && count
+      }
+      export function C({ flag }) {
+        const t = useThing(flag)
+        return <div>{t}</div>
+      }
+    `
+    const logicalOrDirect = `
+      import { $state } from 'fict'
+      function useThing(flag) {
+        let count = $state(0)
+        return flag || count
+      }
+      export function C({ flag }) {
+        const t = useThing(flag)
+        return <div>{t}</div>
+      }
+    `
     const collect = (src: string): string[] => {
       const codes: string[] = []
       transform(src, { strictGuarantee: false, dev: false, onWarn: w => codes.push(w.code) })
@@ -285,6 +340,11 @@ describe('warnings as errors', () => {
     expect(collect(staticFirst)).toContain('FICT-H002')
     expect(collect(accessorFirst)).toContain('FICT-H002')
     expect(collect(copiedAccessor)).toContain('FICT-H002')
+    expect(collect(conditionalObject)).toContain('FICT-H002')
+    expect(collect(conditionalArray)).toContain('FICT-H002')
+    expect(collect(conditionalDirect)).toContain('FICT-H002')
+    expect(collect(logicalAndDirect)).toContain('FICT-H002')
+    expect(collect(logicalOrDirect)).toContain('FICT-H002')
   })
 
   it('does not report FICT-H002 for consistent hook return shapes', () => {

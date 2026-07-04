@@ -404,8 +404,49 @@ export function analyzeHookReturnInfo(
     return iifeAccessorKind(expr)
   }
 
+  const visitLogicalReturnExpr = (expr: Extract<Expression, { kind: 'LogicalExpression' }>) => {
+    const leftKind = returnExprAccessorKind(expr.left)
+    if (expr.operator === '&&') {
+      if (isAlwaysFalsy(expr.left)) {
+        visitReturnExpr(expr.left)
+      } else if (leftKind || isAlwaysTruthy(expr.left)) {
+        visitReturnExpr(expr.right)
+      } else {
+        noteDirect(undefined)
+        visitReturnExpr(expr.right)
+      }
+      return
+    }
+    if (expr.operator === '||') {
+      if (leftKind || isAlwaysTruthy(expr.left)) {
+        visitReturnExpr(expr.left)
+      } else if (isAlwaysFalsy(expr.left)) {
+        visitReturnExpr(expr.right)
+      } else {
+        noteDirect(undefined)
+        visitReturnExpr(expr.right)
+      }
+      return
+    }
+    if (leftKind) {
+      visitReturnExpr(expr.left)
+    } else if (isAlwaysNullish(expr.left)) {
+      visitReturnExpr(expr.right)
+    } else {
+      noteDirect(undefined)
+      visitReturnExpr(expr.right)
+    }
+  }
+
   const visitReturnExpr = (expr: Expression) => {
-    if (expr.kind === 'ObjectExpression') {
+    if (expr.kind === 'ConditionalExpression') {
+      visitReturnExpr(expr.consequent as Expression)
+      visitReturnExpr(expr.alternate as Expression)
+    } else if (expr.kind === 'LogicalExpression') {
+      visitLogicalReturnExpr(expr)
+    } else if (expr.kind === 'SequenceExpression' && expr.expressions.length > 0) {
+      visitReturnExpr(expr.expressions[expr.expressions.length - 1]!)
+    } else if (expr.kind === 'ObjectExpression') {
       // Duplicate keys within a single object literal follow JS last-wins
       // semantics, not a cross-branch conflict. Resolve each key's final kind
       // for this return first, then merge that into the cross-branch tracking.
