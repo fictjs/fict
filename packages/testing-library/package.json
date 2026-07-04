@@ -26,8 +26,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts",
-    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src",
@@ -47,7 +47,7 @@
     "@testing-library/jest-dom": "^6.6.3",
     "@types/node": "^25.3.0",
     "jsdom": "^28.1.0",
-    "tsup": "^8.5.1",
+    "tsdown": "^0.22.3",
     "vitest": "^4.0.18"
   },
   "keywords": [
