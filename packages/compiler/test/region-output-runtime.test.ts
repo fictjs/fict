@@ -401,4 +401,49 @@ describe('region output runtime regressions', () => {
 
     expect(result).toBe('yes1:1:1:1')
   })
+
+  it('runs side-effect-only local-object mutations before later reads', () => {
+    const exports = compileModule(`
+      import { $state } from 'fict'
+
+      export function useBareMutation() {
+        let count = $state(1)
+        const arr = []
+        if (count > 0) {
+          arr.push(1)
+        }
+        const snap = arr.length
+        return String(snap)
+      }
+
+      export function useLogicalMutation() {
+        let count = $state(1)
+        const arr = []
+        if (count > 0) {
+          count > -1 && arr.push(1)
+        }
+        const snap = arr.length
+        return String(snap)
+      }
+
+      export function useConditionalMutation() {
+        let count = $state(1)
+        const arr = []
+        if (count > 0) {
+          count > -1 ? arr.push(1) : 0
+        }
+        const snap = arr.length
+        return String(snap)
+      }
+    `)
+
+    const render = (name: string) =>
+      runtimeInternal.__fictRender({ slots: [], cursor: 0 }, () =>
+        (exports[name] as () => string)(),
+      )
+
+    expect(render('useBareMutation')).toBe('1')
+    expect(render('useLogicalMutation')).toBe('1')
+    expect(render('useConditionalMutation')).toBe('1')
+  })
 })

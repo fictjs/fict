@@ -4811,6 +4811,12 @@ function generateRegionStatements(
       if (declaredVars.has(name)) continue
       const producer = findPriorDeclarationInstruction(regionCtx.rootNode, name, instr)
       if (!producer || producer === instr) continue
+      if (
+        structuredNodeMutatesLocalObjectRootBetween(regionCtx.fullRootNode, name, producer, instr)
+      ) {
+        continue
+      }
+      if (ctx.memberMutatedVars?.has(name) ?? false) continue
       if (isReactiveCreationInstruction(producer) || expressionUsesTracked(producer.value, ctx)) {
         continue
       }
@@ -5735,6 +5741,135 @@ function memberChainRootName(expr: Expression): string | null {
   return current.kind === 'Identifier' ? deSSAVarName(current.name) : null
 }
 
+function expressionMutatesLocalObjectRoot(expr: Expression, rootName: string): boolean {
+  const targetIsRoot = (target: Expression): boolean => memberChainRootName(target) === rootName
+  switch (expr.kind) {
+    case 'CallExpression':
+    case 'OptionalCallExpression': {
+      const callee = expr.callee
+      if (
+        (callee.kind === 'MemberExpression' || callee.kind === 'OptionalMemberExpression') &&
+        targetIsRoot(callee)
+      ) {
+        return true
+      }
+      return (
+        expressionMutatesLocalObjectRoot(callee as Expression, rootName) ||
+        expr.arguments.some(arg => expressionMutatesLocalObjectRoot(arg as Expression, rootName))
+      )
+    }
+    case 'AssignmentExpression': {
+      const target = expr.left as Expression
+      if (
+        (target.kind === 'MemberExpression' || target.kind === 'OptionalMemberExpression') &&
+        targetIsRoot(target)
+      ) {
+        return true
+      }
+      return expressionMutatesLocalObjectRoot(expr.right, rootName)
+    }
+    case 'UpdateExpression': {
+      const target = expr.argument as Expression
+      return (
+        (target.kind === 'MemberExpression' || target.kind === 'OptionalMemberExpression') &&
+        targetIsRoot(target)
+      )
+    }
+    case 'LogicalExpression':
+    case 'BinaryExpression':
+      return (
+        expressionMutatesLocalObjectRoot(expr.left, rootName) ||
+        expressionMutatesLocalObjectRoot(expr.right, rootName)
+      )
+    case 'ConditionalExpression':
+      return (
+        expressionMutatesLocalObjectRoot(expr.test, rootName) ||
+        expressionMutatesLocalObjectRoot(expr.consequent, rootName) ||
+        expressionMutatesLocalObjectRoot(expr.alternate, rootName)
+      )
+    case 'UnaryExpression':
+      if (
+        expr.operator === 'delete' &&
+        (expr.argument.kind === 'MemberExpression' ||
+          expr.argument.kind === 'OptionalMemberExpression') &&
+        targetIsRoot(expr.argument)
+      ) {
+        return true
+      }
+      return expressionMutatesLocalObjectRoot(expr.argument, rootName)
+    case 'SequenceExpression':
+      return expr.expressions.some(part =>
+        expressionMutatesLocalObjectRoot(part as Expression, rootName),
+      )
+    case 'ArrayExpression':
+      return expr.elements.some(el => {
+        if (!el) return false
+        return el.kind === 'SpreadElement'
+          ? expressionMutatesLocalObjectRoot(el.argument as Expression, rootName)
+          : expressionMutatesLocalObjectRoot(el, rootName)
+      })
+    case 'ObjectExpression':
+      return expr.properties.some(prop => {
+        if (prop.kind === 'SpreadElement') {
+          return expressionMutatesLocalObjectRoot(prop.argument as Expression, rootName)
+        }
+        if (prop.kind !== 'Property') return false
+        return (
+          (prop.computed === true &&
+            expressionMutatesLocalObjectRoot(prop.key as Expression, rootName)) ||
+          expressionMutatesLocalObjectRoot(prop.value as Expression, rootName)
+        )
+      })
+    default:
+      return false
+  }
+}
+
+function instructionMutatesLocalObjectRoot(instr: Instruction, rootName: string): boolean {
+  if (instr.kind !== 'Assign' && instr.kind !== 'Expression') return false
+  return expressionMutatesLocalObjectRoot(instr.value, rootName)
+}
+
+function structuredNodeMutatesLocalObjectRootBetween(
+  node: StructuredNode,
+  rootName: string,
+  after: Instruction,
+  before: Instruction,
+): boolean {
+  const visit = (current: StructuredNode | null | undefined): boolean => {
+    if (!current) return false
+    switch (current.kind) {
+      case 'instruction':
+        return (
+          instructionSourceBefore(after, current.instruction) &&
+          instructionSourceBefore(current.instruction, before) &&
+          instructionMutatesLocalObjectRoot(current.instruction, rootName)
+        )
+      case 'sequence':
+        return current.nodes.some(visit)
+      case 'block':
+        return current.statements.some(visit)
+      case 'labeled':
+        return visit(current.statement)
+      case 'if':
+        return visit(current.consequent) || visit(current.alternate)
+      case 'while':
+      case 'doWhile':
+      case 'for':
+      case 'forOf':
+      case 'forIn':
+        return visit(current.body)
+      case 'switch':
+        return current.cases.some(item => visit(item.body))
+      case 'try':
+        return visit(current.block) || visit(current.handler?.body) || visit(current.finalizer)
+      default:
+        return false
+    }
+  }
+  return visit(node)
+}
+
 // A bare statement that mutates a component-local object — a member-method call
 // (`arr.push(x)`) or a member write (`arr[0] = x`) whose receiver root is a
 // component-scoped binding — must run once in source order. It cannot live in a
@@ -5761,20 +5896,70 @@ function expressionMutatesLocalObject(expr: Expression, ctx: CodegenContext): bo
       ) {
         return true
       }
-      return expr.arguments.some(arg => expressionMutatesLocalObject(arg as Expression, ctx))
+      return (
+        expressionMutatesLocalObject(callee as Expression, ctx) ||
+        expr.arguments.some(arg => expressionMutatesLocalObject(arg as Expression, ctx))
+      )
     }
-    case 'AssignmentExpression':
+    case 'AssignmentExpression': {
+      const target = expr.left as Expression
+      if (
+        (target.kind === 'MemberExpression' || target.kind === 'OptionalMemberExpression') &&
+        isLocalRoot(target)
+      ) {
+        return true
+      }
+      return expressionMutatesLocalObject(expr.right, ctx)
+    }
     case 'UpdateExpression': {
-      const target = (
-        expr.kind === 'AssignmentExpression' ? expr.left : expr.argument
-      ) as Expression
+      const target = expr.argument as Expression
       return (
         (target.kind === 'MemberExpression' || target.kind === 'OptionalMemberExpression') &&
         isLocalRoot(target)
       )
     }
+    case 'LogicalExpression':
+    case 'BinaryExpression':
+      return (
+        expressionMutatesLocalObject(expr.left, ctx) ||
+        expressionMutatesLocalObject(expr.right, ctx)
+      )
+    case 'ConditionalExpression':
+      return (
+        expressionMutatesLocalObject(expr.test, ctx) ||
+        expressionMutatesLocalObject(expr.consequent, ctx) ||
+        expressionMutatesLocalObject(expr.alternate, ctx)
+      )
+    case 'UnaryExpression':
+      if (
+        expr.operator === 'delete' &&
+        (expr.argument.kind === 'MemberExpression' ||
+          expr.argument.kind === 'OptionalMemberExpression') &&
+        isLocalRoot(expr.argument)
+      ) {
+        return true
+      }
+      return expressionMutatesLocalObject(expr.argument, ctx)
     case 'SequenceExpression':
       return expr.expressions.some(part => expressionMutatesLocalObject(part as Expression, ctx))
+    case 'ArrayExpression':
+      return expr.elements.some(el => {
+        if (!el) return false
+        return el.kind === 'SpreadElement'
+          ? expressionMutatesLocalObject(el.argument as Expression, ctx)
+          : expressionMutatesLocalObject(el, ctx)
+      })
+    case 'ObjectExpression':
+      return expr.properties.some(prop => {
+        if (prop.kind === 'SpreadElement') {
+          return expressionMutatesLocalObject(prop.argument as Expression, ctx)
+        }
+        if (prop.kind !== 'Property') return false
+        return (
+          (prop.computed === true && expressionMutatesLocalObject(prop.key as Expression, ctx)) ||
+          expressionMutatesLocalObject(prop.value as Expression, ctx)
+        )
+      })
     default:
       return false
   }
