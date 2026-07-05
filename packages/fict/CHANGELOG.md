@@ -1,5 +1,18 @@
 # fict
 
+## 0.24.0
+
+### Minor Changes
+
+- Publish the public `fict` package with runtime 0.24.0 so consumers receive the
+  child-binding untracking fix.
+  - No additional `fict` package API behavior changed in this release.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/runtime@0.24.0
+
 ## 0.23.0
 
 ### Minor Changes

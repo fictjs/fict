@@ -1,5 +1,12 @@
 # @fictjs/eslint-plugin
 
+## 0.24.0
+
+### Minor Changes
+
+- Publish the ESLint plugin with the 0.24 release train.
+  - No lint rule behavior changed in this release.
+
 ## 0.23.0
 
 ### Minor Changes

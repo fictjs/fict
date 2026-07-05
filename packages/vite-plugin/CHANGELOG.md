@@ -1,5 +1,17 @@
 # @fictjs/vite-plugin
 
+## 0.24.0
+
+### Minor Changes
+
+- Publish the Vite plugin with compiler 0.24.0.
+  - No Vite plugin API behavior changed in this release.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/compiler@0.24.0
+
 ## 0.23.0
 
 ### Minor Changes

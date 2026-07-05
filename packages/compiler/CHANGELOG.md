@@ -1,5 +1,13 @@
 # @fictjs/compiler
 
+## 0.24.0
+
+### Minor Changes
+
+- Publish the compiler with the 0.24 release train.
+  - No compiler transform, diagnostic, or public API behavior changed in this
+    release.
+
 ## 0.23.0
 
 ### Minor Changes

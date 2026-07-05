@@ -1,5 +1,17 @@
 # @fictjs/babel-preset
 
+## 0.24.0
+
+### Minor Changes
+
+- Publish the Babel preset with compiler 0.24.0.
+  - No Babel preset API behavior changed in this release.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/compiler@0.24.0
+
 ## 0.23.0
 
 ### Minor Changes

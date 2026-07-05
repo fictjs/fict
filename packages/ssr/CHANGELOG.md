@@ -1,5 +1,18 @@
 # @fictjs/ssr
 
+## 0.24.0
+
+### Minor Changes
+
+- Publish SSR with runtime 0.24.0 so server-rendered component trees stay aligned
+  with the child-binding untracking fix.
+  - No SSR API behavior changed in this release.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/runtime@0.24.0
+
 ## 0.23.0
 
 ### Minor Changes

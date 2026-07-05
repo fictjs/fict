@@ -1,5 +1,18 @@
 # @fictjs/router
 
+## 0.24.0
+
+### Minor Changes
+
+- Publish router with runtime 0.24.0 so routed component trees pick up the
+  child-binding untracking fix.
+  - No router API behavior changed in this release.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/runtime@0.24.0
+
 ## 0.23.0
 
 ### Minor Changes

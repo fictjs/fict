@@ -1,5 +1,14 @@
 # @fictjs/runtime
 
+## 0.24.0
+
+### Minor Changes
+
+- Prevent dynamic child bindings from tracking signal reads that happen while a
+  child node or component is being created.
+  - Conditional children now avoid unnecessary remounts when setup-only signals
+    read during child creation are updated later.
+
 ## 0.23.0
 
 ### Minor Changes
