@@ -33,7 +33,7 @@
     "version": "changeset version",
     "release": "turbo run build && changeset publish",
     "precommit": "pnpm test:api-boundaries && pnpm guardrails:typecheck-config && pnpm typecheck:strict-candidate && pnpm build && pnpm test && pnpm typecheck && pnpm typecheck:tests && pnpm format:check && pnpm lint",
-    "release:verify": "pnpm test:api-boundaries && pnpm guardrails:typecheck-config && pnpm typecheck:strict-candidate && pnpm build && pnpm test && pnpm typecheck && pnpm typecheck:tests && pnpm format:check && pnpm lint && pnpm test:ssr-matrix && pnpm test:bundlers && pnpm test:e2e && pnpm guardrails:perf",
+    "release:verify": "pnpm test:api-boundaries && pnpm guardrails:typecheck-config && pnpm typecheck:strict-candidate && pnpm build && pnpm test && pnpm typecheck && pnpm typecheck:tests && pnpm format:check && pnpm lint && pnpm test:ssr-matrix && pnpm test:bundlers && pnpm test:e2e && pnpm guardrails:compiler-complexity && pnpm guardrails:perf",
     "prepare": "husky",
     "guardrails:compiler-complexity": "node scripts/compiler-complexity-report.mjs",
     "guardrails:hir": "node scripts/hir-guardrails.mjs",
