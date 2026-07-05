@@ -1256,15 +1256,12 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
 }
 
 /**
- * Experimental: Build a high-level IR from a Babel AST.
+ * Build the compiler HIR from a Babel AST.
  *
- * This is intentionally minimal but now emits a simple CFG:
- * - Collects top-level function declarations or const function expressions.
- * - Preserves import/export statements in preamble/postamble.
- * - Emits basic blocks, branching on IfStatement into separate blocks with a join.
- * - Unhandled constructs are represented as undefined literals to keep traversal total.
- *
- * Future work will expand this into a full CFG + SSA builder.
+ * This is the production AST-to-HIR boundary: it preserves module preamble and
+ * postamble items, lowers supported functions into basic blocks and typed
+ * terminators, honors binding-aware macro metadata, and fails closed for syntax
+ * that cannot be represented without changing runtime behavior.
  */
 export function buildHIR(
   ast: BabelCore.types.File,
