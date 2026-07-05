@@ -6,8 +6,10 @@
  */
 import type * as BabelCore from '@babel/core'
 import type { LVal } from '@babel/types'
+
 import { debugLog, debugWarn } from '../debug'
 import type { RegionMetadata } from '../fine-grained-dom'
+
 import type { CodegenContext, RegionInfo, RegionLoweringOps } from './codegen'
 import { markCompilerReactiveGetter } from './codegen-reactive-getter'
 import { runtimeIdentifier } from './codegen-runtime-helpers'
