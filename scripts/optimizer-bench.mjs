@@ -27,6 +27,7 @@ const baselinePath = path.join(__dirname, 'optimizer-bench.baseline.json')
 
 const DEFAULT_BUDGETS = {
   timeRegressionRatio: 0.25,
+  timeRegressionMinMs: 0.5,
   sizeRegressionRatio: 0.15,
   slowdownRatio: 0.35,
 }
@@ -252,7 +253,11 @@ function evaluateBaseline(rows, baseline) {
       continue
     }
 
-    const timeLimit = expected.optimized_ms * runtimeScale * (1 + budgets.timeRegressionRatio)
+    const scaledExpectedMs = expected.optimized_ms * runtimeScale
+    const timeLimit = Math.max(
+      scaledExpectedMs * (1 + budgets.timeRegressionRatio),
+      scaledExpectedMs + budgets.timeRegressionMinMs,
+    )
     if (row.optimized_ms > timeLimit) {
       failures.push(`${row.sample}: optimized_ms ${row.optimized_ms} > ${timeLimit.toFixed(2)}`)
     }

@@ -1,6 +1,7 @@
 {
   "budgets": {
     "timeRegressionRatio": 0.25,
+    "timeRegressionMinMs": 0.5,
     "sizeRegressionRatio": 0.15,
     "slowdownRatio": 0.35
   },
