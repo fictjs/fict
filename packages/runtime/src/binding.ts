@@ -1418,7 +1418,7 @@ export function createChildBinding(
         return
       }
 
-      const output = createElementFn(value)
+      const output = untrack(() => createElementFn(value))
       nodes = toNodeArray(output, marker.ownerDocument ?? parent.ownerDocument ?? document)
       const parentNode = marker.parentNode as (ParentNode & Node) | null
       if (parentNode) {

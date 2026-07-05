@@ -397,6 +397,42 @@ describe('Reactive DOM Binding', () => {
       dispose()
     })
 
+    it('does not track child creation reads as child binding dependencies', async () => {
+      const show = createSignal(true)
+      const setupValue = createSignal('initial')
+      let creates = 0
+
+      const { dispose } = createRoot(() => {
+        createChildBinding(
+          container,
+          () => (show() ? 'child' : null),
+          () => {
+            creates += 1
+            const node = document.createElement('span')
+            node.textContent = setupValue()
+            return node
+          },
+        )
+      })
+
+      expect(container.textContent).toBe('initial')
+      expect(creates).toBe(1)
+
+      setupValue('changed')
+      await tick()
+
+      expect(container.textContent).toBe('initial')
+      expect(creates).toBe(1)
+
+      show(false)
+      await tick()
+
+      expect(container.textContent).toBe('')
+      expect(creates).toBe(1)
+
+      dispose()
+    })
+
     it('destroys empty child roots without running mount callbacks', () => {
       const events: string[] = []
 
