@@ -431,6 +431,29 @@ benchmark builds.
 Set `FICT_STRICT_GUARANTEE=1` in CI to force-enable strict mode globally.
 For the overall guarantee/fallback/unsupported map, see `docs/reactivity-guarantee-matrix.md`.
 
+### FICT-R007: Reactive write in JSX child expression
+
+**Severity:** Error (default)
+
+**Why:** A JSX child expression writes to reactive state while the compiler is
+trying to install the child as a DOM binding.
+
+**Impact:** The write cannot be represented as a stable DOM binding without
+mixing render reads and writes. In opt-out builds this is reported as a warning;
+under `strictGuarantee` the build fails closed.
+
+**Fix:** Move the write into an event handler, effect, or statement before the
+JSX return:
+
+```tsx
+// Triggers FICT-R007
+return <div>{count++}</div>
+
+// Prefer an explicit statement boundary
+count++
+return <div>{count}</div>
+```
+
 ---
 
 ## Performance (FICT-X\*)
@@ -552,6 +575,20 @@ const arr = [undefined, 1]
 // Destructuring: use simple identifiers
 const { value } = obj
 ```
+
+### FICT-COMPILE: Tooling compiler failure
+
+**Severity:** Error
+
+**Why:** Compiler tooling caught a thrown compiler error and normalized it into
+an editor/playground diagnostic.
+
+**Impact:** The source could not be transformed. The diagnostic message is the
+first line of the original compiler error with the best location the tooling can
+infer.
+
+**Fix:** Follow the underlying message. If the message contains another
+`FICT-*` code, use that code's documentation for the specific remediation.
 
 ---
 
