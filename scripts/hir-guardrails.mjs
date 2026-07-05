@@ -56,12 +56,86 @@ const samples = [
       }
     `,
   },
+  {
+    name: 'keyed-list-dom',
+    description: 'Keyed list with dynamic class, style, and event bindings',
+    source: `
+      import { $state } from 'fict'
+      export function Menu() {
+        let selected = $state(1)
+        const items = [1, 2, 3]
+        return (
+          <ul>
+            {items.map(item => (
+              <li
+                key={item}
+                class={{ active: item === selected }}
+                style={{ order: item }}
+                onClick={() => selected = item}
+              >
+                {item === selected ? <span>{selected}</span> : item}
+              </li>
+            ))}
+          </ul>
+        )
+      }
+    `,
+  },
+  {
+    name: 'props-destructure-rest',
+    description: 'Nested props destructuring with defaults and rest access',
+    source: `
+      export function Profile(props) {
+        const {
+          user: { name = 'Ada' } = {},
+          title = 'Engineer',
+          ...rest
+        } = props
+        return <section data-role={rest.role}>{title}: {name}</section>
+      }
+    `,
+  },
+  {
+    name: 'cross-module-hook-metadata',
+    description: 'Bare hook accessor metadata consumed across a module boundary',
+    options: {
+      resolveModuleMetadata: source =>
+        source === 'counter-lib'
+          ? {
+              version: 1,
+              exports: {},
+              hooks: {
+                useCounter: { directAccessor: 'signal' },
+              },
+            }
+          : undefined,
+    },
+    source: `
+      import { useCounter } from 'counter-lib'
+      export function App() {
+        const count = useCounter()
+        return <div>{count}</div>
+      }
+    `,
+  },
+  {
+    name: 'resumable-handler',
+    description: 'Resumable event handler extraction with reactive state',
+    options: { resumable: true },
+    source: `
+      import { $state } from 'fict'
+      export function App() {
+        let count = $state(0)
+        return <button onClick$={() => count++}>{count}</button>
+      }
+    `,
+  },
 ]
 
 function runSample(sample) {
   const result = transformSync(sample.source, {
     filename: `${sample.name}.tsx`,
-    plugins: [[createFictPlugin, { dev: false, sourcemap: false }]],
+    plugins: [[createFictPlugin, { dev: false, sourcemap: false, ...(sample.options ?? {}) }]],
     presets: [['@babel/preset-typescript', { isTSX: true, allExtensions: true }]],
     configFile: false,
     babelrc: false,

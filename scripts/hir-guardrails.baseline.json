@@ -17,6 +17,30 @@
       "regions": 1,
       "sizeBytes": 464,
       "gzipBytes": 238
+    },
+    "keyed-list-dom": {
+      "helpers": 5,
+      "regions": 0,
+      "sizeBytes": 2229,
+      "gzipBytes": 767
+    },
+    "props-destructure-rest": {
+      "helpers": 6,
+      "regions": 0,
+      "sizeBytes": 1989,
+      "gzipBytes": 800
+    },
+    "cross-module-hook-metadata": {
+      "helpers": 3,
+      "regions": 0,
+      "sizeBytes": 618,
+      "gzipBytes": 320
+    },
+    "resumable-handler": {
+      "helpers": 17,
+      "regions": 0,
+      "sizeBytes": 2375,
+      "gzipBytes": 866
     }
   }
 }

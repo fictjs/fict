@@ -66,6 +66,80 @@ const samples = [
       }
     `,
   },
+  {
+    name: 'keyed-list-dom',
+    options: { fineGrainedDom: true },
+    source: `
+      import { $state } from 'fict'
+      export function Menu() {
+        let selected = $state(1)
+        const items = [1, 2, 3]
+        return (
+          <ul>
+            {items.map(item => (
+              <li
+                key={item}
+                class={{ active: item === selected }}
+                style={{ order: item }}
+                onClick={() => selected = item}
+              >
+                {item === selected ? <span>{selected}</span> : item}
+              </li>
+            ))}
+          </ul>
+        )
+      }
+    `,
+  },
+  {
+    name: 'props-destructure-rest',
+    options: { fineGrainedDom: true },
+    source: `
+      export function Profile(props) {
+        const {
+          user: { name = 'Ada' } = {},
+          title = 'Engineer',
+          ...rest
+        } = props
+        return <section data-role={rest.role}>{title}: {name}</section>
+      }
+    `,
+  },
+  {
+    name: 'cross-module-metadata',
+    options: {
+      fineGrainedDom: true,
+      resolveModuleMetadata: source =>
+        source === 'counter-lib'
+          ? {
+              version: 1,
+              exports: {},
+              hooks: {
+                useCounter: { directAccessor: 'signal' },
+              },
+            }
+          : undefined,
+    },
+    source: `
+      import { useCounter } from 'counter-lib'
+      export function App() {
+        const count = useCounter()
+        const doubled = count * 2
+        return <div>{doubled}</div>
+      }
+    `,
+  },
+  {
+    name: 'resumable-handler',
+    options: { fineGrainedDom: true, resumable: true },
+    source: `
+      import { $state } from 'fict'
+      export function App() {
+        let count = $state(0)
+        return <button onClick$={() => count++}>{count}</button>
+      }
+    `,
+  },
 ]
 
 function getOutputPath(argv, envOutputPath) {
@@ -89,12 +163,21 @@ function getOutputPath(argv, envOutputPath) {
   return envOutputPath?.trim() ? envOutputPath : null
 }
 
-function compile(source, optimize) {
-  return transformSync(source, {
+function compile(sample, optimize) {
+  return transformSync(sample.source, {
     filename: 'bench.tsx',
     // Perf benchmark should compare optimizer output/latency, not fail on policy escalation.
     plugins: [
-      [createFictPlugin, { dev: false, optimize, fineGrainedDom: false, strictGuarantee: false }],
+      [
+        createFictPlugin,
+        {
+          dev: false,
+          optimize,
+          fineGrainedDom: false,
+          strictGuarantee: false,
+          ...(sample.options ?? {}),
+        },
+      ],
     ],
     presets: [['@babel/preset-typescript', { isTSX: true, allExtensions: true }]],
     configFile: false,
@@ -104,11 +187,11 @@ function compile(source, optimize) {
 
 function runSample(sample, optimize) {
   for (let i = 0; i < warmup; i++) {
-    compile(sample.source, optimize)
+    compile(sample, optimize)
   }
   const start = performance.now()
   for (let i = 0; i < iterations; i++) {
-    compile(sample.source, optimize)
+    compile(sample, optimize)
   }
   const end = performance.now()
   return (end - start) / iterations
@@ -123,7 +206,7 @@ function runSampleStable(sample, optimize) {
 }
 
 function measureSize(sample, optimize) {
-  const result = compile(sample.source, optimize)
+  const result = compile(sample, optimize)
   const code = result?.code ?? ''
   return Buffer.byteLength(code, 'utf8')
 }
