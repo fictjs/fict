@@ -27,24 +27,77 @@ function toPosix(filePath) {
   return filePath.split(path.sep).join('/')
 }
 
-function isEffectiveSourceLine(line) {
-  const trimmed = line.trim()
-  return (
-    trimmed.length > 0 &&
-    !trimmed.startsWith('//') &&
-    !trimmed.startsWith('/*') &&
-    !trimmed.startsWith('*') &&
-    !trimmed.startsWith('*/')
-  )
+function countEffectiveSourceLines(text) {
+  const normalized = text.endsWith('\n') ? text.slice(0, -1) : text
+  if (normalized.length === 0) return 0
+
+  let effectiveLines = 0
+  let inBlockComment = false
+  let stringQuote = null
+  let escaped = false
+
+  for (const line of normalized.split(/\r?\n/)) {
+    let source = ''
+
+    for (let index = 0; index < line.length; index++) {
+      const char = line[index]
+      const next = line[index + 1]
+
+      if (inBlockComment) {
+        if (char === '*' && next === '/') {
+          inBlockComment = false
+          index++
+        }
+        continue
+      }
+
+      if (stringQuote) {
+        source += char
+        if (escaped) {
+          escaped = false
+          continue
+        }
+        if (char === '\\') {
+          escaped = true
+          continue
+        }
+        if (char === stringQuote) {
+          stringQuote = null
+        }
+        continue
+      }
+
+      if (char === '/' && next === '/') {
+        break
+      }
+      if (char === '/' && next === '*') {
+        inBlockComment = true
+        index++
+        continue
+      }
+
+      source += char
+      if (char === "'" || char === '"' || char === '`') {
+        stringQuote = char
+        escaped = false
+      }
+    }
+
+    if (source.trim().length > 0) {
+      effectiveLines++
+    }
+
+    if (stringQuote !== '`') {
+      stringQuote = null
+      escaped = false
+    }
+  }
+
+  return effectiveLines
 }
 
 function countEffectiveLines(filePath) {
-  const text = fs.readFileSync(filePath, 'utf8')
-  if (text.length === 0) return 0
-  const normalized = text.endsWith('\n') ? text.slice(0, -1) : text
-  return normalized.length === 0
-    ? 0
-    : normalized.split(/\r?\n/).filter(isEffectiveSourceLine).length
+  return countEffectiveSourceLines(fs.readFileSync(filePath, 'utf8'))
 }
 
 function walk(dir, out = []) {
