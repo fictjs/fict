@@ -13,7 +13,9 @@ pnpm guardrails:compiler-complexity
 ```
 
 The report scans `packages/compiler/src`, prints the largest TypeScript files,
-and fails when a file or total source budget is exceeded.
+and fails when a file or total effective-source budget is exceeded. Effective
+source lines exclude blank lines and pure comment lines, so formatting-only
+changes cannot move the guardrail.
 
 Budget values live in `scripts/compiler-complexity-report.mjs`; do not copy
 them into docs. Treat the script as the source of truth for large-file budgets,

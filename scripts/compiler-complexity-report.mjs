@@ -11,27 +11,40 @@ import path from 'node:path'
 
 const compilerSrc = path.join(process.cwd(), 'packages/compiler/src')
 const topLimit = Number(process.env.COMPILER_COMPLEXITY_TOP ?? 12)
-const defaultMaxLoc = Number(process.env.COMPILER_COMPLEXITY_MAX_LOC ?? 1800)
-const totalMaxLoc = Number(process.env.COMPILER_COMPLEXITY_TOTAL_LOC ?? 62513)
+const defaultMaxLoc = Number(process.env.COMPILER_COMPLEXITY_MAX_LOC ?? 1600)
+const totalMaxLoc = Number(process.env.COMPILER_COMPLEXITY_TOTAL_LOC ?? 56029)
 
 const fileBudgets = new Map([
-  ['packages/compiler/src/ir/codegen.ts', 10741],
-  ['packages/compiler/src/ir/optimize.ts', 7827],
-  ['packages/compiler/src/ir/regions.ts', 7817],
-  ['packages/compiler/src/index.ts', 4965],
-  ['packages/compiler/src/ir/build-hir.ts', 4176],
-  ['packages/compiler/src/ir/structurize.ts', 1953],
+  ['packages/compiler/src/ir/codegen.ts', 9691],
+  ['packages/compiler/src/ir/optimize.ts', 7391],
+  ['packages/compiler/src/ir/regions.ts', 7129],
+  ['packages/compiler/src/index.ts', 4677],
+  ['packages/compiler/src/ir/build-hir.ts', 3611],
+  ['packages/compiler/src/ir/structurize.ts', 1602],
 ])
 
 function toPosix(filePath) {
   return filePath.split(path.sep).join('/')
 }
 
-function countLines(filePath) {
+function isEffectiveSourceLine(line) {
+  const trimmed = line.trim()
+  return (
+    trimmed.length > 0 &&
+    !trimmed.startsWith('//') &&
+    !trimmed.startsWith('/*') &&
+    !trimmed.startsWith('*') &&
+    !trimmed.startsWith('*/')
+  )
+}
+
+function countEffectiveLines(filePath) {
   const text = fs.readFileSync(filePath, 'utf8')
   if (text.length === 0) return 0
   const normalized = text.endsWith('\n') ? text.slice(0, -1) : text
-  return normalized.length === 0 ? 0 : normalized.split(/\r?\n/).length
+  return normalized.length === 0
+    ? 0
+    : normalized.split(/\r?\n/).filter(isEffectiveSourceLine).length
 }
 
 function walk(dir, out = []) {
@@ -55,7 +68,7 @@ function main() {
       const relative = toPosix(path.relative(process.cwd(), filePath))
       return {
         file: relative,
-        loc: countLines(filePath),
+        loc: countEffectiveLines(filePath),
         budget: fileBudgets.get(relative) ?? defaultMaxLoc,
       }
     })
@@ -66,21 +79,21 @@ function main() {
 
   for (const row of rows) {
     if (row.loc > row.budget) {
-      failures.push(`${row.file}: ${row.loc} LOC exceeds budget ${row.budget}`)
+      failures.push(`${row.file}: ${row.loc} effective LOC exceeds budget ${row.budget}`)
     }
   }
 
   if (totalLoc > totalMaxLoc) {
-    failures.push(`compiler src total: ${totalLoc} LOC exceeds budget ${totalMaxLoc}`)
+    failures.push(`compiler src total: ${totalLoc} effective LOC exceeds budget ${totalMaxLoc}`)
   }
 
   console.log(`Compiler source files: ${rows.length}`)
-  console.log(`Compiler source LOC: ${totalLoc} / ${totalMaxLoc}`)
+  console.log(`Compiler effective source LOC: ${totalLoc} / ${totalMaxLoc}`)
   console.log('Largest compiler files:')
   console.table(
     rows.slice(0, topLimit).map(row => ({
       file: row.file,
-      loc: row.loc,
+      effectiveLoc: row.loc,
       budget: row.budget,
     })),
   )
