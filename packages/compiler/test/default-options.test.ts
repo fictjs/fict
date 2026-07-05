@@ -1,8 +1,159 @@
 import { describe, expect, it } from 'vitest'
 
+import type { FictCompilerOptions } from '../src'
+
 import { transform, transformWithCompilerDefaults } from './test-utils'
 
+interface StrictDefaultSmokeCase {
+  name: string
+  source: string
+  options?: FictCompilerOptions
+  expectedError?: RegExp
+  assertOutput?: (output: string) => void
+}
+
+const strictDefaultSmokeCases: StrictDefaultSmokeCase[] = [
+  {
+    name: 'simple state derived jsx binding',
+    source: `
+      import { $state } from 'fict'
+
+      export function Counter() {
+        let count = $state(0)
+        const doubled = count * 2
+        return <button onClick={() => count++}>{count}:{doubled}</button>
+      }
+    `,
+    assertOutput: output => {
+      expect(output).toContain('__fictUseSignal')
+      expect(output).toMatch(/count\(\)/)
+    },
+  },
+  {
+    name: 'props destructuring with nested defaults and rest',
+    source: `
+      export function Profile(props) {
+        const {
+          user: { name = 'Ada' } = {},
+          title = 'Engineer',
+          ...rest
+        } = props
+        return <section data-role={rest.role}>{title}: {name}</section>
+      }
+    `,
+    assertOutput: output => {
+      expect(output).toContain('__fictProp')
+      expect(output).toContain('__fictPropsRest')
+    },
+  },
+  {
+    name: 'keyed list map',
+    source: `
+      import { $state } from 'fict'
+
+      export function Menu() {
+        let selected = $state(1)
+        const items = [1, 2, 3]
+        return <ul>{items.map(item => <li key={item}>{item === selected ? selected : item}</li>)}</ul>
+      }
+    `,
+    assertOutput: output => {
+      expect(output).toContain('createKeyedList')
+      expect(output).toMatch(/selected\(\)/)
+    },
+  },
+  {
+    name: 'hook object and array accessor returns',
+    source: `
+      import { $state } from 'fict'
+
+      export function useCounter() {
+        let count = $state(0)
+        const doubled = count * 2
+        return { count, doubled, tuple: [count, doubled] }
+      }
+    `,
+    assertOutput: output => {
+      expect(output).toContain('__fictUseSignal')
+      expect(output).toContain('tuple')
+    },
+  },
+  {
+    name: 'cross-module direct accessor metadata',
+    source: `
+      import { useCounter } from 'counter-lib'
+
+      export function App() {
+        const count = useCounter()
+        return <div>{count}</div>
+      }
+    `,
+    options: {
+      resolveModuleMetadata: source =>
+        source === 'counter-lib'
+          ? {
+              version: 1,
+              exports: {},
+              hooks: {
+                useCounter: { directAccessor: 'signal' },
+              },
+            }
+          : undefined,
+    },
+    assertOutput: output => {
+      expect(output).toMatch(/count\(\)/)
+    },
+  },
+  {
+    name: 'resumable event handler',
+    source: `
+      import { $state } from 'fict'
+
+      export function App() {
+        let count = $state(0)
+        return <button onClick$={() => count++}>{count}</button>
+      }
+    `,
+    options: { resumable: true },
+    assertOutput: output => {
+      expect(output).toContain('__handler')
+    },
+  },
+  {
+    name: 'native spread fallback fail closed',
+    source: `
+      export function App(props) {
+        const attrs = { ...props }
+        return <div {...attrs} />
+      }
+    `,
+    expectedError: /FICT-J003/,
+  },
+]
+
 describe('compiler default options', () => {
+  describe('strict default smoke matrix', () => {
+    for (const testCase of strictDefaultSmokeCases) {
+      it(testCase.name, () => {
+        if (testCase.expectedError) {
+          expect(() =>
+            transformWithCompilerDefaults(testCase.source, {
+              ...testCase.options,
+              dev: false,
+            }),
+          ).toThrow(testCase.expectedError)
+          return
+        }
+
+        const output = transformWithCompilerDefaults(testCase.source, {
+          ...testCase.options,
+          dev: false,
+        })
+        testCase.assertOutput?.(output)
+      })
+    }
+  })
+
   it('enables lazyConditional by default', () => {
     const source = `
       import { $state } from 'fict'
