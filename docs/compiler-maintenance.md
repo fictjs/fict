@@ -15,22 +15,12 @@ pnpm guardrails:compiler-complexity
 The report scans `packages/compiler/src`, prints the largest TypeScript files,
 and fails when a file or total source budget is exceeded.
 
-Current large-file budgets intentionally reflect the existing codebase:
-
-| File                                      | Budget |
-| ----------------------------------------- | ------ |
-| `packages/compiler/src/ir/codegen.ts`     | 10707  |
-| `packages/compiler/src/ir/optimize.ts`    | 7456   |
-| `packages/compiler/src/ir/regions.ts`     | 7743   |
-| `packages/compiler/src/index.ts`          | 4896   |
-| `packages/compiler/src/ir/build-hir.ts`   | 4176   |
-| `packages/compiler/src/ir/structurize.ts` | 1953   |
-
-All other compiler source files use the default budget of 1800 LOC.
+Budget values live in `scripts/compiler-complexity-report.mjs`; do not copy
+them into docs. Treat the script as the source of truth for large-file budgets,
+the default per-file budget, and the total compiler source budget.
 
 These budgets are not goals. They are ceilings that keep already-large files
-from growing silently while the compiler is split into smaller units. The
-current total compiler source budget is 61640 LOC.
+from growing silently while the compiler is split into smaller units.
 
 ## Refactor Rule
 
@@ -55,6 +45,7 @@ pnpm bench:optimizer:guard
 pnpm guardrails:hir
 ```
 
-For release candidates, `pnpm release:compiler:verify` runs compiler lint,
+For release candidates, `pnpm release:verify` runs the complexity report as part
+of the top-level gate. `pnpm release:compiler:verify` also runs compiler lint,
 typecheck, tests, HIR guardrails, optimizer guardrails, and the complexity
-report.
+report for compiler-focused changes.
