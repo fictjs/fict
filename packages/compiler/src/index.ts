@@ -372,25 +372,13 @@ function shouldSuppressWarning(
 
 type WarningLevel = 'off' | 'warn' | 'error'
 
+const wordSet = (source: string): Set<string> => new Set(source.split(' '))
 const DEFAULT_ERROR_WARNING_CODES = new Set(['FICT-R004'])
 const STRICT_REACTIVITY_WARNING_CODES = new Set(['FICT-R003', 'FICT-R006'])
 const STRICT_GUARANTEE_EXACT_WARNING_CODES = new Set(['FICT-M'])
-const STRICT_GUARANTEE_WARNING_CODES = new Set([
-  'FICT-P001',
-  'FICT-P002',
-  'FICT-P003',
-  'FICT-P004',
-  'FICT-P005',
-  'FICT-J003',
-  'FICT-M003',
-  'FICT-S002',
-  'FICT-H',
-  'FICT-R002',
-  'FICT-R003',
-  'FICT-R005',
-  'FICT-R006',
-  'FICT-R007',
-])
+const STRICT_GUARANTEE_WARNING_CODES = wordSet(
+  'FICT-P001 FICT-P002 FICT-P003 FICT-P004 FICT-P005 FICT-J003 FICT-M003 FICT-S002 FICT-H FICT-R002 FICT-R003 FICT-R005 FICT-R006 FICT-R007',
+)
 
 function matchesStrictGuaranteeWarningCode(code: string): boolean {
   return (
@@ -1116,42 +1104,15 @@ function runWarningPass(
     })
     return found
   }
-  const NON_ESCAPING_CALLBACK_METHODS = new Set([
-    'map',
-    'forEach',
-    'filter',
-    'some',
-    'every',
-    'find',
-    'findIndex',
-    'findLast',
-    'findLastIndex',
-    'flatMap',
-    'reduce',
-    'reduceRight',
-    'sort',
-    'toSorted',
-  ])
-  const MUTATING_ARRAY_METHODS = new Set([
-    'copyWithin',
-    'fill',
-    'pop',
-    'push',
-    'reverse',
-    'shift',
-    'sort',
-    'splice',
-    'unshift',
-  ])
-  const NON_ESCAPING_CALLBACK_FUNCTION_IMPORTS = new Set([
-    'untrack',
-    'batch',
-    'startTransition',
-    'createEffect',
-    'createMemo',
-    'createRenderEffect',
-    'runInScope',
-  ])
+  const NON_ESCAPING_CALLBACK_METHODS = wordSet(
+    'map forEach filter some every find findIndex findLast findLastIndex flatMap reduce reduceRight sort toSorted',
+  )
+  const MUTATING_ARRAY_METHODS = wordSet(
+    'copyWithin fill pop push reverse shift sort splice unshift',
+  )
+  const NON_ESCAPING_CALLBACK_FUNCTION_IMPORTS = wordSet(
+    'untrack batch startTransition createEffect createMemo createRenderEffect runInScope',
+  )
   const reactiveScopesSet = new Set(options.reactiveScopes ?? [])
   const resolveReactiveScopeName = (
     callee: BabelCore.types.Expression | BabelCore.types.V8IntrinsicIdentifier,
@@ -2711,30 +2672,12 @@ function createHIREntrypointVisitor(
               name => !name.startsWith('console.') && name !== 'Math.random',
             ),
           )
-          const effectfulCalls = new Set([
-            '$effect',
-            'render',
-            'fetch',
-            'setTimeout',
-            'setInterval',
-            'clearTimeout',
-            'clearInterval',
-            'requestAnimationFrame',
-            'cancelAnimationFrame',
-          ])
-          const userCodeInvokingBuiltins = new Set([
-            'JSON.parse',
-            'JSON.stringify',
-            'Object.values',
-            'Object.entries',
-            'Array.from',
-            'String',
-            'Number',
-            'parseInt',
-            'parseFloat',
-            'isNaN',
-            'isFinite',
-          ])
+          const effectfulCalls = wordSet(
+            '$effect render fetch setTimeout setInterval clearTimeout clearInterval requestAnimationFrame cancelAnimationFrame',
+          )
+          const userCodeInvokingBuiltins = wordSet(
+            'JSON.parse JSON.stringify Object.values Object.entries Array.from String Number parseInt parseFloat isNaN isFinite',
+          )
           const getCalleeName = (
             callee: BabelCore.types.Expression | BabelCore.types.V8IntrinsicIdentifier,
           ): string | null => {
@@ -2763,26 +2706,9 @@ function createHIREntrypointVisitor(
             }
             return null
           }
-          const mutatingMemberProps = new Set([
-            'push',
-            'pop',
-            'splice',
-            'shift',
-            'unshift',
-            'sort',
-            'reverse',
-            'set',
-            'add',
-            'delete',
-            'append',
-            'appendChild',
-            'remove',
-            'removeChild',
-            'setAttribute',
-            'dispatchEvent',
-            'replaceChildren',
-            'replaceWith',
-          ])
+          const mutatingMemberProps = wordSet(
+            'push pop splice shift unshift sort reverse set add delete append appendChild remove removeChild setAttribute dispatchEvent replaceChildren replaceWith',
+          )
           const unwrapStaticMemoValue = (node: BabelCore.types.Node): BabelCore.types.Node => {
             let current = node
             while (

@@ -26,6 +26,7 @@ type ConstObjectFields = Map<string, ConstantValue>
 type ConstArrayElements = Map<number, ConstantValue>
 
 const UNKNOWN_CONST = Symbol('unknown-const')
+const wordSet = (source: string): Set<string> => new Set(source.split(' '))
 
 const constantValuesEqual = (left: ConstantValue | undefined, right: ConstantValue): boolean => {
   if (typeof left === 'number' && typeof right === 'number') return Object.is(left, right)
@@ -76,60 +77,23 @@ interface IdentifierReadSafety {
   idom: Map<BlockId, BlockId>
 }
 
-const PURE_MATH_METHODS = new Set([
-  'abs',
-  'ceil',
-  'floor',
-  'round',
-  'trunc',
-  'sign',
-  'min',
-  'max',
-  'pow',
-  'sqrt',
-  'cbrt',
-  'hypot',
-  'log',
-  'log10',
-  'log2',
-  'exp',
-  'sin',
-  'cos',
-  'tan',
-])
+const PURE_MATH_METHODS = wordSet(
+  'abs ceil floor round trunc sign min max pow sqrt cbrt hypot log log10 log2 exp sin cos tan',
+)
 
 const STABLE_MEMBER_ACCESS = new Map<string, Set<string>>([
-  ['Math', new Set(['E', 'LN2', 'LN10', 'LOG2E', 'LOG10E', 'PI', 'SQRT1_2', 'SQRT2'])],
+  ['Math', wordSet('E LN2 LN10 LOG2E LOG10E PI SQRT1_2 SQRT2')],
   [
     'Number',
-    new Set([
-      'EPSILON',
-      'MAX_SAFE_INTEGER',
-      'MIN_SAFE_INTEGER',
-      'MAX_VALUE',
-      'MIN_VALUE',
-      'NaN',
-      'POSITIVE_INFINITY',
-      'NEGATIVE_INFINITY',
-    ]),
+    wordSet(
+      'EPSILON MAX_SAFE_INTEGER MIN_SAFE_INTEGER MAX_VALUE MIN_VALUE NaN POSITIVE_INFINITY NEGATIVE_INFINITY',
+    ),
   ],
   [
     'Symbol',
-    new Set([
-      'asyncIterator',
-      'hasInstance',
-      'isConcatSpreadable',
-      'iterator',
-      'match',
-      'matchAll',
-      'replace',
-      'search',
-      'species',
-      'split',
-      'toPrimitive',
-      'toStringTag',
-      'unscopables',
-    ]),
+    wordSet(
+      'asyncIterator hasInstance isConcatSpreadable iterator match matchAll replace search species split toPrimitive toStringTag unscopables',
+    ),
   ],
 ])
 
@@ -143,48 +107,16 @@ const BUILTIN_GLOBAL_NAMES = new Set([
   'parseInt',
   'parseFloat',
 ])
-const KNOWN_SAFE_GLOBAL_READS = new Set([
+const KNOWN_SAFE_GLOBAL_READS = new Set<string>([
   ...BUILTIN_GLOBAL_NAMES,
-  'Array',
-  'Date',
-  'Error',
-  'EvalError',
-  'Intl',
-  'JSON',
-  'Map',
-  'Object',
-  'Promise',
-  'Proxy',
-  'RangeError',
-  'ReferenceError',
-  'Reflect',
-  'RegExp',
-  'Set',
-  'SyntaxError',
-  'TypeError',
-  'URIError',
-  'WeakMap',
-  'WeakSet',
-  'console',
-  'globalThis',
-  'Infinity',
-  'NaN',
-  'undefined',
+  ...'Array Date Error EvalError Intl JSON Map Object Promise Proxy RangeError ReferenceError Reflect RegExp Set SyntaxError TypeError URIError WeakMap WeakSet console globalThis Infinity NaN undefined'.split(
+    ' ',
+  ),
 ])
 const COMPILER_SAFE_IDENTIFIER_READS = new Set<string>(Object.values(RUNTIME_HELPERS))
-const IMPURE_CALLEES = new Set([
-  '$state',
-  '$effect',
-  '$memo',
-  '$store',
-  'createSignal',
-  'createEffect',
-  'createMemo',
-  'createStore',
-  'onMount',
-  'startTransition',
-  'render',
-])
+const IMPURE_CALLEES = wordSet(
+  '$state $effect $memo $store createSignal createEffect createMemo createStore onMount startTransition render',
+)
 
 export interface OptimizeOptions {
   memoMacroNames?: Set<string>

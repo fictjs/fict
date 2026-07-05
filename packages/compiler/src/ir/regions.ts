@@ -4,13 +4,10 @@
  * This module bridges HIR reactive scope analysis with fine-grained DOM generation.
  * It replaces the legacy findNextRegion/generateRegionMemo with a CFG-aware approach.
  */
-
 import type * as BabelCore from '@babel/core'
 import type { LVal } from '@babel/types'
-
 import { debugLog, debugWarn } from '../debug'
 import type { RegionMetadata } from '../fine-grained-dom'
-
 import type { CodegenContext, RegionInfo, RegionLoweringOps } from './codegen'
 import { markCompilerReactiveGetter } from './codegen-reactive-getter'
 import { runtimeIdentifier } from './codegen-runtime-helpers'
@@ -36,11 +33,10 @@ import {
   type ShapeAnalysisResult,
 } from './shapes'
 import { structurizeCFG, StructurizationError, type StructuredNode } from './structurize'
-
+const wordSet = (source: string): Set<string> => new Set(source.split(' '))
 function voidZero(t: typeof BabelCore.types): BabelCore.types.UnaryExpression {
   return t.unaryExpression('void', t.numericLiteral(0), true)
 }
-
 function regionOutputProperty(
   t: typeof BabelCore.types,
   name: string,
@@ -51,7 +47,6 @@ function regionOutputProperty(
   const key = computed ? t.stringLiteral(name) : t.identifier(name)
   return t.objectProperty(key, value, computed, shorthand && !computed)
 }
-
 function regionOutputMember(
   t: typeof BabelCore.types,
   object: BabelCore.types.Expression,
@@ -61,7 +56,6 @@ function regionOutputMember(
     ? t.memberExpression(object, t.stringLiteral(name), true)
     : t.memberExpression(object, t.identifier(name))
 }
-
 function numericValueExpression(
   value: number,
   t: typeof BabelCore.types,
@@ -84,7 +78,6 @@ function numericValueExpression(
   }
   return t.numericLiteral(value)
 }
-
 /**
  * A Region represents a contiguous section of code that should be
  * evaluated together and memoized based on its dependencies.
@@ -114,7 +107,6 @@ export interface Region {
   /** Parent region ID if nested */
   parentId?: number | undefined
 }
-
 /**
  * A region's intrinsic eligibility for memoized lowering. Context-specific
  * opt-outs (`use no memo`, non-reactive scopes, dependency-less regions) are
@@ -125,12 +117,10 @@ export interface Region {
 export function isRegionMemoizable(region: Region): boolean {
   return region.shouldMemoize && !region.hasAsyncSyntax
 }
-
 type ReactiveCreationInstruction = AssignInstruction & {
   value: Extract<Expression, { kind: 'CallExpression' }>
   declarationKind: NonNullable<AssignInstruction['declarationKind']>
 }
-
 function templateElementFromQuasi(
   quasi: TemplateQuasi,
   tail: boolean,
@@ -143,7 +133,6 @@ function templateElementFromQuasi(
   ;(element.value as { raw: string; cooked: string | null }).cooked = cooked
   return element
 }
-
 export function expressionNeedsAsyncContext(expr: Expression): boolean {
   switch (expr.kind) {
     case 'AwaitExpression':
@@ -233,14 +222,12 @@ export function expressionNeedsAsyncContext(expr: Expression): boolean {
       return false
   }
 }
-
 function instructionNeedsAsyncContext(instr: Instruction): boolean {
   if (instr.kind === 'Assign' || instr.kind === 'Expression') {
     return expressionNeedsAsyncContext(instr.value)
   }
   return false
 }
-
 function terminatorNeedsAsyncContext(term: Terminator): boolean {
   switch (term.kind) {
     case 'Branch':
@@ -266,7 +253,6 @@ function terminatorNeedsAsyncContext(term: Terminator): boolean {
       return false
   }
 }
-
 /**
  * Result of region generation
  */
@@ -275,9 +261,7 @@ export interface RegionResult {
   regionsByBlock: Map<BlockId, Region[]>
   topLevelRegions: Region[]
 }
-
 const REACTIVE_CREATORS = new Set(['createEffect', 'createMemo', 'createSelector', '$memo'])
-
 function getRegionLoweringOps(ctx: CodegenContext): RegionLoweringOps {
   const ops = ctx.regionLoweringOps
   if (ops) return ops
@@ -285,47 +269,35 @@ function getRegionLoweringOps(ctx: CodegenContext): RegionLoweringOps {
     file: ctx.options?.filename,
   })
 }
-
 const applyRegionToContext: RegionLoweringOps['applyRegionToContext'] = (ctx, region) =>
   getRegionLoweringOps(ctx).applyRegionToContext(ctx, region)
-
 const applyRegionMetadataToExpression: RegionLoweringOps['applyRegionMetadataToExpression'] = (
   expr,
   ctx,
   regionOverride,
 ) => getRegionLoweringOps(ctx).applyRegionMetadataToExpression(expr, ctx, regionOverride)
-
 const buildDependencyGetter: RegionLoweringOps['buildDependencyGetter'] = (deps, ctx) =>
   getRegionLoweringOps(ctx).buildDependencyGetter(deps, ctx)
-
 const getReactiveCallKind: RegionLoweringOps['getReactiveCallKind'] = (expr, ctx) =>
   getRegionLoweringOps(ctx).getReactiveCallKind(expr, ctx)
-
 const assertWritableImportedReactiveIdentifier: RegionLoweringOps['assertWritableImportedReactiveIdentifier'] =
   (name, ctx, loc) =>
     getRegionLoweringOps(ctx).assertWritableImportedReactiveIdentifier(name, ctx, loc)
-
 const lowerExpression: RegionLoweringOps['lowerExpression'] = (expr, ctx, isAssigned = false) =>
   getRegionLoweringOps(ctx).lowerExpression(expr, ctx, isAssigned)
-
 const propagateHookResultAlias: RegionLoweringOps['propagateHookResultAlias'] = (
   targetBase,
   value,
   ctx,
 ) => getRegionLoweringOps(ctx).propagateHookResultAlias(targetBase, value, ctx)
-
 const resolveHookReturnMemberAccessorKind: RegionLoweringOps['resolveHookReturnMemberAccessorKind'] =
   (expr, ctx) => getRegionLoweringOps(ctx).resolveHookReturnMemberAccessorKind(expr, ctx)
-
 const resolveHookMemberValue: RegionLoweringOps['resolveHookMemberValue'] = (expr, ctx) =>
   getRegionLoweringOps(ctx).resolveHookMemberValue(expr, ctx)
-
 const contextIdentifier: RegionLoweringOps['contextIdentifier'] = ctx =>
   getRegionLoweringOps(ctx).contextIdentifier(ctx)
-
 const reserveFunctionLocalName: RegionLoweringOps['reserveFunctionLocalName'] = (ctx, preferred) =>
   getRegionLoweringOps(ctx).reserveFunctionLocalName(ctx, preferred)
-
 function buildEffectCall(
   ctx: CodegenContext,
   t: typeof BabelCore.types,
@@ -347,7 +319,6 @@ function buildEffectCall(
   }
   return t.callExpression(runtimeIdentifier(ctx, 'useEffect'), args)
 }
-
 function shouldWrapTrackedControlInEffect(test: Expression, ctx: CodegenContext): boolean {
   const inNonReactiveScope = !!(ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0)
   return (
@@ -357,12 +328,10 @@ function shouldWrapTrackedControlInEffect(test: Expression, ctx: CodegenContext)
     expressionUsesTracked(test, ctx)
   )
 }
-
 type LoopStructuredNode = Extract<
   StructuredNode,
   { kind: 'while' | 'doWhile' | 'for' | 'forOf' | 'forIn' }
 >
-
 function loopNodeLoc(
   node: LoopStructuredNode,
 ): { start: { line: number; column: number } } | null | undefined {
@@ -378,7 +347,6 @@ function loopNodeLoc(
       return node.object.loc
   }
 }
-
 function structuredNodeContainsJSX(node: StructuredNode | null | undefined): boolean {
   if (!node) return false
   switch (node.kind) {
@@ -416,7 +384,6 @@ function structuredNodeContainsJSX(node: StructuredNode | null | undefined): boo
       return false
   }
 }
-
 /**
  * Non-strict builds lower JSX-building loop bodies as one-shot static
  * fallbacks (strict mode rejects the shape via FICT-R006 errors). Tell the
@@ -443,7 +410,6 @@ function emitStaticLoopFallbackWarning(
     column: loc ? loc.start.column + 1 : 0,
   })
 }
-
 /**
  * Loop bodies in the fallback (non-region) path execute once per iteration,
  * so render-period hooks with static slot ids must not be emitted inside
@@ -475,7 +441,6 @@ function lowerLoopBodyWithDynamicHooks<T>(
     ctx.dynamicHookSlotDepth = prevDynamic
   }
 }
-
 function withTrackedControlEffectScope<T>(ctx: CodegenContext, enabled: boolean, fn: () => T): T {
   if (!enabled) return fn()
   const prevDepth = ctx.nonReactiveScopeDepth ?? 0
@@ -486,7 +451,6 @@ function withTrackedControlEffectScope<T>(ctx: CodegenContext, enabled: boolean,
     ctx.nonReactiveScopeDepth = prevDepth
   }
 }
-
 function wrapTrackedControlStatement(
   stmt: BabelCore.types.Statement,
   shouldWrap: boolean,
@@ -497,7 +461,6 @@ function wrapTrackedControlStatement(
   const effectFn = t.arrowFunctionExpression([], t.blockStatement([stmt]))
   return [t.expressionStatement(buildEffectCall(ctx, t, effectFn))]
 }
-
 function buildMemoCall(
   ctx: CodegenContext,
   t: typeof BabelCore.types,
@@ -526,7 +489,6 @@ function buildMemoCall(
   }
   const memoOptions =
     memoOptionsProperties.length > 0 ? t.objectExpression(memoOptionsProperties) : null
-
   if (ctx.inModule) {
     ctx.helpersUsed.add('memo')
     const args: BabelCore.types.Expression[] = [memoFn]
@@ -546,7 +508,6 @@ function buildMemoCall(
   }
   return t.callExpression(runtimeIdentifier(ctx, 'useMemo'), args)
 }
-
 function expressionCreatesReactive(expr: Expression, memoMacroNames?: Set<string>): boolean {
   if (expr.kind === 'CallExpression' && expr.callee.kind === 'Identifier') {
     const base = getSSABaseName(expr.callee.name)
@@ -554,7 +515,6 @@ function expressionCreatesReactive(expr: Expression, memoMacroNames?: Set<string
   }
   return false
 }
-
 function expressionContainsReactiveCreation(
   expr: Expression,
   memoMacroNames?: Set<string>,
@@ -656,7 +616,6 @@ function expressionContainsReactiveCreation(
       return false
   }
 }
-
 function instructionContainsReactiveCreation(
   instr: Instruction,
   memoMacroNames?: Set<string>,
@@ -669,7 +628,6 @@ function instructionContainsReactiveCreation(
   }
   return false
 }
-
 function instructionIsReactiveSetup(instr: Instruction, memoMacroNames?: Set<string>): boolean {
   if (instr.kind === 'Assign') {
     return expressionCreatesReactive(instr.value, memoMacroNames)
@@ -679,7 +637,6 @@ function instructionIsReactiveSetup(instr: Instruction, memoMacroNames?: Set<str
   }
   return false
 }
-
 function nodeIsPureReactiveScope(node: StructuredNode, memoMacroNames?: Set<string>): boolean {
   let found = false
   const visit = (n: StructuredNode): boolean => {
@@ -701,10 +658,8 @@ function nodeIsPureReactiveScope(node: StructuredNode, memoMacroNames?: Set<stri
         return false
     }
   }
-
   return visit(node) && found
 }
-
 /**
  * Generate regions from HIR reactive scope analysis
  */
@@ -716,7 +671,6 @@ export function generateRegions(
   const regions: Region[] = []
   const regionsByBlock = new Map<BlockId, Region[]>()
   let nextRegionId = 0
-
   // Create regions from scopes
   for (const scope of scopeResult.scopes) {
     if (!scope.hasExternalEffect && !scope.shouldMemoize) {
@@ -724,7 +678,6 @@ export function generateRegions(
     }
     const region = createRegionFromScope(scope, fn, nextRegionId++, shapeResult)
     regions.push(region)
-
     // Index by block
     for (const blockId of region.blocks) {
       const existing = regionsByBlock.get(blockId) ?? []
@@ -732,13 +685,10 @@ export function generateRegions(
       regionsByBlock.set(blockId, existing)
     }
   }
-
   // Determine nesting and top-level regions
   const topLevelRegions = determineRegionHierarchy(regions)
-
   return { regions, regionsByBlock, topLevelRegions }
 }
-
 function structurizeOrThrow(fn: HIRFunction): StructuredNode {
   validateCFGTargets(fn)
   try {
@@ -756,7 +706,6 @@ function structurizeOrThrow(fn: HIRFunction): StructuredNode {
     throw err
   }
 }
-
 function validateCFGTargets(fn: HIRFunction): void {
   const ids = new Set(fn.blocks.map(b => b.id))
   const ensure = (target: BlockId | undefined, source: BlockId, kind: string) => {
@@ -769,7 +718,6 @@ function validateCFGTargets(fn: HIRFunction): void {
       )
     }
   }
-
   for (const block of fn.blocks) {
     const term = block.terminator
     switch (term.kind) {
@@ -806,11 +754,9 @@ function validateCFGTargets(fn: HIRFunction): void {
     }
   }
 }
-
 export function assertStructurableCFG(fn: HIRFunction): void {
   validateCFGTargets(fn)
 }
-
 /**
  * Create a Region from a ReactiveScope
  */
@@ -832,12 +778,10 @@ function createRegionFromScope(
       instructionOrder.set(instr, order++)
     }
   }
-
   // Collect instructions from blocks in this scope
   for (const blockId of blocks) {
     const block = fn.blocks.find(b => b.id === blockId)
     if (!block) continue
-
     for (const instr of block.instructions) {
       if (isInstructionInScope(instr, scope)) {
         instructions.push(instr)
@@ -849,7 +793,6 @@ function createRegionFromScope(
         }
       }
     }
-
     // Check terminator for control flow and JSX
     if (block.terminator.kind === 'Branch' || block.terminator.kind === 'Switch') {
       hasControlFlow = true
@@ -865,12 +808,10 @@ function createRegionFromScope(
     }
   }
   instructions.sort((a, b) => compareInstructionSourceOrder(a, b, instructionOrder))
-
   // Multi-block scopes imply control flow
   if (blocks.size > 1) {
     hasControlFlow = true
   }
-
   // Compute dependency set with optional shape precision
   const baseDeps = getScopeDependencies(scope)
   const dependencies = new Set<string>()
@@ -886,7 +827,6 @@ function createRegionFromScope(
       dependencies.add(dep)
     }
   }
-
   return {
     id: regionId,
     scopeId: scope.id,
@@ -901,7 +841,6 @@ function createRegionFromScope(
     children: [],
   }
 }
-
 function compareInstructionSourceOrder(
   a: Instruction,
   b: Instruction,
@@ -915,7 +854,6 @@ function compareInstructionSourceOrder(
   }
   return (instructionOrder.get(a) ?? 0) - (instructionOrder.get(b) ?? 0)
 }
-
 function compareInstructionLoc(a: Instruction, b: Instruction): number | null {
   const aLoc = a.loc?.start
   const bLoc = b.loc?.start
@@ -923,12 +861,10 @@ function compareInstructionLoc(a: Instruction, b: Instruction): number | null {
   if (aLoc.line !== bLoc.line) return aLoc.line - bLoc.line
   return aLoc.column - bLoc.column
 }
-
 function instructionSourceBefore(a: Instruction, b: Instruction): boolean {
   const order = compareInstructionLoc(a, b)
   return order !== null && order < 0
 }
-
 function isClassEvaluationBarrier(instr: Instruction): boolean {
   return (
     instr.kind === 'Assign' &&
@@ -936,7 +872,6 @@ function isClassEvaluationBarrier(instr: Instruction): boolean {
     instr.value.kind === 'ClassExpression'
   )
 }
-
 /**
  * Check if an instruction belongs to the given scope
  */
@@ -957,7 +892,6 @@ function isInstructionInScope(instr: Instruction, scope: ReactiveScope): boolean
   }
   return false
 }
-
 /**
  * Check if an instruction contains JSX
  */
@@ -967,11 +901,9 @@ function containsJSX(instr: Instruction): boolean {
   }
   return false
 }
-
 function containsJSXExpr(expr: Expression | null | undefined): boolean {
   if (!expr) return false
   if (expr.kind === 'JSXElement') return true
-
   // Recursively check nested expressions
   switch (expr.kind) {
     case 'CallExpression':
@@ -1038,7 +970,6 @@ function containsJSXExpr(expr: Expression | null | undefined): boolean {
       return false
   }
 }
-
 function getStaticPropertyName(property: Expression, computed: boolean): string | null {
   if (!computed && property.kind === 'Identifier') return property.name
   if (property.kind === 'Literal') {
@@ -1048,25 +979,10 @@ function getStaticPropertyName(property: Expression, computed: boolean): string 
   }
   return null
 }
-
-const LAZY_MEMO_SAFE_SYNC_CALLBACK_METHODS = new Set([
-  'every',
-  'filter',
-  'find',
-  'findIndex',
-  'findLast',
-  'findLastIndex',
-  'flatMap',
-  'forEach',
-  'map',
-  'reduce',
-  'reduceRight',
-  'some',
-  'sort',
-])
-
+const LAZY_MEMO_SAFE_SYNC_CALLBACK_METHODS = wordSet(
+  'every filter find findIndex findLast findLastIndex flatMap forEach map reduce reduceRight some sort',
+)
 const LAZY_MEMO_SAFE_GLOBAL_CALLS = new Set(['String', 'Number', 'Boolean', 'BigInt'])
-
 function isLazyMemoSafeSyncCallbackHost(callee: Expression): boolean {
   if (callee.kind !== 'MemberExpression' && callee.kind !== 'OptionalMemberExpression') {
     return false
@@ -1074,7 +990,6 @@ function isLazyMemoSafeSyncCallbackHost(callee: Expression): boolean {
   const propName = getStaticPropertyName(callee.property as Expression, callee.computed)
   return !!propName && LAZY_MEMO_SAFE_SYNC_CALLBACK_METHODS.has(propName)
 }
-
 function getNamespaceReactiveMemberKind(
   candidate: Expression,
   ctx: CodegenContext,
@@ -1090,7 +1005,6 @@ function getNamespaceReactiveMemberKind(
   const kind = nsMeta.exports[propName]
   return kind === 'signal' || kind === 'memo' || kind === 'store' ? kind : null
 }
-
 export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): boolean {
   const babelNodeUsesTracked = (node: unknown): boolean => {
     const { t } = ctx
@@ -1103,7 +1017,6 @@ export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): bo
       return false
     }
     const babelNode = node as BabelCore.types.Node
-
     if (t.isIdentifier(babelNode)) {
       return expressionUsesTracked({ kind: 'Identifier', name: babelNode.name }, ctx)
     }
@@ -1202,7 +1115,6 @@ export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): bo
     ) {
       const staticFieldValueUsesTracked =
         'static' in babelNode && babelNode.static ? babelNodeUsesTracked(babelNode.value) : false
-
       return (
         babelNodeUsesTracked(babelNode.decorators) ||
         ('computed' in babelNode && babelNode.computed
@@ -1214,7 +1126,6 @@ export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): bo
     if (t.isStaticBlock(babelNode)) return babelNodeUsesTracked(babelNode.body)
     return false
   }
-
   const assignmentTargetUsesTrackedRead = (target: Expression): boolean => {
     switch (target.kind) {
       case 'Identifier':
@@ -1230,7 +1141,6 @@ export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): bo
         return expressionUsesTracked(target, ctx)
     }
   }
-
   switch (expr.kind) {
     case 'Identifier':
       return (
@@ -1321,20 +1231,16 @@ export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): bo
       return false
   }
 }
-
 /**
  * Determine region hierarchy (nesting) based on block containment
  */
 function determineRegionHierarchy(regions: Region[]): Region[] {
   if (regions.length === 0) return []
   if (regions.length === 1) return regions
-
   const topLevel: Region[] = []
-
   // Sort regions by size (larger first for parent-first processing)
   // This allows us to check parents before children
   const sorted = [...regions].sort((a, b) => b.blocks.size - a.blocks.size)
-
   // Build a map of block -> containing regions for O(1) lookup
   const blockToRegions = new Map<BlockId, Region[]>()
   for (const region of regions) {
@@ -1347,18 +1253,15 @@ function determineRegionHierarchy(regions: Region[]): Region[] {
       }
     }
   }
-
   // For each region, find its immediate parent (smallest containing region)
   // Process from largest to smallest so parent relationships are established first
   const regionById = new Map<number, Region>()
   for (const region of regions) {
     regionById.set(region.id, region)
   }
-
   for (const region of sorted) {
     // Skip if already has a parent (shouldn't happen but be safe)
     if (region.parentId !== undefined) continue
-
     // Find candidate parents by looking at regions that share a block
     // The parent must contain ALL blocks of this region
     const firstBlock = region.blocks.values().next().value as BlockId | undefined
@@ -1366,15 +1269,12 @@ function determineRegionHierarchy(regions: Region[]): Region[] {
       topLevel.push(region)
       continue
     }
-
     const candidates = blockToRegions.get(firstBlock) ?? []
     let bestParent: Region | undefined
-
     for (const candidate of candidates) {
       if (candidate.id === region.id) continue
       // Parent must be larger
       if (candidate.blocks.size <= region.blocks.size) continue
-
       // Check if candidate contains all blocks of region
       let containsAll = true
       for (const blockId of region.blocks) {
@@ -1383,7 +1283,6 @@ function determineRegionHierarchy(regions: Region[]): Region[] {
           break
         }
       }
-
       if (containsAll) {
         // Pick smallest containing region as immediate parent
         if (!bestParent || candidate.blocks.size < bestParent.blocks.size) {
@@ -1391,7 +1290,6 @@ function determineRegionHierarchy(regions: Region[]): Region[] {
         }
       }
     }
-
     if (bestParent) {
       region.parentId = bestParent.id
       bestParent.children.push(region)
@@ -1399,10 +1297,8 @@ function determineRegionHierarchy(regions: Region[]): Region[] {
       topLevel.push(region)
     }
   }
-
   return topLevel
 }
-
 /**
  * Convert a Region to RegionMetadata for fine-grained DOM generation
  * Applies SSA de-versioning to ensure clean variable names without _n suffixes
@@ -1413,12 +1309,10 @@ export function regionToMetadata(region: Region): RegionMetadata {
   for (const dep of region.dependencies) {
     deDependencies.add(deSSAVarName(dep))
   }
-
   const deDeclarations = new Set<string>()
   for (const decl of region.declarations) {
     deDeclarations.add(deSSAVarName(decl))
   }
-
   return {
     id: region.id,
     dependencies: deDependencies,
@@ -1428,7 +1322,6 @@ export function regionToMetadata(region: Region): RegionMetadata {
     children: region.children.map(c => regionToMetadata(c)),
   }
 }
-
 /**
  * Generate region-based code from HIR
  *
@@ -1445,20 +1338,16 @@ export function generateRegionCode(
   // Generate regions from scope analysis
   const regionResult = generateRegions(fn, scopeResult)
   const declaredVars = new Set<string>()
-
   // Build a map of blockId -> instructions that belong to each region
   const regionInstrMap = new Map<number, { region: Region; emitted: boolean }>()
   for (const region of regionResult.regions) {
     regionInstrMap.set(region.id, { region, emitted: false })
   }
-
   // Use structured code generation for control flow
   const structured = structurizeOrThrow(fn)
-
   // Lower structured code with region awareness
   return lowerStructuredNodeWithRegions(structured, regionResult, t, ctx, declaredVars)
 }
-
 export function lowerStructuredNodeWithoutRegions(
   node: StructuredNode,
   t: typeof BabelCore.types,
@@ -1467,7 +1356,6 @@ export function lowerStructuredNodeWithoutRegions(
 ): BabelCore.types.Statement[] {
   return lowerStructuredNodeInternal(node, t, ctx, declaredVars)
 }
-
 /**
  * Lower structured node with region awareness
  * This combines CFG structurization with reactive region analysis
@@ -1481,11 +1369,9 @@ function lowerStructuredNodeWithRegions(
 ): BabelCore.types.Statement[] {
   return lowerStructuredNodeInternal(node, t, ctx, declaredVars, regionResult)
 }
-
 function collectSubsumedChildRegionIds(regionResult: RegionResult): Set<number> {
   const disabled = new Set<number>()
   const regionsById = new Map(regionResult.regions.map(region => [region.id, region]))
-
   for (const region of regionResult.regions) {
     if (
       region.shouldMemoize ||
@@ -1500,10 +1386,8 @@ function collectSubsumedChildRegionIds(regionResult: RegionResult): Set<number> 
       disabled.add(region.id)
     }
   }
-
   return disabled
 }
-
 /**
  * Context for tracking region emission during lowering
  */
@@ -1517,14 +1401,12 @@ interface RegionEmitContext {
   fullRootNode: StructuredNode
   inlineUnownedInRegionBody?: boolean | undefined
 }
-
 interface ControlFlowRegionState {
   region?: Region | undefined
   partialRegionIds: Set<number>
   hasUnownedInstructions?: boolean | undefined
   ownedInstructionsByRegion?: Map<number, Instruction[]> | undefined
 }
-
 function shouldDisablePartialRegions(node: StructuredNode): boolean {
   switch (node.kind) {
     case 'labeled':
@@ -1539,7 +1421,6 @@ function shouldDisablePartialRegions(node: StructuredNode): boolean {
       return false
   }
 }
-
 /**
  * Internal function to lower structured nodes
  * Handles region-aware code generation with memo/dependency tracking
@@ -1563,14 +1444,12 @@ function lowerStructuredNodeInternal(
         fullRootNode: node,
       }
     : undefined
-
   const statements = lowerNodeWithRegionContext(node, t, ctx, declaredVars, regionCtx)
   if (regionCtx) {
     ctx.disabledRegionIds = new Set(regionCtx.disabledRegions)
   }
   return statements
 }
-
 function ensureSwitchCaseBreak(
   stmts: BabelCore.types.Statement[],
   t: typeof BabelCore.types,
@@ -1594,14 +1473,12 @@ function ensureSwitchCaseBreak(
   }
   return [...stmts, t.breakStatement()]
 }
-
 function cloneTrailingStatements(
   statements: BabelCore.types.Statement[] | undefined,
   t: typeof BabelCore.types,
 ): BabelCore.types.Statement[] {
   return (statements ?? []).map(stmt => t.cloneNode(stmt, true) as BabelCore.types.Statement)
 }
-
 function shouldLabelStructuredNodeDirectly(node: StructuredNode): boolean {
   switch (node.kind) {
     case 'while':
@@ -1615,7 +1492,6 @@ function shouldLabelStructuredNodeDirectly(node: StructuredNode): boolean {
       return false
   }
 }
-
 function canEmitControlFlowRegionDirectly(node: StructuredNode): boolean {
   switch (node.kind) {
     case 'while':
@@ -1630,14 +1506,12 @@ function canEmitControlFlowRegionDirectly(node: StructuredNode): boolean {
       return false
   }
 }
-
 function combineDirectEmitNodes(nodes: StructuredNode[]): StructuredNode {
   if (nodes.length === 1) {
     return nodes[0]!
   }
   return { kind: 'sequence', nodes: [...nodes] }
 }
-
 function instructionListCoversRegion(
   region: Region,
   candidateInstructions: Instruction[],
@@ -1645,7 +1519,6 @@ function instructionListCoversRegion(
   if (candidateInstructions.length < region.instructions.length) {
     return false
   }
-
   const used = new Array(candidateInstructions.length).fill(false)
   for (const regionInstr of region.instructions) {
     let matched = false
@@ -1662,21 +1535,17 @@ function instructionListCoversRegion(
       return false
     }
   }
-
   return true
 }
-
 function collectInstructionDependencies(instr: Instruction): Set<string> {
   if (instr.kind === 'Assign' || instr.kind === 'Expression') {
     return collectExprDependencies(instr.value)
   }
   return new Set()
 }
-
 function collectTerminatorDependencies(term: Terminator): Set<string> {
   const deps = new Set<string>()
   const add = (values: Set<string>) => values.forEach(value => deps.add(value))
-
   switch (term.kind) {
     case 'Return':
       if (term.argument) add(collectExprDependencies(term.argument))
@@ -1702,10 +1571,8 @@ function collectTerminatorDependencies(term: Terminator): Set<string> {
     default:
       break
   }
-
   return deps
 }
-
 function collectExpressionWrites(expr: Expression): Set<string> {
   const writes = new Set<string>()
   const addTarget = (target: Expression): void => {
@@ -1786,7 +1653,6 @@ function collectExpressionWrites(expr: Expression): Set<string> {
   visit(expr)
   return writes
 }
-
 function expressionContainsReactiveWriteExpression(expr: Expression, ctx: CodegenContext): boolean {
   const targetWritesReactiveValue = (target: Expression): boolean => {
     switch (target.kind) {
@@ -1805,7 +1671,6 @@ function expressionContainsReactiveWriteExpression(expr: Expression, ctx: Codege
         return expressionUsesTracked(target, ctx)
     }
   }
-
   const visit = (current: Expression): boolean => {
     switch (current.kind) {
       case 'AssignmentExpression':
@@ -1851,7 +1716,6 @@ function expressionContainsReactiveWriteExpression(expr: Expression, ctx: Codege
   }
   return visit(expr)
 }
-
 function collectInstructionWrites(instr: Instruction): Set<string> {
   const writes = new Set<string>()
   if (instr.kind === 'Assign') {
@@ -1862,7 +1726,6 @@ function collectInstructionWrites(instr: Instruction): Set<string> {
   }
   return writes
 }
-
 function collectStructuredNodeDependencies(node: StructuredNode): Set<string> {
   const deps = new Set<string>()
   const add = (values: Set<string>) => values.forEach(value => deps.add(value))
@@ -1933,7 +1796,6 @@ function collectStructuredNodeDependencies(node: StructuredNode): Set<string> {
   visit(node)
   return deps
 }
-
 function collectStructuredNodeWrites(node: StructuredNode): Set<string> {
   const writes = new Set<string>()
   const add = (values: Set<string>) => values.forEach(value => writes.add(value))
@@ -1988,13 +1850,11 @@ function collectStructuredNodeWrites(node: StructuredNode): Set<string> {
   visit(node)
   return writes
 }
-
 function collectPostRegionWrites(rootNode: StructuredNode, region: Region): Set<string> {
   const writes = new Set<string>()
   const remainingRegionInstructionIndexes = new Set<number>()
   region.instructions.forEach((_instr, index) => remainingRegionInstructionIndexes.add(index))
   let afterRegion = remainingRegionInstructionIndexes.size === 0
-
   const addWrites = (values: Set<string>): void => {
     if (!afterRegion) return
     values.forEach(name => writes.add(name))
@@ -2114,16 +1974,13 @@ function collectPostRegionWrites(rootNode: StructuredNode, region: Region): Set<
         return
     }
   }
-
   visit(rootNode)
   return writes
 }
-
 function getLocalDeclarationName(instr: Instruction): string | null {
   if (instr.kind !== 'Assign' || !instr.declarationKind) return null
   return deSSAVarName(instr.target.name)
 }
-
 function isReactiveCreationExpression(expr: Expression): boolean {
   return (
     expr.kind === 'CallExpression' &&
@@ -2131,13 +1988,11 @@ function isReactiveCreationExpression(expr: Expression): boolean {
     (expr.callee.name === '$state' || expr.callee.name === '$store')
   )
 }
-
 function isReactiveCreationInstruction(instr: Instruction): instr is ReactiveCreationInstruction {
   return (
     instr.kind === 'Assign' && !!instr.declarationKind && isReactiveCreationExpression(instr.value)
   )
 }
-
 function shouldDeferControlFlowPrefixInstruction(
   instr: Instruction,
   controlFlowDependencies: Set<string>,
@@ -2150,7 +2005,6 @@ function shouldDeferControlFlowPrefixInstruction(
   if (instr.kind === 'Assign' && isReactiveCreationExpression(instr.value)) return false
   return true
 }
-
 function buildDirectRegionEmitCandidate(
   nodes: StructuredNode[],
   startIndex: number,
@@ -2166,7 +2020,6 @@ function buildDirectRegionEmitCandidate(
 } | null {
   const region = state.region
   if (!regionCtx || !region) return null
-
   const bufferedRegionInstructions = instructionBuffer
     .filter(item => item.region?.id === region.id)
     .map(item => item.instr)
@@ -2190,7 +2043,6 @@ function buildDirectRegionEmitCandidate(
     ...(state.ownedInstructionsByRegion?.get(region.id) ?? []),
   ]
   const selectedNodes: StructuredNode[] = [nodes[startIndex]!]
-
   if (instructionListCoversRegion(region, coveredInstructions)) {
     return {
       region,
@@ -2200,10 +2052,8 @@ function buildDirectRegionEmitCandidate(
       prefixInstructions: buildPrefixInstructions(),
     }
   }
-
   for (let index = startIndex + 1; index < nodes.length; index++) {
     const sibling = nodes[index]!
-
     if (sibling.kind === 'instruction') {
       const owner = findRegionForInstruction(sibling.instruction, regionCtx)
       if (!owner || owner.id !== region.id) {
@@ -2219,7 +2069,6 @@ function buildDirectRegionEmitCandidate(
       selectedNodes.push(sibling)
       coveredInstructions.push(...(siblingState.ownedInstructionsByRegion?.get(region.id) ?? []))
     }
-
     if (instructionListCoversRegion(region, coveredInstructions)) {
       return {
         region,
@@ -2230,16 +2079,13 @@ function buildDirectRegionEmitCandidate(
       }
     }
   }
-
   return null
 }
-
 function collectIncompleteBufferedRegionIds(
   buffer: { instr: Instruction; region?: Region | undefined }[],
 ): Set<number> {
   const disabled = new Set<number>()
   const instructionsByRegion = new Map<number, { region: Region; instructions: Instruction[] }>()
-
   for (const item of buffer) {
     if (!item.region) continue
     const current = instructionsByRegion.get(item.region.id)
@@ -2252,16 +2098,13 @@ function collectIncompleteBufferedRegionIds(
       })
     }
   }
-
   for (const [id, item] of instructionsByRegion) {
     if (!instructionListCoversRegion(item.region, item.instructions)) {
       disabled.add(id)
     }
   }
-
   return disabled
 }
-
 function structuredNodeUsesTrackedControlFlow(node: StructuredNode, ctx: CodegenContext): boolean {
   switch (node.kind) {
     case 'sequence':
@@ -2312,7 +2155,6 @@ function structuredNodeUsesTrackedControlFlow(node: StructuredNode, ctx: Codegen
       return false
   }
 }
-
 function buildLabeledStructuredStatement(
   node: Extract<StructuredNode, { kind: 'labeled' }>,
   stmts: BabelCore.types.Statement[],
@@ -2325,7 +2167,6 @@ function buildLabeledStructuredStatement(
       : t.blockStatement(stmts)
   return [t.labeledStatement(t.identifier(node.label), body)]
 }
-
 function collectPatternBindingNames(
   pattern: LVal | BabelCore.types.PatternLike | null | undefined,
   t: typeof BabelCore.types,
@@ -2362,7 +2203,6 @@ function collectPatternBindingNames(
     })
   }
 }
-
 function collectStructuredCatchBindingNames(
   handler: Extract<StructuredNode, { kind: 'try' }>['handler'],
   t: typeof BabelCore.types,
@@ -2375,7 +2215,6 @@ function collectStructuredCatchBindingNames(
   }
   return handler.param ? [deSSAVarName(handler.param)] : []
 }
-
 function lowerStructuredCatchParam(
   handler: NonNullable<Extract<StructuredNode, { kind: 'try' }>['handler']>,
   t: typeof BabelCore.types,
@@ -2385,7 +2224,6 @@ function lowerStructuredCatchParam(
   }
   return handler.param ? t.identifier(deSSAVarName(handler.param)) : null
 }
-
 function collectDirectBlockBindingNames(
   statements: StructuredNode[],
   t: typeof BabelCore.types,
@@ -2403,7 +2241,6 @@ function collectDirectBlockBindingNames(
   }
   return names
 }
-
 function collectBabelStatementBindingNames(
   stmt: BabelCore.types.Statement,
   t: typeof BabelCore.types,
@@ -2419,7 +2256,6 @@ function collectBabelStatementBindingNames(
     names.add(stmt.id.name)
   }
 }
-
 function collectInstructionBindingName(instruction: Instruction, names: Set<string>): void {
   if (instruction.kind !== 'Assign') return
   const isFunctionDecl =
@@ -2431,7 +2267,6 @@ function collectInstructionBindingName(instruction: Instruction, names: Set<stri
     names.add(deSSAVarName(instruction.target.name))
   }
 }
-
 function collectDirectStructuredBindingNames(
   node: StructuredNode | null | undefined,
   t: typeof BabelCore.types,
@@ -2463,11 +2298,9 @@ function collectDirectStructuredBindingNames(
       return names
   }
 }
-
 function withShadowedBindings<T>(ctx: CodegenContext, names: Iterable<string>, fn: () => T): T {
   const bindingNames = Array.from(names, name => deSSAVarName(name))
   if (bindingNames.length === 0) return fn()
-
   const prevTracked = ctx.trackedVars
   const prevShadowed = ctx.shadowedNames
   const prevSignals = ctx.signalVars
@@ -2512,7 +2345,6 @@ function withShadowedBindings<T>(ctx: CodegenContext, names: Iterable<string>, f
   const shadowed = new Set(prevShadowed ?? [])
   bindingNames.forEach(name => shadowed.add(name))
   ctx.shadowedNames = shadowed
-
   try {
     return fn()
   } finally {
@@ -2526,7 +2358,6 @@ function withShadowedBindings<T>(ctx: CodegenContext, names: Iterable<string>, f
     ctx.resumablePropAccessors = prevResumablePropAccessors
   }
 }
-
 function lowerLoopAssignmentTargetWithDeSSA(
   target: Expression,
   ctx: CodegenContext,
@@ -2537,7 +2368,6 @@ function lowerLoopAssignmentTargetWithDeSSA(
   }
   return ctx.t.identifier('_item')
 }
-
 /**
  * Lower a node with region context
  */
@@ -2553,7 +2383,6 @@ function lowerNodeWithRegionContext(
       const stmts: BabelCore.types.Statement[] = []
       // Collect instructions and emit regions as complete units
       const instructionBuffer: { instr: Instruction; region?: Region | undefined }[] = []
-
       for (let index = 0; index < node.nodes.length; index++) {
         const child = node.nodes[index]!
         if (child.kind === 'instruction') {
@@ -2700,7 +2529,6 @@ function lowerNodeWithRegionContext(
       stmts.push(...flushInstructionBuffer(instructionBuffer, t, ctx, declaredVars, regionCtx))
       return stmts
     }
-
     case 'labeled': {
       const inNonReactiveScope = !!(ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0)
       const mightWrapInEffect =
@@ -2732,7 +2560,6 @@ function lowerNodeWithRegionContext(
       }
       return labeledStmt
     }
-
     case 'block': {
       const stmts: BabelCore.types.Statement[] = []
       const scopedDeclared = new Set(declaredVars)
@@ -2744,7 +2571,6 @@ function lowerNodeWithRegionContext(
       })
       return [t.blockStatement(stmts)]
     }
-
     case 'instruction': {
       // Single instruction - check if it belongs to a region
       if (instructionWritesHandledRegionOutput(node.instruction, regionCtx)) return []
@@ -2778,33 +2604,27 @@ function lowerNodeWithRegionContext(
       const stmt = instructionToStatement(node.instruction, t, declaredVars, ctx)
       return stmt ? [stmt] : []
     }
-
     case 'return': {
       return [
         t.returnStatement(node.argument ? lowerExpressionWithDeSSA(node.argument, ctx) : null),
         ...cloneTrailingStatements(node.trailingStatements, t),
       ]
     }
-
     case 'throw': {
       return [
         t.throwStatement(lowerExpressionWithDeSSA(node.argument, ctx)),
         ...cloneTrailingStatements(node.trailingStatements, t),
       ]
     }
-
     case 'break': {
       return [t.breakStatement(node.label ? t.identifier(node.label) : null)]
     }
-
     case 'continue': {
       return [t.continueStatement(node.label ? t.identifier(node.label) : null)]
     }
-
     case 'if': {
       const prevConditional = ctx.inConditional ?? 0
       ctx.inConditional = prevConditional + 1
-
       // fix: Pre-compute whether we *might* wrap this if in an effect BEFORE lowering children.
       // We check most conditions but NOT early exit (that requires the built statement).
       // If we might wrap in effect, increment nonReactiveScopeDepth to prevent nested effect wrapping.
@@ -2834,14 +2654,12 @@ function lowerNodeWithRegionContext(
       if (allOwnedControlFlowRegionsAreHandled(controlFlowState, regionCtx)) {
         return []
       }
-
       // If we might wrap in effect, mark children as being in a non-reactive scope
       // so they don't also get wrapped in effects
       const prevNonReactiveDepth = ctx.nonReactiveScopeDepth ?? 0
       if (mightWrapInEffect) {
         ctx.nonReactiveScopeDepth = prevNonReactiveDepth + 1
       }
-
       const lowerBranch = (child: StructuredNode): BabelCore.types.Statement[] => {
         const scopedDeclared = new Set(declaredVars)
         const branchBindings = collectDirectStructuredBindingNames(child, t)
@@ -2851,13 +2669,11 @@ function lowerNodeWithRegionContext(
       }
       const conseqStmts = lowerBranch(node.consequent)
       const altStmts = node.alternate ? lowerBranch(node.alternate) : null
-
       // Restore non-reactive depth
       if (mightWrapInEffect) {
         ctx.nonReactiveScopeDepth = prevNonReactiveDepth
       }
       ctx.inConditional = prevConditional
-
       const conseqReactiveOnly = nodeIsPureReactiveScope(node.consequent, ctx.memoMacroNames)
       const altReactiveOnly = node.alternate
         ? nodeIsPureReactiveScope(node.alternate, ctx.memoMacroNames)
@@ -2878,7 +2694,6 @@ function lowerNodeWithRegionContext(
         const bodyExpr = negate ? t.unaryExpression('!', body) : body
         return t.arrowFunctionExpression([], bodyExpr)
       }
-
       if (conseqReactiveOnly || altReactiveOnly) {
         const stmts: BabelCore.types.Statement[] = []
         const runInScopeId = runtimeIdentifier(ctx, 'runInScope')
@@ -2896,14 +2711,12 @@ function lowerNodeWithRegionContext(
             ),
           )
         }
-
         if (conseqReactiveOnly) {
           addScoped(createFlagExpr(false), conseqStmts)
         }
         if (altReactiveOnly && altStmts) {
           addScoped(createFlagExpr(true), altStmts)
         }
-
         const needsFallbackConseq = !conseqReactiveOnly && conseqStmts.length > 0
         const needsFallbackAlt = !altReactiveOnly && altStmts && altStmts.length > 0
         if (needsFallbackConseq || needsFallbackAlt) {
@@ -2915,10 +2728,8 @@ function lowerNodeWithRegionContext(
             ),
           )
         }
-
         return stmts
       }
-
       // fix: Don't generate empty if statements (or wrap them in effects).
       // When assignments are moved to a region memo, the if body may become empty.
       const conseqIsEmpty = conseqStmts.length === 0
@@ -2927,7 +2738,6 @@ function lowerNodeWithRegionContext(
         // Both branches are empty - nothing to generate
         return []
       }
-
       const ifStmt = t.ifStatement(
         testExpr,
         t.blockStatement(conseqStmts),
@@ -2939,10 +2749,8 @@ function lowerNodeWithRegionContext(
         const effectFn = t.arrowFunctionExpression([], t.blockStatement([ifStmt]))
         return [t.expressionStatement(buildEffectCall(ctx, t, effectFn))]
       }
-
       return [ifStmt]
     }
-
     case 'while': {
       const shouldWrap = shouldWrapTrackedControlInEffect(node.test, ctx)
       const scopedDeclared = new Set(declaredVars)
@@ -2959,7 +2767,6 @@ function lowerNodeWithRegionContext(
       const stmt = t.whileStatement(lowerExpressionWithDeSSA(node.test, ctx), body)
       return wrapTrackedControlStatement(stmt, shouldWrap, ctx, t)
     }
-
     case 'doWhile': {
       const shouldWrap = shouldWrapTrackedControlInEffect(node.test, ctx)
       const scopedDeclared = new Set(declaredVars)
@@ -2976,7 +2783,6 @@ function lowerNodeWithRegionContext(
       const stmt = t.doWhileStatement(lowerExpressionWithDeSSA(node.test, ctx), body)
       return wrapTrackedControlStatement(stmt, shouldWrap, ctx, t)
     }
-
     case 'for': {
       const forBindings = new Set<string>()
       node.init?.forEach(instr => {
@@ -3006,10 +2812,8 @@ function lowerNodeWithRegionContext(
           ),
         )
       })
-
       return [t.forStatement(init, test, update, body)]
     }
-
     case 'forOf': {
       const varKind = node.variableKind ?? 'const'
       let leftPattern: BabelCore.types.LVal
@@ -3076,10 +2880,8 @@ function lowerNodeWithRegionContext(
       withShadowedBindings(ctx, bindingNames, () => {
         body = t.blockStatement(lowerLoopBody())
       })
-
       return [t.forOfStatement(left, right, body, !!node.await)]
     }
-
     case 'forIn': {
       const varKind = node.variableKind ?? 'const'
       let leftPattern: BabelCore.types.LVal
@@ -3137,10 +2939,8 @@ function lowerNodeWithRegionContext(
       withShadowedBindings(ctx, bindingNames, () => {
         body = t.blockStatement(lowerLoopBody())
       })
-
       return [t.forInStatement(left, right, body)]
     }
-
     case 'switch': {
       const prevConditional = ctx.inConditional ?? 0
       ctx.inConditional = prevConditional + 1
@@ -3163,7 +2963,6 @@ function lowerNodeWithRegionContext(
       }
       return [t.switchStatement(lowerExpressionWithDeSSA(node.discriminant, ctx), cases)]
     }
-
     case 'try': {
       const blockDeclared = new Set(declaredVars)
       const blockBindings = collectDirectStructuredBindingNames(node.block, t)
@@ -3203,10 +3002,8 @@ function lowerNodeWithRegionContext(
             )
           })()
         : null
-
       return [t.tryStatement(block, handler, finalizer)]
     }
-
     case 'stateMachine': {
       const unsupportedBlock = node.blocks.find(block => {
         switch (block.terminator.kind) {
@@ -3231,7 +3028,6 @@ function lowerNodeWithRegionContext(
           },
         )
       }
-
       const unsafeReactiveFallback = getUnsafeReactiveStateMachineFallback(node, ctx)
       if (unsafeReactiveFallback) {
         throw new HIRError(
@@ -3246,7 +3042,6 @@ function lowerNodeWithRegionContext(
           },
         )
       }
-
       const hoisted: string[] = []
       const normalizedBlocks = node.blocks.map(block => {
         const instructions = block.instructions.map(instr => {
@@ -3271,19 +3066,16 @@ function lowerNodeWithRegionContext(
       const hoistedInitializers = new Set(hoisted)
       const stateMachineDeclared = new Set(declaredVars)
       hoisted.forEach(n => stateMachineDeclared.add(n))
-
       // Fallback: generate a switch-based state machine
       // This handles non-structurable CFGs by emulating goto with a state variable
       const stateVar = t.identifier(reserveFunctionLocalName(ctx, '__state'))
       const stateDecl = t.variableDeclaration('let', [
         t.variableDeclarator(stateVar, t.numericLiteral(node.entryBlock)),
       ])
-
       // Generate switch cases for each block
       const cases: BabelCore.types.SwitchCase[] = []
       for (const block of normalizedBlocks) {
         const stmts: BabelCore.types.Statement[] = []
-
         // Lower instructions
         for (const instr of block.instructions) {
           const stmt = instructionToStatement(
@@ -3296,29 +3088,22 @@ function lowerNodeWithRegionContext(
           )
           if (stmt) stmts.push(stmt)
         }
-
         // Lower terminator
         stmts.push(...lowerTerminatorForStateMachine(block.terminator, t, ctx, stateVar))
         stmts.push(...cloneTrailingStatements(block.postTerminatorStatements, t))
-
         cases.push(t.switchCase(t.numericLiteral(block.blockId), stmts))
       }
-
       // Add default case that breaks the loop
       cases.push(t.switchCase(null, [t.breakStatement(t.identifier('__cfgLoop'))]))
-
       const switchStmt = t.switchStatement(stateVar, cases)
       const whileLoop = t.whileStatement(t.booleanLiteral(true), t.blockStatement([switchStmt]))
       const labeledLoop = t.labeledStatement(t.identifier('__cfgLoop'), whileLoop)
-
       return [...hoistedDecl, stateDecl, labeledLoop]
     }
-
     default:
       return []
   }
 }
-
 /**
  * Lower a terminator for state machine fallback
  */
@@ -3333,16 +3118,13 @@ function lowerTerminatorForStateMachine(
       return [
         t.returnStatement(term.argument ? lowerExpressionWithDeSSA(term.argument, ctx) : null),
       ]
-
     case 'Throw':
       return [t.throwStatement(lowerExpressionWithDeSSA(term.argument, ctx))]
-
     case 'Jump':
       return [
         t.expressionStatement(t.assignmentExpression('=', stateVar, t.numericLiteral(term.target))),
         t.continueStatement(t.identifier('__cfgLoop')),
       ]
-
     case 'Branch':
       return [
         t.ifStatement(
@@ -3360,19 +3142,16 @@ function lowerTerminatorForStateMachine(
         ),
         t.continueStatement(t.identifier('__cfgLoop')),
       ]
-
     case 'Break':
       return [
         t.expressionStatement(t.assignmentExpression('=', stateVar, t.numericLiteral(term.target))),
         t.continueStatement(t.identifier('__cfgLoop')),
       ]
-
     case 'Continue':
       return [
         t.expressionStatement(t.assignmentExpression('=', stateVar, t.numericLiteral(term.target))),
         t.continueStatement(t.identifier('__cfgLoop')),
       ]
-
     case 'Unreachable':
       // Insert unreachable marker (throws at runtime if reached)
       return [
@@ -3380,16 +3159,13 @@ function lowerTerminatorForStateMachine(
           t.newExpression(t.identifier('Error'), [t.stringLiteral('Unreachable code')]),
         ),
       ]
-
     default:
       // For complex terminators (ForOf, ForIn, Try, Switch), break the loop
       // The state machine fallback is mainly for simple CFG issues
       return [t.breakStatement(t.identifier('__cfgLoop'))]
   }
 }
-
 type StateMachineNode = Extract<StructuredNode, { kind: 'stateMachine' }>
-
 function getUnsafeReactiveStateMachineFallback(
   node: StateMachineNode,
   ctx: CodegenContext,
@@ -3403,12 +3179,10 @@ function getUnsafeReactiveStateMachineFallback(
     }
   }
   if (reactiveNames.size === 0) return null
-
   const localDeclarations = new Set<string>()
   const laterWrites = new Set<string>()
   let hasReturn = false
   let reactiveReadBlock: StateMachineNode['blocks'][number] | undefined
-
   const noteDependencies = (deps: Set<string>, block: StateMachineNode['blocks'][number]) => {
     if (reactiveReadBlock) return
     for (const dep of deps) {
@@ -3418,7 +3192,6 @@ function getUnsafeReactiveStateMachineFallback(
       }
     }
   }
-
   for (const block of node.blocks) {
     for (const instr of block.instructions) {
       if (instr.kind === 'Assign' && instr.declarationKind) {
@@ -3436,9 +3209,7 @@ function getUnsafeReactiveStateMachineFallback(
     }
     noteDependencies(collectTerminatorDependencies(block.terminator), block)
   }
-
   if (!hasReturn || !reactiveReadBlock) return null
-
   for (const localName of localDeclarations) {
     if (laterWrites.has(localName)) {
       return {
@@ -3448,10 +3219,8 @@ function getUnsafeReactiveStateMachineFallback(
       }
     }
   }
-
   return null
 }
-
 function lowerStructuredNodeForRegion(
   node: StructuredNode,
   region: Region,
@@ -3479,7 +3248,6 @@ function lowerStructuredNodeForRegion(
       }
       return stmts
     }
-
     case 'labeled': {
       const inNonReactiveScope = !!(ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0)
       const mightWrapInEffect =
@@ -3519,7 +3287,6 @@ function lowerStructuredNodeForRegion(
       }
       return labeledStmt
     }
-
     case 'block': {
       const stmts: BabelCore.types.Statement[] = []
       const scopedDeclared = new Set(declaredVars)
@@ -3542,7 +3309,6 @@ function lowerStructuredNodeForRegion(
       if (stmts.length === 0) return []
       return [t.blockStatement(stmts)]
     }
-
     case 'instruction': {
       if (skipInstructions?.has(node.instruction)) return []
       if (regionCtx?.hoistedInstructions.has(node.instruction)) return []
@@ -3565,7 +3331,6 @@ function lowerStructuredNodeForRegion(
       const stmt = instructionToStatement(node.instruction, t, declaredVars, ctx)
       return stmt ? [stmt] : []
     }
-
     case 'if': {
       const inNonReactiveScope = !!(ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0)
       const controlFlowState = regionCtx ? analyzeControlFlowRegion(node, regionCtx) : undefined
@@ -3587,10 +3352,8 @@ function lowerStructuredNodeForRegion(
         !ctx.inRegionMemo &&
         !inNonReactiveScope &&
         expressionUsesTracked(node.test, ctx)
-
       const prevConditional = ctx.inConditional ?? 0
       ctx.inConditional = prevConditional + 1
-
       const lowerChild = (
         child: StructuredNode | null | undefined,
         forceNonReactive: boolean,
@@ -3627,7 +3390,6 @@ function lowerStructuredNodeForRegion(
           }
         })
       }
-
       const lowerBranches = (forceNonReactive: boolean) => ({
         consequent: lowerChild(node.consequent, forceNonReactive),
         alternate: node.alternate ? lowerChild(node.alternate, forceNonReactive) : [],
@@ -3650,12 +3412,10 @@ function lowerStructuredNodeForRegion(
           t.blockStatement(cons),
           alt.length > 0 ? t.blockStatement(alt) : null,
         )
-
       let ifStmt = buildIfStmt(consequent, alternate)
       // Final check: only wrap in effect if no early exit (after lowering to check the statement)
       const hasEarlyExit = statementHasEarlyExit(ifStmt, t)
       const shouldWrapEffect = mightWrapInEffect && !hasEarlyExit
-
       // fix: When there's an early exit (createConditional case), DON'T re-lower without
       // the non-reactive guard. The children will be inside a createConditional callback which
       // is already reactive, so they don't need to be wrapped in effects themselves.
@@ -3669,14 +3429,12 @@ function lowerStructuredNodeForRegion(
         if (consequent.length === 0 && alternate.length === 0) return []
         ifStmt = buildIfStmt(consequent, alternate)
       }
-
       if (shouldWrapEffect) {
         const effectFn = t.arrowFunctionExpression([], t.blockStatement([ifStmt]))
         return [t.expressionStatement(buildEffectCall(ctx, t, effectFn))]
       }
       return [ifStmt]
     }
-
     case 'while': {
       const shouldWrap = shouldWrapTrackedControlInEffect(node.test, ctx)
       const scopedDeclared = new Set(declaredVars)
@@ -3700,7 +3458,6 @@ function lowerStructuredNodeForRegion(
       )
       return wrapTrackedControlStatement(stmt, shouldWrap, ctx, t)
     }
-
     case 'doWhile': {
       const shouldWrap = shouldWrapTrackedControlInEffect(node.test, ctx)
       const scopedDeclared = new Set(declaredVars)
@@ -3724,7 +3481,6 @@ function lowerStructuredNodeForRegion(
       )
       return wrapTrackedControlStatement(stmt, shouldWrap, ctx, t)
     }
-
     case 'for': {
       const forBindings = new Set<string>()
       node.init?.forEach(instr => {
@@ -3760,7 +3516,6 @@ function lowerStructuredNodeForRegion(
       })
       return [t.forStatement(init, test, update, t.blockStatement(body))]
     }
-
     case 'forOf': {
       const bindingNames = new Set<string>()
       const leftPattern = node.pattern
@@ -3826,7 +3581,6 @@ function lowerStructuredNodeForRegion(
       const left = t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
       return [t.forOfStatement(left, right, t.blockStatement(body), !!node.await)]
     }
-
     case 'forIn': {
       const leftPattern = node.pattern
         ? (node.pattern as BabelCore.types.LVal)
@@ -3888,7 +3642,6 @@ function lowerStructuredNodeForRegion(
       const left = t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
       return [t.forInStatement(left, right, t.blockStatement(body))]
     }
-
     case 'switch': {
       const prevConditional = ctx.inConditional ?? 0
       ctx.inConditional = prevConditional + 1
@@ -3923,7 +3676,6 @@ function lowerStructuredNodeForRegion(
       if (cases.length === 0) return []
       return [t.switchStatement(lowerExpressionWithDeSSA(node.discriminant, ctx), cases)]
     }
-
     case 'try': {
       const executableRegionCtx = regionCtx
         ? { ...regionCtx, inlineUnownedInRegionBody: true }
@@ -3964,25 +3716,19 @@ function lowerStructuredNodeForRegion(
       const finalizer = node.finalizer ? t.blockStatement(finalizerStmts) : null
       return [t.tryStatement(t.blockStatement(blockStmts), handler, finalizer)]
     }
-
     case 'break':
       return [t.breakStatement(node.label ? t.identifier(node.label) : null)]
-
     case 'continue':
       return [t.continueStatement(node.label ? t.identifier(node.label) : null)]
-
     case 'return':
       return []
-
     case 'throw':
       return [t.throwStatement(lowerExpressionWithDeSSA(node.argument, ctx))]
-
     case 'stateMachine':
     default:
       return []
   }
 }
-
 /**
  * Find the region an instruction belongs to
  */
@@ -3991,7 +3737,6 @@ function findRegionForInstruction(
   regionCtx?: RegionEmitContext,
 ): Region | undefined {
   if (!regionCtx) return undefined
-
   for (const region of regionCtx.regionResult.regions) {
     for (const regionInstr of region.instructions) {
       if (instructionsMatch(instr, regionInstr)) {
@@ -4001,7 +3746,6 @@ function findRegionForInstruction(
   }
   return undefined
 }
-
 function analyzeControlFlowRegion(
   node: StructuredNode,
   regionCtx?: RegionEmitContext,
@@ -4009,12 +3753,10 @@ function analyzeControlFlowRegion(
   if (!regionCtx || node.kind === 'instruction') {
     return { partialRegionIds: new Set() }
   }
-
   const regionIds = new Set<number>()
   let sawInstruction = false
   let hasUnownedInstruction = false
   const ownedInstructionsByRegion = new Map<number, Instruction[]>()
-
   const visit = (current: StructuredNode): void => {
     switch (current.kind) {
       case 'instruction': {
@@ -4066,13 +3808,10 @@ function analyzeControlFlowRegion(
         return
     }
   }
-
   visit(node)
-
   if (!sawInstruction || regionIds.size === 0) {
     return { partialRegionIds: new Set() }
   }
-
   if (hasUnownedInstruction) {
     if (regionIds.size === 1) {
       const [regionId] = Array.from(regionIds)
@@ -4091,11 +3830,9 @@ function analyzeControlFlowRegion(
       ownedInstructionsByRegion,
     }
   }
-
   if (regionIds.size !== 1) {
     return { partialRegionIds: new Set(), ownedInstructionsByRegion }
   }
-
   const [regionId] = Array.from(regionIds)
   return {
     region: regionCtx.regionResult.regions.find(
@@ -4105,7 +3842,6 @@ function analyzeControlFlowRegion(
     ownedInstructionsByRegion,
   }
 }
-
 function allOwnedControlFlowRegionsAreHandled(
   state: ControlFlowRegionState,
   regionCtx?: RegionEmitContext,
@@ -4113,19 +3849,16 @@ function allOwnedControlFlowRegionsAreHandled(
   if (!regionCtx || state.hasUnownedInstructions) return false
   const ownedRegionIds = Array.from(state.ownedInstructionsByRegion?.keys() ?? [])
   if (ownedRegionIds.length === 0) return false
-
   return ownedRegionIds.every(id => {
     const region = regionCtx.regionResult.regions.find(candidate => candidate.id === id)
     if (!region?.shouldMemoize) return false
     return regionCtx.emittedRegions.has(id)
   })
 }
-
 function assignmentExpressionTargetName(expr: Expression): string | null {
   if (expr.kind !== 'AssignmentExpression') return null
   return expr.left.kind === 'Identifier' ? deSSAVarName(expr.left.name) : null
 }
-
 function instructionWritesHandledRegionOutput(
   instr: Instruction,
   regionCtx?: RegionEmitContext,
@@ -4138,7 +3871,6 @@ function instructionWritesHandledRegionOutput(
         ? assignmentExpressionTargetName(instr.value)
         : null
   if (!target) return false
-
   return regionCtx.regionResult.regions.some(
     region =>
       region.shouldMemoize &&
@@ -4146,7 +3878,6 @@ function instructionWritesHandledRegionOutput(
       Array.from(region.declarations).some(declaration => deSSAVarName(declaration) === target),
   )
 }
-
 /**
  * Check if two instructions are the same
  */
@@ -4158,7 +3889,6 @@ function instructionsMatch(a: Instruction, b: Instruction): boolean {
   // For expressions, compare by reference or structure
   return a === b
 }
-
 function expressionHasOrderingEffects(expr: Expression): boolean {
   switch (expr.kind) {
     case 'Identifier':
@@ -4212,7 +3942,6 @@ function expressionHasOrderingEffects(expr: Expression): boolean {
       return expr.expressions.some(part => expressionHasOrderingEffects(part))
   }
 }
-
 function instructionHasOrderingEffects(instr: Instruction): boolean {
   if (instr.kind === 'Debugger') return true
   if (instr.kind === 'Phi') return false
@@ -4221,13 +3950,11 @@ function instructionHasOrderingEffects(instr: Instruction): boolean {
   if (instr.declarationKind === 'function') return false
   return expressionHasOrderingEffects(instr.value)
 }
-
 function collectOrderingBarrierRegionIds(
   buffer: { instr: Instruction; region?: Region | undefined }[],
 ): Set<number> {
   const disabled = new Set<number>()
   const ranges = new Map<number, { first: number; last: number }>()
-
   buffer.forEach((item, index) => {
     const region = item.region
     if (!region || region.hasControlFlow) return
@@ -4238,9 +3965,7 @@ function collectOrderingBarrierRegionIds(
       ranges.set(region.id, { first: index, last: index })
     }
   })
-
   if (ranges.size === 0) return disabled
-
   buffer.forEach((item, index) => {
     // Region-owned assigns are ordered by region emission itself; everything
     // else defers to instructionHasOrderingEffects, including region-less
@@ -4253,10 +3978,8 @@ function collectOrderingBarrierRegionIds(
       disabled.add(id)
     }
   })
-
   return disabled
 }
-
 /**
  * Flush pending instructions, emitting regions as needed
  */
@@ -4276,7 +3999,6 @@ function flushInstructionBuffer(
     regionCtx?.disabledRegions.add(id),
   )
   collectOrderingBarrierRegionIds(buffer).forEach(id => regionCtx?.disabledRegions.add(id))
-
   for (const item of buffer) {
     if (regionCtx?.hoistedInstructions.has(item.instr)) {
       continue
@@ -4309,18 +4031,14 @@ function flushInstructionBuffer(
       stmts.push(...generateRegionStatements(item.region, t, declaredVars, ctx, regionCtx))
       continue
     }
-
     if (instructionWritesHandledRegionOutput(item.instr, regionCtx)) {
       continue
     }
-
     const stmt = instructionToStatement(item.instr, t, declaredVars, ctx)
     if (stmt) stmts.push(stmt)
   }
-
   return stmts
 }
-
 function collectSignalWriteDeclarationBarrierRegionIds(
   buffer: { instr: Instruction; region?: Region | undefined }[],
   ctx: CodegenContext,
@@ -4328,12 +4046,10 @@ function collectSignalWriteDeclarationBarrierRegionIds(
   const disabled = new Set<number>()
   const signalNames = new Set<string>(ctx.signalVars ?? [])
   const priorDeclarations = new Map<string, { index: number; region?: Region | undefined }>()
-
   for (let index = 0; index < buffer.length; index++) {
     const item = buffer[index]
     const instr = item?.instr
     if (!instr) continue
-
     if (instr.kind === 'Assign' && instr.declarationKind) {
       const name = deSSAVarName(instr.target.name)
       priorDeclarations.set(name, { index, region: item.region })
@@ -4342,7 +4058,6 @@ function collectSignalWriteDeclarationBarrierRegionIds(
       }
       continue
     }
-
     if (
       item.region &&
       instr.kind === 'Expression' &&
@@ -4357,12 +4072,9 @@ function collectSignalWriteDeclarationBarrierRegionIds(
       }
       continue
     }
-
     if (!item.region || instr.kind !== 'Assign' || instr.declarationKind) continue
-
     const targetName = deSSAVarName(instr.target.name)
     if (!signalNames.has(targetName)) continue
-
     for (const dep of collectInstructionDependencies(instr)) {
       const depName = deSSAVarName(dep)
       if (depName === targetName) continue
@@ -4372,10 +4084,8 @@ function collectSignalWriteDeclarationBarrierRegionIds(
       disabled.add(item.region.id)
     }
   }
-
   return disabled
 }
-
 function isComputedMemberMutation(expr: Expression): boolean {
   if (expr.kind === 'AssignmentExpression') {
     return (
@@ -4392,41 +4102,33 @@ function isComputedMemberMutation(expr: Expression): boolean {
   }
   return false
 }
-
 function collectSnapshotInterruptedRegionIds(
   buffer: { instr: Instruction; region?: Region | undefined }[],
 ): Set<number> {
   const disabled = new Set<number>()
-
   for (let start = 0; start < buffer.length; start++) {
     const startItem = buffer[start]
     const region = startItem?.region
     const instr = startItem?.instr
     if (!region || !instr || instr.kind !== 'Assign' || !instr.declarationKind) continue
-
     const name = deSSAVarName(instr.target.name)
     const regionDeclarations = new Set(Array.from(region.declarations, dep => deSSAVarName(dep)))
     if (!regionDeclarations.has(name)) continue
-
     for (let end = start + 1; end < buffer.length; end++) {
       const endItem = buffer[end]
       if (endItem?.region?.id !== region.id || !endItem.instr) continue
       if (!collectInstructionWrites(endItem.instr).has(name)) continue
-
       for (let between = start + 1; between < end; between++) {
         const betweenItem = buffer[between]
         if (!betweenItem?.instr || betweenItem.region?.id === region.id) continue
         if (!collectInstructionDependencies(betweenItem.instr).has(name)) continue
-
         disabled.add(region.id)
         if (betweenItem.region) disabled.add(betweenItem.region.id)
       }
     }
   }
-
   return disabled
 }
-
 /**
  * Lower instructions to a for-loop initializer
  */
@@ -4436,7 +4138,6 @@ function lowerInstructionsToInitExpr(
   ctx: CodegenContext,
 ): BabelCore.types.VariableDeclaration | BabelCore.types.Expression | null {
   if (instrs.length === 0) return null
-
   // Check if all are assignments - can use VariableDeclaration
   const allAssigns = instrs.every(i => i.kind === 'Assign')
   if (allAssigns) {
@@ -4472,7 +4173,6 @@ function lowerInstructionsToInitExpr(
         : 'let'
     return t.variableDeclaration(declKind, decls)
   }
-
   // Otherwise use sequence expression
   const exprs = instrs.map(i => {
     if (i.kind === 'Assign') {
@@ -4500,13 +4200,11 @@ function lowerInstructionsToInitExpr(
     }
     return voidZero(t)
   })
-
   if (exprs.length === 1 && exprs[0]) {
     return exprs[0]
   }
   return t.sequenceExpression(exprs)
 }
-
 /**
  * Lower instructions to a for-loop update expression
  */
@@ -4516,7 +4214,6 @@ function lowerInstructionsToUpdateExpr(
   ctx: CodegenContext,
 ): BabelCore.types.Expression | null {
   if (instrs.length === 0) return null
-
   const exprs = instrs.map(i => {
     if (i.kind === 'Assign') {
       return t.assignmentExpression(
@@ -4530,13 +4227,11 @@ function lowerInstructionsToUpdateExpr(
     }
     return voidZero(t)
   })
-
   if (exprs.length === 1 && exprs[0]) {
     return exprs[0]
   }
   return t.sequenceExpression(exprs)
 }
-
 function statementHasEarlyExit(
   stmt: BabelCore.types.Statement,
   t: typeof BabelCore.types,
@@ -4549,21 +4244,17 @@ function statementHasEarlyExit(
   ) {
     return true
   }
-
   if (t.isIfStatement(stmt)) {
     return (
       (stmt.consequent ? statementHasEarlyExit(stmt.consequent, t) : false) ||
       (stmt.alternate ? statementHasEarlyExit(stmt.alternate, t) : false)
     )
   }
-
   if (t.isBlockStatement(stmt)) {
     return stmt.body.some(child => statementHasEarlyExit(child, t))
   }
-
   return false
 }
-
 /**
  * Check if a StructuredNode contains an early exit (return, throw, break, continue).
  * This is used to determine if we should wrap an if statement in an effect
@@ -4578,7 +4269,6 @@ function _structuredNodeHasEarlyExit(
   },
 ): boolean {
   if (!node) return false
-
   switch (node.kind) {
     case 'return':
     case 'continue':
@@ -4592,25 +4282,20 @@ function _structuredNodeHasEarlyExit(
         options?.ignoreBreak === true ||
         (options?.ignoreBreakLabel !== undefined && node.label === options.ignoreBreakLabel)
       )
-
     case 'block':
       return node.statements.some(stmt => _structuredNodeHasEarlyExit(stmt, options))
-
     case 'sequence':
       return node.nodes.some(n => _structuredNodeHasEarlyExit(n, options))
-
     case 'labeled':
       return _structuredNodeHasEarlyExit(node.statement, {
         ...options,
         ignoreBreakLabel: node.label,
       })
-
     case 'if':
       return (
         _structuredNodeHasEarlyExit(node.consequent, options) ||
         _structuredNodeHasEarlyExit(node.alternate, options)
       )
-
     case 'while':
     case 'doWhile':
     case 'for':
@@ -4621,7 +4306,6 @@ function _structuredNodeHasEarlyExit(
       return _structuredNodeHasEarlyExit(node.body, {
         throwsContained: options?.throwsContained,
       })
-
     case 'switch':
       // `break` is the normal terminator for a switch case and should not disable
       // region lowering for a trailing return that consumes case-assigned locals.
@@ -4631,7 +4315,6 @@ function _structuredNodeHasEarlyExit(
           throwsContained: options?.throwsContained,
         }),
       )
-
     case 'try':
       return (
         _structuredNodeHasEarlyExit(
@@ -4641,18 +4324,15 @@ function _structuredNodeHasEarlyExit(
         _structuredNodeHasEarlyExit(node.handler?.body, options) ||
         _structuredNodeHasEarlyExit(node.finalizer, options)
       )
-
     default:
       return false
   }
 }
-
 function _structuredNodeHasReturnOrThrow(
   node: StructuredNode | null | undefined,
   throwsContained = false,
 ): boolean {
   if (!node) return false
-
   switch (node.kind) {
     case 'return':
       return true
@@ -4660,44 +4340,35 @@ function _structuredNodeHasReturnOrThrow(
       // A throw caught by a catch clause inside this same subtree never
       // escapes the lowered region body.
       return !throwsContained
-
     case 'block':
       return node.statements.some(stmt => _structuredNodeHasReturnOrThrow(stmt, throwsContained))
-
     case 'sequence':
       return node.nodes.some(child => _structuredNodeHasReturnOrThrow(child, throwsContained))
-
     case 'labeled':
       return _structuredNodeHasReturnOrThrow(node.statement, throwsContained)
-
     case 'if':
       return (
         _structuredNodeHasReturnOrThrow(node.consequent, throwsContained) ||
         _structuredNodeHasReturnOrThrow(node.alternate, throwsContained)
       )
-
     case 'while':
     case 'doWhile':
     case 'for':
     case 'forOf':
     case 'forIn':
       return _structuredNodeHasReturnOrThrow(node.body, throwsContained)
-
     case 'switch':
       return node.cases.some(c => _structuredNodeHasReturnOrThrow(c.body, throwsContained))
-
     case 'try':
       return (
         _structuredNodeHasReturnOrThrow(node.block, throwsContained || node.handler !== null) ||
         _structuredNodeHasReturnOrThrow(node.handler?.body, throwsContained) ||
         _structuredNodeHasReturnOrThrow(node.finalizer, throwsContained)
       )
-
     default:
       return false
   }
 }
-
 /**
  * Remove SSA version suffix from variable name.
  * Exported for use in codegen.ts and other modules that need SSA de-versioning.
@@ -4706,7 +4377,6 @@ function _structuredNodeHasReturnOrThrow(
 export function deSSAVarName(name: string): string {
   return getSSABaseName(name)
 }
-
 /**
  * Generate statements for a single region
  */
@@ -4727,7 +4397,6 @@ function generateRegionStatements(
     hasReactiveWrites: region.declarations.size > 0,
   }
   const prevRegion = applyRegionToContext(ctx, regionInfo)
-
   const hasTrackedOutputs =
     region.hasControlFlow &&
     Array.from(region.declarations).some(name => ctx.trackedVars.has(deSSAVarName(name)))
@@ -4739,7 +4408,6 @@ function generateRegionStatements(
     ctx.noMemo ||
     !isRegionMemoizable(region) ||
     (region.dependencies.size === 0 && !hasTrackedOutputs)
-
   const hoistedStatements: BabelCore.types.Statement[] = []
   const memoInstructions: Instruction[] = []
   const memoDeclarations = new Set(region.declarations)
@@ -4827,7 +4495,6 @@ function generateRegionStatements(
       visiting.delete(producer)
     }
   }
-
   for (const instr of region.instructions) {
     if (regionCtx?.hoistedInstructions.has(instr)) {
       continue
@@ -4862,7 +4529,6 @@ function generateRegionStatements(
     }
     memoInstructions.push(instr)
   }
-
   if (region.hasControlFlow && regionCtx?.rootNode) {
     const localDeclared = new Set<string>()
     const prevInRegionMemo = ctx.inRegionMemo
@@ -4946,11 +4612,9 @@ function generateRegionStatements(
     )
     statements.push(...memoStatements)
   }
-
   applyRegionToContext(ctx, prevRegion ?? null)
   return statements
 }
-
 /**
  * Wrap a region's instructions in a memo call
  */
@@ -4981,7 +4645,6 @@ function wrapInMemo(
     ctx.inRegionMemo = prevInRegionMemo
     ctx.localValueVars = prevLocalValueVars
   }
-
   // Build return object with declarations - de-version SSA names
   const outputNames =
     outputNamesOverride ?? Array.from(region.declarations).map(name => deSSAVarName(name))
@@ -4991,17 +4654,14 @@ function wrapInMemo(
   const bindableOutputs = uniqueOutputNames.filter(
     name => !declaredVars.has(name) && !(ctx.mutablePropVars?.has(name) ?? false),
   )
-
   debugLog('region', `Region memo ${region.id}`, {
     instructions: region.instructions.map(instr => instr.kind),
     outputs: uniqueOutputNames,
   })
-
   const declarationOnlyNoOutput =
     uniqueOutputNames.length === 0 &&
     bodyStatements.length > 0 &&
     bodyStatements.every(stmt => t.isVariableDeclaration(stmt))
-
   if (declarationOnlyNoOutput) {
     for (const stmt of bodyStatements) {
       collectBabelStatementBindingNames(stmt, t, declaredVars)
@@ -5030,39 +4690,31 @@ function wrapInMemo(
         )
       }
     }
-
     // Has outputs - memo with destructuring
     const buildOutputProperty = (name: string): BabelCore.types.ObjectProperty => {
       return regionOutputProperty(t, name, t.identifier(name), true)
     }
     const returnObj = t.objectExpression(uniqueOutputNames.map(name => buildOutputProperty(name)))
-
     const memoBody = t.blockStatement([...bodyStatements, t.returnStatement(returnObj)])
-
     const slot = ctx.inModule ? undefined : reserveHookSlot(ctx)
     const memoCall = buildMemoCall(ctx, t, t.arrowFunctionExpression([], memoBody), {
       slot,
       internal: true,
     })
-
     const regionVarName = reserveFunctionLocalName(ctx, `__region_${region.id}`)
-
     // Declare region variable
     statements.push(
       t.variableDeclaration('const', [t.variableDeclarator(t.identifier(regionVarName), memoCall)]),
     )
-
     const isAccessorOutput = (name: string) =>
       ctx.signalVars?.has(name) ||
       ctx.memoVars?.has(name) ||
       ctx.aliasVars?.has(name) ||
       ctx.storeVars?.has(name)
-
     const getterOutputs = bindableOutputs.filter(
       name => ctx.trackedVars.has(name) && !isAccessorOutput(name),
     )
     const directOutputs = bindableOutputs.filter(name => !getterOutputs.includes(name))
-
     debugLog('region', `Region debug ${region.id}`, {
       outputs: uniqueOutputNames,
       getterOutputs,
@@ -5070,7 +4722,6 @@ function wrapInMemo(
       tracked: Array.from(ctx.trackedVars),
       memoVars: Array.from(ctx.memoVars ?? []),
     })
-
     const regionResultName =
       mutablePropOutputs.length > 0
         ? reserveFunctionLocalName(ctx, `__region_${region.id}_value`)
@@ -5088,7 +4739,6 @@ function wrapInMemo(
     const directOutputSource = regionResultName
       ? t.identifier(regionResultName)
       : t.callExpression(t.identifier(regionVarName), [])
-
     // Destructure outputs that are already accessors or non-reactive values.
     if (directOutputs.length > 0) {
       directOutputs.forEach(name => declaredVars.add(name))
@@ -5103,7 +4753,6 @@ function wrapInMemo(
         ]),
       )
     }
-
     for (const name of mutablePropOutputs) {
       statements.push(
         t.expressionStatement(
@@ -5121,7 +4770,6 @@ function wrapInMemo(
         ),
       )
     }
-
     // Wrap pending outputs in getters that call the region accessor lazily.
     // These become memo-like getters that should be called with () when used.
     for (const name of getterOutputs) {
@@ -5132,7 +4780,6 @@ function wrapInMemo(
         if (!mutableGetterOutputs?.has(name)) {
           return t.arrowFunctionExpression([], baseAccess)
         }
-
         const overrideName = reserveFunctionLocalName(ctx, `__region_${name}_value`)
         const hasOverrideName = reserveFunctionLocalName(ctx, `__region_${name}_hasValue`)
         const argsName = reserveFunctionLocalName(ctx, `__region_${name}_args`)
@@ -5171,16 +4818,13 @@ function wrapInMemo(
       // Mark as a memo so buildDependencyGetter will add () when this name is used
       ctx.memoVars?.add(name)
     }
-
     // fix: Removed unnecessary effect that just called getter outputs.
     // The getterOutputs are already tracked through the memo - DOM bindings
     // that read them will trigger the memo's dependency tracking.
     // An effect that just calls heading() and extra() without side effects is wasteful.
   }
-
   return statements
 }
-
 /**
  * HIR-based lazy conditional analysis result
  */
@@ -5192,7 +4836,6 @@ interface HIRConditionalInfo {
   /** Derived values only used in false branch */
   falseBranchOnlyDerived: Set<string>
 }
-
 /**
  * Analyze a region to detect conditional patterns where derived values
  * are only used in specific branches. This enables lazy evaluation.
@@ -5206,12 +4849,10 @@ function analyzeHIRConditionalUsage(
     // Need at least 2 derived values for lazy optimization to matter
     return null
   }
-
   // Find conditional patterns in the region's instructions
   for (const instr of region.instructions) {
     if (instr.kind !== 'Assign') continue
     const expr = instr.value
-
     // Check for if-like patterns (ternary or logical &&)
     if (expr.kind === 'ConditionalExpression') {
       if (dependenciesIntersect(collectExprDependencies(expr.test), declarations)) {
@@ -5219,22 +4860,18 @@ function analyzeHIRConditionalUsage(
       }
       const trueBranchDeps = collectExprDependencies(expr.consequent)
       const falseBranchDeps = collectExprDependencies(expr.alternate)
-
       const trueBranchOnlyDerived = new Set<string>()
       const falseBranchOnlyDerived = new Set<string>()
-
       for (const dep of trueBranchDeps) {
         if (declarations.has(dep) && !falseBranchDeps.has(dep)) {
           trueBranchOnlyDerived.add(dep)
         }
       }
-
       for (const dep of falseBranchDeps) {
         if (declarations.has(dep) && !trueBranchDeps.has(dep)) {
           falseBranchOnlyDerived.add(dep)
         }
       }
-
       if (trueBranchOnlyDerived.size > 0 || falseBranchOnlyDerived.size > 0) {
         return {
           condition: expr.test,
@@ -5243,7 +4880,6 @@ function analyzeHIRConditionalUsage(
         }
       }
     }
-
     // Check for logical && patterns
     if (expr.kind === 'LogicalExpression' && expr.operator === '&&') {
       if (dependenciesIntersect(collectExprDependencies(expr.left), declarations)) {
@@ -5251,13 +4887,11 @@ function analyzeHIRConditionalUsage(
       }
       const rightDeps = collectExprDependencies(expr.right)
       const trueBranchOnlyDerived = new Set<string>()
-
       for (const dep of rightDeps) {
         if (declarations.has(dep)) {
           trueBranchOnlyDerived.add(dep)
         }
       }
-
       if (trueBranchOnlyDerived.size > 0) {
         return {
           condition: expr.left,
@@ -5267,26 +4901,21 @@ function analyzeHIRConditionalUsage(
       }
     }
   }
-
   return null
 }
-
 function dependenciesIntersect(deps: Set<string>, declarations: Set<string>): boolean {
   for (const dep of deps) {
     if (declarations.has(dep)) return true
   }
   return false
 }
-
 /**
  * Collect all identifier dependencies from an HIR expression
  */
 function collectExprDependencies(expr: Expression): Set<string> {
   const deps = new Set<string>()
-
   const visit = (e: Expression): void => {
     if (!e || typeof e !== 'object') return
-
     switch (e.kind) {
       case 'Identifier':
         deps.add(deSSAVarName(e.name))
@@ -5376,11 +5005,9 @@ function collectExprDependencies(expr: Expression): Set<string> {
         break
     }
   }
-
   visit(expr)
   return deps
 }
-
 function isAccessorSnapshotSource(name: string, ctx: CodegenContext): boolean {
   return (
     (ctx.memoVars?.has(name) ?? false) ||
@@ -5391,7 +5018,6 @@ function isAccessorSnapshotSource(name: string, ctx: CodegenContext): boolean {
     (ctx.importedNamespaces?.has(name) ?? false)
   )
 }
-
 function isReactiveSnapshotExcludedName(
   name: string,
   ctx: CodegenContext,
@@ -5406,7 +5032,6 @@ function isReactiveSnapshotExcludedName(
     isAccessorSnapshotSource(name, ctx)
   )
 }
-
 function collectMutableNonReactiveDependencies(
   expr: Expression,
   ctx: CodegenContext,
@@ -5425,7 +5050,6 @@ function collectMutableNonReactiveDependencies(
   }
   return Array.from(names)
 }
-
 function isReactiveAccessorReadCall(expr: Expression, ctx: CodegenContext): boolean {
   if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
   if (expr.arguments.length !== 0) return false
@@ -5442,11 +5066,9 @@ function isReactiveAccessorReadCall(expr: Expression, ctx: CodegenContext): bool
   }
   return getNamespaceReactiveMemberKind(callee, ctx) !== null
 }
-
 function isFunctionExpressionValue(expr: Expression | undefined): boolean {
   return expr?.kind === 'ArrowFunction' || expr?.kind === 'FunctionExpression'
 }
-
 function instructionIsLazyMemoSafe(
   instr: Instruction,
   ctx: CodegenContext,
@@ -5458,7 +5080,6 @@ function instructionIsLazyMemoSafe(
   if (!instr.declarationKind) return false
   return expressionIsLazyMemoSafe(instr.value, ctx, safeLocalRoots)
 }
-
 function terminatorIsLazyMemoSafe(
   term: Terminator,
   ctx: CodegenContext,
@@ -5488,13 +5109,11 @@ function terminatorIsLazyMemoSafe(
       return true
   }
 }
-
 function functionParamNames(
   expr: Extract<Expression, { kind: 'ArrowFunction' | 'FunctionExpression' }>,
 ): Set<string> {
   return new Set(expr.params.map(param => deSSAVarName(param.name)))
 }
-
 function expressionRootName(expr: Expression): string | null {
   let current = expr
   while (current.kind === 'MemberExpression' || current.kind === 'OptionalMemberExpression') {
@@ -5502,12 +5121,10 @@ function expressionRootName(expr: Expression): string | null {
   }
   return current.kind === 'Identifier' ? deSSAVarName(current.name) : null
 }
-
 function expressionHasSafeLocalRoot(expr: Expression, safeLocalRoots: Set<string>): boolean {
   const root = expressionRootName(expr)
   return !!root && safeLocalRoots.has(root)
 }
-
 function functionExpressionBodyIsLazyMemoSafe(
   expr: Expression,
   ctx: CodegenContext,
@@ -5539,7 +5156,6 @@ function functionExpressionBodyIsLazyMemoSafe(
   }
   return false
 }
-
 function classExpressionDefinitionIsLazyMemoSafe(
   expr: Extract<Expression, { kind: 'ClassExpression' }>,
   t: typeof BabelCore.types,
@@ -5560,7 +5176,6 @@ function classExpressionDefinitionIsLazyMemoSafe(
     return true
   })
 }
-
 function expressionIsLazyMemoSafe(
   expr: Expression,
   ctx: CodegenContext,
@@ -5698,7 +5313,6 @@ function expressionIsLazyMemoSafe(
       )
   }
 }
-
 function expressionIsLocalFunctionDirectCall(expr: Expression, ctx: CodegenContext): boolean {
   if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
   if (expr.callee.kind !== 'Identifier') return false
@@ -5706,12 +5320,10 @@ function expressionIsLocalFunctionDirectCall(expr: Expression, ctx: CodegenConte
   if (calleeName === 'prop') return false
   return ctx.componentFunctionDefs?.has(calleeName) ?? false
 }
-
 function expressionReturnsAccessorOrReactiveObject(expr: Expression, ctx: CodegenContext): boolean {
   const callKind = getReactiveCallKind(expr, ctx)
   return callKind === 'memo' || isRuntimePropCall(expr, ctx)
 }
-
 function isRuntimePropCall(expr: Expression, ctx: CodegenContext): boolean {
   if (expr.kind !== 'CallExpression') return false
   if (expr.callee.kind !== 'Identifier') return false
@@ -5724,14 +5336,12 @@ function isRuntimePropCall(expr: Expression, ctx: CodegenContext): boolean {
   }
   return ctx.moduleRuntimeImportMap?.get(calleeName) === 'prop'
 }
-
 function classExpressionNeedsReactiveMemo(instr: Instruction, ctx: CodegenContext): boolean {
   if (instr.kind !== 'Assign') return false
   if (instr.value.kind !== 'ClassExpression') return false
   const baseName = deSSAVarName(instr.target.name)
   return expressionUsesTracked(instr.value, ctx) || (ctx.memoVars?.has(baseName) ?? false)
 }
-
 // Root identifier of a (possibly nested) member expression, e.g. `a.b.c` -> `a`.
 function memberChainRootName(expr: Expression): string | null {
   let current: Expression = expr
@@ -5740,7 +5350,6 @@ function memberChainRootName(expr: Expression): string | null {
   }
   return current.kind === 'Identifier' ? deSSAVarName(current.name) : null
 }
-
 function expressionMutatesLocalObjectRoot(expr: Expression, rootName: string): boolean {
   const targetIsRoot = (target: Expression): boolean => memberChainRootName(target) === rootName
   switch (expr.kind) {
@@ -5824,12 +5433,10 @@ function expressionMutatesLocalObjectRoot(expr: Expression, rootName: string): b
       return false
   }
 }
-
 function instructionMutatesLocalObjectRoot(instr: Instruction, rootName: string): boolean {
   if (instr.kind !== 'Assign' && instr.kind !== 'Expression') return false
   return expressionMutatesLocalObjectRoot(instr.value, rootName)
 }
-
 function structuredNodeMutatesLocalObjectRootBetween(
   node: StructuredNode,
   rootName: string,
@@ -5869,7 +5476,6 @@ function structuredNodeMutatesLocalObjectRootBetween(
   }
   return visit(node)
 }
-
 // A bare statement that mutates a component-local object — a member-method call
 // (`arr.push(x)`) or a member write (`arr[0] = x`) whose receiver root is a
 // component-scoped binding — must run once in source order. It cannot live in a
@@ -5964,7 +5570,6 @@ function expressionMutatesLocalObject(expr: Expression, ctx: CodegenContext): bo
       return false
   }
 }
-
 function instructionRequiresEagerDerivedLowering(
   instr: Instruction,
   ctx: CodegenContext,
@@ -5991,7 +5596,6 @@ function instructionRequiresEagerDerivedLowering(
   if (classExpressionNeedsReactiveMemo(instr, ctx)) return false
   return !expressionIsLazyMemoSafe(instr.value, ctx, safeLocalRoots)
 }
-
 function regionRequiresEagerDerivedLowering(
   region: Region,
   ctx: CodegenContext,
@@ -6001,12 +5605,10 @@ function regionRequiresEagerDerivedLowering(
     instructionRequiresEagerDerivedLowering(instr, ctx, safeLocalRoots),
   )
 }
-
 // Catch parameters are bindings created inside the lowered region body, so
 // member reads on them are deterministic per region execution and must not
 // disqualify the region from lazy memoization. Cached per structured root.
 const catchParamNamesCache = new WeakMap<StructuredNode, Set<string>>()
-
 function collectCatchParamNames(root: StructuredNode): Set<string> {
   const cached = catchParamNamesCache.get(root)
   if (cached) return cached
@@ -6051,7 +5653,6 @@ function collectCatchParamNames(root: StructuredNode): Set<string> {
   catchParamNamesCache.set(root, names)
   return names
 }
-
 function replaceMutableSnapshotIdentifiers(
   expr: Expression,
   replacements: Map<string, string>,
@@ -6165,10 +5766,8 @@ function replaceMutableSnapshotIdentifiers(
         return current
     }
   }
-
   return replace(expr)
 }
-
 function collectStructuredAssignDeclarations(
   node: StructuredNode,
   into: AssignInstruction[] = [],
@@ -6212,7 +5811,6 @@ function collectStructuredAssignDeclarations(
   }
   return into
 }
-
 function collectControlFlowLocalRegionDeclarations(
   rootNode: StructuredNode,
   region: Region,
@@ -6223,7 +5821,6 @@ function collectControlFlowLocalRegionDeclarations(
   const regionDeclarations = new Set(
     Array.from(region.declarations, declaration => deSSAVarName(declaration)),
   )
-
   const addRegionInstructionDeclaration = (instr: Instruction): void => {
     if (instr.kind !== 'Assign') return
     if (instr.declarationKind !== 'const' && instr.declarationKind !== 'let') return
@@ -6232,12 +5829,10 @@ function collectControlFlowLocalRegionDeclarations(
     if (findRegionForInstruction(instr, regionCtx)?.id !== region.id) return
     localNames.add(name)
   }
-
   const addLoopBindingName = (name: string, kind: 'const' | 'let' | 'var'): void => {
     if (kind === 'var' || !regionDeclarations.has(name)) return
     localNames.add(name)
   }
-
   const visit = (node: StructuredNode, inControlFlowScope: boolean): void => {
     switch (node.kind) {
       case 'instruction':
@@ -6297,11 +5892,9 @@ function collectControlFlowLocalRegionDeclarations(
         return
     }
   }
-
   visit(rootNode, false)
   return localNames
 }
-
 // Structured trees are not mutated during lowering, so the per-root
 // declaration index can be cached for the lifetime of the tree. Hoisting
 // looks up producers per dependency; without this index every lookup
@@ -6310,7 +5903,6 @@ const structuredAssignDeclarationIndexCache = new WeakMap<
   StructuredNode,
   Map<string, AssignInstruction[]>
 >()
-
 function getStructuredAssignDeclarationIndex(
   rootNode: StructuredNode,
 ): Map<string, AssignInstruction[]> {
@@ -6330,7 +5922,6 @@ function getStructuredAssignDeclarationIndex(
   }
   return index
 }
-
 function findPriorDeclarationInstruction(
   rootNode: StructuredNode,
   name: string,
@@ -6347,7 +5938,6 @@ function findPriorDeclarationInstruction(
   }
   return best
 }
-
 /**
  * Generate a lazy conditional memo that defers evaluation of branch-specific derived values
  */
@@ -6361,13 +5951,11 @@ function generateLazyConditionalMemo(
   ctx: CodegenContext,
 ): BabelCore.types.Statement[] {
   const statements: BabelCore.types.Statement[] = []
-
   // Tag statements by their branch requirement
   interface TaggedStatement {
     stmt: BabelCore.types.Statement
     kind: 'always' | 'lazyTrue' | 'lazyFalse'
   }
-
   const taggedStatements: TaggedStatement[] = bodyStatements.map(stmt => {
     if (t.isVariableDeclaration(stmt) && stmt.declarations.length === 1) {
       const decl = stmt.declarations[0]
@@ -6382,19 +5970,16 @@ function generateLazyConditionalMemo(
     }
     return { stmt, kind: 'always' }
   })
-
   const lazyTrueStatements = taggedStatements
     .filter(tg => tg.kind === 'lazyTrue')
     .map(tg => tg.stmt)
   const lazyFalseStatements = taggedStatements
     .filter(tg => tg.kind === 'lazyFalse')
     .map(tg => tg.stmt)
-
   // Find first lazy index to split always statements
   const firstLazyIndex = taggedStatements.findIndex(tg => tg.kind !== 'always')
   const alwaysBeforeLazy: BabelCore.types.Statement[] = []
   const alwaysAfterLazy: BabelCore.types.Statement[] = []
-
   taggedStatements.forEach((tg, idx) => {
     if (tg.kind === 'always') {
       if (firstLazyIndex === -1 || idx < firstLazyIndex) {
@@ -6404,22 +5989,15 @@ function generateLazyConditionalMemo(
       }
     }
   })
-
   // Create condition variable
   const conditionStmt = lowerExpressionWithDeSSA(conditionalInfo.condition, ctx)
   const conditionId = t.identifier(`__cond_${region.id}`)
   const conditionDecl = t.variableDeclaration('const', [
     t.variableDeclarator(conditionId, conditionStmt),
   ])
-  const ignoredSignatureKeys = new Set([
-    'loc',
-    'start',
-    'end',
-    'leadingComments',
-    'innerComments',
-    'trailingComments',
-    'extra',
-  ])
+  const ignoredSignatureKeys = wordSet(
+    'loc start end leadingComments innerComments trailingComments extra',
+  )
   const nodeSignature = (node: BabelCore.types.Node): string =>
     JSON.stringify(node, (key, value) => (ignoredSignatureKeys.has(key) ? undefined : value))
   const conditionSignature = nodeSignature(conditionStmt)
@@ -6444,7 +6022,6 @@ function generateLazyConditionalMemo(
     statements.forEach(visitNode)
   }
   rewriteConditionalTests(alwaysAfterLazy)
-
   // Create return statement helper
   const createReturnWithNulls = (nullFields: Set<string>): BabelCore.types.ReturnStatement => {
     return t.returnStatement(
@@ -6458,10 +6035,8 @@ function generateLazyConditionalMemo(
       ),
     )
   }
-
   // Build memo body with conditional evaluation
   const memoBody: BabelCore.types.Statement[] = [...alwaysBeforeLazy, conditionDecl]
-
   if (
     lazyTrueStatements.length > 0 ||
     lazyFalseStatements.length > 0 ||
@@ -6481,9 +6056,7 @@ function generateLazyConditionalMemo(
       t.ifStatement(conditionId, t.blockStatement(trueBlock), t.blockStatement(falseBlock)),
     )
   }
-
   const regionVarName = reserveFunctionLocalName(ctx, `__region_${region.id}`)
-
   const memoCall = buildMemoCall(
     ctx,
     t,
@@ -6493,11 +6066,9 @@ function generateLazyConditionalMemo(
       internal: true,
     },
   )
-
   statements.push(
     t.variableDeclaration('const', [t.variableDeclarator(t.identifier(regionVarName), memoCall)]),
   )
-
   // Destructure outputs
   for (const name of orderedOutputs) {
     declaredVars.add(name)
@@ -6512,10 +6083,8 @@ function generateLazyConditionalMemo(
       ),
     ]),
   )
-
   return statements
 }
-
 /**
  * Convert an instruction to a Babel statement
  * Handles SSA name de-versioning
@@ -6528,7 +6097,6 @@ function reserveHookSlot(ctx: CodegenContext): number {
   ctx.nextHookSlot = slot + 1
   return slot
 }
-
 /**
  * fix helper: Create a plain variable declaration for non-reactive scopes.
  * Variables declared inside non-reactive scopes (like createConditional callbacks)
@@ -6548,12 +6116,10 @@ function createNonReactiveVarDecl(
   ctx.memoVars?.delete(baseName)
   return t.variableDeclaration('let', [t.variableDeclarator(t.identifier(baseName), derivedExpr)])
 }
-
 function isCallableSignalInitializer(expr: Expression, ctx: CodegenContext): boolean {
   if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
   return getReactiveCallKind(expr, ctx) === 'signal' && isFunctionExpressionValue(expr.arguments[0])
 }
-
 function expressionContainsNonSerializableFunctionValue(
   expr: Expression | null | undefined,
 ): boolean {
@@ -6578,7 +6144,6 @@ function expressionContainsNonSerializableFunctionValue(
       return false
   }
 }
-
 function isNonSerializableSignalInitializer(expr: Expression, ctx: CodegenContext): boolean {
   if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
   return (
@@ -6586,7 +6151,6 @@ function isNonSerializableSignalInitializer(expr: Expression, ctx: CodegenContex
     expressionContainsNonSerializableFunctionValue(expr.arguments[0])
   )
 }
-
 function markCallableSignalIfFunctionValue(
   name: string,
   value: Expression,
@@ -6596,7 +6160,6 @@ function markCallableSignalIfFunctionValue(
     ctx.callableSignalVars?.add(name)
   }
 }
-
 function markNonSerializableSignalIfFunctionValue(
   name: string,
   value: Expression,
@@ -6609,7 +6172,6 @@ function markNonSerializableSignalIfFunctionValue(
     ctx.nonSerializableSignalVars?.add(name)
   }
 }
-
 function instructionToStatement(
   instr: Instruction,
   t: typeof BabelCore.types,
@@ -6628,7 +6190,6 @@ function instructionToStatement(
     }
     return stmt
   }
-
   if (instr.kind === 'Assign') {
     const ssaName = instr.target.name
     const baseName = deSSAVarName(ssaName)
@@ -6943,7 +6504,6 @@ function instructionToStatement(
           ctx.currentAssignmentName = undefined
         }
       }
-
       if (dependsOnTracked && !isDestructuringTemp) {
         markReactiveAliasIfNeeded()
         if (needsMutable) {
@@ -6965,20 +6525,16 @@ function instructionToStatement(
         }
         return buildDerivedValue(derivedExpr, snapshots)
       }
-
       return lowerAssignedValue(true)
     }
-
     if (isShadowDeclaration && declKind) {
       ctx.trackedVars.delete(baseName)
     }
-
     if (isHoistedDeclarationInitializer) {
       return t.expressionStatement(
         t.assignmentExpression('=', t.identifier(baseName), buildHoistedInitializer()),
       )
     }
-
     if (isNamespaceStoreAlias && !isDestructuringTemp) {
       markNamespaceStoreAlias()
       if (declKind) {
@@ -6991,7 +6547,6 @@ function instructionToStatement(
         t.assignmentExpression('=', t.identifier(baseName), lowerAssignedValue(true)),
       )
     }
-
     if (declKind) {
       const normalizedDecl: VarDecl =
         isStateCall || (dependsOnTracked && !isDestructuringTemp) ? 'const' : declKind
@@ -7006,7 +6561,6 @@ function instructionToStatement(
             : declKind
           : normalizedDecl
       declaredVars.add(baseName)
-
       if (treatAsTracked && !isDestructuringTemp) {
         if (isStateCall) {
           // Set currentAssignmentName so the signal gets a name option for resumability
@@ -7019,7 +6573,6 @@ function instructionToStatement(
             ctx.currentAssignmentName = undefined
           }
         }
-
         if (dependsOnTracked) {
           markReactiveAliasIfNeeded()
           if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
@@ -7062,7 +6615,6 @@ function instructionToStatement(
           ])
         }
       }
-
       if (dependsOnTracked && !isDestructuringTemp) {
         markReactiveAliasIfNeeded()
         if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
@@ -7104,29 +6656,24 @@ function instructionToStatement(
           t.variableDeclarator(t.identifier(baseName), buildDerivedValue(derivedExpr, snapshots)),
         ])
       }
-
       return applyLoc(
         t.variableDeclaration(fallbackDecl, [
           t.variableDeclarator(t.identifier(baseName), lowerAssignedValue(true)),
         ]),
       )
     }
-
     if (!isSignal && aliasVars.has(baseName) && declaredVars.has(baseName)) {
       throwAliasReassignment()
     }
-
     if (capturedTracked && isSignal) {
       // Captured tracked binding from an outer scope - treat as setter call
       return t.expressionStatement(
         t.callExpression(t.identifier(baseName), [lowerAssignedValue(true)]),
       )
     }
-
     if (!isSignal && aliasVars.has(baseName) && !declaredVars.has(baseName)) {
       throwAliasReassignment()
     }
-
     // Handle tracked assignments to already-declared vars (e.g., let alias; alias = count)
     if (
       dependsOnTracked &&
@@ -7138,20 +6685,17 @@ function instructionToStatement(
         (instr.value.kind === 'Identifier' && ctx.trackedVars.has(deSSAVarName(instr.value.name))))
     ) {
       markReactiveAliasIfNeeded()
-
       if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
         const derivedExpr = lowerAssignedValue(true)
         return t.expressionStatement(
           t.assignmentExpression('=', t.identifier(baseName), derivedExpr),
         )
       }
-
       if (shouldEagerDerivedValue) {
         return t.expressionStatement(
           t.assignmentExpression('=', t.identifier(baseName), lowerEagerDerivedValue()),
         )
       }
-
       const { expr: derivedExpr, snapshots } = lowerDerivedAssignedValue()
       trackDerivedMemoVar()
       if (shouldUseNoMemoDerivedValue) {
@@ -7163,7 +6707,6 @@ function instructionToStatement(
           ),
         )
       }
-
       return t.expressionStatement(
         t.assignmentExpression(
           '=',
@@ -7172,12 +6715,10 @@ function instructionToStatement(
         ),
       )
     }
-
     if (declaredVars.has(baseName)) {
       if (!isSignal && aliasVars.has(baseName)) {
         throwAliasReassignment()
       }
-
       // Already declared - use assignment expression
       if (isSignal) {
         return t.expressionStatement(
@@ -7188,7 +6729,6 @@ function instructionToStatement(
         t.assignmentExpression('=', t.identifier(baseName), lowerAssignedValue(true)),
       )
     }
-
     // If no declarationKind, this is a pure assignment (e.g. api = {...})
     // Emit setter call for signals, otherwise use assignment expression.
     if (!declKind) {
@@ -7201,7 +6741,6 @@ function instructionToStatement(
         t.assignmentExpression('=', t.identifier(baseName), lowerAssignedValue(true)),
       )
     }
-
     // First declaration - use let (allows reassignment)
     declaredVars.add(baseName)
     if (isTracked) {
@@ -7215,7 +6754,6 @@ function instructionToStatement(
           t.variableDeclarator(t.identifier(baseName), lowerAssignedValue(true)),
         ])
       }
-
       if (dependsOnTracked) {
         if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
           const derivedExpr = lowerAssignedValue(true)
@@ -7253,12 +6791,10 @@ function instructionToStatement(
           t.variableDeclarator(t.identifier(baseName), buildDerivedValue(derivedExpr, snapshots)),
         ])
       }
-
       return t.variableDeclaration('let', [
         t.variableDeclarator(t.identifier(baseName), lowerAssignedValue(true)),
       ])
     }
-
     if (dependsOnTracked) {
       if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
         const derivedExpr = lowerAssignedValue(true)
@@ -7296,7 +6832,6 @@ function instructionToStatement(
         t.variableDeclarator(t.identifier(baseName), buildDerivedValue(derivedExpr, snapshots)),
       ])
     }
-
     return t.variableDeclaration('let', [
       t.variableDeclarator(
         t.identifier(baseName),
@@ -7351,7 +6886,6 @@ function instructionToStatement(
   // Phi nodes are handled by SSA elimination pass
   return null
 }
-
 /**
  * Lower expression with SSA name de-versioning
  */
@@ -7371,10 +6905,8 @@ function lowerExpressionWithDeSSA(
           hasReactiveWrites: false,
         }
       : null)
-
   const lowered = lowerExpression(expr, ctx, isAssigned)
   let regionApplied: BabelCore.types.Expression
-
   if (ctx.t.isAssignmentExpression(lowered)) {
     const right = applyRegionMetadataToExpression(
       lowered.right,
@@ -7402,7 +6934,6 @@ function lowerExpressionWithDeSSA(
   }
   return deSSAExpression(regionApplied, ctx.t)
 }
-
 /**
  * Recursively de-version SSA names in an expression
  * Traverses all expression types and converts SSA names back to original names
@@ -7414,7 +6945,6 @@ function deSSAExpression(
   if (t.isIdentifier(expr)) {
     return t.identifier(deSSAVarName(expr.name))
   }
-
   if (t.isMemberExpression(expr)) {
     const property = expr.property
     // If the property has been transformed to a CallExpression (e.g., reactive access),
@@ -7434,7 +6964,6 @@ function deSSAExpression(
       expr.optional,
     )
   }
-
   if (t.isCallExpression(expr)) {
     return t.callExpression(
       deSSAExpression(expr.callee as BabelCore.types.Expression, t),
@@ -7449,7 +6978,6 @@ function deSSAExpression(
       }),
     )
   }
-
   if (t.isOptionalCallExpression(expr)) {
     return t.optionalCallExpression(
       deSSAExpression(expr.callee as BabelCore.types.Expression, t),
@@ -7465,7 +6993,6 @@ function deSSAExpression(
       expr.optional,
     )
   }
-
   if (t.isOptionalMemberExpression(expr)) {
     return t.optionalMemberExpression(
       deSSAExpression(expr.object as BabelCore.types.Expression, t),
@@ -7476,7 +7003,6 @@ function deSSAExpression(
       expr.optional,
     )
   }
-
   if (t.isBinaryExpression(expr)) {
     return t.binaryExpression(
       expr.operator,
@@ -7484,11 +7010,9 @@ function deSSAExpression(
       deSSAExpression(expr.right as BabelCore.types.Expression, t),
     )
   }
-
   if (t.isUnaryExpression(expr)) {
     return t.unaryExpression(expr.operator, deSSAExpression(expr.argument, t), expr.prefix)
   }
-
   if (t.isLogicalExpression(expr)) {
     return t.logicalExpression(
       expr.operator,
@@ -7496,7 +7020,6 @@ function deSSAExpression(
       deSSAExpression(expr.right, t),
     )
   }
-
   if (t.isConditionalExpression(expr)) {
     return t.conditionalExpression(
       deSSAExpression(expr.test, t),
@@ -7504,7 +7027,6 @@ function deSSAExpression(
       deSSAExpression(expr.alternate, t),
     )
   }
-
   if (t.isArrayExpression(expr)) {
     return t.arrayExpression(
       expr.elements.map(el => {
@@ -7519,7 +7041,6 @@ function deSSAExpression(
       }),
     )
   }
-
   if (t.isObjectExpression(expr)) {
     return t.objectExpression(
       expr.properties.map(prop => {
@@ -7560,7 +7081,6 @@ function deSSAExpression(
       }),
     )
   }
-
   if (t.isArrowFunctionExpression(expr)) {
     // De-SSA parameters and body
     const params = expr.params.map(p => {
@@ -7572,7 +7092,6 @@ function deSSAExpression(
     const body = t.isExpression(expr.body) ? deSSAExpression(expr.body, t) : expr.body // Block body would need statement-level traversal
     return t.arrowFunctionExpression(params, body, expr.async)
   }
-
   if (t.isFunctionExpression(expr)) {
     const params = expr.params.map(p => {
       if (t.isIdentifier(p)) {
@@ -7588,7 +7107,6 @@ function deSSAExpression(
       expr.async,
     )
   }
-
   if (t.isAssignmentExpression(expr)) {
     const left = t.isIdentifier(expr.left)
       ? t.identifier(deSSAVarName(expr.left.name))
@@ -7601,25 +7119,21 @@ function deSSAExpression(
       deSSAExpression(expr.right, t),
     )
   }
-
   if (t.isUpdateExpression(expr)) {
     const arg = t.isIdentifier(expr.argument)
       ? t.identifier(deSSAVarName(expr.argument.name))
       : deSSAExpression(expr.argument as BabelCore.types.Expression, t)
     return t.updateExpression(expr.operator, arg as BabelCore.types.Expression, expr.prefix)
   }
-
   if (t.isSequenceExpression(expr)) {
     return t.sequenceExpression(expr.expressions.map(e => deSSAExpression(e, t)))
   }
-
   if (t.isTemplateLiteral(expr)) {
     return t.templateLiteral(
       expr.quasis,
       expr.expressions.map(e => deSSAExpression(e as BabelCore.types.Expression, t)),
     )
   }
-
   if (t.isTaggedTemplateExpression(expr)) {
     return t.taggedTemplateExpression(
       deSSAExpression(expr.tag, t),
@@ -7629,7 +7143,6 @@ function deSSAExpression(
       ),
     )
   }
-
   if (t.isNewExpression(expr)) {
     return t.newExpression(
       deSSAExpression(expr.callee as BabelCore.types.Expression, t),
@@ -7644,23 +7157,19 @@ function deSSAExpression(
       }),
     )
   }
-
   if (t.isAwaitExpression(expr)) {
     return t.awaitExpression(deSSAExpression(expr.argument, t))
   }
-
   if (t.isYieldExpression(expr)) {
     return t.yieldExpression(
       expr.argument ? deSSAExpression(expr.argument, t) : null,
       expr.delegate,
     )
   }
-
   if (t.isJSXElement(expr)) {
     // Recursively handle JSX expressions
     return deSSAJSXElement(expr, t)
   }
-
   if (t.isJSXFragment(expr)) {
     return t.jsxFragment(
       expr.openingFragment,
@@ -7668,11 +7177,9 @@ function deSSAExpression(
       expr.children.map(child => deSSAJSXChild(child, t)),
     )
   }
-
   // For other expression types (literals, this, etc.), return as-is
   return expr
 }
-
 /**
  * De-SSA a JSX element recursively
  */
@@ -7696,18 +7203,14 @@ function deSSAJSXElement(
     }
     return attr
   })
-
   const opening = t.jsxOpeningElement(
     elem.openingElement.name,
     attrs,
     elem.openingElement.selfClosing,
   )
-
   const children = elem.children.map(child => deSSAJSXChild(child, t))
-
   return t.jsxElement(opening, elem.closingElement, children, elem.selfClosing)
 }
-
 /**
  * De-SSA a JSX child
  */
@@ -7737,7 +7240,6 @@ function deSSAJSXChild(
   }
   return child
 }
-
 /**
  * Convert HIR Expression to Babel AST Expression
  */
@@ -7746,11 +7248,9 @@ function exprToAST(
   t: typeof BabelCore.types,
 ): BabelCore.types.Expression {
   if (!expr) return voidZero(t)
-
   switch (expr.kind) {
     case 'Identifier':
       return t.identifier(expr.name)
-
     case 'Literal':
       if (expr.value === null) return t.nullLiteral()
       if (expr.value === undefined) return voidZero(t)
@@ -7762,64 +7262,54 @@ function exprToAST(
         return t.regExpLiteral(expr.value.source, expr.value.flags)
       }
       return voidZero(t)
-
     case 'ImportExpression':
       return t.importExpression(
         exprToAST(expr.source, t),
         expr.options ? exprToAST(expr.options, t) : null,
       )
-
     case 'MetaProperty':
       return t.metaProperty(t.identifier(expr.meta.name), t.identifier(expr.property.name))
-
     case 'BinaryExpression':
       return t.binaryExpression(
         expr.operator as BabelCore.types.BinaryExpression['operator'],
         exprToAST(expr.left, t),
         exprToAST(expr.right, t),
       )
-
     case 'UnaryExpression':
       return t.unaryExpression(
         expr.operator as BabelCore.types.UnaryExpression['operator'],
         exprToAST(expr.argument, t),
         expr.prefix !== false,
       )
-
     case 'LogicalExpression':
       return t.logicalExpression(
         expr.operator as '&&' | '||' | '??',
         exprToAST(expr.left, t),
         exprToAST(expr.right, t),
       )
-
     case 'ConditionalExpression':
       return t.conditionalExpression(
         exprToAST(expr.test, t),
         exprToAST(expr.consequent, t),
         exprToAST(expr.alternate, t),
       )
-
     case 'CallExpression':
       return t.callExpression(
         exprToAST(expr.callee, t),
         expr.arguments.map(a => exprToAST(a, t)),
       )
-
     case 'MemberExpression':
       return t.memberExpression(
         exprToAST(expr.object, t),
         exprToAST(expr.property, t),
         expr.computed || false,
       )
-
     case 'ArrayExpression':
       return t.arrayExpression(
         expr.elements.map(el =>
           el ? exprToAST(el, t) : null,
         ) as (BabelCore.types.Expression | null)[],
       )
-
     case 'ObjectExpression':
       return t.objectExpression(
         expr.properties.map(p => {
@@ -7848,7 +7338,6 @@ function exprToAST(
           )
         }),
       )
-
     case 'ArrowFunction': {
       const params = expr.params.map(p => t.identifier(p.name))
       if (expr.isExpression && !Array.isArray(expr.body)) {
@@ -7886,7 +7375,6 @@ function exprToAST(
         return t.arrowFunctionExpression(params, t.blockStatement(stmts))
       }
     }
-
     case 'FunctionExpression': {
       const fnParams = expr.params.map(p => t.identifier(p.name))
       return t.functionExpression(
@@ -7895,21 +7383,18 @@ function exprToAST(
         t.blockStatement([]),
       )
     }
-
     case 'AssignmentExpression':
       return t.assignmentExpression(
         expr.operator || '=',
         exprToAST(expr.left, t) as BabelCore.types.LVal,
         exprToAST(expr.right, t),
       )
-
     case 'UpdateExpression':
       return t.updateExpression(
         expr.operator as '++' | '--',
         exprToAST(expr.argument, t) as BabelCore.types.Expression,
         expr.prefix || false,
       )
-
     case 'TemplateLiteral': {
       const quasis = expr.quasis.map((q, i, arr) =>
         templateElementFromQuasi(q, i === arr.length - 1, t),
@@ -7917,15 +7402,12 @@ function exprToAST(
       const expressions = expr.expressions.map(e => exprToAST(e, t))
       return t.templateLiteral(quasis, expressions)
     }
-
     case 'SpreadElement':
       // Spread is handled in ArrayExpression/ObjectExpression, here just return the argument
       return exprToAST(expr.argument, t)
-
     case 'JSXElement':
       // Convert JSX to createElement call or return as-is if possible
       return jsxToAST(expr, t)
-
     default:
       // Unknown expression type - log warning and return undefined
       if (expr.kind) {
@@ -7934,7 +7416,6 @@ function exprToAST(
       return voidZero(t)
   }
 }
-
 /**
  * Convert JSX HIR to Babel JSX AST
  */
@@ -7945,10 +7426,8 @@ function jsxToAST(
   if (!jsx || jsx.kind !== 'JSXElement') {
     return t.jsxElement(t.jsxOpeningElement(t.jsxIdentifier('div'), [], true), null, [], true)
   }
-
   const tagName = typeof jsx.tagName === 'string' ? jsx.tagName : undefined
   const openingName = tagName ? t.jsxIdentifier(tagName) : t.jsxIdentifier('div')
-
   const attrs = jsx.attributes.map(attr => {
     if (attr.isSpread) {
       return t.jsxSpreadAttribute(exprToAST(attr.spreadExpr, t))
@@ -7964,7 +7443,6 @@ function jsxToAST(
     }
     return t.jsxAttribute(name, value)
   })
-
   const children = jsx.children.map(child => {
     if (child.kind === 'text') {
       return t.jsxText(child.value)
@@ -7977,19 +7455,15 @@ function jsxToAST(
     }
     return t.jsxText('')
   })
-
   const opening = t.jsxOpeningElement(openingName, attrs, children.length === 0)
   const closing = children.length > 0 ? t.jsxClosingElement(openingName) : null
-
   return t.jsxElement(opening, closing, children, children.length === 0)
 }
-
 /**
  * Analyze a function and determine which regions need memoization
  */
 export function analyzeRegionMemoization(regionResult: RegionResult): Map<number, boolean> {
   const shouldMemoize = new Map<number, boolean>()
-
   for (const region of regionResult.regions) {
     // Region should be memoized if:
     // 1. It has dependencies on reactive values
@@ -7999,9 +7473,7 @@ export function analyzeRegionMemoization(regionResult: RegionResult): Map<number
       region.dependencies.size > 0 ||
       region.hasControlFlow ||
       (region.hasJSX && region.dependencies.size > 0)
-
     shouldMemoize.set(region.id, needsMemo)
   }
-
   return shouldMemoize
 }

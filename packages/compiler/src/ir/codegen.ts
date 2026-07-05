@@ -150,17 +150,11 @@ export { getReactiveCallKind } from './codegen-reactive-kind'
 const HOOK_SLOT_BASE = 1000
 const DELEGATED_DATA_ONLY_MARKER = '__fictDataOnly'
 const DELEGATED_DATA_PLAIN_MARKER = '__fictDataOnlyPlain'
-const COMPONENT_CONTEXT_PRIMITIVE_CALLEES = new Set([
-  '$effect',
-  '$memo',
-  '$state',
-  '$store',
-  'createEffect',
-  'createMemo',
-  'createRenderEffect',
-  'createSignal',
-  'createStore',
-])
+const COMPONENT_CONTEXT_PRIMITIVE_CALLEES = new Set(
+  '$effect $memo $state $store createEffect createMemo createRenderEffect createSignal createStore'.split(
+    ' ',
+  ),
+)
 
 function jsxMemberNamePath(node: BabelCore.types.JSXMemberExpression): string[] | null {
   const objectPath =
@@ -9656,6 +9650,40 @@ function lowerFunctionWithRegions(
     }
   }
   const calledIdentifiers = collectCalledIdentifiers(fn, propDestructureRootNames)
+  const restoreCommonContext = (): void => {
+    ctx.needsCtx = prevNeedsCtx
+    ctx.shadowedNames = prevShadowed
+    ctx.localDeclaredNames = prevLocalDeclared
+    ctx.currentFunctionDeclaredNames = prevCurrentFunctionDeclared
+    ctx.localValueVars = prevLocalValueVars
+    ctx.importedReactiveKinds = prevImportedReactiveKinds
+    ctx.mutablePropVars = prevMutablePropVars
+    ctx.trackedVars = prevTracked
+    ctx.externalTracked = prevExternalTracked
+    ctx.signalVars = prevSignalVars
+    ctx.knownArrayVars = prevKnownArrayVars
+    ctx.callableSignalVars = prevCallableSignalVars
+    ctx.nonSerializableSignalVars = prevNonSerializableSignalVars
+    ctx.functionVars = prevFunctionVars
+    ctx.functionBindingKinds = prevFunctionBindingKinds
+    ctx.componentFunctionDefs = prevComponentFunctionDefs
+    ctx.componentFunctionMutations = prevComponentFunctionMutations
+    ctx.hoistedFunctionDepNames = prevHoistedFunctionDepNames
+    ctx.memoVars = prevMemoVars
+    ctx.storeVars = prevStoreVars
+    ctx.mutatedVars = prevMutatedVars
+    ctx.memberMutatedVars = prevMemberMutatedVars
+    ctx.aliasVars = prevAliasVars
+    ctx.noMemo = prevNoMemo
+    ctx.wrapTrackedExpressions = prevWrapTracked
+    ctx.hookResultVarMap = prevHookResultVarMap
+    ctx.hookFunctionAliases = prevHookFunctionAliases
+    ctx.hookFunctionMemberAliases = prevHookFunctionMemberAliases
+    ctx.inModule = prevInModule
+    ctx.contextLocalName = prevContextLocalName
+    ctx.resumablePropAccessors = prevResumablePropAccessors
+    ctx.resumablePropRests = prevResumablePropRests
+  }
   const jsxPropValueReadNames = (() => {
     const names = new Set<string>()
     if (propDestructureRootNames.size === 0) return names
@@ -10471,73 +10499,12 @@ function lowerFunctionWithRegions(
       )
       funcDecl.async = isAsync
       funcDecl.generator = isGenerator
-      ctx.needsCtx = prevNeedsCtx
-      ctx.shadowedNames = prevShadowed
-      ctx.localDeclaredNames = prevLocalDeclared
-      ctx.currentFunctionDeclaredNames = prevCurrentFunctionDeclared
-      ctx.localValueVars = prevLocalValueVars
-      ctx.importedReactiveKinds = prevImportedReactiveKinds
-      ctx.mutablePropVars = prevMutablePropVars
-      ctx.trackedVars = prevTracked
-      ctx.externalTracked = prevExternalTracked
-      ctx.signalVars = prevSignalVars
-      ctx.knownArrayVars = prevKnownArrayVars
-      ctx.callableSignalVars = prevCallableSignalVars
-      ctx.nonSerializableSignalVars = prevNonSerializableSignalVars
-      ctx.functionVars = prevFunctionVars
-      ctx.functionBindingKinds = prevFunctionBindingKinds
-      ctx.componentFunctionDefs = prevComponentFunctionDefs
-      ctx.componentFunctionMutations = prevComponentFunctionMutations
-      ctx.hoistedFunctionDepNames = prevHoistedFunctionDepNames
-      ctx.memoVars = prevMemoVars
-      ctx.storeVars = prevStoreVars
-      ctx.mutatedVars = prevMutatedVars
-      ctx.memberMutatedVars = prevMemberMutatedVars
-      ctx.aliasVars = prevAliasVars
-      ctx.noMemo = prevNoMemo
-      ctx.wrapTrackedExpressions = prevWrapTracked
-      ctx.hookResultVarMap = prevHookResultVarMap
-      ctx.hookFunctionAliases = prevHookFunctionAliases
-      ctx.hookFunctionMemberAliases = prevHookFunctionMemberAliases
-      ctx.inModule = prevInModule
-      ctx.contextLocalName = prevContextLocalName
-      ctx.resumablePropAccessors = prevResumablePropAccessors
-      ctx.resumablePropRests = prevResumablePropRests
+      restoreCommonContext()
       return funcDecl
     }
 
     // Fall back to returning null for complex functions
-    ctx.needsCtx = prevNeedsCtx
-    ctx.shadowedNames = prevShadowed
-    ctx.localDeclaredNames = prevLocalDeclared
-    ctx.currentFunctionDeclaredNames = prevCurrentFunctionDeclared
-    ctx.localValueVars = prevLocalValueVars
-    ctx.importedReactiveKinds = prevImportedReactiveKinds
-    ctx.mutablePropVars = prevMutablePropVars
-    ctx.trackedVars = prevTracked
-    ctx.externalTracked = prevExternalTracked
-    ctx.signalVars = prevSignalVars
-    ctx.callableSignalVars = prevCallableSignalVars
-    ctx.nonSerializableSignalVars = prevNonSerializableSignalVars
-    ctx.functionVars = prevFunctionVars
-    ctx.functionBindingKinds = prevFunctionBindingKinds
-    ctx.componentFunctionDefs = prevComponentFunctionDefs
-    ctx.componentFunctionMutations = prevComponentFunctionMutations
-    ctx.hoistedFunctionDepNames = prevHoistedFunctionDepNames
-    ctx.memoVars = prevMemoVars
-    ctx.storeVars = prevStoreVars
-    ctx.mutatedVars = prevMutatedVars
-    ctx.memberMutatedVars = prevMemberMutatedVars
-    ctx.aliasVars = prevAliasVars
-    ctx.noMemo = prevNoMemo
-    ctx.wrapTrackedExpressions = prevWrapTracked
-    ctx.hookResultVarMap = prevHookResultVarMap
-    ctx.hookFunctionAliases = prevHookFunctionAliases
-    ctx.hookFunctionMemberAliases = prevHookFunctionMemberAliases
-    ctx.inModule = prevInModule
-    ctx.contextLocalName = prevContextLocalName
-    ctx.resumablePropAccessors = prevResumablePropAccessors
-    ctx.resumablePropRests = prevResumablePropRests
+    restoreCommonContext()
     return null
   }
 
@@ -10651,44 +10618,13 @@ function lowerFunctionWithRegions(
   if (isComponent && fn.name) {
     registerResumableComponent(fn.name, ctx)
   }
-  ctx.needsCtx = prevNeedsCtx
-  ctx.shadowedNames = prevShadowed
-  ctx.localDeclaredNames = prevLocalDeclared
-  ctx.currentFunctionDeclaredNames = prevCurrentFunctionDeclared
-  ctx.localValueVars = prevLocalValueVars
-  ctx.importedReactiveKinds = prevImportedReactiveKinds
-  ctx.mutablePropVars = prevMutablePropVars
-  ctx.trackedVars = prevTracked
-  ctx.externalTracked = prevExternalTracked
-  ctx.signalVars = prevSignalVars
-  ctx.knownArrayVars = prevKnownArrayVars
-  ctx.callableSignalVars = prevCallableSignalVars
-  ctx.nonSerializableSignalVars = prevNonSerializableSignalVars
-  ctx.functionVars = prevFunctionVars
-  ctx.functionBindingKinds = prevFunctionBindingKinds
-  ctx.componentFunctionDefs = prevComponentFunctionDefs
-  ctx.componentFunctionMutations = prevComponentFunctionMutations
-  ctx.hoistedFunctionDepNames = prevHoistedFunctionDepNames
-  ctx.memoVars = prevMemoVars
-  ctx.storeVars = prevStoreVars
+  restoreCommonContext()
   ctx.namespaceStoreAliasVars = prevNamespaceStoreAliasVars
-  ctx.mutatedVars = prevMutatedVars
-  ctx.memberMutatedVars = prevMemberMutatedVars
-  ctx.aliasVars = prevAliasVars
-  ctx.noMemo = prevNoMemo
-  ctx.wrapTrackedExpressions = prevWrapTracked
   ctx.currentFnIsHook = prevHookFlag
   ctx.isComponentFn = prevIsComponent
-  ctx.hookResultVarMap = prevHookResultVarMap
-  ctx.hookFunctionAliases = prevHookFunctionAliases
-  ctx.hookFunctionMemberAliases = prevHookFunctionMemberAliases
   ctx.propsParamName = prevPropsParam
   ctx.propAccessorDecls = prevPropAccessors
-  ctx.resumablePropAccessors = prevResumablePropAccessors
-  ctx.resumablePropRests = prevResumablePropRests
   ctx.delegatedEventsUsed = prevDelegatedEventsUsed
-  ctx.inModule = prevInModule
-  ctx.contextLocalName = prevContextLocalName
   return funcDecl
 }
 
