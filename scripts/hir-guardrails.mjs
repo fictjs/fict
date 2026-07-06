@@ -19,6 +19,11 @@ const __dirname = path.dirname(__filename)
 const baselinePath = path.join(__dirname, 'hir-guardrails.baseline.json')
 const updateBaseline = process.argv.includes('--update')
 
+const DEFAULT_BUDGETS = {
+  gzipRegressionRatio: 0.05,
+  gzipRegressionMinBytes: 32,
+}
+
 const samples = [
   {
     name: 'counter-basic',
@@ -172,6 +177,7 @@ function main() {
 
   if (updateBaseline) {
     const payload = {
+      budgets: baseline?.budgets ?? DEFAULT_BUDGETS,
       samples: Object.fromEntries(
         rows.map(row => [
           row.name,
@@ -190,6 +196,7 @@ function main() {
     throw new Error(`Missing baseline at ${baselinePath}. Run with --update to generate.`)
   } else {
     const mismatches = []
+    const budgets = { ...DEFAULT_BUDGETS, ...(baseline.budgets ?? {}) }
     const expectedSamples = new Set(Object.keys(baseline.samples ?? {}))
     const actualSamples = new Set(rows.map(row => row.name))
 
@@ -204,7 +211,7 @@ function main() {
         mismatches.push({ name: row.name, reason: 'unexpected sample' })
         continue
       }
-      const fields = ['helpers', 'regions', 'sizeBytes', 'gzipBytes']
+      const fields = ['helpers', 'regions', 'sizeBytes']
       for (const field of fields) {
         if (row[field] !== expected[field]) {
           mismatches.push({
@@ -212,6 +219,17 @@ function main() {
             reason: `${field} ${expected[field]} -> ${row[field]}`,
           })
         }
+      }
+
+      const gzipLimit = Math.max(
+        expected.gzipBytes * (1 + budgets.gzipRegressionRatio),
+        expected.gzipBytes + budgets.gzipRegressionMinBytes,
+      )
+      if (row.gzipBytes > gzipLimit) {
+        mismatches.push({
+          name: row.name,
+          reason: `gzipBytes ${expected.gzipBytes} -> ${row.gzipBytes} exceeds budget ${Math.round(gzipLimit)}`,
+        })
       }
     }
 

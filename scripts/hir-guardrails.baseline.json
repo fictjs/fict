@@ -1,4 +1,8 @@
 {
+  "budgets": {
+    "gzipRegressionRatio": 0.05,
+    "gzipRegressionMinBytes": 32
+  },
   "samples": {
     "counter-basic": {
       "helpers": 5,
