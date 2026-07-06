@@ -1,7 +1,6 @@
 import type * as BabelCore from '@babel/core'
 
 import { DelegatedEvents } from '../constants'
-import { debugLog } from '../debug'
 import { applyRegionMetadata, shouldMemoizeRegion, type RegionMetadata } from '../fine-grained-dom'
 import { setModuleMetadata } from '../module-metadata'
 import type {
