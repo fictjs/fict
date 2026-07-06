@@ -5813,10 +5813,6 @@ function preserveHookReturnAccessorsInStatement(
 ): BabelCore.types.Statement {
   const { t } = ctx
   if (t.isFunctionDeclaration(stmt)) {
-    stmt.body = preserveHookReturnAccessorsInStatement(
-      stmt.body,
-      ctx,
-    ) as BabelCore.types.BlockStatement
     return stmt
   }
   if (t.isReturnStatement(stmt)) {
@@ -5878,13 +5874,21 @@ function preserveHookReturnAccessorsInStatement(
   return stmt
 }
 
+function preserveHookReturnAccessorsInFunctionDeclaration(
+  fn: BabelCore.types.FunctionDeclaration,
+  ctx: CodegenContext,
+): BabelCore.types.FunctionDeclaration {
+  fn.body = preserveHookReturnAccessorsInStatement(fn.body, ctx) as BabelCore.types.BlockStatement
+  return fn
+}
+
 function preserveTopLevelHookReturnAccessorsInStatement(
   stmt: BabelCore.types.Statement,
   ctx: CodegenContext,
 ): BabelCore.types.Statement {
   const { t } = ctx
   if (t.isFunctionDeclaration(stmt) && isHookName(stmt.id?.name)) {
-    return preserveHookReturnAccessorsInStatement(stmt, ctx)
+    return preserveHookReturnAccessorsInFunctionDeclaration(stmt, ctx)
   }
   if (
     t.isExportNamedDeclaration(stmt) &&
@@ -5892,7 +5896,7 @@ function preserveTopLevelHookReturnAccessorsInStatement(
     t.isFunctionDeclaration(stmt.declaration) &&
     isHookName(stmt.declaration.id?.name)
   ) {
-    stmt.declaration = preserveHookReturnAccessorsInStatement(
+    stmt.declaration = preserveHookReturnAccessorsInFunctionDeclaration(
       stmt.declaration,
       ctx,
     ) as BabelCore.types.FunctionDeclaration
@@ -5903,7 +5907,7 @@ function preserveTopLevelHookReturnAccessorsInStatement(
     t.isFunctionDeclaration(stmt.declaration) &&
     isHookName(stmt.declaration.id?.name)
   ) {
-    stmt.declaration = preserveHookReturnAccessorsInStatement(
+    stmt.declaration = preserveHookReturnAccessorsInFunctionDeclaration(
       stmt.declaration,
       ctx,
     ) as BabelCore.types.FunctionDeclaration
@@ -7939,7 +7943,7 @@ export function lowerHIRWithRegions(
     const funcStmt = lowerFunctionWithRegions(fn, ctx)
     if (funcStmt && fn.name) {
       const stmt = isHookName(fn.name)
-        ? (preserveHookReturnAccessorsInStatement(
+        ? (preserveHookReturnAccessorsInFunctionDeclaration(
             funcStmt,
             ctx,
           ) as BabelCore.types.FunctionDeclaration)

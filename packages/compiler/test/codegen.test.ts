@@ -1180,6 +1180,29 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(plain).not.toMatch(/__fictUseEffect\(__fictCtx, \(\) => \{\s*if \(bucket\.count\)/)
   })
 
+  it('keeps nested hook helper return reads as accessor calls', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      export function useCounter() {
+        const count = $state(0)
+
+        function read() {
+          return count()
+        }
+
+        const readArrow = () => count()
+
+        return { read, readArrow, count }
+      }
+    `)
+
+    expect(output).toMatch(/function read\(\) \{\s*return count\(\);?\s*\}/)
+    expect(output).toMatch(/const readArrow = \(\) => count\(\);?/)
+    expect(output).toMatch(/return \{\s*read,\s*readArrow,\s*count\s*\}/)
+    expect(output).not.toMatch(/function read\(\) \{\s*return count;?\s*\}/)
+  })
+
   it('handles hook return object without destructuring by treating properties as accessors', () => {
     const ast = parseFile(`
       const useCounter = () => {
