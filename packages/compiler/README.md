@@ -46,7 +46,7 @@ createFictPlugin({
 })
 ```
 
-- `dev` (default: `NODE_ENV !== 'production' && NODE_ENV !== 'test'`): enables default compiler warning output. Set to `false` to silence warnings unless an integration supplies `onWarn`.
+- `dev` (default: `NODE_ENV !== 'production' && NODE_ENV !== 'test'`): controls whether development diagnostics are emitted through the compiler warning channel. Integrations should provide `onWarn` to surface warnings in CLI, Vite, editor, or playground output.
 - `onWarn`: custom warning handler. When provided, warn-level diagnostics are delivered to the handler even in `dev: false` opt-out builds; `strictGuarantee`, `strictReactivity`, `warningsAsErrors`, and default error-level diagnostics can still fail the build.
 - `fineGrainedDom` (default: `true`): emits template-first fine-grained DOM operations for supported JSX.
 - `lazyConditional` (default: `true`): enables control-flow lazy lowering for reactive branch returns where supported. When active branch reads require fallback re-execution, branch output is remounted instead of partially patched.
