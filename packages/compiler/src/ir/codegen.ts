@@ -9650,7 +9650,7 @@ function lowerFunctionWithRegions(
     }
   }
   const calledIdentifiers = collectCalledIdentifiers(fn, propDestructureRootNames)
-  const restoreCommonContext = (): void => {
+  const restoreFunctionContext = (): void => {
     ctx.needsCtx = prevNeedsCtx
     ctx.shadowedNames = prevShadowed
     ctx.localDeclaredNames = prevLocalDeclared
@@ -9666,6 +9666,7 @@ function lowerFunctionWithRegions(
     ctx.nonSerializableSignalVars = prevNonSerializableSignalVars
     ctx.functionVars = prevFunctionVars
     ctx.functionBindingKinds = prevFunctionBindingKinds
+    ctx.namespaceStoreAliasVars = prevNamespaceStoreAliasVars
     ctx.componentFunctionDefs = prevComponentFunctionDefs
     ctx.componentFunctionMutations = prevComponentFunctionMutations
     ctx.hoistedFunctionDepNames = prevHoistedFunctionDepNames
@@ -9681,8 +9682,13 @@ function lowerFunctionWithRegions(
     ctx.hookFunctionMemberAliases = prevHookFunctionMemberAliases
     ctx.inModule = prevInModule
     ctx.contextLocalName = prevContextLocalName
+    ctx.currentFnIsHook = prevHookFlag
+    ctx.isComponentFn = prevIsComponent
+    ctx.propsParamName = prevPropsParam
+    ctx.propAccessorDecls = prevPropAccessors
     ctx.resumablePropAccessors = prevResumablePropAccessors
     ctx.resumablePropRests = prevResumablePropRests
+    ctx.delegatedEventsUsed = prevDelegatedEventsUsed
   }
   const jsxPropValueReadNames = (() => {
     const names = new Set<string>()
@@ -10499,12 +10505,12 @@ function lowerFunctionWithRegions(
       )
       funcDecl.async = isAsync
       funcDecl.generator = isGenerator
-      restoreCommonContext()
+      restoreFunctionContext()
       return funcDecl
     }
 
     // Fall back to returning null for complex functions
-    restoreCommonContext()
+    restoreFunctionContext()
     return null
   }
 
@@ -10618,13 +10624,7 @@ function lowerFunctionWithRegions(
   if (isComponent && fn.name) {
     registerResumableComponent(fn.name, ctx)
   }
-  restoreCommonContext()
-  ctx.namespaceStoreAliasVars = prevNamespaceStoreAliasVars
-  ctx.currentFnIsHook = prevHookFlag
-  ctx.isComponentFn = prevIsComponent
-  ctx.propsParamName = prevPropsParam
-  ctx.propAccessorDecls = prevPropAccessors
-  ctx.delegatedEventsUsed = prevDelegatedEventsUsed
+  restoreFunctionContext()
   return funcDecl
 }
 

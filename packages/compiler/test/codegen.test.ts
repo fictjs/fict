@@ -5952,6 +5952,25 @@ describe('resumable event handler transformation', () => {
     expect(code).toContain('console.log(rest.title)')
   })
 
+  it('restores function context after pure hook early returns', () => {
+    const ast = parseFile(`
+      function usePlain() {
+        return 1
+      }
+
+      function Button({ id }) {
+        return <button onClick$={() => console.log(id)}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('function usePlain()')
+    expect(code).toMatch(/const id = \(\) => __scopeProps\.id/)
+    expect(code).toContain('console.log(id())')
+  })
+
   it('throws for explicit resumable handlers that call function props', () => {
     const ast = parseFile(`
       function Button(props) {
