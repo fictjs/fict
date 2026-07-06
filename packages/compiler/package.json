@@ -41,18 +41,18 @@
     "@babel/core": ">=7.0.0"
   },
   "dependencies": {
-    "@babel/helper-plugin-utils": "^7.28.6",
-    "@babel/plugin-transform-destructuring": "^7.27.1",
-    "@babel/traverse": "^7.29.0"
+    "@babel/helper-plugin-utils": "^8.0.1",
+    "@babel/plugin-transform-destructuring": "^8.0.1",
+    "@babel/traverse": "^8.0.0"
   },
   "devDependencies": {
-    "@babel/core": "^7.29.0",
-    "@babel/generator": "^7.29.1",
-    "@babel/plugin-syntax-jsx": "^7.28.6",
+    "@babel/core": "^8.0.1",
+    "@babel/generator": "^8.0.0",
+    "@babel/plugin-syntax-jsx": "^8.0.1",
     "@babel/plugin-transform-modules-commonjs": "^7.28.6",
-    "@babel/plugin-transform-react-jsx": "^7.28.6",
-    "@babel/preset-typescript": "^7.26.0",
-    "@babel/types": "^7.29.0",
+    "@babel/plugin-transform-react-jsx": "^8.0.1",
+    "@babel/preset-typescript": "^8.0.1",
+    "@babel/types": "^8.0.0",
     "@fictjs/runtime": "workspace:*",
     "@jridgewell/trace-mapping": "^0.3.31",
     "@types/babel__core": "^7.20.5",

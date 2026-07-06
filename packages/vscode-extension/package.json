@@ -148,10 +148,10 @@
     "package:vsix": "vsce package --no-dependencies"
   },
   "dependencies": {
-    "@babel/core": "^7.29.0",
-    "@babel/preset-typescript": "^7.26.0",
+    "@babel/core": "^8.0.1",
+    "@babel/preset-typescript": "^8.0.1",
     "@fictjs/compiler": "workspace:*",
-    "ws": "^8.18.3"
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "^25.3.0",
