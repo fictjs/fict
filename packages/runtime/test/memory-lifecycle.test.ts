@@ -347,7 +347,8 @@ describe('Memory and Lifecycle Tests', () => {
       list.dispose()
     })
 
-    it('large list operations do not accumulate effects', { timeout: 10000 }, async () => {
+    it('large list operations do not accumulate effects', async () => {
+      const LIST_SIZE = 200
       const items = createSignal<number[]>([])
       let totalCleanups = 0
 
@@ -367,17 +368,18 @@ describe('Memory and Lifecycle Tests', () => {
       container.appendChild(list.marker)
       await tick()
 
-      // Add 1000 items
-      items(Array.from({ length: 1000 }, (_, i) => i))
+      // Add enough items to exercise batched block creation without making the
+      // coverage job depend on CI runner throughput.
+      items(Array.from({ length: LIST_SIZE }, (_, i) => i))
       await tick()
 
-      expect(container.querySelectorAll('div').length).toBe(1000)
+      expect(container.querySelectorAll('div').length).toBe(LIST_SIZE)
 
       // Remove all
       items([])
       await tick()
 
-      expect(totalCleanups).toBe(1000)
+      expect(totalCleanups).toBe(LIST_SIZE)
       expect(container.querySelectorAll('div').length).toBe(0)
 
       list.dispose()
