@@ -24,6 +24,16 @@ the default per-file budget, and the total compiler source budget.
 These budgets are not goals. They are ceilings that keep already-large files
 from growing silently while the compiler is split into smaller units.
 
+Treat the checked-in budgets for the largest compiler files and total effective
+LOC as a no-growth policy. Routine bug fixes should stay within the current
+ceilings by removing dead code, simplifying local structure, or extracting
+cohesive helpers into focused modules. If a change intentionally grows a
+budgeted file or the total compiler source budget, update
+`scripts/compiler-complexity-report.mjs` in a dedicated commit and explain the
+reason in the review; do not hide budget bumps inside unrelated behavior
+changes. New files are allowed, but they still count toward the total compiler
+budget and the default per-file ceiling.
+
 ## Refactor Rule
 
 When touching one of the budgeted files:
