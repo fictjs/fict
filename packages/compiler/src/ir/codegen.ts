@@ -10441,11 +10441,6 @@ function lowerFunctionWithRegions(
       ctx.hookReturnInfo.set(fn.name, info)
     }
   }
-  if (fn.name === 'Counter') {
-    debugLog('region', 'Tracked vars for Counter', Array.from(ctx.trackedVars))
-    debugLog('region', 'Memo vars for Counter', Array.from(ctx.memoVars))
-  }
-
   // Ensure hook call results that return direct accessors are treated as reactive aliases
   hookResultVars.forEach(varName => {
     const hookName = ctx.hookResultVarMap?.get(varName)
