@@ -73,7 +73,7 @@ explicit loop instead.
 
 ## What stays out of contract
 
-- The *ordering* of error delivery relative to DevTools hooks and dev-mode
+- The _ordering_ of error delivery relative to DevTools hooks and dev-mode
   logging is not specified.
 - Errors thrown by third-party code inside event handlers follow DOM event
   semantics plus the boundary routing described in

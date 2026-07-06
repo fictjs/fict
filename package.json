@@ -14,7 +14,7 @@
     "lint:fix": "turbo run lint -- --fix",
     "typecheck": "turbo run typecheck",
     "format": "prettier --write .",
-    "format:check": "prettier --check packages/*",
+    "format:check": "prettier --check .",
     "test:api-boundaries": "node scripts/check-api-boundaries.mjs",
     "test": "turbo run test",
     "test:watch": "turbo run test:watch",
