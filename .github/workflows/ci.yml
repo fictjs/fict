@@ -45,6 +45,7 @@ jobs:
 
       - run: pnpm install
 
+      - run: pnpm guardrails:compiler-complexity
       - run: pnpm format:check
       - run: pnpm lint
 
