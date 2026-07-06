@@ -1,13 +1,24 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
 
 import { getAllDiagnosticCodes } from '../src/validation'
 
 const diagnosticCodePattern = /\bFICT-(?:[A-Z][0-9]{3}|[MH]|[A-Z]{2,}(?:-[A-Z0-9]+)*)\b/g
+const projectRoot = new URL('../../../', import.meta.url)
 
 function readProjectFile(relativePath: string): string {
-  return readFileSync(new URL(`../../../${relativePath}`, import.meta.url), 'utf8')
+  return readFileSync(new URL(relativePath, projectRoot), 'utf8')
+}
+
+function compilerSourceFiles(relativeDir = 'packages/compiler/src'): string[] {
+  return readdirSync(new URL(`${relativeDir}/`, projectRoot), { withFileTypes: true }).flatMap(
+    entry => {
+      const childPath = `${relativeDir}/${entry.name}`
+      if (entry.isDirectory()) return compilerSourceFiles(childPath)
+      return entry.isFile() && entry.name.endsWith('.ts') ? [childPath] : []
+    },
+  )
 }
 
 function documentedDiagnosticCodes(): Set<string> {
@@ -21,11 +32,7 @@ function documentedDiagnosticCodes(): Set<string> {
 
 function sourceDiagnosticCodes(): Set<string> {
   const codes = new Set<string>(getAllDiagnosticCodes())
-  for (const relativePath of [
-    'packages/compiler/src/validation.ts',
-    'packages/compiler/src/index.ts',
-    'packages/compiler/src/tooling/analyze.ts',
-  ]) {
+  for (const relativePath of compilerSourceFiles()) {
     const source = readProjectFile(relativePath)
     for (const match of source.matchAll(diagnosticCodePattern)) {
       if (match[0]) codes.add(match[0])
