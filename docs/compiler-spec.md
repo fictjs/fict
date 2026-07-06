@@ -567,8 +567,11 @@ Optimizer baselines: `pnpm bench:optimizer:guard` compares results to
 the baseline when changes are intentional.
 Snapshot baselines: `pnpm -C packages/compiler test -- optimizer-baseline.test.ts -u`
 updates the optimizer output snapshots for core scenarios.
-Guardrails: `pnpm guardrails:hir` compares current output to `scripts/hir-guardrails.baseline.json`.
-Use `pnpm guardrails:hir:update` to refresh the baseline when changes are intentional.
+Guardrails: `pnpm guardrails:hir` compares current output to
+`scripts/hir-guardrails.baseline.json`. Helper and region counts must match the
+baseline exactly; raw and gzip output size may shrink, but size increases must
+stay within the baseline regression budgets. Use `pnpm guardrails:hir:update`
+to refresh the baseline when changes are intentional.
 Warning escalation: `warningsAsErrors` (boolean or list of diagnostic codes) and
 `warningLevels` let you turn warnings into errors or suppress specific codes.
 Set `strictReactivity: true` to escalate control-flow fallback diagnostics

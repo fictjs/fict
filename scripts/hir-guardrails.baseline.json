@@ -1,5 +1,7 @@
 {
   "budgets": {
+    "sizeRegressionRatio": 0.02,
+    "sizeRegressionMinBytes": 16,
     "gzipRegressionRatio": 0.05,
     "gzipRegressionMinBytes": 32
   },

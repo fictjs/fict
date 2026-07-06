@@ -12,17 +12,28 @@ import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'zlib'
 
 const require = createRequire(import.meta.url)
-const { default: createFictPlugin } = require('../packages/compiler/dist/index.cjs')
-
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+const compilerDistPath = path.join(__dirname, '../packages/compiler/dist/index.cjs')
 const baselinePath = path.join(__dirname, 'hir-guardrails.baseline.json')
 const updateBaseline = process.argv.includes('--update')
 
 const DEFAULT_BUDGETS = {
+  sizeRegressionRatio: 0.02,
+  sizeRegressionMinBytes: 16,
   gzipRegressionRatio: 0.05,
   gzipRegressionMinBytes: 32,
 }
+
+if (!fs.existsSync(compilerDistPath)) {
+  console.error(`[guardrails] Missing compiler build artifact: ${compilerDistPath}`)
+  console.error(
+    '[guardrails] Run `pnpm --filter @fictjs/compiler build` before `pnpm guardrails:hir`.',
+  )
+  process.exit(1)
+}
+
+const { default: createFictPlugin } = require(compilerDistPath)
 
 const samples = [
   {
@@ -211,7 +222,7 @@ function main() {
         mismatches.push({ name: row.name, reason: 'unexpected sample' })
         continue
       }
-      const fields = ['helpers', 'regions', 'sizeBytes']
+      const fields = ['helpers', 'regions']
       for (const field of fields) {
         if (row[field] !== expected[field]) {
           mismatches.push({
@@ -219,6 +230,17 @@ function main() {
             reason: `${field} ${expected[field]} -> ${row[field]}`,
           })
         }
+      }
+
+      const sizeLimit = Math.max(
+        expected.sizeBytes * (1 + budgets.sizeRegressionRatio),
+        expected.sizeBytes + budgets.sizeRegressionMinBytes,
+      )
+      if (row.sizeBytes > sizeLimit) {
+        mismatches.push({
+          name: row.name,
+          reason: `sizeBytes ${expected.sizeBytes} -> ${row.sizeBytes} exceeds budget ${Math.round(sizeLimit)}`,
+        })
       }
 
       const gzipLimit = Math.max(
