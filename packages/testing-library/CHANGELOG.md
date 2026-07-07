@@ -1,5 +1,12 @@
 # @fictjs/testing-library
 
+## 0.25.0
+
+### Minor Changes
+
+- Publish the testing library with the 0.25 release train.
+  - No testing utility API behavior changed in this release.
+
 ## 0.24.0
 
 ### Minor Changes

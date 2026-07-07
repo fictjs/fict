@@ -1,5 +1,12 @@
 # @fictjs/runtime
 
+## 0.25.0
+
+### Minor Changes
+
+- Publish the runtime with the 0.25 release train.
+  - No runtime API behavior changed in this release.
+
 ## 0.24.0
 
 ### Minor Changes

@@ -1,5 +1,17 @@
 # fict
 
+## 0.25.0
+
+### Minor Changes
+
+- Publish the public `fict` package with runtime 0.25.0.
+  - No additional `fict` package API behavior changed in this release.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/runtime@0.25.0
+
 ## 0.24.0
 
 ### Minor Changes

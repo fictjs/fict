@@ -1,5 +1,18 @@
 # @fictjs/vite-plugin
 
+## 0.25.0
+
+### Minor Changes
+
+- Publish the Vite plugin with compiler 0.25.0 so Vite builds pick up the
+  codegen context and hook return accessor fixes.
+  - No Vite plugin API behavior changed in this release.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/compiler@0.25.0
+
 ## 0.24.0
 
 ### Minor Changes

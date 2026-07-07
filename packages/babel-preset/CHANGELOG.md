@@ -1,5 +1,18 @@
 # @fictjs/babel-preset
 
+## 0.25.0
+
+### Minor Changes
+
+- Publish the Babel preset with compiler 0.25.0 so Babel users pick up the
+  codegen context and hook return accessor fixes.
+  - No Babel preset API behavior changed in this release.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/compiler@0.25.0
+
 ## 0.24.0
 
 ### Minor Changes

@@ -1,5 +1,17 @@
 # @fictjs/router
 
+## 0.25.0
+
+### Minor Changes
+
+- Publish router with runtime 0.25.0.
+  - No router API behavior changed in this release.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/runtime@0.25.0
+
 ## 0.24.0
 
 ### Minor Changes

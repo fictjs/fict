@@ -1,5 +1,20 @@
 # @fictjs/compiler
 
+## 0.25.0
+
+### Minor Changes
+
+- Fix compiler codegen state isolation and hook return accessor preservation.
+  - Function-level codegen context is now restored consistently across pure
+    function early exits, preventing hook/component/props/resumable state from
+    leaking into later lowered functions.
+  - Hook return accessor preservation now stops at nested function boundaries,
+    so helper functions inside hooks keep explicit signal reads such as
+    `return count()` while top-level hook returns still expose accessors.
+  - Compiler maintenance guardrails now cover complexity budgets, diagnostic
+    docs coverage, strict-default smoke tests, HIR output budgets, and warning
+    channel documentation more reliably.
+
 ## 0.24.0
 
 ### Minor Changes
