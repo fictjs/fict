@@ -33,18 +33,6 @@ export function __fictRunWithSSRSession<T>(session: FictSSRSession, fn: () => T)
   }
 }
 
-export async function __fictRunWithSSRSessionAsync<T>(
-  session: FictSSRSession,
-  fn: () => Promise<T>,
-): Promise<T> {
-  sessionStack.push(session)
-  try {
-    return await fn()
-  } finally {
-    sessionStack.pop()
-  }
-}
-
 export function __fictGetCurrentSSRSession(): FictSSRSession | null {
   return sessionStack[sessionStack.length - 1] ?? null
 }

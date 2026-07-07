@@ -75,7 +75,6 @@ export {
 export {
   __fictCreateSSRSession,
   __fictRunWithSSRSession,
-  __fictRunWithSSRSessionAsync,
   __fictGetCurrentSSRSession,
 } from './ssr-session'
 export { __fictGetSSRStreamHooks, __fictSetSSRStreamHooks } from './ssr-stream'
