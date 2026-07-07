@@ -273,6 +273,22 @@ describe('DOM Module', () => {
   })
 
   describe('hydrateComponent', () => {
+    it('runs compiled hydration functions and ignores their return value', () => {
+      container.innerHTML = 'server'
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const teardown = hydrateComponent(() => {
+        createElement('client')
+        return { type: 'span', props: { children: 'ignored' }, key: undefined }
+      }, container)
+
+      expect(container.textContent).toBe('client')
+      expect(container.childNodes).toHaveLength(1)
+
+      teardown()
+      warnSpy.mockRestore()
+    })
+
     it('preserves spread children text nodes during hydration', () => {
       container.innerHTML = '<div>hello</div>'
       const existingElement = container.firstChild as HTMLDivElement

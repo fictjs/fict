@@ -211,16 +211,17 @@ export function render(view: () => FictNode, container: HTMLElement): () => void
 }
 
 /**
- * Hydrate a component into an existing DOM container.
- * Unlike render(), this runs the view function INSIDE the hydration context
- * so that template() can claim existing DOM nodes.
+ * Hydrate compiled DOM output into an existing DOM container.
+ * Unlike render(), the view function is expected to perform its own template
+ * claims and binding setup while running inside the hydration context. Its
+ * return value is ignored for compatibility with compiler-generated entries.
  *
- * @param view - A function that returns the view to hydrate
+ * @param view - A compiled hydration entry that claims/creates DOM as it runs
  * @param container - The DOM container with existing SSR content
  * @returns A teardown function to unmount the view
  */
 export function hydrateComponent(
-  view: () => FictNode,
+  view: () => FictNode | void,
   container: HTMLElement,
   options: HydrateComponentOptions = {},
 ): () => void {
