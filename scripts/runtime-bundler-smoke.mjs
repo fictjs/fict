@@ -10,7 +10,8 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const runtimeDir = path.join(rootDir, 'packages/runtime')
 const smokeDir = path.join(runtimeDir, '.tmp-bundler-smoke')
 const entryPath = path.join(smokeDir, 'entry.js')
-const bundlePath = path.join(smokeDir, 'bundle.mjs')
+const bundleDir = path.join(smokeDir, 'out')
+const bundlePath = path.join(bundleDir, 'entry.js')
 const packageJson = JSON.parse(readFileSync(path.join(runtimeDir, 'package.json'), 'utf8'))
 
 function fail(message) {
@@ -57,9 +58,10 @@ mkdirSync(smokeDir, { recursive: true })
 try {
   writeFileSync(
     entryPath,
-    `import { reactive, spread } from '@fictjs/runtime/internal'
+    `import { assign, reactive, spread } from '@fictjs/runtime/internal'
 
 const host = document.createElement('section')
+const assigned = document.createElement('section')
 
 spread(
   host,
@@ -74,11 +76,34 @@ spread(
   false,
 )
 
+assign(
+  assigned,
+  {
+    children: reactive(() => ({
+      type: 'span',
+      props: { id: 'assigned-child', children: 'assigned' },
+      key: undefined,
+    })),
+  },
+  false,
+  false,
+  {},
+)
+
 await Promise.resolve()
 
 const child = host.querySelector('#child')
 if (!child || child.textContent !== 'ok' || host.innerHTML !== '<span id="child">ok</span>') {
-  throw new Error(\`Expected tree-shaken internal bundle to preserve createElement registration, got: \${host.innerHTML}\`)
+  throw new Error(\`Expected tree-shaken internal spread bundle to preserve createElement registration, got: \${host.innerHTML}\`)
+}
+
+const assignedChild = assigned.querySelector('#assigned-child')
+if (
+  !assignedChild ||
+  assignedChild.textContent !== 'assigned' ||
+  assigned.innerHTML !== '<span id="assigned-child">assigned</span>'
+) {
+  throw new Error(\`Expected tree-shaken internal assign bundle to preserve createElement registration, got: \${assigned.innerHTML}\`)
 }
 `,
   )
@@ -87,17 +112,18 @@ if (!child || child.textContent !== 'ok' || host.innerHTML !== '<span id="child"
     '-C',
     runtimeDir,
     'exec',
-    'rolldown',
-    '--input',
+    'tsdown',
     entryPath,
+    '--no-config',
     '--format',
     'esm',
-    '--file',
-    bundlePath,
+    '--out-dir',
+    bundleDir,
     '--platform',
     'browser',
     '--logLevel',
     'silent',
+    '--no-sourcemap',
   ])
 
   const runtimeRequire = createRequire(path.join(runtimeDir, 'package.json'))

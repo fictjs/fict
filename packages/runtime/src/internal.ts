@@ -12,6 +12,13 @@
  * @packageDocumentation
  */
 
+import {
+  assign as __fictAssign,
+  registerCreateElement as __fictRegisterCreateElement,
+  spread as __fictSpread,
+} from './binding'
+import { createElement as __fictCreateElement } from './dom'
+
 // ============================================================================
 // Core Primitives (also exported from main, but needed by compiler)
 // ============================================================================
@@ -120,12 +127,35 @@ export {
   insertBetween,
   createConditional,
   createPortal,
-  spread,
-  assign,
   classList,
   isReactive,
   unwrap,
 } from './binding'
+
+export function spread(
+  node: Element,
+  props: Record<string, unknown> | (() => Record<string, unknown>) = {},
+  isSVG = false,
+  skipChildren = false,
+  exclude: readonly string[] = [],
+): Record<string, unknown> {
+  __fictRegisterCreateElement(__fictCreateElement)
+  return __fictSpread(node, props, isSVG, skipChildren, exclude)
+}
+
+export function assign(
+  node: Element,
+  props: Record<string, unknown>,
+  isSVG = false,
+  skipChildren = false,
+  prevProps: Record<string, unknown> = {},
+  skipRef = false,
+  excludedProps?: ReadonlySet<string>,
+): void {
+  __fictRegisterCreateElement(__fictCreateElement)
+  __fictAssign(node, props, isSVG, skipChildren, prevProps, skipRef, excludedProps)
+}
+
 export { resolvePath, getSlotEnd } from './node-ops'
 
 // ============================================================================
