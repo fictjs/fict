@@ -927,7 +927,13 @@ export function deserializeValue(
         if (value.v.k === 'g') {
           return Symbol.for(value.v.n)
         }
-        return WELL_KNOWN_SYMBOL_BY_NAME.get(value.v.n)
+        {
+          const symbol = WELL_KNOWN_SYMBOL_BY_NAME.get(value.v.n)
+          if (symbol === undefined) {
+            throw new Error(`[fict] Unknown well-known symbol marker at ${path}: ${value.v.n}.`)
+          }
+          return symbol
+        }
       case 'o': {
         const obj: Record<string | symbol, unknown> = value.p === 'n' ? Object.create(null) : {}
         refs.set(path, obj)
@@ -968,6 +974,9 @@ export function deserializeValue(
         return set
       }
       case 'ref':
+        if (!refs.has(value.v)) {
+          throw new Error(`[fict] Invalid snapshot reference at ${path}: ${value.v}.`)
+        }
         return refs.get(value.v)
     }
   }

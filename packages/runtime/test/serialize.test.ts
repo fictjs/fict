@@ -87,6 +87,12 @@ describe('serializeValue / deserializeValue', () => {
       expect(deserializeValue(serializedGlobal)).toBe(global)
       expect(deserializeValue(serializedIterator)).toBe(Symbol.iterator)
     })
+
+    it('should reject unknown well-known symbol markers', () => {
+      expect(() =>
+        deserializeValue({ __t: 'sym', v: { k: 'w', n: 'notAWellKnownSymbol' } }),
+      ).toThrow('[fict] Unknown well-known symbol marker at $: notAWellKnownSymbol.')
+    })
   })
 
   describe('Date', () => {
@@ -625,6 +631,12 @@ describe('serializeValue / deserializeValue', () => {
       const result = deserializeValue(serializeValue(obj)) as typeof obj
       expect(result.name).toBe('root')
       expect(result.self).toBe(result) // Same reference
+    })
+
+    it('should reject references to missing snapshot paths', () => {
+      expect(() => deserializeValue({ __t: 'ref', v: '$.missing' })).toThrow(
+        '[fict] Invalid snapshot reference at $: $.missing.',
+      )
     })
 
     it('should handle circular array references', () => {
