@@ -74,7 +74,7 @@ export function createRootContext(parent?: RootContext): RootContext {
 
 export function pushRoot(root: RootContext): RootContext | undefined {
   if (!enterRootGuard(root)) {
-    return currentRoot
+    throw new Error('[fict] cycle protection triggered: root-reentry')
   }
   const prev = currentRoot
   currentRoot = root

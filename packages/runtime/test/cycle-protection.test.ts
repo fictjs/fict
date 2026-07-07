@@ -11,7 +11,7 @@ import {
   enterRootGuard,
   exitRootGuard,
 } from '../src/cycle-guard'
-import { createRootContext, popRoot, pushRoot } from '../src/lifecycle'
+import { createRootContext, getCurrentRoot, popRoot, pushRoot } from '../src/lifecycle'
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -178,6 +178,26 @@ describe('framework cycle protection', () => {
       expect(() => pushRoot(root)).toThrow(/root-reentry/)
 
       popRoot(prev)
+    })
+
+    it('fails closed when root re-entry is blocked in warn mode', () => {
+      setCycleProtectionOptions({
+        maxRootReentrantDepth: 1,
+        devMode: false,
+      })
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const root = createRootContext()
+      const prev = pushRoot(root)
+
+      try {
+        expect(() => pushRoot(root)).toThrow(/root-reentry/)
+        expect(getCurrentRoot()).toBe(root)
+      } finally {
+        popRoot(prev)
+        warn.mockRestore()
+      }
+
+      expect(getCurrentRoot()).toBeUndefined()
     })
 
     it('allows re-entry up to max depth', () => {
