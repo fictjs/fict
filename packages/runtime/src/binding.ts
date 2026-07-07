@@ -1678,24 +1678,26 @@ export function addEventListener(
   if (delegate) {
     const key = `$$${name}`
     const dataKey = `${key}Data`
+    const host = node as unknown as Record<string, unknown>
     const rootRef = getCurrentRoot()
     const delegationDocument = resolveDelegationDocument(node, rootRef)
 
     delegateEvents([name], delegationDocument)
 
     if (handler == null) {
-      ;(node as unknown as Record<string, unknown>)[key] = undefined
-      ;(node as unknown as Record<string, unknown>)[dataKey] = undefined
+      host[key] = undefined
+      host[dataKey] = undefined
       return
     }
 
-    ;(node as unknown as Record<string, unknown>)[key] = createEventInvoker(
-      name,
-      handler,
-      node,
-      rootRef,
-    )
-    ;(node as unknown as Record<string, unknown>)[dataKey] = undefined
+    const wrapped = createEventInvoker(name, handler, node, rootRef)
+    host[key] = wrapped
+    host[dataKey] = undefined
+    registerRootCleanup(() => {
+      if (host[key] !== wrapped) return
+      host[key] = undefined
+      host[dataKey] = undefined
+    })
     return
   }
 
@@ -1709,6 +1711,7 @@ export function addEventListener(
     listener: wrapped,
     options,
   })
+  registerRootCleanup(() => removeStoredEventListener(node, name, options, wrapped))
 }
 
 function resolveDelegationDocument(node: Element, rootRef: RootContext | undefined): Document {
@@ -1743,6 +1746,7 @@ function removeStoredEventListener(
   node: Element,
   name: string,
   options?: boolean | AddEventListenerOptions,
+  expectedListener?: EventListener,
 ): void {
   const host = node as unknown as {
     [EVENT_LISTENER_CACHE]?: EventListenerStore
@@ -1752,6 +1756,7 @@ function removeStoredEventListener(
 
   const entry = store.get(getEventListenerStoreKey(name, options))
   if (!entry) return
+  if (expectedListener && entry.listener !== expectedListener) return
 
   node.removeEventListener(name, entry.listener, entry.options)
   store.delete(getEventListenerStoreKey(name, options))
@@ -1870,7 +1875,6 @@ export function bindEvent(
     options,
   )
   const cleanup = () => removeStoredEventListener(el, eventName, options)
-  registerRootCleanup(cleanup)
   return cleanup
 }
 

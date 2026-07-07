@@ -1868,6 +1868,46 @@ describe('Binding Edge Cases', () => {
       expect(second).not.toHaveBeenCalled()
     })
 
+    it('removes delegated assign handlers when the owner root is disposed', () => {
+      const el = document.createElement('button')
+      container.appendChild(el)
+      const handler = vi.fn()
+      const prevProps: Record<string, unknown> = {}
+
+      const root = createRoot(() => {
+        assign(el, { onClick: handler }, false, false, prevProps)
+      })
+
+      el.dispatchEvent(new Event('click', { bubbles: true }))
+      expect(handler).toHaveBeenCalledTimes(1)
+
+      root.dispose()
+      handler.mockClear()
+      el.dispatchEvent(new Event('click', { bubbles: true }))
+
+      expect(handler).not.toHaveBeenCalled()
+      expect((el as any).$$click).toBeUndefined()
+    })
+
+    it('removes non-delegated assign handlers when the owner root is disposed', () => {
+      const el = document.createElement('input')
+      const handler = vi.fn()
+      const prevProps: Record<string, unknown> = {}
+
+      const root = createRoot(() => {
+        assign(el, { onFocus: handler }, false, false, prevProps)
+      })
+
+      el.dispatchEvent(new Event('focus'))
+      expect(handler).toHaveBeenCalledTimes(1)
+
+      root.dispose()
+      handler.mockClear()
+      el.dispatchEvent(new Event('focus'))
+
+      expect(handler).not.toHaveBeenCalled()
+    })
+
     it('handles attr: prefix for forced attributes', () => {
       const el = document.createElement('div')
 
@@ -1960,6 +2000,26 @@ describe('Binding Edge Cases', () => {
       addEventListener(el, 'click', handler, true)
 
       expect((el as any).$$click).toBeTypeOf('function')
+    })
+
+    it('removes delegated bindEvent handlers when the owner root is disposed', () => {
+      const el = document.createElement('button')
+      container.appendChild(el)
+      const handler = vi.fn()
+
+      const root = createRoot(() => {
+        bindEvent(el, 'click', handler)
+      })
+
+      el.dispatchEvent(new Event('click', { bubbles: true }))
+      expect(handler).toHaveBeenCalledTimes(1)
+
+      root.dispose()
+      handler.mockClear()
+      el.dispatchEvent(new Event('click', { bubbles: true }))
+
+      expect(handler).not.toHaveBeenCalled()
+      expect((el as any).$$click).toBeUndefined()
     })
 
     it('handles [handler, data] tuple', () => {
