@@ -39,7 +39,7 @@ const forbiddenDistFiles = ['index.dev.js', 'index.dev.js.map']
 
 const exportChecks = [
   ['.', ['render', 'createEffect']],
-  ['./internal', ['insertBetween', 'hydrateComponent']],
+  ['./internal', ['insertBetween', 'hydrateComponent', '__fictRunWithSSRSessionAsync']],
   ['./internal/list', ['createKeyedList', 'toNodeArray']],
   ['./advanced', ['createRenderEffect', 'createContext']],
   ['./loader', ['installResumableLoader', 'waitForPendingHandlers']],
