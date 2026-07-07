@@ -13,6 +13,7 @@ import {
   __fictGetScopeRegistry,
   __fictGetSSRScope,
   __fictIsHydrating,
+  __fictMergeSSRState,
   __fictQrl,
   __fictRegisterScope,
   __fictSetComponentMeta,
@@ -81,6 +82,55 @@ describe('SSR lifecycle state cleanup', () => {
 
     __fictExitHydration()
     expect(__fictIsHydrating()).toBe(false)
+  })
+
+  it('rejects invalid internal SSR snapshot state', () => {
+    expect(() =>
+      __fictSetSSRState({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION + 1,
+        scopes: {},
+      }),
+    ).toThrow('Unsupported SSR snapshot schema version')
+
+    expect(() =>
+      __fictSetSSRState({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: [] as any,
+      }),
+    ).toThrow('expected an object')
+
+    expect(() =>
+      __fictSetSSRState({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          broken: { id: 'broken', slots: [[0, 'unknown', 1] as any] },
+        },
+      }),
+    ).toThrow('Invalid SSR snapshot scope "broken" slot 0')
+  })
+
+  it('rejects invalid merged SSR snapshot state without replacing current state', () => {
+    const existing = {
+      id: 's-existing',
+      slots: [[0, 'raw' as const, 'current']],
+    }
+
+    __fictSetSSRState({
+      v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+      scopes: { 's-existing': existing },
+    })
+
+    expect(() =>
+      __fictMergeSSRState({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s2: { id: 's2', slots: [[0, 'unknown', 'next'] as any] },
+        },
+      }),
+    ).toThrow('Invalid SSR snapshot scope "s2" slot 0')
+
+    expect(__fictGetSSRScope('s-existing')).toEqual(existing)
+    expect(__fictGetSSRScope('s2')).toBeUndefined()
   })
 
   it('stores component metadata for frozen functions without throwing', () => {

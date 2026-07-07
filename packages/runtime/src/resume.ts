@@ -121,6 +121,67 @@ function setSnapshotState(state: SSRState | null): void {
   getSSRSession().snapshotState = state
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function assertRecord(value: unknown, label: string): asserts value is Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error(`[fict] Invalid SSR snapshot ${label}: expected an object.`)
+  }
+}
+
+function assertScopeSnapshot(value: unknown, scopeId: string): asserts value is ScopeSnapshot {
+  assertRecord(value, `scope "${scopeId}"`)
+  if (typeof value.id !== 'string') {
+    throw new Error(`[fict] Invalid SSR snapshot scope "${scopeId}": expected string id.`)
+  }
+  if (value.t !== undefined && typeof value.t !== 'string') {
+    throw new Error(`[fict] Invalid SSR snapshot scope "${scopeId}": expected string type.`)
+  }
+  if (!Array.isArray(value.slots)) {
+    throw new Error(`[fict] Invalid SSR snapshot scope "${scopeId}": expected slots array.`)
+  }
+  for (let i = 0; i < value.slots.length; i++) {
+    const slot = value.slots[i]
+    if (
+      !Array.isArray(slot) ||
+      !Number.isInteger(slot[0]) ||
+      (slot[1] !== 'sig' && slot[1] !== 'store' && slot[1] !== 'raw') ||
+      slot.length < 3
+    ) {
+      throw new Error(`[fict] Invalid SSR snapshot scope "${scopeId}" slot ${i}.`)
+    }
+  }
+  if (value.props !== undefined) {
+    assertRecord(value.props, `scope "${scopeId}" props`)
+  }
+  if (value.vars !== undefined) {
+    assertRecord(value.vars, `scope "${scopeId}" vars`)
+    for (const [name, index] of Object.entries(value.vars)) {
+      if (typeof index !== 'number' || !Number.isInteger(index)) {
+        throw new Error(
+          `[fict] Invalid SSR snapshot scope "${scopeId}" var "${name}": expected integer slot index.`,
+        )
+      }
+    }
+  }
+}
+
+function validateSSRState(state: SSRState, operation: string): SSRState {
+  assertRecord(state, operation)
+  if (state.v !== FICT_SSR_SNAPSHOT_SCHEMA_VERSION) {
+    throw new Error(
+      `[fict] Unsupported SSR snapshot schema version for ${operation}: ${String(state.v)}.`,
+    )
+  }
+  assertRecord(state.scopes, `${operation} scopes`)
+  for (const [scopeId, scope] of Object.entries(state.scopes)) {
+    assertScopeSnapshot(scope, scopeId)
+  }
+  return state
+}
+
 function resetSSRTrackingState(session = getSSRSession()): void {
   __fictResetSSRSession(session)
   resumedScopes.clear()
@@ -242,7 +303,7 @@ export function __fictSerializeSSRStateForScopes(scopeIds: Iterable<string>): SS
 }
 
 export function __fictSetSSRState(state: SSRState | null): void {
-  setSnapshotState(state)
+  setSnapshotState(state ? validateSSRState(state, '__fictSetSSRState') : null)
   if (!state) {
     resumedScopes.clear()
   }
@@ -250,12 +311,13 @@ export function __fictSetSSRState(state: SSRState | null): void {
 
 export function __fictMergeSSRState(state: SSRState | null): void {
   if (!state) return
+  const validated = validateSSRState(state, '__fictMergeSSRState')
   const snapshotState = getSnapshotState()
   if (!snapshotState) {
-    setSnapshotState({ v: state.v, scopes: { ...state.scopes } })
+    setSnapshotState({ v: validated.v, scopes: { ...validated.scopes } })
     return
   }
-  Object.assign(snapshotState.scopes, state.scopes)
+  Object.assign(snapshotState.scopes, validated.scopes)
 }
 
 export function __fictGetSSRScope(id: string): ScopeSnapshot | undefined {
