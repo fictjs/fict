@@ -35,6 +35,8 @@ const requiredDistFiles = [
   'jsx-dev-runtime.d.ts',
 ]
 
+const forbiddenDistFiles = ['index.dev.js', 'index.dev.js.map']
+
 const exportChecks = [
   ['.', ['render', 'createEffect']],
   ['./internal', ['insertBetween', 'hydrateComponent']],
@@ -54,6 +56,13 @@ for (const file of requiredDistFiles) {
   const filePath = path.join(runtimeDist, file)
   if (!existsSync(filePath)) {
     fail(`Missing runtime build artifact: ${path.relative(rootDir, filePath)}`)
+  }
+}
+
+for (const file of forbiddenDistFiles) {
+  const filePath = path.join(runtimeDist, file)
+  if (existsSync(filePath)) {
+    fail(`Unexpected non-exported runtime artifact: ${path.relative(rootDir, filePath)}`)
   }
 }
 

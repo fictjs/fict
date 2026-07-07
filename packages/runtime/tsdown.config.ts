@@ -36,15 +36,4 @@ export default defineConfig([
       __DEV__: 'true',
     },
   },
-  {
-    ...common,
-    entry: {
-      'index.dev': 'src/index.ts',
-    },
-    format: ['esm'],
-    dts: false,
-    define: {
-      __DEV__: 'true',
-    },
-  },
 ])
