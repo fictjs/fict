@@ -87,6 +87,17 @@ describe('resumable loader snapshot validation', () => {
     expect(scope?.slots[0]?.[2]).toBe('legacy')
   })
 
+  it('throws a clear error when installed without a browser document', () => {
+    vi.stubGlobal('window', undefined)
+    try {
+      expect(() => installResumableLoader({ events: [], prefetch: false })).toThrow(
+        '[fict/loader] installResumableLoader requires a browser document.',
+      )
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('appends prefetch links to the source document head', async () => {
     const doc = createDocumentWithSnapshots(
       JSON.stringify({
@@ -290,6 +301,10 @@ describe('resumable loader snapshot validation', () => {
     })
 
     const clickEvent = new Event('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(clickEvent, 'composedPath', {
+      configurable: true,
+      value: undefined,
+    })
     childButton.dispatchEvent(clickEvent)
     await waitForPendingHandlers()
 

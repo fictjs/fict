@@ -398,7 +398,7 @@ export function cleanupEventListeners(): void {
 // ============================================================================
 
 export function installResumableLoader(options: ResumableLoaderOptions = {}): void {
-  const doc = options.document ?? window.document
+  const doc = resolveLoaderDocument(options.document)
   const scriptId = options.snapshotScriptId ?? '__FICT_SNAPSHOT__'
   snapshotIssueHandler = options.onSnapshotIssue ?? null
   snapshotMigrations = options.snapshotMigrations ?? null
@@ -485,6 +485,14 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
   if (options.prefetch !== false) {
     prefetchCleanup = setupPrefetch(doc, options.prefetch ?? {})
   }
+}
+
+function resolveLoaderDocument(doc: Document | undefined): Document {
+  if (doc) return doc
+  if (typeof window === 'undefined' || !window.document) {
+    throw new Error('[fict/loader] installResumableLoader requires a browser document.')
+  }
+  return window.document
 }
 
 function isSnapshotScript(script: HTMLScriptElement): boolean {
@@ -1097,10 +1105,20 @@ function buildEventPath(event: Event): EventTarget[] {
   let node: EventTarget | null = event.target
   while (node) {
     path.push(node)
-    node = (node as Node).parentNode
+    node = (node as Node).parentNode ?? null
   }
-  path.push(window)
+  const doc = getEventDocument(event.target) ?? getEventDocument(event.currentTarget)
+  const view = doc?.defaultView ?? (typeof window !== 'undefined' ? window : undefined)
+  if (view && !path.includes(view)) {
+    path.push(view)
+  }
   return path
+}
+
+function getEventDocument(target: EventTarget | null): Document | undefined {
+  if (!target || typeof (target as Node).nodeType !== 'number') return undefined
+  const node = target as Node
+  return node.nodeType === 9 ? (node as Document) : (node.ownerDocument ?? undefined)
 }
 
 // Re-export for handler authors (optional)
