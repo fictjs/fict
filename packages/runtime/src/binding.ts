@@ -3010,8 +3010,10 @@ export function createPortal(
 
   let currentNodes: Node[] = []
   let currentRoot: RootContext | null = null
+  let disposed = false
 
   const dispose = createRenderEffect(() => {
+    if (disposed) return
     // Clean up previous
     if (currentRoot) {
       destroyRoot(currentRoot)
@@ -3065,12 +3067,16 @@ export function createPortal(
 
   // The portal's dispose function must be named so we can register it for cleanup
   const portalDispose = () => {
+    if (disposed) return
+    disposed = true
     dispose()
     if (currentRoot) {
       destroyRoot(currentRoot)
+      currentRoot = null
     }
     if (currentNodes.length > 0) {
       removeNodes(currentNodes)
+      currentNodes = []
     }
     marker.parentNode?.removeChild(marker)
   }

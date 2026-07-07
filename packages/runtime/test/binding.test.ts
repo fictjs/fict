@@ -1314,6 +1314,37 @@ describe('Reactive DOM Binding', () => {
       dispose()
       expect(portalContainer.contains(marker)).toBe(false)
     })
+
+    it('does not run portal cleanup twice after manual dispose and parent root disposal', () => {
+      const portalContainer = document.createElement('div')
+      const cleanups: string[] = []
+      let disposePortal!: () => void
+
+      const Child = () => {
+        onDestroy(() => {
+          cleanups.push('child')
+        })
+        return { type: 'span', props: { children: 'portal' }, key: undefined }
+      }
+
+      const root = createRoot(() => {
+        const handle = createPortal(
+          portalContainer,
+          () => ({ type: Child, props: {}, key: undefined }),
+          createElement,
+        )
+        disposePortal = handle.dispose
+      })
+
+      expect(portalContainer.textContent).toBe('portal')
+
+      disposePortal()
+      root.dispose()
+
+      expect(cleanups).toEqual(['child'])
+      expect(portalContainer.textContent).toBe('')
+      expect(portalContainer.childNodes.length).toBe(0)
+    })
   })
 
   describe('Full Integration: render with reactive children', () => {
