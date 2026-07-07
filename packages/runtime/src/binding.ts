@@ -953,7 +953,9 @@ export function setClass(
  * Toggle a class key (supports space-separated class names)
  */
 function toggleClassKey(node: Element, key: string, value: boolean): void {
-  const classNames = key.trim().split(/\s+/)
+  const normalized = key.trim()
+  if (!normalized) return
+  const classNames = normalized.split(/\s+/)
   for (let i = 0, len = classNames.length; i < len; i++) {
     node.classList.toggle(classNames[i]!, value)
   }

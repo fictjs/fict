@@ -952,6 +952,14 @@ describe('Binding Edge Cases', () => {
       bindClass(el, () => classValue())
       expect(el.classList.contains('valid')).toBe(true)
     })
+
+    it('ignores whitespace-only object class keys', () => {
+      const el = document.createElement('div')
+
+      expect(() => bindClass(el, () => ({ '   ': true, valid: true }))).not.toThrow()
+      expect(el.classList.contains('valid')).toBe(true)
+      expect(el.className).toBe('valid')
+    })
   })
 
   describe('classList', () => {
@@ -987,6 +995,16 @@ describe('Binding Edge Cases', () => {
 
       classList(el, 'new-class' as any)
       expect(el.className).toBe('new-class')
+    })
+
+    it('ignores whitespace-only keys when adding and removing classes', () => {
+      const el = document.createElement('div')
+
+      const prev = classList(el, { '   ': true, valid: true })
+      expect(el.className).toBe('valid')
+
+      expect(() => classList(el, { '   ': false }, prev)).not.toThrow()
+      expect(el.className).toBe('')
     })
   })
 
