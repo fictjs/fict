@@ -521,6 +521,29 @@ describe('Reactive DOM Binding', () => {
       root.dispose()
     })
 
+    it('cleans dynamic child roots when the owner root is disposed', () => {
+      const cleanups: string[] = []
+
+      const Child = () => {
+        onDestroy(() => {
+          cleanups.push('child')
+        })
+        return { type: 'span', props: { children: 'child' }, key: undefined }
+      }
+
+      const root = createRoot(() => {
+        insert(container, () => ({ type: Child, props: {}, key: undefined }), createElement)
+      })
+
+      expect(container.querySelector('span')?.textContent).toBe('child')
+
+      root.dispose()
+
+      expect(cleanups).toEqual(['child'])
+      expect(container.querySelector('span')).toBeNull()
+      expect(container.childNodes.length).toBe(0)
+    })
+
     it('uses parent ownerDocument for auto-created marker and text', async () => {
       const foreignDoc = document.implementation.createHTMLDocument('foreign-insert')
       const foreignContainer = foreignDoc.createElement('div')
@@ -609,6 +632,34 @@ describe('Reactive DOM Binding', () => {
       expect(container.textContent).toBe('')
 
       dispose()
+    })
+
+    it('cleans dynamic child roots between markers when the owner root is disposed', () => {
+      const start = document.createComment('start')
+      const end = document.createComment('end')
+      container.append(start, end)
+      const cleanups: string[] = []
+
+      const Child = () => {
+        onDestroy(() => {
+          cleanups.push('child')
+        })
+        return { type: 'span', props: { children: 'child' }, key: undefined }
+      }
+
+      const root = createRoot(() => {
+        insertBetween(start, end, () => ({ type: Child, props: {}, key: undefined }), createElement)
+      })
+
+      expect(container.querySelector('span')?.textContent).toBe('child')
+
+      root.dispose()
+
+      expect(cleanups).toEqual(['child'])
+      expect(container.querySelector('span')).toBeNull()
+      expect(container.childNodes.length).toBe(2)
+      expect(container.firstChild).toBe(start)
+      expect(container.lastChild).toBe(end)
     })
   })
 

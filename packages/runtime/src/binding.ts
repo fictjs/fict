@@ -1184,7 +1184,10 @@ export function insert(
     currentNodes = nodes
   })
 
-  return () => {
+  let disposed = false
+  const cleanup = () => {
+    if (disposed) return
+    disposed = true
     dispose()
     if (currentRoot) {
       destroyRoot(currentRoot)
@@ -1195,6 +1198,8 @@ export function insert(
       marker.parentNode?.removeChild(marker)
     }
   }
+  registerRootCleanup(cleanup)
+  return cleanup
 }
 
 /**
@@ -1371,7 +1376,10 @@ export function insertBetween(
     initialHydrating = false
   })
 
-  return () => {
+  let disposed = false
+  const cleanup = () => {
+    if (disposed) return
+    disposed = true
     dispose()
     if (currentRoot) {
       destroyRoot(currentRoot)
@@ -1379,6 +1387,8 @@ export function insertBetween(
     }
     clearCurrentNodes()
   }
+  registerRootCleanup(cleanup)
+  return cleanup
 }
 
 /**
