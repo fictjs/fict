@@ -1,5 +1,23 @@
 # @fictjs/runtime
 
+## 0.26.0
+
+### Minor Changes
+
+- Harden runtime lifecycle cleanup, hydration/resume validation, store platform
+  objects, SSR session boundaries, and internal bundler behavior for the 0.26
+  release train.
+  - Dynamic inserts, nested `BindingHandle` children, portals, assigned event
+    handlers, and DOM spread/list bindings now clean up with their owner roots
+    more consistently.
+  - Hydration/resume state now fails closed for invalid internal snapshots,
+    serialized references, nested hydration scopes, root-guard rejections, and
+    loader document boundaries.
+  - Store proxies now keep URL, URLSearchParams, and other platform objects raw
+    to avoid internal-slot receiver errors.
+  - Tree-shaken internal bundles now preserve DOM creation registration for
+    `spread` and `assign` helpers.
+
 ## 0.25.0
 
 ### Minor Changes

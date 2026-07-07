@@ -1,5 +1,19 @@
 # @fictjs/router
 
+## 0.26.0
+
+### Minor Changes
+
+- Publish router with runtime 0.26.0 so routed component trees receive the
+  runtime cleanup, hydration/resume, store platform-object, and internal bundle
+  fixes.
+  - No router API behavior changed in this release.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/runtime@0.26.0
+
 ## 0.25.0
 
 ### Minor Changes

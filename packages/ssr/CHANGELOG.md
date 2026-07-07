@@ -1,5 +1,19 @@
 # @fictjs/ssr
 
+## 0.26.0
+
+### Minor Changes
+
+- Publish SSR with runtime 0.26.0 so server-rendered and hydrated trees stay
+  aligned with the runtime cleanup, hydration/resume validation, loader
+  boundary, and SSR session fixes.
+  - No SSR API behavior changed in this release.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/runtime@0.26.0
+
 ## 0.25.0
 
 ### Minor Changes

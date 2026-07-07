@@ -1,5 +1,19 @@
 # fict
 
+## 0.26.0
+
+### Minor Changes
+
+- Publish the public `fict` package with runtime 0.26.0 so applications receive
+  the runtime lifecycle, hydration/resume, store platform-object, SSR session,
+  and internal bundle fixes.
+  - No additional public `fict` package API behavior changed in this release.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/runtime@0.26.0
+
 ## 0.25.0
 
 ### Minor Changes
