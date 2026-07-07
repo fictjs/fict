@@ -6,10 +6,13 @@ import {
   __fictDisableSSR,
   __fictEnableSSR,
   __fictEnsureScope,
+  __fictEnterHydration,
+  __fictExitHydration,
   __fictGetScopeProps,
   __fictGetComponentMeta,
   __fictGetScopeRegistry,
   __fictGetSSRScope,
+  __fictIsHydrating,
   __fictQrl,
   __fictRegisterScope,
   __fictSetComponentMeta,
@@ -59,6 +62,25 @@ describe('SSR lifecycle state cleanup', () => {
     expect(() => __fictUseLexicalScope('s-resume', ['value'])).toThrow(
       '[fict] Missing resumed scope for s-resume',
     )
+  })
+
+  it('keeps hydration active until all nested hydration scopes exit', () => {
+    expect(__fictIsHydrating()).toBe(false)
+
+    __fictEnterHydration()
+    expect(__fictIsHydrating()).toBe(true)
+
+    __fictEnterHydration()
+    expect(__fictIsHydrating()).toBe(true)
+
+    __fictExitHydration()
+    expect(__fictIsHydrating()).toBe(true)
+
+    __fictExitHydration()
+    expect(__fictIsHydrating()).toBe(false)
+
+    __fictExitHydration()
+    expect(__fictIsHydrating()).toBe(false)
   })
 
   it('stores component metadata for frozen functions without throwing', () => {

@@ -73,7 +73,7 @@ export interface ComponentMeta {
 }
 
 let resumableEnabled = false
-let hydrating = false
+let hydrationDepth = 0
 const defaultSSRSession = __fictCreateSSRSession()
 const resumedScopes = new Map<
   string,
@@ -156,15 +156,15 @@ export function __fictIsSSR(): boolean {
 }
 
 export function __fictEnterHydration(): void {
-  hydrating = true
+  hydrationDepth++
 }
 
 export function __fictExitHydration(): void {
-  hydrating = false
+  hydrationDepth = Math.max(0, hydrationDepth - 1)
 }
 
 export function __fictIsHydrating(): boolean {
-  return hydrating
+  return hydrationDepth > 0
 }
 
 export function __fictRegisterScope(
