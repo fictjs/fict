@@ -176,19 +176,58 @@ function isCollection(value: object): value is ReactiveCollection {
   )
 }
 
+const internalSlotGlobalConstructors = [
+  'URL',
+  'URLSearchParams',
+  'Blob',
+  'File',
+  'FileList',
+  'FormData',
+  'Headers',
+  'Request',
+  'Response',
+  'AbortController',
+  'AbortSignal',
+  'DOMException',
+  'EventTarget',
+  'Event',
+  'Node',
+  'Document',
+  'Element',
+  'Window',
+] as const
+
+function isInstanceOfGlobal(value: object, name: (typeof internalSlotGlobalConstructors)[number]) {
+  const ctor = (globalThis as Record<string, unknown>)[name]
+  if (typeof ctor !== 'function') return false
+  try {
+    return value instanceof (ctor as Function)
+  } catch {
+    return false
+  }
+}
+
 // Objects whose methods depend on internal slots cannot go through the
 // generic deep proxy: their methods would be invoked with the proxy as
 // `this` and throw "called on incompatible receiver". They are returned
 // raw; property-level tracking on the parent still notifies on replacement.
 function hasInternalSlots(value: object): boolean {
-  return (
+  if (
     value instanceof Date ||
     value instanceof RegExp ||
     value instanceof Promise ||
     value instanceof Error ||
     value instanceof ArrayBuffer ||
     ArrayBuffer.isView(value)
-  )
+  ) {
+    return true
+  }
+
+  for (let i = 0; i < internalSlotGlobalConstructors.length; i++) {
+    if (isInstanceOfGlobal(value, internalSlotGlobalConstructors[i]!)) return true
+  }
+
+  return false
 }
 
 const collectionMutators = new Set(['set', 'add', 'delete', 'clear'])

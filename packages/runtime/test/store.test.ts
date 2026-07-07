@@ -1122,4 +1122,25 @@ describe('createStore collections and internal-slot objects', () => {
     await tick()
     expect(times).toEqual([0, 1000])
   })
+
+  it('returns platform objects with branded accessors raw', async () => {
+    const [store] = createStore({
+      url: new URL('https://example.com/a?x=1'),
+      params: new URLSearchParams('a=1'),
+    })
+
+    expect(store.url.href).toBe('https://example.com/a?x=1')
+    expect(store.url.toString()).toBe('https://example.com/a?x=1')
+    expect(store.params.size).toBe(1)
+    expect(store.params.get('a')).toBe('1')
+
+    const hrefs: string[] = []
+    createEffect(() => {
+      hrefs.push(store.url.href)
+    })
+
+    store.url = new URL('https://example.com/b')
+    await tick()
+    expect(hrefs).toEqual(['https://example.com/a?x=1', 'https://example.com/b'])
+  })
 })
