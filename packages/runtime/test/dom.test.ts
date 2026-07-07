@@ -1079,6 +1079,37 @@ describe('DOM Module', () => {
         await tick()
         expect(flushed).toBe(true)
       })
+
+      it('registers cleanup for nested BindingHandle children', () => {
+        const marker = document.createComment('nested-marker')
+        let disposed = 0
+        let flushed = 0
+
+        const handle = {
+          marker,
+          dispose: () => {
+            disposed++
+          },
+          flush: () => {
+            flushed++
+          },
+        }
+
+        const { value: result, dispose: rootDispose } = createRoot(() =>
+          createElement({
+            type: 'div',
+            props: { children: [handle] },
+            key: undefined,
+          } as any),
+        )
+
+        expect((result as HTMLDivElement).firstChild).toBe(marker)
+        expect(flushed).toBe(1)
+
+        rootDispose()
+
+        expect(disposed).toBe(1)
+      })
     })
 
     describe('Reactive children', () => {

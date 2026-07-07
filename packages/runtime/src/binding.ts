@@ -1412,8 +1412,10 @@ export function createChildBinding(
   const marker = (parent.ownerDocument ?? document).createComment('fict:child')
   parent.appendChild(marker)
   const hostRoot = getCurrentRoot()
+  let disposed = false
 
   const dispose = createRenderEffect(() => {
+    if (disposed) return
     const root = createRootContext(hostRoot)
     const prev = pushRoot(root)
     let nodes: Node[] = []
@@ -1462,6 +1464,8 @@ export function createChildBinding(
   return {
     marker,
     dispose: () => {
+      if (disposed) return
+      disposed = true
       dispose()
       marker.parentNode?.removeChild(marker)
     },
@@ -2712,6 +2716,7 @@ export function createConditional(
   let lastCondition: boolean | undefined = undefined
   let pendingRender = false
   let initialHydrating = __fictIsHydrating()
+  let disposed = false
 
   const collectBetween = (): Node[] => {
     const nodes: Node[] = []
@@ -2927,14 +2932,18 @@ export function createConditional(
   return {
     marker: fragment,
     flush: () => {
+      if (disposed) return
       if (pendingRender) {
         runConditional()
       }
     },
     dispose: () => {
+      if (disposed) return
+      disposed = true
       dispose()
       if (currentRoot) {
         destroyRoot(currentRoot)
+        currentRoot = null
       }
       removeNodes(currentNodes)
       currentNodes = []

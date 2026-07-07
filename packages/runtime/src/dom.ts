@@ -641,6 +641,7 @@ function appendChildNode(
 
   // Handle BindingHandle (recursive)
   if (isBindingHandle(child)) {
+    registerRootCleanup(child.dispose)
     appendChildNode(parent, child.marker, namespace, parentOwnerDocument)
     // Flush pending nodes now that markers are in the DOM
     child.flush?.()
