@@ -201,7 +201,7 @@ function isInstanceOfGlobal(value: object, name: (typeof internalSlotGlobalConst
   const ctor = (globalThis as Record<string, unknown>)[name]
   if (typeof ctor !== 'function') return false
   try {
-    return value instanceof (ctor as Function)
+    return value instanceof (ctor as new (...args: never[]) => object)
   } catch {
     return false
   }
