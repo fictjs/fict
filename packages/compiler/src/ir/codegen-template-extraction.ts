@@ -884,6 +884,12 @@ export function extractHIRStaticHtml(
     node?.kind === 'element' &&
     !node.value.isComponent &&
     node.value.tagName === 'tr'
+  const isImplicitTableColumn = (node: JSXChild | undefined): boolean =>
+    tagName === 'table' &&
+    resolvedNamespace === null &&
+    node?.kind === 'element' &&
+    !node.value.isComponent &&
+    node.value.tagName === 'col'
   const hasAdjacentInline = (index: number): boolean => {
     const prev = children[index - 1]
     const next = children[index + 1]
@@ -996,6 +1002,31 @@ export function extractHIRStaticHtml(
           }
           i--
           html += '</tbody>'
+          childIndex++
+          continue
+        }
+        if (isImplicitTableColumn(child)) {
+          const colgroupPath = [...parentPath, childIndex]
+          html += '<colgroup>'
+          let columnIndex = 0
+          while (true) {
+            const column = children[i]
+            if (column?.kind !== 'element' || !isImplicitTableColumn(column)) break
+            const columnResult = extractHIRStaticHtml(
+              column.value,
+              ctx,
+              ops,
+              [...colgroupPath, columnIndex],
+              resolvedNamespace,
+              false,
+            )
+            html += columnResult.html
+            bindings.push(...columnResult.bindings)
+            columnIndex += columnResult.nodeCount
+            i++
+          }
+          i--
+          html += '</colgroup>'
           childIndex++
           continue
         }

@@ -3448,6 +3448,68 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps table column binding paths aligned with implicit colgroup insertion', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let refTag = ''
+      export let api: { set(title: string, active: boolean): void }
+
+      export function App() {
+        let title = $state('first')
+        let active = $state(true)
+        api = {
+          set(nextTitle, nextActive) {
+            title = nextTitle
+            active = nextActive
+          },
+        }
+        return (
+          <table data-testid="table">
+            <col
+              data-testid="column"
+              title={title}
+              classList={{ active }}
+              ref={el => { refTag = el ? (el as HTMLElement).tagName : '' }}
+            />
+          </table>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { set(title: string, active: boolean): void }
+      refTag: string
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const table = container.querySelector('[data-testid="table"]') as HTMLTableElement
+    const colgroup = table.children[0] as HTMLTableColElement
+    const column = container.querySelector('[data-testid="column"]') as HTMLTableColElement
+
+    expect(colgroup.tagName).toBe('COLGROUP')
+    expect(colgroup.getAttribute('title')).toBeNull()
+    expect(column.getAttribute('title')).toBe('first')
+    expect(column.classList.contains('active')).toBe(true)
+    expect(mod.refTag).toBe('COL')
+
+    mod.api.set('next', false)
+    await flushUpdates()
+    expect(colgroup.getAttribute('title')).toBeNull()
+    expect(column.getAttribute('title')).toBe('next')
+    expect(column.classList.contains('active')).toBe(false)
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps sibling binding paths aligned after HTML void elements', async () => {
     const source = `
       import { $state, render } from 'fict'
