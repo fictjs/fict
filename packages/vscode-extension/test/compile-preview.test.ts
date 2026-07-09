@@ -39,6 +39,18 @@ describe('compile preview', () => {
     expect(output).toContain('__fictUseSignal')
   })
 
+  it('compiles angle-bracket assertions in TypeScript-only documents', () => {
+    const output = compileDocumentSource(
+      createDocument(
+        "import { $state } from 'fict'\nexport function useValue(input: unknown) { const asserted = <number>input; const value = $state(asserted); return value }\n",
+        '/tmp/use-value.ts',
+      ) as never,
+    )
+
+    expect(output).toContain('__fictUseSignal')
+    expect(output).not.toContain('<number>')
+  })
+
   it('preserves strict guarantee failures in preview compilation', () => {
     expect(() =>
       compileDocumentSource(

@@ -51,6 +51,13 @@ interface AnalyzeMacroNames {
   effect: Set<string>
 }
 
+function analyzeParserPlugins(fileName: string): ('typescript' | 'jsx')[] {
+  const cleanFileName = fileName.split(/[?#]/, 1)[0]?.toLowerCase() ?? fileName.toLowerCase()
+  // JSX and TypeScript's angle-bracket assertions are syntactically
+  // ambiguous. Explicit TypeScript-only extensions must not enable JSX.
+  return /\.(?:ts|mts|cts)$/.test(cleanFileName) ? ['typescript'] : ['typescript', 'jsx']
+}
+
 function importSpecifierImportedName(spec: BabelCore.types.ImportSpecifier): string {
   return BabelTypes.isIdentifier(spec.imported) ? spec.imported.name : String(spec.imported.value)
 }
@@ -480,7 +487,7 @@ function parseSourceAstSafely(source: string, fileName: string): BabelCore.types
       sourceType: 'module',
       parserOpts: {
         sourceType: 'module',
-        plugins: ['typescript', 'jsx'],
+        plugins: analyzeParserPlugins(fileName),
         allowReturnOutsideFunction: true,
       },
     })
@@ -694,7 +701,7 @@ function analyzeDiagnostics(
       sourceType: 'module',
       parserOpts: {
         sourceType: 'module',
-        plugins: ['typescript', 'jsx'],
+        plugins: analyzeParserPlugins(fileName),
         allowReturnOutsideFunction: true,
       },
       plugins: [[createFictPlugin, pluginOptions]],
@@ -755,7 +762,7 @@ function parseFileAst(code: string, fileName: string): BabelCore.types.File {
     sourceType: 'module',
     parserOpts: {
       sourceType: 'module',
-      plugins: ['typescript', 'jsx'],
+      plugins: analyzeParserPlugins(fileName),
       allowReturnOutsideFunction: true,
     },
   })

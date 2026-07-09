@@ -54,6 +54,23 @@ function hasTraceMarker(
 }
 
 describe('analyzeFictFile', () => {
+  it('parses angle-bracket assertions in TypeScript-only files', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useValue(input: unknown) {
+        const asserted = <number>input
+        const value = $state(asserted)
+        return value
+      }
+    `
+
+    const result = analyzeFictFile(source, 'use-value.ts')
+
+    expect(result.components.map(component => component.name)).toContain('useValue')
+    expect(result.diagnostics).toEqual([])
+  })
+
   it('ignores consumer Babel configuration during internal parsing', async () => {
     const root = await mkdtemp(path.join(process.cwd(), '.fict-analyze-babel-config-'))
 

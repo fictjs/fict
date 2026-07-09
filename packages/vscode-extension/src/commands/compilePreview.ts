@@ -5,12 +5,21 @@ import * as vscode from 'vscode'
 
 const COMPILED_SCHEME = 'fict-compiled'
 
+function documentUsesJsx(document: vscode.TextDocument): boolean {
+  if (document.languageId === 'typescriptreact' || document.languageId === 'javascriptreact') {
+    return true
+  }
+  const cleanFileName = document.fileName.split(/[?#]/, 1)[0]?.toLowerCase() ?? ''
+  return /\.(?:tsx|jsx)$/.test(cleanFileName)
+}
+
 function toCompiledUri(sourceUri: vscode.Uri): vscode.Uri {
   const encoded = encodeURIComponent(sourceUri.toString())
   return vscode.Uri.parse(`${COMPILED_SCHEME}://${encoded}.js`)
 }
 
 export function compileDocumentSource(document: vscode.TextDocument): string {
+  const isTSX = documentUsesJsx(document)
   const result = transformSync(document.getText(), {
     filename: document.fileName,
     configFile: false,
@@ -18,7 +27,7 @@ export function compileDocumentSource(document: vscode.TextDocument): string {
     sourceType: 'module',
     parserOpts: {
       sourceType: 'module',
-      plugins: ['typescript', 'jsx'],
+      plugins: isTSX ? ['typescript', 'jsx'] : ['typescript'],
       allowReturnOutsideFunction: true,
     },
     plugins: [
@@ -31,7 +40,7 @@ export function compileDocumentSource(document: vscode.TextDocument): string {
         },
       ],
     ],
-    presets: [[presetTypescript, { isTSX: true, allExtensions: true, allowDeclareFields: true }]],
+    presets: [[presetTypescript, { isTSX, allExtensions: true, allowDeclareFields: true }]],
     generatorOpts: {
       compact: false,
     },
