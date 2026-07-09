@@ -142,6 +142,55 @@ function originalPositionFor(
 }
 
 describe('fict vite-plugin', () => {
+  it('does not recompile linked Fict framework build artifacts', async () => {
+    const workspace = await mkdtemp(path.join(tmpdir(), 'fict-vite-framework-dist-'))
+    const appRoot = path.join(workspace, 'app')
+    const runtimeRoot = path.join(workspace, 'runtime')
+    const runtimeEntry = path.join(runtimeRoot, 'dist', 'index.js')
+    const entry = path.join(appRoot, 'src', 'main.ts')
+
+    try {
+      await mkdir(path.dirname(entry), { recursive: true })
+      await mkdir(path.dirname(runtimeEntry), { recursive: true })
+      await writeFile(
+        path.join(appRoot, 'package.json'),
+        JSON.stringify({ name: 'consumer-app', private: true }),
+      )
+      await writeFile(
+        path.join(runtimeRoot, 'package.json'),
+        JSON.stringify({ name: '@fictjs/runtime', type: 'module' }),
+      )
+      // This intentionally violates Fict macro placement. A framework dist
+      // dependency must pass through untouched instead of being recompiled.
+      await writeFile(runtimeEntry, `export function frameworkValue() { return $state(1) }`)
+      await writeFile(
+        entry,
+        `import { frameworkValue } from '@fictjs/runtime'; export const value = frameworkValue()`,
+      )
+
+      const result = await build({
+        root: appRoot,
+        logLevel: 'silent',
+        resolve: { alias: { '@fictjs/runtime': runtimeEntry } },
+        plugins: [fict({ cache: false, useTypeScriptProject: false, functionSplitting: false })],
+        build: {
+          write: false,
+          lib: { entry, formats: ['es'], fileName: () => 'app.js' },
+        },
+      })
+      const outputs = Array.isArray(result) ? result : [result]
+      const code = outputs
+        .flatMap(output => ('output' in output ? output.output : []))
+        .filter(output => output.type === 'chunk')
+        .map(output => output.code)
+        .join('\n')
+
+      expect(code).toContain('$state(1)')
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('prepares aliased cyclic hook metadata before a cold Vite build transforms the importer', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-cold-metadata-'))
     const srcDir = path.join(root, 'src')

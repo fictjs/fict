@@ -155,6 +155,11 @@ interface FictPackageMappingResult {
   unmappedAssets: LibraryMetadataAsset[]
 }
 
+interface PackageBoundary {
+  root: string
+  name: string
+}
+
 interface TypeScriptProject {
   configPath: string
   configHash: string
@@ -257,6 +262,19 @@ const MODULE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts',
 const DEFAULT_APP_INCLUDE = MODULE_EXTENSIONS.map(extension => `**/*${extension}`)
 const DEFAULT_LIBRARY_INCLUDE = DEFAULT_APP_INCLUDE
 const LIBRARY_METADATA_VERSION = 1 satisfies ModuleReactiveMetadata['version']
+const FICT_FRAMEWORK_PACKAGES = new Set([
+  'fict',
+  '@fictjs/runtime',
+  '@fictjs/compiler',
+  '@fictjs/babel-preset',
+  '@fictjs/vite-plugin',
+  '@fictjs/devtools',
+  '@fictjs/router',
+  '@fictjs/ssr',
+  '@fictjs/testing-library',
+  '@fictjs/eslint-plugin',
+  '@fictjs/playground',
+])
 
 // Virtual module prefix for extracted handlers
 const VIRTUAL_HANDLER_PREFIX = '\0fict-handler:'
@@ -336,6 +354,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   let metadataPreparationQueue: Promise<void> = Promise.resolve()
   const extractedHandlers = new Map<string, ExtractedHandler>()
   const libraryMetadataAssets = new Map<string, LibraryMetadataAsset>()
+  const packageBoundaryCache = new Map<string, PackageBoundary | null>()
+  let projectPackageRoot: string | undefined
   const debugEnabled =
     debugOption === true ||
     process.env.FICT_VITE_PLUGIN_DEBUG === '1' ||
@@ -392,6 +412,23 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     extractedHandlers.clear()
     libraryMetadataAssets.clear()
   }
+
+  const isFrameworkBuildArtifact = (filename: string): boolean => {
+    const boundary = findOwningPackageBoundary(filename, packageBoundaryCache)
+    if (
+      !boundary ||
+      boundary.root === projectPackageRoot ||
+      !FICT_FRAMEWORK_PACKAGES.has(boundary.name)
+    ) {
+      return false
+    }
+    const relativePath = path.relative(boundary.root, stripQuery(filename))
+    const [outputDir] = relativePath.split(path.sep)
+    return outputDir === 'dist' || outputDir === 'build'
+  }
+
+  const shouldCompileModule = (id: string): boolean =>
+    shouldTransform(id, transformFilter) && !isFrameworkBuildArtifact(id)
 
   const lookupStoredMetadata = (resolved: string): ModuleReactiveMetadata | undefined => {
     const normalized = normalizeFileName(resolved, config?.root)
@@ -451,7 +488,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     if (resolvedSource) {
       const resolvedMetadata = lookupStoredMetadata(resolvedSource)
       if (resolvedMetadata) return resolvedMetadata
-      if (shouldTransform(resolvedSource, transformFilter)) {
+      if (shouldCompileModule(resolvedSource)) {
         throw new Error(
           `[fict] Local module metadata for "${source}" imported by "${importerFile}" ` +
             `was not prepared (${resolvedSource}).`,
@@ -540,7 +577,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
 
       for (const source of collectStaticModuleSources(code)) {
         const resolved = await resolveGraphDependency(context, source, normalizedFilename)
-        if (!resolved || !shouldTransform(resolved, transformFilter)) continue
+        if (!resolved || !shouldCompileModule(resolved)) continue
         resolvedLocalModules.set(createLocalResolutionKey(normalizedFilename, source), resolved)
         node.dependencies.add(resolved)
         await visit(resolved)
@@ -717,6 +754,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
 
     configResolved(resolvedConfig) {
       config = resolvedConfig
+      packageBoundaryCache.clear()
+      projectPackageRoot =
+        findOwningPackageBoundary(
+          path.join(config.root, '__fict_project_entry__.js'),
+          packageBoundaryCache,
+        )?.root ?? normalizeFileName(config.root)
       isDev = config.command === 'serve' || config.mode === 'development'
       // Rebuild cache with resolved config so cacheDir is available
       resetCache()
@@ -857,7 +900,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       const filename = stripQuery(id)
 
       // Skip non-matching files
-      if (!shouldTransform(filename, transformFilter)) {
+      if (!shouldCompileModule(filename)) {
         return null
       }
 
@@ -1147,6 +1190,46 @@ function shouldTransform(id: string, filter: ReturnType<typeof createFilter>): b
   const normalizedId = withoutQuery.replace(/\\/g, '/')
 
   return filter(normalizedId)
+}
+
+function findOwningPackageBoundary(
+  filename: string,
+  cache: Map<string, PackageBoundary | null>,
+): PackageBoundary | null {
+  let directory = path.dirname(stripQuery(filename))
+  const visited: string[] = []
+
+  while (true) {
+    const cached = cache.get(directory)
+    if (cached !== undefined || cache.has(directory)) {
+      for (const item of visited) cache.set(item, cached ?? null)
+      return cached ?? null
+    }
+
+    visited.push(directory)
+    const packageJsonPath = path.join(directory, 'package.json')
+    if (existsSync(packageJsonPath)) {
+      try {
+        const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as {
+          name?: unknown
+        }
+        if (typeof packageJson.name === 'string') {
+          const boundary = { root: directory, name: packageJson.name }
+          for (const item of visited) cache.set(item, boundary)
+          return boundary
+        }
+      } catch {
+        // Invalid/unreadable package manifests are not safe exclusion signals.
+      }
+    }
+
+    const parent = path.dirname(directory)
+    if (parent === directory) {
+      for (const item of visited) cache.set(item, null)
+      return null
+    }
+    directory = parent
+  }
 }
 
 function isTypeScriptDeclarationFile(id: string): boolean {
