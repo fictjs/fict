@@ -309,6 +309,7 @@ export function NavLink(props: NavLinkProps): FictNode {
   const router = useRouter()
   const to = untrack(() => props.to)
   const end = untrack(() => props.end)
+  const caseSensitive = untrack(() => props.caseSensitive)
   const replace = untrack(() => props.replace)
   const state = untrack(() => props.state)
   const scroll = untrack(() => props.scroll)
@@ -325,7 +326,7 @@ export function NavLink(props: NavLinkProps): FictNode {
   const pendingStyleProp = untrack(() => props.pendingStyle)
   const ariaCurrentProp = untrack(() => props['aria-current'])
   const externalHref = getExternalHref(to)
-  const internalIsActive = useIsActive(() => to, { end })
+  const internalIsActive = useIsActive(() => to, { end, caseSensitive })
   const isActive = externalHref ? () => false : internalIsActive
   const href = useHref(() => to)
   const getHrefValue = () =>
@@ -343,11 +344,15 @@ export function NavLink(props: NavLinkProps): FictNode {
     const baseToStrip = base === '/' ? '' : base
 
     // Strip base from pending location to compare
-    const pendingPathWithoutBase = stripBasePath(pending.pathname, baseToStrip)
+    let pendingPathWithoutBase = stripBasePath(pending.pathname, baseToStrip)
 
     // Parse the resolved href to get pathname
     const parsed = parseURL(resolvedHref)
-    const targetPathWithoutBase = stripBasePath(parsed.pathname, baseToStrip)
+    let targetPathWithoutBase = stripBasePath(parsed.pathname, baseToStrip)
+    if (!caseSensitive) {
+      pendingPathWithoutBase = pendingPathWithoutBase.toLowerCase()
+      targetPathWithoutBase = targetPathWithoutBase.toLowerCase()
+    }
 
     // Check if the pending navigation is to this link's destination
     if (end) {

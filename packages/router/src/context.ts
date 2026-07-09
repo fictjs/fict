@@ -481,7 +481,7 @@ export function useHref(to: To | (() => To)): () => string {
  */
 export function useIsActive(
   to: To | (() => To),
-  options?: { end?: boolean | undefined },
+  options?: { end?: boolean | undefined; caseSensitive?: boolean | undefined },
 ): () => boolean {
   const router = useRouter()
 
@@ -498,15 +498,19 @@ export function useIsActive(
     if (base && currentPath !== base && !currentPath.startsWith(base + '/')) {
       return false
     }
-    const currentPathWithoutBase = stripBasePath(currentPath, base)
+    let currentPathWithoutBase = stripBasePath(currentPath, base)
+    let targetPath = resolvedTargetPath
+    if (!options?.caseSensitive) {
+      currentPathWithoutBase = currentPathWithoutBase.toLowerCase()
+      targetPath = targetPath.toLowerCase()
+    }
 
     if (options?.end) {
-      return currentPathWithoutBase === resolvedTargetPath
+      return currentPathWithoutBase === targetPath
     }
 
     return (
-      currentPathWithoutBase === resolvedTargetPath ||
-      currentPathWithoutBase.startsWith(resolvedTargetPath + '/')
+      currentPathWithoutBase === targetPath || currentPathWithoutBase.startsWith(targetPath + '/')
     )
   }
 }

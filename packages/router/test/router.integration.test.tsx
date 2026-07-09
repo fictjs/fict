@@ -396,6 +396,29 @@ describe('Router integration (MemoryRouter)', () => {
     expect(screen.getByTestId('path').textContent).toBe('/users/list')
   })
 
+  it('honors NavLink case-sensitive matching', () => {
+    render(() => (
+      <MemoryRouter initialEntries={['/About']}>
+        <Route
+          path="/About"
+          element={
+            <div>
+              <NavLink to="/about" activeClassName="active" data-testid="insensitive">
+                insensitive
+              </NavLink>
+              <NavLink to="/about" caseSensitive activeClassName="active" data-testid="sensitive">
+                sensitive
+              </NavLink>
+            </div>
+          }
+        />
+      </MemoryRouter>
+    ))
+
+    expect(screen.getByTestId('insensitive').className).toBe('active')
+    expect(screen.getByTestId('sensitive').className).toBe('')
+  })
+
   it('Link resolves relative paths from current route', async () => {
     render(() => (
       <MemoryRouter initialEntries={['/users/123']}>
