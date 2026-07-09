@@ -53,6 +53,15 @@ const mergeStyles = (
   return Object.keys(style).length > 0 ? style : undefined
 }
 
+const ABSOLUTE_URL_PATTERN = /^(?:[a-z][a-z\d+.-]*:|\/\/)/i
+
+function getExternalHref(to: To): string | null {
+  const pathname = typeof to === 'string' ? to : to.pathname || ''
+  if (!ABSOLUTE_URL_PATTERN.test(pathname)) return null
+  if (typeof to === 'string') return to
+  return `${pathname}${to.search || ''}${to.hash || ''}`
+}
+
 const createSpreadRef = <T extends Element>(props: Record<string, unknown>) => {
   let current: T | null = null
   return (el: T | null) => {
@@ -113,9 +122,10 @@ export function Link(props: LinkProps): FictNode {
   const prefetchMode = untrack(() => props.prefetch)
   const isDisabled = untrack(() => props.disabled)
   const onClick = untrack(() => props.onClick)
+  const externalHref = getExternalHref(to)
   const href = useHref(() => to)
   const getHrefValue = () =>
-    readAccessor(readAccessor(href as MaybeAccessor<MaybeAccessor<string>>))
+    externalHref ?? readAccessor(readAccessor(href as MaybeAccessor<MaybeAccessor<string>>))
   let preloadTriggered = false
 
   const handleClick = (event: MouseEvent) => {
@@ -139,6 +149,9 @@ export function Link(props: LinkProps): FictNode {
     // Don't handle if disabled
     if (isDisabled) return
 
+    // Let the browser handle absolute and protocol-relative URLs.
+    if (externalHref) return
+
     // Don't handle external links
     const target = (event.currentTarget as HTMLAnchorElement).target
     if (target && target !== '_self') return
@@ -159,7 +172,7 @@ export function Link(props: LinkProps): FictNode {
 
   // Preload handler for hover/focus
   const triggerPreload = () => {
-    if (preloadTriggered || isDisabled || prefetchMode === 'none') return
+    if (preloadTriggered || isDisabled || externalHref || prefetchMode === 'none') return
     preloadTriggered = true
 
     // Emit a preload event that can be handled by route preloaders
@@ -311,10 +324,12 @@ export function NavLink(props: NavLinkProps): FictNode {
   const activeStyleProp = untrack(() => props.activeStyle)
   const pendingStyleProp = untrack(() => props.pendingStyle)
   const ariaCurrentProp = untrack(() => props['aria-current'])
-  const isActive = useIsActive(() => to, { end })
+  const externalHref = getExternalHref(to)
+  const internalIsActive = useIsActive(() => to, { end })
+  const isActive = externalHref ? () => false : internalIsActive
   const href = useHref(() => to)
   const getHrefValue = () =>
-    readAccessor(readAccessor(href as MaybeAccessor<MaybeAccessor<string>>))
+    externalHref ?? readAccessor(readAccessor(href as MaybeAccessor<MaybeAccessor<string>>))
   const pendingLocation = usePendingLocation()
 
   // Compute isPending by comparing pending location with this link's target
@@ -396,6 +411,8 @@ export function NavLink(props: NavLinkProps): FictNode {
 
     // Don't handle if disabled
     if (isDisabled) return
+
+    if (externalHref) return
 
     // Don't handle external links
     const target = (event.currentTarget as HTMLAnchorElement).target

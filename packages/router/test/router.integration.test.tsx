@@ -422,4 +422,35 @@ describe('Router integration (MemoryRouter)', () => {
 
     expect(screen.getByTestId('path').textContent).toBe('/users/123/settings')
   })
+
+  it('leaves absolute external links to the browser', () => {
+    render(() => (
+      <MemoryRouter initialEntries={['/from']}>
+        <Route
+          path="/from"
+          element={
+            <div>
+              <LocationText />
+              <Link to="https://example.com/docs" data-testid="external">
+                docs
+              </Link>
+            </div>
+          }
+        />
+      </MemoryRouter>
+    ))
+
+    const anchor = screen.getByTestId('external') as HTMLAnchorElement
+    let routerPreventedDefault = true
+    anchor.addEventListener('click', event => {
+      routerPreventedDefault = event.defaultPrevented
+      event.preventDefault()
+    })
+
+    anchor.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }))
+
+    expect(anchor.getAttribute('href')).toBe('https://example.com/docs')
+    expect(routerPreventedDefault).toBe(false)
+    expect(screen.getByTestId('path').textContent).toBe('/from')
+  })
 })
