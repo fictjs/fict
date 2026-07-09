@@ -1013,7 +1013,7 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
     }
     const handler = (mod as Record<string, unknown>)[exportName]
     if (typeof handler === 'function') {
-      const originalCurrentTarget = event.currentTarget
+      const currentTargetDescriptor = Object.getOwnPropertyDescriptor(event, 'currentTarget')
       let handlerFailed = false
       Object.defineProperty(event, 'currentTarget', {
         configurable: true,
@@ -1042,12 +1042,11 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
         })
         handlerFailed = true
       } finally {
-        Object.defineProperty(event, 'currentTarget', {
-          configurable: true,
-          get() {
-            return originalCurrentTarget
-          },
-        })
+        if (currentTargetDescriptor) {
+          Object.defineProperty(event, 'currentTarget', currentTargetDescriptor)
+        } else {
+          Reflect.deleteProperty(event, 'currentTarget')
+        }
       }
       if (handlerFailed) {
         preemptiveDefault.restore()

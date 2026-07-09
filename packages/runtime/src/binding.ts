@@ -1550,6 +1550,7 @@ function globalEventHandler(e: Event): void {
   const dataKey = `${key}Data` as `$$${string}Data`
   const oriTarget = e.target
   const oriCurrentTarget = e.currentTarget
+  const currentTargetDescriptor = Object.getOwnPropertyDescriptor(e, 'currentTarget')
   let lastHandled: Element | null = null
 
   // Retarget helper for shadow DOM and portals
@@ -1632,34 +1633,42 @@ function globalEventHandler(e: Event): void {
     },
   })
 
-  // Use composedPath for shadow DOM support
-  if (e.composedPath) {
-    const path = e.composedPath()
-    retarget(path[0] as EventTarget)
-    for (let i = 0; i < path.length - 2; i++) {
-      const nextNode = asElement(path[i] as EventTarget)
-      if (!nextNode || nextNode === lastHandled) continue
-      node = nextNode
-      if (!handleNode()) break
-      lastHandled = node
-      // Handle portal event bubbling
-      if (node._$host) {
-        node = node._$host
-        walkUpTree()
-        break
+  try {
+    // Use composedPath for shadow DOM support
+    if (e.composedPath) {
+      const path = e.composedPath()
+      retarget(path[0] as EventTarget)
+      for (let i = 0; i < path.length - 2; i++) {
+        const nextNode = asElement(path[i] as EventTarget)
+        if (!nextNode || nextNode === lastHandled) continue
+        node = nextNode
+        if (!handleNode()) break
+        lastHandled = node
+        // Handle portal event bubbling
+        if (node._$host) {
+          node = node._$host
+          walkUpTree()
+          break
+        }
+        // Don't bubble above root of event delegation
+        if (node.parentNode === oriCurrentTarget) {
+          break
+        }
       }
-      // Don't bubble above root of event delegation
-      if (node.parentNode === oriCurrentTarget) {
-        break
-      }
+    } else {
+      // Fallback for browsers without composedPath
+      walkUpTree()
     }
-  } else {
-    // Fallback for browsers without composedPath
-    walkUpTree()
+  } finally {
+    // Reset target and remove the temporary currentTarget override. Leaving an
+    // own getter behind makes currentTarget remain non-null after dispatch.
+    retarget(oriTarget as EventTarget)
+    if (currentTargetDescriptor) {
+      Object.defineProperty(e, 'currentTarget', currentTargetDescriptor)
+    } else {
+      Reflect.deleteProperty(e, 'currentTarget')
+    }
   }
-
-  // Reset target
-  retarget(oriTarget as EventTarget)
 }
 
 /**

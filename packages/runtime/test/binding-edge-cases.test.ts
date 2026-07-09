@@ -1949,6 +1949,23 @@ describe('Binding Edge Cases', () => {
       expect(handler).toHaveBeenCalled()
     })
 
+    it('restores currentTarget after delegated dispatch', () => {
+      const el = document.createElement('button')
+      const event = new Event('click', { bubbles: true })
+      let observedCurrentTarget: EventTarget | null = null
+      container.appendChild(el)
+      delegateEvents(['click'])
+      ;(el as any).$$click = (received: Event) => {
+        observedCurrentTarget = received.currentTarget
+      }
+
+      el.dispatchEvent(event)
+
+      expect(observedCurrentTarget).toBe(el)
+      expect(event.currentTarget).toBeNull()
+      expect(Object.prototype.hasOwnProperty.call(event, 'currentTarget')).toBe(false)
+    })
+
     it('clears delegated events', () => {
       const el = document.createElement('button')
       container.appendChild(el)

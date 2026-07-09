@@ -1172,12 +1172,15 @@ describe('resumable loader snapshot validation', () => {
 
     installResumableLoader({ document: doc, events: ['click'], prefetch: false })
 
-    button.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    const event = new Event('click', { bubbles: true, cancelable: true })
+    button.dispatchEvent(event)
     await waitForPendingHandlers()
 
     expect(
       (globalThis as { __fictCurrentTargetText?: string | null }).__fictCurrentTargetText,
     ).toBe('Run')
+    expect(event.currentTarget).toBeNull()
+    expect(Object.prototype.hasOwnProperty.call(event, 'currentTarget')).toBe(false)
 
     delete (globalThis as { __fictCurrentTargetText?: string | null }).__fictCurrentTargetText
   })
