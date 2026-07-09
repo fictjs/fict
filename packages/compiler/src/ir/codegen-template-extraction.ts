@@ -722,7 +722,7 @@ export function extractHIRStaticHtml(
       bindings.push({
         type: 'event',
         path: [...parentPath],
-        name: eventName.toLowerCase(),
+        name: namespacedEvent ? eventName : eventName.toLowerCase(),
         expr: attr.value ?? undefined,
         eventOptions: { capture, passive, once },
         resumable: shouldBeResumable,

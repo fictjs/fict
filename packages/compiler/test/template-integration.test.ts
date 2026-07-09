@@ -8277,6 +8277,40 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('preserves case-sensitive custom event names in fine-grained mode', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const calls: string[] = []
+
+      export function App() {
+        return <div data-id="target" on:myEvent={() => calls.push('exact')} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      calls: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const target = container.querySelector('[data-id="target"]') as HTMLDivElement
+
+    target.dispatchEvent(new CustomEvent('myevent'))
+    target.dispatchEvent(new CustomEvent('myEvent'))
+    await flushUpdates()
+
+    expect(mod.calls).toEqual(['exact'])
+
+    teardown()
+    container.remove()
+  })
+
   it('wires namespaced on: event handlers in VNode fallback mode', async () => {
     const source = `
       import { render } from 'fict'
