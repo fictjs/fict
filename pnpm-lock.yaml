@@ -328,13 +328,13 @@ importers:
       '@fictjs/compiler':
         specifier: workspace:*
         version: link:../compiler
+      '@types/babel__core':
+        specifier: ^7.20.5
+        version: 7.20.5
     devDependencies:
       '@babel/core':
         specifier: ^7.29.0
         version: 7.29.0
-      '@types/babel__core':
-        specifier: ^7.20.5
-        version: 7.20.5
       tsdown:
         specifier: ^0.22.3
         version: 0.22.3(typescript@5.9.3)
@@ -353,6 +353,9 @@ importers:
       '@babel/traverse':
         specifier: ^7.29.0
         version: 7.29.0
+      '@types/babel__core':
+        specifier: ^7.20.5
+        version: 7.20.5
     devDependencies:
       '@babel/core':
         specifier: ^7.29.0
@@ -378,9 +381,6 @@ importers:
       '@jridgewell/trace-mapping':
         specifier: ^0.3.31
         version: 0.3.31
-      '@types/babel__core':
-        specifier: ^7.20.5
-        version: 7.20.5
       '@types/babel__helper-plugin-utils':
         specifier: ^7.10.3
         version: 7.10.3

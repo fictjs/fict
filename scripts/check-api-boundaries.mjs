@@ -125,6 +125,18 @@ for (const packagePath of [
   }
 }
 
+for (const packagePath of [
+  'packages/compiler/package.json',
+  'packages/babel-preset/package.json',
+]) {
+  const packageJson = readJson(packagePath)
+  if (!packageJson.dependencies?.['@types/babel__core']) {
+    fail(
+      `${packageJson.name ?? packagePath} must publish @types/babel__core because its public declarations reference @babel/core`,
+    )
+  }
+}
+
 const fictMain = readText('packages/fict/src/index.ts')
 const advancedExportRe = /export\s*\{([^}]*)\}\s*from\s*['"]@fictjs\/runtime\/advanced['"]/g
 const allowedMainAdvancedExports = ['createSelector', 'createScope', 'runInScope']

@@ -49,7 +49,8 @@
     "@babel/helper-plugin-utils": "^7.28.6",
     "@babel/plugin-transform-destructuring": "^7.27.1",
     "@babel/plugin-transform-typescript": "^7.28.5",
-    "@babel/traverse": "^7.29.0"
+    "@babel/traverse": "^7.29.0",
+    "@types/babel__core": "^7.20.5"
   },
   "devDependencies": {
     "@babel/core": "^7.29.0",
@@ -60,7 +61,6 @@
     "@babel/types": "^7.29.0",
     "@fictjs/runtime": "workspace:*",
     "@jridgewell/trace-mapping": "^0.3.31",
-    "@types/babel__core": "^7.20.5",
     "@types/babel__helper-plugin-utils": "^7.10.3",
     "@types/babel__traverse": "^7.28.0",
     "tsdown": "^0.22.3"

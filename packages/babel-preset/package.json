@@ -38,11 +38,11 @@
   "dependencies": {
     "@babel/plugin-syntax-jsx": "^7.28.6",
     "@babel/plugin-transform-typescript": "^7.28.5",
-    "@fictjs/compiler": "workspace:*"
+    "@fictjs/compiler": "workspace:*",
+    "@types/babel__core": "^7.20.5"
   },
   "devDependencies": {
     "@babel/core": "^7.29.0",
-    "@types/babel__core": "^7.20.5",
     "tsdown": "^0.22.3"
   },
   "keywords": [
