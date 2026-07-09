@@ -70,10 +70,13 @@ describe('SVG/MathML Namespace Support ()', () => {
         }
       `
       const output = transform(source)
+      const wrapperVNode = output.slice(output.indexOf('type: Wrapper'))
 
       expect(output).toMatch(/template\([^)]*circle[^)]*,\s*void 0,\s*true\)/)
-      expect(output).toMatch(/template\([^)]*span data-id=\\"html\\"[^)]*\)/)
-      expect(output).not.toMatch(/template\([^)]*span data-id=\\"html\\"[^)]*,\s*void 0,\s*true\)/)
+      expect(wrapperVNode).toContain('type: "span"')
+      expect(wrapperVNode).toContain('"data-id": "html"')
+      expect(wrapperVNode).toMatch(/\}\), createElement\);/)
+      expect(wrapperVNode).not.toContain('createElementInNamespace')
     })
 
     it('restores SVG namespace before later HTML dynamic siblings', () => {
@@ -110,9 +113,12 @@ describe('SVG/MathML Namespace Support ()', () => {
         }
       `
       const output = transform(source)
+      const wrapperVNode = output.slice(output.indexOf('type: Wrapper'))
 
       expect(output).toMatch(/template\([^)]*circle[^)]*,\s*void 0,\s*true\)/)
-      expect(output).toMatch(/template\([^)]*g data-id=\\"still-svg\\"[^)]*,\s*void 0,\s*true\)/)
+      expect(wrapperVNode).toContain('type: "g"')
+      expect(wrapperVNode).toContain('"data-id": "still-svg"')
+      expect(wrapperVNode).toContain('createElementInNamespace(__node, "svg")')
     })
 
     it('handles nested SVG elements correctly', () => {
@@ -360,12 +366,13 @@ describe('SVG/MathML Namespace Support ()', () => {
         }
       `
       const output = transform(source)
+      const wrapperVNode = output.slice(output.indexOf('type: Wrapper'))
 
       expect(output).toMatch(/template\([^)]*mi[^)]*,\s*void 0,\s*void 0,\s*true\)/)
-      expect(output).toMatch(/template\([^)]*span data-id=\\"html-math\\"[^)]*\)/)
-      expect(output).not.toMatch(
-        /template\([^)]*span data-id=\\"html-math\\"[^)]*,\s*void 0,\s*void 0,\s*true\)/,
-      )
+      expect(wrapperVNode).toContain('type: "span"')
+      expect(wrapperVNode).toContain('"data-id": "html-math"')
+      expect(wrapperVNode).toMatch(/\}\), createElement\);/)
+      expect(wrapperVNode).not.toContain('createElementInNamespace')
     })
 
     it('passes MathML namespace to dynamic string intrinsic slots', () => {

@@ -2000,6 +2000,192 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('defers JSX prop and child component materialization to the receiving component', async () => {
+    const source = `
+      import { $state, createContext, render, useContext } from 'fict'
+
+      export const seen: string[] = []
+      const OwnershipContext = createContext('early')
+
+      function Consumer({ id }: { id: string }) {
+        const owner = useContext(OwnershipContext)
+        seen.push(id + ':' + owner)
+        return <span data-id={id}>{owner}</span>
+      }
+
+      function Owner({ content, children, config, items }: any) {
+        return (
+          <OwnershipContext.Provider value="owned">
+            <section>{content}{children}{config.view}{items[1]}</section>
+          </OwnershipContext.Provider>
+        )
+      }
+
+      function App() {
+        let count = $state(0)
+        return (
+          <Owner
+            content={<div><Consumer id="prop" /></div>}
+            config={{ count, view: <div><Consumer id="object" /></div> }}
+            items={[count, <div><Consumer id="array" /></div>]}
+          >
+            <>
+              <div><Consumer id="child" /></div>
+            </>
+          </Owner>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      seen: string[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+    expect(mod.seen).toEqual(['prop:owned', 'child:owned', 'object:owned', 'array:owned'])
+    expect(container.querySelector('[data-id="prop"]')?.textContent).toBe('owned')
+    expect(container.querySelector('[data-id="child"]')?.textContent).toBe('owned')
+    expect(container.querySelector('[data-id="object"]')?.textContent).toBe('owned')
+    expect(container.querySelector('[data-id="array"]')?.textContent).toBe('owned')
+
+    teardown()
+    container.remove()
+  })
+
+  it('keeps deferred intrinsic VNode props reactive after materialization', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function Owner({ content }: { content: unknown }) {
+        return <section>{content}</section>
+      }
+
+      function App() {
+        let color = $state('red')
+        let attrs = $state<Record<string, string>>({ title: 'one', 'data-old': 'old' })
+        return (
+          <main>
+            <button
+              data-action="update"
+              onClick={() => {
+                color = 'blue'
+                attrs = { title: 'two', 'data-new': 'new' }
+              }}
+            >
+              update
+            </button>
+            <Owner
+              content={
+                <div
+                  data-target="content"
+                  style={{ color }}
+                  classList={{ active: color === 'red' }}
+                  {...attrs}
+                >
+                  {color}
+                </div>
+              }
+            />
+          </main>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+    let content = container.querySelector<HTMLElement>('[data-target="content"]')
+    expect(content?.textContent).toBe('red')
+    expect(content?.style.color).toBe('red')
+    expect(content?.classList.contains('active')).toBe(true)
+    expect(content?.title).toBe('one')
+    expect(content?.getAttribute('data-old')).toBe('old')
+
+    container
+      .querySelector<HTMLElement>('[data-action="update"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushUpdates()
+
+    content = container.querySelector<HTMLElement>('[data-target="content"]')
+    expect(content?.textContent).toBe('blue')
+    expect(content?.style.color).toBe('blue')
+    expect(content?.classList.contains('active')).toBe(false)
+    expect(content?.title).toBe('two')
+    expect(content?.hasAttribute('data-old')).toBe(false)
+    expect(content?.getAttribute('data-new')).toBe('new')
+
+    teardown()
+    container.remove()
+  })
+
+  it('keeps unused JSX props inert and reusable JSX props as fresh instances', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export let calls = 0
+
+      function Consumer() {
+        calls++
+        return <span data-ignored-consumer="true">ignored</span>
+      }
+
+      function Ignore({ content: _content }: { content: unknown }) {
+        return <aside data-ignored="true">ignored</aside>
+      }
+
+      function Repeat({ content }: { content: unknown }) {
+        return <section>{content}{content}</section>
+      }
+
+      function App() {
+        return (
+          <main>
+            <Ignore content={<div><Consumer /></div>} />
+            <Repeat content={<span data-reused="true">same</span>} />
+          </main>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      calls: number
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+    expect(mod.calls).toBe(0)
+    expect(container.querySelector('[data-ignored="true"]')).toBeTruthy()
+    expect(container.querySelector('[data-ignored-consumer="true"]')).toBeNull()
+    expect(container.querySelectorAll('[data-reused="true"]')).toHaveLength(2)
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps reactive component children live through props.children', async () => {
     const source = `
       import { $state, render } from 'fict'

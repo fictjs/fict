@@ -561,8 +561,9 @@ describe('Fict Compiler - Basic Transforms', () => {
           return <Layout>{() => <span>Slot</span>}</Layout>
         }
       `
-      const output = transform(input)
+      const output = transformWithOptions(input, { fineGrainedDom: true })
       expect(output).toContain('children: nonReactive(() =>')
+      expect(output).toContain('template("<span>Slot</span>")')
     })
 
     it('marks vnode-mode reactive intrinsic values with compiler getter markers', () => {

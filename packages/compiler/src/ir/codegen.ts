@@ -1392,6 +1392,8 @@ export interface CodegenContext {
   inConditional?: number | undefined
   /** Whether we are lowering JSX props (enables prop getter wrapping) */
   inPropsContext?: boolean | undefined
+  /** Whether nested JSX must remain a VNode until a receiving component materializes it. */
+  deferJSXMaterialization?: boolean | undefined
   /** Name of the props parameter for component lowering */
   propsParamName?: string | undefined
   /** Pending prop accessor declarations synthesized for props reads */
@@ -1547,6 +1549,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     getterCacheInvalidated: new Set(),
     getterCacheEnabled: false,
     inPropsContext: false,
+    deferJSXMaterialization: false,
     propsParamName: undefined,
     propAccessorDecls: new Map(),
     resumablePropAccessors: new Map(),
@@ -3202,10 +3205,15 @@ export function lowerExpression(
     )
   }
   ctx.expressionDepth = depth
+  const previousDeferredJSX = ctx.deferJSXMaterialization
+  if (expr.kind === 'ArrowFunction' || expr.kind === 'FunctionExpression') {
+    ctx.deferJSXMaterialization = false
+  }
 
   try {
     return setNodeLoc(lowerExpressionImpl(expr, ctx, valueUsed), expr.loc)
   } finally {
+    ctx.deferJSXMaterialization = previousDeferredJSX
     ctx.expressionDepth = depth - 1
   }
 }
@@ -4912,7 +4920,9 @@ function lowerExpressionImpl(
       )
 
     case 'JSXElement':
-      return lowerJSXElement(expr, ctx)
+      return ctx.deferJSXMaterialization
+        ? lowerJSXElementAsVNode(expr, ctx)
+        : lowerJSXElement(expr, ctx)
 
     case 'ArrowFunction': {
       const componentLowered = lowerComponentExpressionFunctionValue(expr, ctx)
@@ -5349,7 +5359,7 @@ function lowerJSXChildNonFineGrained(
     return t.stringLiteral(child.value)
   }
   if (child.kind === 'element') {
-    return lowerJSXElement(child.value, ctx)
+    return lowerJSXElementAsVNode(child.value, ctx)
   }
   const expr = child.value
   const lowered = lowerDomExpression(expr, ctx)
@@ -5507,6 +5517,52 @@ function lowerIntrinsicElementAsVNode(
   return t.objectExpression(vnodeProps)
 }
 
+function withDeferredJSXMaterialization<T>(ctx: CodegenContext, fn: () => T): T {
+  const previous = ctx.deferJSXMaterialization
+  ctx.deferJSXMaterialization = true
+  try {
+    return fn()
+  } finally {
+    ctx.deferJSXMaterialization = previous
+  }
+}
+
+function lowerJSXElementAsVNode(
+  jsx: JSXElementExpression,
+  ctx: CodegenContext,
+): BabelCore.types.Expression {
+  return withDeferredJSXMaterialization(ctx, () => {
+    const previousPropsContext = ctx.inPropsContext
+    ctx.inPropsContext = false
+    try {
+      if (jsx.isFragmentSyntax === true) {
+        const { t } = ctx
+        ctx.helpersUsed.add('fragment')
+        const children = jsx.children.map(child => lowerJSXChildNonFineGrained(child, ctx))
+        const childrenValue =
+          children.length === 1
+            ? children[0]!
+            : children.length > 1
+              ? t.arrayExpression(children)
+              : null
+        return t.objectExpression([
+          t.objectProperty(t.identifier('type'), runtimeIdentifier(ctx, 'fragment')),
+          t.objectProperty(
+            t.identifier('props'),
+            childrenValue
+              ? t.objectExpression([t.objectProperty(t.identifier('children'), childrenValue)])
+              : t.nullLiteral(),
+          ),
+        ])
+      }
+
+      return jsx.isComponent ? lowerJSXElement(jsx, ctx) : lowerIntrinsicElementAsVNode(jsx, ctx)
+    } finally {
+      ctx.inPropsContext = previousPropsContext
+    }
+  })
+}
+
 /**
  * Lower a JSX Element expression to fine-grained DOM operations
  */
@@ -5550,10 +5606,12 @@ function lowerJSXElement(
     // Component - create VNode {type, props} for runtime createElement
     assertSupportedJSXComponentTag(jsx, ctx)
     ctx.helpersUsed.add('createElement')
-    const children = jsx.children.map(c => ({
-      value: lowerJSXChild(c, ctx),
-      ...(c.kind === 'expression' ? { source: c.value } : null),
-    }))
+    const children = withDeferredJSXMaterialization(ctx, () =>
+      jsx.children.map(c => ({
+        value: lowerJSXChild(c, ctx),
+        ...(c.kind === 'expression' ? { source: c.value } : null),
+      })),
+    )
     let keyExpr: BabelCore.types.Expression | null = null
     const propsAttributes = jsx.attributes.filter(attr => {
       if (!attr.isSpread && attr.name === 'key') {
@@ -5562,15 +5620,17 @@ function lowerJSXElement(
       }
       return true
     })
-    const propsExpr = buildPropsExpression(propsAttributes, children, ctx, {
-      lowerDomExpression,
-      lowerTrackedExpression,
-      expressionUsesTracked,
-      deSSAVarName,
-      reactiveFunctionProps: isRuntimeResettableBoundaryComponent(jsx.tagName, ctx)
-        ? RESETTABLE_BOUNDARY_REACTIVE_FUNCTION_PROPS
-        : undefined,
-    })
+    const propsExpr = withDeferredJSXMaterialization(ctx, () =>
+      buildPropsExpression(propsAttributes, children, ctx, {
+        lowerDomExpression,
+        lowerTrackedExpression,
+        expressionUsesTracked,
+        deSSAVarName,
+        reactiveFunctionProps: isRuntimeResettableBoundaryComponent(jsx.tagName, ctx)
+          ? RESETTABLE_BOUNDARY_REACTIVE_FUNCTION_PROPS
+          : undefined,
+      }),
+    )
 
     const componentRef =
       typeof jsx.tagName === 'string'
@@ -7526,7 +7586,9 @@ function lowerJSXChild(child: JSXChild, ctx: CodegenContext): BabelCore.types.Ex
   if (child.kind === 'text') {
     return t.stringLiteral(child.value)
   } else if (child.kind === 'element') {
-    return lowerJSXElement(child.value, ctx)
+    return ctx.deferJSXMaterialization
+      ? lowerJSXElementAsVNode(child.value, ctx)
+      : lowerJSXElement(child.value, ctx)
   } else {
     return applyRegionMetadataToExpression(lowerExpression(child.value, ctx), ctx)
   }
@@ -9597,6 +9659,7 @@ function lowerFunctionWithRegions(
   const prevHookFunctionAliases = ctx.hookFunctionAliases
   const prevHookFunctionMemberAliases = ctx.hookFunctionMemberAliases
   const prevInModule = ctx.inModule
+  const prevDeferredJSX = ctx.deferJSXMaterialization
   const prevContextLocalName = ctx.contextLocalName
   const prevLocalValueVars = ctx.localValueVars
   const prevMutablePropVars = ctx.mutablePropVars
@@ -9613,6 +9676,7 @@ function lowerFunctionWithRegions(
   ctx.needsCtx = false
   ctx.contextLocalName = undefined
   ctx.inModule = false
+  ctx.deferJSXMaterialization = false
   const prevShadowed = ctx.shadowedNames
   const functionShadowed = new Set(prevShadowed ?? [])
   shadowedParams.forEach(n => functionShadowed.add(n))
@@ -9723,6 +9787,7 @@ function lowerFunctionWithRegions(
     ctx.hookFunctionAliases = prevHookFunctionAliases
     ctx.hookFunctionMemberAliases = prevHookFunctionMemberAliases
     ctx.inModule = prevInModule
+    ctx.deferJSXMaterialization = prevDeferredJSX
     ctx.contextLocalName = prevContextLocalName
     ctx.currentFnIsHook = prevHookFlag
     ctx.isComponentFn = prevIsComponent

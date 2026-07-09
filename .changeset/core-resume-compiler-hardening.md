@@ -30,7 +30,9 @@ metadata before clean-build transforms, honor configured glob filters, and keep
 library metadata scoped to the correct facade. This also preserves custom-event
 casing and bindings through implicit table colgroups. JSX reset getters on the
 built-in ErrorBoundary and Suspense components are now marked reactive without
-changing ordinary callback-prop semantics.
+changing ordinary callback-prop semantics. JSX-valued component props and
+children now remain VNodes until the receiving component materializes them, so
+provider and router ownership is established before nested consumers run.
 
 Runtime and `fict` now harden per-document resumable-loader isolation, malformed
 and partial snapshots, serialized symbol references, lifecycle/error-boundary
