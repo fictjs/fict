@@ -21,6 +21,7 @@ import {
   __fictSerializeSSRStateForScopes,
   __fictSetSSRState,
   __fictUseLexicalScope,
+  createSignal,
   serializeValue,
 } from '../src/internal'
 
@@ -360,6 +361,18 @@ describe('SSR lifecycle state cleanup', () => {
     const state = __fictSerializeSSRState()
     expect(state.scopes[id]?.slots).toEqual([])
     expect(state.scopes[id]?.slots.some(([index]) => index === 1000)).toBe(false)
+  })
+
+  it('does not emit dangling refs after signal value serialization fails', () => {
+    __fictEnableSSR()
+    const shared = { handler: () => undefined }
+    const scopeContext: Parameters<typeof __fictRegisterScope>[0] = {
+      slots: [createSignal(shared)],
+      cursor: 0,
+    }
+    __fictRegisterScope(scopeContext, document.createElement('div'), 'Child', { shared })
+
+    expect(() => __fictSerializeSSRState()).toThrow('Cannot serialize function at $[0]."handler"')
   })
 
   it('preserves references shared between scope props and slots', () => {

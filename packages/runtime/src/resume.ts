@@ -526,12 +526,14 @@ function serializeSlots(ctx: HookContext, seen = new Map<object, string>()): Slo
 
     const value = values[i]
     if (isSignal(value)) {
+      let raw: unknown
       try {
-        const raw = (value as () => unknown)()
-        slots.push([i, 'sig', serializeValue(raw, seen, `$[${i}]`)])
+        raw = (value as () => unknown)()
       } catch {
         // ignore signal read errors during SSR
+        continue
       }
+      slots.push([i, 'sig', serializeValue(raw, seen, `$[${i}]`)])
       continue
     }
 
