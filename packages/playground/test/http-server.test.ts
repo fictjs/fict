@@ -302,7 +302,34 @@ describe('playground HTTP server', () => {
       templateId: 'counter',
     })
     const sessionId = create.session?.id as string | undefined
+    const previewUrl = create.session?.previewUrl as string | undefined
     expect(sessionId).toBeTruthy()
+    expect(previewUrl).toBeTruthy()
+
+    await postJson(`${activeServer.url}/api/sessions/${sessionId}/files`, {
+      path: 'src/useCounter.ts',
+      content: `import { $state } from 'fict'
+
+export function useCounter(initial: number) {
+  const count: number = $state(initial)
+  return count
+}
+`,
+    })
+    await postJson(`${activeServer.url}/api/sessions/${sessionId}/files`, {
+      path: 'src/App.tsx',
+      content: `import { useCounter } from './useCounter'
+
+export function App() {
+  const count = useCounter(2)
+  return <div>{count}</div>
+}
+`,
+    })
+
+    const transformedHook = await fetch(new URL('/src/useCounter.ts', previewUrl))
+    expect(transformedHook.status).toBe(200)
+    expect(await transformedHook.text()).not.toContain('$state(initial)')
 
     const verification = await postJson(`${activeServer.url}/api/sessions/${sessionId}/verify`, {})
 

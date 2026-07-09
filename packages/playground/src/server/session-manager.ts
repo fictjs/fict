@@ -47,6 +47,7 @@ const DEFAULT_IDLE_TIMEOUT_MS = 1000 * 60 * 30
 const DEFAULT_MAX_SESSIONS = 8
 const DEFAULT_MAX_CONCURRENT_VERIFICATIONS = 2
 const DEFAULT_VERIFY_TIMEOUT_MS = 30_000
+const SESSION_COMPILER_INCLUDE = '**/*.{js,jsx,ts,tsx,mjs,mts,cjs,cts}'
 const SYSTEM_ACCESS_CONTEXT: PlaygroundAuthContext = {
   tenantId: 'system',
   userId: 'system',
@@ -461,7 +462,7 @@ export class PlaygroundSessionManager {
       createServer: (options: unknown) => Promise<ViteDevServerLike>
     }
 
-    const plugins = await this.createVitePlugins(config)
+    const plugins = await this.createVitePlugins(rootDir, config)
 
     const server = await createViteServer({
       configFile: false,
@@ -519,7 +520,7 @@ export class PlaygroundSessionManager {
       build: (options: unknown) => Promise<unknown>
       createLogger: (level?: string, options?: { allowClearScreen?: boolean }) => ViteLoggerLike
     }
-    const plugins = await this.createVitePlugins(config)
+    const plugins = await this.createVitePlugins(rootDir, config)
 
     const baseLogger = createLogger('warn', { allowClearScreen: false })
     const logger: ViteLoggerLike = {
@@ -571,8 +572,12 @@ export class PlaygroundSessionManager {
     }
   }
 
-  private createFictPluginOptions(config: PlaygroundConfig): Record<string, unknown> {
+  private createFictPluginOptions(
+    rootDir: string,
+    config: PlaygroundConfig,
+  ): Record<string, unknown> {
     return {
+      include: createSessionCompilerInclude(rootDir),
       strictGuarantee: config.strictGuarantee,
       strictReactivity: config.strictReactivity,
       lazyConditional: config.lazyConditional,
@@ -581,11 +586,11 @@ export class PlaygroundSessionManager {
     }
   }
 
-  private async createVitePlugins(config: PlaygroundConfig): Promise<unknown[]> {
+  private async createVitePlugins(rootDir: string, config: PlaygroundConfig): Promise<unknown[]> {
     const { default: fict } = (await import('@fictjs/vite-plugin')) as {
       default: (options?: Record<string, unknown>) => unknown
     }
-    const plugins: unknown[] = [fict(this.createFictPluginOptions(config))]
+    const plugins: unknown[] = [fict(this.createFictPluginOptions(rootDir, config))]
 
     if (config.devtools) {
       const { default: fictDevTools } = (await import('@fictjs/devtools/vite')) as {
@@ -617,6 +622,11 @@ export class PlaygroundSessionManager {
       { find: /^@fictjs\/devtools\/vite$/, replacement: `${devtoolsSrc}/vite/index.ts` },
     ]
   }
+}
+
+export function createSessionCompilerInclude(rootDir: string): string[] {
+  const normalizedRoot = toPosixPath(path.resolve(rootDir)).replace(/\/+$/, '')
+  return [`${normalizedRoot}/${SESSION_COMPILER_INCLUDE}`]
 }
 
 interface AliasEntry {
