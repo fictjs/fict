@@ -189,8 +189,15 @@ export function query<T, Args extends unknown[]>(
       return () => resultSignal()
     }
 
-    // Fetch the data
-    const promise = Promise.resolve(fn(...args))
+    // Fetch the data. Query functions may throw before returning a promise;
+    // normalize that path so failures follow the same internal error state.
+    let fetchResult: T | Promise<T>
+    try {
+      fetchResult = fn(...args)
+    } catch (error) {
+      fetchResult = Promise.reject(error)
+    }
+    const promise = Promise.resolve(fetchResult)
       .then(result => {
         // Update cache
         const entry: QueryCacheEntry<T> = {

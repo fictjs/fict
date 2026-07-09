@@ -96,6 +96,22 @@ describe('query', () => {
     expect(accessor()).toBe(undefined)
   })
 
+  it('normalizes synchronous query failures into the internal error path', async () => {
+    const error = new Error('synchronous query failure')
+    const fetchValue = query(() => {
+      throw error
+    }, 'syncFailureQuery')
+    let accessor: (() => undefined) | undefined
+
+    expect(() => {
+      accessor = fetchValue()
+    }).not.toThrow()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(accessor?.()).toBeUndefined()
+  })
+
   it('should retry successfully after a rejected query', async () => {
     const fetchUser = query(
       vi.fn().mockRejectedValueOnce(new Error('query failed')).mockResolvedValueOnce('ok'),
