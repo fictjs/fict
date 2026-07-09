@@ -192,6 +192,167 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it('transforms a TypeScript hook by default before its TSX importer', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-default-ts-hook-'))
+    const srcDir = path.join(root, 'src')
+    const hookPath = path.join(srcDir, 'hook.ts')
+    const entry = path.join(srcDir, 'App.tsx')
+
+    try {
+      await mkdir(srcDir, { recursive: true })
+      await writeFile(
+        hookPath,
+        `
+          import { $state } from 'fict'
+
+          export function useCounter(initial: number) {
+            const count: number = $state(initial)
+            return count
+          }
+        `,
+      )
+      await writeFile(
+        entry,
+        `
+          import { useCounter } from './hook'
+
+          export function App() {
+            const count = useCounter(2)
+            const doubled = count * 2
+            return <div>{doubled}</div>
+          }
+        `,
+      )
+
+      const result = await build({
+        root,
+        logLevel: 'silent',
+        plugins: [fict({ cache: false, useTypeScriptProject: false, functionSplitting: false })],
+        build: {
+          write: false,
+          lib: { entry, formats: ['es'], fileName: () => 'app.js' },
+          rollupOptions: {
+            external: id => id === 'fict' || id.startsWith('fict/'),
+          },
+        },
+      })
+      const outputs = Array.isArray(result) ? result : [result]
+      const code = outputs
+        .flatMap(output => ('output' in output ? output.output : []))
+        .filter(output => output.type === 'chunk')
+        .map(output => output.code)
+        .join('\n')
+
+      expect(code).not.toContain('$state')
+      expect(code).toMatch(/=>\s*[\w$]+\(\) \* 2,\s*\{\s*name:\s*"doubled"/)
+      expect(code).not.toMatch(/=>\s*[\w$]+ \* 2,\s*\{\s*name:\s*"doubled"/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    { extension: '.js', typeAnnotation: '' },
+    { extension: '.mjs', typeAnnotation: '' },
+    { extension: '.cjs', typeAnnotation: '' },
+    { extension: '.mts', typeAnnotation: ': number' },
+    { extension: '.cts', typeAnnotation: ': number' },
+  ])('transforms macros in $extension application modules by default', async testCase => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-default-module-'))
+    const entry = path.join(root, `counter${testCase.extension}`)
+
+    try {
+      await writeFile(
+        entry,
+        `
+          import { $state } from 'fict'
+
+          export function useDoubled() {
+            const count${testCase.typeAnnotation} = $state(2)
+            return count * 2
+          }
+        `,
+      )
+
+      const result = await build({
+        root,
+        logLevel: 'silent',
+        plugins: [fict({ cache: false, useTypeScriptProject: false, functionSplitting: false })],
+        build: {
+          write: false,
+          lib: { entry, formats: ['es'], fileName: () => 'counter.js' },
+          rollupOptions: {
+            external: id => id === 'fict' || id.startsWith('fict/'),
+          },
+        },
+      })
+      const outputs = Array.isArray(result) ? result : [result]
+      const code = outputs
+        .flatMap(output => ('output' in output ? output.output : []))
+        .filter(output => output.type === 'chunk')
+        .map(output => output.code)
+        .join('\n')
+
+      expect(code).not.toContain('$state')
+      expect(code).not.toContain(': number')
+      expect(code).toMatch(/\}\)\(\) \* 2/)
+      expect(code).not.toMatch(/\}\) \* 2/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps bare package requests on the package metadata path when tsconfig maps them locally', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-bare-tsconfig-path-'))
+    const srcDir = path.join(root, 'src')
+    const entry = path.join(srcDir, 'App.tsx')
+    const source = `
+      import { $state } from 'fict'
+
+      export function App() {
+        const count = $state(1)
+        return <div>{count}</div>
+      }
+    `
+
+    try {
+      await mkdir(srcDir, { recursive: true })
+      await writeFile(
+        path.join(root, 'tsconfig.json'),
+        JSON.stringify({
+          compilerOptions: {
+            baseUrl: '.',
+            jsx: 'preserve',
+            module: 'ESNext',
+            moduleResolution: 'bundler',
+            paths: { fict: ['src/fict.ts'] },
+          },
+          include: ['src'],
+        }),
+      )
+      await writeFile(
+        path.join(srcDir, 'fict.ts'),
+        'export declare function $state<T>(value: T): T',
+      )
+      await writeFile(entry, source)
+
+      const plugin = getTestPlugin({ cache: false, functionSplitting: false })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+      const context = {
+        error(error: unknown): never {
+          throw error instanceof Error ? error : new Error(String(error))
+        },
+        warn: vi.fn(),
+        emitFile: vi.fn(),
+      }
+      const result = await plugin.transform?.call(context, source, entry)
+
+      expect(result).toMatchObject({ code: expect.not.stringContaining('$state') })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('deduplicates dependency metadata preparation across concurrent importer transforms', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-concurrent-metadata-'))
     const srcDir = path.join(root, 'src')

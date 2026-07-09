@@ -49,4 +49,19 @@ describe('vite plugin transform filter', () => {
       ),
     ).resolves.toBeNull()
   })
+
+  it.each(['types.d.ts?import', 'types.d.mts?raw', 'types.d.cts#raw'])(
+    'never transforms TypeScript declaration request %s',
+    async request => {
+      const { context, plugin } = createTransformPlugin({ include: ['**/*'] })
+
+      await expect(
+        plugin.transform.call(
+          context,
+          'export declare function useCounter(): number',
+          `/workspace/src/${request}`,
+        ),
+      ).resolves.toBeNull()
+    },
+  )
 })

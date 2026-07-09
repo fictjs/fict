@@ -41,7 +41,7 @@ interface BabelGeneratorOptionsWithInputSourceMap extends BabelGeneratorOptions 
 export interface FictPluginOptions extends FictCompilerOptions {
   /**
    * File patterns to include for transformation.
-   * @default ['**\/*.tsx', '**\/*.jsx']
+   * @default all supported JavaScript and TypeScript module extensions
    */
   include?: string[]
   /**
@@ -85,8 +85,7 @@ export interface FictPluginOptions extends FictCompilerOptions {
   debug?: boolean
   /**
    * Enable library publishing helpers.
-   * Library mode expands the default transform include list to non-JSX source files
-   * and emits package-consumable Fict metadata assets for public entry chunks.
+   * Library mode emits package-consumable Fict metadata assets for public entry chunks.
    */
   library?: boolean | FictLibraryOptions
 }
@@ -252,9 +251,10 @@ function getTransformCacheFingerprint(): string {
     ].join('|'),
   ))
 }
+const TYPESCRIPT_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts']
 const MODULE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts']
-const DEFAULT_APP_INCLUDE = ['**/*.tsx', '**/*.jsx']
-const DEFAULT_LIBRARY_INCLUDE = ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx']
+const DEFAULT_APP_INCLUDE = MODULE_EXTENSIONS.map(extension => `**/*${extension}`)
+const DEFAULT_LIBRARY_INCLUDE = DEFAULT_APP_INCLUDE
 const LIBRARY_METADATA_VERSION = 1 satisfies ModuleReactiveMetadata['version']
 
 // Virtual module prefix for extracted handlers
@@ -440,10 +440,10 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           } else if (config?.root) {
             resolvedSource = resolveExistingModuleFile(path.resolve(config.root, aliased))
           }
-        } else if (tsProject) {
-          const tsResolved = tsProject.resolveModuleName(source, importerFile)
-          if (tsResolved) resolvedSource = normalizeFileName(tsResolved, config?.root)
         }
+        // Do not classify an unresolved bare request as local solely because a monorepo
+        // tsconfig maps it to workspace source. Exact graph resolutions and explicit Vite
+        // aliases above still fail closed when their metadata is missing.
       }
     }
 
@@ -615,12 +615,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         continue
       }
 
-      const preparedCandidates: Array<{
+      const preparedCandidates: {
         filename: string
         prepared: PreparedCompilerTransform | undefined
         key: string
         fictOptions: FictCompilerOptions
-      }> = []
+      }[] = []
       // TypeScriptProject is a shared mutable language-service snapshot. Prepare
       // candidate keys deterministically so updateFile/getProgram never race.
       for (const filename of sortedComponent) {
@@ -1054,7 +1054,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         resetCache()
       }
 
-      // Force full reload for .tsx/.jsx files to ensure reactive graph is rebuilt
+      // Force full reload for transformed source files so the reactive graph is rebuilt.
       if (shouldTransform(file, transformFilter)) {
         server.ws.send({
           type: 'full-reload',
@@ -1144,13 +1144,17 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
 function shouldTransform(id: string, filter: ReturnType<typeof createFilter>): boolean {
   // Normalize path separators
   const withoutQuery = stripQuery(id)
-  if (isInternalModuleId(withoutQuery)) {
+  if (isInternalModuleId(withoutQuery) || isTypeScriptDeclarationFile(withoutQuery)) {
     return false
   }
 
   const normalizedId = withoutQuery.replace(/\\/g, '/')
 
   return filter(normalizedId)
+}
+
+function isTypeScriptDeclarationFile(id: string): boolean {
+  return /\.d\.(?:ts|mts|cts)(?:$|#)/i.test(id)
 }
 
 function isInternalModuleId(id: string): boolean {
@@ -1670,7 +1674,7 @@ async function compileFictCompilerStage(
   filename: string,
   fictOptions: FictCompilerOptions,
 ): Promise<{ code: string; map: TransformResult['map'] }> {
-  const isTypeScript = filename.endsWith('.tsx') || filename.endsWith('.ts')
+  const isTypeScript = TYPESCRIPT_EXTENSIONS.some(extension => filename.endsWith(extension))
   const result = await transformAsync(code, {
     filename,
     sourceMaps: fictOptions.sourcemap,

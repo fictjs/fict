@@ -44,8 +44,8 @@ export default defineConfig({
 
 Core defaults:
 
-- `include`: `['**/*.tsx', '**/*.jsx']`
-  - with `library: true`: `['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx']`
+- `include`: `['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.mjs', '**/*.cjs', '**/*.mts', '**/*.cts']`
+- TypeScript declaration files (`.d.ts`, `.d.mts`, `.d.cts`) are never transformed.
 - `exclude`: `['**/node_modules/**']`
 - `useTypeScriptProject`: `true`
 - `cache`:
@@ -77,7 +77,7 @@ export default defineConfig({
 
 Library mode:
 
-- compiles `.ts`, `.tsx`, `.js`, and `.jsx` source by default;
+- compiles `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.mts`, and `.cts` source by default;
 - collects compiler-generated module metadata from transformed entry chunks;
 - emits `*.fict.meta.json` files into the build output;
 - updates the package `package.json` with `fict.metadata` for one public entry or `fict.exports` for multiple public entries.
@@ -137,7 +137,7 @@ Runtime dev/prod define:
 
 HMR behavior:
 
-- Fict-transformed `.tsx`/`.jsx` modules intentionally trigger a full reload in dev so the compiler-generated reactive graph is rebuilt from a clean module instance.
+- Fict-transformed source modules intentionally trigger a full reload in dev so the compiler-generated reactive graph is rebuilt from a clean module instance.
 - `tsconfig` changes reset the TypeScript project and transform cache before the next transform.
 - See `docs/tooling-runtime-matrix.md` for the v1.0 tooling release gate.
 
