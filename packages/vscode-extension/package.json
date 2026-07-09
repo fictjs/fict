@@ -15,6 +15,9 @@
   "type": "module",
   "displayName": "Fict",
   "publisher": "fictjs",
+  "config": {
+    "vscodeExtensionName": "fict"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -145,7 +148,7 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
     "vscode:prepublish": "pnpm build",
-    "package:vsix": "vsce package --no-dependencies"
+    "package:vsix": "pnpm build && node scripts/package-vsix.mjs"
   },
   "dependencies": {
     "@babel/core": "^7.29.0",
