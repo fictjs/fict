@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { parseHTML } from 'linkedom'
 
 import type { FictNode } from '@fictjs/runtime'
 import {
@@ -11,6 +12,76 @@ import {
 import { renderToDocument, renderToString } from '../src/index'
 
 describe('@fictjs/ssr', () => {
+  it.each(['title', 'textarea', 'style', 'script'] as const)(
+    'keeps text inside <%s> inert when SSR output is parsed as HTML',
+    tagName => {
+      const attack = `</${tagName}><script data-fict-xss="${tagName}">globalThis.__fictXss=1</script>`
+      const html = renderToString(() => ({ type: tagName, props: { children: attack } }), {
+        includeSnapshot: false,
+      })
+
+      const { document } = parseHTML(
+        `<!doctype html><html><head></head><body>${html}</body></html>`,
+      )
+
+      expect(document.querySelector(`[data-fict-xss="${tagName}"]`)).toBeNull()
+    },
+  )
+
+  it.each(['style', 'script'] as const)(
+    'neutralizes a </%s> end tag split across adjacent text nodes',
+    tagName => {
+      const splitAt = Math.floor(tagName.length / 2)
+      const html = renderToString(
+        () => ({
+          type: tagName,
+          props: {
+            children: [
+              `</${tagName.slice(0, splitAt)}`,
+              `${tagName.slice(splitAt)}><script data-fict-xss="split"></script>`,
+            ],
+          },
+        }),
+        { includeSnapshot: false },
+      )
+
+      const { document } = parseHTML(
+        `<!doctype html><html><head></head><body>${html}</body></html>`,
+      )
+      expect(document.querySelector('[data-fict-xss="split"]')).toBeNull()
+    },
+  )
+
+  it('preserves literal ampersands in attributes across HTML reparsing', () => {
+    const href = 'javascript&colon;globalThis.__fictXss=1'
+    const note = 'a&copy;b"<unsafe>'
+    const encodedSrcdoc = '&lt;script data-fict-xss="srcdoc"&gt;parent.__fictXss=1&lt;/script&gt;'
+    const html = renderToString(
+      () => ({
+        type: 'div',
+        props: {
+          children: [
+            { type: 'a', props: { href, 'data-note': note } },
+            { type: 'iframe', props: { srcdoc: encodedSrcdoc } },
+          ],
+        },
+      }),
+      { includeSnapshot: false },
+    )
+
+    const { document } = parseHTML(`<!doctype html><html><head></head><body>${html}</body></html>`)
+    const anchor = document.querySelector('a')
+    const iframe = document.querySelector('iframe')
+
+    expect(anchor?.getAttribute('href')).toBe(href)
+    expect(anchor?.getAttribute('data-note')).toBe(note)
+    expect(iframe?.getAttribute('srcdoc')).toBe(encodedSrcdoc)
+
+    const srcdoc = iframe?.getAttribute('srcdoc') ?? ''
+    const nested = parseHTML(`<!doctype html><html><body>${srcdoc}</body></html>`)
+    expect(nested.document.querySelector('[data-fict-xss="srcdoc"]')).toBeNull()
+  })
+
   it('does not replace process DOM globals by default', () => {
     const globals = globalThis as Record<string, unknown>
     const hadDocument = Object.prototype.hasOwnProperty.call(globals, 'document')

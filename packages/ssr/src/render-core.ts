@@ -14,6 +14,7 @@ import {
 import { parseHTML } from 'linkedom'
 
 import { installGlobals, installManifest } from './globals'
+import { serializeHtmlChildren, serializeHtmlNode, serializeHtmlNodes } from './html-serializer'
 import { createPipeBridge, createQueuedTextStream, type StreamWriter } from './stream-bridge'
 import { createStreamRuntimeCode } from './stream-runtime'
 
@@ -737,7 +738,7 @@ function startStreamingRenderInSession(
       if (mode === 'shell') {
         writeSnapshotForBoundary(id)
         if (dom) {
-          const html = serializeBetween(dom.document, entry.start, entry.end)
+          const html = serializeBetween(entry.start, entry.end)
           enqueueWrite(buildPatchChunk(id, html, resolvedOptions))
         }
       }
@@ -886,14 +887,15 @@ function resolveStreamPatchMode(options: RenderToStreamOptions): 'inline' | 'obs
   return options.streamRuntime === 'external' ? 'observer' : 'inline'
 }
 
-function serializeBetween(document: Document, start: Comment, end: Comment): string {
-  const wrapper = document.createElement('div')
+function serializeBetween(start: Comment, end: Comment): string {
+  const parentElement = start.parentElement
+  const nodes: Node[] = []
   let node = start.nextSibling
   while (node && node !== end) {
-    wrapper.appendChild(node.cloneNode(true) as Node)
+    nodes.push(node)
     node = node.nextSibling
   }
-  return wrapper.innerHTML
+  return serializeHtmlNodes(nodes, parentElement)
 }
 
 function splitDocumentHtml(html: string): { head: string; tail: string } | null {
@@ -927,15 +929,17 @@ function serializeOutput(
 ): string {
   if (options.fullDocument) {
     const doctype = serializeDoctype(document, options.doctype)
-    const html = document.documentElement ? document.documentElement.outerHTML : container.outerHTML
+    const html = document.documentElement
+      ? serializeHtmlNode(document.documentElement)
+      : serializeHtmlNode(container)
     return doctype ? `${doctype}${html}` : html
   }
 
   if (options.includeContainer) {
-    return container.outerHTML
+    return serializeHtmlNode(container)
   }
 
-  return container.innerHTML
+  return serializeHtmlChildren(container)
 }
 
 function injectSnapshot(

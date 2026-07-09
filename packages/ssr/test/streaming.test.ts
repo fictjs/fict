@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { parseHTML } from 'linkedom'
 
 import type { FictNode } from '@fictjs/runtime'
 import { Suspense, createSuspenseToken, onDestroy } from '@fictjs/runtime'
@@ -102,6 +103,45 @@ describe('@fictjs/ssr streaming', () => {
     expect(html).toContain('data-fict-snapshot')
     expect(html).toContain('data-fict-suspense')
     expect(html).toContain('Done')
+  })
+
+  it('safely serializes raw-text content in deferred patches', async () => {
+    const token = createSuspenseToken()
+    let ready = false
+
+    function AsyncChild(): FictNode {
+      if (!ready) throw token.token
+      return {
+        type: 'script',
+        props: {
+          children: ['</scr', 'ipt><script data-fict-xss="stream">globalThis.__fictXss=1</script>'],
+        },
+      }
+    }
+
+    const stream = renderToStream(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: { type: 'span', props: { children: 'Loading' } },
+          children: { type: AsyncChild, props: {} },
+        },
+      }),
+      { mode: 'shell', streamPatchMode: 'observer' },
+    )
+    const readAll = readReadableStream(stream)
+    await Promise.resolve()
+    ready = true
+    token.resolve()
+
+    const html = await readAll
+    const patch = html.match(/<template data-fict-suspense="[^"]+">([\s\S]*?)<\/template>/)?.[1]
+    expect(patch).toBeDefined()
+
+    const { document } = parseHTML(
+      `<!doctype html><html><head></head><body>${patch ?? ''}</body></html>`,
+    )
+    expect(document.querySelector('[data-fict-xss="stream"]')).toBeNull()
   })
 
   it('applies CSP nonces to generated streaming scripts', async () => {
