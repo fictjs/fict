@@ -171,22 +171,40 @@ export function registerRootCleanup(fn: Cleanup): void {
 }
 
 export function clearRoot(root: RootContext): void {
-  runCleanupList(root.cleanups, root)
-  if (root.onMountCallbacks) {
-    root.onMountCallbacks.length = 0
+  try {
+    runCleanupList(root.cleanups, root)
+  } finally {
+    if (root.onMountCallbacks) {
+      root.onMountCallbacks.length = 0
+    }
   }
 }
 
 export function destroyRoot(root: RootContext): void {
-  clearRoot(root)
-  runCleanupList(root.destroyCallbacks, root)
-  if (root.errorHandlers) {
-    root.errorHandlers.length = 0
+  let error: unknown
+  try {
+    clearRoot(root)
+  } catch (err) {
+    error = err
   }
-  if (root.suspenseHandlers) {
-    root.suspenseHandlers.length = 0
+
+  try {
+    runCleanupList(root.destroyCallbacks, root)
+  } catch (err) {
+    if (error === undefined) {
+      error = err
+    }
+  } finally {
+    if (root.errorHandlers) {
+      root.errorHandlers.length = 0
+    }
+    if (root.suspenseHandlers) {
+      root.suspenseHandlers.length = 0
+    }
+    disposeRootDevtools(root)
   }
-  disposeRootDevtools(root)
+
+  if (error !== undefined) throw error
 }
 
 export function createRoot<T>(

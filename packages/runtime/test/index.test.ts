@@ -129,6 +129,36 @@ describe('fict runtime', () => {
     expect(cleaned).toBe(1)
   })
 
+  it('finishes root teardown when an effect cleanup throws', async () => {
+    const trigger = createSignal(0)
+    const calls: string[] = []
+    let effectRuns = 0
+
+    const root = createRoot(() => {
+      onDestroy(() => {
+        calls.push('destroy')
+      })
+      createEffect(() => {
+        trigger()
+        effectRuns++
+        return () => {
+          calls.push('effect-cleanup')
+          throw new Error('cleanup boom')
+        }
+      })
+      onCleanup(() => {
+        calls.push('root-cleanup')
+      })
+    })
+
+    expect(() => root.dispose()).toThrow('cleanup boom')
+    expect(calls).toEqual(['root-cleanup', 'effect-cleanup', 'destroy'])
+
+    trigger(1)
+    await tick()
+    expect(effectRuns).toBe(1)
+  })
+
   it('cleans up createRoot effects when setup throws', async () => {
     const trigger = createSignal(0)
     let runs = 0

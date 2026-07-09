@@ -49,8 +49,13 @@ export function createEffect(fn: Effect, options?: EffectOptions): () => void {
 
   const disposeEffect = effectWithCleanup(run, doCleanup, rootForError, options)
   const teardown = () => {
-    runCleanupList(cleanups, rootForError)
-    disposeEffect()
+    try {
+      runCleanupList(cleanups, rootForError)
+    } finally {
+      // Cleanup failures must not leave the effect subscribed. The error is
+      // rethrown after the reactive node has been detached.
+      disposeEffect()
+    }
   }
 
   registerRootCleanup(teardown)
@@ -93,8 +98,13 @@ export function createRenderEffect(fn: Effect, options?: EffectOptions): () => v
 
   const disposeEffect = effectWithCleanup(run, doCleanup, rootForError, options)
   const teardown = () => {
-    runCleanupList(cleanups, rootForError)
-    disposeEffect()
+    try {
+      runCleanupList(cleanups, rootForError)
+    } finally {
+      // Cleanup failures must not leave the effect subscribed. The error is
+      // rethrown after the reactive node has been detached.
+      disposeEffect()
+    }
   }
 
   registerRootCleanup(teardown)
