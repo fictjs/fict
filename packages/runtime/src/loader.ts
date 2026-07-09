@@ -1308,7 +1308,20 @@ async function handleResumableEventAsync(
       })
       continue
     }
-    __fictEnsureScope(scopeId, host, snapshot)
+    try {
+      __fictEnsureScope(scopeId, host, snapshot)
+    } catch (error) {
+      emitSnapshotIssue(installation, {
+        code: 'snapshot_invalid_shape',
+        message: `[fict/loader] Invalid serialized state for scope ${sourceScopeId}; skipping resumable handler execution: ${formatImportError(error)}`,
+        source: 'event',
+        expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopeId: sourceScopeId,
+        eventType: event.type,
+        error,
+      })
+      continue
+    }
 
     const { url, exportName, flags } = parseQrl(qrl)
 

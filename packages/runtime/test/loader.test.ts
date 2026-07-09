@@ -476,6 +476,60 @@ describe('resumable loader snapshot validation', () => {
     delete (globalThis as { __fictParentCalls?: number }).__fictParentCalls
   })
 
+  it('reports malformed serialized props without running their handlers', async () => {
+    const onIssue = vi.fn()
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sMalformed: {
+            id: 'sMalformed',
+            slots: [],
+            props: { __t: 's', v: null },
+          },
+        },
+      }),
+    )
+
+    ;(globalThis as { __fictMalformedPropsCalls?: number }).__fictMalformedPropsCalls = 0
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 'sMalformed')
+    const button = doc.createElement('button')
+    button.setAttribute(
+      'on:click',
+      'data:text/javascript,export function handle(){globalThis.__fictMalformedPropsCalls++}#handle',
+    )
+    host.appendChild(button)
+    doc.body.appendChild(host)
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    installResumableLoader({
+      document: doc,
+      events: ['click'],
+      prefetch: false,
+      onSnapshotIssue: onIssue,
+    })
+
+    button.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    await waitForPendingHandlers()
+
+    expect((globalThis as { __fictMalformedPropsCalls?: number }).__fictMalformedPropsCalls).toBe(0)
+    expect(onIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'snapshot_invalid_shape',
+        scopeId: 'sMalformed',
+        eventType: 'click',
+      }),
+    )
+    expect(errorSpy).not.toHaveBeenCalled()
+
+    errorSpy.mockRestore()
+    warnSpy.mockRestore()
+    delete (globalThis as { __fictMalformedPropsCalls?: number }).__fictMalformedPropsCalls
+  })
+
   it('continues event path scanning after successful child handlers', async () => {
     const doc = createDocumentWithSnapshots(
       JSON.stringify({
