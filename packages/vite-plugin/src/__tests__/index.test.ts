@@ -1654,6 +1654,28 @@ describe('fict vite-plugin', () => {
   })
 
   describe('function-level code splitting', () => {
+    async function splitHandlerExports(code: string, sourceModule: string) {
+      const plugin = fict({ cache: false, functionSplitting: true, sourcemap: true }) as any
+      plugin.configResolved?.(mockBuildConfig as any)
+
+      const context = {
+        emitFile: vi.fn(),
+        error: vi.fn(),
+        warn: vi.fn(),
+      }
+      const result = await plugin.transform.call(context, code, sourceModule)
+
+      expect(context.error).not.toHaveBeenCalled()
+      expect(context.warn).not.toHaveBeenCalled()
+      expect(result && typeof result === 'object').toBe(true)
+
+      return {
+        code: result.code as string,
+        load: plugin.load as (id: string) => string | null,
+        map: result.map as SourceMapLike | null,
+      }
+    }
+
     it('rewrites QRLs to virtual modules when functionSplitting is enabled', async () => {
       const plugin = fict({ functionSplitting: true }) as any
 
@@ -2519,6 +2541,89 @@ function Counter() {
           expect(content).toContain('__fictUseLexicalScope')
         }
       }
+    })
+
+    it.each([
+      {
+        name: 'first',
+        declaration: `
+          export const __fict_e0 = () => 'handler',
+            /* keep-after */ after = 'after';
+        `,
+        keptExports: ['after'],
+        keptComments: ['keep-after'],
+      },
+      {
+        name: 'middle',
+        declaration: `
+          export const /* keep-before */ before = 'before',
+            __fict_e0 = () => 'handler',
+            /* keep-after */ after = 'after';
+        `,
+        keptExports: ['before', 'after'],
+        keptComments: ['keep-before', 'keep-after'],
+      },
+      {
+        name: 'last',
+        declaration: `
+          export const /* keep-before */ before = 'before',
+            __fict_e0 = () => 'handler';
+        `,
+        keptExports: ['before'],
+        keptComments: ['keep-before'],
+      },
+    ])('preserves sibling exports when the handler is $name', async testCase => {
+      const sourceModule = `/project/src/Sibling-${testCase.name}.tsx`
+      const source = `
+        import { __fictQrl } from '@fictjs/runtime/internal';
+        ${testCase.declaration}
+        export const handlerUrl = __fictQrl(import.meta.url, '__fict_e0');
+      `
+      const result = await splitHandlerExports(source, sourceModule)
+
+      expect(result.code).not.toMatch(/\b(?:const|let|var)\s+__fict_e0\b/)
+      expect(result.code).toContain(`virtual:fict-handler:${sourceModule}$$__fict_e0#default`)
+      for (const exportName of testCase.keptExports) {
+        expect(result.code).toMatch(new RegExp(`\\b${exportName}\\s*=\\s*["']${exportName}["']`))
+      }
+      for (const comment of testCase.keptComments) {
+        expect(result.code).toContain(comment)
+      }
+
+      const handlerModule = result.load(`\0fict-handler:${sourceModule}$$__fict_e0`)
+      expect(handlerModule).toContain('export default')
+      expect(handlerModule).toMatch(/["']handler["']/)
+    })
+
+    it('preserves siblings and sourcemaps around multiple handlers in one export', async () => {
+      const sourceModule = '/project/src/MultipleSiblingHandlers.tsx'
+      const source = `
+        import { __fictQrl } from '@fictjs/runtime/internal';
+
+        /* declaration-comment */
+        export const /* keep-sibling */ keep = 'kept',
+          __fict_e0 = () => 'first',
+          __fict_e1 = () => 'second';
+
+        export const firstUrl = __fictQrl(import.meta.url, '__fict_e0');
+        export const secondUrl = __fictQrl(import.meta.url, '__fict_e1');
+      `
+      const result = await splitHandlerExports(source, sourceModule)
+
+      expect(result.code).not.toMatch(/\b(?:const|let|var)\s+__fict_e[01]\b/)
+      expect(result.code).toMatch(/export const\s+\/\* keep-sibling \*\/\s*keep\s*=\s*["']kept["']/)
+      expect(result.code).toContain('declaration-comment')
+      expect(result.code).toContain(`virtual:fict-handler:${sourceModule}$$__fict_e0#default`)
+      expect(result.code).toContain(`virtual:fict-handler:${sourceModule}$$__fict_e1#default`)
+      expect(result.load(`\0fict-handler:${sourceModule}$$__fict_e0`)).toMatch(/["']first["']/)
+      expect(result.load(`\0fict-handler:${sourceModule}$$__fict_e1`)).toMatch(/["']second["']/)
+
+      expect(result.map).not.toBeNull()
+      const generated = findGeneratedPosition(result.code, 'keep =')
+      const original = originalPositionFor(result.map!, generated.line, generated.column)
+      expect(original).not.toBeNull()
+      expect(original?.source).toContain('MultipleSiblingHandlers.tsx')
+      expect(source.split('\n')[original!.line - 1]).toContain("keep = 'kept'")
     })
 
     it('includes hoisted helper functions in handler virtual modules', async () => {

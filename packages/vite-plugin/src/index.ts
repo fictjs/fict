@@ -2835,6 +2835,7 @@ function extractAndRewriteHandlers(
 
   const handlerNames: string[] = []
   const nodesToRemove = new Set<t.Node>()
+  const handlerDeclaratorsToRemove = new Set<t.VariableDeclarator>()
   const dependencyExportNames = new Map<string, string>()
   const runtimeImportFamily = detectRuntimeImportFamilyFromCode(ast.program.body)
 
@@ -2910,8 +2911,10 @@ function extractAndRewriteHandlers(
             runtimeImportFamily,
           })
 
-          // Mark this export for removal
-          nodesToRemove.add(path.node)
+          // Remove only this handler declarator. Compiler output can share an
+          // exported variable declaration with ordinary exports, which must
+          // remain in the source module.
+          handlerDeclaratorsToRemove.add(declarator)
         }
         return
       }
@@ -2993,7 +2996,23 @@ function extractAndRewriteHandlers(
     ExportNamedDeclaration(path) {
       if (nodesToRemove.has(path.node)) {
         path.remove()
+        return
       }
+
+      const declaration = path.node.declaration
+      if (!t.isVariableDeclaration(declaration)) return
+
+      const remainingDeclarations = declaration.declarations.filter(
+        declarator => !handlerDeclaratorsToRemove.has(declarator),
+      )
+      if (remainingDeclarations.length === declaration.declarations.length) return
+
+      if (remainingDeclarations.length === 0) {
+        path.remove()
+        return
+      }
+
+      declaration.declarations = remainingDeclarations
     },
 
     CallExpression(path) {
