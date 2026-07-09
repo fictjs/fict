@@ -106,18 +106,6 @@
       "prettier --write"
     ]
   },
-  "size-limit": [
-    {
-      "name": "Fict (ESM)",
-      "path": "packages/fict/dist/index.js",
-      "limit": "17.4 KB"
-    },
-    {
-      "name": "Fict (CJS)",
-      "path": "packages/fict/dist/index.cjs",
-      "limit": "19.1 KB"
-    }
-  ],
   "config": {
     "commitizen": {
       "path": "./node_modules/cz-customizable"
