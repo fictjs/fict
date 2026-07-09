@@ -28,7 +28,7 @@ The runtime ignores hooks that declare an incompatible protocol range.
 ```ts
 // vite.config.ts
 import { defineConfig } from 'vite'
-import { fictDevTools } from '@fictjs/devtools'
+import fictDevTools from '@fictjs/devtools/vite'
 
 export default defineConfig({
   plugins: [fictDevTools()],

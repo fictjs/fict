@@ -13,9 +13,6 @@ export * from './core/tree-walker'
 export * from './core/plugin'
 export * from './core/rpc'
 
-// Vite plugin export
-export { default as fictDevTools, type FictDevToolsOptions } from './vite'
-
 // Re-export for convenience
 export { attachDebugger, detachDebugger, hook, exposeToConsole } from './core/debugger'
 export {
