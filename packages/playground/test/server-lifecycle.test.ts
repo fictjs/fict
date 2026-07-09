@@ -1,3 +1,4 @@
+import { access } from 'node:fs/promises'
 import { request, type ClientRequest } from 'node:http'
 
 import { afterEach, describe, expect, it } from 'vitest'
@@ -28,7 +29,7 @@ describe('playground server lifecycle', () => {
     await stopPromise
     activeServer = null
 
-    await expect(fetch(String(session.previewUrl))).rejects.toThrow()
+    await expect(access(String(session.rootDir))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('makes repeated stop calls share one shutdown', async () => {
