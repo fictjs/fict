@@ -90,7 +90,8 @@
     "overrides": {
       "@modelcontextprotocol/sdk>ajv": "^8.18.0",
       "picomatch@>=4.0.0 <4.0.4": "4.0.5",
-      "rollup@>=4.0.0 <4.59.0": "4.62.2"
+      "rollup@>=4.0.0 <4.59.0": "4.62.2",
+      "postcss@>=8.0.0 <8.5.10": "8.5.16"
     }
   },
   "lint-staged": {
