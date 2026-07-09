@@ -220,6 +220,15 @@ test.describe('Error Boundary', () => {
       'Error: Intentional error for testing',
     )
   })
+
+  test('recovers when the compiled reset getter changes', async ({ page }) => {
+    await page.click('#trigger-error')
+    await expect(page.locator('#error-fallback')).toBeVisible()
+
+    await page.click('#reset-error')
+    await expect(page.locator('#no-error')).toBeVisible()
+    await expect(page.locator('#error-fallback')).not.toBeVisible()
+  })
 })
 
 // ============================================================================

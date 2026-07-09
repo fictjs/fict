@@ -356,7 +356,7 @@ function ErrorBoundaryTest() {
       </button>
       <div id="error-container">
         <ErrorBoundary
-          key={boundaryVersion}
+          resetKeys={() => boundaryVersion}
           fallback={err => <div id="error-fallback">Error: {(err as Error).message}</div>}
         >
           <ThrowingComponent shouldThrow={shouldThrow} />

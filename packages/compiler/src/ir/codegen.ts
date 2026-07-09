@@ -3340,6 +3340,42 @@ function getStaticMemberPath(expr: Expression): string[] | null {
   return [...objectPath, String(propertyName)]
 }
 
+const RESETTABLE_BOUNDARY_COMPONENTS = new Set(['ErrorBoundary', 'Suspense'])
+const RESETTABLE_BOUNDARY_IMPORT_SOURCES = new Set(['fict', '@fictjs/runtime'])
+const RESETTABLE_BOUNDARY_REACTIVE_FUNCTION_PROPS = new Set(['resetKeys'])
+
+function isRuntimeResettableBoundaryComponent(
+  tagName: string | Expression,
+  ctx: CodegenContext,
+): boolean {
+  if (typeof tagName === 'string') return false
+
+  if (tagName.kind === 'Identifier') {
+    const localName = deSSAVarName(tagName.name)
+    if (ctx.currentFunctionDeclaredNames?.has(localName)) return false
+    const importedName = ctx.moduleRuntimeImportMap?.get(localName)
+    const source = ctx.moduleRuntimeImportSources?.get(localName)
+    return (
+      !!importedName &&
+      RESETTABLE_BOUNDARY_COMPONENTS.has(importedName) &&
+      !!source &&
+      RESETTABLE_BOUNDARY_IMPORT_SOURCES.has(source)
+    )
+  }
+
+  const memberPath = getStaticMemberPath(tagName)
+  if (!memberPath || memberPath.length !== 2) return false
+  const [namespaceName, componentName] = memberPath
+  if (!namespaceName || !componentName) return false
+  if (ctx.currentFunctionDeclaredNames?.has(namespaceName)) return false
+  const source = ctx.moduleRuntimeNamespaceImportSources?.get(namespaceName)
+  return (
+    RESETTABLE_BOUNDARY_COMPONENTS.has(componentName) &&
+    !!source &&
+    RESETTABLE_BOUNDARY_IMPORT_SOURCES.has(source)
+  )
+}
+
 function addDestructuredJSXComponentSourcePathsFromFunctions(
   functions: Iterable<HIRFunction>,
   ctx: CodegenContext,
@@ -5531,6 +5567,9 @@ function lowerJSXElement(
       lowerTrackedExpression,
       expressionUsesTracked,
       deSSAVarName,
+      reactiveFunctionProps: isRuntimeResettableBoundaryComponent(jsx.tagName, ctx)
+        ? RESETTABLE_BOUNDARY_REACTIVE_FUNCTION_PROPS
+        : undefined,
     })
 
     const componentRef =

@@ -6346,6 +6346,53 @@ describe('compiler + fict integration', () => {
       dispose()
     })
 
+    it('Suspense resets compiled children when a reset getter changes', async () => {
+      const source = `
+        import { $state, render, Suspense, createSuspenseToken } from 'fict'
+
+        function App() {
+          let shouldSuspend = $state(true)
+          let resetKey = $state(0)
+
+          function MaybeSuspend() {
+            if (shouldSuspend) {
+              const { token } = createSuspenseToken()
+              throw token
+            }
+            return <span data-testid="good">good</span>
+          }
+
+          return (
+            <div>
+              <button data-testid="reset" onClick={() => { shouldSuspend = false; resetKey = resetKey + 1 }}>Reset</button>
+              <Suspense fallback={<span data-testid="fallback">loading</span>} resetKeys={() => resetKey}>
+                <MaybeSuspend />
+              </Suspense>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      expect(container.querySelector('[data-testid="fallback"]')?.textContent).toBe('loading')
+
+      const resetBtn = container.querySelector('[data-testid="reset"]') as HTMLButtonElement
+      resetBtn.click()
+      await tick()
+
+      expect(container.querySelector('[data-testid="good"]')?.textContent).toBe('good')
+      expect(container.querySelector('[data-testid="fallback"]')).toBeNull()
+
+      dispose()
+    })
+
     it('createSelector stops updating after component unmount', async () => {
       const source = `
         import { $state, $effect, createSelector, render } from 'fict'

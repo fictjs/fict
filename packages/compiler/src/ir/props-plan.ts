@@ -4,6 +4,7 @@ import { RUNTIME_ALIASES } from '../constants'
 import { DiagnosticCode, reportDiagnostic } from '../validation'
 
 import type { CodegenContext } from './codegen'
+import { markCompilerReactiveGetter } from './codegen-reactive-getter'
 import { runtimeIdentifier } from './codegen-runtime-helpers'
 import type { Expression, JSXAttribute } from './hir'
 
@@ -24,6 +25,7 @@ export interface PropsPlanHelpers {
   lowerTrackedExpression: (expr: Expression, ctx: CodegenContext) => BabelCore.types.Expression
   expressionUsesTracked: (expr: Expression, ctx: CodegenContext) => boolean
   deSSAVarName: (name: string) => string
+  reactiveFunctionProps?: ReadonlySet<string> | undefined
 }
 
 export interface PropsChild {
@@ -293,7 +295,7 @@ export function buildPropsPlan(
       return { base: expr.object as Expression, key: expr.property as Expression }
     }
 
-    const lowerPropValue = (value: Expression): BabelCore.types.Expression => {
+    const lowerPropValue = (value: Expression, propName?: string): BabelCore.types.Expression => {
       const isFunctionLike = value.kind === 'ArrowFunction' || value.kind === 'FunctionExpression'
       const isCompositeValue = value.kind === 'ObjectExpression' || value.kind === 'ArrayExpression'
       const baseIdent = value.kind === 'Identifier' ? helpers.deSSAVarName(value.name) : undefined
@@ -374,7 +376,10 @@ export function buildPropsPlan(
                 ])
               })()
             : lowered
-      return isFunctionLike ? wrapNonReactiveFunction(valueExpr) : valueExpr
+      if (!isFunctionLike) return valueExpr
+      return propName && helpers.reactiveFunctionProps?.has(propName)
+        ? markCompilerReactiveGetter(ctx, valueExpr)
+        : wrapNonReactiveFunction(valueExpr)
     }
 
     const pushArrayLiteralSpread = (expr: Expression): boolean => {
@@ -428,7 +433,7 @@ export function buildPropsPlan(
       }
 
       if (attr.value) {
-        bucket.push(toPropObjectProperty(attr.name, lowerPropValue(attr.value)))
+        bucket.push(toPropObjectProperty(attr.name, lowerPropValue(attr.value, attr.name)))
         continue
       }
 

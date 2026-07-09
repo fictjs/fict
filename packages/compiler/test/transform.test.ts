@@ -495,6 +495,63 @@ describe('Fict Compiler - Basic Transforms', () => {
       expect(output).toContain('renderEmpty: nonReactive(() =>')
     })
 
+    it('marks built-in boundary reset getters as reactive', () => {
+      const input = `
+        import { $state, ErrorBoundary, Suspense } from 'fict'
+        function Component() {
+          let key = $state(0)
+          return (
+            <>
+              <ErrorBoundary fallback="error" resetKeys={() => key}>ready</ErrorBoundary>
+              <Suspense fallback="loading" resetKeys={() => key}>ready</Suspense>
+            </>
+          )
+        }
+      `
+      const output = transform(input)
+      expect(output.match(/resetKeys: __fictReactive\(\(\) => key\(\)\)/g)).toHaveLength(2)
+      expect(output).not.toContain('resetKeys: nonReactive')
+    })
+
+    it('recognizes aliased and namespace-imported built-in boundaries', () => {
+      const input = `
+        import { $state, ErrorBoundary as Boundary } from 'fict'
+        import * as Runtime from '@fictjs/runtime'
+        function Component() {
+          let key = $state(0)
+          return (
+            <>
+              <Boundary fallback="error" resetKeys={() => key}>ready</Boundary>
+              <Runtime.Suspense fallback="loading" resetKeys={() => key}>ready</Runtime.Suspense>
+            </>
+          )
+        }
+      `
+      const output = transform(input)
+      expect(output.match(/resetKeys: __fictReactive\(\(\) => key\(\)\)/g)).toHaveLength(2)
+    })
+
+    it('keeps resetKeys callbacks non-reactive on user components and shadowed imports', () => {
+      const input = `
+        import { $state, ErrorBoundary } from 'fict'
+        function Boundary(props) {
+          return <div>{props.children}</div>
+        }
+        function Component({ ErrorBoundary }) {
+          let key = $state(0)
+          return (
+            <>
+              <Boundary resetKeys={() => key}>local</Boundary>
+              <ErrorBoundary resetKeys={() => key}>shadowed</ErrorBoundary>
+            </>
+          )
+        }
+      `
+      const output = transform(input)
+      expect(output.match(/resetKeys: nonReactive\(\(\) => key\(\)\)/g)).toHaveLength(2)
+      expect(output).not.toContain('resetKeys: __fictReactive')
+    })
+
     it('marks function-as-child callbacks for components as non-reactive', () => {
       const input = `
         function Layout(props) {

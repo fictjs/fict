@@ -28,7 +28,9 @@ Fict analysis, accept TypeScript enums, namespaces, and supported declare
 fields, compile macros in normal `.ts` and `.js` modules, prepare imported hook
 metadata before clean-build transforms, honor configured glob filters, and keep
 library metadata scoped to the correct facade. This also preserves custom-event
-casing and bindings through implicit table colgroups.
+casing and bindings through implicit table colgroups. JSX reset getters on the
+built-in ErrorBoundary and Suspense components are now marked reactive without
+changing ordinary callback-prop semantics.
 
 Runtime and `fict` now harden per-document resumable-loader isolation, malformed
 and partial snapshots, serialized symbol references, lifecycle/error-boundary
