@@ -163,6 +163,10 @@ async function handleRequest(context: RequestContext): Promise<void> {
   let errorMessage: string | undefined
 
   try {
+    if (!isAllowedRequestHost(context.request.headers.host, context.runtime)) {
+      throw new RequestError(403, 'Invalid Host header')
+    }
+
     if (isApiPath(pathname) && pathname !== '/api/health') {
       actor = context.controllers.auth.authenticate(context.request.headers)
       context.controllers.quota.registerRequest(actor.tenantId)
@@ -725,7 +729,18 @@ function toConfigPatch(record: Record<string, unknown>): Partial<PlaygroundConfi
 
 function createOrigin(host: string, port: number): string {
   const publicHost = host === '0.0.0.0' ? '127.0.0.1' : host
-  return `http://${publicHost}:${port}`
+  const urlHost =
+    publicHost.includes(':') && !publicHost.startsWith('[') ? `[${publicHost}]` : publicHost
+  return `http://${urlHost}:${port}`
+}
+
+function isAllowedRequestHost(
+  header: string | string[] | undefined,
+  runtime: ServerRuntime,
+): boolean {
+  const value = Array.isArray(header) ? header[0] : header
+  if (!value || !runtime.origin) return false
+  return value.trim().toLowerCase() === new URL(runtime.origin).host.toLowerCase()
 }
 
 function mapRequestError(error: unknown): { status: number; message: string } {
