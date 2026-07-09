@@ -173,6 +173,16 @@ describe('Hook Context System', () => {
       expect(ctx.cursor).toBe(2)
     })
 
+    it('records prototype-like signal names as own slot mappings', () => {
+      const ctx = __fictPushContext()
+      ctx.rendering = true
+
+      __fictUseSignal(ctx, 42, { name: '__proto__' }, 0)
+
+      expect(Object.prototype.hasOwnProperty.call(ctx.slotMap, '__proto__')).toBe(true)
+      expect(ctx.slotMap?.__proto__).toBe(0)
+    })
+
     it('throws when called outside render context', () => {
       const ctx = __fictPushContext()
       ctx.rendering = false

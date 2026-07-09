@@ -262,6 +262,20 @@ describe('SSR lifecycle state cleanup', () => {
     expect(second.shared.value).toBe(1)
   })
 
+  it('restores lexical scope maps without prototype fallbacks', () => {
+    const scopeSnapshot = {
+      id: 's-dangerous-vars',
+      slots: [[0, 'raw' as const, 41]],
+      vars: JSON.parse('{"__proto__":0}') as Record<string, number>,
+    }
+
+    const ctx = __fictEnsureScope('s-dangerous-vars', document.createElement('div'), scopeSnapshot)
+
+    expect(Object.getPrototypeOf(ctx.slotMap)).toBe(null)
+    expect(__fictUseLexicalScope('s-dangerous-vars', ['__proto__'])).toEqual([41])
+    expect(__fictUseLexicalScope('s-dangerous-vars', ['toString'])).toEqual([undefined])
+  })
+
   it('serializes and restores complex scope props through JSON', () => {
     __fictEnableSSR()
     const props = {

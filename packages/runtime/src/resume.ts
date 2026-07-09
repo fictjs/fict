@@ -371,7 +371,10 @@ export function __fictUseLexicalScope(scopeId: string, names: string[]): unknown
   }
   const ctx = record.ctx
   const map = ctx.slotMap ?? {}
-  return names.map(name => ctx.slots[map[name] ?? -1])
+  return names.map(name => {
+    const index = Object.prototype.hasOwnProperty.call(map, name) ? map[name]! : -1
+    return ctx.slots[index]
+  })
 }
 
 export function __fictGetScopeProps(scopeId: string): Record<string, unknown> | undefined {
@@ -580,7 +583,7 @@ function createContextFromSnapshot(
     }
   }
   if (snapshot.vars) {
-    ctx.slotMap = { ...snapshot.vars }
+    ctx.slotMap = Object.assign(Object.create(null) as Record<string, number>, snapshot.vars)
   }
 
   return ctx

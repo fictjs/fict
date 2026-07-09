@@ -97,8 +97,13 @@ export function __fictUseSignal<T>(
     ctx.slots[index] = createSignal(initial, options)
   }
   if (options?.name) {
-    if (!ctx.slotMap) ctx.slotMap = {}
-    ctx.slotMap[options.name] = index
+    if (!ctx.slotMap) ctx.slotMap = Object.create(null) as Record<string, number>
+    Object.defineProperty(ctx.slotMap, options.name, {
+      value: index,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    })
   }
   return ctx.slots[index] as SignalAccessor<T>
 }
