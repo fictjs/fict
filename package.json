@@ -54,7 +54,7 @@
     "release:compiler:verify": "pnpm --filter @fictjs/runtime build && pnpm --filter fict build && pnpm --dir packages/compiler lint && pnpm --dir packages/compiler typecheck && pnpm --dir packages/compiler test && pnpm guardrails:compiler-complexity && pnpm guardrails:hir && pnpm bench:optimizer:guard"
   },
   "devDependencies": {
-    "@babel/core": "^7.29.0",
+    "@babel/core": "^7.29.7",
     "@babel/plugin-syntax-jsx": "^7.28.6",
     "@babel/plugin-transform-react-jsx": "^7.28.6",
     "@babel/preset-typescript": "^7.26.0",
