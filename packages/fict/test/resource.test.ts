@@ -1,5 +1,6 @@
 import { ErrorBoundary, Suspense, createRoot, render } from '@fictjs/runtime'
 import { createSignal, reactive } from '@fictjs/runtime/advanced'
+import { __fictCreateSSRSession, __fictRunWithSSRSession } from '@fictjs/runtime/internal'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 import { resource } from '../src/resource'
@@ -774,6 +775,102 @@ describe('resource', () => {
     expect(fetcher).toHaveBeenCalledTimes(1)
     expect(first.data).toBe('ok')
     expect(second.data).toBe('ok')
+  })
+
+  it('isolates the default memory cache between SSR request sessions', async () => {
+    let currentUser = 'Alice'
+    const fetcher = vi.fn(() => Promise.resolve(currentUser))
+    const r = resource<string, string>(fetcher)
+    const aliceSession = __fictCreateSSRSession()
+    const bobSession = __fictCreateSSRSession()
+
+    const aliceRoot = __fictRunWithSSRSession(aliceSession, () =>
+      createRoot(() => r.read('viewer')),
+    )
+    await vi.runAllTimersAsync()
+    await tick()
+
+    expect(aliceRoot.value.data).toBe('Alice')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    currentUser = 'Bob'
+    const bobRoot = __fictRunWithSSRSession(bobSession, () => createRoot(() => r.read('viewer')))
+
+    expect(bobRoot.value.data).toBeUndefined()
+    expect(fetcher).toHaveBeenCalledTimes(2)
+
+    await vi.runAllTimersAsync()
+    await tick()
+
+    expect(bobRoot.value.data).toBe('Bob')
+    expect(aliceRoot.value.data).toBe('Alice')
+
+    aliceRoot.dispose()
+    bobRoot.dispose()
+  })
+
+  it('deduplicates equal reads within one SSR request session', async () => {
+    const fetcher = vi.fn().mockResolvedValue('Alice')
+    const r = resource<string, string>(fetcher)
+    const session = __fictCreateSSRSession()
+
+    const requestRoot = __fictRunWithSSRSession(session, () =>
+      createRoot(() => [r.read('viewer'), r.read('viewer')] as const),
+    )
+
+    await vi.runAllTimersAsync()
+    await tick()
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(requestRoot.value[0].data).toBe('Alice')
+    expect(requestRoot.value[1].data).toBe('Alice')
+    requestRoot.dispose()
+  })
+
+  it('keeps client memory caching shared across roots by default', async () => {
+    const fetcher = vi.fn().mockResolvedValue('client-value')
+    const r = resource<string, string>(fetcher)
+
+    const firstRoot = createRoot(() => r.read('key'))
+    await vi.runAllTimersAsync()
+    await tick()
+
+    const secondRoot = createRoot(() => r.read('key'))
+    await tick()
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(firstRoot.value.data).toBe('client-value')
+    expect(secondRoot.value.data).toBe('client-value')
+
+    firstRoot.dispose()
+    secondRoot.dispose()
+  })
+
+  it('shares memory across SSR sessions only when explicitly requested', async () => {
+    let currentUser = 'Alice'
+    const fetcher = vi.fn(() => Promise.resolve(currentUser))
+    const r = resource<string, string>({
+      fetch: fetcher,
+      cache: { scope: 'shared' },
+    })
+
+    const aliceRoot = __fictRunWithSSRSession(__fictCreateSSRSession(), () =>
+      createRoot(() => r.read('viewer')),
+    )
+    await vi.runAllTimersAsync()
+    await tick()
+
+    currentUser = 'Bob'
+    const bobRoot = __fictRunWithSSRSession(__fictCreateSSRSession(), () =>
+      createRoot(() => r.read('viewer')),
+    )
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(aliceRoot.value.data).toBe('Alice')
+    expect(bobRoot.value.data).toBe('Alice')
+
+    aliceRoot.dispose()
+    bobRoot.dispose()
   })
 
   it('uses cached value without refetch until refresh or args change', async () => {

@@ -10,6 +10,7 @@
 
 import { createEffect, onCleanup, createSuspenseToken } from '@fictjs/runtime'
 import { createSignal, isReactive } from '@fictjs/runtime/advanced'
+import { __fictGetCurrentSSRSession } from '@fictjs/runtime/internal'
 
 /**
  * The result of reading a resource.
@@ -41,6 +42,16 @@ export interface ResourceCacheOptions {
    * @default 'memory'
    */
   mode?: 'memory' | 'none'
+
+  /**
+   * Memory-cache scope during server-side rendering:
+   * - `'request'`: Isolate entries to the active SSR request (default)
+   * - `'shared'`: Share entries across SSR requests for explicitly public data
+   *
+   * In the browser, memory caching remains scoped to the resource instance.
+   * @default 'request'
+   */
+  scope?: 'request' | 'shared'
 
   /**
    * Time-to-live in milliseconds before cached data is considered stale.
@@ -199,6 +210,7 @@ interface ResourceEntry<T, Args> {
 
 const defaultCacheOptions: Required<ResourceCacheOptions> = {
   mode: 'memory',
+  scope: 'request',
   ttlMs: Number.POSITIVE_INFINITY,
   staleWhileRevalidate: false,
   cacheErrors: false,
@@ -313,7 +325,25 @@ export function resource<T, Args = void>(
   const cacheOptions: ResourceCacheOptions =
     typeof optionsOrFetcher === 'object' ? (optionsOrFetcher.cache ?? {}) : {}
   const resolvedCacheOptions = { ...defaultCacheOptions, ...cacheOptions }
-  const cache = new Map<unknown, ResourceEntry<T, Args>>()
+  type Cache = Map<unknown, ResourceEntry<T, Args>>
+  type SSRSession = NonNullable<ReturnType<typeof __fictGetCurrentSSRSession>>
+
+  const sharedCache: Cache = new Map()
+  const requestCaches = new WeakMap<SSRSession, Cache>()
+
+  const resolveCache = (): Cache => {
+    const session = __fictGetCurrentSSRSession()
+    if (resolvedCacheOptions.scope === 'shared' || !session) {
+      return sharedCache
+    }
+
+    let requestCache = requestCaches.get(session)
+    if (!requestCache) {
+      requestCache = new Map()
+      requestCaches.set(session, requestCache)
+    }
+    return requestCache
+  }
 
   const readArgs = (argsAccessor: (() => Args) | Args): Args =>
     isReactive(argsAccessor) ? (argsAccessor as () => Args)() : (argsAccessor as Args)
@@ -340,7 +370,7 @@ export function resource<T, Args = void>(
     return reset
   }
 
-  const evictOverflowEntries = () => {
+  const evictOverflowEntries = (cache: Cache) => {
     const maxEntries = resolvedCacheOptions.maxEntries
     if (!Number.isFinite(maxEntries) || maxEntries <= 0) return
     if (cache.size <= maxEntries) return
@@ -352,7 +382,7 @@ export function resource<T, Args = void>(
     }
   }
 
-  const ensureEntry = (key: unknown): ResourceEntry<T, Args> => {
+  const ensureEntry = (cache: Cache, key: unknown): ResourceEntry<T, Args> => {
     let state = cache.get(key)
     if (state) {
       // Refresh recency so eviction drops the least-recently-used entries.
@@ -378,7 +408,7 @@ export function resource<T, Args = void>(
       controller: undefined,
     }
     cache.set(key, state)
-    evictOverflowEntries()
+    evictOverflowEntries(cache)
     return state
   }
 
@@ -400,6 +430,7 @@ export function resource<T, Args = void>(
   }
 
   const startFetch = (
+    cache: Cache,
     entry: ResourceEntry<T, Args>,
     key: unknown,
     args: Args,
@@ -491,6 +522,7 @@ export function resource<T, Args = void>(
   }
 
   const invalidate = (key?: unknown) => {
+    const cache = resolveCache()
     if (key === undefined) {
       cache.forEach(entry => {
         entry.controller?.abort()
@@ -513,14 +545,15 @@ export function resource<T, Args = void>(
   }
 
   function prefetch(args: Args, keyOverride?: unknown) {
+    const cache = resolveCache()
     const hasKeyOverride = arguments.length >= 2
     const key = hasKeyOverride ? structuralArgsKey(keyOverride) : computeKey(args)
-    const entry = ensureEntry(key)
+    const entry = ensureEntry(cache, key)
     const usableData = entry.hasValue && !isExpired(entry)
     if (!usableData) {
       entry.lastArgs = hasKeyOverride ? (key as Args) : args
       entry.lastVersion = entry.version()
-      startFetch(entry, key, args, { createToken: false })
+      startFetch(cache, entry, key, args, { createToken: false })
     }
   }
 
@@ -529,10 +562,11 @@ export function resource<T, Args = void>(
     value: T | ((prev: T | undefined) => T),
     options?: { key?: unknown; revalidate?: boolean },
   ) => {
+    const cache = resolveCache()
     const args = readArgs(argsAccessor)
     const hasKeyOverride = !!options && Object.prototype.hasOwnProperty.call(options, 'key')
     const key = hasKeyOverride ? structuralArgsKey(options.key) : computeKey(args)
-    const entry = ensureEntry(key)
+    const entry = ensureEntry(cache, key)
     const prevValue = entry.data()
     const nextValue =
       typeof value === 'function' ? (value as (prev: T | undefined) => T)(prevValue) : value
@@ -563,11 +597,15 @@ export function resource<T, Args = void>(
 
   return {
     read(argsAccessor: (() => Args) | Args): ResourceResult<T> {
+      // Capture the active request cache once. Reactive re-runs may happen
+      // after the synchronous SSR session stack has unwound, but they still
+      // belong to the request that created this read.
+      const cache = resolveCache()
       const entryRef = createSignal<ResourceEntry<T, Args> | null>(null)
 
       createEffect(() => {
         const key = computeKey(argsAccessor)
-        const entry = ensureEntry(key)
+        const entry = ensureEntry(cache, key)
         entryRef(entry)
         const args = readArgs(argsAccessor)
         const currentVersion = entry.version()
@@ -610,11 +648,11 @@ export function resource<T, Args = void>(
             entry.hasValue = false
             entry.expiresAt = Date.now() - 1
           }
-          startFetch(entry, key, args as Args)
+          startFetch(cache, entry, key, args as Args)
         } else if (canUseStaleData && entry.inFlight === undefined) {
           // stale-while-revalidate: return stale data immediately, refresh in background
           // Pass isRevalidating=true to avoid showing loading state
-          startFetch(entry, key, args as Args, { isRevalidating: true })
+          startFetch(cache, entry, key, args as Args, { isRevalidating: true })
         }
       })
 

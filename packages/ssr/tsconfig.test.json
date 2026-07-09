@@ -3,6 +3,7 @@
   "include": [
     "src/**/*.ts",
     "test/index.test.ts",
+    "test/resource-cache.test.ts",
     "../compiler/src/types/**/*.d.ts",
     "../runtime/src/dev.d.ts"
   ],

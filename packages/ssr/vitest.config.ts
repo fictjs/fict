@@ -9,6 +9,10 @@ export default defineConfig({
   resolve: {
     alias: [
       {
+        find: /^fict\/plus$/,
+        replacement: fileURLToPath(new URL('../fict/src/plus.ts', import.meta.url)),
+      },
+      {
         find: '@fictjs/runtime/loader',
         replacement: fileURLToPath(new URL('../runtime/src/loader.ts', import.meta.url)),
       },
@@ -19,6 +23,10 @@ export default defineConfig({
       {
         find: /^@fictjs\/runtime\/internal$/,
         replacement: fileURLToPath(new URL('../runtime/src/internal.ts', import.meta.url)),
+      },
+      {
+        find: /^@fictjs\/runtime\/advanced$/,
+        replacement: fileURLToPath(new URL('../runtime/src/advanced.ts', import.meta.url)),
       },
       {
         find: /^@fictjs\/runtime$/,
