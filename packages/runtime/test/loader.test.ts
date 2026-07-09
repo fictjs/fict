@@ -76,6 +76,34 @@ describe('resumable loader snapshot validation', () => {
     expect(scope?.slots[0]?.[2]).toBe(123)
   })
 
+  it('does not treat an absent initial snapshot as state or an eager error', async () => {
+    const issues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots()
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 'sAbsent')
+    const button = doc.createElement('button')
+    button.setAttribute('on:click', 'data:text/javascript,export function h(){}#h')
+    host.appendChild(button)
+    doc.body.appendChild(host)
+
+    installResumableLoader({
+      document: doc,
+      events: ['click'],
+      prefetch: false,
+      onSnapshotIssue: issue => issues.push(issue),
+    })
+
+    expect(issues).toEqual([])
+    expect(__fictGetSSRScope('sAbsent')).toBeUndefined()
+
+    button.dispatchEvent(new Event('click', { bubbles: true }))
+    await waitForPendingHandlers()
+
+    expect(issues).toEqual([
+      expect.objectContaining({ code: 'scope_snapshot_missing', scopeId: 'sAbsent' }),
+    ])
+  })
+
   it('rejects unversioned snapshots instead of guessing their value codec', () => {
     const issues: SnapshotIssue[] = []
     const doc = createDocumentWithSnapshots(
@@ -433,6 +461,78 @@ describe('resumable loader snapshot validation', () => {
         actualVersion: 0,
       }),
     )
+  })
+
+  it.each([
+    {
+      name: 'non-object output',
+      migrations: { 0: () => null },
+      message: /must return a snapshot object/,
+    },
+    {
+      name: 'an invalid next version',
+      migrations: { 0: () => ({ v: 'next', scopes: {} }) },
+      message: /invalid schema version/,
+    },
+    {
+      name: 'a non-advancing version',
+      migrations: { 0: () => ({ v: 0, scopes: {} }) },
+      message: /did not advance/,
+    },
+    {
+      name: 'a version cycle',
+      migrations: {
+        0: () => ({ v: 1, scopes: {} }),
+        1: () => ({ v: 0, scopes: {} }),
+      },
+      message: /produced a cycle/,
+    },
+  ])('rejects snapshot migrations that produce $name', ({ migrations, message }) => {
+    const issues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: 0,
+        scopes: { sGuarded: { id: 'sGuarded', slots: [] } },
+      }),
+    )
+
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: false,
+      snapshotMigrations: migrations,
+      onSnapshotIssue: issue => issues.push(issue),
+    })
+
+    expect(__fictGetSSRScope('sGuarded')).toBeUndefined()
+    expect(issues).toHaveLength(1)
+    expect(issues[0]).toEqual(
+      expect.objectContaining({ code: 'snapshot_migration_failed', actualVersion: 0 }),
+    )
+    expect(issues[0]?.message).toMatch(message)
+  })
+
+  it('reports a missing migration step as an unsupported snapshot version', () => {
+    const issues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: 0,
+        scopes: { sUnsupported: { id: 'sUnsupported', slots: [] } },
+      }),
+    )
+
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: false,
+      snapshotMigrations: {},
+      onSnapshotIssue: issue => issues.push(issue),
+    })
+
+    expect(__fictGetSSRScope('sUnsupported')).toBeUndefined()
+    expect(issues).toEqual([
+      expect.objectContaining({ code: 'snapshot_unsupported_version', actualVersion: 0 }),
+    ])
   })
 
   it('reports parse and shape errors for invalid snapshots', () => {
