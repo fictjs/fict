@@ -117,8 +117,18 @@ function getSnapshotState(): SSRState | null {
   return getSSRSession().snapshotState as SSRState | null
 }
 
+function copySnapshotScopes(scopes: Record<string, ScopeSnapshot>): Record<string, ScopeSnapshot> {
+  const copy = Object.create(null) as Record<string, ScopeSnapshot>
+  for (const [scopeId, snapshot] of Object.entries(scopes)) {
+    copy[scopeId] = snapshot
+  }
+  return copy
+}
+
 function setSnapshotState(state: SSRState | null): void {
   getSSRSession().snapshotState = state
+    ? { v: state.v, scopes: copySnapshotScopes(state.scopes) }
+    : null
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -320,14 +330,16 @@ export function __fictMergeSSRState(state: SSRState | null): void {
   const validated = validateSSRState(state, '__fictMergeSSRState')
   const snapshotState = getSnapshotState()
   if (!snapshotState) {
-    setSnapshotState({ v: validated.v, scopes: { ...validated.scopes } })
+    setSnapshotState(validated)
     return
   }
   Object.assign(snapshotState.scopes, validated.scopes)
 }
 
 export function __fictGetSSRScope(id: string): ScopeSnapshot | undefined {
-  return getSnapshotState()?.scopes[id]
+  const scopes = getSnapshotState()?.scopes
+  if (!scopes || !Object.prototype.hasOwnProperty.call(scopes, id)) return undefined
+  return scopes[id]
 }
 
 export function __fictEnsureScope(

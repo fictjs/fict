@@ -133,6 +133,27 @@ describe('SSR lifecycle state cleanup', () => {
     expect(__fictGetSSRScope('s2')).toBeUndefined()
   })
 
+  it('keeps dangerous scope ids from mutating snapshot lookup prototypes', () => {
+    __fictSetSSRState({
+      v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+      scopes: {},
+    })
+
+    expect(__fictGetSSRScope('toString')).toBeUndefined()
+
+    const state = JSON.parse(`{
+      "v": ${FICT_SSR_SNAPSHOT_SCHEMA_VERSION},
+      "scopes": {
+        "__proto__": { "id": "__proto__", "slots": [] }
+      }
+    }`) as Parameters<typeof __fictMergeSSRState>[0]
+    __fictMergeSSRState(state)
+
+    expect(__fictGetSSRScope('__proto__')?.id).toBe('__proto__')
+    expect(__fictGetSSRScope('id')).toBeUndefined()
+    expect(__fictGetSSRScope('toString')).toBeUndefined()
+  })
+
   it('stores component metadata for frozen functions without throwing', () => {
     function App() {}
     const meta = { id: 'App@module', resume: '/module.js#__fict_r0' }
