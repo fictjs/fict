@@ -270,6 +270,55 @@ describe('@fictjs/ssr streaming', () => {
     expect(document.querySelector('[data-fict-xss="stream"]')).toBeNull()
   })
 
+  it('aborts and cleans up when a deferred patch contains an invalid DOM name', async () => {
+    const token = createSuspenseToken()
+    let ready = false
+    let destroyed = false
+    const errors: unknown[] = []
+
+    function AsyncChild(): FictNode {
+      if (!ready) throw token.token
+      // linkedom permits the invalid name. Returning the already materialized
+      // node bypasses runtime VNode validation and exercises the final
+      // serializer defense-in-depth boundary.
+      return document.createElement('span><script data-fict-xss="deferred">') as unknown as FictNode
+    }
+
+    function App(): FictNode {
+      onDestroy(() => {
+        destroyed = true
+      })
+      return {
+        type: Suspense,
+        props: {
+          fallback: { type: 'span', props: { children: 'Loading' } },
+          children: { type: AsyncChild, props: {} },
+        },
+      }
+    }
+
+    const stream = renderToStream(() => ({ type: App, props: {} }), {
+      mode: 'shell',
+      fullDocument: false,
+      includeSnapshot: false,
+      exposeGlobals: true,
+      onError(error) {
+        errors.push(error)
+        throw new Error('DOM name error reporter failed')
+      },
+    })
+    const readAll = readReadableStream(stream)
+    await Promise.resolve()
+    ready = true
+    token.resolve()
+
+    await expect(readAll).rejects.toThrow('DOM name error reporter failed')
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toBeInstanceOf(Error)
+    expect((errors[0] as Error).message).toMatch(/Invalid element name/)
+    expect(destroyed).toBe(true)
+  })
+
   it('applies CSP nonces to generated streaming scripts', async () => {
     const token = createSuspenseToken()
     let ready = false

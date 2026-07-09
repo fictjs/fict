@@ -18,7 +18,12 @@ export default defineConfig({
   plugins: [
     // E2E fixture app intentionally exercises behavior-first fallback shapes.
     // Keep strict guarantee coverage in compiler/unit suites.
-    fict({ strictGuarantee: false }),
+    fict({
+      strictGuarantee: false,
+      // Compile only the application fixture. Framework source aliases are
+      // exercised as runtime dependencies and must not be compiled as user code.
+      include: [path.resolve(__dirname, 'src/**/*.{js,jsx,ts,tsx}')],
+    }),
     stripRuntimePrebundle(),
   ],
   cacheDir: path.resolve(__dirname, '../node_modules/.vite-e2e-v5'),

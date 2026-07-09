@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { parseHTML } from 'linkedom'
 
-import { Suspense, createSuspenseToken, type FictNode } from '@fictjs/runtime'
+import { Suspense, createSuspenseToken, onDestroy, type FictNode } from '@fictjs/runtime'
 import {
   FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
   __fictQrl,
@@ -9,7 +9,12 @@ import {
   __fictUseSignal,
 } from '@fictjs/runtime/internal'
 
-import { renderToDocument, renderToString, renderToStringAsync } from '../src/index'
+import {
+  createSSRDocument,
+  renderToDocument,
+  renderToString,
+  renderToStringAsync,
+} from '../src/index'
 
 describe('@fictjs/ssr', () => {
   describe('renderToStringAsync', () => {
@@ -120,6 +125,62 @@ describe('@fictjs/ssr', () => {
           includeSnapshot: false,
         }),
       ).toThrowError(/Invalid attribute name/)
+    })
+
+    it('rejects a pre-created invalid container at the final serialization boundary', () => {
+      const dom = createSSRDocument()
+      const container = dom.document.createElement(
+        'main><script data-fict-xss="container">',
+      ) as HTMLElement
+      dom.document.body.appendChild(container)
+      const globals = globalThis as Record<string, unknown>
+      const hadDocument = Object.prototype.hasOwnProperty.call(globals, 'document')
+      const previousDocument = globals.document
+      let destroyed = false
+
+      expect(() =>
+        renderToString(
+          () => {
+            onDestroy(() => {
+              destroyed = true
+            })
+            return 'safe'
+          },
+          {
+            dom,
+            container,
+            exposeGlobals: true,
+            includeContainer: true,
+            includeSnapshot: false,
+          },
+        ),
+      ).toThrowError(/Invalid element name/)
+
+      expect(destroyed).toBe(true)
+      expect(Object.prototype.hasOwnProperty.call(globals, 'document')).toBe(hadDocument)
+      expect(globals.document).toBe(previousDocument)
+    })
+
+    it('rejects all-ready serialization failures and tears down the render', async () => {
+      const dom = createSSRDocument()
+      const invalidNode = dom.document.createElement(
+        'div><script data-fict-xss="all-ready">',
+      ) as unknown as FictNode
+      let destroyed = false
+
+      await expect(
+        renderToStringAsync(
+          () => {
+            onDestroy(() => {
+              destroyed = true
+            })
+            return invalidNode
+          },
+          { dom, includeSnapshot: false },
+        ),
+      ).rejects.toThrow(/Invalid element name/)
+
+      expect(destroyed).toBe(true)
     })
 
     it('preserves valid custom, data, aria, Unicode, and namespaced names', () => {

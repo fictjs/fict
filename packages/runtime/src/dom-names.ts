@@ -7,78 +7,51 @@
  * invalid name as markup, so Fict performs the browser validation itself.
  */
 
-function isNameStartCodePoint(codePoint: number): boolean {
-  return (
-    codePoint === 0x3a ||
-    (codePoint >= 0x41 && codePoint <= 0x5a) ||
-    codePoint === 0x5f ||
-    (codePoint >= 0x61 && codePoint <= 0x7a) ||
-    (codePoint >= 0xc0 && codePoint <= 0xd6) ||
-    (codePoint >= 0xd8 && codePoint <= 0xf6) ||
-    (codePoint >= 0xf8 && codePoint <= 0x2ff) ||
-    (codePoint >= 0x370 && codePoint <= 0x37d) ||
-    (codePoint >= 0x37f && codePoint <= 0x1fff) ||
-    (codePoint >= 0x200c && codePoint <= 0x200d) ||
-    (codePoint >= 0x2070 && codePoint <= 0x218f) ||
-    (codePoint >= 0x2c00 && codePoint <= 0x2fef) ||
-    (codePoint >= 0x3001 && codePoint <= 0xd7ff) ||
-    (codePoint >= 0xf900 && codePoint <= 0xfdcf) ||
-    (codePoint >= 0xfdf0 && codePoint <= 0xfffd) ||
-    (codePoint >= 0x10000 && codePoint <= 0xeffff)
-  )
-}
-
-function isNameCodePoint(codePoint: number): boolean {
-  return (
-    isNameStartCodePoint(codePoint) ||
-    codePoint === 0x2d ||
-    codePoint === 0x2e ||
-    (codePoint >= 0x30 && codePoint <= 0x39) ||
-    codePoint === 0xb7 ||
-    (codePoint >= 0x300 && codePoint <= 0x36f) ||
-    (codePoint >= 0x203f && codePoint <= 0x2040)
-  )
-}
+const XML_NAME_START =
+  ':A-Z_a-z\\u00c0-\\u00d6\\u00d8-\\u00f6\\u00f8-\\u02ff\\u0370-\\u037d\\u037f-\\u1fff\\u200c-\\u200d\\u2070-\\u218f\\u2c00-\\u2fef\\u3001-\\ud7ff\\uf900-\\ufdcf\\ufdf0-\\ufffd\\u{10000}-\\u{effff}'
+const XML_NAME = RegExp(
+  // eslint-disable-next-line no-misleading-character-class -- XML NameChar includes combining marks by definition.
+  `^[${XML_NAME_START}][-.${XML_NAME_START}\\d\\u00b7\\u0300-\\u036f\\u203f-\\u2040]*$`,
+  'u',
+)
 
 function isValidDOMName(name: string): boolean {
-  if (name.length === 0) return false
-
-  let index = 0
-  for (const character of name) {
-    const codePoint = character.codePointAt(0)
-    if (codePoint === undefined) return false
-    if (index === 0 ? !isNameStartCodePoint(codePoint) : !isNameCodePoint(codePoint)) {
-      return false
-    }
-    index++
-  }
-  return true
+  return XML_NAME.test(name)
 }
 
 function isValidDOMQualifiedName(name: string): boolean {
   const firstColon = name.indexOf(':')
-  if (firstColon === -1) return isValidDOMName(name)
-  if (firstColon === 0 || name.indexOf(':', firstColon + 1) !== -1) return false
-  return isValidDOMName(name.slice(0, firstColon)) && isValidDOMName(name.slice(firstColon + 1))
+  return (
+    isValidDOMName(name) &&
+    (firstColon === -1 ||
+      (firstColon > 0 &&
+        name.indexOf(':', firstColon + 1) === -1 &&
+        isValidDOMName(name.slice(firstColon + 1))))
+  )
 }
 
-function invalidCharacterError(kind: 'element' | 'attribute', name: string): Error {
+function assertValidDOMName(
+  kind: 'element' | 'attribute',
+  name: string,
+  namespaceAware: boolean,
+): void {
+  const valid = namespaceAware ? isValidDOMQualifiedName(name) : isValidDOMName(name)
+  if (valid) return
+
   const message = `[fict] Invalid ${kind} name ${JSON.stringify(name)}.`
   if (typeof DOMException === 'function') {
-    return new DOMException(message, 'InvalidCharacterError')
+    throw new DOMException(message, 'InvalidCharacterError')
   }
 
   const error = new Error(message)
   error.name = 'InvalidCharacterError'
-  return error
+  throw error
 }
 
 export function assertValidDOMElementName(name: string, namespaceAware = false): void {
-  const valid = namespaceAware ? isValidDOMQualifiedName(name) : isValidDOMName(name)
-  if (!valid) throw invalidCharacterError('element', name)
+  assertValidDOMName('element', name, namespaceAware)
 }
 
 export function assertValidDOMAttributeName(name: string, namespaceAware = false): void {
-  const valid = namespaceAware ? isValidDOMQualifiedName(name) : isValidDOMName(name)
-  if (!valid) throw invalidCharacterError('attribute', name)
+  assertValidDOMName('attribute', name, namespaceAware)
 }

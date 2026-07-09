@@ -1,3 +1,5 @@
+import { assertValidDOMAttributeName, assertValidDOMElementName } from '@fictjs/runtime/internal'
+
 const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml'
 
 const HTML_VOID_ELEMENTS = new Set([
@@ -64,7 +66,10 @@ export function serializeHtmlNode(node: Node, parentElement: Element | null = nu
     case DOCUMENT_TYPE_NODE:
       return serializeDocumentType(node as DocumentType)
     case PROCESSING_INSTRUCTION_NODE:
-      return `<?${node.nodeName} ${node.nodeValue ?? ''}>`
+      // HTML has no processing-instruction syntax: `<?...>` is parsed as a
+      // bogus comment only until the first `>`, so arbitrary PI data could
+      // otherwise reopen markup. Preserve it as an inert HTML comment.
+      return serializeComment(`?${node.nodeName} ${node.nodeValue ?? ''}?`)
     default:
       return ''
   }
@@ -92,9 +97,11 @@ export function serializeHtmlNodes(
 function serializeElement(element: Element): string {
   const tagName = element.localName || element.tagName
   const isHtml = isHtmlElement(element)
+  assertValidDOMElementName(tagName, !isHtml)
   let html = `<${tagName}`
 
   for (const attribute of Array.from(element.attributes)) {
+    assertValidDOMAttributeName(attribute.name, attribute.namespaceURI != null)
     html += ` ${attribute.name}="${escapeAttributeValue(attribute.value)}"`
   }
 
@@ -145,6 +152,7 @@ function serializeComment(value: string): string {
 
 function serializeDocumentType(doctype: DocumentType): string {
   const name = doctype.name || 'html'
+  assertValidDOMElementName(name, true)
   if (doctype.publicId) {
     const system = doctype.systemId ? ` "${escapeAttributeValue(doctype.systemId)}"` : ''
     return `<!DOCTYPE ${name} PUBLIC "${escapeAttributeValue(doctype.publicId)}"${system}>`

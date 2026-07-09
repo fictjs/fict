@@ -242,7 +242,18 @@ function renderToDocumentInSession(
   // SSR rendering complete - disable SSR mode
   __fictDisableSSR()
 
-  const html = serializeOutput(dom.document, container!, options)
+  let html: string
+  try {
+    html = serializeOutput(dom.document, container!, options)
+  } catch (error) {
+    try {
+      teardown()
+    } finally {
+      restoreGlobals()
+      restoreManifest()
+    }
+    throw error
+  }
 
   const dispose = () => {
     try {
@@ -701,16 +712,33 @@ function startStreamingRenderInSession(
     }
   }
 
+  const reportErrorAndAbort = (error: unknown) => {
+    let abortReason = error
+    try {
+      options.onError?.(error)
+    } catch (onErrorFailure) {
+      abortReason = onErrorFailure
+    }
+    abort(abortReason)
+  }
+
   const finalize = () => {
     if (closed) return
-    closed = true
 
     if (mode === 'all' && dom && container && !wroteShell) {
-      if (includeSnapshot) {
-        const snapshot = __fictSerializeSSRState()
-        injectSnapshot(dom.document, container, snapshot, resolvedOptions)
+      let fullHtml: string
+      try {
+        if (includeSnapshot) {
+          const snapshot = __fictSerializeSSRState()
+          injectSnapshot(dom.document, container, snapshot, resolvedOptions)
+        }
+        fullHtml = serializeOutput(dom.document, container, resolvedOptions)
+      } catch (error) {
+        reportErrorAndAbort(error)
+        return
       }
-      const fullHtml = serializeOutput(dom.document, container, resolvedOptions)
+
+      closed = true
       enqueueWrite(fullHtml)
       afterWrites(() => {
         writer.close()
@@ -723,6 +751,7 @@ function startStreamingRenderInSession(
       return
     }
 
+    closed = true
     writeRemainingSnapshots()
 
     if (tailHtml) {
@@ -765,15 +794,19 @@ function startStreamingRenderInSession(
       if (mode === 'shell') {
         writeSnapshotForBoundary(id)
         if (dom) {
-          const html = serializeBetween(entry.start, entry.end)
-          enqueueWrite(buildPatchChunk(id, html, resolvedOptions))
+          try {
+            const html = serializeBetween(entry.start, entry.end)
+            enqueueWrite(buildPatchChunk(id, html, resolvedOptions))
+          } catch (error) {
+            reportErrorAndAbort(error)
+            return
+          }
         }
       }
       maybeFinalize()
     },
     onError(err: unknown) {
-      options.onError?.(err)
-      abort(err)
+      reportErrorAndAbort(err)
     },
   }
 
@@ -853,8 +886,7 @@ function startStreamingRenderInSession(
     // If no pending boundaries, finalize immediately.
     maybeFinalize()
   } catch (err) {
-    options.onError?.(err)
-    abort(err)
+    reportErrorAndAbort(err)
   }
 
   return { shellReady, allReady, abort }
