@@ -92,6 +92,7 @@ export class PlaygroundSessionManager {
   private readonly maxSessions: number
   private readonly sessions = new Map<string, SessionRecord>()
   private readonly sessionQueueTails = new Map<string, Promise<void>>()
+  private readonly sessionCreationLimiter = new AsyncLimiter(1)
   private readonly verifyLimiter: AsyncLimiter
   private readonly verifyTimeoutMs: number
   private readonly cleanupTimer: NodeJS.Timeout
@@ -124,6 +125,13 @@ export class PlaygroundSessionManager {
   async createSession(
     input: Partial<CreateSessionInput> = {},
     access: PlaygroundAuthContext = SYSTEM_ACCESS_CONTEXT,
+  ): Promise<PlaygroundSessionState> {
+    return this.sessionCreationLimiter.run(() => this.createSessionInternal(input, access))
+  }
+
+  private async createSessionInternal(
+    input: Partial<CreateSessionInput>,
+    access: PlaygroundAuthContext,
   ): Promise<PlaygroundSessionState> {
     const templateId = input.templateId ?? this.templates[0]?.id
     if (!templateId) {

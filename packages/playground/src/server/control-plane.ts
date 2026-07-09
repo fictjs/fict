@@ -68,6 +68,7 @@ export class TenantQuotaController {
   private readonly tenantOverrides: Record<string, Partial<PlaygroundTenantQuota>>
   private readonly requestWindows = new Map<string, number[]>()
   private readonly verificationWindows = new Map<string, number[]>()
+  private readonly pendingSessionCreations = new Map<string, number>()
 
   constructor(options: PlaygroundTenantQuotaOptions | undefined) {
     this.defaultQuota = {
@@ -99,6 +100,24 @@ export class TenantQuotaController {
     const quota = this.getTenantQuota(tenantId)
     if (activeSessions >= quota.maxSessions) {
       throw new ControlPlaneError(429, 'Active session quota exceeded for tenant')
+    }
+  }
+
+  reserveSessionCapacity(tenantId: string, activeSessions: number): () => void {
+    const pendingSessions = this.pendingSessionCreations.get(tenantId) ?? 0
+    this.assertSessionCapacity(tenantId, activeSessions + pendingSessions)
+    this.pendingSessionCreations.set(tenantId, pendingSessions + 1)
+
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      const remaining = (this.pendingSessionCreations.get(tenantId) ?? 1) - 1
+      if (remaining > 0) {
+        this.pendingSessionCreations.set(tenantId, remaining)
+      } else {
+        this.pendingSessionCreations.delete(tenantId)
+      }
     }
   }
 

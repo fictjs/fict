@@ -230,10 +230,6 @@ async function handleRequest(context: RequestContext): Promise<void> {
     if (method === 'POST' && pathname === '/api/sessions') {
       const principal = requireActor(actor)
       assertRole(principal, 'developer')
-      context.controllers.quota.assertSessionCapacity(
-        principal.tenantId,
-        context.manager.countSessionsForTenant(principal.tenantId),
-      )
 
       const body = await readJsonBody(context.request, context.runtime.maxRequestBodyBytes)
       const sessionInput = {
@@ -241,7 +237,16 @@ async function handleRequest(context: RequestContext): Promise<void> {
         ...(isRecord(body.config) ? { config: toConfigPatch(body.config) } : {}),
         ...(isRecord(body.files) ? { files: toStringMap(body.files) } : {}),
       }
-      const session = await context.manager.createSession(sessionInput, principal)
+      const releaseCapacity = context.controllers.quota.reserveSessionCapacity(
+        principal.tenantId,
+        context.manager.countSessionsForTenant(principal.tenantId),
+      )
+      let session
+      try {
+        session = await context.manager.createSession(sessionInput, principal)
+      } finally {
+        releaseCapacity()
+      }
       status = 201
       sendJson(context.response, 201, { session })
       return
@@ -250,10 +255,6 @@ async function handleRequest(context: RequestContext): Promise<void> {
     if (method === 'POST' && pathname === '/api/import') {
       const principal = requireActor(actor)
       assertRole(principal, 'developer')
-      context.controllers.quota.assertSessionCapacity(
-        principal.tenantId,
-        context.manager.countSessionsForTenant(principal.tenantId),
-      )
 
       const body = await readJsonBody(context.request, context.runtime.maxRequestBodyBytes)
       if (typeof body.token !== 'string') {
@@ -262,7 +263,16 @@ async function handleRequest(context: RequestContext): Promise<void> {
         return
       }
       const snapshot = decodeSessionSnapshot(body.token)
-      const session = await context.manager.importSnapshot(snapshot, principal)
+      const releaseCapacity = context.controllers.quota.reserveSessionCapacity(
+        principal.tenantId,
+        context.manager.countSessionsForTenant(principal.tenantId),
+      )
+      let session
+      try {
+        session = await context.manager.importSnapshot(snapshot, principal)
+      } finally {
+        releaseCapacity()
+      }
       status = 201
       sendJson(context.response, 201, { session })
       return
