@@ -27,6 +27,7 @@ import {
   bindClass,
   createConditional,
   createPortal,
+  hydrateComponent,
   insert,
   insertBetween,
   bindEvent,
@@ -34,6 +35,8 @@ import {
   createKeyedList,
   toNodeArray,
   delegateEvents,
+  spread,
+  template,
   __fictReactive,
   __fictProp,
 } from '../src/internal'
@@ -588,6 +591,47 @@ describe('Reactive DOM Binding', () => {
       disposeInsert()
       root.dispose()
     })
+
+    it('tracks getValue but not descendant materialization reads or writes', async () => {
+      const visible = createSignal(true)
+      const materializationState = createSignal(0)
+      let materializations = 0
+
+      const root = createRoot(() =>
+        insert(
+          container,
+          () => (visible() ? { type: 'span', props: {}, key: undefined } : null),
+          () => {
+            materializations += 1
+            const current = materializationState()
+            if (current === 0) materializationState(1)
+            const node = document.createElement('span')
+            node.textContent = `insert:${current}`
+            return node
+          },
+        ),
+      )
+
+      expect(materializations).toBe(1)
+      expect(container.textContent).toBe('insert:0')
+      await tick()
+      expect(materializations).toBe(1)
+
+      materializationState(2)
+      await tick()
+      expect(materializations).toBe(1)
+
+      visible(false)
+      await tick()
+      expect(container.textContent).toBe('')
+      visible(true)
+      await tick()
+      expect(materializations).toBe(2)
+      expect(container.textContent).toBe('insert:2')
+
+      root.value()
+      root.dispose()
+    })
   })
 
   describe('insertBetween', () => {
@@ -701,7 +745,226 @@ describe('Reactive DOM Binding', () => {
     })
   })
 
+  describe('spread children materialization', () => {
+    it('tracks the assigned child getter but not descendant materialization', async () => {
+      const host = document.createElement('div')
+      container.appendChild(host)
+      const visible = createSignal(true)
+      const materializationState = createSignal(0)
+      let childRenders = 0
+
+      const Child = () => {
+        childRenders += 1
+        const current = materializationState()
+        if (current === 0) materializationState(1)
+        return {
+          type: 'span',
+          props: { children: `spread:${current}` },
+          key: undefined,
+        }
+      }
+      const children = reactive(() =>
+        visible() ? { type: Child, props: {}, key: undefined } : null,
+      )
+      const root = createRoot(() => spread(host, { children }))
+
+      expect(childRenders).toBe(1)
+      expect(host.textContent).toBe('spread:0')
+      await tick()
+      expect(childRenders).toBe(1)
+
+      materializationState(2)
+      await tick()
+      expect(childRenders).toBe(1)
+
+      visible(false)
+      await tick()
+      expect(host.textContent).toBe('')
+      visible(true)
+      await tick()
+      expect(childRenders).toBe(2)
+      expect(host.textContent).toBe('spread:2')
+
+      root.dispose()
+    })
+
+    it('does not track descendant materialization while hydrating assigned children', async () => {
+      container.innerHTML = '<div><span>spread-hydrated:0</span></div>'
+      const materializationState = createSignal(0)
+      let childRenders = 0
+      const hydratedHost = template('<div></div>')
+      const hydratedChild = template('<span>spread-hydrated:0</span>')
+
+      const Child = () => {
+        childRenders += 1
+        const current = materializationState()
+        if (current === 0) materializationState(1)
+        return hydratedChild()
+      }
+
+      const teardown = hydrateComponent(() => {
+        const host = hydratedHost() as Element
+        spread(host, {
+          children: { type: Child, props: {}, key: undefined },
+        })
+      }, container)
+
+      expect(childRenders).toBe(1)
+      await tick()
+      expect(childRenders).toBe(1)
+
+      materializationState(2)
+      await tick()
+      expect(childRenders).toBe(1)
+
+      teardown()
+    })
+  })
+
   describe('createConditional', () => {
+    it('does not track descendant materialization for ordinary branches', async () => {
+      const visible = createSignal(true)
+      const materializationState = createSignal(0)
+      let childRenders = 0
+      const start = document.createComment('fict:cond:start')
+      const end = document.createComment('fict:cond:end')
+      container.append(start, end)
+
+      const Child = () => {
+        childRenders += 1
+        const current = materializationState()
+        if (current === 0) materializationState(1)
+        return {
+          type: 'span',
+          props: { children: `conditional:${current}` },
+          key: undefined,
+        }
+      }
+      const root = createRoot(() =>
+        createConditional(
+          () => visible(),
+          () => ({ type: Child, props: {}, key: undefined }),
+          createElement,
+          () => 'OFF',
+          start,
+          end,
+        ),
+      )
+
+      expect(childRenders).toBe(1)
+      expect(container.textContent).toBe('conditional:0')
+      await tick()
+      expect(childRenders).toBe(1)
+
+      materializationState(2)
+      await tick()
+      expect(childRenders).toBe(1)
+
+      visible(false)
+      await tick()
+      expect(container.textContent).toBe('OFF')
+      visible(true)
+      await tick()
+      expect(childRenders).toBe(2)
+      expect(container.textContent).toBe('conditional:2')
+
+      root.value.dispose()
+      root.dispose()
+    })
+
+    it('continues tracking opted-in branch reads', async () => {
+      const branchLabel = createSignal('A')
+      let branchRenders = 0
+      let childRenders = 0
+      const start = document.createComment('fict:cond:start')
+      const end = document.createComment('fict:cond:end')
+      container.append(start, end)
+
+      const Child = (props: { label: string }) => {
+        childRenders += 1
+        return {
+          type: 'span',
+          props: { children: props.label },
+          key: undefined,
+        }
+      }
+      const root = createRoot(() =>
+        createConditional(
+          () => true,
+          () => {
+            branchRenders += 1
+            return {
+              type: Child,
+              props: { label: branchLabel() },
+              key: undefined,
+            }
+          },
+          createElement,
+          undefined,
+          start,
+          end,
+          { trackBranchReads: true },
+        ),
+      )
+
+      expect(branchRenders).toBe(1)
+      expect(childRenders).toBe(1)
+      expect(container.textContent).toBe('A')
+
+      branchLabel('B')
+      await tick()
+      expect(branchRenders).toBe(2)
+      expect(childRenders).toBe(2)
+      expect(container.textContent).toBe('B')
+
+      root.value.dispose()
+      root.dispose()
+    })
+
+    it('does not track descendant materialization while hydrating a branch', async () => {
+      container.innerHTML =
+        '<div><!--fict:cond:start--><span>hydrated:0</span><!--fict:cond:end--></div>'
+      const materializationState = createSignal(0)
+      let childRenders = 0
+      const hydratedHost = template('<div></div>')
+      const hydratedChild = template('<span>hydrated:0</span>')
+
+      const Child = () => {
+        childRenders += 1
+        const current = materializationState()
+        if (current === 0) materializationState(1)
+        return hydratedChild()
+      }
+
+      const teardown = hydrateComponent(() => {
+        const host = hydratedHost()
+        const comments = Array.from(host.childNodes).filter(
+          node => node.nodeType === Node.COMMENT_NODE,
+        ) as Comment[]
+        const start = comments[0]!
+        const end = comments[1]!
+        const handle = createConditional(
+          () => true,
+          () => ({ type: Child, props: {}, key: undefined }),
+          createElement,
+          undefined,
+          start,
+          end,
+        )
+        onDestroy(handle.dispose)
+      }, container)
+
+      expect(childRenders).toBe(1)
+      await tick()
+      expect(childRenders).toBe(1)
+
+      materializationState(2)
+      await tick()
+      expect(childRenders).toBe(1)
+
+      teardown()
+    })
+
     it('renders true branch when condition is true', async () => {
       const show = createSignal(true)
 
@@ -1271,6 +1534,60 @@ describe('Reactive DOM Binding', () => {
   })
 
   describe('createPortal', () => {
+    it('tracks direct render dependencies but not descendant materialization', async () => {
+      const portalContainer = document.createElement('div')
+      const directLabel = createSignal('A')
+      const materializationState = createSignal(0)
+      let portalRenders = 0
+      let childRenders = 0
+
+      const Child = (props: { label: string }) => {
+        childRenders += 1
+        const current = materializationState()
+        if (current === 0) materializationState(1)
+        return {
+          type: 'span',
+          props: { children: `${props.label}:${current}` },
+          key: undefined,
+        }
+      }
+      const root = createRoot(() =>
+        createPortal(
+          portalContainer,
+          () => {
+            portalRenders += 1
+            return {
+              type: Child,
+              props: { label: directLabel() },
+              key: undefined,
+            }
+          },
+          createElement,
+        ),
+      )
+
+      expect(portalRenders).toBe(1)
+      expect(childRenders).toBe(1)
+      expect(portalContainer.textContent).toBe('A:0')
+      await tick()
+      expect(portalRenders).toBe(1)
+      expect(childRenders).toBe(1)
+
+      materializationState(2)
+      await tick()
+      expect(portalRenders).toBe(1)
+      expect(childRenders).toBe(1)
+
+      directLabel('B')
+      await tick()
+      expect(portalRenders).toBe(2)
+      expect(childRenders).toBe(2)
+      expect(portalContainer.textContent).toBe('B:2')
+
+      root.value.dispose()
+      root.dispose()
+    })
+
     it('renders and cleans up fragment output', async () => {
       const portalContainer = document.createElement('div')
       const visible = createSignal(true)

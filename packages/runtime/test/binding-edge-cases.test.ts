@@ -2871,15 +2871,18 @@ describe('Binding Edge Cases', () => {
 
       const { marker, dispose, flush } = createConditional(
         () => condition(),
-        () => ({
-          type: ErrorBoundary as any,
-          props: {
-            fallback: { type: 'span', props: { children: 'caught' }, key: undefined },
-            onError: (err: unknown) => errors.push(err),
-            children: { type: Child, props: {}, key: undefined },
-          },
-          key: undefined,
-        }),
+        () => {
+          counter()
+          return {
+            type: ErrorBoundary as any,
+            props: {
+              fallback: { type: 'span', props: { children: 'caught' }, key: undefined },
+              onError: (err: unknown) => errors.push(err),
+              children: { type: Child, props: {}, key: undefined },
+            },
+            key: undefined,
+          }
+        },
         createElement,
         () => 'OFF',
         undefined,
@@ -3623,7 +3626,10 @@ describe('Binding Edge Cases', () => {
 
         const handle = createConditional(
           () => condition(),
-          () => ({ type: Child, props: {}, key: undefined }),
+          () => {
+            counter()
+            return { type: Child, props: {}, key: undefined }
+          },
           createElement,
           () => 'OFF',
           undefined,

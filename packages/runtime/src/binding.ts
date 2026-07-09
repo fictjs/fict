@@ -1133,28 +1133,28 @@ export function insert(
     let nodes: Node[]
     let handledError = false
     try {
-      let newNode: Node | Node[]
       const ownerDocument = parentNode?.ownerDocument ?? markerOwnerDocument
-
-      if (isNodeLike(value, ownerDocument)) {
-        newNode = value
-      } else if (Array.isArray(value)) {
-        if (value.every(v => isNodeLike(v, ownerDocument))) {
-          newNode = value as Node[]
-        } else {
+      const createValue = () => {
+        if (isNodeLike(value, ownerDocument)) {
+          return value
+        }
+        if (Array.isArray(value)) {
+          if (value.every(v => isNodeLike(v, ownerDocument))) {
+            return value as Node[]
+          }
           if (createFn) {
             const mapped: Node[] = []
             for (const item of value) {
               mapped.push(...toNodeArray(createFn(item as any), ownerDocument))
             }
-            newNode = mapped
-          } else {
-            newNode = ownerDocument.createTextNode(String(value))
+            return mapped
           }
+          return ownerDocument.createTextNode(String(value))
         }
-      } else {
-        newNode = createFn ? createFn(value) : ownerDocument.createTextNode(String(value))
+        return createFn ? createFn(value) : ownerDocument.createTextNode(String(value))
       }
+
+      const newNode: Node | Node[] = untrack(createValue)
 
       nodes = toNodeArray(newNode, ownerDocument)
       if (root.suspended) {
@@ -2158,8 +2158,8 @@ function bindAssignedChildren(
 
       const newNode =
         initialHydrating && isHydratingActive()
-          ? withHydration(node, () => createValue())
-          : createValue()
+          ? withHydration(node, () => untrack(createValue))
+          : untrack(createValue)
 
       nodes = toNodeArray(newNode, ownerDocument)
       if (root.suspended) {
@@ -2800,7 +2800,7 @@ export function createConditional(
       if (output == null || output === false) {
         return { root, nodes: [], handled: false }
       }
-      const el = createElementFn(output)
+      const el = untrack(() => createElementFn(output))
       return {
         root,
         nodes: toNodeArray(el, parent.ownerDocument ?? markerOwnerDocument),
@@ -2900,7 +2900,7 @@ export function createConditional(
             if (output == null || output === false) {
               return
             }
-            createElementFn(output)
+            untrack(() => createElementFn(output))
           },
         )
         currentNodes = collectBetween()
@@ -3057,7 +3057,7 @@ export function createPortal(
     try {
       const output = render()
       if (output != null && output !== false) {
-        const el = createElementFn(output)
+        const el = untrack(() => createElementFn(output))
         const nodes = toNodeArray(el, markerOwnerDocument)
         if (marker.parentNode) {
           currentNodes = insertNodesBefore(marker.parentNode as ParentNode & Node, nodes, marker)
