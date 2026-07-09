@@ -64,6 +64,7 @@ export function createBrowserHistory(): History {
 
   const listeners = new Set<HistoryListener>()
   const blockers = new Set<Blocker>()
+  let destroyed = false
 
   let action: HistoryAction = 'POP'
   let location = readLocation(
@@ -233,6 +234,14 @@ export function createBrowserHistory(): History {
         }
       }
     },
+    destroy() {
+      if (destroyed) return
+      destroyed = true
+      window.removeEventListener('popstate', handlePopState)
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      listeners.clear()
+      blockers.clear()
+    },
   }
 }
 
@@ -264,6 +273,7 @@ export function createHashHistory(options: { hashType?: 'slash' | 'noslash' } = 
   const { hashType = 'slash' } = options
   const listeners = new Set<HistoryListener>()
   const blockers = new Set<Blocker>()
+  let destroyed = false
 
   let action: HistoryAction = 'POP'
   let location = readHashLocation()
@@ -445,6 +455,14 @@ export function createHashHistory(options: { hashType?: 'slash' | 'noslash' } = 
         }
       }
     },
+    destroy() {
+      if (destroyed) return
+      destroyed = true
+      window.removeEventListener('hashchange', handleHashChange)
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      listeners.clear()
+      blockers.clear()
+    },
   }
 }
 
@@ -607,6 +625,10 @@ export function createMemoryHistory(
       blockers.add(blocker)
       return () => blockers.delete(blocker)
     },
+    destroy() {
+      listeners.clear()
+      blockers.clear()
+    },
   }
 }
 
@@ -657,6 +679,9 @@ export function createStaticHistory(url: string): History {
     block() {
       // No-op on server
       return () => {}
+    },
+    destroy() {
+      // No resources to release on the server.
     },
   }
 }

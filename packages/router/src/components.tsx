@@ -10,6 +10,7 @@ import {
   Fragment,
   Suspense,
   ErrorBoundary,
+  onCleanup,
   untrack,
   type FictNode,
   type Component,
@@ -71,7 +72,9 @@ interface StaticRouterProps extends BaseRouterProps {
  * Browser Router - uses the History API
  */
 export function Router(props: BrowserRouterProps & { children?: FictNode }) {
+  const ownsHistory = !props.history
   const history = props.history || createBrowserHistory()
+  if (ownsHistory) onCleanup(() => history.destroy?.())
   const children = untrack(() => props.children)
   const routes = extractRoutes(children)
 
@@ -88,6 +91,7 @@ export function Router(props: BrowserRouterProps & { children?: FictNode }) {
 export function HashRouter(props: HashRouterProps & { children?: FictNode }) {
   const hashOptions = props.hashType ? { hashType: props.hashType } : undefined
   const history = createHashHistory(hashOptions)
+  onCleanup(() => history.destroy?.())
   const children = untrack(() => props.children)
   const routes = extractRoutes(children)
 
@@ -112,6 +116,7 @@ export function MemoryRouter(props: MemoryRouterProps & { children?: FictNode })
         }
       : undefined
   const history = createMemoryHistory(memoryOptions)
+  onCleanup(() => history.destroy?.())
   const children = untrack(() => props.children)
   const routes = extractRoutes(children)
 
@@ -128,6 +133,7 @@ export function MemoryRouter(props: MemoryRouterProps & { children?: FictNode })
 export function StaticRouter(props: StaticRouterProps & { children?: FictNode }) {
   const url = untrack(() => props.url)
   const history = createStaticHistory(url)
+  onCleanup(() => history.destroy?.())
   const children = untrack(() => props.children)
   const routes = extractRoutes(children)
 
@@ -523,7 +529,9 @@ export function createRouter(
 } {
   return {
     Router: (props: { children?: FictNode }) => {
+      const ownsHistory = !options?.history
       const history = options?.history || createBrowserHistory()
+      if (ownsHistory) onCleanup(() => history.destroy?.())
 
       return (
         <RouterProvider history={history} routes={routes} base={options?.base}>

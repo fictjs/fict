@@ -310,6 +310,8 @@ export interface History {
   createHref(to: To): string
   /** Block navigation */
   block(blocker: Blocker): () => void
+  /** Release global listeners and local subscriptions owned by this history */
+  destroy?(): void
 }
 
 /**

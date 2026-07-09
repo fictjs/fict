@@ -1,5 +1,40 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { createMemoryHistory, createStaticHistory } from '../src/history'
+import {
+  createBrowserHistory,
+  createHashHistory,
+  createMemoryHistory,
+  createStaticHistory,
+} from '../src/history'
+
+describe('browser-backed history lifecycle', () => {
+  it('removes browser listeners and blockers when destroyed', () => {
+    const removeEventListener = vi.spyOn(window, 'removeEventListener')
+    const history = createBrowserHistory()
+    history.listen(vi.fn())
+    history.block(vi.fn())
+
+    history.destroy?.()
+    history.destroy?.()
+
+    expect(removeEventListener).toHaveBeenCalledWith('popstate', expect.any(Function))
+    expect(removeEventListener).toHaveBeenCalledWith('beforeunload', expect.any(Function))
+    removeEventListener.mockRestore()
+  })
+
+  it('removes hash listeners and blockers when destroyed', () => {
+    const removeEventListener = vi.spyOn(window, 'removeEventListener')
+    const history = createHashHistory()
+    history.listen(vi.fn())
+    history.block(vi.fn())
+
+    history.destroy?.()
+    history.destroy?.()
+
+    expect(removeEventListener).toHaveBeenCalledWith('hashchange', expect.any(Function))
+    expect(removeEventListener).toHaveBeenCalledWith('beforeunload', expect.any(Function))
+    removeEventListener.mockRestore()
+  })
+})
 
 describe('createMemoryHistory', () => {
   it('should initialize with default entry', () => {
