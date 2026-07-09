@@ -473,6 +473,10 @@ export class PlaygroundSessionManager {
         host: this.previewHost,
         port: 0,
         strictPort: false,
+        fs: {
+          strict: true,
+          allow: this.createPreviewFileSystemAllowList(rootDir),
+        },
       },
       resolve: {
         alias: this.createWorkspaceAliases(),
@@ -620,6 +624,16 @@ export class PlaygroundSessionManager {
       { find: /^@fictjs\/devtools$/, replacement: `${devtoolsSrc}/index.ts` },
       { find: /^@fictjs\/devtools\/core$/, replacement: `${devtoolsSrc}/core/index.ts` },
       { find: /^@fictjs\/devtools\/vite$/, replacement: `${devtoolsSrc}/vite/index.ts` },
+    ]
+  }
+
+  private createPreviewFileSystemAllowList(rootDir: string): string[] {
+    return [
+      path.resolve(rootDir),
+      path.join(this.workspaceRoot, 'packages/runtime/src'),
+      path.join(this.workspaceRoot, 'packages/fict/src'),
+      path.join(this.workspaceRoot, 'packages/ssr/src'),
+      path.join(this.workspaceRoot, 'packages/devtools/src'),
     ]
   }
 }
