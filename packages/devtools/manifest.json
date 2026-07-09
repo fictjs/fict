@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Fict DevTools",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Developer tools for Fict applications",
   "permissions": ["storage", "scripting", "tabs", "activeTab"],
   "devtools_page": "devtools.html",
