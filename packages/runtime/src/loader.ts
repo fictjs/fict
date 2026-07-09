@@ -298,6 +298,12 @@ export interface ResumableLoaderOptions {
    */
   onSnapshotIssue?: (issue: SnapshotIssue) => void
   /**
+   * Called once after a rejected snapshot has made resumability unsafe.
+   * The loader first removes its listeners and clears the affected resumable
+   * state; applications should mount their client-rendered root here.
+   */
+  onSnapshotRejected?: (issue: SnapshotIssue) => void | Promise<void>
+  /**
    * Prefetch strategy configuration.
    * Set to false to disable all prefetching.
    * @default { visibility: true, hover: true }
@@ -357,6 +363,7 @@ export type SnapshotIssueCode =
   | 'snapshot_invalid_shape'
   | 'snapshot_unsupported_version'
   | 'snapshot_migration_failed'
+  | 'snapshot_fallback_failed'
   | 'scope_snapshot_missing'
   | 'resume_import_failed'
   | 'resume_function_missing'
@@ -395,6 +402,10 @@ interface LoaderInstallation {
   processedSnapshots: Set<HTMLScriptElement>
   emittedIssueKeys: Set<string>
   snapshotIssueHandler: ((issue: SnapshotIssue) => void) | null
+  snapshotRejectedHandler: ((issue: SnapshotIssue) => void | Promise<void>) | null
+  snapshotRejection: SnapshotIssue | null
+  snapshotFallbackStarted: boolean
+  initialized: boolean
   snapshotMigrations: Record<number, SnapshotMigration> | null
   eventListenerCleanup: (() => void) | null
   prefetchCleanup: (() => void) | null
@@ -473,6 +484,10 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
     processedSnapshots: new Set(),
     emittedIssueKeys: new Set(),
     snapshotIssueHandler: options.onSnapshotIssue ?? null,
+    snapshotRejectedHandler: options.onSnapshotRejected ?? null,
+    snapshotRejection: null,
+    snapshotFallbackStarted: false,
+    initialized: false,
     snapshotMigrations: options.snapshotMigrations ?? null,
     eventListenerCleanup: null,
     prefetchCleanup: null,
@@ -493,6 +508,12 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
   )
   for (const script of Array.from(snapshotScripts)) {
     parseSnapshotScript(installation, script as HTMLScriptElement)
+    if (installation.snapshotRejection) break
+  }
+
+  if (installation.snapshotRejection) {
+    activateSnapshotFallback(installation)
+    return
   }
 
   const SnapshotObserver = globalThis.MutationObserver
@@ -552,6 +573,7 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
   if (options.prefetch !== false) {
     installation.prefetchCleanup = setupPrefetch(installation, options.prefetch ?? {})
   }
+  installation.initialized = true
 }
 
 function cleanupLoaderInstallation(
@@ -564,6 +586,7 @@ function cleanupLoaderInstallation(
   installation.eventListenerCleanup = null
   installation.prefetchCleanup = null
   installation.snapshotObserver = null
+  installation.initialized = false
   __fictDeleteResumedScopes(Object.keys(installation.state.scopes))
   loaderInstallations.delete(installation.document)
   if (synchronizeState) {
@@ -916,10 +939,90 @@ function emitSnapshotIssue(installation: LoaderInstallation, issue: SnapshotIssu
   if (installation.emittedIssueKeys.has(key)) return
   installation.emittedIssueKeys.add(key)
 
-  installation.snapshotIssueHandler?.(issue)
+  notifySnapshotIssueHandler(installation, issue)
 
   if (typeof console !== 'undefined' && typeof console.warn === 'function') {
     console.warn(issue.message)
+  }
+
+  if (isSnapshotRejection(installation, issue) && installation.snapshotRejection === null) {
+    installation.snapshotRejection = issue
+    if (installation.initialized) {
+      activateSnapshotFallback(installation)
+    }
+  }
+}
+
+function notifySnapshotIssueHandler(installation: LoaderInstallation, issue: SnapshotIssue): void {
+  try {
+    installation.snapshotIssueHandler?.(issue)
+  } catch (error) {
+    if (typeof console !== 'undefined' && typeof console.error === 'function') {
+      console.error('[fict/loader] onSnapshotIssue callback failed.', error)
+    }
+  }
+}
+
+function isSnapshotRejection(installation: LoaderInstallation, issue: SnapshotIssue): boolean {
+  if (installation.snapshotRejectedHandler === null) return false
+  return (
+    issue.code === 'snapshot_parse_error' ||
+    issue.code === 'snapshot_invalid_shape' ||
+    issue.code === 'snapshot_unsupported_version' ||
+    issue.code === 'snapshot_migration_failed' ||
+    issue.code === 'scope_snapshot_missing'
+  )
+}
+
+function activateSnapshotFallback(installation: LoaderInstallation): void {
+  if (installation.snapshotFallbackStarted) return
+  const issue = installation.snapshotRejection
+  if (!issue) return
+
+  installation.snapshotFallbackStarted = true
+  const fallback = installation.snapshotRejectedHandler
+  cleanupLoaderInstallation(installation)
+  if (!fallback) return
+
+  let result: void | Promise<void>
+  try {
+    result = fallback(issue)
+  } catch (error) {
+    reportSnapshotFallbackFailure(installation, issue, error)
+    return
+  }
+
+  if (!isPromiseLikeValue(result)) return
+  const pending = Promise.resolve(result)
+    .catch(error => reportSnapshotFallbackFailure(installation, issue, error))
+    .then(() => undefined)
+  pendingHandlers.add(pending)
+  void pending.finally(() => pendingHandlers.delete(pending))
+}
+
+function isPromiseLikeValue(value: unknown): value is PromiseLike<void> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as PromiseLike<void>).then === 'function'
+  )
+}
+
+function reportSnapshotFallbackFailure(
+  installation: LoaderInstallation,
+  rejectedIssue: SnapshotIssue,
+  error: unknown,
+): void {
+  const issue: SnapshotIssue = {
+    code: 'snapshot_fallback_failed',
+    message: `[fict/loader] Client-render fallback failed: ${formatImportError(error)}`,
+    source: rejectedIssue.source,
+    expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+    error,
+  }
+  notifySnapshotIssueHandler(installation, issue)
+  if (typeof console !== 'undefined' && typeof console.error === 'function') {
+    console.error(issue.message)
   }
 }
 
@@ -1378,6 +1481,7 @@ async function handleResumableEventAsync(
         expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
         scopeId: sourceScopeId,
       })
+      if (installation.snapshotFallbackStarted) return
       continue
     }
     try {
@@ -1392,7 +1496,7 @@ async function handleResumableEventAsync(
         eventType: event.type,
         error,
       })
-      continue
+      return
     }
 
     const { url, exportName, flags } = parseQrl(qrl)

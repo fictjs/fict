@@ -281,6 +281,95 @@ describe('resumable loader snapshot validation', () => {
     expect(issues.some(issue => issue.code === 'snapshot_unsupported_version')).toBe(true)
   })
 
+  it('disengages resumability before invoking a single client-render fallback', () => {
+    const issues: SnapshotIssue[] = []
+    const fallbackIssues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION + 1,
+        scopes: { sRejected: { id: 'sRejected', slots: [] } },
+      }),
+      ['{invalid-incremental-json'],
+    )
+    const root = doc.createElement('main')
+    root.textContent = 'server shell'
+    doc.body.appendChild(root)
+
+    installResumableLoader({
+      document: doc,
+      events: ['click'],
+      prefetch: false,
+      onSnapshotIssue: issue => issues.push(issue),
+      onSnapshotRejected: issue => {
+        fallbackIssues.push(issue)
+        root.replaceChildren(doc.createTextNode('client rendered'))
+      },
+    })
+
+    expect(root.textContent).toBe('client rendered')
+    expect(fallbackIssues).toHaveLength(1)
+    expect(fallbackIssues[0]?.code).toBe('snapshot_unsupported_version')
+    expect(__fictGetSSRScope('sRejected')).toBeUndefined()
+
+    root.dispatchEvent(new Event('click', { bubbles: true }))
+    expect(fallbackIssues).toHaveLength(1)
+    expect(issues.filter(issue => issue.code === 'scope_snapshot_missing')).toHaveLength(0)
+  })
+
+  it('falls back to client rendering when an event targets a missing scope', async () => {
+    const fallbackIssues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({ v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION, scopes: {} }),
+    )
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 'sMissing')
+    const button = doc.createElement('button')
+    button.setAttribute('on:click', 'data:text/javascript,export function h(){}#h')
+    host.appendChild(button)
+    doc.body.appendChild(host)
+
+    installResumableLoader({
+      document: doc,
+      events: ['click'],
+      prefetch: false,
+      onSnapshotRejected: async issue => {
+        await Promise.resolve()
+        fallbackIssues.push(issue)
+        host.replaceChildren(doc.createTextNode('client fallback'))
+      },
+    })
+
+    button.dispatchEvent(new Event('click', { bubbles: true }))
+    await waitForPendingHandlers()
+
+    expect(fallbackIssues).toHaveLength(1)
+    expect(fallbackIssues[0]?.code).toBe('scope_snapshot_missing')
+    expect(host.textContent).toBe('client fallback')
+  })
+
+  it('reports rejected client-render fallbacks without unhandled rejections', async () => {
+    const issues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots('{invalid-json')
+
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: false,
+      onSnapshotIssue: issue => issues.push(issue),
+      onSnapshotRejected: async () => {
+        throw new Error('fallback boom')
+      },
+    })
+    await waitForPendingHandlers()
+
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        code: 'snapshot_fallback_failed',
+        error: expect.objectContaining({ message: 'fallback boom' }),
+      }),
+    )
+  })
+
   it('migrates older snapshot schema versions when a migration is provided', () => {
     const doc = createDocumentWithSnapshots(
       JSON.stringify({
