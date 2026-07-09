@@ -114,6 +114,77 @@ describe('query', () => {
     expect(second()).toBe('ok')
   })
 
+  it('deduplicates concurrent retries after a rejected query', async () => {
+    let resolveRetry: ((value: string) => void) | undefined
+    const fetcher = vi
+      .fn<(id: string) => Promise<string>>()
+      .mockRejectedValueOnce(new Error('query failed'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>(resolve => {
+            resolveRetry = resolve
+          }),
+      )
+    const fetchUser = query(fetcher, 'dedupedRetryQuery')
+
+    fetchUser('123')
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const firstRetry = fetchUser('123')
+    const secondRetry = fetchUser('123')
+    expect(fetcher).toHaveBeenCalledTimes(2)
+
+    resolveRetry?.('ok')
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(firstRetry()).toBe('ok')
+    expect(secondRetry()).toBe('ok')
+  })
+
+  it('deduplicates refreshes of an expired query result', async () => {
+    let now = 0
+    let resolveRefresh: ((value: string) => void) | undefined
+    const dateNow = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const fetcher = vi
+      .fn<(id: string) => Promise<string>>()
+      .mockResolvedValueOnce('initial')
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>(resolve => {
+            resolveRefresh = resolve
+          }),
+      )
+    const fetchUser = query(fetcher, 'dedupedExpiredQuery')
+
+    try {
+      fetchUser('123')
+      await Promise.resolve()
+      await Promise.resolve()
+      now = 3 * 60 * 1000 + 1
+
+      const firstRefresh = fetchUser('123')
+      const secondRefresh = fetchUser('123')
+      expect(fetcher).toHaveBeenCalledTimes(2)
+      expect(firstRefresh()).toBe('initial')
+      expect(secondRefresh()).toBe('initial')
+
+      resolveRefresh?.('refreshed')
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(firstRefresh()).toBe('refreshed')
+      expect(secondRefresh()).toBe('refreshed')
+    } finally {
+      dateNow.mockRestore()
+    }
+  })
+
   it('should dedupe pending requests for the same key', async () => {
     let resolveFetch: ((value: string) => void) | undefined
     const fetcher = vi.fn<(id: string) => Promise<string>>(

@@ -165,7 +165,7 @@ export function query<T, Args extends unknown[]>(
 
     // Check cache
     const cached = queryCache.get(cacheKey) as QueryCacheEntry<T> | undefined
-    if (cached?.hasResult) {
+    if (cached?.hasResult && cached.settled !== false) {
       // Check if cache is still valid
       const maxAge = cached.intent === 'preload' ? PRELOAD_CACHE_DURATION : CACHE_DURATION
 
@@ -179,7 +179,7 @@ export function query<T, Args extends unknown[]>(
     const errorSignal = createSignal<unknown>(undefined)
     const loadingSignal = createSignal<boolean>(true)
 
-    if (cached && cached.result === undefined && !cached.settled) {
+    if (cached && !cached.settled) {
       void cached.promise.then(result => {
         batch(() => {
           resultSignal(result)
@@ -201,8 +201,11 @@ export function query<T, Args extends unknown[]>(
           hasResult: true,
           intent: 'navigate',
         }
-        queryCache.set(cacheKey, entry)
-        evictOldestEntries(queryCache)
+        const currentEntry = queryCache.get(cacheKey)
+        if (currentEntry?.promise === (promise as Promise<T>)) {
+          queryCache.set(cacheKey, entry)
+          evictOldestEntries(queryCache)
+        }
 
         // Update signals
         batch(() => {
@@ -219,20 +222,20 @@ export function query<T, Args extends unknown[]>(
         })
         const entry = queryCache.get(cacheKey) as QueryCacheEntry<T> | undefined
         if (entry?.promise === (promise as Promise<T>)) {
-          entry.settled = true
+          queryCache.delete(cacheKey)
         }
         return undefined
       })
 
     // Store promise in cache immediately for deduplication
-    if (!cached) {
-      queryCache.set(cacheKey, {
-        timestamp: Date.now(),
-        promise: promise as Promise<unknown>,
-        settled: false,
-        intent: 'navigate',
-      })
+    const pendingEntry: QueryCacheEntry<T> = {
+      timestamp: Date.now(),
+      promise: promise as Promise<T>,
+      settled: false,
+      intent: 'navigate',
+      ...(cached?.hasResult ? { result: cached.result as T, hasResult: true } : {}),
     }
+    queryCache.set(cacheKey, pendingEntry)
 
     return () => resultSignal()
   }
