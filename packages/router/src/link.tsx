@@ -572,10 +572,14 @@ export function Form(props: FormProps): FictNode {
       )
     } else {
       // For POST/PUT/PATCH/DELETE, submit via fetch
-      submitFormAction(form, actionUrl, method, formData, {
+      void submitFormAction(form, actionUrl, method, formData, {
         navigate: shouldNavigate !== false,
         replace: replace ?? false,
         router,
+      }).catch(() => {
+        // submitFormAction already reports the failure through `formerror`
+        // and console.error. Event listeners cannot observe its returned
+        // promise, so consume the rejection here to avoid an unhandled one.
       })
     }
   }

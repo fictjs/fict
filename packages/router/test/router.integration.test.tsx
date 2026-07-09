@@ -11,6 +11,7 @@ import {
   usePendingLocation,
   NavLink,
   Link,
+  Form,
 } from '../src'
 
 function LocationText() {
@@ -475,5 +476,44 @@ describe('Router integration (MemoryRouter)', () => {
     expect(anchor.getAttribute('href')).toBe('https://example.com/docs')
     expect(routerPreventedDefault).toBe(false)
     expect(screen.getByTestId('path').textContent).toBe('/from')
+  })
+
+  it('contains rejected non-GET Form submissions after reporting them', async () => {
+    const rejection = new Error('submission failed')
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockRejectedValue(rejection)
+
+    try {
+      render(() => (
+        <MemoryRouter initialEntries={['/form']}>
+          <Route
+            path="/form"
+            element={
+              <Form action="/submit" method="post" data-testid="form">
+                <input name="value" value="test" />
+              </Form>
+            }
+          />
+        </MemoryRouter>
+      ))
+
+      const form = screen.getByTestId('form') as HTMLFormElement
+      const errors: unknown[] = []
+      form.addEventListener('formerror', event => {
+        errors.push((event as CustomEvent<{ error: unknown }>).detail.error)
+      })
+
+      form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(errors).toEqual([rejection])
+      expect(consoleError).toHaveBeenCalledWith('[fict-router] Form submission failed:', rejection)
+    } finally {
+      consoleError.mockRestore()
+      fetchMock.mockRestore()
+    }
   })
 })
