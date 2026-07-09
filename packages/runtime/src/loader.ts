@@ -347,6 +347,8 @@ export interface SnapshotIssue {
 // ============================================================================
 
 const hydratedScopes = new Set<string>()
+const pendingScopeResumes = new Map<string, Promise<boolean>>()
+const pendingScopeHandlers = new Map<string, Promise<void>>()
 const prefetchedUrls = new Set<string>()
 let prefetchCleanup: (() => void) | null = null
 let eventListenerCleanup: (() => void) | null = null
@@ -361,6 +363,8 @@ const emittedIssueKeys = new Set<string>()
  */
 export function resetHydratedScopes(): void {
   hydratedScopes.clear()
+  pendingScopeResumes.clear()
+  pendingScopeHandlers.clear()
 }
 
 /**
@@ -405,6 +409,8 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
 
   // Reset hydrated scopes for fresh loader installation
   hydratedScopes.clear()
+  pendingScopeResumes.clear()
+  pendingScopeHandlers.clear()
   prefetchedUrls.clear()
   processedSnapshots.clear()
   emittedIssueKeys.clear()
@@ -872,6 +878,231 @@ function handleResumableEvent(event: Event): void {
     })
 }
 
+async function resumeScopeForEvent(
+  scopeId: string,
+  host: Element,
+  event: Event,
+): Promise<{ canRunHandler: boolean; hydratedDuringEvent: boolean }> {
+  if (hydratedScopes.has(scopeId)) {
+    return { canRunHandler: true, hydratedDuringEvent: false }
+  }
+
+  const resumeQrl = host.getAttribute('data-fict-h')
+  if (!resumeQrl) {
+    return { canRunHandler: true, hydratedDuringEvent: false }
+  }
+
+  let resumePromise = pendingScopeResumes.get(scopeId)
+  if (!resumePromise) {
+    const resumeOperation = resumeScope(scopeId, host, event, resumeQrl)
+    resumePromise = resumeOperation.finally(() => {
+      if (pendingScopeResumes.get(scopeId) === resumePromise) {
+        pendingScopeResumes.delete(scopeId)
+      }
+    })
+    pendingScopeResumes.set(scopeId, resumePromise)
+  }
+
+  const resumed = await resumePromise
+  return { canRunHandler: resumed, hydratedDuringEvent: resumed }
+}
+
+async function resumeScope(
+  scopeId: string,
+  host: Element,
+  event: Event,
+  resumeQrl: string,
+): Promise<boolean> {
+  const { url: resumeUrl, exportName: resumeExport } = parseQrl(resumeQrl)
+  const resolvedResumeUrl = resolveModuleUrl(resumeUrl)
+  const resolvedAbsoluteResumeUrl = resolveAbsoluteModuleUrl(
+    resolvedResumeUrl,
+    host.ownerDocument ?? undefined,
+  )
+  const resolvedResumeQrl = `${resolvedResumeUrl}#${resumeExport}`
+  const resolvedAbsoluteResumeQrl = `${resolvedAbsoluteResumeUrl}#${resumeExport}`
+  const normalizedResumeImportUrl = normalizeImportUrl(resolvedResumeUrl)
+
+  try {
+    await import(/* @vite-ignore */ normalizedResumeImportUrl)
+  } catch (error) {
+    emitSnapshotIssue({
+      code: 'resume_import_failed',
+      message: `[fict/loader] Failed to import resume module ${resolvedResumeUrl}: ${formatImportError(error)}`,
+      source: 'event',
+      expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+      scopeId,
+      qrl: resumeQrl,
+      url: resolvedResumeUrl,
+      exportName: resumeExport,
+      eventType: event.type,
+      error,
+    })
+    return false
+  }
+
+  const resumeFn =
+    __fictGetResume(resumeQrl) ??
+    __fictGetResume(resolvedResumeQrl) ??
+    __fictGetResume(resolvedAbsoluteResumeQrl) ??
+    __fictGetResume(resumeExport)
+  if (typeof resumeFn !== 'function') {
+    emitSnapshotIssue({
+      code: 'resume_function_missing',
+      message: `[fict/loader] Resume function ${resumeExport} was not registered for scope ${scopeId}.`,
+      source: 'event',
+      expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+      scopeId,
+      qrl: resumeQrl,
+      url: resolvedResumeUrl,
+      exportName: resumeExport,
+      eventType: event.type,
+    })
+    return false
+  }
+
+  try {
+    await (resumeFn as (scopeId: string, host: Element) => unknown)(scopeId, host)
+  } catch (error) {
+    emitSnapshotIssue({
+      code: 'resume_failed',
+      message: `[fict/loader] Resume function ${resumeExport} failed for scope ${scopeId}: ${formatImportError(error)}`,
+      source: 'event',
+      expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+      scopeId,
+      qrl: resumeQrl,
+      url: resolvedResumeUrl,
+      exportName: resumeExport,
+      eventType: event.type,
+      error,
+    })
+    return false
+  }
+
+  hydratedScopes.add(scopeId)
+  return true
+}
+
+function enqueueScopeHandler<T>(scopeId: string, handler: () => Promise<T>): Promise<T> {
+  const previousHandler = pendingScopeHandlers.get(scopeId) ?? Promise.resolve()
+  const result = previousHandler.then(handler)
+  const settled = result.then(
+    () => undefined,
+    () => undefined,
+  )
+  pendingScopeHandlers.set(scopeId, settled)
+  void settled.then(() => {
+    if (pendingScopeHandlers.get(scopeId) === settled) {
+      pendingScopeHandlers.delete(scopeId)
+    }
+  })
+  return result
+}
+
+async function runScopeHandler(
+  scopeId: string,
+  node: Element,
+  event: Event,
+  qrl: string,
+  url: string,
+  exportName: string,
+  resumePromise: ReturnType<typeof resumeScopeForEvent>,
+  preservedControlState: PreservedControlState | null,
+  preemptiveDefault: PreemptiveDefaultControl,
+): Promise<boolean> {
+  let replayDefault = false
+  try {
+    const resumeResult = await resumePromise
+    if (!resumeResult.canRunHandler) {
+      return false
+    }
+
+    if (resumeResult.hydratedDuringEvent) {
+      restoreControlState(node, preservedControlState)
+    }
+
+    const resolvedUrl = resolveModuleUrl(url)
+    const normalizedImportUrl = normalizeImportUrl(resolvedUrl)
+    let mod: Record<string, unknown>
+    try {
+      mod = (await import(/* @vite-ignore */ normalizedImportUrl)) as Record<string, unknown>
+    } catch (error) {
+      emitSnapshotIssue({
+        code: 'handler_import_failed',
+        message: `[fict/loader] Failed to import handler module ${resolvedUrl}: ${formatImportError(error)}`,
+        source: 'event',
+        expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopeId,
+        qrl,
+        url: resolvedUrl,
+        exportName,
+        eventType: event.type,
+        error,
+      })
+      return false
+    }
+
+    const handler = mod[exportName]
+    if (typeof handler !== 'function') {
+      emitSnapshotIssue({
+        code: 'handler_missing',
+        message: `[fict/loader] Resumable handler export ${exportName} was not found in ${resolvedUrl}.`,
+        source: 'event',
+        expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopeId,
+        qrl,
+        url: resolvedUrl,
+        exportName,
+        eventType: event.type,
+      })
+      return false
+    }
+
+    const currentTargetDescriptor = Object.getOwnPropertyDescriptor(event, 'currentTarget')
+    let handlerFailed = false
+    Object.defineProperty(event, 'currentTarget', {
+      configurable: true,
+      get() {
+        return node
+      },
+    })
+    try {
+      await (handler as (scopeId: string, ev: Event, el: Element) => unknown)(scopeId, event, node)
+    } catch (error) {
+      emitSnapshotIssue({
+        code: 'handler_failed',
+        message: `[fict/loader] Resumable handler ${exportName} failed for scope ${scopeId}: ${formatImportError(error)}`,
+        source: 'event',
+        expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopeId,
+        qrl,
+        url: resolvedUrl,
+        exportName,
+        eventType: event.type,
+        error,
+      })
+      handlerFailed = true
+    } finally {
+      if (currentTargetDescriptor) {
+        Object.defineProperty(event, 'currentTarget', currentTargetDescriptor)
+      } else {
+        Reflect.deleteProperty(event, 'currentTarget')
+      }
+    }
+    if (handlerFailed) {
+      return false
+    }
+
+    replayDefault = true
+    return event.cancelBubble
+  } finally {
+    if (replayDefault) {
+      preemptiveDefault.replayIfNeeded()
+    }
+    preemptiveDefault.restore()
+  }
+}
+
 async function handleResumableEventAsync(event: Event): Promise<void> {
   const path =
     typeof event.composedPath === 'function' ? event.composedPath() : buildEventPath(event)
@@ -906,171 +1137,21 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
     })
 
     const preservedControlState = captureControlState(node, event)
-    let resumedDuringEvent = false
-
-    // Resume FIRST to set up reactive bindings BEFORE the handler runs
-    if (!hydratedScopes.has(scopeId)) {
-      const resumeQrl = host.getAttribute('data-fict-h')
-      if (resumeQrl) {
-        const { url: resumeUrl, exportName: resumeExport } = parseQrl(resumeQrl)
-        const resolvedResumeUrl = resolveModuleUrl(resumeUrl)
-        const resolvedAbsoluteResumeUrl = resolveAbsoluteModuleUrl(
-          resolvedResumeUrl,
-          host.ownerDocument ?? undefined,
-        )
-        const resolvedResumeQrl = `${resolvedResumeUrl}#${resumeExport}`
-        const resolvedAbsoluteResumeQrl = `${resolvedAbsoluteResumeUrl}#${resumeExport}`
-        const normalizedResumeImportUrl = normalizeImportUrl(resolvedResumeUrl)
-        // Load the module to ensure resume functions are registered
-        try {
-          await import(/* @vite-ignore */ normalizedResumeImportUrl)
-        } catch (error) {
-          emitSnapshotIssue({
-            code: 'resume_import_failed',
-            message: `[fict/loader] Failed to import resume module ${resolvedResumeUrl}: ${formatImportError(error)}`,
-            source: 'event',
-            expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
-            scopeId,
-            qrl: resumeQrl,
-            url: resolvedResumeUrl,
-            exportName: resumeExport,
-            eventType: event.type,
-            error,
-          })
-          preemptiveDefault.restore()
-          continue
-        }
-        // Get resume function from registry (not module exports)
-        const resumeFn =
-          __fictGetResume(resumeQrl) ??
-          __fictGetResume(resolvedResumeQrl) ??
-          __fictGetResume(resolvedAbsoluteResumeQrl) ??
-          __fictGetResume(resumeExport)
-        if (typeof resumeFn === 'function') {
-          try {
-            await (resumeFn as (scopeId: string, host: Element) => unknown)(scopeId, host)
-          } catch (error) {
-            emitSnapshotIssue({
-              code: 'resume_failed',
-              message: `[fict/loader] Resume function ${resumeExport} failed for scope ${scopeId}: ${formatImportError(error)}`,
-              source: 'event',
-              expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
-              scopeId,
-              qrl: resumeQrl,
-              url: resolvedResumeUrl,
-              exportName: resumeExport,
-              eventType: event.type,
-              error,
-            })
-            preemptiveDefault.restore()
-            continue
-          }
-          hydratedScopes.add(scopeId)
-          resumedDuringEvent = true
-        } else {
-          emitSnapshotIssue({
-            code: 'resume_function_missing',
-            message: `[fict/loader] Resume function ${resumeExport} was not registered for scope ${scopeId}.`,
-            source: 'event',
-            expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
-            scopeId,
-            qrl: resumeQrl,
-            url: resolvedResumeUrl,
-            exportName: resumeExport,
-            eventType: event.type,
-          })
-          preemptiveDefault.restore()
-          continue
-        }
-      }
-    }
-
-    if (resumedDuringEvent) {
-      restoreControlState(node, preservedControlState)
-    }
-
-    // THEN run the handler - now signal updates will trigger DOM updates
-    const resolvedUrl = resolveModuleUrl(url)
-    const normalizedImportUrl = normalizeImportUrl(resolvedUrl)
-    let mod: Record<string, unknown>
-    try {
-      mod = (await import(/* @vite-ignore */ normalizedImportUrl)) as Record<string, unknown>
-    } catch (error) {
-      emitSnapshotIssue({
-        code: 'handler_import_failed',
-        message: `[fict/loader] Failed to import handler module ${resolvedUrl}: ${formatImportError(error)}`,
-        source: 'event',
-        expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+    const resumePromise = resumeScopeForEvent(scopeId, host, event)
+    const shouldStop = await enqueueScopeHandler(scopeId, () =>
+      runScopeHandler(
         scopeId,
+        node,
+        event,
         qrl,
-        url: resolvedUrl,
+        url,
         exportName,
-        eventType: event.type,
-        error,
-      })
-      preemptiveDefault.restore()
-      continue
-    }
-    const handler = (mod as Record<string, unknown>)[exportName]
-    if (typeof handler === 'function') {
-      const currentTargetDescriptor = Object.getOwnPropertyDescriptor(event, 'currentTarget')
-      let handlerFailed = false
-      Object.defineProperty(event, 'currentTarget', {
-        configurable: true,
-        get() {
-          return node
-        },
-      })
-      try {
-        await (handler as (scopeId: string, ev: Event, el: Element) => unknown)(
-          scopeId,
-          event,
-          node,
-        )
-      } catch (error) {
-        emitSnapshotIssue({
-          code: 'handler_failed',
-          message: `[fict/loader] Resumable handler ${exportName} failed for scope ${scopeId}: ${formatImportError(error)}`,
-          source: 'event',
-          expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
-          scopeId,
-          qrl,
-          url: resolvedUrl,
-          exportName,
-          eventType: event.type,
-          error,
-        })
-        handlerFailed = true
-      } finally {
-        if (currentTargetDescriptor) {
-          Object.defineProperty(event, 'currentTarget', currentTargetDescriptor)
-        } else {
-          Reflect.deleteProperty(event, 'currentTarget')
-        }
-      }
-      if (handlerFailed) {
-        preemptiveDefault.restore()
-        continue
-      }
-    } else {
-      emitSnapshotIssue({
-        code: 'handler_missing',
-        message: `[fict/loader] Resumable handler export ${exportName} was not found in ${resolvedUrl}.`,
-        source: 'event',
-        expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
-        scopeId,
-        qrl,
-        url: resolvedUrl,
-        exportName,
-        eventType: event.type,
-      })
-      preemptiveDefault.restore()
-      continue
-    }
-
-    preemptiveDefault.replayIfNeeded()
-    preemptiveDefault.restore()
-    if (event.cancelBubble) {
+        resumePromise,
+        preservedControlState,
+        preemptiveDefault,
+      ),
+    )
+    if (shouldStop) {
       return
     }
   }

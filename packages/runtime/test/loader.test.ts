@@ -924,6 +924,141 @@ describe('resumable loader snapshot validation', () => {
     warnSpy.mockRestore()
   })
 
+  it('deduplicates concurrent resumes while preserving every handler event', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    let releaseResume!: () => void
+    const resumeGate = new Promise<void>(resolve => {
+      releaseResume = resolve
+    })
+    let releaseFirstHandler!: () => void
+    const firstHandlerGate = new Promise<void>(resolve => {
+      releaseFirstHandler = resolve
+    })
+    let resumeCalls = 0
+    const handlerOrder: string[] = []
+    ;(globalThis as { __fictConcurrentHandlerOrder?: string[] }).__fictConcurrentHandlerOrder =
+      handlerOrder
+    ;(globalThis as { __fictFirstHandlerGate?: Promise<void> }).__fictFirstHandlerGate =
+      firstHandlerGate
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    host.setAttribute('data-fict-h', 'data:text/javascript,export default null#__fict_concurrent')
+    __fictRegisterResume('__fict_concurrent', () => {
+      resumeCalls++
+      return resumeGate
+    })
+
+    const button = doc.createElement('button')
+    button.setAttribute(
+      'on:click',
+      'data:text/javascript,export async function handle(scopeId,event){if(event.sequence==="first"){globalThis.__fictConcurrentHandlerOrder.push("first:start");await globalThis.__fictFirstHandlerGate;globalThis.__fictConcurrentHandlerOrder.push("first:end")}else{globalThis.__fictConcurrentHandlerOrder.push(event.sequence)}}#handle',
+    )
+    host.appendChild(button)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+    const firstEvent = new Event('click', { bubbles: true, cancelable: true })
+    const secondEvent = new Event('click', { bubbles: true, cancelable: true })
+    ;(firstEvent as Event & { sequence: string }).sequence = 'first'
+    ;(secondEvent as Event & { sequence: string }).sequence = 'second'
+    button.dispatchEvent(firstEvent)
+    button.dispatchEvent(secondEvent)
+
+    await vi.waitFor(() => expect(resumeCalls).toBe(1))
+    expect(handlerOrder).toEqual([])
+
+    releaseResume()
+    await vi.waitFor(() => expect(handlerOrder).toEqual(['first:start']))
+    releaseFirstHandler()
+    await waitForPendingHandlers()
+
+    expect(resumeCalls).toBe(1)
+    expect(handlerOrder).toEqual(['first:start', 'first:end', 'second'])
+
+    delete (globalThis as { __fictConcurrentHandlerOrder?: string[] }).__fictConcurrentHandlerOrder
+    delete (globalThis as { __fictFirstHandlerGate?: Promise<void> }).__fictFirstHandlerGate
+  })
+
+  it('allows a later event to retry after a shared resume failure', async () => {
+    const issues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    let rejectFirstResume!: (reason?: unknown) => void
+    const firstResume = new Promise<void>((_resolve, reject) => {
+      rejectFirstResume = reject
+    })
+    let resumeAttempts = 0
+    ;(globalThis as { __fictRetryHandlerCalls?: number }).__fictRetryHandlerCalls = 0
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    host.setAttribute('data-fict-h', 'data:text/javascript,export default null#__fict_retry')
+    __fictRegisterResume('__fict_retry', () => {
+      resumeAttempts++
+      if (resumeAttempts === 1) {
+        return firstResume
+      }
+    })
+
+    const button = doc.createElement('button')
+    button.setAttribute(
+      'on:click',
+      'data:text/javascript,export function handle(){globalThis.__fictRetryHandlerCalls++}#handle',
+    )
+    host.appendChild(button)
+    doc.body.appendChild(host)
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    installResumableLoader({
+      document: doc,
+      events: ['click'],
+      prefetch: false,
+      onSnapshotIssue: issue => issues.push(issue),
+    })
+
+    button.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    button.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(resumeAttempts).toBe(1))
+    rejectFirstResume(new Error('retryable resume failure'))
+    await waitForPendingHandlers()
+
+    expect(resumeAttempts).toBe(1)
+    expect((globalThis as { __fictRetryHandlerCalls?: number }).__fictRetryHandlerCalls).toBe(0)
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        code: 'resume_failed',
+        scopeId: 's1',
+        exportName: '__fict_retry',
+      }),
+    )
+
+    button.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    await waitForPendingHandlers()
+
+    expect(resumeAttempts).toBe(2)
+    expect((globalThis as { __fictRetryHandlerCalls?: number }).__fictRetryHandlerCalls).toBe(1)
+
+    warnSpy.mockRestore()
+    delete (globalThis as { __fictRetryHandlerCalls?: number }).__fictRetryHandlerCalls
+  })
+
   it('reports resume import and resume function failures', async () => {
     const issues: SnapshotIssue[] = []
     const doc = createDocumentWithSnapshots(
