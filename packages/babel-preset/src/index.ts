@@ -15,14 +15,14 @@ export interface FictPresetOptions extends Omit<FictCompilerOptions, 'typescript
    */
   typescriptOptions?: {
     /**
-     * Enable TSX parsing.
-     * @default true
+     * Enable TSX parsing when allExtensions is true.
+     * @default true in all-extensions mode
      */
     isTSX?: boolean
 
     /**
-     * Parse all files as TSX.
-     * @default true
+     * Parse all files with one TypeScript mode instead of detecting .ts/.tsx.
+     * @default false
      */
     allExtensions?: boolean
 
@@ -77,26 +77,58 @@ export default function fictPreset(
 
   const { typescript = true, typescriptOptions = {}, ...compilerOptions } = options
 
-  const {
-    isTSX = true,
-    allExtensions = true,
-    allowNamespaces = true,
-    allowDeclareFields = true,
-  } = typescriptOptions
+  const { allowNamespaces = true, allowDeclareFields = true } = typescriptOptions
+  const allExtensions = typescriptOptions.allExtensions ?? false
+  const isTSX = typescriptOptions.isTSX ?? true
 
   const plugins: TransformOptions['plugins'] = []
+  const overrides: TransformOptions['overrides'] = []
+  const typeScriptOptions = {
+    allowNamespaces,
+    allowDeclareFields,
+  }
 
   // TypeScript must lower runtime declarations before Fict's Program.exit transform.
   if (typescript) {
-    plugins.push([
-      transformTypeScript,
-      {
-        isTSX,
-        allExtensions,
-        allowNamespaces,
-        allowDeclareFields,
-      },
-    ])
+    if (allExtensions) {
+      plugins.push([
+        transformTypeScript,
+        {
+          ...typeScriptOptions,
+          isTSX,
+          allExtensions: true,
+        },
+      ])
+    } else {
+      overrides.push(
+        {
+          test: /\.tsx$/i,
+          plugins: [
+            [transformTypeScript, { ...typeScriptOptions, isTSX: true, allExtensions: true }],
+          ],
+        },
+        {
+          test: /\.ts$/i,
+          plugins: [
+            [transformTypeScript, { ...typeScriptOptions, isTSX: false, allExtensions: true }],
+          ],
+        },
+        {
+          test: /\.[cm]ts$/i,
+          plugins: [
+            [
+              transformTypeScript,
+              {
+                ...typeScriptOptions,
+                isTSX: false,
+                allExtensions: true,
+                disallowAmbiguousJSXLike: true,
+              },
+            ],
+          ],
+        },
+      )
+    }
   }
 
   // Add JSX syntax plugin
@@ -107,6 +139,7 @@ export default function fictPreset(
 
   return {
     plugins,
+    ...(overrides.length > 0 ? { overrides } : {}),
   }
 }
 

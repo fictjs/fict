@@ -42,6 +42,8 @@ module.exports = {
         // Preset-level options
         typescript: true,
         typescriptOptions: {
+          // Optional: force every matched file into one parsing mode.
+          // By default .ts/.tsx/.mts/.cts are detected from the filename.
           isTSX: true,
           allExtensions: true,
           allowNamespaces: true,
@@ -78,4 +80,5 @@ Key defaults:
 - production compilation (`NODE_ENV=production`) force-enables compiler `strictGuarantee`
 - compiler `emitModuleMetadata`: `'auto'`
 - preset `typescript`: `true`
+- preset `typescriptOptions.allExtensions`: `false` (detect from filename)
 - preset `typescriptOptions.allowDeclareFields`: `true`

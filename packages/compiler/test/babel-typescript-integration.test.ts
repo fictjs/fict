@@ -6,6 +6,45 @@ import { describe, expect, it } from 'vitest'
 import fictPreset from '../../babel-preset/src'
 
 describe('@fictjs/babel-preset TypeScript integration', () => {
+  it('detects TypeScript and TSX syntax from the file extension', () => {
+    const typed = transformSync(
+      `
+        import { $state } from 'fict'
+        export function useValue(input: unknown) {
+          const asserted = <number>input
+          const value = $state(asserted)
+          return value
+        }
+      `,
+      {
+        filename: 'use-value.ts',
+        configFile: false,
+        babelrc: false,
+        presets: [[fictPreset, { dev: false, strictGuarantee: false }]],
+      },
+    )
+    const tsx = transformSync(
+      `
+        import { $state } from 'fict'
+        export function App() {
+          const value = $state(1)
+          return <div>{value}</div>
+        }
+      `,
+      {
+        filename: 'App.tsx',
+        configFile: false,
+        babelrc: false,
+        presets: [[fictPreset, { dev: false, strictGuarantee: false }]],
+      },
+    )
+
+    expect(typed?.code).toContain('__fictUseSignal')
+    expect(typed?.code).not.toContain('<number>')
+    expect(tsx?.code).toContain('__fictUseSignal')
+    expect(tsx?.code).toContain('template("<div>')
+  })
+
   it('composes with Babel plugins explicitly configured by the user', () => {
     const configuredPlugin: PluginObj = {
       name: 'configured-marker-plugin',
