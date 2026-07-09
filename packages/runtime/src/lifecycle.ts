@@ -289,6 +289,7 @@ export function registerSuspenseHandler(fn: SuspenseHandler): void {
 export function handleError(err: unknown, info?: ErrorInfo, startRoot?: RootContext): boolean {
   let root: RootContext | undefined = startRoot ?? currentRoot
   let error = err
+  let handlerFailed = false
   while (root) {
     const handlers = root.errorHandlers
     if (handlers && handlers.length) {
@@ -301,14 +302,18 @@ export function handleError(err: unknown, info?: ErrorInfo, startRoot?: RootCont
           }
         } catch (nextErr) {
           error = nextErr
+          handlerFailed = true
         }
       }
     }
     root = root.parent
   }
-  // The caller (e.g., runCleanupList) can decide whether to rethrow.
-  // This makes the API consistent: handleError always returns a boolean
-  // indicating whether the error was handled.
+  // A boundary which fails while handling an error replaces the original
+  // failure. Preserve that fallback/onError exception when no outer boundary
+  // accepts it instead of making callers rethrow the stale original error.
+  if (handlerFailed) throw error
+  // With no handler failure, the caller (e.g., runCleanupList) can decide
+  // whether to rethrow the original error from this boolean result.
   return false
 }
 

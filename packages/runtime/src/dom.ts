@@ -52,7 +52,6 @@ import {
   createRootContext,
   destroyRoot,
   flushOnMount,
-  handleError,
   handleSuspend,
   pushRoot,
   popRoot,
@@ -472,7 +471,6 @@ function createElementWithContext(
       if (handleSuspend(err as any)) {
         return ownerDocument.createComment('fict:suspend')
       }
-      handleError(err, { source: 'render', componentName: vnode.type.name })
       throw err
     } finally {
       __fictPopContext()

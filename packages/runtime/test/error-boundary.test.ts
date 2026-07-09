@@ -1066,6 +1066,183 @@ describe('ErrorBoundary', () => {
     dispose()
   })
 
+  it('renders a throwing fallback only once for errors from dynamic children', async () => {
+    const container = document.createElement('div')
+    const showCrash = createSignal(false)
+    const childError = new Error('dynamic child failed')
+    const fallbackError = new Error('dynamic fallback failed')
+    const innerErrors: unknown[] = []
+    const outerErrors: unknown[] = []
+    let fallbackRenders = 0
+    let fallbackDisposals = 0
+
+    const Crash = () => {
+      throw childError
+    }
+
+    const ThrowingFallback = () => {
+      fallbackRenders += 1
+      onDestroy(() => {
+        fallbackDisposals += 1
+      })
+      throw fallbackError
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'outer fallback',
+          onError: err => outerErrors.push(err),
+          children: {
+            type: ErrorBoundary,
+            props: {
+              fallback: { type: ThrowingFallback, props: {} },
+              onError: err => innerErrors.push(err),
+              children: {
+                type: 'div',
+                props: {
+                  children: reactive(() =>
+                    showCrash()
+                      ? { type: Crash, props: {} }
+                      : { type: 'span', props: { children: 'ok' } },
+                  ),
+                },
+              },
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('ok')
+    showCrash(true)
+    await nextTick()
+
+    expect(container.textContent).toBe('outer fallback')
+    expect(fallbackRenders).toBe(1)
+    expect(fallbackDisposals).toBe(1)
+    expect(innerErrors).toEqual([childError])
+    expect(outerErrors).toEqual([fallbackError])
+
+    dispose()
+  })
+
+  it('routes errors from mounted fallback effects to an outer boundary', async () => {
+    const container = document.createElement('div')
+    const failChild = createSignal(false)
+    const failFallback = createSignal(false)
+    const childError = new Error('child effect failed')
+    const fallbackError = new Error('fallback effect failed')
+    const innerErrors: unknown[] = []
+    const outerErrors: unknown[] = []
+
+    const Child = () => {
+      createEffect(() => {
+        if (failChild()) throw childError
+      })
+      return 'child'
+    }
+
+    const Fallback = () => {
+      createEffect(() => {
+        if (failFallback()) throw fallbackError
+      })
+      return 'inner fallback'
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'outer fallback',
+          onError: err => outerErrors.push(err),
+          children: {
+            type: ErrorBoundary,
+            props: {
+              fallback: { type: Fallback, props: {} },
+              onError: err => innerErrors.push(err),
+              children: { type: Child, props: {} },
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    failChild(true)
+    await nextTick()
+    expect(container.textContent).toBe('inner fallback')
+    expect(innerErrors).toEqual([childError])
+
+    failFallback(true)
+    await nextTick()
+    expect(container.textContent).toBe('outer fallback')
+    expect(innerErrors).toEqual([childError])
+    expect(outerErrors).toEqual([fallbackError])
+
+    dispose()
+  })
+
+  it('routes errors from mounted fallback events to an outer boundary', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const failChild = createSignal(false)
+    const childError = new Error('child effect failed')
+    const fallbackError = new Error('fallback event failed')
+    const innerErrors: unknown[] = []
+    const outerErrors: unknown[] = []
+
+    const Child = () => {
+      createEffect(() => {
+        if (failChild()) throw childError
+      })
+      return 'child'
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'outer fallback',
+          onError: err => outerErrors.push(err),
+          children: {
+            type: ErrorBoundary,
+            props: {
+              fallback: {
+                type: 'button',
+                props: {
+                  onClick: () => {
+                    throw fallbackError
+                  },
+                  children: 'inner fallback',
+                },
+              },
+              onError: err => innerErrors.push(err),
+              children: { type: Child, props: {} },
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    failChild(true)
+    await nextTick()
+    expect(container.textContent).toBe('inner fallback')
+    expect(innerErrors).toEqual([childError])
+
+    container.querySelector('button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await nextTick()
+    expect(container.textContent).toBe('outer fallback')
+    expect(innerErrors).toEqual([childError])
+    expect(outerErrors).toEqual([fallbackError])
+
+    dispose()
+    container.remove()
+  })
+
   it('captures errors from keyed list blocks created after updates', async () => {
     const container = document.createElement('div')
     // Attach to document.body for isConnected check in performDiff

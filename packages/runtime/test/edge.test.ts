@@ -405,6 +405,22 @@ describe('handleError return value', () => {
     expect(result).toBe(false)
     expect(handler).toHaveBeenCalledTimes(1)
   })
+
+  it('propagates a replacement error from a failed handler', () => {
+    const root = createRootContext()
+    const prev = pushRoot(root)
+    const fallbackError = new Error('fallback failed')
+
+    registerErrorHandler(() => {
+      throw fallbackError
+    })
+
+    expect(() => handleError(new Error('original'), { source: 'render' }, root)).toThrow(
+      fallbackError,
+    )
+
+    popRoot(prev)
+  })
 })
 
 describe('handleSuspend return value', () => {

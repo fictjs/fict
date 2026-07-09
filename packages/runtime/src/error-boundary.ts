@@ -10,6 +10,7 @@ import {
   popRoot,
   registerErrorHandler,
   registerRootCleanup,
+  type RootContext,
   withRootContext,
 } from './lifecycle'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
@@ -35,16 +36,15 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
   let renderingFallback = false
 
   let reset = () => {}
-  const toView = (err: unknown | null): FictNode | null => {
-    if (err != null) {
-      return typeof props.fallback === 'function'
-        ? (props.fallback as (e: unknown, reset?: () => void) => FictNode)(err, reset)
-        : props.fallback
-    }
-    return props.children ?? null
-  }
+  const toFallback = (err: unknown): FictNode =>
+    typeof props.fallback === 'function'
+      ? (props.fallback as (e: unknown, reset?: () => void) => FictNode)(err, reset)
+      : props.fallback
 
-  const renderValue = (value: FictNode | null) => {
+  const renderValue = (
+    value: FictNode | null,
+    parentRoot: RootContext | undefined = boundaryRoot,
+  ) => {
     if (cleanup) {
       cleanup()
       cleanup = undefined
@@ -58,7 +58,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
       return
     }
 
-    const root = createRootContext(boundaryRoot)
+    const root = createRootContext(parentRoot)
     const prev = pushRoot(root)
     let nodes: Node[] = []
     let didPopRoot = false
@@ -74,7 +74,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
       if (parentNode) {
         nodes = insertNodesBefore(parentNode, nodes, marker)
       }
-      nodes.forEach(node => setEventErrorRoot(node, boundaryRoot))
+      nodes.forEach(node => setEventErrorRoot(node, root))
       restoreRoot()
       flushOnMount(root)
     } catch (err) {
@@ -85,22 +85,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
       if (renderingFallback) {
         throw err
       }
-      // nested errors. If fallback rendering also throws, we should NOT reset
-      // the flag until we're sure no more recursion is happening.
-      renderingFallback = true
-      try {
-        renderValue(toView(err))
-        // Only reset if successful - if renderValue threw, we want to keep
-        // renderingFallback = true to prevent infinite recursion
-        renderingFallback = false
-        props.onError?.(err)
-      } catch (fallbackErr) {
-        // Fallback rendering failed - keep renderingFallback = true
-        // to prevent further attempts, then rethrow
-        // If fallback fails, report both errors
-        props.onError?.(err)
-        throw fallbackErr
-      }
+      captureError(err)
       return
     }
 
@@ -111,9 +96,29 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
     activeNodes = nodes
   }
 
+  const captureError = (err: unknown) => {
+    renderingFallback = true
+    let rendered = false
+    let fallbackError: unknown
+    try {
+      // The fallback subtree belongs to the parent scope. Errors from the
+      // fallback itself must reach an outer boundary, not this boundary.
+      renderValue(toFallback(err), hostRoot)
+      rendered = true
+    } catch (nextErr) {
+      fallbackError = nextErr
+    }
+
+    // A successfully mounted fallback is protected by its parent root. Keep
+    // the synchronous guard set only when fallback rendering failed.
+    if (rendered) renderingFallback = false
+    props.onError?.(err)
+    if (!rendered) throw fallbackError
+  }
+
   reset = () => {
     renderingFallback = false
-    renderValue(toView(null))
+    renderValue(props.children ?? null)
   }
 
   renderValue(props.children ?? null)
@@ -128,8 +133,8 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
 
   withRootContext(boundaryRoot, () => {
     registerErrorHandler(err => {
-      renderValue(toView(err))
-      props.onError?.(err)
+      if (renderingFallback) return false
+      captureError(err)
       return true
     })
   })
@@ -141,7 +146,8 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
       const next = getter ? getter() : props.resetKeys
       if (resetKeysChanged(prev, next)) {
         prev = next
-        renderValue(toView(null))
+        renderingFallback = false
+        renderValue(props.children ?? null)
       } else {
         prev = next
       }
