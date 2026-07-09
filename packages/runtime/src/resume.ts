@@ -51,7 +51,7 @@ export interface ScopeSnapshot {
   vars?: Record<string, number>
 }
 
-export const FICT_SSR_SNAPSHOT_SCHEMA_VERSION = 1
+export const FICT_SSR_SNAPSHOT_SCHEMA_VERSION = 2
 
 export interface SSRState {
   v: number

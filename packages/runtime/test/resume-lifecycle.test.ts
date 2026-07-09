@@ -34,6 +34,18 @@ describe('SSR lifecycle state cleanup', () => {
     delete (globalThis as Record<string, unknown>).__FICT_MANIFEST__
   })
 
+  it('writes the unambiguous v2 snapshot schema', () => {
+    expect(FICT_SSR_SNAPSHOT_SCHEMA_VERSION).toBe(2)
+
+    __fictEnableSSR()
+    __fictRegisterScope({ slots: [], cursor: 0 }, document.createElement('div'))
+
+    expect(__fictSerializeSSRState()).toMatchObject({
+      v: 2,
+      scopes: { s1: { id: 's1', slots: [] } },
+    })
+  })
+
   it('clears registry, snapshot state, and resumed scopes when SSR is disabled', () => {
     __fictEnableSSR()
 

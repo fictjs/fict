@@ -690,8 +690,7 @@ function normalizeSnapshotState(
     return null
   }
 
-  const rawVersion = value.v
-  const version = rawVersion === undefined ? FICT_SSR_SNAPSHOT_SCHEMA_VERSION : rawVersion
+  const version = value.v
   if (!Number.isInteger(version) || version !== FICT_SSR_SNAPSHOT_SCHEMA_VERSION) {
     if (Number.isInteger(version) && typeof version === 'number') {
       const migrated = migrateSnapshotState(installation, value, version, source)

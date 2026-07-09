@@ -72,7 +72,8 @@ describe('resumable loader snapshot validation', () => {
     expect(scope?.slots[0]?.[2]).toBe(123)
   })
 
-  it('accepts legacy snapshots without explicit version', () => {
+  it('rejects unversioned snapshots instead of guessing their value codec', () => {
+    const issues: SnapshotIssue[] = []
     const doc = createDocumentWithSnapshots(
       JSON.stringify({
         scopes: {
@@ -81,11 +82,52 @@ describe('resumable loader snapshot validation', () => {
       }),
     )
 
-    installResumableLoader({ document: doc, events: [], prefetch: false })
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: false,
+      onSnapshotIssue: issue => issues.push(issue),
+    })
 
-    const scope = __fictGetSSRScope('s2')
-    expect(scope).toBeDefined()
-    expect(scope?.slots[0]?.[2]).toBe('legacy')
+    expect(__fictGetSSRScope('s2')).toBeUndefined()
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        code: 'snapshot_unsupported_version',
+        expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+      }),
+    )
+  })
+
+  it('rejects ambiguous v1 snapshots unless the application provides a migration', () => {
+    const issues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: 1,
+        scopes: {
+          sLegacy: {
+            id: 'sLegacy',
+            slots: [],
+            props: { value: { __t: 'u' } },
+          },
+        },
+      }),
+    )
+
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: false,
+      onSnapshotIssue: issue => issues.push(issue),
+    })
+
+    expect(__fictGetSSRScope('sLegacy')).toBeUndefined()
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        code: 'snapshot_unsupported_version',
+        expectedVersion: 2,
+        actualVersion: 1,
+      }),
+    )
   })
 
   it('throws a clear error when installed without a browser document', () => {
@@ -219,7 +261,9 @@ describe('resumable loader snapshot validation', () => {
 
   it('reports parse and shape errors for invalid snapshots', () => {
     const issues: SnapshotIssue[] = []
-    const doc = createDocumentWithSnapshots('{not-valid-json', ['{"v":1,"scopes":[] }'])
+    const doc = createDocumentWithSnapshots('{not-valid-json', [
+      JSON.stringify({ v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION, scopes: [] }),
+    ])
 
     installResumableLoader({
       document: doc,
