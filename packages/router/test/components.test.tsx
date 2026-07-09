@@ -16,6 +16,7 @@ import {
 } from '../src/components'
 
 import type { RouteDefinition } from '../src/types'
+import { createMemoryHistory } from '../src/history'
 
 describe('Routes', () => {
   it('should be a function component', () => {
@@ -229,6 +230,36 @@ describe('createRouter', () => {
     const result = createRouter(routes, { base: '/app' })
 
     expect(typeof result.Router).toBe('function')
+  })
+
+  it('should preserve every programmatic route option', () => {
+    const preload = vi.fn()
+    const matchFilters = { id: /^\d+$/ }
+    const routes: RouteDefinition[] = [
+      {
+        path: '/users/:id',
+        element: 'User' as any,
+        preload,
+        errorElement: 'Error' as any,
+        loadingElement: 'Loading' as any,
+        matchFilters,
+        key: 'user-route',
+      },
+    ]
+    const history = createMemoryHistory({ initialEntries: ['/users/42'] })
+
+    const { Router: ProgrammaticRouter } = createRouter(routes, { history })
+    const provider = ProgrammaticRouter({}) as any
+    const routesElement = provider.props.children
+
+    expect(routesElement.props.routes).toBe(routes)
+    expect(routesElement.props.routes[0]).toMatchObject({
+      preload,
+      errorElement: 'Error',
+      loadingElement: 'Loading',
+      matchFilters,
+      key: 'user-route',
+    })
   })
 })
 

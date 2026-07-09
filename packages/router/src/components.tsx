@@ -350,6 +350,7 @@ interface RouteJSXProps {
     | undefined
   errorElement?: FictNode
   loadingElement?: FictNode
+  matchFilters?: RouteDefinition['matchFilters']
 }
 
 /**
@@ -471,7 +472,7 @@ function extractRoutes(children: FictNode): RouteDefinition[] {
     if (child == null || typeof child !== 'object') continue
 
     // Check if it's a Route element
-    const vnode = child as { type?: unknown; props?: Record<string, unknown> }
+    const vnode = child as { type?: unknown; props?: Record<string, unknown>; key?: string }
 
     if (vnode.type === Route) {
       const props = vnode.props || {}
@@ -485,6 +486,10 @@ function extractRoutes(children: FictNode): RouteDefinition[] {
       if (props.errorElement !== undefined) routeDef.errorElement = props.errorElement as FictNode
       if (props.loadingElement !== undefined)
         routeDef.loadingElement = props.loadingElement as FictNode
+      if (props.matchFilters !== undefined)
+        routeDef.matchFilters = props.matchFilters as NonNullable<RouteDefinition['matchFilters']>
+      const key = vnode.key ?? props.key
+      if (key !== undefined) routeDef.key = String(key)
       if (props.children) routeDef.children = extractRoutes(props.children as FictNode)
       routes.push(routeDef)
     } else if (vnode.type === Fragment && vnode.props?.children) {
@@ -522,28 +527,9 @@ export function createRouter(
 
       return (
         <RouterProvider history={history} routes={routes} base={options?.base}>
-          {props.children || <Routes>{routesToElements(routes)}</Routes>}
+          {props.children || <Routes routes={routes} />}
         </RouterProvider>
       )
     },
   }
-}
-
-/**
- * Convert route definitions to Route elements
- */
-function routesToElements(routes: RouteDefinition[]): FictNode {
-  return (
-    <>
-      {routes.map((route, i) => {
-        const routeProps: RouteJSXProps = { key: route.key || `route-${i}` }
-        if (route.path !== undefined) routeProps.path = route.path
-        if (route.component !== undefined) routeProps.component = route.component
-        if (route.element !== undefined) routeProps.element = route.element
-        if (route.index !== undefined) routeProps.index = route.index
-        if (route.children) routeProps.children = routesToElements(route.children)
-        return <Route {...routeProps} />
-      })}
-    </>
-  )
 }
