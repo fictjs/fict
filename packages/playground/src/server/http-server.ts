@@ -634,6 +634,15 @@ async function readJsonBody(
   request: IncomingMessage,
   maxBytes: number,
 ): Promise<Record<string, unknown>> {
+  const contentTypeHeader = request.headers['content-type']
+  const contentTypeValue = Array.isArray(contentTypeHeader)
+    ? contentTypeHeader[0]
+    : contentTypeHeader
+  const mediaType = contentTypeValue?.split(';', 1)[0]?.trim().toLowerCase()
+  if (mediaType !== 'application/json' && !mediaType?.endsWith('+json')) {
+    throw new RequestError(415, 'Content-Type must be application/json')
+  }
+
   const contentLengthHeader = request.headers['content-length']
   const contentLengthValue = Array.isArray(contentLengthHeader)
     ? contentLengthHeader[0]
