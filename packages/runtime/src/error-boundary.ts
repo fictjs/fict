@@ -15,6 +15,7 @@ import {
 } from './lifecycle'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
 import { resetKeysChanged } from './reset-keys'
+import { untrack } from './signal'
 import type { BaseProps, FictNode } from './types'
 
 interface ErrorBoundaryProps extends BaseProps {
@@ -68,7 +69,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
       didPopRoot = true
     }
     try {
-      const output = createElement(value)
+      const output = untrack(() => createElement(value))
       nodes = toNodeArray(output, markerOwnerDocument)
       const parentNode = marker.parentNode as (ParentNode & Node) | null
       if (parentNode) {
@@ -103,7 +104,10 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
     try {
       // The fallback subtree belongs to the parent scope. Errors from the
       // fallback itself must reach an outer boundary, not this boundary.
-      renderValue(toFallback(err), hostRoot)
+      renderValue(
+        untrack(() => toFallback(err)),
+        hostRoot,
+      )
       rendered = true
     } catch (nextErr) {
       fallbackError = nextErr
@@ -112,7 +116,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
     // A successfully mounted fallback is protected by its parent root. Keep
     // the synchronous guard set only when fallback rendering failed.
     if (rendered) renderingFallback = false
-    props.onError?.(err)
+    untrack(() => props.onError?.(err))
     if (!rendered) throw fallbackError
   }
 

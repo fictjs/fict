@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
 import { render, ErrorBoundary, Fragment, createEffect, onMount, onDestroy } from '../src/index'
-import { createRenderEffect, createSignal, reactive } from '../src/advanced'
+import { createRenderEffect, createSignal, reactive, type FictDevtoolsHook } from '../src/advanced'
 import { bindEvent, createKeyedList, spread } from '../src/internal'
 
 const nextTick = () => Promise.resolve()
@@ -327,6 +327,68 @@ describe('ErrorBoundary', () => {
     expect(container.textContent).toBe('eff-fallback')
 
     dispose()
+  })
+
+  it('does not attach fallback factory reads to the effect that failed', async () => {
+    const originalHook = (globalThis as { __FICT_DEVTOOLS_HOOK__?: unknown }).__FICT_DEVTOOLS_HOOK__
+    let factorySignalId: number | undefined
+    let childEffectId: number | undefined
+    const dependencyEdges: Array<[number, number]> = []
+    const hook: FictDevtoolsHook = {
+      registerSignal: (id, value) => {
+        if (value === 'factory-state') factorySignalId = id
+      },
+      updateSignal: () => {},
+      registerComputed: () => {},
+      updateComputed: () => {},
+      registerEffect: id => {
+        childEffectId = id
+      },
+      effectRun: () => {},
+      trackDependency: (subscriberId, dependencyId) => {
+        dependencyEdges.push([subscriberId, dependencyId])
+      },
+    }
+    ;(globalThis as { __FICT_DEVTOOLS_HOOK__?: FictDevtoolsHook }).__FICT_DEVTOOLS_HOOK__ = hook
+
+    const container = document.createElement('div')
+    const trigger = createSignal(false)
+    const factoryState = createSignal('factory-state')
+    let dispose: (() => void) | undefined
+
+    try {
+      const Child = () => {
+        createEffect(() => {
+          if (trigger()) throw new Error('effect failed')
+        })
+        return 'ready'
+      }
+
+      dispose = render(
+        () => ({
+          type: ErrorBoundary,
+          props: {
+            fallback: () => {
+              factoryState()
+              return 'error'
+            },
+            children: { type: Child, props: {} },
+          },
+        }),
+        container,
+      )
+
+      trigger(true)
+      await nextTick()
+
+      expect(container.textContent).toBe('error')
+      expect(childEffectId).toBeDefined()
+      expect(factorySignalId).toBeDefined()
+      expect(dependencyEdges).not.toContainEqual([childEffectId, factorySignalId])
+    } finally {
+      dispose?.()
+      ;(globalThis as { __FICT_DEVTOOLS_HOOK__?: unknown }).__FICT_DEVTOOLS_HOOK__ = originalHook
+    }
   })
 
   it('does not capture sibling effect errors outside the boundary subtree', async () => {
@@ -922,6 +984,113 @@ describe('ErrorBoundary', () => {
     await nextTick()
 
     expect(container.textContent).toBe('recovered')
+
+    dispose()
+  })
+
+  it('does not subscribe resetKeys tracking to child materialization signals', async () => {
+    const container = document.createElement('div')
+    const resetKey = createSignal(0)
+    const materializationState = createSignal(1)
+    let resetKeyReads = 0
+    let childRenders = 0
+
+    const Child = () => {
+      childRenders++
+      const current = materializationState()
+      if (current === 0) materializationState(1)
+      return `child:${current}`
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'error',
+          resetKeys: reactive(() => {
+            resetKeyReads++
+            return resetKey()
+          }),
+          children: { type: Child, props: {} },
+        },
+      }),
+      container,
+    )
+
+    const readsBeforeReset = resetKeyReads
+    materializationState(0)
+    resetKey(1)
+    await nextTick()
+
+    expect(container.textContent).toBe('child:0')
+    expect(childRenders).toBe(2)
+    expect(resetKeyReads).toBe(readsBeforeReset + 1)
+
+    materializationState(2)
+    await nextTick()
+    expect(childRenders).toBe(2)
+    expect(resetKeyReads).toBe(readsBeforeReset + 1)
+
+    dispose()
+  })
+
+  it('does not subscribe resetKeys tracking to fallback materialization signals', async () => {
+    const container = document.createElement('div')
+    const resetKey = createSignal(0)
+    const shouldThrow = createSignal(false)
+    const factoryState = createSignal(0)
+    const fallbackState = createSignal(0)
+    let resetKeyReads = 0
+    let fallbackCalls = 0
+    let fallbackRenders = 0
+
+    const Child = () => {
+      if (shouldThrow()) throw new Error('reset render failed')
+      return 'ready'
+    }
+    const Fallback = () => {
+      fallbackRenders++
+      const current = fallbackState()
+      if (current === 0) fallbackState(1)
+      return `error:${current}`
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: () => {
+            fallbackCalls++
+            const current = factoryState()
+            if (current === 0) factoryState(1)
+            return { type: Fallback, props: {} }
+          },
+          resetKeys: reactive(() => {
+            resetKeyReads++
+            return resetKey()
+          }),
+          children: { type: Child, props: {} },
+        },
+      }),
+      container,
+    )
+
+    const readsBeforeReset = resetKeyReads
+    shouldThrow(true)
+    resetKey(1)
+    await nextTick()
+
+    expect(container.textContent).toBe('error:0')
+    expect(fallbackCalls).toBe(1)
+    expect(fallbackRenders).toBe(1)
+    expect(resetKeyReads).toBe(readsBeforeReset + 1)
+
+    factoryState(2)
+    fallbackState(2)
+    await nextTick()
+    expect(fallbackCalls).toBe(1)
+    expect(fallbackRenders).toBe(1)
+    expect(resetKeyReads).toBe(readsBeforeReset + 1)
 
     dispose()
   })

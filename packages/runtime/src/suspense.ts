@@ -17,7 +17,7 @@ import {
 } from './lifecycle'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
 import { resetKeysChanged } from './reset-keys'
-import { createSignal } from './signal'
+import { createSignal, untrack } from './signal'
 import { __fictGetCurrentSSRSession, __fictRunWithSSRSession } from './ssr-session'
 import { __fictGetSSRStreamHooks, __fictPopSSRBoundary, __fictPushSSRBoundary } from './ssr-stream'
 import type { BaseProps, FictNode, SuspenseToken } from './types'
@@ -110,7 +110,7 @@ export function Suspense(props: SuspenseProps): FictNode {
         __fictPushSSRBoundary(streamBoundaryId)
         boundaryPushed = true
       }
-      const output = createElement(view)
+      const output = untrack(() => createElement(view))
       nodes = toNodeArray(output, markerOwnerDocument)
       // Suspended view: child threw a suspense token and was handled upstream.
       // Avoid replacing existing fallback content; tear down this attempt.
@@ -192,12 +192,12 @@ export function Suspense(props: SuspenseProps): FictNode {
         streamPending = true
         streamHooks.boundaryPending(streamBoundaryId)
       }
-      pending(pending() + 1)
+      pending(untrack(() => pending()) + 1)
       // Directly render fallback instead of using switchView to avoid
       // triggering the effect which would cause duplicate renders
       let fallback: FictNode
       try {
-        fallback = toFallback()
+        fallback = untrack(toFallback)
       } catch (err) {
         if (isThenable(err)) {
           if (!handleSuspend(err, hostRoot)) throw err
