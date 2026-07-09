@@ -101,17 +101,24 @@ export async function createPlaygroundServer(
   runtime.port = address.port
   runtime.origin = createOrigin(runtime.host, runtime.port)
 
-  const stop = async (): Promise<void> => {
-    await manager.disposeAll()
-    await new Promise<void>((resolve, reject) => {
-      server.close(error => {
-        if (error) {
-          reject(error)
-          return
-        }
-        resolve()
-      })
-    })
+  let stopPromise: Promise<void> | undefined
+  const stop = (): Promise<void> => {
+    stopPromise ??= (async () => {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          server.close(error => {
+            if (error) {
+              reject(error)
+              return
+            }
+            resolve()
+          })
+        })
+      } finally {
+        await manager.disposeAll()
+      }
+    })()
+    return stopPromise
   }
 
   return {
