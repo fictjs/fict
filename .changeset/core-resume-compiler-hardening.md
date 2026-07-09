@@ -36,7 +36,8 @@ cleanup, delegated event targets, lazy loader retries, and resource cache
 isolation, expiry, keying, and bounds. Child, conditional, portal, Suspense, and
 ErrorBoundary materialization no longer inherits a parent effect's dependencies,
 preventing production self-notification loops while preserving explicit getter
-and branch tracking.
+and branch tracking. Namespace-aware DOM writes also retain their qualified
+`xlink:`/`xml:` prefixes in browser and SSR output.
 
 Compiler, Babel preset, and Vite plugin CommonJS consumers now resolve
 condition-specific `.d.cts` declarations. The ESLint plugin has no lint-rule

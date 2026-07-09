@@ -17,7 +17,9 @@ through v0.26. The format cannot be inferred safely from the snapshot bytes.
 Use `onSnapshotRejected` for the application-owned CSR fallback.
 
 SSR rendering now escapes and validates HTML according to text, attribute,
-raw-text, script, and DOM-name contexts; waits for asynchronous render work
+raw-text, script, processing-instruction, doctype, and DOM-name contexts;
+preserves qualified namespace prefixes; waits for asynchronous render work
 before completing; prevents Suspense materialization from self-notifying its
-parent render effect; and makes CommonJS pipeable-stream abort paths settle
-deterministically. Supported SSR API signatures are unchanged.
+parent render effect; and keeps stream abort, readiness, and cleanup
+deterministic even when a writer or application error callback throws.
+Supported SSR API signatures are unchanged.
