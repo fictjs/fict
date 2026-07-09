@@ -191,10 +191,14 @@ export function lazy<TProps extends Record<string, unknown> = Record<string, unk
    */
   component.reset = () => {
     loadGeneration++
+    const suspendedToken = pendingToken
     loadError = null
     loadingPromise = null
     pendingToken = null
     retryCount = 0
+    // Wake an already rendered Suspense boundary so it retries against the
+    // new generation. The stale loader can no longer settle this token.
+    suspendedToken?.resolve()
     // Note: we don't clear `loaded` - if it was successfully loaded, keep it
   }
 

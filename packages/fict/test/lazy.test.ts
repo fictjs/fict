@@ -192,6 +192,49 @@ describe('lazy', () => {
     expect(loader).toHaveBeenCalledTimes(2)
   })
 
+  it('restarts a rendered suspense load after reset', async () => {
+    type TestModule = { default: () => string }
+    const pending: Array<{
+      resolve: (module: TestModule) => void
+      reject: (err: unknown) => void
+    }> = []
+    const loader = vi.fn(
+      () =>
+        new Promise<TestModule>((resolve, reject) => {
+          pending.push({ resolve, reject })
+        }),
+    )
+    const LazyComp = lazy(loader)
+    const container = document.createElement('div')
+    const dispose = render(
+      () => ({
+        type: Suspense as any,
+        props: {
+          fallback: 'loading',
+          children: { type: LazyComp, props: {} },
+        },
+      }),
+      container,
+    )
+
+    await flushPromises()
+    expect(container.textContent).toBe('loading')
+    expect(loader).toHaveBeenCalledTimes(1)
+
+    LazyComp.reset()
+    await flushPromises()
+    expect(loader).toHaveBeenCalledTimes(2)
+
+    pending[1]!.resolve({ default: () => 'ready' })
+    await flushPromises()
+    expect(container.textContent).toBe('ready')
+
+    pending[0]!.resolve({ default: () => 'stale' })
+    await flushPromises()
+    expect(container.textContent).toBe('ready')
+    dispose()
+  })
+
   it('ignores stale pending failure after reset and newer success', async () => {
     type TestModule = { default: () => string }
     const pending: Array<{
