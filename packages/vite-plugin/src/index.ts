@@ -1305,7 +1305,7 @@ function buildEntryChunkMetadata(
   store: Map<string, ModuleReactiveMetadata>,
   root: string,
 ): ModuleReactiveMetadata | null {
-  const allowedExports = chunk.exports && chunk.exports.length > 0 ? new Set(chunk.exports) : null
+  const allowedExports = chunk.exports ? new Set(chunk.exports) : null
   const metadata: ModuleReactiveMetadata = {
     version: LIBRARY_METADATA_VERSION,
     exports: {},
@@ -1316,9 +1316,6 @@ function buildEntryChunkMetadata(
     getStoredModuleMetadata(store, chunk.facadeModuleId, root),
     allowedExports,
   )
-  for (const moduleId of Object.keys(chunk.modules ?? {})) {
-    mergeMetadata(metadata, getStoredModuleMetadata(store, moduleId, root), allowedExports)
-  }
 
   return hasMetadata(metadata) ? metadata : null
 }
