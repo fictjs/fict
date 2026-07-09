@@ -88,6 +88,22 @@ describe('serializeValue / deserializeValue', () => {
       expect(deserializeValue(serializedIterator)).toBe(Symbol.iterator)
     })
 
+    it('should handle explicit resource management symbols', () => {
+      const symbols = Symbol as typeof Symbol & {
+        readonly dispose: symbol
+        readonly asyncDispose: symbol
+      }
+
+      for (const [name, symbol] of [
+        ['dispose', symbols.dispose],
+        ['asyncDispose', symbols.asyncDispose],
+      ] as const) {
+        const serialized = JSON.parse(JSON.stringify(serializeValue(symbol)))
+        expect(deserializeValue(serialized)).toBe(symbol)
+        expect(deserializeValue({ __t: 'sym', v: { k: 'w', n: name } })).toBe(symbol)
+      }
+    })
+
     it('should reject unknown well-known symbol markers', () => {
       expect(() =>
         deserializeValue({ __t: 'sym', v: { k: 'w', n: 'notAWellKnownSymbol' } }),

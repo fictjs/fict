@@ -97,6 +97,17 @@ const WELL_KNOWN_SYMBOLS = new Map<symbol, string>([
   [Symbol.unscopables, 'unscopables'],
 ])
 
+const resourceManagementSymbols = Symbol as typeof Symbol & {
+  readonly dispose?: symbol
+  readonly asyncDispose?: symbol
+}
+if (resourceManagementSymbols.dispose !== undefined) {
+  WELL_KNOWN_SYMBOLS.set(resourceManagementSymbols.dispose, 'dispose')
+}
+if (resourceManagementSymbols.asyncDispose !== undefined) {
+  WELL_KNOWN_SYMBOLS.set(resourceManagementSymbols.asyncDispose, 'asyncDispose')
+}
+
 const WELL_KNOWN_SYMBOL_BY_NAME = new Map(
   Array.from(WELL_KNOWN_SYMBOLS, ([symbol, name]) => [name, symbol] as const),
 )
