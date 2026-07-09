@@ -21,7 +21,132 @@ const config: PlaygroundConfig = {
 
 const diagnosticTimeout = process.env.CI ? 60_000 : 20_000
 
+async function writeDiagnosticsProject(rootDir: string, source: string): Promise<void> {
+  await writeFile(
+    path.join(rootDir, 'tsconfig.json'),
+    JSON.stringify(
+      {
+        compilerOptions: {
+          target: 'ES2020',
+          module: 'ESNext',
+          moduleResolution: 'bundler',
+          jsx: 'preserve',
+          jsxImportSource: 'fict',
+          strict: true,
+          skipLibCheck: true,
+        },
+        include: ['src'],
+      },
+      null,
+      2,
+    ),
+  )
+  await mkdir(path.join(rootDir, 'src'), { recursive: true })
+  await writeFile(path.join(rootDir, 'src/main.tsx'), source)
+}
+
 describe('playground diagnostics', () => {
+  it(
+    'ignores a consumer .babelrc that references an unavailable plugin',
+    async () => {
+      const sandboxRoot = path.join(process.cwd(), '.fict-playground-test')
+      await mkdir(sandboxRoot, { recursive: true })
+      const rootDir = await mkdtemp(path.join(sandboxRoot, 'diag-babelrc-'))
+
+      try {
+        await writeDiagnosticsProject(
+          rootDir,
+          "import { $state } from 'fict'\n\nexport function App() {\n  const count = $state(1)\n  return <div>{count}</div>\n}\n",
+        )
+        await writeFile(
+          path.join(rootDir, '.babelrc'),
+          JSON.stringify({ plugins: ['./missing-consumer-babel-plugin.cjs'] }),
+        )
+
+        const result = await collectSessionDiagnostics({ rootDir, config })
+
+        expect(result.diagnostics).toEqual([])
+        expect(result.artifacts[0]?.code).toContain('__fictUseSignal')
+      } finally {
+        await rm(rootDir, { recursive: true, force: true })
+      }
+    },
+    diagnosticTimeout,
+  )
+
+  it(
+    'ignores a consumer babel.config that would change artifact semantics',
+    async () => {
+      const originalCwd = process.cwd()
+      const sandboxRoot = path.join(originalCwd, '.fict-playground-test')
+      await mkdir(sandboxRoot, { recursive: true })
+      const rootDir = await mkdtemp(path.join(sandboxRoot, 'diag-babel-config-'))
+
+      try {
+        await writeDiagnosticsProject(
+          rootDir,
+          "import { $state } from 'fict'\n\nexport function useMarker() {\n  const marker = $state('original-marker')\n  return marker\n}\n",
+        )
+        await writeFile(
+          path.join(rootDir, 'babel.config.cjs'),
+          `
+            module.exports = {
+              plugins: [function mutateMarker() {
+                return {
+                  visitor: {
+                    StringLiteral(path) {
+                      if (path.node.value === 'original-marker') {
+                        path.node.value = 'mutated-marker'
+                      }
+                    }
+                  }
+                }
+              }]
+            }
+          `,
+        )
+        process.chdir(rootDir)
+
+        const result = await collectSessionDiagnostics({ rootDir, config })
+        const code = result.artifacts[0]?.code ?? ''
+
+        expect(result.diagnostics).toEqual([])
+        expect(code).toContain('original-marker')
+        expect(code).not.toContain('mutated-marker')
+      } finally {
+        process.chdir(originalCwd)
+        await rm(rootDir, { recursive: true, force: true })
+      }
+    },
+    diagnosticTimeout,
+  )
+
+  it('ignores consumer Babel configuration while inferring compiler locations', async () => {
+    const sandboxRoot = path.join(process.cwd(), '.fict-playground-test')
+    await mkdir(sandboxRoot, { recursive: true })
+    const rootDir = await mkdtemp(path.join(sandboxRoot, 'diag-location-babelrc-'))
+    const sourceCode =
+      "import { $state } from 'fict'\n\nexport function App() {\n  function inner() {\n    let count = $state(0)\n    return count\n  }\n  return <div>{inner()}</div>\n}\n"
+    const filePath = path.join(rootDir, 'src/main.tsx')
+
+    try {
+      await writeFile(
+        path.join(rootDir, '.babelrc'),
+        JSON.stringify({ plugins: ['./missing-consumer-babel-plugin.cjs'] }),
+      )
+
+      expect(
+        inferCompilerLocationFromSource(
+          sourceCode,
+          filePath,
+          `${filePath}: $state() cannot be declared inside nested functions.`,
+        ),
+      ).toEqual({ line: 5, column: 17 })
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it(
     'reports diagnostics only for session files',
     async () => {

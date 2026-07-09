@@ -81,6 +81,8 @@ async function collectCompilerDiagnostics(
     try {
       const result = await transformAsync(sourceCode, {
         filename: absolutePath,
+        configFile: false,
+        babelrc: false,
         sourceMaps: true,
         sourceFileName: absolutePath,
         presets: isTypeScript
@@ -296,6 +298,8 @@ function parseSourceAstSafely(sourceCode: string, filePath: string): BabelTypes.
   try {
     const ast = parseSync(sourceCode, {
       filename: filePath,
+      configFile: false,
+      babelrc: false,
       sourceType: 'module',
       parserOpts: {
         sourceType: 'module',
