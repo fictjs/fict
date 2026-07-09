@@ -190,7 +190,7 @@ describe('@fictjs/ssr', () => {
           props: {
             children: {
               type: 'use',
-              props: { 'xlink:href': '#icon', 'aria-label': 'icon' },
+              props: { 'xlink:href': '#icon', 'xml:lang': 'en', 'aria-label': 'icon' },
             },
           },
         }),
@@ -214,8 +214,18 @@ describe('@fictjs/ssr', () => {
         expect(result.container.getAttribute('aria-label')).toBe('application')
         expect(result.container.getAttribute('état')).toBe('ready')
         expect(result.container.getAttribute('xml:lang')).toBe('en')
-        expect(use?.getAttributeNS('http://www.w3.org/1999/xlink', 'href')).toBe('#icon')
+        // linkedom does not expose namespaceURI for qualified attributes, so
+        // the SSR contract is verified at the serialized qualified-name layer.
+        expect(use?.getAttribute('xlink:href')).toBe('#icon')
+        expect(use?.getAttribute('xml:lang')).toBe('en')
         expect(use?.getAttribute('aria-label')).toBe('icon')
+        expect(result.html).toContain('xlink:href="#icon"')
+        expect(result.html).toContain('xml:lang="en"')
+
+        const { document } = parseHTML(`<html><body>${result.html}</body></html>`)
+        const reparsedUse = document.querySelector('use')
+        expect(reparsedUse?.getAttribute('xlink:href')).toBe('#icon')
+        expect(reparsedUse?.getAttribute('xml:lang')).toBe('en')
       } finally {
         result.dispose()
       }

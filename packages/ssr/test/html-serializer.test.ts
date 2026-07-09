@@ -49,6 +49,20 @@ describe('SSR HTML serializer DOM name validation', () => {
     expect(html).toContain('<!--?fict')
     expect(document.querySelector('[data-fict-xss="processing-instruction"]')).toBeNull()
   })
+
+  it('preserves a qualified element name from namespace-aware DOMs', () => {
+    const element = {
+      nodeType: 1,
+      localName: 'item',
+      tagName: 'fict:item',
+      prefix: 'fict',
+      namespaceURI: 'urn:fict:test',
+      attributes: [],
+      childNodes: [],
+    } as unknown as Element
+
+    expect(serializeHtmlNode(element)).toBe('<fict:item />')
+  })
 })
 
 describe('direct runtime rendering with a permissive server DOM', () => {

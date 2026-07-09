@@ -95,6 +95,7 @@ describe('DOM name handling', () => {
     expect(div.getAttribute('data-mode')).toBe('client')
     expect(div.getAttribute('aria-label')).toBe('application')
     expect(svg.getAttributeNS('http://www.w3.org/1999/xlink', 'href')).toBe('#icon')
+    expect(svg.getAttribute('xlink:href')).toBe('#icon')
   })
 
   it('implements the XML Name and QName boundary ranges', () => {

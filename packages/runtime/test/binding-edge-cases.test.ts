@@ -1363,6 +1363,7 @@ describe('Binding Edge Cases', () => {
       expect(el.getAttribute('clip-rule')).toBe('evenodd')
       expect(el.getAttribute('viewBox')).toBe('0 0 10 10')
       expect(el.getAttributeNS(xlinkNS, 'href')).toBe('#a')
+      expect(el.getAttribute('xlink:href')).toBe('#a')
       expect(el.hasAttribute('strokeWidth')).toBe(false)
       expect(el.hasAttribute('xlinkHref')).toBe(false)
       dispose()
@@ -1384,7 +1385,8 @@ describe('Binding Edge Cases', () => {
       await tick()
       expect(el.getAttributeNS(xlinkNS, 'href')).toBe('#a')
       expect(el.getAttributeNS(xmlNS, 'lang')).toBe('en')
-      expect(el.hasAttribute('xlink:href')).toBe(false)
+      expect(el.getAttribute('xlink:href')).toBe('#a')
+      expect(el.getAttribute('xml:lang')).toBe('en')
 
       props({ 'xlink:href': null, 'xml:lang': 'fr' })
       await tick()

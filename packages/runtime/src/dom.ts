@@ -33,8 +33,8 @@ import {
   ChildProperties,
   getPropAlias,
   SVGElements,
-  SVGNamespace,
   normalizeSVGAttributeName,
+  resolveNamespacedAttribute,
 } from './constants'
 import { getDevtoolsHook } from './devtools'
 import { isDocumentFragmentLike, isHTMLElementLike, isNodeLike } from './dom-guards'
@@ -879,10 +879,10 @@ function applyProps(el: Element, props: Record<string, unknown>, isSVG = false):
       continue
     }
 
-    const namespaced = getNamespacedProp(key)
+    const namespaced = resolveNamespacedAttribute(key)
     if (namespaced) {
       createAttributeBinding(el, key, value as MaybeReactive<unknown>, (el, _key, val) =>
-        setAttributeNS(el, namespaced.namespace, namespaced.localName, val),
+        setAttributeNS(el, namespaced, val),
       )
       continue
     }
@@ -917,16 +917,6 @@ function applyProps(el: Element, props: Record<string, unknown>, isSVG = false):
     const attrName = key === 'htmlFor' ? 'for' : key
     createAttributeBinding(el, attrName, value as MaybeReactive<unknown>, setAttribute)
   }
-}
-
-function getNamespacedProp(key: string): { namespace: string; localName: string } | undefined {
-  const colonIndex = key.indexOf(':')
-  if (colonIndex <= 0) return undefined
-  const prefix = key.slice(0, colonIndex)
-  const localName = key.slice(colonIndex + 1)
-  const namespace = SVGNamespace[prefix]
-  if (!namespace || !localName) return undefined
-  return { namespace, localName }
 }
 
 /**
@@ -1039,14 +1029,18 @@ const setBoolAttribute: AttributeSetter = (el: Element, key: string, value: unkn
 /**
  * Set an attribute with a namespace (for SVG xlink:href, etc.)
  */
-function setAttributeNS(el: Element, namespace: string, name: string, value: unknown): void {
-  assertValidDOMAttributeName(name, true)
+function setAttributeNS(
+  el: Element,
+  namespaced: NonNullable<ReturnType<typeof resolveNamespacedAttribute>>,
+  value: unknown,
+): void {
+  assertValidDOMAttributeName(namespaced.qualifiedName, true)
   if (value === undefined || value === null || value === false) {
-    el.removeAttributeNS(namespace, name)
+    el.removeAttributeNS(namespaced.namespace, namespaced.localName)
   } else if (value === true) {
-    el.setAttributeNS(namespace, name, '')
+    el.setAttributeNS(namespaced.namespace, namespaced.qualifiedName, '')
   } else {
-    el.setAttributeNS(namespace, name, String(value))
+    el.setAttributeNS(namespaced.namespace, namespaced.qualifiedName, String(value))
   }
 }
 

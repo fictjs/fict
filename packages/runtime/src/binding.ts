@@ -18,8 +18,8 @@ import {
   Properties,
   ChildProperties,
   getPropAlias,
-  SVGNamespace,
   normalizeSVGAttributeName,
+  resolveNamespacedAttribute,
 } from './constants'
 import { isNodeLike } from './dom-guards'
 import { assertValidDOMAttributeName } from './dom-names'
@@ -160,16 +160,6 @@ function readDangerouslySetInnerHTML(
   if (value == null || typeof value !== 'object') return { found: false }
   if (!hasOwn.call(value, '__html')) return { found: false }
   return { found: true, html: (value as Record<string, unknown>).__html }
-}
-
-function getNamespacedAttribute(key: string): { namespace: string; localName: string } | undefined {
-  const colonIndex = key.indexOf(':')
-  if (colonIndex <= 0) return undefined
-  const prefix = key.slice(0, colonIndex)
-  const localName = key.slice(colonIndex + 1)
-  const namespace = SVGNamespace[prefix]
-  if (!namespace || !localName) return undefined
-  return { namespace, localName }
 }
 
 function getNonReactiveFnRegistry(): WeakSet<(...args: unknown[]) => unknown> {
@@ -640,8 +630,8 @@ export function bindAttribute(el: Element, key: string, getValue: () => unknown)
  */
 export function setAttr(el: Element, key: string, value: unknown): void {
   assertValidDOMAttributeName(key)
-  const namespaced = getNamespacedAttribute(key)
-  if (namespaced) assertValidDOMAttributeName(namespaced.localName, true)
+  const namespaced = resolveNamespacedAttribute(key)
+  if (namespaced) assertValidDOMAttributeName(namespaced.qualifiedName, true)
   const cacheTarget = el as unknown as Record<PropertyKey, unknown>
   const attrCache =
     (cacheTarget[ATTR_CACHE] as Record<string, unknown> | undefined) ??
@@ -653,9 +643,9 @@ export function setAttr(el: Element, key: string, value: unknown): void {
     if (value === undefined || value === null || value === false) {
       el.removeAttributeNS(namespaced.namespace, namespaced.localName)
     } else if (value === true) {
-      el.setAttributeNS(namespaced.namespace, namespaced.localName, '')
+      el.setAttributeNS(namespaced.namespace, namespaced.qualifiedName, '')
     } else {
-      el.setAttributeNS(namespaced.namespace, namespaced.localName, String(value))
+      el.setAttributeNS(namespaced.namespace, namespaced.qualifiedName, String(value))
     }
     return
   }
@@ -678,7 +668,7 @@ function isAttributeCurrent(
   el: Element,
   key: string,
   value: unknown,
-  namespaced: ReturnType<typeof getNamespacedAttribute>,
+  namespaced: ReturnType<typeof resolveNamespacedAttribute>,
 ): boolean {
   if (value === undefined || value === null || value === false) {
     return namespaced
@@ -2655,9 +2645,9 @@ function assignProp(
     }
   }
 
-  const namespaced = getNamespacedAttribute(prop)
+  const namespaced = resolveNamespacedAttribute(prop)
   if (namespaced) {
-    assertValidDOMAttributeName(namespaced.localName, true)
+    assertValidDOMAttributeName(namespaced.qualifiedName, true)
     if (value == null) {
       if (node.hasAttributeNS(namespaced.namespace, namespaced.localName)) {
         node.removeAttributeNS(namespaced.namespace, namespaced.localName)
@@ -2665,7 +2655,7 @@ function assignProp(
     } else {
       const next = String(value)
       if (node.getAttributeNS(namespaced.namespace, namespaced.localName) !== next) {
-        node.setAttributeNS(namespaced.namespace, namespaced.localName, next)
+        node.setAttributeNS(namespaced.namespace, namespaced.qualifiedName, next)
       }
     }
     return value

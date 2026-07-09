@@ -392,6 +392,17 @@ export const SVGNamespace: Record<string, string> = {
   xmlns: 'http://www.w3.org/2000/xmlns/',
 }
 
+export function resolveNamespacedAttribute(
+  qualifiedName: string,
+): { namespace: string; localName: string; qualifiedName: string } | undefined {
+  const colonIndex = qualifiedName.indexOf(':')
+  if (colonIndex <= 0) return undefined
+  const namespace = SVGNamespace[qualifiedName.slice(0, colonIndex)]
+  const localName = qualifiedName.slice(colonIndex + 1)
+  if (!namespace || !localName) return undefined
+  return { namespace, localName, qualifiedName }
+}
+
 export const SVGAttributeAliases: Record<string, string> = {
   xmlnsXlink: 'xmlns:xlink',
   strokeWidth: 'stroke-width',

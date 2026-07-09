@@ -1123,6 +1123,7 @@ describe('DOM Module', () => {
         expect(path.getAttribute('fill-rule')).toBe('evenodd')
         expect(path.getAttribute('clip-rule')).toBe('evenodd')
         expect(path.getAttributeNS(xlinkNS, 'href')).toBe('#a')
+        expect(path.getAttribute('xlink:href')).toBe('#a')
         expect(path.hasAttribute('strokeWidth')).toBe(false)
         expect(path.hasAttribute('xlinkHref')).toBe(false)
       })

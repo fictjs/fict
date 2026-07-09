@@ -95,7 +95,8 @@ export function serializeHtmlNodes(
 }
 
 function serializeElement(element: Element): string {
-  const tagName = element.localName || element.tagName
+  const localName = element.localName || element.tagName
+  const tagName = element.prefix ? `${element.prefix}:${localName}` : localName
   const isHtml = isHtmlElement(element)
   assertValidDOMElementName(tagName, !isHtml)
   let html = `<${tagName}`
