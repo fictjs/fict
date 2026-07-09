@@ -26,8 +26,6 @@ export interface DirectiveResult {
   found: boolean
 }
 
-const NO_MEMO_DIRECTIVE_TEXT = DirectiveType.NoMemo
-
 /**
  * Parse all directives from a program or block statement
  */
@@ -115,49 +113,6 @@ export function removeDirective(
   }
 }
 
-export function detectNoMemoDirective(
-  path: BabelCore.NodePath<BabelCore.types.Program | BabelCore.types.BlockStatement>,
-  t: typeof BabelCore.types,
-): boolean {
-  let found = false
-
-  if (Array.isArray(path.node.directives)) {
-    const filtered = path.node.directives.filter(d => {
-      if (d.value.value === NO_MEMO_DIRECTIVE_TEXT) {
-        found = true
-        return false
-      }
-      return true
-    })
-    if (filtered.length !== path.node.directives.length) {
-      path.node.directives = filtered
-    }
-  }
-
-  const body = (path.node as BabelCore.types.Program | BabelCore.types.BlockStatement).body
-  if (Array.isArray(body) && body.length > 0) {
-    const first = body[0]
-    if (
-      t.isExpressionStatement(first) &&
-      t.isStringLiteral(first.expression) &&
-      first.expression.value === NO_MEMO_DIRECTIVE_TEXT
-    ) {
-      found = true
-      body.shift()
-    }
-  }
-
-  if (Array.isArray(body) && body.length > 0) {
-    const firstStmt = body[0]
-    const comments = (firstStmt?.leadingComments ?? []).map(c => c.value.trim())
-    if (comments.some(c => c.includes(NO_MEMO_DIRECTIVE_TEXT))) {
-      found = true
-    }
-  }
-
-  return found
-}
-
 // ============================================================================
 // Utility Functions
 // ============================================================================
@@ -239,30 +194,6 @@ export function createGetterCall(
   name: string,
 ): BabelCore.types.CallExpression {
   return t.callExpression(t.identifier(name), [])
-}
-
-/**
- * Check if a token is an assignment operator
- */
-export function isAssignmentOperator(operator: string): boolean {
-  return [
-    '=',
-    '+=',
-    '-=',
-    '*=',
-    '/=',
-    '%=',
-    '**=',
-    '<<=',
-    '>>=',
-    '>>>=',
-    '|=',
-    '^=',
-    '&=',
-    '||=',
-    '&&=',
-    '??=',
-  ].includes(operator)
 }
 
 export function isLogicalAssignmentOperator(operator: string): operator is '||=' | '&&=' | '??=' {
