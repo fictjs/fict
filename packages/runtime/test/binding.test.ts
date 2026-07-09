@@ -634,6 +634,44 @@ describe('Reactive DOM Binding', () => {
       dispose()
     })
 
+    it('does not track signal reads and writes while materializing inserted children', async () => {
+      const start = document.createComment('start')
+      const end = document.createComment('end')
+      container.append(start, end)
+      const materializationState = createSignal(0)
+      let materializations = 0
+
+      const dispose = insertBetween(
+        start,
+        end,
+        () => ({ type: 'span', props: {}, key: undefined }),
+        () => {
+          materializations += 1
+          const current = materializationState()
+          if (current === 0) {
+            materializationState(1)
+          }
+          const node = document.createElement('span')
+          node.textContent = `materialized:${current}`
+          return node
+        },
+      )
+
+      expect(materializations).toBe(1)
+      expect(container.textContent).toBe('materialized:0')
+
+      await tick()
+      expect(materializations).toBe(1)
+      expect(container.textContent).toBe('materialized:0')
+
+      materializationState(2)
+      await tick()
+      expect(materializations).toBe(1)
+      expect(container.textContent).toBe('materialized:0')
+
+      dispose()
+    })
+
     it('cleans dynamic child roots between markers when the owner root is disposed', () => {
       const start = document.createComment('start')
       const end = document.createComment('end')

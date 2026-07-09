@@ -6,7 +6,15 @@ import { parseHTML } from 'linkedom'
 
 import type { FictNode } from '@fictjs/runtime'
 import { Suspense, createSuspenseToken, onDestroy } from '@fictjs/runtime'
-import { __fictUseContext, __fictUseSignal } from '@fictjs/runtime/internal'
+import {
+  __fictUseContext,
+  __fictUseSignal,
+  createElement,
+  getSlotEnd,
+  insertBetween,
+  resolvePath,
+  template,
+} from '@fictjs/runtime/internal'
 
 import { renderToPipeableStream, renderToStream } from '../src/index'
 import { renderToPartial } from '../src/experimental'
@@ -25,6 +33,25 @@ async function readReadableStream(stream: ReadableStream<Uint8Array>): Promise<s
   }
   out += decoder.decode()
   return out
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} did not settle within ${timeoutMs}ms`))
+    }, timeoutMs)
+
+    promise.then(
+      value => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      error => {
+        clearTimeout(timer)
+        reject(error)
+      },
+    )
+  })
 }
 
 describe('@fictjs/ssr streaming', () => {
@@ -133,6 +160,75 @@ describe('@fictjs/ssr streaming', () => {
     expect(html).toContain('data-fict-snapshot')
     expect(html).toContain('data-fict-suspense')
     expect(html).toContain('Done')
+  })
+
+  it('settles compiled insertBetween Suspense streams without remounting the boundary', async () => {
+    const token = createSuspenseToken()
+    let ready = false
+    let asyncChildRenders = 0
+    const compiledTemplate = template(
+      '<main><section><!--fict:slot:start--><!--fict:slot:end--></section></main>',
+    )
+
+    function AsyncChild(): FictNode {
+      asyncChildRenders += 1
+      if (!ready) throw token.token
+      return { type: 'strong', props: { children: 'CompiledDone' } }
+    }
+
+    function CompilerShapedApp(): FictNode {
+      const root = compiledTemplate()
+      const start = resolvePath(root, [0, 0])
+      if (!start || start.nodeType !== 8) {
+        throw new Error('Failed to resolve compiler-style slot start marker')
+      }
+      const end = getSlotEnd(start as Comment)
+      insertBetween(
+        start as Comment,
+        end,
+        () => ({
+          type: Suspense,
+          props: {
+            fallback: { type: 'span', props: { children: 'CompiledLoading' } },
+            children: { type: AsyncChild, props: {} },
+          },
+        }),
+        createElement,
+      )
+      return root
+    }
+
+    const { pipe, shellReady, allReady } = renderToPipeableStream(
+      () => ({ type: CompilerShapedApp, props: {} }),
+      { mode: 'shell', fullDocument: true },
+    )
+    const sink = new PassThrough()
+    const chunks: Buffer[] = []
+    const ended = new Promise<void>((resolve, reject) => {
+      sink.on('data', chunk => chunks.push(chunk as Buffer))
+      sink.once('end', resolve)
+      sink.once('error', reject)
+    })
+
+    pipe(sink)
+    await withTimeout(shellReady, 500, 'compiled Suspense shellReady')
+
+    const shell = Buffer.concat(chunks).toString('utf8')
+    expect(shell).toContain('CompiledLoading')
+    expect(shell).toContain('fict:suspense-start')
+    expect(shell).not.toContain('CompiledDone')
+    expect(asyncChildRenders).toBe(1)
+
+    ready = true
+    token.resolve()
+    await withTimeout(allReady, 500, 'compiled Suspense allReady')
+    await withTimeout(ended, 500, 'compiled Suspense output stream')
+
+    const html = Buffer.concat(chunks).toString('utf8')
+    expect(html).toContain('CompiledLoading')
+    expect(html).toContain('CompiledDone')
+    expect(html).toContain('data-fict-suspense')
+    expect(asyncChildRenders).toBe(2)
   })
 
   it('safely serializes raw-text content in deferred patches', async () => {

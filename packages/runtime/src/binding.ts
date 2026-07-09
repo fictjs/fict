@@ -1341,11 +1341,11 @@ export function insertBetween(
           end,
           parentNode.ownerDocument ?? markerOwnerDocument,
           () => {
-            newNode = createValue()
+            newNode = untrack(createValue)
           },
         )
       } else {
-        newNode = createValue()
+        newNode = untrack(createValue)
       }
 
       nodes = toNodeArray(newNode, ownerDocument)
