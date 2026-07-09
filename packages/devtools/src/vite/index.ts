@@ -188,8 +188,8 @@ export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[
           }, 100)
 
           if (openInBrowser) {
-            // @ts-expect-error - open is an optional dynamic import
-            import('open')
+            const openPackage = 'open'
+            import(/* @vite-ignore */ openPackage)
               .then((mod: { default: (url: string) => Promise<unknown> }) => {
                 mod.default(devtoolsUrl)
               })
