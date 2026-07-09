@@ -22,6 +22,7 @@ import {
   normalizeSVGAttributeName,
 } from './constants'
 import { isNodeLike } from './dom-guards'
+import { assertValidDOMAttributeName } from './dom-names'
 import { createRenderEffect } from './effect'
 import { withHydration, withHydrationRange, isHydratingActive } from './hydration'
 import {
@@ -638,11 +639,13 @@ export function bindAttribute(el: Element, key: string, getValue: () => unknown)
  * Patch attribute value with per-node, per-attribute cache.
  */
 export function setAttr(el: Element, key: string, value: unknown): void {
+  assertValidDOMAttributeName(key)
+  const namespaced = getNamespacedAttribute(key)
+  if (namespaced) assertValidDOMAttributeName(namespaced.localName, true)
   const cacheTarget = el as unknown as Record<PropertyKey, unknown>
   const attrCache =
     (cacheTarget[ATTR_CACHE] as Record<string, unknown> | undefined) ??
     (cacheTarget[ATTR_CACHE] = Object.create(null))
-  const namespaced = getNamespacedAttribute(key)
   if (attrCache[key] === value && isAttributeCurrent(el, key, value, namespaced)) return
   attrCache[key] = value
 
@@ -2522,14 +2525,17 @@ function assignProp(
     const eventName = prop.slice(3)
     if (value == null) {
       removeStoredEventListener(node, eventName)
+      assertValidDOMAttributeName(prop)
       node.removeAttribute(prop)
       return value
     }
     if (typeof value === 'string') {
       removeStoredEventListener(node, eventName)
+      assertValidDOMAttributeName(prop)
       node.setAttribute(prop, value)
       return value
     }
+    assertValidDOMAttributeName(prop)
     node.removeAttribute(prop)
     addEventListener(
       node,
@@ -2583,15 +2589,19 @@ function assignProp(
 
   // Explicit attribute: attr:name
   if (prop.slice(0, 5) === 'attr:') {
-    if (value == null) node.removeAttribute(prop.slice(5))
-    else node.setAttribute(prop.slice(5), String(value))
+    const attributeName = prop.slice(5)
+    assertValidDOMAttributeName(attributeName)
+    if (value == null) node.removeAttribute(attributeName)
+    else node.setAttribute(attributeName, String(value))
     return value
   }
 
   // Explicit boolean attribute: bool:name
   if (prop.slice(0, 5) === 'bool:') {
-    if (value) node.setAttribute(prop.slice(5), '')
-    else node.removeAttribute(prop.slice(5))
+    const attributeName = prop.slice(5)
+    assertValidDOMAttributeName(attributeName)
+    if (value) node.setAttribute(attributeName, '')
+    else node.removeAttribute(attributeName)
     return value
   }
 
@@ -2638,6 +2648,7 @@ function assignProp(
 
   const namespaced = getNamespacedAttribute(prop)
   if (namespaced) {
+    assertValidDOMAttributeName(namespaced.localName, true)
     if (value == null) {
       if (node.hasAttributeNS(namespaced.namespace, namespaced.localName)) {
         node.removeAttributeNS(namespaced.namespace, namespaced.localName)
@@ -2653,6 +2664,7 @@ function assignProp(
 
   // Default: set as attribute
   const attrName = prop === 'htmlFor' ? 'for' : prop
+  assertValidDOMAttributeName(attrName)
   if (value == null) {
     if (node.hasAttribute(attrName)) node.removeAttribute(attrName)
   } else {

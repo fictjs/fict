@@ -157,6 +157,7 @@ export function assign(
 }
 
 export { resolvePath, getSlotEnd } from './node-ops'
+export { assertValidDOMElementName, assertValidDOMAttributeName } from './dom-names'
 
 // ============================================================================
 // Event Delegation (Compiler-generated code)

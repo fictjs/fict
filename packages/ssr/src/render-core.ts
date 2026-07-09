@@ -10,6 +10,8 @@ import {
   __fictSerializeSSRState,
   __fictSerializeSSRStateForScopes,
   __fictSetSSRStreamHooks,
+  assertValidDOMAttributeName,
+  assertValidDOMElementName,
 } from '@fictjs/runtime/internal'
 import { parseHTML } from 'linkedom'
 
@@ -842,12 +844,14 @@ function resolveContainer(document: Document, options: RenderToStringOptions): H
   }
 
   const tag = options.containerTag ?? 'div'
+  assertValidDOMElementName(tag)
   const container = document.createElement(tag)
   if (options.containerId) {
     container.setAttribute('id', options.containerId)
   }
   if (options.containerAttributes) {
     for (const [name, value] of Object.entries(options.containerAttributes)) {
+      assertValidDOMAttributeName(name)
       if (value === null || value === undefined || value === false) continue
       container.setAttribute(name, value === true ? '' : String(value))
     }

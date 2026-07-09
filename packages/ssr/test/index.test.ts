@@ -12,6 +12,96 @@ import {
 import { renderToDocument, renderToString } from '../src/index'
 
 describe('@fictjs/ssr', () => {
+  describe('DOM name validation', () => {
+    it.each(['1div', 'div name', 'div><script data-fict-xss="tag">', 'svg/onload'])(
+      'rejects an invalid dynamic element name: %s',
+      tagName => {
+        expect(() =>
+          renderToString(() => ({ type: tagName, props: { children: 'unsafe' } }), {
+            includeSnapshot: false,
+          }),
+        ).toThrowError(/Invalid element name/)
+      },
+    )
+
+    it('rejects an invalid dynamic prop key', () => {
+      const attributeName = 'data-safe"><script data-fict-xss="attribute">'
+
+      expect(() =>
+        renderToString(
+          () => ({
+            type: 'div',
+            props: { [attributeName]: 'unsafe' },
+          }),
+          { includeSnapshot: false },
+        ),
+      ).toThrowError(/Invalid attribute name/)
+    })
+
+    it.each(['main><script data-fict-xss="container">', '1main', 'main shell'])(
+      'rejects an invalid containerTag: %s',
+      containerTag => {
+        expect(() =>
+          renderToString(() => 'safe', {
+            containerTag,
+            includeContainer: true,
+            includeSnapshot: false,
+          }),
+        ).toThrowError(/Invalid element name/)
+      },
+    )
+
+    it('rejects invalid containerAttributes, including omitted values', () => {
+      const attributeName = 'data-safe"><script data-fict-xss="container-attribute">'
+
+      expect(() =>
+        renderToString(() => 'safe', {
+          containerAttributes: { [attributeName]: null },
+          includeContainer: true,
+          includeSnapshot: false,
+        }),
+      ).toThrowError(/Invalid attribute name/)
+    })
+
+    it('preserves valid custom, data, aria, Unicode, and namespaced names', () => {
+      const result = renderToDocument(
+        () => ({
+          type: 'svg',
+          props: {
+            children: {
+              type: 'use',
+              props: { 'xlink:href': '#icon', 'aria-label': 'icon' },
+            },
+          },
+        }),
+        {
+          containerTag: 'fict-shell',
+          containerAttributes: {
+            'data-mode': 'ssr',
+            'aria-label': 'application',
+            état: 'ready',
+            'xml:lang': 'en',
+          },
+          includeContainer: true,
+          includeSnapshot: false,
+        },
+      )
+
+      try {
+        const use = result.container.querySelector('use')
+        expect(result.container.localName).toBe('fict-shell')
+        expect(result.container.getAttribute('data-mode')).toBe('ssr')
+        expect(result.container.getAttribute('aria-label')).toBe('application')
+        expect(result.container.getAttribute('état')).toBe('ready')
+        expect(result.container.getAttribute('xml:lang')).toBe('en')
+        expect(use?.getAttributeNS('http://www.w3.org/1999/xlink', 'href')).toBe('#icon')
+        expect(use?.getAttribute('aria-label')).toBe('icon')
+      } finally {
+        result.dispose()
+      }
+    })
+  })
+
   it.each(['title', 'textarea', 'style', 'script'] as const)(
     'keeps text inside <%s> inert when SSR output is parsed as HTML',
     tagName => {

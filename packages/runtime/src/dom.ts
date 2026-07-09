@@ -38,6 +38,7 @@ import {
 } from './constants'
 import { getDevtoolsHook } from './devtools'
 import { isDocumentFragmentLike, isHTMLElementLike, isNodeLike } from './dom-guards'
+import { assertValidDOMAttributeName, assertValidDOMElementName } from './dom-names'
 import { __fictPushContext, __fictPopContext, __fictGetCurrentComponentId } from './hooks'
 import {
   claimNodes,
@@ -489,6 +490,7 @@ function createElementWithContext(
   // HTML Element
   const tagName = typeof vnode.type === 'string' ? vnode.type : 'div'
   const resolvedNamespace = resolveNamespace(tagName, namespace)
+  assertValidDOMElementName(tagName, resolvedNamespace !== null)
   const el =
     resolvedNamespace === 'svg'
       ? ownerDocument.createElementNS(SVG_NS, tagName)
@@ -950,6 +952,7 @@ function shouldStringifyBooleanAttribute(key: string): boolean {
 }
 
 const setAttribute: AttributeSetter = (el: Element, key: string, value: unknown): void => {
+  assertValidDOMAttributeName(key)
   if (typeof value === 'boolean' && shouldStringifyBooleanAttribute(key)) {
     el.setAttribute(key, String(value))
     return
@@ -1022,6 +1025,7 @@ const setInnerHTML: AttributeSetter = (el: Element, _key: string, value: unknown
  * Set a boolean attribute on an element (empty string when true, removed when false)
  */
 const setBoolAttribute: AttributeSetter = (el: Element, key: string, value: unknown): void => {
+  assertValidDOMAttributeName(key)
   if (value) {
     el.setAttribute(key, '')
   } else {
@@ -1033,6 +1037,7 @@ const setBoolAttribute: AttributeSetter = (el: Element, key: string, value: unkn
  * Set an attribute with a namespace (for SVG xlink:href, etc.)
  */
 function setAttributeNS(el: Element, namespace: string, name: string, value: unknown): void {
+  assertValidDOMAttributeName(name, true)
   if (value === undefined || value === null || value === false) {
     el.removeAttributeNS(namespace, name)
   } else if (value === true) {
