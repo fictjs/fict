@@ -197,8 +197,13 @@ export function render(view: () => FictNode, container: HTMLElement): () => void
     flushOnMount(root)
 
     const teardown = () => {
-      destroyRoot(root)
-      container.innerHTML = ''
+      try {
+        destroyRoot(root)
+      } finally {
+        // An unhandled cleanup error is still reported to the caller, but it
+        // must not leave the rendered tree mounted.
+        container.innerHTML = ''
+      }
     }
 
     completed = true

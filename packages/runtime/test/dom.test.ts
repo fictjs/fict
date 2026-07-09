@@ -6,6 +6,7 @@ import {
   Fragment,
   createRoot,
   createEffect,
+  onCleanup,
   onDestroy,
   onMount,
 } from '../src/index'
@@ -130,6 +131,21 @@ describe('DOM Module', () => {
       expect(destroyed).toBe(false)
       teardown()
       expect(destroyed).toBe(true)
+    })
+
+    it('unmounts the rendered tree when a cleanup throws', () => {
+      const teardown = render(() => {
+        onCleanup(() => {
+          throw new Error('cleanup boom')
+        })
+        const child = document.createElement('div')
+        child.textContent = 'mounted'
+        return child
+      }, container)
+
+      expect(container.textContent).toBe('mounted')
+      expect(() => teardown()).toThrow('cleanup boom')
+      expect(container.innerHTML).toBe('')
     })
 
     it('cleans up effects when the render view throws', async () => {
