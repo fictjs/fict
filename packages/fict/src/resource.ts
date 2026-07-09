@@ -496,7 +496,14 @@ export function resource<T, Args = void>(
     const shouldSuspend = createToken && useSuspense && !entry.hasValue
     entry.pendingToken = shouldSuspend ? createSuspenseToken() : null
 
-    const fetchPromise = fetcher({ signal: controller.signal }, args)
+    let request: Promise<T>
+    try {
+      request = Promise.resolve(fetcher({ signal: controller.signal }, args))
+    } catch (err) {
+      request = Promise.reject(err)
+    }
+
+    const fetchPromise = request
       .then(res => {
         if (controller.signal.aborted || entry.generation !== currentGen) return
         entry.data(res)

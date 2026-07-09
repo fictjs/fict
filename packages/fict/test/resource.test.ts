@@ -69,6 +69,27 @@ describe('resource', () => {
     expect(result.data).toBe('success')
   })
 
+  it('normalizes synchronous fetch failures into resource errors', async () => {
+    const error = new Error('sync fetch failed')
+    const fetcher = vi.fn(() => {
+      throw error
+    })
+    const r = resource<string, string>({ fetch: fetcher as never })
+
+    let result: any
+    expect(() => {
+      createRoot(() => {
+        result = r.read('key')
+      })
+    }).not.toThrow()
+
+    await vi.runAllTimersAsync()
+    await tick()
+    expect(result.loading).toBe(false)
+    expect(result.error).toBe(error)
+    expect(result.data).toBeUndefined()
+  })
+
   it('treats plain function read args as values', async () => {
     const fnArg = vi.fn(() => 'value')
     const fetcher = vi.fn((_, arg: () => string) => Promise.resolve(arg))
