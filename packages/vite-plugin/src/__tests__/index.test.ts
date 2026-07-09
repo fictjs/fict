@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
+import { build } from 'vite'
 import { describe, it, expect, vi } from 'vitest'
 
 import fict, { __fictVitePluginInternals } from '..'
@@ -120,6 +121,228 @@ function originalPositionFor(
 }
 
 describe('fict vite-plugin', () => {
+  it('prepares aliased cyclic hook metadata before a cold Vite build transforms the importer', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-cold-metadata-'))
+    const srcDir = path.join(root, 'src')
+    const hooksDir = path.join(srcDir, 'hooks')
+
+    try {
+      await mkdir(hooksDir, { recursive: true })
+      await writeFile(
+        path.join(hooksDir, 'index.tsx'),
+        `
+          export { useCounter } from './use-counter'
+          export const marker = 'ready'
+        `,
+      )
+      await writeFile(
+        path.join(hooksDir, 'use-counter.tsx'),
+        `
+          import { $state } from 'fict'
+          import { marker } from './index'
+
+          export const observedMarker = marker
+          export function useCounter() {
+            const count = $state(1)
+            return count
+          }
+        `,
+      )
+      await writeFile(path.join(srcDir, 'public-hooks.tsx'), `export { useCounter } from './hooks'`)
+      const entry = path.join(srcDir, 'App.tsx')
+      await writeFile(
+        entry,
+        `
+          import { useCounter } from '@/public-hooks'
+
+          export function App() {
+            const count = useCounter()
+            const doubled = count * 2
+            return <div>{doubled}</div>
+          }
+        `,
+      )
+
+      const result = await build({
+        root,
+        logLevel: 'silent',
+        resolve: {
+          alias: { '@': srcDir },
+        },
+        plugins: [fict({ cache: false, useTypeScriptProject: false, functionSplitting: false })],
+        build: {
+          write: false,
+          lib: { entry, formats: ['es'], fileName: () => 'app.js' },
+          rollupOptions: {
+            external: id => id === 'fict' || id.startsWith('fict/'),
+          },
+        },
+      })
+      const outputs = Array.isArray(result) ? result : [result]
+      const code = outputs
+        .flatMap(output => ('output' in output ? output.output : []))
+        .filter(output => output.type === 'chunk')
+        .map(output => output.code)
+        .join('\n')
+
+      expect(code).toMatch(/=>\s*[\w$]+\(\) \* 2,\s*\{\s*name:\s*"doubled"/)
+      expect(code).not.toMatch(/=>\s*[\w$]+ \* 2,\s*\{\s*name:\s*"doubled"/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('deduplicates dependency metadata preparation across concurrent importer transforms', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-concurrent-metadata-'))
+    const srcDir = path.join(root, 'src')
+    const hookPath = path.join(srcDir, 'use-counter.tsx')
+    const compiledFiles: string[] = []
+
+    try {
+      await mkdir(srcDir, { recursive: true })
+      await writeFile(
+        hookPath,
+        `
+          import { $state } from 'fict'
+          export function useCounter() {
+            const count = $state(1)
+            return count
+          }
+        `,
+      )
+      const plugin = getTestPlugin({
+        cache: false,
+        functionSplitting: false,
+        useTypeScriptProject: false,
+        explain: artifact => compiledFiles.push(path.normalize(artifact.fileName)),
+      })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+      const context = {
+        error(error: unknown): never {
+          throw error instanceof Error ? error : new Error(String(error))
+        },
+        warn: vi.fn(),
+        emitFile: vi.fn(),
+      }
+      const makeApp = (name: string) => `
+        import { useCounter } from './use-counter'
+        export function ${name}() {
+          const count = useCounter()
+          return <div>{count * 2}</div>
+        }
+      `
+
+      const [first, second] = await Promise.all([
+        plugin.transform?.call(context, makeApp('First'), path.join(srcDir, 'First.tsx')),
+        plugin.transform?.call(context, makeApp('Second'), path.join(srcDir, 'Second.tsx')),
+      ])
+
+      expect(first && typeof first === 'object').toBe(true)
+      expect(second && typeof second === 'object').toBe(true)
+      expect(compiledFiles.filter(file => file === hookPath)).toHaveLength(1)
+      expect(compiledFiles.filter(file => file.endsWith('First.tsx'))).toHaveLength(1)
+      expect(compiledFiles.filter(file => file.endsWith('Second.tsx'))).toHaveLength(1)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keys persistent importer transforms with prepared local metadata', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-local-metadata-cache-'))
+    const srcDir = path.join(root, 'src')
+    const cacheDir = path.join(root, '.cache')
+    const hookPath = path.join(srcDir, 'use-counter.tsx')
+    const appPath = path.join(srcDir, 'App.tsx')
+    const appSource = `
+      import { useCounter } from '@/use-counter'
+      export function App() {
+        const count = useCounter()
+        return <div>{count * 2}</div>
+      }
+    `
+    const context = {
+      error(error: unknown): never {
+        const message =
+          error && typeof error === 'object' && 'message' in error
+            ? String(error.message)
+            : String(error)
+        throw new Error(message)
+      },
+      warn: vi.fn(),
+      emitFile: vi.fn(),
+    }
+
+    try {
+      await mkdir(srcDir, { recursive: true })
+      await writeFile(
+        hookPath,
+        `
+          import { $state } from 'fict'
+          export function useCounter() {
+            const count = $state(1)
+            return count
+          }
+        `,
+      )
+      const firstPlugin = getTestPlugin({
+        cache: { persistent: true, dir: cacheDir },
+        functionSplitting: false,
+        useTypeScriptProject: false,
+      })
+      firstPlugin.configResolved?.({
+        ...mockBuildConfig,
+        root,
+        resolve: { alias: { '@': srcDir } },
+      })
+      const first = await firstPlugin.transform?.call(context, appSource, appPath)
+      expect(first && typeof first === 'object' && 'code' in first ? first.code : '').toMatch(
+        /count\(\) \* 2/,
+      )
+
+      await writeFile(
+        hookPath,
+        `
+          export function useCounter() {
+            return 1
+          }
+        `,
+      )
+      const send = vi.fn()
+      expect(
+        firstPlugin.handleHotUpdate?.({
+          file: hookPath,
+          server: { ws: { send } },
+        }),
+      ).toEqual([])
+      expect(send).toHaveBeenCalledWith({ type: 'full-reload', path: '*' })
+      const hmrResult = await firstPlugin.transform?.call(context, appSource, appPath)
+      const hmrCode =
+        hmrResult && typeof hmrResult === 'object' && 'code' in hmrResult
+          ? String(hmrResult.code)
+          : ''
+      expect(hmrCode).toMatch(/count \* 2/)
+      expect(hmrCode).not.toMatch(/count\(\) \* 2/)
+
+      const secondPlugin = getTestPlugin({
+        cache: { persistent: true, dir: cacheDir },
+        functionSplitting: false,
+        useTypeScriptProject: false,
+      })
+      secondPlugin.configResolved?.({
+        ...mockBuildConfig,
+        root,
+        resolve: { alias: { '@': srcDir } },
+      })
+      const second = await secondPlugin.transform?.call(context, appSource, appPath)
+      const secondCode =
+        second && typeof second === 'object' && 'code' in second ? String(second.code) : ''
+      expect(secondCode).toMatch(/count \* 2/)
+      expect(secondCode).not.toMatch(/count\(\) \* 2/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('applies the Babel transformer', async () => {
     const plugin = fict() as any
     const sample = `

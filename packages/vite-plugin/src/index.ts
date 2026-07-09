@@ -118,6 +118,27 @@ interface CachedTransform {
   moduleMetadata?: ModuleReactiveMetadata
 }
 
+interface PreparedCompilerTransform {
+  code: string
+  map: TransformResult['map']
+  moduleMetadata: ModuleReactiveMetadata
+  preparationKey: string
+}
+
+interface MetadataGraphNode {
+  filename: string
+  code: string
+  dependencies: Set<string>
+}
+
+interface MetadataResolveContext {
+  resolve?: (
+    source: string,
+    importer?: string,
+    options?: { skipSelf?: boolean },
+  ) => Promise<{ id: string; external?: boolean | 'absolute' | 'relative' } | null>
+}
+
 interface NormalizedLibraryOptions {
   enabled: boolean
   metadataDir: string
@@ -308,6 +329,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   let tsProject: TypeScriptProject | null = null
   let tsProjectInit: Promise<TypeScriptProject | null> | null = null
   const moduleMetadata: FictCompilerOptions['moduleMetadata'] = new Map()
+  const resolvedLocalModules = new Map<string, string>()
+  const preparedCompilerTransforms = new Map<string, PreparedCompilerTransform>()
+  let metadataPreparationQueue: Promise<void> = Promise.resolve()
   const extractedHandlers = new Map<string, ExtractedHandler>()
   const libraryMetadataAssets = new Map<string, LibraryMetadataAsset>()
   const debugEnabled =
@@ -360,8 +384,328 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
 
   const resetTransformState = () => {
     moduleMetadata.clear()
+    resolvedLocalModules.clear()
+    preparedCompilerTransforms.clear()
+    metadataPreparationQueue = Promise.resolve()
     extractedHandlers.clear()
     libraryMetadataAssets.clear()
+  }
+
+  const lookupStoredMetadata = (resolved: string): ModuleReactiveMetadata | undefined => {
+    const normalized = normalizeFileName(resolved, config?.root)
+    const direct = moduleMetadata.get(normalized)
+    if (direct) return direct
+    const ext = path.extname(normalized)
+    if (!ext) {
+      for (const suffix of MODULE_EXTENSIONS) {
+        const byExt = moduleMetadata.get(`${normalized}${suffix}`)
+        if (byExt) return byExt
+      }
+      for (const suffix of MODULE_EXTENSIONS) {
+        const byIndex = moduleMetadata.get(path.join(normalized, `index${suffix}`))
+        if (byIndex) return byIndex
+      }
+    }
+    return undefined
+  }
+
+  const resolveCompilerModuleMetadata = (
+    source: string,
+    importer?: string,
+  ): ModuleReactiveMetadata | undefined => {
+    const userResolved = compilerOptions.resolveModuleMetadata?.(source, importer)
+    if (userResolved) return userResolved
+    if (!importer) return undefined
+
+    const importerFile = normalizeFileName(importer, config?.root)
+    const exactResolution = resolvedLocalModules.get(createLocalResolutionKey(importerFile, source))
+    const aliasEntries = normalizeAliases(config?.resolve?.alias)
+    let resolvedSource = exactResolution ?? null
+
+    if (!resolvedSource) {
+      if (path.isAbsolute(source)) {
+        resolvedSource = normalizeFileName(source, config?.root)
+      } else if (source.startsWith('.')) {
+        resolvedSource = resolveExistingModuleFile(path.resolve(path.dirname(importerFile), source))
+      } else {
+        const aliased = applyAlias(source, aliasEntries)
+        if (aliased) {
+          if (path.isAbsolute(aliased)) {
+            resolvedSource = resolveExistingModuleFile(aliased)
+          } else if (aliased.startsWith('.')) {
+            resolvedSource = resolveExistingModuleFile(
+              path.resolve(path.dirname(importerFile), aliased),
+            )
+          } else if (config?.root) {
+            resolvedSource = resolveExistingModuleFile(path.resolve(config.root, aliased))
+          }
+        } else if (tsProject) {
+          const tsResolved = tsProject.resolveModuleName(source, importerFile)
+          if (tsResolved) resolvedSource = normalizeFileName(tsResolved, config?.root)
+        }
+      }
+    }
+
+    if (resolvedSource) {
+      const resolvedMetadata = lookupStoredMetadata(resolvedSource)
+      if (resolvedMetadata) return resolvedMetadata
+      if (shouldTransform(resolvedSource, includePatterns, exclude)) {
+        throw new Error(
+          `[fict] Local module metadata for "${source}" imported by "${importerFile}" ` +
+            `was not prepared (${resolvedSource}).`,
+        )
+      }
+    }
+
+    return resolvePackageModuleMetadata(source, importerFile, {
+      ...compilerOptions,
+      moduleMetadata,
+    })
+  }
+
+  const createCompilerOptions = async (
+    code: string,
+    normalizedFilename: string,
+  ): Promise<{ fictOptions: FictCompilerOptions; project: TypeScriptProject | null }> => {
+    const fictOptions: FictCompilerOptions = {
+      ...compilerOptions,
+      dev: compilerOptions.dev ?? isDev,
+      sourcemap: compilerOptions.sourcemap ?? true,
+      filename: normalizedFilename,
+      moduleMetadata,
+      resolveModuleMetadata: resolveCompilerModuleMetadata,
+    }
+
+    const project = await ensureTypeScriptProject()
+    if (project) {
+      project.updateFile(normalizedFilename, code)
+      const program = project.getProgram()
+      const checker =
+        program && typeof program.getTypeChecker === 'function'
+          ? program.getTypeChecker()
+          : undefined
+      fictOptions.typescript = {
+        program: program ?? undefined,
+        checker,
+        projectVersion: project.projectVersion,
+        configPath: project.configPath,
+      }
+    }
+    return { fictOptions, project }
+  }
+
+  const resolveGraphDependency = async (
+    context: MetadataResolveContext,
+    source: string,
+    importer: string,
+  ): Promise<string | null> => {
+    if (hasModuleRequestSuffix(source)) return null
+    if (context.resolve) {
+      const resolved = await context.resolve(source, importer, { skipSelf: true })
+      if (resolved && !resolved.external && !isInternalModuleId(resolved.id)) {
+        const resolvedFile = resolveExistingModuleFile(stripQuery(resolved.id))
+        if (resolvedFile) return normalizeFileName(resolvedFile, config?.root)
+      }
+    }
+    return resolveLocalModuleSource(
+      source,
+      importer,
+      config?.root,
+      normalizeAliases(config?.resolve?.alias),
+    )
+  }
+
+  const discoverMetadataGraph = async (
+    context: MetadataResolveContext,
+    rootCode: string,
+    rootFilename: string,
+  ): Promise<Map<string, MetadataGraphNode>> => {
+    const nodes = new Map<string, MetadataGraphNode>()
+    const discovered = new Set<string>()
+
+    const visit = async (filename: string, suppliedCode?: string): Promise<void> => {
+      const normalizedFilename = normalizeFileName(filename, config?.root)
+      if (discovered.has(normalizedFilename)) return
+      discovered.add(normalizedFilename)
+
+      const code = suppliedCode ?? (await fs.readFile(normalizedFilename, 'utf8'))
+      const node: MetadataGraphNode = {
+        filename: normalizedFilename,
+        code,
+        dependencies: new Set(),
+      }
+      nodes.set(normalizedFilename, node)
+
+      for (const source of collectStaticModuleSources(code)) {
+        const resolved = await resolveGraphDependency(context, source, normalizedFilename)
+        if (!resolved || !shouldTransform(resolved, includePatterns, exclude)) continue
+        resolvedLocalModules.set(createLocalResolutionKey(normalizedFilename, source), resolved)
+        node.dependencies.add(resolved)
+        await visit(resolved)
+      }
+    }
+
+    await visit(rootFilename, rootCode)
+    return nodes
+  }
+
+  const getPreparationKey = async (
+    node: MetadataGraphNode,
+  ): Promise<{
+    key: string
+    fictOptions: FictCompilerOptions
+  }> => {
+    const { fictOptions, project } = await createCompilerOptions(node.code, node.filename)
+    const dependencyFingerprint = computePackageMetadataCacheFingerprint(
+      node.code,
+      node.filename,
+      compilerOptions,
+      moduleMetadata,
+      config?.root,
+      normalizeAliases(config?.resolve?.alias),
+      new Set(),
+      resolvedLocalModules,
+    )
+    return {
+      key: buildMetadataPreparationKey(
+        node.filename,
+        node.code,
+        fictOptions,
+        project,
+        dependencyFingerprint,
+      ),
+      fictOptions,
+    }
+  }
+
+  const compileMetadataNode = async (
+    node: MetadataGraphNode,
+    fictOptions: FictCompilerOptions,
+  ): Promise<Omit<PreparedCompilerTransform, 'preparationKey'>> => {
+    const compiled = await compileFictCompilerStage(node.code, node.filename, fictOptions)
+    const generatedMetadata = moduleMetadata.get(node.filename)
+    if (!generatedMetadata) {
+      throw new Error(`[fict] Compiler did not emit module metadata for ${node.filename}.`)
+    }
+    return {
+      code: compiled.code,
+      map: compiled.map,
+      moduleMetadata: generatedMetadata,
+    }
+  }
+
+  const prepareMetadataGraph = async (
+    graph: Map<string, MetadataGraphNode>,
+    rootFilename: string,
+  ): Promise<void> => {
+    for (const component of getStronglyConnectedMetadataComponents(graph)) {
+      const sortedComponent = [...component].sort()
+      const hasCycle =
+        sortedComponent.length > 1 ||
+        graph.get(sortedComponent[0]!)?.dependencies.has(sortedComponent[0]!) === true
+      // The transform hook compiles the requested root immediately after preparation.
+      // Precompile it only when it participates in a cycle; acyclic roots need their
+      // dependencies ready, but compiling the root here would defeat the transform cache.
+      if (
+        !hasCycle &&
+        sortedComponent.length === 1 &&
+        sortedComponent[0] === normalizeFileName(rootFilename, config?.root)
+      ) {
+        continue
+      }
+
+      const preparedCandidates: Array<{
+        filename: string
+        prepared: PreparedCompilerTransform | undefined
+        key: string
+        fictOptions: FictCompilerOptions
+      }> = []
+      // TypeScriptProject is a shared mutable language-service snapshot. Prepare
+      // candidate keys deterministically so updateFile/getProgram never race.
+      for (const filename of sortedComponent) {
+        const node = graph.get(filename)!
+        const preparation = await getPreparationKey(node)
+        preparedCandidates.push({
+          filename,
+          prepared: preparedCompilerTransforms.get(filename),
+          ...preparation,
+        })
+      }
+      if (
+        preparedCandidates.every(candidate => candidate.prepared?.preparationKey === candidate.key)
+      ) {
+        for (const candidate of preparedCandidates) {
+          moduleMetadata.set(candidate.filename, candidate.prepared!.moduleMetadata)
+        }
+        continue
+      }
+
+      if (!hasCycle) {
+        const filename = sortedComponent[0]!
+        const node = graph.get(filename)!
+        const { fictOptions } = await getPreparationKey(node)
+        const compiled = await compileMetadataNode(node, fictOptions)
+        const { key } = await getPreparationKey(node)
+        preparedCompilerTransforms.set(filename, { ...compiled, preparationKey: key })
+        continue
+      }
+
+      for (const filename of sortedComponent) {
+        if (!moduleMetadata.has(filename)) {
+          moduleMetadata.set(filename, createEmptyModuleMetadata())
+        }
+      }
+
+      let latestResults = new Map<string, Omit<PreparedCompilerTransform, 'preparationKey'>>()
+      let converged = false
+      const maxPasses = Math.max(8, sortedComponent.length * 4)
+      for (let pass = 0; pass < maxPasses; pass++) {
+        const before = stableStringify(
+          sortedComponent.map(filename => [filename, moduleMetadata.get(filename)]),
+        )
+        const passResults = new Map<string, Omit<PreparedCompilerTransform, 'preparationKey'>>()
+        for (const filename of sortedComponent) {
+          const node = graph.get(filename)!
+          const { fictOptions } = await getPreparationKey(node)
+          passResults.set(filename, await compileMetadataNode(node, fictOptions))
+        }
+        latestResults = passResults
+        const after = stableStringify(
+          sortedComponent.map(filename => [filename, moduleMetadata.get(filename)]),
+        )
+        if (after === before) {
+          converged = true
+          break
+        }
+      }
+      if (!converged) {
+        throw new Error(
+          `[fict] Local module metadata did not converge for circular dependency: ${sortedComponent.join(', ')}`,
+        )
+      }
+      for (const filename of sortedComponent) {
+        const node = graph.get(filename)!
+        const result = latestResults.get(filename)!
+        const { key } = await getPreparationKey(node)
+        preparedCompilerTransforms.set(filename, { ...result, preparationKey: key })
+      }
+    }
+  }
+
+  const prepareReachableMetadata = async (
+    context: MetadataResolveContext,
+    code: string,
+    filename: string,
+  ): Promise<void> => {
+    const prepare = metadataPreparationQueue.then(async () => {
+      const graph = await discoverMetadataGraph(context, code, filename)
+      await prepareMetadataGraph(graph, filename)
+    })
+    metadataPreparationQueue = prepare.then(
+      () => undefined,
+      () => undefined,
+    )
+    await prepare
   }
 
   return {
@@ -521,143 +865,67 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       }
 
       const normalizedFilename = normalizeFileName(filename, config?.root)
-      const aliasEntries = normalizeAliases(config?.resolve?.alias)
-      const fictOptions: FictCompilerOptions = {
-        ...compilerOptions,
-        dev: compilerOptions.dev ?? isDev,
-        sourcemap: compilerOptions.sourcemap ?? true,
-        filename: normalizedFilename,
-        moduleMetadata,
-        resolveModuleMetadata: (source, importer) => {
-          const userResolved = compilerOptions.resolveModuleMetadata?.(source, importer)
-          if (userResolved) return userResolved
-          if (!importer) return undefined
-
-          const importerFile = normalizeFileName(importer, config?.root)
-          const lookupMetadata = (resolved: string) => {
-            const direct = moduleMetadata.get(resolved)
-            if (direct) return direct
-            const ext = path.extname(resolved)
-            if (!ext) {
-              for (const suffix of MODULE_EXTENSIONS) {
-                const byExt = moduleMetadata.get(`${resolved}${suffix}`)
-                if (byExt) return byExt
-              }
-              for (const suffix of MODULE_EXTENSIONS) {
-                const byIndex = moduleMetadata.get(path.join(resolved, `index${suffix}`))
-                if (byIndex) return byIndex
-              }
-            }
-            return undefined
-          }
-          let resolvedSource: string | null = null
-
-          if (path.isAbsolute(source)) {
-            resolvedSource = normalizeFileName(source, config?.root)
-          } else if (source.startsWith('.')) {
-            resolvedSource = normalizeFileName(
-              path.resolve(path.dirname(importerFile), source),
-              config?.root,
-            )
-          } else {
-            const aliased = applyAlias(source, aliasEntries)
-            if (aliased) {
-              if (path.isAbsolute(aliased)) {
-                resolvedSource = normalizeFileName(aliased, config?.root)
-              } else if (aliased.startsWith('.')) {
-                resolvedSource = normalizeFileName(
-                  path.resolve(path.dirname(importerFile), aliased),
-                  config?.root,
-                )
-              } else if (config?.root) {
-                resolvedSource = normalizeFileName(path.resolve(config.root, aliased), config?.root)
-              }
-            } else if (tsProject) {
-              const tsResolved = tsProject.resolveModuleName(source, importerFile)
-              if (tsResolved) {
-                resolvedSource = normalizeFileName(tsResolved, config?.root)
-              }
-            }
-          }
-
-          if (resolvedSource) {
-            const resolvedMetadata = lookupMetadata(resolvedSource)
-            if (resolvedMetadata) return resolvedMetadata
-          }
-
-          return resolvePackageModuleMetadata(source, importerFile, {
-            ...compilerOptions,
-            moduleMetadata,
-          })
-        },
-      }
-
-      const tsProject = await ensureTypeScriptProject()
-      if (tsProject) {
-        tsProject.updateFile(normalizedFilename, code)
-        const program = tsProject.getProgram()
-        const checker =
-          program && typeof program.getTypeChecker === 'function'
-            ? program.getTypeChecker()
-            : undefined
-        fictOptions.typescript = {
-          program: program ?? undefined,
-          checker,
-          projectVersion: tsProject.projectVersion,
-          configPath: tsProject.configPath,
-        }
-      }
-
-      const cacheStore = ensureCache()
-      const shouldSplit =
-        options.functionSplitting ??
-        (config?.command === 'build' && (compilerOptions.resumable || !config?.build?.ssr))
-      const cacheKey = cacheStore.enabled
-        ? buildCacheKey(
-            filename,
-            code,
-            fictOptions,
-            tsProject,
-            shouldSplit,
-            computePackageMetadataCacheFingerprint(
-              code,
-              normalizedFilename,
-              compilerOptions,
-              moduleMetadata,
-              config?.root,
-              aliasEntries,
-            ),
-          )
-        : null
-
-      if (cacheKey) {
-        const cached = await cacheStore.get(cacheKey)
-        if (cached) {
-          if (shouldSplit && cached.extractedHandlers?.length) {
-            for (const handler of cached.extractedHandlers) {
-              const handlerId = createHandlerId(handler.sourceModule, handler.exportName)
-              extractedHandlers.set(handlerId, handler)
-              if (config?.command === 'build' && !config?.build?.ssr) {
-                this.emitFile({
-                  type: 'chunk',
-                  id: `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}`,
-                  name: `handler-${handler.exportName}`,
-                })
-              }
-            }
-          }
-          if (cached.moduleMetadata) {
-            moduleMetadata.set(normalizedFilename, cached.moduleMetadata)
-          }
-          return {
-            code: cached.code,
-            map: cached.map,
-          }
-        }
-      }
-
       try {
         const precompiledInput = isPrecompiledFictModule(code)
+        if (!precompiledInput) {
+          await prepareReachableMetadata(this as MetadataResolveContext, code, normalizedFilename)
+        }
+        const { fictOptions, project: tsProject } = await createCompilerOptions(
+          code,
+          normalizedFilename,
+        )
+        const aliasEntries = normalizeAliases(config?.resolve?.alias)
+        const dependencyFingerprint = computePackageMetadataCacheFingerprint(
+          code,
+          normalizedFilename,
+          compilerOptions,
+          moduleMetadata,
+          config?.root,
+          aliasEntries,
+          new Set(),
+          resolvedLocalModules,
+        )
+        const cacheStore = ensureCache()
+        const shouldSplit =
+          options.functionSplitting ??
+          (config?.command === 'build' && (compilerOptions.resumable || !config?.build?.ssr))
+        const cacheKey = cacheStore.enabled
+          ? buildCacheKey(
+              filename,
+              code,
+              fictOptions,
+              tsProject,
+              shouldSplit,
+              dependencyFingerprint,
+            )
+          : null
+
+        if (cacheKey) {
+          const cached = await cacheStore.get(cacheKey)
+          if (cached) {
+            if (shouldSplit && cached.extractedHandlers?.length) {
+              for (const handler of cached.extractedHandlers) {
+                const handlerId = createHandlerId(handler.sourceModule, handler.exportName)
+                extractedHandlers.set(handlerId, handler)
+                if (config?.command === 'build' && !config?.build?.ssr) {
+                  this.emitFile({
+                    type: 'chunk',
+                    id: `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}`,
+                    name: `handler-${handler.exportName}`,
+                  })
+                }
+              }
+            }
+            if (cached.moduleMetadata) {
+              moduleMetadata.set(normalizedFilename, cached.moduleMetadata)
+            }
+            return {
+              code: cached.code,
+              map: cached.map,
+            }
+          }
+        }
+
         let finalCode: string
         let finalMap: TransformResult['map']
         let splitResult: { code: string; handlers: string[]; map: TransformResult['map'] } | null =
@@ -667,27 +935,30 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           finalCode = code
           finalMap = null
         } else {
-          const isTypeScript = filename.endsWith('.tsx') || filename.endsWith('.ts')
-
-          const result = await transformAsync(code, {
-            filename: normalizedFilename,
-            sourceMaps: fictOptions.sourcemap,
-            sourceFileName: filename,
-            presets: isTypeScript
-              ? [['@babel/preset-typescript', { isTSX: true, allExtensions: true }]]
-              : [],
-            plugins: [
-              ['@babel/plugin-syntax-jsx', {}],
-              [createFictPlugin, fictOptions],
-            ],
-          })
-
-          if (!result || !result.code) {
-            return null
+          const preparationKey = buildMetadataPreparationKey(
+            normalizedFilename,
+            code,
+            fictOptions,
+            tsProject,
+            dependencyFingerprint,
+          )
+          const prepared = preparedCompilerTransforms.get(normalizedFilename)
+          let result: { code: string; map: TransformResult['map'] }
+          if (prepared?.preparationKey === preparationKey) {
+            result = prepared
+          } else {
+            result = await compileFictCompilerStage(code, normalizedFilename, fictOptions)
+            const generatedMetadata = moduleMetadata.get(normalizedFilename)
+            if (generatedMetadata) {
+              preparedCompilerTransforms.set(normalizedFilename, {
+                ...result,
+                moduleMetadata: generatedMetadata,
+                preparationKey,
+              })
+            }
           }
-
           finalCode = result.code
-          finalMap = result.map as TransformResult['map']
+          finalMap = result.map
         }
 
         // Apply function-level code splitting in production builds
@@ -1380,6 +1651,88 @@ function isBarePackageSource(source: string): boolean {
   return !path.isAbsolute(source) && !source.startsWith('.') && !source.startsWith('/@fs/')
 }
 
+function hasModuleRequestSuffix(source: string): boolean {
+  return source.includes('?') || source.includes('#')
+}
+
+function createLocalResolutionKey(importer: string, source: string): string {
+  return `${normalizeFileName(importer)}\0${source}`
+}
+
+function createEmptyModuleMetadata(): ModuleReactiveMetadata {
+  return { version: LIBRARY_METADATA_VERSION, exports: {} }
+}
+
+function getStronglyConnectedMetadataComponents(graph: Map<string, MetadataGraphNode>): string[][] {
+  let nextIndex = 0
+  const indices = new Map<string, number>()
+  const lowLinks = new Map<string, number>()
+  const stack: string[] = []
+  const onStack = new Set<string>()
+  const components: string[][] = []
+
+  const visit = (filename: string): void => {
+    const index = nextIndex++
+    indices.set(filename, index)
+    lowLinks.set(filename, index)
+    stack.push(filename)
+    onStack.add(filename)
+
+    const dependencies = [...(graph.get(filename)?.dependencies ?? [])].sort()
+    for (const dependency of dependencies) {
+      if (!graph.has(dependency)) continue
+      if (!indices.has(dependency)) {
+        visit(dependency)
+        lowLinks.set(filename, Math.min(lowLinks.get(filename)!, lowLinks.get(dependency)!))
+      } else if (onStack.has(dependency)) {
+        lowLinks.set(filename, Math.min(lowLinks.get(filename)!, indices.get(dependency)!))
+      }
+    }
+
+    if (lowLinks.get(filename) !== indices.get(filename)) return
+    const component: string[] = []
+    while (stack.length > 0) {
+      const member = stack.pop()!
+      onStack.delete(member)
+      component.push(member)
+      if (member === filename) break
+    }
+    components.push(component)
+  }
+
+  for (const filename of [...graph.keys()].sort()) {
+    if (!indices.has(filename)) visit(filename)
+  }
+  return components
+}
+
+async function compileFictCompilerStage(
+  code: string,
+  filename: string,
+  fictOptions: FictCompilerOptions,
+): Promise<{ code: string; map: TransformResult['map'] }> {
+  const isTypeScript = filename.endsWith('.tsx') || filename.endsWith('.ts')
+  const result = await transformAsync(code, {
+    filename,
+    sourceMaps: fictOptions.sourcemap,
+    sourceFileName: filename,
+    presets: isTypeScript
+      ? [['@babel/preset-typescript', { isTSX: true, allExtensions: true }]]
+      : [],
+    plugins: [
+      ['@babel/plugin-syntax-jsx', {}],
+      [createFictPlugin, fictOptions],
+    ],
+  })
+  if (!result?.code) {
+    throw new Error(`[fict] Compiler returned no output for ${filename}.`)
+  }
+  return {
+    code: result.code,
+    map: result.map as TransformResult['map'],
+  }
+}
+
 function collectStaticModuleSources(code: string): string[] {
   let ast: ReturnType<typeof parse>
   try {
@@ -1457,6 +1810,7 @@ function computePackageMetadataCacheFingerprint(
   root?: string,
   aliases: AliasEntry[] = [],
   visited = new Set<string>(),
+  resolvedLocalModules?: ReadonlyMap<string, string>,
 ): string {
   const normalizedFilename = normalizeFileName(filename, root)
   if (visited.has(normalizedFilename)) return '[]'
@@ -1464,36 +1818,44 @@ function computePackageMetadataCacheFingerprint(
 
   const entries: [string, string | null, string?][] = []
   for (const source of collectStaticModuleSources(code)) {
+    const userMetadata = compilerOptions.resolveModuleMetadata?.(source, normalizedFilename)
+    if (userMetadata) {
+      entries.push([source, stableStringify(userMetadata), 'custom-resolver'])
+      continue
+    }
+    const localFile =
+      resolvedLocalModules?.get(createLocalResolutionKey(normalizedFilename, source)) ??
+      resolveLocalModuleSource(source, normalizedFilename, root, aliases)
+    if (localFile) {
+      try {
+        const localCode = readFileSync(localFile, 'utf8')
+        const storedMetadata = moduleMetadata.get(localFile)
+        const nestedFingerprint = computePackageMetadataCacheFingerprint(
+          localCode,
+          localFile,
+          compilerOptions,
+          moduleMetadata,
+          root,
+          aliases,
+          visited,
+          resolvedLocalModules,
+        )
+        entries.push([
+          source,
+          storedMetadata ? stableStringify(storedMetadata) : null,
+          `${hashString(localCode)}:${nestedFingerprint}`,
+        ])
+      } catch {
+        entries.push([source, null, 'unreadable'])
+      }
+      continue
+    }
     if (isBarePackageSource(source)) {
       const metadata = resolvePackageModuleMetadata(source, normalizedFilename, {
         ...compilerOptions,
         moduleMetadata,
       })
       entries.push([source, metadata ? stableStringify(metadata) : null])
-      continue
-    }
-
-    const localFile = resolveLocalModuleSource(source, normalizedFilename, root, aliases)
-    if (!localFile) continue
-    try {
-      const localCode = readFileSync(localFile, 'utf8')
-      const storedMetadata = moduleMetadata.get(localFile)
-      const nestedFingerprint = computePackageMetadataCacheFingerprint(
-        localCode,
-        localFile,
-        compilerOptions,
-        moduleMetadata,
-        root,
-        aliases,
-        visited,
-      )
-      entries.push([
-        source,
-        storedMetadata ? stableStringify(storedMetadata) : null,
-        `${hashString(localCode)}:${nestedFingerprint}`,
-      ])
-    } catch {
-      entries.push([source, null, 'unreadable'])
     }
   }
   return stableStringify(entries)
@@ -1593,6 +1955,35 @@ function buildCacheKey(
       tsKey,
       shouldSplit ? 'split' : 'inline',
       packageMetadataFingerprint,
+    ].join('|'),
+  )
+}
+
+function buildMetadataPreparationKey(
+  filename: string,
+  code: string,
+  options: FictCompilerOptions,
+  tsProject: TypeScriptProject | null,
+  dependencyMetadataFingerprint: string,
+): string {
+  const normalizedOptions = normalizeOptionsForCache(options)
+  const typescript = normalizedOptions.typescript
+  if (typescript && typeof typescript === 'object') {
+    // The compiler does not currently consume the Program. A global project version
+    // would make the same module miss this per-module cache whenever an unrelated file
+    // is discovered, so the source/dependency graph and tsconfig hash are the stable key.
+    delete (typescript as Record<string, unknown>).projectVersion
+  }
+  return hashString(
+    [
+      CACHE_VERSION,
+      getTransformCacheFingerprint(),
+      'metadata-preparation',
+      filename,
+      hashString(code),
+      hashString(stableStringify(normalizedOptions)),
+      tsProject?.configHash ?? '',
+      dependencyMetadataFingerprint,
     ].join('|'),
   )
 }
