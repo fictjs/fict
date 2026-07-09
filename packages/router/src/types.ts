@@ -165,7 +165,7 @@ export interface CompiledRoute {
   /** Normalized path pattern */
   pattern: string
   /** Matcher function */
-  matcher: (pathname: string) => RouteMatch | null
+  matcher: (pathname: string, end?: boolean, expectedParams?: Params) => RouteMatch | null
   /** Route score for ranking */
   score: number
   /** Child compiled routes */

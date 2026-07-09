@@ -242,11 +242,11 @@ export function scoreRoute(pattern: string, isIndex = false): number {
 export function createMatcher(
   pattern: string,
   matchFilters?: Record<string, MatchFilter>,
-): (pathname: string) => RouteMatch | null {
+): (pathname: string, end?: boolean, expectedParams?: Params) => RouteMatch | null {
   const segments = parsePathPattern(pattern)
   const normalizedPattern = normalizePath(pattern)
 
-  return (pathname: string): RouteMatch | null => {
+  return (pathname: string, end = true, expectedParams?: Params): RouteMatch | null => {
     const pathSegments = pathname.split('/').filter(Boolean)
     const params: Record<string, string> = {}
     let matchedPath = ''
@@ -285,6 +285,13 @@ export function createMatcher(
         case 'optional': {
           // May or may not have a value
           if (pathSegment) {
+            if (
+              expectedParams &&
+              !Object.prototype.hasOwnProperty.call(expectedParams, segment.paramName!)
+            ) {
+              break
+            }
+
             // Look ahead: if next pattern segment is static and matches current path segment,
             // skip this optional to allow the static to match
             const nextSegment = segments[i + 1]
@@ -334,7 +341,7 @@ export function createMatcher(
 
     // If we haven't consumed all path segments, this is not a match
     // (unless the last segment was a splat)
-    if (pathIndex < pathSegments.length) {
+    if (end && pathIndex < pathSegments.length) {
       return null
     }
 
@@ -414,31 +421,24 @@ export function createBranches(routes: CompiledRoute[]): RouteBranch[] {
 
       const branchMatcher = (pathname: string): RouteMatch[] | null => {
         const matches: RouteMatch[] = []
-        let remainingPath = pathname
-        let accumulatedParams: Record<string, string | undefined> = {}
+        const leafRoute = currentRoutes[currentRoutes.length - 1]!
+        const leafMatch = leafRoute.matcher(pathname)
+        if (!leafMatch) return null
 
-        for (const compiledRoute of currentRoutes) {
-          const match = compiledRoute.matcher(remainingPath)
+        for (let index = 0; index < currentRoutes.length; index++) {
+          const compiledRoute = currentRoutes[index]!
+          const isLeaf = index === currentRoutes.length - 1
+          const match = isLeaf
+            ? leafMatch
+            : compiledRoute.matcher(pathname, false, leafMatch.params)
           if (!match) {
             return null
           }
 
-          // Accumulate params
-          accumulatedParams = { ...accumulatedParams, ...match.params }
-
           matches.push({
             ...match,
             route: compiledRoute.route,
-            params: { ...accumulatedParams } as Params,
           })
-
-          // For nested routes, the remaining path should be after the matched portion
-          // But only if this isn't the leaf route
-          if (compiledRoute !== currentRoutes[currentRoutes.length - 1]) {
-            if (match.pathname !== '/') {
-              remainingPath = remainingPath.slice(match.pathname.length) || '/'
-            }
-          }
         }
 
         return matches

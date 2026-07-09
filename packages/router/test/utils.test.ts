@@ -236,6 +236,69 @@ describe('matchRoutes', () => {
     expect(matches2?.[0]?.params.id).toBe('123')
   })
 
+  it('should match nested branches against the complete pathname', () => {
+    const routes = [
+      compileRoute({
+        path: '/users',
+        component: () => null,
+        children: [
+          {
+            path: ':userId',
+            component: () => null,
+            children: [{ path: 'posts/:postId', component: () => null }],
+          },
+        ],
+      }),
+    ]
+    const branches = createBranches(routes)
+
+    const matches = matchRoutes(branches, '/users/42/posts/7')
+
+    expect(matches?.map(match => match.pattern)).toEqual([
+      '/users',
+      '/users/:userId',
+      '/users/:userId/posts/:postId',
+    ])
+    expect(matches?.[0]?.params).toEqual({})
+    expect(matches?.[1]?.params).toEqual({ userId: '42' })
+    expect(matches?.[2]?.params).toEqual({ userId: '42', postId: '7' })
+  })
+
+  it('should match nested index routes at the parent pathname', () => {
+    const routes = [
+      compileRoute({
+        path: '/users',
+        component: () => null,
+        children: [{ index: true, component: () => null }],
+      }),
+    ]
+    const branches = createBranches(routes)
+
+    const matches = matchRoutes(branches, '/users')
+
+    expect(matches).toHaveLength(2)
+    expect(matches?.map(match => match.pathname)).toEqual(['/users', '/users'])
+  })
+
+  it('should preserve optional parent parameter consumption from the leaf match', () => {
+    const routes = [
+      compileRoute({
+        path: '/users/:userId?',
+        component: () => null,
+        children: [{ path: 'settings', component: () => null }],
+      }),
+    ]
+    const branches = createBranches(routes)
+
+    const withoutOptional = matchRoutes(branches, '/users/settings')
+    const withOptional = matchRoutes(branches, '/users/42/settings')
+
+    expect(withoutOptional?.[0]?.pathname).toBe('/users')
+    expect(withoutOptional?.[0]?.params).toEqual({})
+    expect(withOptional?.[0]?.pathname).toBe('/users/42')
+    expect(withOptional?.[0]?.params).toEqual({ userId: '42' })
+  })
+
   it('should return null for no match', () => {
     const routes = [compileRoute({ path: '/users', component: () => null })]
     const branches = createBranches(routes)
