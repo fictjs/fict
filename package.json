@@ -24,7 +24,7 @@
     "test:runtime-package-smoke": "node scripts/runtime-package-smoke.mjs",
     "test:runtime-bundler-smoke": "node scripts/runtime-bundler-smoke.mjs",
     "test:bundlers": "pnpm -C examples/counter-webpack build && pnpm -C examples/counter-basic build && pnpm examples:verify",
-    "examples:verify": "pnpm -C examples/real-apps build && pnpm -C examples/ssr-basic build && pnpm -C examples/ssr-streaming build",
+    "examples:verify": "pnpm -C examples/real-apps build && pnpm -C examples/ssr-basic build && pnpm -C examples/ssr-streaming build && pnpm -C examples/ssr-streaming smoke:production",
     "security:audit:prod": "pnpm audit --prod --audit-level=low",
     "guardrails:typecheck-config": "node scripts/check-typecheck-config.mjs",
     "typecheck:tests": "pnpm -C packages/runtime typecheck:tests && pnpm -C packages/compiler typecheck:tests && pnpm -C packages/vite-plugin typecheck:tests && pnpm -C packages/ssr typecheck:tests",
