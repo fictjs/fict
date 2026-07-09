@@ -734,6 +734,30 @@ describe('resource', () => {
     }
   })
 
+  it('preserves fetch arguments when prefetch uses an explicit cache key', async () => {
+    type Args = { id: string; label: string }
+    const fetcher = vi.fn((_: { signal: AbortSignal }, args: Args) => Promise.resolve(args.label))
+    const r = resource<string, Args>({
+      key: args => args.id,
+      fetch: fetcher,
+    })
+    const args = { id: 'same-key', label: 'prefetched' }
+
+    r.prefetch(args, 'same-key')
+    await vi.runAllTimersAsync()
+    await tick()
+
+    let result: any
+    const { dispose } = createRoot(() => {
+      result = r.read(args)
+    })
+    await tick()
+
+    expect(result.data).toBe('prefetched')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    dispose()
+  })
+
   it('invalidates null as a specific resource key', async () => {
     const fetcher = vi.fn().mockResolvedValueOnce('null:first').mockResolvedValueOnce('null:second')
     const r = resource<string, null>({ fetch: fetcher })

@@ -551,7 +551,7 @@ export function resource<T, Args = void>(
     const entry = ensureEntry(cache, key)
     const usableData = entry.hasValue && !isExpired(entry)
     if (!usableData) {
-      entry.lastArgs = hasKeyOverride ? (key as Args) : args
+      entry.lastArgs = args
       entry.lastVersion = entry.version()
       startFetch(cache, entry, key, args, { createToken: false })
     }
@@ -582,7 +582,7 @@ export function resource<T, Args = void>(
     entry.loading(false)
     entry.error(undefined)
     markExpiry(entry)
-    entry.lastArgs = hasKeyOverride ? (key as Args) : args
+    entry.lastArgs = args
     entry.lastVersion = entry.version()
 
     if (entry.pendingToken) {
