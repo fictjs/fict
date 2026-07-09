@@ -6,6 +6,9 @@ export default defineConfig({
     fict({
       // Router package tests validate routing behavior, not strict guarantee diagnostics.
       strictGuarantee: false,
+      // Compile the Router's JSX fixtures without treating aliased framework
+      // runtime sources and plain TypeScript test helpers as application macros.
+      include: ['**/*.tsx', '**/*.jsx'],
     }),
   ],
   test: {
