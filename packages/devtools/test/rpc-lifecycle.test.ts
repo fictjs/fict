@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { ChromeExtensionTransport } from '../src/core/rpc'
+import { ChromeExtensionTransport, PostMessageTransport } from '../src/core/rpc'
 
 type Listener<TArgs extends unknown[]> = (...args: TArgs) => void
 
@@ -38,6 +38,7 @@ describe('ChromeExtensionTransport lifecycle', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
+    document.body.replaceChildren()
   })
 
   it('does not reconnect after being destroyed', async () => {
@@ -55,5 +56,35 @@ describe('ChromeExtensionTransport lifecycle', () => {
 
     expect(connect).toHaveBeenCalledTimes(1)
     expect(transport.isConnected()).toBe(false)
+  })
+
+  it('only accepts postMessage traffic from its configured peer window', () => {
+    const peerFrame = document.createElement('iframe')
+    const impostorFrame = document.createElement('iframe')
+    document.body.append(peerFrame, impostorFrame)
+    const peerWindow = peerFrame.contentWindow!
+    const impostorWindow = impostorFrame.contentWindow!
+    const transport = new PostMessageTransport(peerWindow, 'https://trusted.example')
+    const messages: unknown[] = []
+    transport.subscribe(message => messages.push(message))
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        source: impostorWindow,
+        origin: 'https://trusted.example',
+        data: { source: 'fict-devtools-hook', type: 'spoofed', timestamp: Date.now() },
+      }),
+    )
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        source: peerWindow,
+        origin: 'https://trusted.example',
+        data: { source: 'fict-devtools-hook', type: 'trusted', timestamp: Date.now() },
+      }),
+    )
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({ type: 'trusted' })
+    transport.destroy()
   })
 })

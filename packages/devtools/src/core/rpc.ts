@@ -243,6 +243,7 @@ export class PostMessageTransport implements RPCTransport {
 
     this.boundHandler = (event: MessageEvent) => {
       // Validate message
+      if (event.source !== this.targetWindow) return
       if (!event.data?.source) return
       if (targetOrigin !== '*' && event.origin !== targetOrigin) return
 
