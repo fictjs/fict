@@ -71,6 +71,26 @@ describe('analyzeFictFile', () => {
     expect(result.diagnostics).toEqual([])
   })
 
+  it('lowers TypeScript runtime declarations before tooling analysis', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      enum Kind { First, Second }
+      namespace Defaults { export const kind = Kind.Second }
+      class Model { declare kind: Kind }
+
+      export function useKind() {
+        const kind = $state(Defaults.kind)
+        return kind
+      }
+    `
+
+    const result = analyzeFictFile(source, 'use-kind.ts')
+
+    expect(result.components.map(component => component.name)).toContain('useKind')
+    expect(result.diagnostics).toEqual([])
+  })
+
   it('ignores consumer Babel configuration during internal parsing', async () => {
     const root = await mkdtemp(path.join(process.cwd(), '.fict-analyze-babel-config-'))
 
@@ -1015,7 +1035,7 @@ describe('analyzeFictFile', () => {
     ).toThrow(/JSX spread children are not supported/)
   })
 
-  it('returns a generic compile diagnostic when no structured compiler warning exists', () => {
+  it('removes type-only statements before tooling analysis', () => {
     const result = analyzeFictFile(
       `
         export function App() {
@@ -1031,13 +1051,8 @@ describe('analyzeFictFile', () => {
       },
     )
 
-    expect(result.components).toEqual([])
-    expect(result.diagnostics).toEqual([
-      expect.objectContaining({
-        code: 'FICT-COMPILE',
-        severity: 'error',
-      }),
-    ])
+    expect(result.components.map(component => component.name)).toContain('App')
+    expect(result.diagnostics).toEqual([])
   })
 
   it('returns a located generic compile diagnostic for direct compiler errors without mapped codes', () => {

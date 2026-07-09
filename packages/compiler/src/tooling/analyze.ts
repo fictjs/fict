@@ -1,5 +1,6 @@
 import type * as BabelCore from '@babel/core'
 import { parseSync, transformSync } from '@babel/core'
+import transformTypeScript from '@babel/plugin-transform-typescript'
 import * as BabelTypes from '@babel/types'
 
 import createFictPlugin from '../index'
@@ -56,6 +57,15 @@ function analyzeParserPlugins(fileName: string): ('typescript' | 'jsx')[] {
   // JSX and TypeScript's angle-bracket assertions are syntactically
   // ambiguous. Explicit TypeScript-only extensions must not enable JSX.
   return /\.(?:ts|mts|cts)$/.test(cleanFileName) ? ['typescript'] : ['typescript', 'jsx']
+}
+
+function analyzeTypeScriptOptions(fileName: string) {
+  return {
+    isTSX: analyzeParserPlugins(fileName).includes('jsx'),
+    allExtensions: true,
+    allowNamespaces: true,
+    allowDeclareFields: true,
+  }
 }
 
 function importSpecifierImportedName(spec: BabelCore.types.ImportSpecifier): string {
@@ -704,7 +714,10 @@ function analyzeDiagnostics(
         plugins: analyzeParserPlugins(fileName),
         allowReturnOutsideFunction: true,
       },
-      plugins: [[createFictPlugin, pluginOptions]],
+      plugins: [
+        [transformTypeScript, analyzeTypeScriptOptions(fileName)],
+        [createFictPlugin, pluginOptions],
+      ],
       generatorOpts: {
         compact: false,
       },
@@ -755,17 +768,21 @@ function shouldIncludeFunction(fn: HIRFunction, macroNames: AnalyzeMacroNames): 
 }
 
 function parseFileAst(code: string, fileName: string): BabelCore.types.File {
-  const ast = parseSync(code, {
+  const result = transformSync(code, {
     filename: fileName,
     configFile: false,
     babelrc: false,
     sourceType: 'module',
+    ast: true,
+    code: false,
     parserOpts: {
       sourceType: 'module',
       plugins: analyzeParserPlugins(fileName),
       allowReturnOutsideFunction: true,
     },
+    plugins: [[transformTypeScript, analyzeTypeScriptOptions(fileName)]],
   })
+  const ast = result?.ast
 
   if (!ast || ast.type !== 'File') {
     throw new Error('Failed to parse source file for Fict analysis.')
