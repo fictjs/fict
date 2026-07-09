@@ -6,6 +6,7 @@ export default defineConfig({
   entry: {
     extension: 'src/extension.ts',
   },
+  tsconfig: 'tsconfig.build.json',
   format: ['cjs'],
   platform: 'node',
   outDir: 'dist',
@@ -13,7 +14,16 @@ export default defineConfig({
   clean: true,
   sourcemap: true,
   outExtensions: packageOutExtensions,
+  inputOptions: options => ({
+    ...options,
+    resolve: {
+      ...options.resolve,
+      conditionNames: ['import', 'node', 'default'],
+    },
+  }),
   deps: {
     neverBundle: ['vscode'],
+    alwaysBundle: [/.*/],
+    onlyBundle: false,
   },
 })

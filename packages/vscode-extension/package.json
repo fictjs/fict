@@ -137,7 +137,7 @@
     }
   },
   "scripts": {
-    "build": "tsdown",
+    "build": "tsdown && node scripts/verify-bundle.mjs",
     "dev": "tsdown --watch",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
