@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
   schedule:
     - cron: '17 8 * * *'
@@ -213,7 +215,6 @@ jobs:
   e2e:
     name: E2E
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'schedule'
     steps:
       - name: Checkout repository
         id: checkout
