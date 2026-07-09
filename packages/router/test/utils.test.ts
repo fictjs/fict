@@ -184,6 +184,15 @@ describe('createMatcher', () => {
     expect(matcher('/users/abc')).toBe(null)
   })
 
+  it('should make stateful regular-expression filters deterministic', () => {
+    const filter = /^\d+$/g
+    const matcher = createMatcher('/users/:id', { id: filter })
+
+    expect(matcher('/users/42')?.params.id).toBe('42')
+    expect(matcher('/users/42')?.params.id).toBe('42')
+    expect(filter.lastIndex).toBe(0)
+  })
+
   it('should validate with array filter', () => {
     const matcher = createMatcher('/status/:code', { code: ['active', 'inactive'] })
     expect(matcher('/status/active')).toBeTruthy()

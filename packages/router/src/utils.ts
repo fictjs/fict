@@ -360,7 +360,13 @@ export function createMatcher(
  */
 function validateParam(value: string, filter: MatchFilter): boolean {
   if (filter instanceof RegExp) {
-    return filter.test(value)
+    const lastIndex = filter.lastIndex
+    try {
+      filter.lastIndex = 0
+      return filter.test(value)
+    } finally {
+      filter.lastIndex = lastIndex
+    }
   }
   if (Array.isArray(filter)) {
     return filter.includes(value)
