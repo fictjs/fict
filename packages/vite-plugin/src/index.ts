@@ -3,9 +3,10 @@ import { existsSync, promises as fs, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { transformAsync } from '@babel/core'
+import { transformAsync, type PluginItem } from '@babel/core'
 import _generate from '@babel/generator'
 import { parse } from '@babel/parser'
+import transformTypeScript from '@babel/plugin-transform-typescript'
 import _traverse from '@babel/traverse'
 import type { NodePath, Scope } from '@babel/traverse'
 import * as t from '@babel/types'
@@ -1675,17 +1676,27 @@ async function compileFictCompilerStage(
   fictOptions: FictCompilerOptions,
 ): Promise<{ code: string; map: TransformResult['map'] }> {
   const isTypeScript = TYPESCRIPT_EXTENSIONS.some(extension => filename.endsWith(extension))
+  const isTSX = filename.endsWith('.tsx')
+  const isExplicitModuleTypeScript = filename.endsWith('.mts') || filename.endsWith('.cts')
+  const plugins: PluginItem[] = []
+  if (isTypeScript) {
+    plugins.push([
+      transformTypeScript,
+      {
+        isTSX,
+        allExtensions: true,
+        allowDeclareFields: true,
+        allowNamespaces: true,
+        disallowAmbiguousJSXLike: isExplicitModuleTypeScript,
+      },
+    ])
+  }
+  plugins.push(['@babel/plugin-syntax-jsx', {}], [createFictPlugin, fictOptions])
   const result = await transformAsync(code, {
     filename,
     sourceMaps: fictOptions.sourcemap,
     sourceFileName: filename,
-    presets: isTypeScript
-      ? [['@babel/preset-typescript', { isTSX: true, allExtensions: true }]]
-      : [],
-    plugins: [
-      ['@babel/plugin-syntax-jsx', {}],
-      [createFictPlugin, fictOptions],
-    ],
+    plugins,
   })
   if (!result?.code) {
     throw new Error(`[fict] Compiler returned no output for ${filename}.`)

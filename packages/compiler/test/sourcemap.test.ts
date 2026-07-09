@@ -1,5 +1,5 @@
 import { transformSync } from '@babel/core'
-import presetTypescript from '@babel/preset-typescript'
+import pluginTransformTypescript from '@babel/plugin-transform-typescript'
 import { TraceMap, originalPositionFor, type SourceMapInput } from '@jridgewell/trace-mapping'
 import { describe, expect, it } from 'vitest'
 
@@ -40,11 +40,19 @@ function compileWithSourcemap(
     },
     plugins: [
       [
+        pluginTransformTypescript,
+        {
+          isTSX: true,
+          allExtensions: true,
+          allowDeclareFields: true,
+          allowNamespaces: true,
+        },
+      ],
+      [
         createFictPlugin,
         { sourcemap: true, emitModuleMetadata: false, strictGuarantee: false, ...options },
       ],
     ],
-    presets: [[presetTypescript, { isTSX: true, allExtensions: true, allowDeclareFields: true }]],
     generatorOpts: { compact: false },
   })
 
@@ -701,8 +709,18 @@ export const InlineSource = () => {
           sourceType: 'module',
           plugins: ['typescript', 'jsx'],
         },
-        plugins: [[createFictPlugin, { sourcemap: true, emitModuleMetadata: false }]],
-        presets: [[presetTypescript, { isTSX: true, allExtensions: true }]],
+        plugins: [
+          [
+            pluginTransformTypescript,
+            {
+              isTSX: true,
+              allExtensions: true,
+              allowDeclareFields: true,
+              allowNamespaces: true,
+            },
+          ],
+          [createFictPlugin, { sourcemap: true, emitModuleMetadata: false }],
+        ],
       })
 
       expect(result?.code).toContain('sourceMappingURL=data:')

@@ -51,7 +51,7 @@
     "@babel/plugin-syntax-jsx": "^7.28.6",
     "@babel/plugin-transform-modules-commonjs": "^7.28.6",
     "@babel/plugin-transform-react-jsx": "^7.28.6",
-    "@babel/preset-typescript": "^7.26.0",
+    "@babel/plugin-transform-typescript": "^7.28.5",
     "@babel/types": "^7.29.0",
     "@fictjs/runtime": "workspace:*",
     "@jridgewell/trace-mapping": "^0.3.31",

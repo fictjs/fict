@@ -22,7 +22,7 @@ describe('compiler API type contract', () => {
     const compilerTypeDeclarations = [
       'babel-plugin-transform-destructuring.d.ts',
       'babel-plugin-transform-modules-commonjs.d.ts',
-      'babel-preset-typescript.d.ts',
+      'babel-plugin-transform-typescript.d.ts',
     ].map(fileName => path.join(dirname, '../src/types', fileName))
     const program = ts.createProgram({
       rootNames: [fixture, ...compilerTypeDeclarations],

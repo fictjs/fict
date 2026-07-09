@@ -2441,8 +2441,11 @@ function createHIREntrypointVisitor(
 
   return {
     Program: {
-      enter(path) {
+      exit(path) {
         if (hasDirective(path, DirectiveType.FictCompilerDisable, t)) return
+        // TypeScript lowering plugins run their declaration visitors before Program.exit.
+        // Validate only what remains at the point where Fict actually starts compiling so
+        // legal runtime TS constructs can be lowered by an earlier Babel plugin first.
         path.traverse({
           TSEnumDeclaration(tsPath) {
             const message = unsupportedTypeScriptRuntimeDeclarationMessage(tsPath.node, t)
@@ -2461,9 +2464,6 @@ function createHIREntrypointVisitor(
             if (message) throw tsPath.buildCodeFrameError(message)
           },
         })
-      },
-      exit(path) {
-        if (hasDirective(path, DirectiveType.FictCompilerDisable, t)) return
         const hub = path.hub as unknown as {
           file?: BabelCore.BabelFile & {
             opts?: { filename?: string }

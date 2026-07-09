@@ -1,5 +1,5 @@
 import { transformSync } from '@babel/core'
-import presetTypescript from '@babel/preset-typescript'
+import pluginTransformTypescript from '@babel/plugin-transform-typescript'
 import { describe, expect, it } from 'vitest'
 
 import createFictPlugin from '../src/index'
@@ -14,8 +14,18 @@ function transformWithExplicitResourceManagement(source: string): void {
       sourceType: 'module',
       plugins: ['typescript', 'jsx', 'explicitResourceManagement'],
     },
-    plugins: [[createFictPlugin, { dev: true, strictGuarantee: false }]],
-    presets: [[presetTypescript, { isTSX: true, allExtensions: true, allowDeclareFields: true }]],
+    plugins: [
+      [
+        pluginTransformTypescript,
+        {
+          isTSX: true,
+          allExtensions: true,
+          allowDeclareFields: true,
+          allowNamespaces: true,
+        },
+      ],
+      [createFictPlugin, { dev: true, strictGuarantee: false }],
+    ],
   })
 }
 

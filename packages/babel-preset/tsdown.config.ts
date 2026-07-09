@@ -20,8 +20,8 @@ export default defineConfig({
   deps: {
     neverBundle: [
       '@babel/core',
-      '@babel/preset-typescript',
       '@babel/plugin-syntax-jsx',
+      '@babel/plugin-transform-typescript',
       '@fictjs/compiler',
     ],
   },

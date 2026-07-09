@@ -353,6 +353,66 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it('lowers TypeScript runtime declarations before a real Vite build', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-typescript-lowering-'))
+    const entry = path.join(root, 'App.tsx')
+
+    try {
+      await writeFile(
+        entry,
+        `
+          import { $state } from 'fict'
+
+          enum Status {
+            Idle,
+            Ready,
+          }
+
+          namespace Defaults {
+            export const status = Status.Ready
+          }
+
+          class Model {
+            declare status: Status
+            current = Defaults.status
+          }
+
+          export function App() {
+            const status = $state(new Model().current)
+            return <div>{status}</div>
+          }
+        `,
+      )
+
+      const result = await build({
+        root,
+        logLevel: 'silent',
+        plugins: [fict({ cache: false, useTypeScriptProject: false, functionSplitting: false })],
+        build: {
+          write: false,
+          lib: { entry, formats: ['es'], fileName: () => 'app.js' },
+          rollupOptions: {
+            external: id => id === 'fict' || id.startsWith('fict/'),
+          },
+        },
+      })
+      const outputs = Array.isArray(result) ? result : [result]
+      const code = outputs
+        .flatMap(output => ('output' in output ? output.output : []))
+        .filter(output => output.type === 'chunk')
+        .map(output => output.code)
+        .join('\n')
+
+      expect(code).toContain('fict/internal')
+      expect(code).not.toContain('$state')
+      expect(code).not.toMatch(/\benum\s+Status\b/)
+      expect(code).not.toMatch(/\bnamespace\s+Defaults\b/)
+      expect(code).not.toContain('declare status')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('deduplicates dependency metadata preparation across concurrent importer transforms', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-concurrent-metadata-'))
     const srcDir = path.join(root, 'src')

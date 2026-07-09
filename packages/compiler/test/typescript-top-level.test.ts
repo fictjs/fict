@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { transform } from './test-utils'
+import { transform, transformRawTypeScript } from './test-utils'
 
 describe('TypeScript top-level declarations', () => {
   it('lets non-exported type and interface declarations be erased by TypeScript', () => {
@@ -61,7 +61,7 @@ describe('TypeScript top-level declarations', () => {
 
   it('rejects TypeScript enums that have not been lowered first', () => {
     expect(() =>
-      transform(`
+      transformRawTypeScript(`
       enum Status {
         Ready = 1,
       }

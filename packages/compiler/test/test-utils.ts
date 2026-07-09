@@ -1,6 +1,6 @@
 import { transformSync, type PluginItem } from '@babel/core'
 import pluginTransformCjs from '@babel/plugin-transform-modules-commonjs'
-import presetTypescript from '@babel/preset-typescript'
+import pluginTransformTypescript from '@babel/plugin-transform-typescript'
 
 import createFictPlugin, { type FictCompilerOptions } from '../src/index'
 
@@ -10,6 +10,7 @@ function runTransform(
   filename = 'module.tsx',
   extraPlugins: PluginItem[] = [],
   useCompilerDefaults = false,
+  lowerTypeScript = true,
 ): string {
   const mergedOptions: FictCompilerOptions = { ...options }
   if (mergedOptions.dev === undefined) {
@@ -24,6 +25,20 @@ function runTransform(
     mergedOptions.strictGuarantee = false
   }
 
+  const plugins: PluginItem[] = []
+  if (lowerTypeScript) {
+    plugins.push([
+      pluginTransformTypescript,
+      {
+        isTSX: true,
+        allExtensions: true,
+        allowDeclareFields: true,
+        allowNamespaces: true,
+      },
+    ])
+  }
+  plugins.push([createFictPlugin, mergedOptions], ...extraPlugins)
+
   const result = transformSync(source, {
     filename,
     configFile: false,
@@ -34,11 +49,7 @@ function runTransform(
       plugins: ['typescript', 'jsx'],
       allowReturnOutsideFunction: true,
     },
-    // JSX plugin runs AFTER Fict plugin (Babel runs plugins left to right, but visitors run bottom-up)
-    // However, for conditional bindings, we need the JSX inside arrow functions to be transformed
-    // The Fict plugin should handle transforming JSX inside these generated constructs
-    plugins: [[createFictPlugin, mergedOptions], ...extraPlugins],
-    presets: [[presetTypescript, { isTSX: true, allExtensions: true, allowDeclareFields: true }]],
+    plugins,
     generatorOpts: {
       compact: false,
     },
@@ -56,6 +67,19 @@ export function transformFineGrained(
 }
 
 export const transform = transformFineGrained
+
+/**
+ * Runs the compiler directly on a TypeScript AST without a lowering plugin.
+ * Used to verify that the standalone Babel plugin still fails closed for
+ * runtime TypeScript constructs that would otherwise emit invalid JavaScript.
+ */
+export function transformRawTypeScript(
+  source: string,
+  options: FictCompilerOptions = {},
+  filename = 'module.tsx',
+): string {
+  return runTransform(source, options, filename, [], false, false)
+}
 
 /**
  * Uses compiler defaults as-is (including strictGuarantee defaults).

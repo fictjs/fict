@@ -32,7 +32,7 @@
   },
   "dependencies": {
     "@babel/plugin-syntax-jsx": "^7.28.6",
-    "@babel/preset-typescript": "^7.26.0",
+    "@babel/plugin-transform-typescript": "^7.28.5",
     "@fictjs/compiler": "workspace:*"
   },
   "devDependencies": {

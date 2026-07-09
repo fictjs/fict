@@ -24,7 +24,7 @@ For standard apps, `fict` is the runtime dependency that pairs with this preset.
 
 `@fictjs/babel-preset` includes:
 
-- `@babel/preset-typescript` (enabled by default)
+- `@babel/plugin-transform-typescript` (enabled by default and ordered before Fict)
 - `@babel/plugin-syntax-jsx`
 - `@fictjs/compiler`
 
@@ -43,6 +43,7 @@ module.exports = {
           isTSX: true,
           allExtensions: true,
           allowNamespaces: true,
+          allowDeclareFields: true,
         },
         // Compiler options (forwarded)
         strictGuarantee: true,
@@ -75,3 +76,4 @@ Key defaults:
 - production compilation (`NODE_ENV=production`) force-enables compiler `strictGuarantee`
 - compiler `emitModuleMetadata`: `'auto'`
 - preset `typescript`: `true`
+- preset `typescriptOptions.allowDeclareFields`: `true`

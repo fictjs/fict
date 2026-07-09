@@ -1,4 +1,5 @@
 import type { ConfigAPI, TransformOptions } from '@babel/core'
+import transformTypeScript from '@babel/plugin-transform-typescript'
 import { createFictPlugin, type FictCompilerOptions } from '@fictjs/compiler'
 
 export interface FictPresetOptions extends Omit<FictCompilerOptions, 'typescript'> {
@@ -9,7 +10,7 @@ export interface FictPresetOptions extends Omit<FictCompilerOptions, 'typescript
   typescript?: boolean
 
   /**
-   * TypeScript preset options.
+   * TypeScript transform options.
    * Only used when typescript is true.
    */
   typescriptOptions?: {
@@ -30,6 +31,12 @@ export interface FictPresetOptions extends Omit<FictCompilerOptions, 'typescript
      * @default true
      */
     allowNamespaces?: boolean
+
+    /**
+     * Remove legal `declare` class fields before Fict compilation.
+     * @default true
+     */
+    allowDeclareFields?: boolean
   }
 }
 
@@ -37,7 +44,7 @@ export interface FictPresetOptions extends Omit<FictCompilerOptions, 'typescript
  * Babel preset for Fict.
  *
  * Includes:
- * - @babel/preset-typescript (optional, enabled by default)
+ * - @babel/plugin-transform-typescript (optional, enabled by default)
  * - @babel/plugin-syntax-jsx
  * - @fictjs/compiler
  *
@@ -70,19 +77,24 @@ export default function fictPreset(
 
   const { typescript = true, typescriptOptions = {}, ...compilerOptions } = options
 
-  const { isTSX = true, allExtensions = true, allowNamespaces = true } = typescriptOptions
+  const {
+    isTSX = true,
+    allExtensions = true,
+    allowNamespaces = true,
+    allowDeclareFields = true,
+  } = typescriptOptions
 
-  const presets: TransformOptions['presets'] = []
   const plugins: TransformOptions['plugins'] = []
 
-  // Add TypeScript preset if enabled
+  // TypeScript must lower runtime declarations before Fict's Program.exit transform.
   if (typescript) {
-    presets.push([
-      '@babel/preset-typescript',
+    plugins.push([
+      transformTypeScript,
       {
         isTSX,
         allExtensions,
         allowNamespaces,
+        allowDeclareFields,
       },
     ])
   }
@@ -94,7 +106,6 @@ export default function fictPreset(
   plugins.push([createFictPlugin, compilerOptions])
 
   return {
-    presets,
     plugins,
   }
 }

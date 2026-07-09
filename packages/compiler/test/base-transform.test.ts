@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { transform, transformCommonJS } from './test-utils'
+import { transform, transformCommonJS, transformRawTypeScript } from './test-utils'
 
 describe('createFictPlugin (HIR)', () => {
   describe('Basics', () => {
@@ -549,9 +549,41 @@ describe('createFictPlugin (HIR)', () => {
       expect(output).not.toContain('Foo')
     })
 
-    it('rejects exported TypeScript runtime declarations before emitting JS', () => {
+    it('lowers TypeScript runtime declarations before Fict compilation', () => {
+      const output = transform(`
+        import { $state } from 'fict'
+
+        enum Color {
+          Red = 1,
+          Blue,
+        }
+
+        namespace Defaults {
+          export const color = Color.Blue
+        }
+
+        class Model {
+          declare selected: Color
+          color = Defaults.color
+        }
+
+        export function App() {
+          const color = $state(new Model().color)
+          return <div>{color}</div>
+        }
+      `)
+
+      expect(output).toContain('class Model')
+      expect(output).toContain('__fictUseSignal')
+      expect(output).not.toContain('$state')
+      expect(output).not.toMatch(/\benum\s+Color\b/)
+      expect(output).not.toMatch(/\bnamespace\s+Defaults\b/)
+      expect(output).not.toContain('declare selected')
+    })
+
+    it('rejects unlowered exported TypeScript runtime declarations', () => {
       expect(() =>
-        transform(`
+        transformRawTypeScript(`
           export enum Color {
             Red = 1,
           }
@@ -559,7 +591,7 @@ describe('createFictPlugin (HIR)', () => {
       ).toThrow('TypeScript enum declarations must be lowered')
 
       expect(() =>
-        transform(`
+        transformRawTypeScript(`
           export const enum Color {
             Red = 1,
           }
@@ -567,7 +599,7 @@ describe('createFictPlugin (HIR)', () => {
       ).toThrow('TypeScript enum declarations must be lowered')
 
       expect(() =>
-        transform(`
+        transformRawTypeScript(`
           export namespace N {
             export const x = 1
           }

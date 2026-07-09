@@ -322,8 +322,8 @@ importers:
       '@babel/plugin-syntax-jsx':
         specifier: ^7.28.6
         version: 7.28.6(@babel/core@7.29.0)
-      '@babel/preset-typescript':
-        specifier: ^7.26.0
+      '@babel/plugin-transform-typescript':
+        specifier: ^7.28.5
         version: 7.28.5(@babel/core@7.29.0)
       '@fictjs/compiler':
         specifier: workspace:*
@@ -366,8 +366,8 @@ importers:
       '@babel/plugin-transform-react-jsx':
         specifier: ^7.28.6
         version: 7.28.6(@babel/core@7.29.0)
-      '@babel/preset-typescript':
-        specifier: ^7.26.0
+      '@babel/plugin-transform-typescript':
+        specifier: ^7.28.5
         version: 7.28.5(@babel/core@7.29.0)
       '@babel/types':
         specifier: ^7.29.0
@@ -591,8 +591,8 @@ importers:
       '@babel/plugin-transform-react-jsx':
         specifier: ^7.28.6
         version: 7.28.6(@babel/core@7.29.0)
-      '@babel/preset-typescript':
-        specifier: ^7.26.0
+      '@babel/plugin-transform-typescript':
+        specifier: ^7.28.5
         version: 7.28.5(@babel/core@7.29.0)
       '@babel/traverse':
         specifier: ^7.29.0

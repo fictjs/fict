@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
 
+const compilerIndex = fileURLToPath(new URL('./src/index.ts', import.meta.url))
 const runtimeInternal = fileURLToPath(new URL('../runtime/src/internal.ts', import.meta.url))
 const runtimeInternalList = fileURLToPath(
   new URL('../runtime/src/internal/list.ts', import.meta.url),
@@ -11,6 +12,7 @@ const runtimeJsx = fileURLToPath(new URL('../runtime/src/jsx-runtime.ts', import
 export default defineConfig({
   resolve: {
     alias: [
+      { find: /^@fictjs\/compiler$/, replacement: compilerIndex },
       { find: '@fictjs/runtime/jsx-runtime', replacement: runtimeJsx },
       { find: /^@fictjs\/runtime\/internal\/list$/, replacement: runtimeInternalList },
       { find: /^@fictjs\/runtime\/internal$/, replacement: runtimeInternal },
