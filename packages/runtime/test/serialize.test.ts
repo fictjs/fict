@@ -780,6 +780,28 @@ describe('serializeValue / deserializeValue', () => {
       expect(result.bracket).not.toBe(result.indexed)
     })
 
+    it('should keep string and symbol-key reference paths distinct', () => {
+      const symbolKey = Symbol.for('fict.serialize.path')
+      const aliasKey = Symbol.for('fict.serialize.alias')
+      const stringValue = { id: 'string' }
+      const symbolValue = { id: 'symbol' }
+      const obj: Record<string | symbol, unknown> = {
+        'Symbol(fict.serialize.path)': stringValue,
+        [symbolKey]: symbolValue,
+        [aliasKey]: stringValue,
+      }
+
+      const result = deserializeValue(JSON.parse(JSON.stringify(serializeValue(obj)))) as Record<
+        string | symbol,
+        { id: string }
+      >
+
+      expect(result[aliasKey]).toBe(result['Symbol(fict.serialize.path)'])
+      expect(result[aliasKey]).not.toBe(result[symbolKey])
+      expect(result[aliasKey]?.id).toBe('string')
+      expect(result[symbolKey]?.id).toBe('symbol')
+    })
+
     it('should restore self-references under dotted object keys', () => {
       const dotted: Record<string, unknown> = { name: 'dotted' }
       dotted.self = dotted

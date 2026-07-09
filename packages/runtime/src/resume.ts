@@ -627,6 +627,22 @@ function objectChildPath(path: string, key: string): string {
   return `${path}.${JSON.stringify(key)}`
 }
 
+function symbolChildPath(path: string, key: symbol): string {
+  const globalKey = Symbol.keyFor(key)
+  if (globalKey !== undefined) {
+    return `${path}.@g${JSON.stringify(globalKey)}`
+  }
+
+  const wellKnownName = WELL_KNOWN_SYMBOLS.get(key)
+  if (wellKnownName !== undefined) {
+    return `${path}.@w${JSON.stringify(wellKnownName)}`
+  }
+
+  // Local symbols are rejected by serializeSymbol. Keep their diagnostic path
+  // disjoint from string-key paths before that validation runs.
+  return `${path}.@l${JSON.stringify(String(key))}`
+}
+
 function isArrayIndexKey(key: string): boolean {
   const index = Number(key)
   return Number.isInteger(index) && index >= 0 && index < 4294967295 && String(index) === key
@@ -702,7 +718,7 @@ function serializeObjectEntries(
     }
   }
   for (const key of symbolKeys) {
-    const keyPath = objectChildPath(path, String(key))
+    const keyPath = symbolChildPath(path, key)
     const serialized = serializeValue(
       (value as Record<symbol, unknown>)[key],
       seen,
@@ -952,7 +968,11 @@ export function deserializeValue(
           defineEnumerableDataProperty(
             obj,
             key,
-            deserializeValue(rawValue, refs, objectChildPath(path, String(key))),
+            deserializeValue(
+              rawValue,
+              refs,
+              typeof key === 'symbol' ? symbolChildPath(path, key) : objectChildPath(path, key),
+            ),
           )
         }
         return obj
