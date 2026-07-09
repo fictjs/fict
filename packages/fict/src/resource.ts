@@ -446,7 +446,7 @@ export function resource<T, Args = void>(
     if (resolvedCacheOptions.mode === 'none') return true
     if (!Number.isFinite(resolvedCacheOptions.ttlMs)) return false
     if (entry.expiresAt === undefined) return false
-    return entry.expiresAt < Date.now()
+    return entry.expiresAt <= Date.now()
   }
 
   const markExpiry = (entry: ResourceEntry<T, Args>) => {

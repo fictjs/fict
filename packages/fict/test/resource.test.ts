@@ -940,6 +940,20 @@ describe('resource', () => {
     expect(fetcher).toHaveBeenCalledTimes(1)
   })
 
+  it('treats a zero TTL value as immediately expired', async () => {
+    const fetcher = vi.fn().mockResolvedValue('ok')
+    const r = resource<string, string>({ fetch: fetcher, cache: { ttlMs: 0 } })
+
+    r.prefetch('k')
+    await vi.runAllTimersAsync()
+    await tick()
+    r.prefetch('k')
+    await vi.runAllTimersAsync()
+    await tick()
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
   it('stale-while-revalidate keeps old data while refreshing', async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(1).mockResolvedValueOnce(2)
     const r = resource<number, void>({
