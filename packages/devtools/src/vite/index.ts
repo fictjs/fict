@@ -6,7 +6,7 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { Plugin, ViteDevServer } from 'vite'
@@ -78,6 +78,60 @@ const packageRoot = __dirname.includes('dist')
   ? resolve(__dirname, '..')
   : resolve(__dirname, '../..')
 
+type ParsedAssetRequest = { pathname: string } | { statusCode: 400 | 403; message: string }
+
+/**
+ * Decode the request path exactly once and reject path spellings that can be
+ * interpreted differently by URL and filesystem implementations.
+ */
+function parseAssetRequest(rawUrl: string): ParsedAssetRequest {
+  const queryIndex = rawUrl.search(/[?#]/)
+  const rawPathname = queryIndex === -1 ? rawUrl : rawUrl.slice(0, queryIndex)
+
+  if (!rawPathname.startsWith('/')) {
+    return { statusCode: 400, message: 'Invalid DevTools asset path' }
+  }
+
+  let pathname: string
+  try {
+    pathname = decodeURIComponent(rawPathname)
+  } catch {
+    return { statusCode: 400, message: 'Malformed DevTools asset path' }
+  }
+
+  if (pathname.includes('\0')) {
+    return { statusCode: 400, message: 'Invalid DevTools asset path' }
+  }
+
+  // URL paths use forward slashes. Backslashes and still-encoded path
+  // separators/dot segments are ambiguous on Windows or after a second decode.
+  if (pathname.includes('\\') || /%(?:00|2e|2f|5c)/i.test(pathname)) {
+    return { statusCode: 403, message: 'Forbidden DevTools asset path' }
+  }
+
+  if (pathname.split('/').some(segment => segment === '..')) {
+    return { statusCode: 403, message: 'Forbidden DevTools asset path' }
+  }
+
+  return { pathname }
+}
+
+function resolveAssetPath(buildDir: string, pathname: string): string | undefined {
+  const relativePath = pathname.replace(/^\/+/, '')
+  const staticPath = resolve(buildDir, relativePath)
+  const pathFromBuildDir = relative(buildDir, staticPath)
+
+  if (
+    pathFromBuildDir === '..' ||
+    pathFromBuildDir.startsWith(`..${sep}`) ||
+    isAbsolute(pathFromBuildDir)
+  ) {
+    return undefined
+  }
+
+  return staticPath
+}
+
 /**
  * Fict DevTools Vite Plugin
  */
@@ -120,30 +174,42 @@ export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[
 
         // Serve DevTools UI at /__fict-devtools__/
         server.middlewares.use('/__fict-devtools__', (req, res, next) => {
-          const url = req.url || '/'
-          const buildDir = join(packageRoot, 'build/chrome')
+          const request = parseAssetRequest(req.url || '/')
+          if ('statusCode' in request) {
+            res.statusCode = request.statusCode
+            res.end(request.message)
+            return
+          }
+
+          const { pathname } = request
+          const buildDir = resolve(packageRoot, 'build/chrome')
 
           // Serve panel HTML
-          if (url === '/' || url === '/index.html') {
+          if (pathname === '/' || pathname === '/index.html') {
             res.setHeader('Content-Type', 'text/html')
             res.end(getDevToolsHtml(server.config.base))
             return
           }
 
           // Map virtual paths to actual build files
-          let filePath = url
-          if (url === '/index.js') {
-            filePath = '/panel.js'
-          } else if (url === '/styles.css') {
-            filePath = '/assets/panel.css'
+          let assetPath = pathname
+          if (pathname === '/index.js') {
+            assetPath = '/panel.js'
+          } else if (pathname === '/styles.css') {
+            assetPath = '/assets/panel.css'
           }
 
           // Serve static assets from build directory
-          const staticPath = join(buildDir, filePath)
+          const staticPath = resolveAssetPath(buildDir, assetPath)
+          if (!staticPath) {
+            res.statusCode = 403
+            res.end('Forbidden DevTools asset path')
+            return
+          }
+
           if (existsSync(staticPath)) {
             const content = readFileSync(staticPath)
-            const ext = filePath.split('.').pop()
-            const contentType = getContentType(ext || '')
+            const contentType = getContentType(extname(assetPath).slice(1))
             res.setHeader('Content-Type', contentType)
             res.end(content)
             return
