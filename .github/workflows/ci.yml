@@ -367,6 +367,7 @@ jobs:
       - run: FICT_STRICT_GUARANTEE=1 pnpm build
       - run: pnpm test:runtime-package-smoke
       - run: pnpm test:runtime-bundler-smoke
+      - run: pnpm --filter @fictjs/router test:package
 
       - name: Check bundle size
         run: pnpm size
