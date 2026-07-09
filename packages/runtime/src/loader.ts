@@ -437,7 +437,7 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
   if (snapshotEl?.textContent) {
     const state = parseSnapshotText(snapshotEl.textContent, `#${scriptId}`)
     if (state) {
-      __fictSetSSRState(state)
+      applySnapshotState(state, `#${scriptId}`, 'replace')
     }
   }
 
@@ -451,8 +451,17 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
   if (typeof MutationObserver !== 'undefined') {
     snapshotObserver = new MutationObserver(mutations => {
       for (const mutation of mutations) {
+        if (isSnapshotScriptElement(mutation.target, doc)) {
+          parseSnapshotScript(mutation.target)
+        }
         for (const node of Array.from(mutation.addedNodes)) {
-          if (!isElementLike(node, doc)) continue
+          if (!isElementLike(node, doc)) {
+            const parent = node.parentElement
+            if (parent && isSnapshotScriptElement(parent, doc)) {
+              parseSnapshotScript(parent)
+            }
+            continue
+          }
           if (node.tagName === 'SCRIPT') {
             const script = node as HTMLScriptElement
             if (isSnapshotScript(script)) {
@@ -505,15 +514,42 @@ function isSnapshotScript(script: HTMLScriptElement): boolean {
   return script.type === 'application/json' && script.hasAttribute('data-fict-snapshot')
 }
 
+function isSnapshotScriptElement(node: Node, doc: Document): node is HTMLScriptElement {
+  return (
+    isElementLike(node, doc) &&
+    node.tagName === 'SCRIPT' &&
+    isSnapshotScript(node as HTMLScriptElement)
+  )
+}
+
 function parseSnapshotScript(script: HTMLScriptElement): void {
   if (processedSnapshots.has(script)) return
-  processedSnapshots.add(script)
   const text = script.textContent
   if (!text) return
   const source = script.id ? `#${script.id}` : '<script[data-fict-snapshot]>'
   const state = parseSnapshotText(text, source)
-  if (state) {
-    __fictMergeSSRState(state)
+  if (state && applySnapshotState(state, source, 'merge')) {
+    processedSnapshots.add(script)
+  }
+}
+
+function applySnapshotState(state: SSRState, source: string, mode: 'replace' | 'merge'): boolean {
+  try {
+    if (mode === 'replace') {
+      __fictSetSSRState(state)
+    } else {
+      __fictMergeSSRState(state)
+    }
+    return true
+  } catch (error) {
+    emitSnapshotIssue({
+      code: 'snapshot_invalid_shape',
+      message: `[fict/loader] Snapshot payload contains invalid scope data: ${formatImportError(error)}`,
+      source,
+      expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+      error,
+    })
+    return false
   }
 }
 

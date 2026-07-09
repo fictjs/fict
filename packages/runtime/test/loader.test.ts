@@ -231,6 +231,79 @@ describe('resumable loader snapshot validation', () => {
     expect(issues.some(issue => issue.code === 'snapshot_invalid_shape')).toBe(true)
   })
 
+  it('rejects malformed incremental scopes without corrupting valid snapshots', () => {
+    const issues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sBase: { id: 'sBase', slots: [[0, 'raw', 'base']] },
+        },
+      }),
+      [
+        JSON.stringify({
+          v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+          scopes: {
+            sBroken: { id: 'sBroken', slots: 'not-an-array' },
+          },
+        }),
+        JSON.stringify({
+          v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+          scopes: {
+            sLater: { id: 'sLater', slots: [[0, 'raw', 'later']] },
+          },
+        }),
+      ],
+    )
+
+    expect(() =>
+      installResumableLoader({
+        document: doc,
+        events: [],
+        prefetch: false,
+        onSnapshotIssue: issue => issues.push(issue),
+      }),
+    ).not.toThrow()
+
+    expect(__fictGetSSRScope('sBase')?.slots[0]?.[2]).toBe('base')
+    expect(__fictGetSSRScope('sBroken')).toBeUndefined()
+    expect(__fictGetSSRScope('sLater')?.slots[0]?.[2]).toBe('later')
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        code: 'snapshot_invalid_shape',
+        source: '<script[data-fict-snapshot]>',
+      }),
+    )
+  })
+
+  it('retries an incremental snapshot after its partial payload is completed', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {},
+      }),
+    )
+
+    installResumableLoader({ document: doc, events: [], prefetch: false })
+
+    const script = doc.createElement('script')
+    script.type = 'application/json'
+    script.setAttribute('data-fict-snapshot', '')
+    doc.body.appendChild(script)
+    await Promise.resolve()
+
+    script.textContent = JSON.stringify({
+      v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+      scopes: {
+        sStreamed: { id: 'sStreamed', slots: [[0, 'raw', 'complete']] },
+      },
+    })
+
+    await vi.waitFor(() => {
+      expect(__fictGetSSRScope('sStreamed')?.slots[0]?.[2]).toBe('complete')
+    })
+  })
+
   it('ignores incremental snapshots with unsupported versions', () => {
     const onIssue = vi.fn()
     const doc = createDocumentWithSnapshots(
