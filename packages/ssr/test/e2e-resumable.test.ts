@@ -18,7 +18,7 @@ import presetTypescript from '@babel/preset-typescript'
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 
 import type { FictNode } from '@fictjs/runtime'
-import { Suspense, createSuspenseToken } from '@fictjs/runtime'
+import { Suspense, createSuspenseToken, render } from '@fictjs/runtime'
 import {
   installResumableLoader,
   resetHydratedScopes,
@@ -493,6 +493,64 @@ describe('QRL Generation and Event Handler Resolution', () => {
       expect(button.textContent).toBe('1')
     } finally {
       await cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('hands rejected SSR snapshots to an application-owned client render', async () => {
+    const source = `
+      import { $state } from 'fict'
+      export function App() {
+        let count = $state(0)
+        return <button onClick$={() => count++}>{count}</button>
+      }
+    `
+
+    const compiled = compileModule(source, { baseDir: path.join(process.cwd(), '.tmp') })
+    let cleanupEnvironment = () => {}
+    let cleanupClientRender = () => {}
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    try {
+      const mod = (await import(compiled.url)) as { App: () => FictNode }
+      const html = renderToString(() => ({ type: mod.App, props: {} }))
+      const snapshot = parseSnapshot(html)
+      expect(snapshot).not.toBeNull()
+      expect(snapshot?.v).toBe(FICT_SSR_SNAPSHOT_SCHEMA_VERSION)
+      const incompatibleHtml = replaceSnapshot(html, {
+        ...snapshot,
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION + 1,
+      })
+      const env = setupClientEnvironment(`<main id="app">${incompatibleHtml}</main>`)
+      cleanupEnvironment = env.cleanup
+      const root = env.document.querySelector('#app') as HTMLElement
+      let fallbackCount = 0
+
+      installResumableLoader({
+        document: env.document,
+        events: ['click'],
+        prefetch: false,
+        onSnapshotRejected(issue) {
+          fallbackCount++
+          expect(issue.code).toBe('snapshot_unsupported_version')
+          cleanupClientRender = render(
+            () => ({
+              type: 'p',
+              props: { 'data-client-root': '', children: 'client rendered' },
+              key: undefined,
+            }),
+            root,
+          )
+        },
+      })
+
+      expect(fallbackCount).toBe(1)
+      expect(root.querySelector('[data-client-root]')?.textContent).toBe('client rendered')
+      expect(root.querySelector('#__FICT_SNAPSHOT__')).toBeNull()
+    } finally {
+      cleanupClientRender()
+      await cleanupEnvironment()
+      warn.mockRestore()
       compiled.cleanup()
     }
   })
