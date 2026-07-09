@@ -3,8 +3,11 @@ import { untrack } from '@fictjs/runtime'
 import { render, screen, act } from '@fictjs/testing-library'
 
 import {
+  Router,
   MemoryRouter,
   Route,
+  createBrowserHistory,
+  createMemoryHistory,
   useNavigate,
   useLocation,
   useBeforeLeave,
@@ -12,6 +15,7 @@ import {
   NavLink,
   Link,
   Form,
+  type History,
 } from '../src'
 
 function LocationText() {
@@ -29,6 +33,24 @@ function NavigateButton({ to }: { to: string }) {
   )
 }
 
+function NumericNavigateButton({ delta }: { delta: number }) {
+  const navigate = useNavigate()
+  return (
+    <button data-testid={`go-${delta}`} onClick={() => navigate(delta)}>
+      go
+    </button>
+  )
+}
+
+function ReplaceNavigateButton({ to }: { to: string }) {
+  const navigate = useNavigate()
+  return (
+    <button data-testid={`replace-${to}`} onClick={() => navigate(to, { replace: true })}>
+      replace
+    </button>
+  )
+}
+
 function PendingText() {
   const pending = usePendingLocation()
   return <span data-testid="pending">{pending()?.pathname ?? 'none'}</span>
@@ -37,13 +59,39 @@ function PendingText() {
 function Guarded({
   onCall,
 }: {
-  onCall: (retry: (force?: boolean) => void, prevent: () => void) => void
+  onCall: (retry: (force?: boolean) => void, prevent: () => void) => void | Promise<void>
 }) {
   const handleCall = untrack(() => onCall)
   useBeforeLeave(event => {
-    handleCall(event.retry, event.preventDefault)
+    return handleCall(event.retry, event.preventDefault)
   })
   return <div data-testid="guarded" />
+}
+
+function createLegacyMemoryHistory(): History {
+  const history = createMemoryHistory({
+    initialEntries: ['/legacy/from', '/legacy/to'],
+    initialIndex: 1,
+  })
+
+  return {
+    get action() {
+      return history.action
+    },
+    get location() {
+      return history.location
+    },
+    push: (to, state) => history.push(to, state),
+    replace: (to, state) => history.replace(to, state),
+    go: delta => history.go(delta),
+    back: () => history.back(),
+    forward: () => history.forward(),
+    listen: listener => history.listen(listener),
+    createHref: to => history.createHref(to),
+    block: blocker =>
+      history.block(({ action, location, retry }) => blocker({ action, location, retry })),
+    destroy: () => history.destroy?.(),
+  }
 }
 
 describe('Router integration (MemoryRouter)', () => {
@@ -357,8 +405,197 @@ describe('Router integration (MemoryRouter)', () => {
       screen.getByTestId('go-/to').click()
     })
 
-    expect(onCall).toHaveBeenCalled()
+    expect(onCall).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('path').textContent).toBe('/to')
+  })
+
+  it('runs a beforeLeave handler only once for replace navigation', async () => {
+    const onCall = vi.fn(retry => retry(true))
+
+    render(() => (
+      <MemoryRouter initialEntries={['/from']}>
+        <Route
+          path="/from"
+          element={
+            <div>
+              <LocationText />
+              <Guarded onCall={onCall} />
+              <ReplaceNavigateButton to="/to" />
+            </div>
+          }
+        />
+        <Route path="/to" element={<LocationText />} />
+      </MemoryRouter>
+    ))
+
+    await act(async () => {
+      screen.getByTestId('replace-/to').click()
+    })
+
+    expect(onCall).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('path').textContent).toBe('/to')
+  })
+
+  it('guards numeric memory navigation and allows an explicit retry', async () => {
+    let calls = 0
+    const onCall = vi.fn(retry => {
+      calls += 1
+      if (calls === 2) retry(true)
+    })
+
+    render(() => (
+      <MemoryRouter initialEntries={['/one', '/two']} initialIndex={1}>
+        <Route path="/one" element={<LocationText />} />
+        <Route
+          path="/two"
+          element={
+            <div>
+              <LocationText />
+              <Guarded onCall={onCall} />
+              <NumericNavigateButton delta={-1} />
+            </div>
+          }
+        />
+      </MemoryRouter>
+    ))
+
+    await act(async () => {
+      screen.getByTestId('go--1').click()
+    })
+    expect(screen.getByTestId('path').textContent).toBe('/two')
+
+    await act(async () => {
+      screen.getByTestId('go--1').click()
+    })
+    expect(onCall).toHaveBeenCalledTimes(2)
+    expect(screen.getByTestId('path').textContent).toBe('/one')
+  })
+
+  it('supports custom histories implemented against the original blocker contract', async () => {
+    const history = createLegacyMemoryHistory()
+    const onCall = vi.fn(retry => retry(true))
+
+    render(() => (
+      <Router history={history}>
+        <Route path="/legacy/from" element={<LocationText />} />
+        <Route
+          path="/legacy/to"
+          element={
+            <div>
+              <LocationText />
+              <Guarded onCall={onCall} />
+              <NumericNavigateButton delta={-1} />
+            </div>
+          }
+        />
+      </Router>
+    ))
+
+    await act(async () => {
+      screen.getByTestId('go--1').click()
+    })
+
+    expect(onCall).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('path').textContent).toBe('/legacy/from')
+    history.destroy?.()
+  })
+
+  it('does not let a superseded async guard release an older navigation', async () => {
+    const approvals: Array<() => void> = []
+    const onCall = vi.fn(
+      retry =>
+        new Promise<void>(resolve => {
+          approvals.push(() => {
+            retry(true)
+            resolve()
+          })
+        }),
+    )
+
+    render(() => (
+      <MemoryRouter initialEntries={['/start']}>
+        <Route
+          path="/start"
+          element={
+            <div>
+              <LocationText />
+              <Guarded onCall={onCall} />
+              <NavigateButton to="/first" />
+              <NavigateButton to="/second" />
+            </div>
+          }
+        />
+        <Route path="/first" element={<LocationText />} />
+        <Route path="/second" element={<LocationText />} />
+      </MemoryRouter>
+    ))
+
+    await act(async () => {
+      screen.getByTestId('go-/first').click()
+      await Promise.resolve()
+      screen.getByTestId('go-/second').click()
+      await Promise.resolve()
+    })
+    expect(approvals).toHaveLength(2)
+
+    await act(async () => {
+      approvals[1]!()
+      await Promise.resolve()
+    })
+    expect(screen.getByTestId('path').textContent).toBe('/second')
+
+    await act(async () => {
+      approvals[0]!()
+      await Promise.resolve()
+    })
+    expect(screen.getByTestId('path').textContent).toBe('/second')
+    expect(onCall).toHaveBeenCalledTimes(2)
+  })
+
+  it('guards native browser POP and proceeds after async confirmation', async () => {
+    window.history.replaceState({ usr: null, key: 'pop-from', idx: 0 }, '', '/pop/from')
+    const history = createBrowserHistory()
+    history.push('/pop/to')
+
+    let approve: (() => void) | undefined
+    const onCall = vi.fn(
+      retry =>
+        new Promise<void>(resolve => {
+          approve = () => {
+            retry(true)
+            resolve()
+          }
+        }),
+    )
+
+    render(() => (
+      <Router history={history}>
+        <Route path="/pop/from" element={<LocationText />} />
+        <Route
+          path="/pop/to"
+          element={
+            <div>
+              <LocationText />
+              <Guarded onCall={onCall} />
+            </div>
+          }
+        />
+      </Router>
+    ))
+
+    window.history.back()
+    await vi.waitFor(() => expect(onCall).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(window.location.pathname).toBe('/pop/to'))
+    expect(screen.getByTestId('path').textContent).toBe('/pop/to')
+
+    await act(async () => {
+      approve?.()
+    })
+    await vi.waitFor(() => expect(screen.getByTestId('path').textContent).toBe('/pop/from'))
+    expect(onCall).toHaveBeenCalledTimes(1)
+
+    history.destroy?.()
+    window.history.replaceState({ usr: null, key: 'root', idx: 0 }, '', '/')
   })
 
   it('NavLink active state reflects current route and pending state', async () => {

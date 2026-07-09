@@ -317,7 +317,14 @@ export interface History {
 /**
  * Blocker function for preventing navigation
  */
-export type Blocker = (tx: { action: HistoryAction; location: Location; retry: () => void }) => void
+export type Blocker = (tx: {
+  action: HistoryAction
+  location: Location
+  /** Retry the transition and run blockers again. */
+  retry: () => void
+  /** Continue this transition once without running blockers again. */
+  proceed?: () => void
+}) => void
 
 // ============================================================================
 // BeforeLeave Types

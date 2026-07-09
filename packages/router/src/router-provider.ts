@@ -17,6 +17,7 @@ import { getScrollRestoration } from './scroll'
 import type {
   BeforeLeaveEventArgs,
   BeforeLeaveHandler,
+  Blocker,
   History,
   Location,
   NavigateFunction,
@@ -88,11 +89,85 @@ function createRouterState(
   // BeforeLeave handlers and navigation token for async ordering
   const beforeLeaveHandlers = new Set<BeforeLeaveHandler>()
   let navigationToken = 0
+  let historyTransitionToken = 0
+  let unblockHistory: (() => void) | null = null
+  let pendingProgrammaticNavigation: { key: string; scroll: boolean } | null = null
+
+  function resetPendingTransition(target?: Location) {
+    if (target && pendingLocationSignal()?.key !== target.key) return
+    batch(() => {
+      isRoutingSignal(false)
+      pendingLocationSignal(null)
+    })
+    if (!target || pendingProgrammaticNavigation?.key === target.key) {
+      pendingProgrammaticNavigation = null
+    }
+  }
+
+  const handleBlockedTransition: Blocker = transition => {
+    const currentToken = ++historyTransitionToken
+    const from = locationSignal()
+    const target = transition.location
+
+    pendingLocationSignal(target)
+
+    untrack(async () => {
+      try {
+        const canNavigate = await beforeLeave.confirm(target, from)
+        if (currentToken !== historyTransitionToken) return
+
+        if (!canNavigate) {
+          resetPendingTransition(target)
+          return
+        }
+
+        batch(() => {
+          isRoutingSignal(true)
+          pendingLocationSignal(target)
+        })
+
+        if (transition.proceed) {
+          transition.proceed()
+          return
+        }
+
+        // Histories written against the original API do not expose `proceed`.
+        // Temporarily remove only our blocker so their existing retry callback
+        // can complete without recursively invoking the same guard.
+        unblockHistory?.()
+        unblockHistory = null
+        transition.retry()
+        ensureHistoryBlocker()
+      } catch {
+        if (currentToken === historyTransitionToken) resetPendingTransition(target)
+      }
+    })
+  }
+
+  function ensureHistoryBlocker() {
+    if (!unblockHistory && beforeLeaveHandlers.size > 0) {
+      unblockHistory = history.block(handleBlockedTransition)
+    }
+  }
+
+  function removeHistoryBlocker() {
+    unblockHistory?.()
+    unblockHistory = null
+  }
 
   const beforeLeave: BeforeLeaveContextValue = {
     addHandler(handler: BeforeLeaveHandler) {
       beforeLeaveHandlers.add(handler)
-      return () => beforeLeaveHandlers.delete(handler)
+      ensureHistoryBlocker()
+      return () => {
+        beforeLeaveHandlers.delete(handler)
+        if (beforeLeaveHandlers.size === 0) {
+          navigationToken++
+          historyTransitionToken++
+          removeHistoryBlocker()
+          resetPendingTransition()
+        }
+      }
     },
     async confirm(to: Location, from: Location): Promise<boolean> {
       if (beforeLeaveHandlers.size === 0) return true
@@ -232,66 +307,46 @@ function createRouterState(
 
     const targetLocation = createLocation(locationSpec, finalState, toKey)
 
-    // Check beforeLeave handlers
-    untrack(async () => {
-      try {
-        if (beforeLeaveHandlers.size > 0) {
-          pendingLocationSignal(targetLocation)
+    pendingProgrammaticNavigation = {
+      key: targetLocation.key,
+      scroll: options?.scroll !== false,
+    }
+
+    if (beforeLeaveHandlers.size > 0) {
+      pendingLocationSignal(targetLocation)
+    } else {
+      // Start routing immediately when there is no asynchronous guard.
+      batch(() => {
+        isRoutingSignal(true)
+        pendingLocationSignal(targetLocation)
+      })
+    }
+
+    try {
+      startTransition(() => {
+        const prevLocation = history.location
+        if (options?.replace) {
+          history.replace(targetLocation, finalState)
+        } else {
+          history.push(targetLocation, finalState)
         }
-        const canNavigate = await beforeLeave.confirm(targetLocation, currentLocation)
-        if (!canNavigate) {
-          pendingLocationSignal(null)
-          return
+
+        // Static or custom histories may decline a transition without notifying.
+        if (beforeLeaveHandlers.size === 0 && locationsAreEqual(prevLocation, history.location)) {
+          resetPendingTransition(targetLocation)
         }
-
-        // Start routing indicator and set pending location
-        batch(() => {
-          isRoutingSignal(true)
-          pendingLocationSignal(targetLocation)
-        })
-
-        // Use transition for smooth updates
-        // Note: We only push/replace to history here.
-        // The actual signal updates happen in history.listen to avoid duplicates.
-        startTransition(() => {
-          const prevLocation = history.location
-          if (options?.replace) {
-            history.replace(targetLocation, finalState)
-          } else {
-            history.push(targetLocation, finalState)
-          }
-
-          // Scroll handling for programmatic navigation
-          if (options?.scroll !== false && isBrowser()) {
-            const scrollRestoration = getScrollRestoration()
-            scrollRestoration.handleNavigation(
-              prevLocation,
-              history.location,
-              options?.replace ? 'REPLACE' : 'PUSH',
-            )
-          }
-
-          // If navigation was blocked or no-op, reset routing state
-          if (locationsAreEqual(prevLocation, history.location)) {
-            batch(() => {
-              isRoutingSignal(false)
-              pendingLocationSignal(null)
-            })
-          }
-        })
-      } catch {
-        batch(() => {
-          isRoutingSignal(false)
-          pendingLocationSignal(null)
-        })
-      }
-    })
+      })
+    } catch {
+      resetPendingTransition(targetLocation)
+    }
   }
 
   // Listen for history changes (browser back/forward AND navigate calls)
   // This is the single source of truth for location/matches updates
   const unlisten = history.listen(({ action, location: newLocation }) => {
     const prevLocation = locationSignal()
+    const programmaticNavigation =
+      pendingProgrammaticNavigation?.key === newLocation.key ? pendingProgrammaticNavigation : null
 
     batch(() => {
       locationSignal(newLocation)
@@ -305,7 +360,12 @@ function createRouterState(
     if (action === 'POP' && isBrowser()) {
       const scrollRestoration = getScrollRestoration()
       scrollRestoration.handleNavigation(prevLocation, newLocation, 'POP')
+    } else if (programmaticNavigation?.scroll && isBrowser()) {
+      const scrollRestoration = getScrollRestoration()
+      scrollRestoration.handleNavigation(prevLocation, newLocation, action)
     }
+
+    pendingProgrammaticNavigation = null
   })
 
   // State accessor
@@ -320,7 +380,12 @@ function createRouterState(
     state,
     navigate,
     beforeLeave,
-    cleanup: unlisten,
+    cleanup: () => {
+      navigationToken++
+      historyTransitionToken++
+      removeHistoryBlocker()
+      unlisten()
+    },
     normalizedBase: baseForStrip,
   }
 }

@@ -67,6 +67,13 @@ interface History {
   createHref(to: To): string
   block(blocker: Blocker): () => void
 }
+
+type Blocker = (transition: {
+  action: HistoryAction
+  location: Location
+  retry: () => void
+  proceed?: () => void
+}) => void
 ```
 
 ### 3.2 History Implementations

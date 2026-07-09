@@ -34,6 +34,26 @@ describe('browser-backed history lifecycle', () => {
     expect(removeEventListener).toHaveBeenCalledWith('beforeunload', expect.any(Function))
     removeEventListener.mockRestore()
   })
+
+  it('restores a blocked POP before proceeding exactly once', async () => {
+    window.history.replaceState({ usr: null, key: 'history-from', idx: 0 }, '', '/history/from')
+    const history = createBrowserHistory()
+    history.push('/history/to')
+    const blocker = vi.fn(({ proceed }) => proceed?.())
+    history.block(blocker)
+
+    window.history.back()
+
+    await vi.waitFor(() => expect(history.location.pathname).toBe('/history/from'))
+    expect(blocker).toHaveBeenCalledTimes(1)
+
+    window.history.forward()
+    await vi.waitFor(() => expect(history.location.pathname).toBe('/history/to'))
+    expect(blocker).toHaveBeenCalledTimes(2)
+
+    history.destroy?.()
+    window.history.replaceState({ usr: null, key: 'root', idx: 0 }, '', '/')
+  })
 })
 
 describe('createMemoryHistory', () => {

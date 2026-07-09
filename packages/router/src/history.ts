@@ -73,6 +73,43 @@ export function createBrowserHistory(): History {
   )
   let index = (window.history.state?.idx as number) ?? 0
 
+  interface BlockedPopTransition {
+    fromIndex: number
+    toIndex: number
+    location: Location
+    restored: boolean
+    retryRequested: 'retry' | 'proceed' | null
+    cancelled: boolean
+  }
+
+  let blockedPop: BlockedPopTransition | null = null
+  let restoringPop: BlockedPopTransition | null = null
+  let forcedPopIndex: number | null = null
+
+  function cancelBlockedPop() {
+    if (blockedPop) blockedPop.cancelled = true
+    blockedPop = null
+    forcedPopIndex = null
+  }
+
+  function retryBlockedPop(transition: BlockedPopTransition) {
+    if (transition.cancelled || blockedPop !== transition) return
+
+    const delta = transition.toIndex - transition.fromIndex
+    blockedPop = null
+    if (transition.retryRequested === 'proceed') forcedPopIndex = transition.toIndex
+
+    if (delta === 0) {
+      forcedPopIndex = null
+      action = 'POP'
+      location = transition.location
+      notifyListeners()
+      return
+    }
+
+    window.history.go(delta)
+  }
+
   // Handle popstate (back/forward navigation)
   function handlePopState(event: PopStateEvent) {
     const nextLocation = readLocation(
@@ -82,31 +119,76 @@ export function createBrowserHistory(): History {
     const nextAction: HistoryAction = 'POP'
     const nextIndex = (event.state?.idx as number) ?? 0
 
+    // A blocked POP first has to return the browser to the last accepted entry.
+    // That restoration is an implementation detail and must not notify listeners
+    // or run blockers a second time.
+    if (restoringPop && nextIndex === restoringPop.fromIndex) {
+      const transition = restoringPop
+      restoringPop = null
+      transition.restored = true
+
+      if (transition.retryRequested !== null) {
+        retryBlockedPop(transition)
+      }
+      return
+    }
+
+    // A forced retry is allowed through exactly once. This is used by the router
+    // after its asynchronous beforeLeave handlers approve the original POP.
+    if (forcedPopIndex !== null && nextIndex === forcedPopIndex) {
+      forcedPopIndex = null
+      action = nextAction
+      location = nextLocation
+      index = nextIndex
+      notifyListeners()
+      return
+    }
+
     // Check blockers
     if (blockers.size > 0) {
-      let blocked = false
-      const retry = () => {
-        // Re-trigger the navigation
-        window.history.go(nextIndex - index)
+      cancelBlockedPop()
+
+      const transition: BlockedPopTransition = {
+        fromIndex: index,
+        toIndex: nextIndex,
+        location: nextLocation,
+        restored: nextIndex === index,
+        retryRequested: null,
+        cancelled: false,
       }
+      blockedPop = transition
+
+      let resumed = false
+      const resume = (mode: 'retry' | 'proceed') => {
+        if (resumed || transition.cancelled) return
+        resumed = true
+        transition.retryRequested = mode
+        if (transition.restored) retryBlockedPop(transition)
+      }
+      const retry = () => resume('retry')
+      const proceed = () => resume('proceed')
 
       for (const blocker of blockers) {
         blocker({
           action: nextAction,
           location: nextLocation,
           retry,
+          proceed,
         })
-        blocked = true
         break
       }
 
-      if (blocked) {
-        // Restore the previous state by going back
+      if (nextIndex !== index) {
+        restoringPop = transition
+        // Restore the previous entry while the asynchronous blocker decides.
         window.history.go(index - nextIndex)
-        return
+      } else if (transition.retryRequested !== null) {
+        retryBlockedPop(transition)
       }
+      return
     }
 
+    cancelBlockedPop()
     action = nextAction
     location = nextLocation
     index = nextIndex
@@ -122,28 +204,38 @@ export function createBrowserHistory(): History {
     }
   }
 
-  function push(to: To, state?: unknown) {
+  function push(to: To, state?: unknown, force = false) {
     const nextLocation = createLocation(to, state)
     const nextAction: HistoryAction = 'PUSH'
 
     // Check blockers
-    if (blockers.size > 0) {
-      let blocked = false
-      const retry = () => push(to, state)
+    if (!force && blockers.size > 0) {
+      let resumed = false
+      const retry = () => {
+        if (resumed) return
+        resumed = true
+        push(to, state)
+      }
+      const proceed = () => {
+        if (resumed) return
+        resumed = true
+        push(to, state, true)
+      }
 
       for (const blocker of blockers) {
         blocker({
           action: nextAction,
           location: nextLocation,
           retry,
+          proceed,
         })
-        blocked = true
         break
       }
 
-      if (blocked) return
+      return
     }
 
+    cancelBlockedPop()
     action = nextAction
     location = nextLocation
     index++
@@ -154,28 +246,38 @@ export function createBrowserHistory(): History {
     notifyListeners()
   }
 
-  function replace(to: To, state?: unknown) {
+  function replace(to: To, state?: unknown, force = false) {
     const nextLocation = createLocation(to, state)
     const nextAction: HistoryAction = 'REPLACE'
 
     // Check blockers
-    if (blockers.size > 0) {
-      let blocked = false
-      const retry = () => replace(to, state)
+    if (!force && blockers.size > 0) {
+      let resumed = false
+      const retry = () => {
+        if (resumed) return
+        resumed = true
+        replace(to, state)
+      }
+      const proceed = () => {
+        if (resumed) return
+        resumed = true
+        replace(to, state, true)
+      }
 
       for (const blocker of blockers) {
         blocker({
           action: nextAction,
           location: nextLocation,
           retry,
+          proceed,
         })
-        blocked = true
         break
       }
 
-      if (blocked) return
+      return
     }
 
+    cancelBlockedPop()
     action = nextAction
     location = nextLocation
 
@@ -350,26 +452,35 @@ export function createHashHistory(options: { hashType?: 'slash' | 'noslash' } = 
     }
   }
 
-  function push(to: To, state?: unknown) {
+  function push(to: To, state?: unknown, force = false) {
     const nextLocation = createLocation(to, state)
     const nextAction: HistoryAction = 'PUSH'
 
     // Check blockers
-    if (blockers.size > 0) {
-      let blocked = false
-      const retry = () => push(to, state)
+    if (!force && blockers.size > 0) {
+      let resumed = false
+      const retry = () => {
+        if (resumed) return
+        resumed = true
+        push(to, state)
+      }
+      const proceed = () => {
+        if (resumed) return
+        resumed = true
+        push(to, state, true)
+      }
 
       for (const blocker of blockers) {
         blocker({
           action: nextAction,
           location: nextLocation,
           retry,
+          proceed,
         })
-        blocked = true
         break
       }
 
-      if (blocked) return
+      return
     }
 
     action = nextAction
@@ -382,26 +493,35 @@ export function createHashHistory(options: { hashType?: 'slash' | 'noslash' } = 
     notifyListeners()
   }
 
-  function replace(to: To, state?: unknown) {
+  function replace(to: To, state?: unknown, force = false) {
     const nextLocation = createLocation(to, state)
     const nextAction: HistoryAction = 'REPLACE'
 
     // Check blockers
-    if (blockers.size > 0) {
-      let blocked = false
-      const retry = () => replace(to, state)
+    if (!force && blockers.size > 0) {
+      let resumed = false
+      const retry = () => {
+        if (resumed) return
+        resumed = true
+        replace(to, state)
+      }
+      const proceed = () => {
+        if (resumed) return
+        resumed = true
+        replace(to, state, true)
+      }
 
       for (const blocker of blockers) {
         blocker({
           action: nextAction,
           location: nextLocation,
           retry,
+          proceed,
         })
-        blocked = true
         break
       }
 
-      if (blocked) return
+      return
     }
 
     action = nextAction
@@ -503,26 +623,35 @@ export function createMemoryHistory(
     }
   }
 
-  function push(to: To, state?: unknown) {
+  function push(to: To, state?: unknown, force = false) {
     const nextLocation = createLocation(to, state)
     const nextAction: HistoryAction = 'PUSH'
 
     // Check blockers
-    if (blockers.size > 0) {
-      let blocked = false
-      const retry = () => push(to, state)
+    if (!force && blockers.size > 0) {
+      let resumed = false
+      const retry = () => {
+        if (resumed) return
+        resumed = true
+        push(to, state)
+      }
+      const proceed = () => {
+        if (resumed) return
+        resumed = true
+        push(to, state, true)
+      }
 
       for (const blocker of blockers) {
         blocker({
           action: nextAction,
           location: nextLocation,
           retry,
+          proceed,
         })
-        blocked = true
         break
       }
 
-      if (blocked) return
+      return
     }
 
     action = nextAction
@@ -537,26 +666,35 @@ export function createMemoryHistory(
     notifyListeners()
   }
 
-  function replace(to: To, state?: unknown) {
+  function replace(to: To, state?: unknown, force = false) {
     const nextLocation = createLocation(to, state)
     const nextAction: HistoryAction = 'REPLACE'
 
     // Check blockers
-    if (blockers.size > 0) {
-      let blocked = false
-      const retry = () => replace(to, state)
+    if (!force && blockers.size > 0) {
+      let resumed = false
+      const retry = () => {
+        if (resumed) return
+        resumed = true
+        replace(to, state)
+      }
+      const proceed = () => {
+        if (resumed) return
+        resumed = true
+        replace(to, state, true)
+      }
 
       for (const blocker of blockers) {
         blocker({
           action: nextAction,
           location: nextLocation,
           retry,
+          proceed,
         })
-        blocked = true
         break
       }
 
-      if (blocked) return
+      return
     }
 
     action = nextAction
@@ -565,7 +703,7 @@ export function createMemoryHistory(
     notifyListeners()
   }
 
-  function go(delta: number) {
+  function go(delta: number, force = false) {
     const nextIndex = Math.max(0, Math.min(index + delta, entries.length - 1))
 
     if (nextIndex === index) return
@@ -574,21 +712,30 @@ export function createMemoryHistory(
     const nextAction: HistoryAction = 'POP'
 
     // Check blockers
-    if (blockers.size > 0) {
-      let blocked = false
-      const retry = () => go(delta)
+    if (!force && blockers.size > 0) {
+      let resumed = false
+      const retry = () => {
+        if (resumed) return
+        resumed = true
+        go(delta)
+      }
+      const proceed = () => {
+        if (resumed) return
+        resumed = true
+        go(delta, true)
+      }
 
       for (const blocker of blockers) {
         blocker({
           action: nextAction,
           location: nextLocation,
           retry,
+          proceed,
         })
-        blocked = true
         break
       }
 
-      if (blocked) return
+      return
     }
 
     action = nextAction

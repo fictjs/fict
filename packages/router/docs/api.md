@@ -1412,7 +1412,12 @@ interface History {
 }
 
 type HistoryListener = (update: { action: HistoryAction; location: Location }) => void
-type Blocker = (tx: { action: HistoryAction; location: Location; retry: () => void }) => void
+type Blocker = (tx: {
+  action: HistoryAction
+  location: Location
+  retry: () => void // Run blockers again
+  proceed?: () => void // Continue once without re-running blockers
+}) => void
 ```
 
 ### Router Options
