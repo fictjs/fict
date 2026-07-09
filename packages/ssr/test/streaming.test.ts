@@ -1,3 +1,6 @@
+import { createRequire } from 'node:module'
+import { PassThrough } from 'node:stream'
+
 import { describe, it, expect } from 'vitest'
 import { parseHTML } from 'linkedom'
 
@@ -7,7 +10,7 @@ import { __fictUseContext, __fictUseSignal } from '@fictjs/runtime/internal'
 
 import { renderToPipeableStream, renderToStream } from '../src/index'
 import { renderToPartial } from '../src/experimental'
-import { createQueuedTextStream } from '../src/stream-bridge'
+import { createPipeBridge, createQueuedTextStream } from '../src/stream-bridge'
 import { FICT_STREAM_RUNTIME_CODE, createStreamRuntimeCode } from '../src/stream-runtime'
 
 const decoder = new TextDecoder()
@@ -25,6 +28,33 @@ async function readReadableStream(stream: ReadableStream<Uint8Array>): Promise<s
 }
 
 describe('@fictjs/ssr streaming', () => {
+  it('contains errors emitted by the internal Node stream on abort', async () => {
+    const globals = globalThis as Record<string, unknown>
+    const hadRequire = Object.prototype.hasOwnProperty.call(globals, 'require')
+    const previousRequire = globals.require
+
+    try {
+      // ESM test workers normally have no global require. Supplying one makes
+      // this exercise the same Node bridge selected by the published CJS build.
+      globals.require = createRequire(import.meta.url)
+
+      const bridge = createPipeBridge()
+      const sink = new PassThrough()
+      sink.resume()
+      bridge.pipe(sink)
+      bridge.abort(new Error('manual-cjs-abort'))
+
+      // Node emits the internal PassThrough error asynchronously.
+      await new Promise<void>(resolve => setImmediate(resolve))
+    } finally {
+      if (hadRequire) {
+        globals.require = previousRequire
+      } else {
+        delete globals.require
+      }
+    }
+  })
+
   it('waits for queued text stream pulls under backpressure', async () => {
     const { stream, writer } = createQueuedTextStream()
     let released = false

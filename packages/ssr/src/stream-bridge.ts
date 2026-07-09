@@ -1,8 +1,11 @@
+import { getNodeRequire } from './node-require'
+
 interface NodePassThroughLike {
   pipe: (destination: NodeJS.WritableStream) => unknown
   write: (chunk: string | Uint8Array) => boolean
   end: (...args: unknown[]) => unknown
   destroy?: (error?: Error) => void
+  on?: (event: 'error', listener: (error: Error) => void) => unknown
 }
 
 export interface StreamWriter {
@@ -235,6 +238,14 @@ function createNodePipeBridge(): PipeBridge | null {
     }
     if (!streamModule.PassThrough) return null
     const passThrough = new streamModule.PassThrough()
+
+    // `destroy(error)` emits an asynchronous `error` event on Node streams.
+    // This PassThrough is an internal implementation detail, so consumers
+    // cannot attach a listener to it. Keep an internal listener installed to
+    // prevent an explicit render abort from becoming an uncaught exception;
+    // the public readiness promises still reject with the same reason.
+    passThrough.on?.('error', () => {})
+
     const buffer: string[] = []
     let piped = false
     let state: 'open' | 'closed' | 'aborted' = 'open'
@@ -341,21 +352,6 @@ function createNodePipeBridge(): PipeBridge | null {
         }
       },
     }
-  } catch {
-    return null
-  }
-}
-
-function getNodeRequire(): ((specifier: string) => unknown) | null {
-  const g = globalThis as Record<string, unknown>
-  const direct = g.require
-  if (typeof direct === 'function') {
-    return direct as (specifier: string) => unknown
-  }
-  try {
-    return Function('return typeof require === "function" ? require : null')() as
-      | ((specifier: string) => unknown)
-      | null
   } catch {
     return null
   }

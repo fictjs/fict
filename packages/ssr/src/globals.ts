@@ -1,5 +1,7 @@
 import { __fictGetCurrentSSRSession } from '@fictjs/runtime/internal'
 
+import { getNodeRequire } from './node-require'
+
 interface GlobalSnapshot {
   key: string
   exists: boolean
@@ -146,19 +148,4 @@ function readTextFileFromPath(path: string): string {
     '[fict/ssr] `manifest` as file path is only supported when Deno.readTextFileSync or CommonJS require is available. ' +
       'Pass a manifest object in Node ESM or edge runtimes.',
   )
-}
-
-function getNodeRequire(): ((specifier: string) => unknown) | null {
-  const g = globalThis as Record<string, unknown>
-  const direct = g.require
-  if (typeof direct === 'function') {
-    return direct as (specifier: string) => unknown
-  }
-  try {
-    return Function('return typeof require === "function" ? require : null')() as
-      | ((specifier: string) => unknown)
-      | null
-  } catch {
-    return null
-  }
 }
