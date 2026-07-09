@@ -105,6 +105,26 @@ assertEqualSet('devtools package exports', packageExports('packages/devtools/pac
   './vite',
 ])
 
+for (const packagePath of [
+  'packages/compiler/package.json',
+  'packages/babel-preset/package.json',
+  'packages/vite-plugin/package.json',
+  'packages/testing-library/package.json',
+]) {
+  const packageJson = readJson(packagePath)
+  const rootExport = packageJson.exports?.['.']
+  if (
+    rootExport?.import?.types !== './dist/index.d.ts' ||
+    rootExport?.import?.default !== './dist/index.js' ||
+    rootExport?.require?.types !== './dist/index.d.cts' ||
+    rootExport?.require?.default !== './dist/index.cjs'
+  ) {
+    fail(
+      `${packageJson.name ?? packagePath} must expose format-specific declarations for ESM and CJS consumers`,
+    )
+  }
+}
+
 const fictMain = readText('packages/fict/src/index.ts')
 const advancedExportRe = /export\s*\{([^}]*)\}\s*from\s*['"]@fictjs\/runtime\/advanced['"]/g
 const allowedMainAdvancedExports = ['createSelector', 'createScope', 'runInScope']
