@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  UNVERSIONED_SNAPSHOT_MIGRATION_KEY,
   cleanupEventListeners,
+  createLegacySnapshotMigration,
   installResumableLoader,
   waitForPendingHandlers,
   type SnapshotIssue,
@@ -9,6 +11,8 @@ import {
 import {
   FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
   __fictDisableResumable,
+  __fictEnsureScope,
+  __fictGetScopeProps,
   __fictRegisterResume,
   __fictGetSSRScope,
   __fictSetSSRState,
@@ -128,6 +132,89 @@ describe('resumable loader snapshot validation', () => {
         actualVersion: 1,
       }),
     )
+  })
+
+  it('lets applications interpret ambiguous v1 props as encoded markers explicitly', () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: 1,
+        scopes: {
+          sEncoded: {
+            id: 'sEncoded',
+            slots: [],
+            props: { value: { __t: 'u' } },
+          },
+        },
+      }),
+    )
+
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: false,
+      snapshotMigrations: { 1: createLegacySnapshotMigration('encoded-props') },
+    })
+
+    const snapshot = __fictGetSSRScope('sEncoded')
+    expect(snapshot).toBeDefined()
+    __fictEnsureScope('sEncoded', doc.createElement('div'), snapshot)
+    const props = __fictGetScopeProps('sEncoded')
+    expect(props).toHaveProperty('value', undefined)
+  })
+
+  it('lets applications preserve the same v1 bytes as raw literal props explicitly', () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: 1,
+        scopes: {
+          sRaw: {
+            id: 'sRaw',
+            slots: [],
+            props: { value: { __t: 'u' } },
+          },
+        },
+      }),
+    )
+
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: false,
+      snapshotMigrations: { 1: createLegacySnapshotMigration('raw-props') },
+    })
+
+    const snapshot = __fictGetSSRScope('sRaw')
+    expect(snapshot).toBeDefined()
+    __fictEnsureScope('sRaw', doc.createElement('div'), snapshot)
+    expect(__fictGetScopeProps('sRaw')).toEqual({ value: { __t: 'u' } })
+  })
+
+  it('requires an explicit sentinel migration for unversioned raw-props snapshots', () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        scopes: {
+          sUnversioned: {
+            id: 'sUnversioned',
+            slots: [],
+            props: { value: { __t: 'u' } },
+          },
+        },
+      }),
+    )
+
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: false,
+      snapshotMigrations: {
+        [UNVERSIONED_SNAPSHOT_MIGRATION_KEY]: createLegacySnapshotMigration('raw-props'),
+      },
+    })
+
+    const snapshot = __fictGetSSRScope('sUnversioned')
+    expect(snapshot).toBeDefined()
+    __fictEnsureScope('sUnversioned', doc.createElement('div'), snapshot)
+    expect(__fictGetScopeProps('sUnversioned')).toEqual({ value: { __t: 'u' } })
   })
 
   it('throws a clear error when installed without a browser document', () => {

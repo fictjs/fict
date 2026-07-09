@@ -10,6 +10,7 @@ import {
   __fictGetResume,
   __fictSetSSRState,
   __fictUseLexicalScope,
+  serializeValue,
 } from './resume'
 
 // ============================================================================
@@ -308,6 +309,42 @@ export type SnapshotMigration = (
   snapshot: Record<string, unknown>,
   context: SnapshotMigrationContext,
 ) => unknown
+
+/**
+ * Sentinel key for opting an unversioned pre-v1 snapshot into migration.
+ * Unversioned payloads are rejected unless this migration is provided.
+ */
+export const UNVERSIONED_SNAPSHOT_MIGRATION_KEY = 0
+
+/**
+ * Historical v1 snapshots used two incompatible props encodings. Applications
+ * must select the format that matches the cached/deployed writer; the loader
+ * cannot infer it from the payload bytes.
+ */
+export type LegacySnapshotFormat = 'raw-props' | 'encoded-props'
+
+/**
+ * Create an explicit migration for a known legacy snapshot writer.
+ *
+ * `raw-props` covers unversioned and v1 writers through v0.21, where props
+ * were handed directly to JSON.stringify. `encoded-props` covers the later v1
+ * contract where props already use Fict serialization markers. This helper
+ * deliberately does not attempt heuristic format detection.
+ */
+export function createLegacySnapshotMigration(format: LegacySnapshotFormat): SnapshotMigration {
+  if (format !== 'raw-props' && format !== 'encoded-props') {
+    throw new Error(`[fict/loader] Unknown legacy snapshot format: ${String(format)}.`)
+  }
+
+  return (snapshot, context) => {
+    const migrated = copyRecord(snapshot)
+    migrated.v = context.toVersion
+    if (format === 'raw-props') {
+      migrated.scopes = migrateRawLegacyProps(snapshot.scopes)
+    }
+    return migrated
+  }
+}
 
 export interface SnapshotMigrationContext {
   fromVersion: number
@@ -691,6 +728,15 @@ function normalizeSnapshotState(
   }
 
   const version = value.v
+  if (version === undefined) {
+    const migrated = migrateSnapshotState(
+      installation,
+      value,
+      UNVERSIONED_SNAPSHOT_MIGRATION_KEY,
+      source,
+    )
+    if (migrated !== undefined) return migrated
+  }
   if (!Number.isInteger(version) || version !== FICT_SSR_SNAPSHOT_SCHEMA_VERSION) {
     if (Number.isInteger(version) && typeof version === 'number') {
       const migrated = migrateSnapshotState(installation, value, version, source)
@@ -833,6 +879,33 @@ function emitSnapshotMigrationFailed(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function copyRecord(value: Record<string, unknown>): Record<string, unknown> {
+  const copy = Object.create(null) as Record<string, unknown>
+  for (const key of Object.keys(value)) {
+    copy[key] = value[key]
+  }
+  return copy
+}
+
+function migrateRawLegacyProps(scopes: unknown): unknown {
+  if (!isRecord(scopes)) return scopes
+
+  const migratedScopes = Object.create(null) as Record<string, unknown>
+  for (const [scopeId, value] of Object.entries(scopes)) {
+    if (!isRecord(value)) {
+      migratedScopes[scopeId] = value
+      continue
+    }
+
+    const scope = copyRecord(value)
+    if (Object.prototype.hasOwnProperty.call(scope, 'props')) {
+      scope.props = serializeValue(scope.props, new Map<object, string>(), '$.props')
+    }
+    migratedScopes[scopeId] = scope
+  }
+  return migratedScopes
 }
 
 function emitSnapshotIssue(installation: LoaderInstallation, issue: SnapshotIssue): void {
