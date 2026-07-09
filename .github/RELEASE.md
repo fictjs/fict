@@ -41,6 +41,10 @@ export BENCH_OUTPUT="${TMPDIR:-/tmp}/fict-optimizer-bench.json"
 pnpm release:verify
 ```
 
+Do not export `FICT_STRICT_GUARANTEE` around `release:verify`. The root release
+scripts scope it to the compiler contract, build, and bundler gates so
+behavior-first test suites keep their documented non-strict configuration.
+
 #### Step 3: Create and Push a Tag
 
 ```bash

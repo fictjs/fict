@@ -44,7 +44,7 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
 
       - name: Verify full release gate
-        run: BENCH_OUTPUT="${RUNNER_TEMP}/optimizer-bench.json" FICT_STRICT_GUARANTEE=1 pnpm release:verify
+        run: BENCH_OUTPUT="${RUNNER_TEMP}/optimizer-bench.json" pnpm release:verify
 
       - name: Upload optimizer benchmark output
         if: always()

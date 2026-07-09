@@ -123,9 +123,9 @@ jobs:
           cache: pnpm
 
       - run: pnpm install
-      - run: FICT_STRICT_GUARANTEE=1 pnpm -C packages/compiler test -- reactivity-guarantee-contract.test.ts
-      - run: FICT_STRICT_GUARANTEE=1 pnpm build
-      - run: FICT_STRICT_GUARANTEE=1 pnpm test:bundlers
+      - run: pnpm test:strict-guarantee
+      - run: pnpm build:strict-guarantee
+      - run: pnpm test:bundlers:strict-guarantee
 
   perf-guardrails:
     name: Performance Guardrails
