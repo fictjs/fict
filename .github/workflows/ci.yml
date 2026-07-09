@@ -47,6 +47,9 @@ jobs:
 
       - run: pnpm install
 
+      - name: Audit production dependencies
+        run: pnpm security:audit:prod
+
       - run: pnpm guardrails:compiler-complexity
       - run: pnpm format:check
       - run: pnpm lint
