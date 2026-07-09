@@ -70,23 +70,25 @@ export function createRenderEffect(fn: Effect, options?: EffectOptions): () => v
 
   const run = () => {
     // Note: cleanups are now run by signal.ts runEffect before this function is called
-    try {
-      const maybeCleanup = fn()
-      if (typeof maybeCleanup === 'function') {
-        cleanups = [maybeCleanup]
-      } else {
-        cleanups = []
+    const bucket: Cleanup[] = []
+    withEffectCleanups(bucket, () => {
+      try {
+        const maybeCleanup = fn()
+        if (typeof maybeCleanup === 'function') {
+          bucket.push(maybeCleanup)
+        }
+      } catch (err) {
+        if (handleSuspend(err as any, rootForError)) {
+          return
+        }
+        const handled = handleError(err, { source: 'effect' }, rootForError)
+        if (handled) {
+          return
+        }
+        throw err
       }
-    } catch (err) {
-      if (handleSuspend(err as any, rootForError)) {
-        return
-      }
-      const handled = handleError(err, { source: 'effect' }, rootForError)
-      if (handled) {
-        return
-      }
-      throw err
-    }
+    })
+    cleanups = bucket
   }
 
   const disposeEffect = effectWithCleanup(run, doCleanup, rootForError, options)

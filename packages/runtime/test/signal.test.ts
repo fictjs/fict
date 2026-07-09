@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
 import { batch, createEffect, createMemo, createRoot, onCleanup, render } from '../src/index'
-import { createSelector, createSignal } from '../src/advanced'
+import { createRenderEffect, createSelector, createSignal } from '../src/advanced'
 import { registerErrorHandler } from '../src/lifecycle'
 import {
   __resetReactiveState,
@@ -21,6 +21,24 @@ const tick = () =>
   )
 
 describe('signal runtime robustness', () => {
+  it('scopes onCleanup callbacks to render effect reruns and disposal', async () => {
+    const value = createSignal(0)
+    const order: string[] = []
+
+    const dispose = createRenderEffect(() => {
+      const current = value()
+      onCleanup(() => order.push(`registered-${current}`))
+      return () => order.push(`returned-${current}`)
+    })
+
+    value(1)
+    await tick()
+    expect(order).toEqual(['returned-0', 'registered-0'])
+
+    dispose()
+    expect(order).toEqual(['returned-0', 'registered-0', 'returned-1', 'registered-1'])
+  })
+
   it('coalesces batched writes across chained memos and effects', () => {
     const sourceA = createSignal(0)
     const sourceB = createSignal(0)
