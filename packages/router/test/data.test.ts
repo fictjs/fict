@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { createSignal } from '@fictjs/runtime/advanced'
+import { __fictCreateSSRSession, __fictRunWithSSRSession } from '@fictjs/runtime/internal'
 import {
   query,
   revalidate,
@@ -296,6 +297,32 @@ describe('query', () => {
     expect(numberValue()).toBe('number:1')
     expect(stringValue()).toBe('string:1')
     expect(booleanValue()).toBe('boolean:true')
+  })
+
+  it('isolates cached query data between SSR sessions', async () => {
+    let currentUser = 'alice'
+    const fetcher = vi.fn(async (_key: string) => currentUser)
+    const fetchUser = query(fetcher, 'sessionUser')
+    const aliceSession = __fictCreateSSRSession()
+    const bobSession = __fictCreateSSRSession()
+
+    const alice = __fictRunWithSSRSession(aliceSession, () => fetchUser('same-key'))
+    await Promise.resolve()
+    await Promise.resolve()
+
+    currentUser = 'bob'
+    const bob = __fictRunWithSSRSession(bobSession, () => fetchUser('same-key'))
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const aliceAgain = __fictRunWithSSRSession(aliceSession, () => fetchUser('same-key'))
+    const bobAgain = __fictRunWithSSRSession(bobSession, () => fetchUser('same-key'))
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(alice()).toBe('alice')
+    expect(aliceAgain()).toBe('alice')
+    expect(bob()).toBe('bob')
+    expect(bobAgain()).toBe('bob')
   })
 })
 

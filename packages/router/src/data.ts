@@ -7,6 +7,7 @@
 
 import { createEffect, batch } from '@fictjs/runtime'
 import { createSignal } from '@fictjs/runtime/advanced'
+import { __fictGetCurrentSSRSession } from '@fictjs/runtime/internal'
 
 import type {
   QueryFunction,
@@ -38,8 +39,26 @@ const NORMAL_CLEANUP_INTERVAL = 60 * 1000
 /** Cleanup interval when cache is large (10 seconds) */
 const FAST_CLEANUP_INTERVAL = 10 * 1000
 
-/** Global query cache */
-const queryCache = new Map<string, QueryCacheEntry<unknown>>()
+type QueryCache = Map<string, QueryCacheEntry<unknown>>
+type SSRSession = NonNullable<ReturnType<typeof __fictGetCurrentSSRSession>>
+
+/** Shared browser cache. SSR requests use isolated caches below. */
+const sharedQueryCache: QueryCache = new Map()
+
+/** Request-local caches are released with their SSR sessions. */
+let requestQueryCaches = new WeakMap<SSRSession, QueryCache>()
+
+function resolveQueryCache(): QueryCache {
+  const session = __fictGetCurrentSSRSession()
+  if (!session) return sharedQueryCache
+
+  let cache = requestQueryCaches.get(session)
+  if (!cache) {
+    cache = new Map()
+    requestQueryCaches.set(session, cache)
+  }
+  return cache
+}
 
 /** Cache cleanup timer */
 let cacheCleanupTimer: ReturnType<typeof setInterval> | undefined
@@ -50,7 +69,7 @@ let currentCleanupInterval = NORMAL_CLEANUP_INTERVAL
 /**
  * Evict oldest entries when cache exceeds max size
  */
-function evictOldestEntries() {
+function evictOldestEntries(queryCache: QueryCache) {
   if (queryCache.size <= MAX_CACHE_SIZE) return
 
   // Sort entries by timestamp (oldest first)
@@ -69,17 +88,17 @@ function evictOldestEntries() {
 function runCacheCleanup() {
   const now = Date.now()
 
-  for (const [key, entry] of queryCache) {
+  for (const [key, entry] of sharedQueryCache) {
     const maxAge = entry.intent === 'preload' ? PRELOAD_CACHE_DURATION : CACHE_DURATION
 
     if (now - entry.timestamp > maxAge) {
-      queryCache.delete(key)
+      sharedQueryCache.delete(key)
     }
   }
 
   // Adjust cleanup interval based on cache size
   const newInterval =
-    queryCache.size > MAX_CACHE_SIZE / 2 ? FAST_CLEANUP_INTERVAL : NORMAL_CLEANUP_INTERVAL
+    sharedQueryCache.size > MAX_CACHE_SIZE / 2 ? FAST_CLEANUP_INTERVAL : NORMAL_CLEANUP_INTERVAL
 
   if (newInterval !== currentCleanupInterval) {
     currentCleanupInterval = newInterval
@@ -139,6 +158,9 @@ export function query<T, Args extends unknown[]>(
   startCacheCleanup()
 
   return (...args: Args) => {
+    // Capture the request cache before starting asynchronous work. Promise
+    // callbacks run after the synchronous SSR session stack has unwound.
+    const queryCache = resolveQueryCache()
     const cacheKey = `${name}:${hashQueryArgs(args)}`
 
     // Check cache
@@ -179,7 +201,7 @@ export function query<T, Args extends unknown[]>(
           intent: 'navigate',
         }
         queryCache.set(cacheKey, entry)
-        evictOldestEntries()
+        evictOldestEntries(queryCache)
 
         // Update signals
         batch(() => {
@@ -219,6 +241,7 @@ export function query<T, Args extends unknown[]>(
  * Invalidate cached queries by key pattern
  */
 export function revalidate(keys?: string | string[] | RegExp): void {
+  const queryCache = resolveQueryCache()
   if (!keys) {
     // Invalidate all
     queryCache.clear()
@@ -557,7 +580,8 @@ export function createResource<T, S = unknown>(
  */
 export function cleanupDataUtilities(): void {
   stopCacheCleanup()
-  queryCache.clear()
+  sharedQueryCache.clear()
+  requestQueryCaches = new WeakMap()
   actionRegistry.clear()
   activeSubmissions(new Map())
 }
