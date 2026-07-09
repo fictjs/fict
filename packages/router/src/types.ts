@@ -407,6 +407,8 @@ export interface QueryCacheEntry<T = unknown> {
   settled?: boolean
   /** Resolved result */
   result?: T
+  /** Whether the query resolved successfully, including to `undefined` */
+  hasResult?: boolean
   /** Intent when fetched */
   intent: NavigationIntent
 }

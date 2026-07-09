@@ -52,6 +52,20 @@ describe('query', () => {
     expect(callCount).toBe(1)
   })
 
+  it('caches successful undefined results', async () => {
+    const fetcher = vi.fn((_key: string) => undefined)
+    const fetchValue = query(fetcher, 'undefinedResult')
+
+    const first = fetchValue('key')
+    await Promise.resolve()
+    await Promise.resolve()
+    const second = fetchValue('key')
+
+    expect(first()).toBeUndefined()
+    expect(second()).toBeUndefined()
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
   it('should handle different args separately', async () => {
     let callCount = 0
     const fetchUser = query(async (id: string) => {

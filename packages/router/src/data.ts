@@ -165,7 +165,7 @@ export function query<T, Args extends unknown[]>(
 
     // Check cache
     const cached = queryCache.get(cacheKey) as QueryCacheEntry<T> | undefined
-    if (cached && cached.result !== undefined) {
+    if (cached?.hasResult) {
       // Check if cache is still valid
       const maxAge = cached.intent === 'preload' ? PRELOAD_CACHE_DURATION : CACHE_DURATION
 
@@ -198,6 +198,7 @@ export function query<T, Args extends unknown[]>(
           promise: promise as Promise<T>,
           settled: true,
           result,
+          hasResult: true,
           intent: 'navigate',
         }
         queryCache.set(cacheKey, entry)
