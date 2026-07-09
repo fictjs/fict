@@ -53,6 +53,30 @@ describe('lazy', () => {
     expect(() => LazyComp({})).toThrow(error)
   })
 
+  it('normalizes synchronous loader failures into rejected preloads', async () => {
+    const error = new Error('sync load failed')
+    const loader = vi.fn(() => {
+      throw error
+    })
+    const LazyComp = lazy(loader as never)
+
+    let preload: Promise<void> | undefined
+    expect(() => {
+      preload = LazyComp.preload()
+    }).not.toThrow()
+    await expect(preload).rejects.toBe(error)
+    expect(() => LazyComp({})).toThrow(error)
+  })
+
+  it('rejects modules without a default component', async () => {
+    const loader = vi.fn(() => Promise.resolve({ default: undefined }))
+    const LazyComp = lazy(loader as never)
+
+    await expect(LazyComp.preload()).rejects.toThrow(/default component/)
+    expect(loader).toHaveBeenCalledTimes(1)
+    expect(() => LazyComp({})).toThrow(/default component/)
+  })
+
   it('resolves preload after a retry succeeds', async () => {
     const Loaded = () => 'ready'
     const loader = vi

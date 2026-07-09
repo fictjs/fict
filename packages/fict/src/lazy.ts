@@ -100,10 +100,25 @@ export function lazy<TProps extends Record<string, unknown> = Record<string, unk
   const isCurrentLoad = (generation: number): boolean => generation === loadGeneration
 
   const attemptLoad = (generation: number): Promise<void> => {
-    return loader()
+    let loadedModule: Promise<LazyModule<TProps> | { default: Component<TProps> }>
+    try {
+      loadedModule = Promise.resolve(loader())
+    } catch (err) {
+      // Keep synchronous loader failures on the same retry/preload contract as
+      // rejected dynamic imports.
+      loadedModule = Promise.reject(err)
+    }
+
+    return loadedModule
       .then(mod => {
         if (!isCurrentLoad(generation)) return
-        loaded = (mod as LazyModule<TProps>).default
+        const resolved = (mod as LazyModule<TProps> | null | undefined)?.default
+        if (typeof resolved !== 'function') {
+          throw new TypeError(
+            '[fict] lazy() loader must resolve to a module with a default component.',
+          )
+        }
+        loaded = resolved
         loadError = null
         retryCount = 0
         pendingToken?.resolve()
