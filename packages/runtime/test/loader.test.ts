@@ -12,6 +12,7 @@ import {
   __fictRegisterResume,
   __fictGetSSRScope,
   __fictSetSSRState,
+  __fictUseLexicalScope,
 } from '../src/internal'
 
 function createDocumentWithSnapshots(
@@ -302,6 +303,92 @@ describe('resumable loader snapshot validation', () => {
     await vi.waitFor(() => {
       expect(__fictGetSSRScope('sStreamed')?.slots[0]?.[2]).toBe('complete')
     })
+  })
+
+  it('keeps independent document loaders isolated until shared cleanup', async () => {
+    const createIslandDocument = (value: string): Document =>
+      createDocumentWithSnapshots(
+        JSON.stringify({
+          v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+          scopes: {
+            s1: {
+              id: 's1',
+              slots: [[0, 'raw', value]],
+              vars: { value: 0 },
+            },
+          },
+        }),
+      )
+    const docA = createIslandDocument('A')
+    const docB = createIslandDocument('B')
+    const resumedValues: string[] = []
+    const handlerCalls: string[] = []
+    const issuesA: SnapshotIssue[] = []
+    const issuesB: SnapshotIssue[] = []
+    ;(globalThis as { __fictMultiDocumentCalls?: string[] }).__fictMultiDocumentCalls = handlerCalls
+
+    const appendIsland = (doc: Document, name: string, resumeName: string): HTMLButtonElement => {
+      const host = doc.createElement('div')
+      host.setAttribute('data-fict-s', 's1')
+      host.setAttribute('data-fict-h', `data:text/javascript,export default null#${resumeName}`)
+      const button = doc.createElement('button')
+      button.setAttribute(
+        'on:click',
+        `data:text/javascript,export function handle(){globalThis.__fictMultiDocumentCalls.push("${name}")}#handle`,
+      )
+      host.appendChild(button)
+      doc.body.appendChild(host)
+      return button
+    }
+    const buttonA = appendIsland(docA, 'A', '__fict_multi_document_a')
+    const buttonB = appendIsland(docB, 'B', '__fict_multi_document_b')
+
+    __fictRegisterResume('__fict_multi_document_a', scopeId => {
+      resumedValues.push(__fictUseLexicalScope(scopeId as string, ['value'])[0] as string)
+    })
+    __fictRegisterResume('__fict_multi_document_b', scopeId => {
+      resumedValues.push(__fictUseLexicalScope(scopeId as string, ['value'])[0] as string)
+    })
+
+    installResumableLoader({
+      document: docA,
+      events: ['click'],
+      prefetch: false,
+      onSnapshotIssue: issue => issuesA.push(issue),
+    })
+    installResumableLoader({
+      document: docB,
+      events: ['click'],
+      prefetch: false,
+      onSnapshotIssue: issue => issuesB.push(issue),
+    })
+
+    buttonA.dispatchEvent(new Event('click', { bubbles: true }))
+    buttonB.dispatchEvent(new Event('click', { bubbles: true }))
+    await waitForPendingHandlers()
+
+    expect(resumedValues.toSorted()).toEqual(['A', 'B'])
+    expect(handlerCalls.toSorted()).toEqual(['A', 'B'])
+
+    cleanupEventListeners()
+    buttonA.dispatchEvent(new Event('click', { bubbles: true }))
+    buttonB.dispatchEvent(new Event('click', { bubbles: true }))
+    expect(handlerCalls).toEqual(['A', 'B'])
+    expect(__fictGetSSRScope('s1')).toBeUndefined()
+
+    const rejectedSnapshot = docA.createElement('script')
+    rejectedSnapshot.type = 'application/json'
+    rejectedSnapshot.setAttribute('data-fict-snapshot', '')
+    rejectedSnapshot.textContent = JSON.stringify({
+      v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION + 1,
+      scopes: {},
+    })
+    docA.body.appendChild(rejectedSnapshot)
+    await Promise.resolve()
+    expect(issuesA).toEqual([])
+    expect(issuesB).toEqual([])
+
+    delete (globalThis as { __fictMultiDocumentCalls?: string[] }).__fictMultiDocumentCalls
   })
 
   it('ignores incremental snapshots with unsupported versions', () => {

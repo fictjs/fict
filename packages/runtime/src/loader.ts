@@ -3,11 +3,11 @@ import { isElementLike } from './dom-guards'
 import {
   FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
   type SSRState,
+  __fictDeleteResumedScopes,
+  __fictDisableResumable,
   __fictEnableResumable,
   __fictEnsureScope,
   __fictGetResume,
-  __fictGetSSRScope,
-  __fictMergeSSRState,
   __fictSetSSRState,
   __fictUseLexicalScope,
 } from './resume'
@@ -346,32 +346,45 @@ export interface SnapshotIssue {
 // State
 // ============================================================================
 
-const hydratedScopes = new Set<string>()
-const pendingScopeResumes = new Map<string, Promise<boolean>>()
-const pendingScopeHandlers = new Map<string, Promise<void>>()
-const prefetchedUrls = new Set<string>()
-let prefetchCleanup: (() => void) | null = null
-let eventListenerCleanup: (() => void) | null = null
-let snapshotObserver: MutationObserver | null = null
-const processedSnapshots = new Set<HTMLScriptElement>()
-let snapshotIssueHandler: ((issue: SnapshotIssue) => void) | null = null
-let snapshotMigrations: Record<number, SnapshotMigration> | null = null
-const emittedIssueKeys = new Set<string>()
+interface LoaderInstallation {
+  id: number
+  document: Document
+  state: SSRState
+  scopeIds: Map<string, string>
+  hydratedScopes: Set<string>
+  pendingScopeResumes: Map<string, Promise<boolean>>
+  pendingScopeHandlers: Map<string, Promise<void>>
+  prefetchedUrls: Set<string>
+  processedSnapshots: Set<HTMLScriptElement>
+  emittedIssueKeys: Set<string>
+  snapshotIssueHandler: ((issue: SnapshotIssue) => void) | null
+  snapshotMigrations: Record<number, SnapshotMigration> | null
+  eventListenerCleanup: (() => void) | null
+  prefetchCleanup: (() => void) | null
+  snapshotObserver: MutationObserver | null
+}
+
+const loaderInstallations = new Map<Document, LoaderInstallation>()
+let nextLoaderInstallationId = 0
 
 /**
  * Reset the hydrated scopes set. Useful for testing.
  */
 export function resetHydratedScopes(): void {
-  hydratedScopes.clear()
-  pendingScopeResumes.clear()
-  pendingScopeHandlers.clear()
+  for (const installation of loaderInstallations.values()) {
+    installation.hydratedScopes.clear()
+    installation.pendingScopeResumes.clear()
+    installation.pendingScopeHandlers.clear()
+  }
 }
 
 /**
  * Reset the prefetched URLs set. Useful for testing.
  */
 export function resetPrefetchedUrls(): void {
-  prefetchedUrls.clear()
+  for (const installation of loaderInstallations.values()) {
+    installation.prefetchedUrls.clear()
+  }
 }
 
 /**
@@ -391,10 +404,12 @@ export async function waitForPendingHandlers(): Promise<void> {
  * Clean up all registered event listeners. Useful for testing.
  */
 export function cleanupEventListeners(): void {
-  if (eventListenerCleanup) {
-    eventListenerCleanup()
-    eventListenerCleanup = null
+  for (const installation of loaderInstallations.values()) {
+    cleanupLoaderInstallation(installation, false)
   }
+  loaderInstallations.clear()
+  __fictSetSSRState(null)
+  __fictDisableResumable()
 }
 
 // ============================================================================
@@ -404,40 +419,35 @@ export function cleanupEventListeners(): void {
 export function installResumableLoader(options: ResumableLoaderOptions = {}): void {
   const doc = resolveLoaderDocument(options.document)
   const scriptId = options.snapshotScriptId ?? '__FICT_SNAPSHOT__'
-  snapshotIssueHandler = options.onSnapshotIssue ?? null
-  snapshotMigrations = options.snapshotMigrations ?? null
-
-  // Reset hydrated scopes for fresh loader installation
-  hydratedScopes.clear()
-  pendingScopeResumes.clear()
-  pendingScopeHandlers.clear()
-  prefetchedUrls.clear()
-  processedSnapshots.clear()
-  emittedIssueKeys.clear()
-  __fictSetSSRState(null)
-
-  // Clean up previous event listeners
-  if (eventListenerCleanup) {
-    eventListenerCleanup()
-    eventListenerCleanup = null
+  const previousInstallation = loaderInstallations.get(doc)
+  if (previousInstallation) {
+    cleanupLoaderInstallation(previousInstallation)
   }
 
-  // Clean up previous prefetch handlers
-  if (prefetchCleanup) {
-    prefetchCleanup()
-    prefetchCleanup = null
+  const installation: LoaderInstallation = {
+    id: ++nextLoaderInstallationId,
+    document: doc,
+    state: { v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION, scopes: {} },
+    scopeIds: new Map(),
+    hydratedScopes: new Set(),
+    pendingScopeResumes: new Map(),
+    pendingScopeHandlers: new Map(),
+    prefetchedUrls: new Set(),
+    processedSnapshots: new Set(),
+    emittedIssueKeys: new Set(),
+    snapshotIssueHandler: options.onSnapshotIssue ?? null,
+    snapshotMigrations: options.snapshotMigrations ?? null,
+    eventListenerCleanup: null,
+    prefetchCleanup: null,
+    snapshotObserver: null,
   }
-
-  if (snapshotObserver) {
-    snapshotObserver.disconnect()
-    snapshotObserver = null
-  }
+  loaderInstallations.set(doc, installation)
 
   const snapshotEl = doc.getElementById(scriptId)
   if (snapshotEl?.textContent) {
-    const state = parseSnapshotText(snapshotEl.textContent, `#${scriptId}`)
+    const state = parseSnapshotText(installation, snapshotEl.textContent, `#${scriptId}`)
     if (state) {
-      applySnapshotState(state, `#${scriptId}`, 'replace')
+      applySnapshotState(installation, state, `#${scriptId}`, 'replace')
     }
   }
 
@@ -445,27 +455,28 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
     'script[type="application/json"][data-fict-snapshot]',
   )
   for (const script of Array.from(snapshotScripts)) {
-    parseSnapshotScript(script as HTMLScriptElement)
+    parseSnapshotScript(installation, script as HTMLScriptElement)
   }
 
-  if (typeof MutationObserver !== 'undefined') {
-    snapshotObserver = new MutationObserver(mutations => {
+  const SnapshotObserver = globalThis.MutationObserver
+  if (typeof SnapshotObserver !== 'undefined') {
+    installation.snapshotObserver = new SnapshotObserver(mutations => {
       for (const mutation of mutations) {
         if (isSnapshotScriptElement(mutation.target, doc)) {
-          parseSnapshotScript(mutation.target)
+          parseSnapshotScript(installation, mutation.target)
         }
         for (const node of Array.from(mutation.addedNodes)) {
           if (!isElementLike(node, doc)) {
             const parent = node.parentElement
             if (parent && isSnapshotScriptElement(parent, doc)) {
-              parseSnapshotScript(parent)
+              parseSnapshotScript(installation, parent)
             }
             continue
           }
           if (node.tagName === 'SCRIPT') {
             const script = node as HTMLScriptElement
             if (isSnapshotScript(script)) {
-              parseSnapshotScript(script)
+              parseSnapshotScript(installation, script)
             }
           }
           const nested = node.querySelectorAll?.(
@@ -473,32 +484,56 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
           )
           if (nested && nested.length) {
             for (const script of Array.from(nested)) {
-              parseSnapshotScript(script as HTMLScriptElement)
+              parseSnapshotScript(installation, script as HTMLScriptElement)
             }
           }
         }
       }
     })
-    snapshotObserver.observe(doc.documentElement ?? doc, { childList: true, subtree: true })
+    installation.snapshotObserver.observe(doc.documentElement ?? doc, {
+      childList: true,
+      subtree: true,
+    })
   }
 
   __fictEnableResumable()
 
   const events = options.events ?? Array.from(DelegatedEvents)
+  const eventListener = (event: Event) => handleResumableEvent(installation, event)
   for (const eventName of events) {
-    doc.addEventListener(eventName, handleResumableEvent, true)
+    doc.addEventListener(eventName, eventListener, true)
   }
 
   // Store cleanup function for event listeners
-  eventListenerCleanup = () => {
+  installation.eventListenerCleanup = () => {
     for (const eventName of events) {
-      doc.removeEventListener(eventName, handleResumableEvent, true)
+      doc.removeEventListener(eventName, eventListener, true)
     }
   }
 
   // Setup prefetch if enabled
   if (options.prefetch !== false) {
-    prefetchCleanup = setupPrefetch(doc, options.prefetch ?? {})
+    installation.prefetchCleanup = setupPrefetch(installation, options.prefetch ?? {})
+  }
+}
+
+function cleanupLoaderInstallation(
+  installation: LoaderInstallation,
+  synchronizeState = true,
+): void {
+  installation.eventListenerCleanup?.()
+  installation.prefetchCleanup?.()
+  installation.snapshotObserver?.disconnect()
+  installation.eventListenerCleanup = null
+  installation.prefetchCleanup = null
+  installation.snapshotObserver = null
+  __fictDeleteResumedScopes(Object.keys(installation.state.scopes))
+  loaderInstallations.delete(installation.document)
+  if (synchronizeState) {
+    synchronizeSnapshotState()
+  }
+  if (loaderInstallations.size === 0) {
+    __fictDisableResumable()
   }
 }
 
@@ -522,27 +557,51 @@ function isSnapshotScriptElement(node: Node, doc: Document): node is HTMLScriptE
   )
 }
 
-function parseSnapshotScript(script: HTMLScriptElement): void {
-  if (processedSnapshots.has(script)) return
+function parseSnapshotScript(installation: LoaderInstallation, script: HTMLScriptElement): void {
+  if (installation.processedSnapshots.has(script)) return
   const text = script.textContent
   if (!text) return
   const source = script.id ? `#${script.id}` : '<script[data-fict-snapshot]>'
-  const state = parseSnapshotText(text, source)
-  if (state && applySnapshotState(state, source, 'merge')) {
-    processedSnapshots.add(script)
+  const state = parseSnapshotText(installation, text, source)
+  if (state && applySnapshotState(installation, state, source, 'merge')) {
+    installation.processedSnapshots.add(script)
   }
 }
 
-function applySnapshotState(state: SSRState, source: string, mode: 'replace' | 'merge'): boolean {
-  try {
-    if (mode === 'replace') {
-      __fictSetSSRState(state)
-    } else {
-      __fictMergeSSRState(state)
+function applySnapshotState(
+  installation: LoaderInstallation,
+  state: SSRState,
+  source: string,
+  mode: 'replace' | 'merge',
+): boolean {
+  const nextScopeIds = new Map(installation.scopeIds)
+  const nextScopes: SSRState['scopes'] = Object.assign(
+    Object.create(null) as SSRState['scopes'],
+    mode === 'replace' ? undefined : installation.state.scopes,
+  )
+  const occupiedScopeIds = collectOccupiedScopeIds(installation)
+
+  for (const [sourceScopeId, snapshot] of Object.entries(state.scopes)) {
+    let scopeId = nextScopeIds.get(sourceScopeId)
+    if (!scopeId) {
+      scopeId = allocateScopeId(installation, sourceScopeId, occupiedScopeIds)
+      nextScopeIds.set(sourceScopeId, scopeId)
+      occupiedScopeIds.add(scopeId)
     }
+    nextScopes[scopeId] = { ...snapshot, id: scopeId }
+  }
+
+  const nextState: SSRState = {
+    v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+    scopes: nextScopes,
+  }
+  try {
+    synchronizeSnapshotState(installation, nextState)
+    installation.state = nextState
+    installation.scopeIds = nextScopeIds
     return true
   } catch (error) {
-    emitSnapshotIssue({
+    emitSnapshotIssue(installation, {
       code: 'snapshot_invalid_shape',
       message: `[fict/loader] Snapshot payload contains invalid scope data: ${formatImportError(error)}`,
       source,
@@ -553,12 +612,58 @@ function applySnapshotState(state: SSRState, source: string, mode: 'replace' | '
   }
 }
 
-function parseSnapshotText(text: string, source: string): SSRState | null {
+function collectOccupiedScopeIds(excluded: LoaderInstallation): Set<string> {
+  const occupied = new Set<string>()
+  for (const installation of loaderInstallations.values()) {
+    if (installation === excluded) continue
+    for (const scopeId of Object.keys(installation.state.scopes)) {
+      occupied.add(scopeId)
+    }
+  }
+  return occupied
+}
+
+function allocateScopeId(
+  installation: LoaderInstallation,
+  sourceScopeId: string,
+  occupied: Set<string>,
+): string {
+  if (!occupied.has(sourceScopeId)) return sourceScopeId
+  const prefix = `__fict_d${installation.id}_`
+  let candidate = `${prefix}${sourceScopeId}`
+  let suffix = 1
+  while (occupied.has(candidate)) {
+    candidate = `${prefix}${suffix++}_${sourceScopeId}`
+  }
+  return candidate
+}
+
+function synchronizeSnapshotState(
+  replacement?: LoaderInstallation,
+  replacementState?: SSRState,
+): void {
+  const scopes = Object.create(null) as SSRState['scopes']
+  for (const installation of loaderInstallations.values()) {
+    const state = installation === replacement ? replacementState : installation.state
+    if (state) {
+      Object.assign(scopes, state.scopes)
+    }
+  }
+  __fictSetSSRState(
+    loaderInstallations.size === 0 ? null : { v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION, scopes },
+  )
+}
+
+function parseSnapshotText(
+  installation: LoaderInstallation,
+  text: string,
+  source: string,
+): SSRState | null {
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
   } catch {
-    emitSnapshotIssue({
+    emitSnapshotIssue(installation, {
       code: 'snapshot_parse_error',
       message: '[fict/loader] Failed to parse SSR snapshot JSON.',
       source,
@@ -567,12 +672,16 @@ function parseSnapshotText(text: string, source: string): SSRState | null {
     return null
   }
 
-  return normalizeSnapshotState(parsed, source)
+  return normalizeSnapshotState(installation, parsed, source)
 }
 
-function normalizeSnapshotState(value: unknown, source: string): SSRState | null {
+function normalizeSnapshotState(
+  installation: LoaderInstallation,
+  value: unknown,
+  source: string,
+): SSRState | null {
   if (!isRecord(value)) {
-    emitSnapshotIssue({
+    emitSnapshotIssue(installation, {
       code: 'snapshot_invalid_shape',
       message: '[fict/loader] Snapshot payload must be an object.',
       source,
@@ -585,7 +694,7 @@ function normalizeSnapshotState(value: unknown, source: string): SSRState | null
   const version = rawVersion === undefined ? FICT_SSR_SNAPSHOT_SCHEMA_VERSION : rawVersion
   if (!Number.isInteger(version) || version !== FICT_SSR_SNAPSHOT_SCHEMA_VERSION) {
     if (Number.isInteger(version) && typeof version === 'number') {
-      const migrated = migrateSnapshotState(value, version, source)
+      const migrated = migrateSnapshotState(installation, value, version, source)
       if (migrated !== undefined) return migrated
     }
     const versionIssue: SnapshotIssue = {
@@ -597,7 +706,7 @@ function normalizeSnapshotState(value: unknown, source: string): SSRState | null
     if (typeof version === 'number') {
       versionIssue.actualVersion = version
     }
-    emitSnapshotIssue({
+    emitSnapshotIssue(installation, {
       ...versionIssue,
     })
     return null
@@ -605,7 +714,7 @@ function normalizeSnapshotState(value: unknown, source: string): SSRState | null
 
   const scopes = value.scopes
   if (!isRecord(scopes)) {
-    emitSnapshotIssue({
+    emitSnapshotIssue(installation, {
       code: 'snapshot_invalid_shape',
       message: '[fict/loader] Snapshot payload is missing a valid `scopes` object.',
       source,
@@ -618,23 +727,30 @@ function normalizeSnapshotState(value: unknown, source: string): SSRState | null
 }
 
 function migrateSnapshotState(
+  installation: LoaderInstallation,
   value: Record<string, unknown>,
   version: number,
   source: string,
 ): SSRState | null | undefined {
-  if (!snapshotMigrations) return undefined
+  if (!installation.snapshotMigrations) return undefined
   let current: Record<string, unknown> = value
   let currentVersion = version
   const seen = new Set<number>()
 
   while (currentVersion !== FICT_SSR_SNAPSHOT_SCHEMA_VERSION) {
     if (seen.has(currentVersion)) {
-      emitSnapshotMigrationFailed(source, version, currentVersion, 'Migration produced a cycle.')
+      emitSnapshotMigrationFailed(
+        installation,
+        source,
+        version,
+        currentVersion,
+        'Migration produced a cycle.',
+      )
       return null
     }
     seen.add(currentVersion)
 
-    const migration = snapshotMigrations[currentVersion]
+    const migration = installation.snapshotMigrations[currentVersion]
     if (!migration) return undefined
 
     let migrated: unknown
@@ -645,12 +761,20 @@ function migrateSnapshotState(
         source,
       })
     } catch (error) {
-      emitSnapshotMigrationFailed(source, version, currentVersion, formatImportError(error), error)
+      emitSnapshotMigrationFailed(
+        installation,
+        source,
+        version,
+        currentVersion,
+        formatImportError(error),
+        error,
+      )
       return null
     }
 
     if (!isRecord(migrated)) {
       emitSnapshotMigrationFailed(
+        installation,
         source,
         version,
         currentVersion,
@@ -664,6 +788,7 @@ function migrateSnapshotState(
       nextVersionRaw === undefined ? FICT_SSR_SNAPSHOT_SCHEMA_VERSION : nextVersionRaw
     if (!Number.isInteger(nextVersion) || typeof nextVersion !== 'number') {
       emitSnapshotMigrationFailed(
+        installation,
         source,
         version,
         currentVersion,
@@ -673,6 +798,7 @@ function migrateSnapshotState(
     }
     if (nextVersion === currentVersion) {
       emitSnapshotMigrationFailed(
+        installation,
         source,
         version,
         currentVersion,
@@ -685,17 +811,18 @@ function migrateSnapshotState(
     currentVersion = nextVersion
   }
 
-  return normalizeSnapshotState(current, source)
+  return normalizeSnapshotState(installation, current, source)
 }
 
 function emitSnapshotMigrationFailed(
+  installation: LoaderInstallation,
   source: string,
   originalVersion: number,
   failedVersion: number,
   reason: string,
   error?: unknown,
 ): void {
-  emitSnapshotIssue({
+  emitSnapshotIssue(installation, {
     code: 'snapshot_migration_failed',
     message: `[fict/loader] Failed to migrate snapshot schema from version ${originalVersion} at step ${failedVersion}: ${reason}`,
     source,
@@ -709,15 +836,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function emitSnapshotIssue(issue: SnapshotIssue): void {
+function emitSnapshotIssue(installation: LoaderInstallation, issue: SnapshotIssue): void {
   const key =
     `${issue.code}|${issue.source}|${issue.scopeId ?? ''}|` +
     `${issue.actualVersion ?? ''}|${issue.expectedVersion}|${issue.qrl ?? ''}|` +
     `${issue.eventType ?? ''}|${issue.exportName ?? ''}`
-  if (emittedIssueKeys.has(key)) return
-  emittedIssueKeys.add(key)
+  if (installation.emittedIssueKeys.has(key)) return
+  installation.emittedIssueKeys.add(key)
 
-  snapshotIssueHandler?.(issue)
+  installation.snapshotIssueHandler?.(issue)
 
   if (typeof console !== 'undefined' && typeof console.warn === 'function') {
     console.warn(issue.message)
@@ -732,18 +859,18 @@ function formatImportError(error: unknown): string {
 // Prefetch Implementation
 // ============================================================================
 
-function setupPrefetch(doc: Document, strategy: PrefetchStrategy): () => void {
+function setupPrefetch(installation: LoaderInstallation, strategy: PrefetchStrategy): () => void {
   const cleanupFns: (() => void)[] = []
 
   // Visibility-based prefetch
   if (strategy.visibility !== false) {
-    const cleanup = setupVisibilityPrefetch(doc, strategy.visibilityMargin ?? '200px')
+    const cleanup = setupVisibilityPrefetch(installation, strategy.visibilityMargin ?? '200px')
     cleanupFns.push(cleanup)
   }
 
   // Hover-based prefetch
   if (strategy.hover !== false) {
-    const cleanup = setupHoverPrefetch(doc, strategy.hoverDelay ?? 50)
+    const cleanup = setupHoverPrefetch(installation, strategy.hoverDelay ?? 50)
     cleanupFns.push(cleanup)
   }
 
@@ -754,7 +881,8 @@ function setupPrefetch(doc: Document, strategy: PrefetchStrategy): () => void {
   }
 }
 
-function setupVisibilityPrefetch(doc: Document, rootMargin: string): () => void {
+function setupVisibilityPrefetch(installation: LoaderInstallation, rootMargin: string): () => void {
+  const doc = installation.document
   // Check if IntersectionObserver is available
   if (typeof IntersectionObserver === 'undefined') {
     return () => {}
@@ -765,7 +893,7 @@ function setupVisibilityPrefetch(doc: Document, rootMargin: string): () => void 
       for (const entry of entries) {
         if (entry.isIntersecting) {
           const el = entry.target as Element
-          prefetchElementQrls(el)
+          prefetchElementQrls(installation, el)
           // Stop observing after prefetch
           observer.unobserve(el)
         }
@@ -789,7 +917,8 @@ function setupVisibilityPrefetch(doc: Document, rootMargin: string): () => void 
   }
 }
 
-function setupHoverPrefetch(doc: Document, delay: number): () => void {
+function setupHoverPrefetch(installation: LoaderInstallation, delay: number): () => void {
+  const doc = installation.document
   let hoverTimeout: ReturnType<typeof setTimeout> | null = null
   let lastHoveredElement: Element | null = null
 
@@ -816,7 +945,7 @@ function setupHoverPrefetch(doc: Document, delay: number): () => void {
 
     // Debounce prefetch
     hoverTimeout = setTimeout(() => {
-      prefetchElementQrls(interactiveEl)
+      prefetchElementQrls(installation, interactiveEl)
     }, delay)
   }
 
@@ -840,21 +969,21 @@ function setupHoverPrefetch(doc: Document, delay: number): () => void {
   }
 }
 
-function prefetchElementQrls(el: Element): void {
+function prefetchElementQrls(installation: LoaderInstallation, el: Element): void {
   const ownerDocument = el.ownerDocument ?? (typeof document !== 'undefined' ? document : undefined)
   // Prefetch event handler QRLs
   const eventAttrs = ['on:click', 'on:input', 'on:change', 'on:submit', 'on:keydown', 'on:keyup']
   for (const attr of eventAttrs) {
     const qrl = el.getAttribute(attr)
     if (qrl) {
-      prefetchQrl(qrl, ownerDocument)
+      prefetchQrl(installation, qrl, ownerDocument)
     }
   }
 
   // Prefetch resume handler QRL
   const resumeQrl = el.getAttribute('data-fict-h')
   if (resumeQrl) {
-    prefetchQrl(resumeQrl, ownerDocument)
+    prefetchQrl(installation, resumeQrl, ownerDocument)
   }
 
   // Also check children for nested QRLs
@@ -865,21 +994,25 @@ function prefetchElementQrls(el: Element): void {
     for (const attr of eventAttrs) {
       const qrl = child.getAttribute(attr)
       if (qrl) {
-        prefetchQrl(qrl, ownerDocument)
+        prefetchQrl(installation, qrl, ownerDocument)
       }
     }
     const childResumeQrl = child.getAttribute('data-fict-h')
     if (childResumeQrl) {
-      prefetchQrl(childResumeQrl, ownerDocument)
+      prefetchQrl(installation, childResumeQrl, ownerDocument)
     }
   })
 }
 
-function prefetchQrl(qrl: string, ownerDocument?: Document): void {
+function prefetchQrl(
+  installation: LoaderInstallation,
+  qrl: string,
+  ownerDocument?: Document,
+): void {
   const { url } = parseQrl(qrl)
-  if (!url || prefetchedUrls.has(url)) return
+  if (!url || installation.prefetchedUrls.has(url)) return
 
-  prefetchedUrls.add(url)
+  installation.prefetchedUrls.add(url)
 
   // Resolve through manifest for production builds
   const resolvedUrl = resolveModuleUrl(url)
@@ -900,8 +1033,8 @@ function prefetchQrl(qrl: string, ownerDocument?: Document): void {
 /**
  * Wrapper that tracks the async handler promise for testing.
  */
-function handleResumableEvent(event: Event): void {
-  const promise = handleResumableEventAsync(event)
+function handleResumableEvent(installation: LoaderInstallation, event: Event): void {
+  const promise = handleResumableEventAsync(installation, event)
   pendingHandlers.add(promise)
   void promise
     .catch(error => {
@@ -915,11 +1048,12 @@ function handleResumableEvent(event: Event): void {
 }
 
 async function resumeScopeForEvent(
+  installation: LoaderInstallation,
   scopeId: string,
   host: Element,
   event: Event,
 ): Promise<{ canRunHandler: boolean; hydratedDuringEvent: boolean }> {
-  if (hydratedScopes.has(scopeId)) {
+  if (installation.hydratedScopes.has(scopeId)) {
     return { canRunHandler: true, hydratedDuringEvent: false }
   }
 
@@ -928,15 +1062,15 @@ async function resumeScopeForEvent(
     return { canRunHandler: true, hydratedDuringEvent: false }
   }
 
-  let resumePromise = pendingScopeResumes.get(scopeId)
+  let resumePromise = installation.pendingScopeResumes.get(scopeId)
   if (!resumePromise) {
-    const resumeOperation = resumeScope(scopeId, host, event, resumeQrl)
+    const resumeOperation = resumeScope(installation, scopeId, host, event, resumeQrl)
     resumePromise = resumeOperation.finally(() => {
-      if (pendingScopeResumes.get(scopeId) === resumePromise) {
-        pendingScopeResumes.delete(scopeId)
+      if (installation.pendingScopeResumes.get(scopeId) === resumePromise) {
+        installation.pendingScopeResumes.delete(scopeId)
       }
     })
-    pendingScopeResumes.set(scopeId, resumePromise)
+    installation.pendingScopeResumes.set(scopeId, resumePromise)
   }
 
   const resumed = await resumePromise
@@ -944,6 +1078,7 @@ async function resumeScopeForEvent(
 }
 
 async function resumeScope(
+  installation: LoaderInstallation,
   scopeId: string,
   host: Element,
   event: Event,
@@ -962,7 +1097,7 @@ async function resumeScope(
   try {
     await import(/* @vite-ignore */ normalizedResumeImportUrl)
   } catch (error) {
-    emitSnapshotIssue({
+    emitSnapshotIssue(installation, {
       code: 'resume_import_failed',
       message: `[fict/loader] Failed to import resume module ${resolvedResumeUrl}: ${formatImportError(error)}`,
       source: 'event',
@@ -983,7 +1118,7 @@ async function resumeScope(
     __fictGetResume(resolvedAbsoluteResumeQrl) ??
     __fictGetResume(resumeExport)
   if (typeof resumeFn !== 'function') {
-    emitSnapshotIssue({
+    emitSnapshotIssue(installation, {
       code: 'resume_function_missing',
       message: `[fict/loader] Resume function ${resumeExport} was not registered for scope ${scopeId}.`,
       source: 'event',
@@ -1000,7 +1135,7 @@ async function resumeScope(
   try {
     await (resumeFn as (scopeId: string, host: Element) => unknown)(scopeId, host)
   } catch (error) {
-    emitSnapshotIssue({
+    emitSnapshotIssue(installation, {
       code: 'resume_failed',
       message: `[fict/loader] Resume function ${resumeExport} failed for scope ${scopeId}: ${formatImportError(error)}`,
       source: 'event',
@@ -1015,27 +1150,32 @@ async function resumeScope(
     return false
   }
 
-  hydratedScopes.add(scopeId)
+  installation.hydratedScopes.add(scopeId)
   return true
 }
 
-function enqueueScopeHandler<T>(scopeId: string, handler: () => Promise<T>): Promise<T> {
-  const previousHandler = pendingScopeHandlers.get(scopeId) ?? Promise.resolve()
+function enqueueScopeHandler<T>(
+  installation: LoaderInstallation,
+  scopeId: string,
+  handler: () => Promise<T>,
+): Promise<T> {
+  const previousHandler = installation.pendingScopeHandlers.get(scopeId) ?? Promise.resolve()
   const result = previousHandler.then(handler)
   const settled = result.then(
     () => undefined,
     () => undefined,
   )
-  pendingScopeHandlers.set(scopeId, settled)
+  installation.pendingScopeHandlers.set(scopeId, settled)
   void settled.then(() => {
-    if (pendingScopeHandlers.get(scopeId) === settled) {
-      pendingScopeHandlers.delete(scopeId)
+    if (installation.pendingScopeHandlers.get(scopeId) === settled) {
+      installation.pendingScopeHandlers.delete(scopeId)
     }
   })
   return result
 }
 
 async function runScopeHandler(
+  installation: LoaderInstallation,
   scopeId: string,
   node: Element,
   event: Event,
@@ -1063,7 +1203,7 @@ async function runScopeHandler(
     try {
       mod = (await import(/* @vite-ignore */ normalizedImportUrl)) as Record<string, unknown>
     } catch (error) {
-      emitSnapshotIssue({
+      emitSnapshotIssue(installation, {
         code: 'handler_import_failed',
         message: `[fict/loader] Failed to import handler module ${resolvedUrl}: ${formatImportError(error)}`,
         source: 'event',
@@ -1080,7 +1220,7 @@ async function runScopeHandler(
 
     const handler = mod[exportName]
     if (typeof handler !== 'function') {
-      emitSnapshotIssue({
+      emitSnapshotIssue(installation, {
         code: 'handler_missing',
         message: `[fict/loader] Resumable handler export ${exportName} was not found in ${resolvedUrl}.`,
         source: 'event',
@@ -1105,7 +1245,7 @@ async function runScopeHandler(
     try {
       await (handler as (scopeId: string, ev: Event, el: Element) => unknown)(scopeId, event, node)
     } catch (error) {
-      emitSnapshotIssue({
+      emitSnapshotIssue(installation, {
         code: 'handler_failed',
         message: `[fict/loader] Resumable handler ${exportName} failed for scope ${scopeId}: ${formatImportError(error)}`,
         source: 'event',
@@ -1139,7 +1279,10 @@ async function runScopeHandler(
   }
 }
 
-async function handleResumableEventAsync(event: Event): Promise<void> {
+async function handleResumableEventAsync(
+  installation: LoaderInstallation,
+  event: Event,
+): Promise<void> {
   const path =
     typeof event.composedPath === 'function' ? event.composedPath() : buildEventPath(event)
 
@@ -1150,17 +1293,18 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
 
     const host = node.closest('[data-fict-s]') as Element | null
     if (!host) continue
-    const scopeId = host.getAttribute('data-fict-s')
-    if (!scopeId) continue
+    const sourceScopeId = host.getAttribute('data-fict-s')
+    if (!sourceScopeId) continue
+    const scopeId = installation.scopeIds.get(sourceScopeId) ?? sourceScopeId
 
-    const snapshot = __fictGetSSRScope(scopeId)
+    const snapshot = installation.state.scopes[scopeId]
     if (!snapshot) {
-      emitSnapshotIssue({
+      emitSnapshotIssue(installation, {
         code: 'scope_snapshot_missing',
-        message: `[fict/loader] Missing scope snapshot for ${scopeId}; skipping resumable handler execution.`,
+        message: `[fict/loader] Missing scope snapshot for ${sourceScopeId}; skipping resumable handler execution.`,
         source: 'event',
         expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
-        scopeId,
+        scopeId: sourceScopeId,
       })
       continue
     }
@@ -1173,9 +1317,10 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
     })
 
     const preservedControlState = captureControlState(node, event)
-    const resumePromise = resumeScopeForEvent(scopeId, host, event)
-    const shouldStop = await enqueueScopeHandler(scopeId, () =>
+    const resumePromise = resumeScopeForEvent(installation, scopeId, host, event)
+    const shouldStop = await enqueueScopeHandler(installation, scopeId, () =>
       runScopeHandler(
+        installation,
         scopeId,
         node,
         event,

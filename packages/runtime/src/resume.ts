@@ -208,6 +208,12 @@ export function __fictDisableResumable(): void {
   resumedScopes.clear()
 }
 
+export function __fictDeleteResumedScopes(scopeIds: Iterable<string>): void {
+  for (const scopeId of scopeIds) {
+    resumedScopes.delete(scopeId)
+  }
+}
+
 export function __fictIsResumable(): boolean {
   return getSSRSession().ssrEnabled || resumableEnabled
 }
