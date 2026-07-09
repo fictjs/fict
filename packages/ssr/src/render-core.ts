@@ -234,8 +234,7 @@ function renderToDocumentInSession(
   } catch (error) {
     // Clean up SSR state and globals on any error
     __fictDisableSSR()
-    restoreGlobals()
-    restoreManifest()
+    cleanupRenderResources(teardown, restoreGlobals, restoreManifest, true)
     throw error
   }
 
@@ -246,23 +245,11 @@ function renderToDocumentInSession(
   try {
     html = serializeOutput(dom.document, container!, options)
   } catch (error) {
-    try {
-      teardown()
-    } finally {
-      restoreGlobals()
-      restoreManifest()
-    }
+    cleanupRenderResources(teardown, restoreGlobals, restoreManifest, true)
     throw error
   }
 
-  const dispose = () => {
-    try {
-      teardown()
-    } finally {
-      restoreGlobals()
-      restoreManifest()
-    }
-  }
+  const dispose = () => cleanupRenderResources(teardown, restoreGlobals, restoreManifest, false)
 
   return { html, document: dom.document, window: dom.window, container: container!, dispose }
 }
@@ -515,6 +502,27 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
   )
 }
 
+function cleanupRenderResources(
+  teardown: () => void,
+  restoreGlobals: () => void,
+  restoreManifest: () => void,
+  suppressErrors: boolean,
+): void {
+  let failed = false
+  let firstError: unknown
+  for (const cleanup of [teardown, restoreGlobals, restoreManifest]) {
+    try {
+      cleanup()
+    } catch (error) {
+      if (!failed) {
+        failed = true
+        firstError = error
+      }
+    }
+  }
+  if (failed && !suppressErrors) throw firstError
+}
+
 function startStreamingRender(
   view: () => FictNode,
   options: RenderToStreamOptions,
@@ -577,6 +585,8 @@ function startStreamingRenderInSession(
   let shellCarriesTail = false
   let writeChain: Promise<void> | null = null
   let writeFailed = false
+  let failureReported = false
+  let cleaned = false
   let removeAbortListener = () => {}
 
   const mode = options.mode ?? 'shell'
@@ -589,12 +599,7 @@ function startStreamingRenderInSession(
 
   const handleWriteError = (error: unknown) => {
     if (writeFailed) return
-    writeFailed = true
-    options.onError?.(error)
-    writer.abort(error)
-    cleanup()
-    rejectShell(error)
-    rejectAll(error)
+    reportErrorAndAbort(error)
   }
 
   const enqueueWrite = (chunk: string): void => {
@@ -656,9 +661,14 @@ function startStreamingRenderInSession(
 
   const markShellReady = (): void => {
     afterWrites(() => {
-      control.onShellFlushed?.()
+      try {
+        control.onShellFlushed?.()
+      } catch (error) {
+        reportErrorAndAbort(error)
+        return
+      }
       resolveShell()
-      options.onShellReady?.()
+      callLifecycleCallback(options.onShellReady)
     })
   }
 
@@ -696,23 +706,31 @@ function startStreamingRenderInSession(
   }
 
   const cleanup = () => {
-    removeAbortListener()
-    removeAbortListener = () => {}
-    runInSession(() => {
-      __fictSetSSRStreamHooks(null)
-      __fictDisableSSR()
-    })
+    if (cleaned) return
+    cleaned = true
     try {
-      teardown()
+      removeAbortListener()
     } catch {
-      // ignore cleanup errors
-    } finally {
-      restoreGlobals()
-      restoreManifest()
+      // Cleanup must remain best-effort so readiness promises always settle.
     }
+    removeAbortListener = () => {}
+    try {
+      runInSession(() => {
+        __fictSetSSRStreamHooks(null)
+        __fictDisableSSR()
+      })
+    } catch {
+      // Continue with owner/global cleanup even if session reset fails.
+    }
+    cleanupRenderResources(teardown, restoreGlobals, restoreManifest, true)
   }
 
   const reportErrorAndAbort = (error: unknown) => {
+    if (failureReported) {
+      abort(error)
+      return
+    }
+    failureReported = true
     let abortReason = error
     try {
       options.onError?.(error)
@@ -720,6 +738,14 @@ function startStreamingRenderInSession(
       abortReason = onErrorFailure
     }
     abort(abortReason)
+  }
+
+  const callLifecycleCallback = (callback: (() => void) | undefined): void => {
+    try {
+      callback?.()
+    } catch (error) {
+      reportErrorAndAbort(error)
+    }
   }
 
   const finalize = () => {
@@ -741,28 +767,44 @@ function startStreamingRenderInSession(
       closed = true
       enqueueWrite(fullHtml)
       afterWrites(() => {
-        writer.close()
+        try {
+          writer.close()
+        } catch (error) {
+          reportErrorAndAbort(error)
+          return
+        }
         cleanup()
         resolveShell()
         resolveAll()
-        options.onShellReady?.()
-        options.onAllReady?.()
+        callLifecycleCallback(options.onShellReady)
+        callLifecycleCallback(options.onAllReady)
       })
       return
     }
 
+    try {
+      writeRemainingSnapshots()
+    } catch (error) {
+      reportErrorAndAbort(error)
+      return
+    }
+    if (writeFailed) return
     closed = true
-    writeRemainingSnapshots()
 
     if (tailHtml) {
       enqueueWrite(tailHtml)
     }
 
     afterWrites(() => {
-      writer.close()
+      try {
+        writer.close()
+      } catch (error) {
+        reportErrorAndAbort(error)
+        return
+      }
       cleanup()
       resolveAll()
-      options.onAllReady?.()
+      callLifecycleCallback(options.onAllReady)
     })
   }
 
@@ -792,15 +834,15 @@ function startStreamingRenderInSession(
         pendingCount = Math.max(0, pendingCount - 1)
       }
       if (mode === 'shell') {
-        writeSnapshotForBoundary(id)
-        if (dom) {
-          try {
+        try {
+          writeSnapshotForBoundary(id)
+          if (dom) {
             const html = serializeBetween(entry.start, entry.end)
             enqueueWrite(buildPatchChunk(id, html, resolvedOptions))
-          } catch (error) {
-            reportErrorAndAbort(error)
-            return
           }
+        } catch (error) {
+          reportErrorAndAbort(error)
+          return
         }
       }
       maybeFinalize()
@@ -812,11 +854,15 @@ function startStreamingRenderInSession(
 
   const abort = (reason?: unknown) => {
     const abortReason = reason ?? new Error('Stream aborted')
-    if (!closed) {
+    if (!cleaned) {
       closed = true
       writeFailed = true
-      writer.abort(reason)
       cleanup()
+      try {
+        writer.abort(abortReason)
+      } catch {
+        // A broken sink must not prevent readiness promises from rejecting.
+      }
     }
     // Always settle. A late sink error can arrive after finalize() set `closed`
     // but before its (stalled) write chain resolves; rejecting an already-settled
@@ -874,6 +920,7 @@ function startStreamingRenderInSession(
     } else {
       enqueueWrite(shellHtml + streamRuntime)
     }
+    if (writeFailed) return { shellReady, allReady, abort }
     wroteShell = true
     writeSnapshotForScopes(Array.from(__fictGetScopeRegistry().keys()))
     if (shellCarriesTail && tailHtml) {

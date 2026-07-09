@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module'
 import { PassThrough } from 'node:stream'
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { parseHTML } from 'linkedom'
 
 import type { FictNode } from '@fictjs/runtime'
@@ -316,6 +316,109 @@ describe('@fictjs/ssr streaming', () => {
     expect(errors).toHaveLength(1)
     expect(errors[0]).toBeInstanceOf(Error)
     expect((errors[0] as Error).message).toMatch(/Invalid element name/)
+    expect(destroyed).toBe(true)
+  })
+
+  it('aborts when a deferred boundary snapshot cannot be serialized', async () => {
+    const token = createSuspenseToken()
+    const errors: unknown[] = []
+    let ready = false
+    let destroyed = false
+
+    function InvalidSnapshot(): FictNode {
+      const ctx = __fictUseContext()
+      __fictUseSignal(ctx, [() => 'not serializable'], { name: 'value' })
+      return { type: 'span', props: { children: 'invalid snapshot' } }
+    }
+    ;(InvalidSnapshot as { __fictMeta?: unknown }).__fictMeta = {
+      id: 'DeferredInvalidSnapshot@test',
+      resume: 'deferred-invalid-snapshot#resume',
+    }
+
+    function AsyncChild(): FictNode {
+      if (!ready) throw token.token
+      return { type: InvalidSnapshot, props: {} }
+    }
+
+    function App(): FictNode {
+      onDestroy(() => {
+        destroyed = true
+      })
+      return {
+        type: Suspense,
+        props: {
+          fallback: { type: 'span', props: { children: 'Loading' } },
+          children: { type: AsyncChild, props: {} },
+        },
+      }
+    }
+
+    const stream = renderToStream(() => ({ type: App, props: {} }), {
+      mode: 'shell',
+      fullDocument: false,
+      onError: error => errors.push(error),
+    })
+    const readAll = readReadableStream(stream)
+    await Promise.resolve()
+    ready = true
+    token.resolve()
+
+    await expect(withTimeout(readAll, 500, 'deferred snapshot failure')).rejects.toThrow(
+      /Cannot serialize function/,
+    )
+    expect(errors).toHaveLength(1)
+    expect(destroyed).toBe(true)
+  })
+
+  it('errors the stream and cleans up when a writer and onError callback both throw', () => {
+    const NativeReadableStream = globalThis.ReadableStream
+    const reported: unknown[] = []
+    let streamError: unknown
+    let destroyed = false
+
+    class FailingReadableStream {
+      constructor(source: UnderlyingSource<Uint8Array>) {
+        const controller = {
+          desiredSize: 1,
+          enqueue() {
+            throw new Error('writer failed')
+          },
+          close() {},
+          error(reason: unknown) {
+            streamError = reason
+          },
+        } as unknown as ReadableStreamDefaultController<Uint8Array>
+        source.start?.(controller)
+      }
+    }
+
+    vi.stubGlobal('ReadableStream', FailingReadableStream)
+    try {
+      expect(() =>
+        renderToStream(
+          () => {
+            onDestroy(() => {
+              destroyed = true
+            })
+            return { type: 'div', props: { children: 'writer failure' } }
+          },
+          {
+            includeSnapshot: false,
+            fullDocument: false,
+            onError(error) {
+              reported.push(error)
+              throw new Error('error reporter failed')
+            },
+          },
+        ),
+      ).not.toThrow()
+    } finally {
+      vi.stubGlobal('ReadableStream', NativeReadableStream)
+    }
+
+    expect(reported).toHaveLength(1)
+    expect((reported[0] as Error).message).toBe('writer failed')
+    expect(streamError).toEqual(expect.objectContaining({ message: 'error reporter failed' }))
     expect(destroyed).toBe(true)
   })
 

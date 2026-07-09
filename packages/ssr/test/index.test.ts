@@ -143,6 +143,7 @@ describe('@fictjs/ssr', () => {
           () => {
             onDestroy(() => {
               destroyed = true
+              throw new Error('cleanup must not replace serialization failure')
             })
             return 'safe'
           },
@@ -159,6 +160,29 @@ describe('@fictjs/ssr', () => {
       expect(destroyed).toBe(true)
       expect(Object.prototype.hasOwnProperty.call(globals, 'document')).toBe(hadDocument)
       expect(globals.document).toBe(previousDocument)
+    })
+
+    it('tears down a completed render when snapshot serialization fails', () => {
+      let destroyed = false
+
+      function InvalidSnapshot(): FictNode {
+        const ctx = __fictUseContext()
+        __fictUseSignal(ctx, [() => 'not serializable'], { name: 'value' })
+        onDestroy(() => {
+          destroyed = true
+        })
+        return { type: 'span', props: { children: 'unsafe snapshot' } }
+      }
+
+      ;(InvalidSnapshot as { __fictMeta?: unknown }).__fictMeta = {
+        id: 'InvalidSnapshot@test',
+        resume: 'invalid-snapshot#resume',
+      }
+
+      expect(() => renderToString(() => ({ type: InvalidSnapshot, props: {} }))).toThrowError(
+        /Cannot serialize function/,
+      )
+      expect(destroyed).toBe(true)
     })
 
     it('rejects all-ready serialization failures and tears down the render', async () => {
@@ -378,6 +402,48 @@ describe('@fictjs/ssr', () => {
       result.dispose()
       expect(Object.prototype.hasOwnProperty.call(globals, 'document')).toBe(false)
       expect(Object.prototype.hasOwnProperty.call(globals, 'window')).toBe(false)
+    } finally {
+      if (hadDocument) {
+        globals.document = previousDocument
+      } else {
+        delete globals.document
+      }
+      if (hadWindow) {
+        globals.window = previousWindow
+      } else {
+        delete globals.window
+      }
+    }
+  })
+
+  it('restores process DOM globals when explicit disposal throws', () => {
+    const globals = globalThis as Record<string, unknown>
+    const hadDocument = Object.prototype.hasOwnProperty.call(globals, 'document')
+    const hadWindow = Object.prototype.hasOwnProperty.call(globals, 'window')
+    const previousDocument = globals.document
+    const previousWindow = globals.window
+    const sentinelDocument = { sentinel: 'document' }
+    const sentinelWindow = { sentinel: 'window' }
+
+    try {
+      globals.document = sentinelDocument
+      globals.window = sentinelWindow
+
+      const result = renderToDocument(
+        () => {
+          onDestroy(() => {
+            throw new Error('dispose cleanup failed')
+          })
+          return { type: 'div', props: { children: 'cleanup' } }
+        },
+        { exposeGlobals: true, includeSnapshot: false },
+      )
+
+      expect(globals.document).toBe(result.document)
+      expect(globals.window).toBe(result.window)
+      expect(() => result.dispose()).toThrow('dispose cleanup failed')
+      expect(globals.document).toBe(sentinelDocument)
+      expect(globals.window).toBe(sentinelWindow)
     } finally {
       if (hadDocument) {
         globals.document = previousDocument
