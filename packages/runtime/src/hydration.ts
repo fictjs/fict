@@ -7,7 +7,11 @@ interface HydrationContext {
   strictHydration?: boolean | undefined
 }
 
-export type HydrationIssueCode = 'node_missing' | 'node_type_mismatch' | 'text_mismatch'
+export type HydrationIssueCode =
+  | 'node_missing'
+  | 'node_extra'
+  | 'node_type_mismatch'
+  | 'text_mismatch'
 
 export interface HydrationIssue {
   code: HydrationIssueCode
@@ -40,18 +44,26 @@ export function withHydration<T>(
   options: HydrationOptions = {},
 ): T {
   const owner = root.ownerDocument ?? document
-  hydrationStack.push({
+  const context: HydrationContext = {
     cursor: root.firstChild,
     boundary: null,
     owner,
     parent: root,
     onIssue: options.onHydrationIssue,
     strictHydration: options.strictHydration,
-  })
+  }
+  hydrationStack.push(context)
+  let completed = false
   try {
-    return fn()
+    const result = fn()
+    completed = true
+    return result
   } finally {
-    hydrationStack.pop()
+    try {
+      if (completed) removeExtraHydrationNodes(context)
+    } finally {
+      hydrationStack.pop()
+    }
   }
 }
 
@@ -66,18 +78,26 @@ export function withHydrationRange<T>(
   const rangeParent =
     ((end?.parentNode ?? start?.parentNode ?? parent?.parent) as (ParentNode & Node) | null) ??
     owner.createDocumentFragment()
-  hydrationStack.push({
+  const context: HydrationContext = {
     cursor: start,
     boundary: end,
     owner,
     parent: rangeParent,
     onIssue: options.onHydrationIssue ?? parent?.onIssue,
     strictHydration: options.strictHydration ?? parent?.strictHydration,
-  })
+  }
+  hydrationStack.push(context)
+  let completed = false
   try {
-    return fn()
+    const result = fn()
+    completed = true
+    return result
   } finally {
-    hydrationStack.pop()
+    try {
+      if (completed) removeExtraHydrationNodes(context)
+    } finally {
+      hydrationStack.pop()
+    }
   }
 }
 
@@ -180,6 +200,25 @@ export function claimText(value: string, fallback: () => Text): Text {
 
 export function isHydratingActive(): boolean {
   return hydrationStack.length > 0
+}
+
+function removeExtraHydrationNodes(ctx: HydrationContext): void {
+  if (!ctx.cursor || ctx.cursor === ctx.boundary) return
+
+  emitHydrationIssue(ctx, {
+    code: 'node_extra',
+    message: '[fict/hydration] Hydrated DOM contains extra server-rendered nodes.',
+    actual: describeNode(ctx.cursor),
+    node: ctx.cursor,
+  })
+
+  let cursor: Node | null = ctx.cursor
+  while (cursor && cursor !== ctx.boundary) {
+    const next: Node | null = cursor.nextSibling
+    cursor.parentNode?.removeChild(cursor)
+    cursor = next
+  }
+  ctx.cursor = ctx.boundary
 }
 
 function mountFallback(

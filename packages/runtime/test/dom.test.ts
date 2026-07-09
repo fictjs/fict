@@ -642,6 +642,61 @@ describe('DOM Module', () => {
       warnSpy.mockRestore()
     })
 
+    it('reports and removes extra server-rendered nodes', () => {
+      container.innerHTML = '<div>expected</div><span>extra</span><p>also extra</p>'
+      const expected = container.firstChild
+      const extra = container.children[1]
+      const issues: HydrationIssue[] = []
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const teardown = hydrateComponent(
+        () => {
+          const factory = template('<div>expected</div>')
+          factory()
+        },
+        container,
+        { onHydrationIssue: issue => issues.push(issue) },
+      )
+
+      expect(container.childNodes).toHaveLength(1)
+      expect(container.firstChild).toBe(expected)
+      expect(extra?.isConnected).toBe(false)
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          code: 'node_extra',
+          actual: 'span',
+          node: extra,
+        }),
+      )
+
+      teardown()
+      warnSpy.mockRestore()
+    })
+
+    it('fails closed on extra server-rendered nodes in strict hydration', () => {
+      container.innerHTML = '<div>expected</div><span>extra</span>'
+      const issues: HydrationIssue[] = []
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      expect(() =>
+        hydrateComponent(
+          () => {
+            const factory = template('<div>expected</div>')
+            factory()
+          },
+          container,
+          {
+            strictHydration: true,
+            onHydrationIssue: issue => issues.push(issue),
+          },
+        ),
+      ).toThrow('[fict/hydration] Hydrated DOM contains extra server-rendered nodes.')
+
+      expect(container.childNodes).toHaveLength(2)
+      expect(issues).toContainEqual(expect.objectContaining({ code: 'node_extra' }))
+      warnSpy.mockRestore()
+    })
+
     it('preserves claimed multi-root template nodes during hydration', () => {
       container.innerHTML = '<div>one</div><p>two</p>'
       const first = container.firstChild
