@@ -133,11 +133,14 @@ of independent satellites + ignored internal tooling."
       `@fictjs/skill` were first privatized, then migrated into standalone repos
       (`mcp/` and `skill/`). They no longer participate in this monorepo's
       workspace, Changesets config, or Turbo graph.
-- [x] **Step 5 — Preview degradation contracts.** Audited and fully test-backed:
-      all 11 failure modes are implemented + tested. See
-      [preview-degradation-audit.md](./docs/preview-degradation-audit.md): the
-      streaming sink-error hang **G1** is fixed/regression-tested, and **G2** now
-      proves per-scope revive failure does not invalidate sibling scopes.
+- [x] **Step 5 — Preview degradation contracts.** The current failure behavior
+      is audited and test-backed in
+      [preview-degradation-audit.md](./docs/preview-degradation-audit.md),
+      including explicit legacy snapshot migration, one-shot
+      application-owned CSR handoff after loader cleanup, sibling-scope
+      isolation for resume failures, and streaming sink-error cleanup. The
+      contract does not claim automatic CSR or ErrorBoundary routing for QRL
+      failures.
 - [x] **Step 6 — Re-tier docs.** SSR docs (deployment, resume-stability,
       performance, SEO) now carry a maturity banner: `@fictjs/ssr` is a Satellite
       and resume/PPR are Preview. Tier-0 docs (semantics, diagnostics, guarantee

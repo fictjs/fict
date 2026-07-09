@@ -201,27 +201,23 @@ function __fictRegisterScope(ctx, host, type, props) {
 
 ### 3.3 State Serialization
 
-```typescript
-function serializeSlots(ctx: HookContext): SlotSnapshot[] {
-  const slots: SlotSnapshot[] = []
+The runtime owns the codec in `packages/runtime/src/resume.ts`; architecture
+docs do not duplicate its implementation. Stable invariants are:
 
-  for (let i = 0; i < ctx.slots.length; i++) {
-    const value = ctx.slots[i]
+- every current writer emits schema v2;
+- scope slots and props use the same recursive value codec;
+- literal objects containing `__t` are escaped so they cannot collide with a
+  marker;
+- shared/circular references, array holes, symbol keys, and supported built-ins
+  preserve their semantics;
+- unsupported objects and functions inside value-bearing containers fail
+  serialization instead of silently changing value semantics;
+- function-valued component-prop properties and function-valued raw slots are
+  intentionally omitted by the existing compiler ABI.
 
-    if (isSignal(value)) {
-      // Signal: Serialize current value
-      slots.push([i, 'sig', serializeValue(value())])
-    } else if (isStoreProxy(value)) {
-      // Store: Serialize entire object
-      slots.push([i, 'store', serializeValue(unwrapStore(value))])
-    } else {
-      // Raw value
-      slots.push([i, 'raw', serializeValue(value)])
-    }
-  }
-
-  return slots
-}
+Historical v1 writers used incompatible raw-props and encoded-props dialects.
+Only an explicit migration selected by deployment history may accept them. See
+the [SSR / Resume Stability Contract](../../../docs/ssr-resume-stability-contract.md).
 
 ### 3.4 Streaming SSR (Shell-first)
 
@@ -234,99 +230,40 @@ Key pieces:
 - **Patch chunks**: `<template data-fict-suspense="ID">...</template><script>__FICT_STREAM.apply("ID")</script>`
 - **Client patcher**: small runtime injected in the shell to apply patches.
 
-function serializeValue(value: unknown): unknown {
-  // Handle special types
-  if (value === undefined) return { __t: 'u' }
-  if (Number.isNaN(value)) return { __t: 'n' }
-  if (value === Infinity) return { __t: '+i' }
-  if (value === -Infinity) return { __t: '-i' }
-  if (value instanceof Date) return { __t: 'd', v: value.getTime() }
-  if (value instanceof Map) return { __t: 'm', v: [...value.entries()] }
-  if (value instanceof Set) return { __t: 's', v: [...value] }
-  if (value instanceof RegExp) return { __t: 'r', v: { s: value.source, f: value.flags } }
-  if (typeof value === 'bigint') return { __t: 'b', v: value.toString() }
-
-  // Recursively handle objects and arrays
-  if (Array.isArray(value)) return value.map(serializeValue)
-  if (typeof value === 'object' && value !== null) {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, serializeValue(v)]))
-  }
-
-  return value
-}
-```
+Incremental snapshot scripts use the same v2 schema as the initial snapshot.
+A cached shell and its deferred patches must remain on one build and schema.
 
 ## 4. Client Layer Details
 
 ### 4.1 Loader Initialization
 
-```typescript
-function installResumableLoader(options) {
-  // 1. Parse snapshot
-  const snapshotEl = document.getElementById('__FICT_SNAPSHOT__')
-  if (snapshotEl?.textContent) {
-    const state = JSON.parse(snapshotEl.textContent)
-    __fictSetSSRState(state)
-  }
+`packages/runtime/src/loader.ts` follows this validation-first sequence:
 
-  // 2. Enable resumable mode
-  __fictEnableResumable()
-
-  // 3. Register event delegation
-  const events = options.events ?? DelegatedEvents
-  for (const eventName of events) {
-    document.addEventListener(eventName, handleResumableEvent, true)
-  }
-
-  // 4. Set up prefetch
-  if (options.prefetch !== false) {
-    setupPrefetch(document, options.prefetch)
-  }
-}
+```text
+initial and incremental snapshot scripts
+  -> parse JSON
+  -> require v2 or run an explicitly registered migration
+  -> validate state and scope shape
+  -> replace/merge accepted scopes
+  -> install snapshot observer, delegated events, and prefetch
 ```
+
+Rejected payloads are never merged. When `onSnapshotRejected` is configured,
+the loader removes its observer/listeners/prefetch state and clears the affected
+resumable state before invoking the application callback once. The application
+then mounts CSR. `onSnapshotIssue` alone is telemetry and never mounts a root.
 
 ### 4.2 Event Handling Process
 
-```typescript
-async function handleResumableEvent(event) {
-  // 1. Traverse event path
-  const path = event.composedPath()
-  for (const node of path) {
-    const qrl = node.getAttribute(`on:${event.type}`)
-    if (!qrl) continue
+For each delegated interaction the loader resolves the nearest `on:*` QRL,
+requires an accepted scope snapshot, restores the scope, imports/runs its resume
+function once, then imports/runs the handler. A missing scope emits
+`scope_snapshot_missing`; without an application fallback callback that handler
+is skipped and scanning may continue to a valid ancestor.
 
-    // 2. Get scope info
-    const host = node.closest('[data-fict-s]')
-    const scopeId = host.getAttribute('data-fict-s')
-
-    // 3. Restore snapshot data
-    const snapshot = __fictGetSSRScope(scopeId)
-    if (snapshot) {
-      __fictEnsureScope(scopeId, host, snapshot)
-    }
-
-    // 4. First interaction requires hydrate
-    if (!hydratedScopes.has(scopeId)) {
-      const resumeQrl = host.getAttribute('data-fict-h')
-      const { url, exportName } = parseQrl(resumeQrl)
-
-      // Load and execute resume function
-      await import(resolveModuleUrl(url))
-      const resumeFn = __fictGetResume(exportName)
-      await resumeFn(scopeId, host)
-
-      hydratedScopes.add(scopeId)
-    }
-
-    // 5. Load and execute handler
-    const { url, exportName } = parseQrl(qrl)
-    const mod = await import(resolveModuleUrl(url))
-    await mod[exportName](scopeId, event, node)
-
-    return
-  }
-}
-```
+Resume and handler import/export/execution failures emit structured issue codes
+and become no-ops. The loader does not promise ErrorBoundary routing or
+automatic CSR for QRL failures.
 
 ### 4.3 Prefetch Strategy
 
@@ -383,62 +320,28 @@ function prefetchQrl(qrl) {
 
 ### 4.4 State Restoration
 
-```typescript
-function __fictUseLexicalScope(scopeId, varNames) {
-  const scope = resumedScopes.get(scopeId)
-  if (!scope) {
-    throw new Error(`Scope ${scopeId} not found`)
-  }
+State restoration is owned by `packages/runtime/src/resume.ts`. Accepted v2
+scope snapshots are validated before they enter runtime state, then restored as
+one context so slots, props, variable indexes, shared references, and circular
+references use the same reference table.
 
-  return varNames.map(name => {
-    const slotIndex = scope.ctx.slotMap[name]
-    return scope.ctx.slots[slotIndex]
-  })
-}
+The stable flow is:
 
-function __fictRestoreSignal(snapshot, index) {
-  const [, type, value] = snapshot.slots.find(([i]) => i === index)
-
-  if (type === 'sig') {
-    return createSignal(deserializeValue(value))
-  }
-  if (type === 'store') {
-    return createStore(deserializeValue(value))
-  }
-  return deserializeValue(value)
-}
-
-function deserializeValue(value) {
-  if (!value || typeof value !== 'object') return value
-
-  if ('__t' in value) {
-    switch (value.__t) {
-      case 'u':
-        return undefined
-      case 'n':
-        return NaN
-      case '+i':
-        return Infinity
-      case '-i':
-        return -Infinity
-      case 'd':
-        return new Date(value.v)
-      case 'm':
-        return new Map(value.v.map(([k, v]) => [deserializeValue(k), deserializeValue(v)]))
-      case 's':
-        return new Set(value.v.map(deserializeValue))
-      case 'r':
-        return new RegExp(value.v.s, value.v.f)
-      case 'b':
-        return BigInt(value.v)
-    }
-  }
-
-  if (Array.isArray(value)) return value.map(deserializeValue)
-
-  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, deserializeValue(v)]))
-}
+```text
+validated v2 ScopeSnapshot
+  -> deserialize slots and props with one reference map
+  -> create or restore signal/store/raw slots
+  -> register the resumed scope and its host
+  -> expose lexical variables by the serialized slot index map
 ```
+
+The codec includes marker collision escaping, negative zero, invalid dates,
+RegExp `lastIndex`, global/well-known symbols, symbol-keyed and null-prototype
+objects, array holes, and shared/circular references. Keeping a second
+deserialize implementation in this document would be unsafe; the source type
+`SerializedMarker`, runtime codec tests, and the
+[SSR / Resume Stability Contract](../../../docs/ssr-resume-stability-contract.md)
+are the verification sources.
 
 ## 5. Manifest System
 
@@ -491,6 +394,11 @@ function resolveModuleUrl(url: string): string {
   return url // Return directly in dev mode
 }
 ```
+
+The SSR server, emitted HTML/snapshot, client loader, manifest, QRL chunks, and
+external streaming runtime form one atomic build. A fixed-name manifest must be
+revalidated and must not use stale-while-revalidate independently from HTML.
+See the [SSR Deployment Guide](../../../docs/ssr-deployment.md).
 
 ## 6. Performance Features
 

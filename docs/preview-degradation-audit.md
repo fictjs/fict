@@ -1,64 +1,46 @@
-# Preview Degradation — Coverage Audit (Step 5)
+# Preview Degradation — Coverage Audit
 
-> Evidence ledger for the degradation contract defined in [PREVIEW.md](./PREVIEW.md).
-> For each failure mode it records the **actual implemented behavior** (file:line)
-> and the **test** that pins it, replacing PREVIEW.md's "Default if unspecified"
-> placeholders with verified reality.
->
-> **Headline:** the contract is far more real than the placeholders implied —
-> **all 11 rows are implemented _and_ tested.** The streaming **sink-error hang**
-> (G1) is fixed and regression-tested, and the per-scope revive isolation
-> assertion (G2) is now pinned.
+> Evidence ledger for the degradation contract in [PREVIEW.md](./PREVIEW.md).
+> It records current behavior and durable verification paths. The loader does
+> not mount CSR automatically: fallback is explicitly application-owned through
+> `onSnapshotRejected`.
 
-This corresponds to [SCOPE.md](../SCOPE.md) migration **Step 5**. A row is only
-"done" for graduation when both **Impl** and **Test** are ✅.
+This audit corresponds to [SCOPE.md](../SCOPE.md) migration Step 5. Preview
+graduation still requires every row to remain implemented and tested, plus the
+other gates in PREVIEW.md.
 
 ## Resume failure modes
 
-| #   | Failure (PREVIEW row)                         | Implemented behavior                                                                                                                                                                                           | Where                                                | Test                                                                                                                   | Status          |
-| --- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | --------------- |
-| R1  | Snapshot missing / malformed JSON             | `JSON.parse` in try/catch → `snapshot_parse_error` issue; state stays `null` → app client-renders. Never throws to user.                                                                                       | `runtime/src/loader.ts` (`parseSnapshotText`, ~L416) | `runtime/test/loader.test.ts:208` (`'{not-valid-json'` → asserts `snapshot_parse_error` + `snapshot_invalid_shape`)    | ✅ impl ✅ test |
-| R2  | Snapshot schema version mismatch              | Version checked vs `FICT_SSR_SNAPSHOT_SCHEMA_VERSION`; tries `snapshotMigrations`, else `snapshot_unsupported_version` (fail-closed). Migration guards cycles / invalid / non-advancing versions.              | `loader.ts` ~L442–540 (`migrateSnapshotState`)       | `loader.test.ts` (`snapshot_unsupported_version`, `snapshot_migration_failed`)                                         | ✅ impl ✅ test |
-| R3  | Scope id in DOM but absent from snapshot      | `scope_snapshot_missing` issue; that scope re-inits, siblings keep resumed state.                                                                                                                              | `loader.ts` (code `scope_snapshot_missing`)          | `loader.test.ts` (`scope_snapshot_missing`)                                                                            | ✅ impl ✅ test |
-| R4  | Scope deserializes but a slot fails to revive | `resume_failed` / `resume_import_failed` / `resume_function_missing` issues; failure is reported per scope. (SSR-side signal-read errors are also swallowed, `resume.ts:362`.)                                 | `loader.ts` (codes), `resume.ts:358–366`             | `loader.test.ts` (`resume_failed`, `resume_import_failed`, sibling-isolation assertion)                                | ✅ impl ✅ test |
-| R5  | DOM/snapshot structural mismatch during claim | Stop at mismatch → `node_missing` / `node_type_mismatch` / `text_mismatch` issue → `mountFallback` mounts the fallback subtree; `text_mismatch` repairs `.data`. `onHydrationIssue` + `strictHydration` throw. | `runtime/src/hydration.ts:84–254`                    | `runtime/test/resume-lifecycle.test.ts` (`node_type_mismatch`, `text_mismatch`, `onHydrationIssue`, `strictHydration`) | ✅ impl ✅ test |
-| R6  | QRL module fails to load on interaction       | `handler_import_failed` / `handler_missing` / `handler_failed`; logged via `console.error`, does not crash the page.                                                                                           | `loader.ts` ~L760–767 (codes L234–236)               | `loader.test.ts` (`handler_failed`, `handler_import_failed`)                                                           | ✅ impl ✅ test |
+| #   | Failure                                     | Implemented behavior                                                                                                                                                                                       | Verification                                                                                                                                                                                                                                                                                                  |
+| --- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R1  | Initial snapshot absent or malformed        | An absent script is not interpreted as state or reported as an eager error. Malformed JSON emits `snapshot_parse_error`; invalid shape emits `snapshot_invalid_shape`. Rejected payloads are never merged. | `packages/runtime/src/loader.ts` (`parseSnapshotText`, `normalizeSnapshotState`); `packages/runtime/test/loader.test.ts` (`does not treat an absent initial snapshot as state or an eager error`, `reports parse and shape errors for invalid snapshots`)                                                     |
+| R2  | Snapshot version or legacy dialect mismatch | The v2 writer is accepted. Missing `v` and ambiguous v1 fail closed unless the exact writer dialect is selected through an explicit migration. No codec heuristic is used.                                 | `packages/runtime/test/resume-lifecycle.test.ts` (`writes the unambiguous v2 snapshot schema`); `packages/runtime/test/loader.test.ts` (unversioned/v1 rejection, raw-props, encoded-props, and sentinel migration tests)                                                                                     |
+| R3  | Migration fails                             | Cyclic, invalid, non-advancing, and thrown migration steps fail closed with `snapshot_migration_failed`. A missing step cannot migrate the payload and is reported as `snapshot_unsupported_version`.      | `packages/runtime/src/loader.ts` (`migrateSnapshotState`); `packages/runtime/test/loader.test.ts` (`reports failed snapshot schema migrations and keeps them fail-closed`, guard-output cases, and `reports a missing migration step as an unsupported snapshot version`)                                     |
+| R4  | Rejected snapshot needs CSR                 | If configured, `onSnapshotRejected` runs once after the loader disengages and clears its resumable state. The application mounts CSR. Async callback failure emits `snapshot_fallback_failed`.             | `packages/runtime/test/loader.test.ts` (`disengages resumability before invoking a single client-render fallback`, `reports rejected client-render fallbacks without unhandled rejections`); `packages/ssr/test/e2e-resumable.test.ts` (`hands rejected SSR snapshots to an application-owned client render`) |
+| R5  | Scope id exists in DOM but not snapshot     | Emits `scope_snapshot_missing`. With the rejection callback, the loader disengages and hands off to CSR. Without it, that handler is skipped and a valid ancestor handler may still run.                   | `packages/runtime/test/loader.test.ts` (`falls back to client rendering when an event targets a missing scope`, `continues event path scanning when a nested scope snapshot is missing`)                                                                                                                      |
+| R6  | Serialized scope value cannot be revived    | Emits `snapshot_invalid_shape` and does not run that scope's handler. It uses the common application-owned rejection path when `onSnapshotRejected` is configured.                                         | `packages/runtime/test/loader.test.ts` (`reports malformed serialized props without running their handlers`); common rejection behavior is covered by R4                                                                                                                                                      |
+| R7  | Resume module/export/function fails         | Emits `resume_import_failed`, `resume_function_missing`, or `resume_failed`; the handler does not run and sibling scopes remain usable. No ErrorBoundary or automatic CSR routing is claimed.              | `packages/runtime/test/loader.test.ts` (resume import/missing/function failure tests, `keeps sibling scopes resumable when one resume function fails`)                                                                                                                                                        |
+| R8  | Handler module/export/function fails        | Emits `handler_import_failed`, `handler_missing`, or `handler_failed`; the interaction becomes a no-op without crashing the page. No ErrorBoundary or automatic CSR routing is claimed.                    | `packages/runtime/test/loader.test.ts` (handler import/missing/thrown tests)                                                                                                                                                                                                                                  |
+| R9  | DOM/snapshot claim mismatch                 | Reports node-missing, node-type, or text mismatch through `onHydrationIssue`; mounts or repairs the fallback subtree. `strictHydration` reports and then throws.                                           | `packages/runtime/src/hydration.ts`; `packages/runtime/test/resume-lifecycle.test.ts` (node-type/text mismatch, fallback, `onHydrationIssue`, and `strictHydration` tests)                                                                                                                                    |
 
 ## Streaming failure modes
 
-| #   | Failure (PREVIEW row)                         | Implemented behavior                                                                                                                                                                    | Where                                                                      | Test                                                                       | Status                         |
-| --- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------ |
-| S1  | Client disconnect / `signal` abort mid-stream | `abort(reason)` runs cleanup, rejects `shellReady`/`allReady`, drains backpressure; `ReadableStream.cancel` wired to abort.                                                             | `ssr/src/render-core.ts` (`abort`, `cancel`)                               | `ssr/test/streaming.test.ts` (abort / disconnect)                          | ✅ impl ✅ test                |
-| S2  | A Suspense boundary rejects after shell sent  | Routed to `onError` / nearest `ErrorBoundary`; other boundaries keep resolving.                                                                                                         | `render-core.ts` (`hooks.onError`), `runtime/src/suspense.ts` (`onReject`) | `ssr/test/streaming.test.ts`, `runtime/test/suspense.test.ts` (`onReject`) | ✅ impl ✅ test                |
-| S3  | Backpressure: consumer slower than producer   | Honors `desiredSize`; suspends writes via `readyResolvers` until `pull`; bounded.                                                                                                       | `render-core.ts` ~L279–348                                                 | `ssr/test/streaming.test.ts` (backpressure)                                | ✅ impl ✅ test                |
-| S4  | Write throws after shell flushed              | Sink errors route via the pipe bridge `onError` → render `abort` (rejects shell/all, flushes the stalled drain so cleanup runs); `handleWriteError` also guards injected-writer throws. | `render-core.ts` ~L549–599 (`handleWriteError`/`enqueueWrite`)             | `streaming.test.ts` ('downstream sink errors')                             | ✅ impl ✅ test — **G1 fixed** |
-| S5  | CSP active (`scriptNonce`)                    | All injected `<script>` carry the nonce; `external` runtime mode for strict CSP.                                                                                                        | `render-core.ts` (`renderNonceAttribute`, `buildStreamRuntimeScript`)      | `ssr/test/streaming.test.ts` (`nonce`, `scriptNonce`)                      | ✅ impl ✅ test                |
+| #   | Failure                               | Implemented behavior                                                                                                                                               | Verification                                                                                       |
+| --- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| S1  | Client disconnect or abort            | `abort(reason)` runs cleanup, rejects readiness promises when pending, releases backpressure, and is connected to `ReadableStream.cancel`.                         | `packages/ssr/test/streaming.test.ts` (abort and disconnect tests)                                 |
+| S2  | Suspense boundary rejects after shell | Routes through stream `onError` and the runtime boundary rejection path while other boundaries continue.                                                           | `packages/ssr/test/streaming.test.ts`; `packages/runtime/test/suspense.test.ts`                    |
+| S3  | Consumer backpressure                 | Web and Node writers pause until pull/drain instead of growing an unbounded queue.                                                                                 | `packages/ssr/test/streaming.test.ts` (backpressure tests)                                         |
+| S4  | Downstream write fails                | The pipe bridge aborts the render, releases stalled drains, and avoids double-close behavior.                                                                      | `packages/ssr/test/streaming.test.ts` (`aborts the pipeable render when a downstream sink errors`) |
+| S5  | Strict CSP / Trusted Types            | Generated scripts carry the nonce. External observer mode uses the published classic runtime and avoids `innerHTML`, `insertAdjacentHTML`, `eval`, and `Function`. | `packages/ssr/test/streaming.test.ts` (nonce, external runtime, and Trusted Types sink tests)      |
 
-## Gaps
+## Remaining graduation work
 
-- **G1 — Streaming sink-error hang — FIXED.** Found while writing the S4 test:
-  `handleWriteError` is effectively unreachable via the public API, but the
-  reachable failure — a piped `Writable` that errors mid-stream — **hung** the
-  render (`allReady` never settled; after the sink unpiped, the source
-  `PassThrough` backed up and the write chain never drained). **Fix:** the pipe
-  bridge now takes an `onError` channel wired to the render's `abort`
-  (`render-core.ts` `renderToPipeableStream`), and flushes pending backpressure
-  drains on sink-error/abort so the stalled write chain releases; `abort` now
-  settles `shellReady`/`allReady` even when `finalize()` already set `closed`.
-  Regression test: `ssr/test/streaming.test.ts` › 'aborts the pipeable render
-  when a downstream sink errors' (was a 5 s timeout; now ~8 ms).
-- **G2 — Per-scope revive isolation assertion — FIXED.** `loader.test.ts` now
-  proves that a failing scope's `resume_failed` path does not invalidate a
-  sibling scope: after `sBad` fails to resume, `sGood` still resumes, preserves
-  its own host state, and runs its handler.
-
-## Graduation impact
-
-Per PREVIEW.md's graduation gate, the "degradation contract implemented and
-tested" criterion is now **met for every row (resume R1–R6, streaming S1–S5)**
-after G1 and G2 were fixed. The degradation-contract bar is fully test-backed —
-one of the bars that keeps `renderToPartial` / resume in Preview is cleared.
-
-> Note: graduation also requires the _other_ gate items (frozen shape, release-gate
-> matrix rows, frozen snapshot-schema commitment). This audit only covers the
-> degradation-contract bar.
+- The rejection and migration behavior is implemented and test-backed,
+  including an SSR-to-client-render E2E path.
+- A maintained runnable example still needs to demonstrate one failure path;
+  unit and E2E tests do not satisfy that separate PREVIEW.md example gate.
+- The long-term snapshot support window is not frozen. v2 is the current
+  contract, while accepted legacy formats remain explicit deployment choices.
+- Hosted deployment certification must verify atomic build rollout, cache
+  invalidation, and rollback as described in
+  [SSR Deployment Guide](./ssr-deployment.md).

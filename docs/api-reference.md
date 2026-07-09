@@ -1947,6 +1947,87 @@ function renderToPipeableStream(
 For Edge runtimes, prefer `renderToStream()`. Use `renderToPartial()` from
 `@fictjs/ssr/experimental` only for Preview PPR workflows.
 
+### installResumableLoader
+
+The client loader is exported from both `fict/loader` and
+`@fictjs/runtime/loader`:
+
+```typescript
+function installResumableLoader(options?: ResumableLoaderOptions): void
+
+interface ResumableLoaderOptions {
+  document?: Document
+  snapshotScriptId?: string
+  events?: string[]
+  snapshotMigrations?: Record<number, SnapshotMigration>
+  onSnapshotIssue?: (issue: SnapshotIssue) => void
+  onSnapshotRejected?: (issue: SnapshotIssue) => void | Promise<void>
+  prefetch?: PrefetchStrategy | false
+}
+
+type SnapshotMigration = (
+  snapshot: Record<string, unknown>,
+  context: {
+    fromVersion: number
+    toVersion: number
+    source: string
+  },
+) => unknown
+
+type LegacySnapshotFormat = 'raw-props' | 'encoded-props'
+
+function createLegacySnapshotMigration(format: LegacySnapshotFormat): SnapshotMigration
+const UNVERSIONED_SNAPSHOT_MIGRATION_KEY: 0
+
+type SnapshotIssueCode =
+  | 'snapshot_parse_error'
+  | 'snapshot_invalid_shape'
+  | 'snapshot_unsupported_version'
+  | 'snapshot_migration_failed'
+  | 'snapshot_fallback_failed'
+  | 'scope_snapshot_missing'
+  | 'resume_import_failed'
+  | 'resume_function_missing'
+  | 'resume_failed'
+  | 'handler_import_failed'
+  | 'handler_missing'
+  | 'handler_failed'
+
+interface SnapshotIssue {
+  code: SnapshotIssueCode
+  message: string
+  source: string
+  expectedVersion: number
+  actualVersion?: number
+  scopeId?: string
+  qrl?: string
+  url?: string
+  exportName?: string
+  eventType?: string
+  error?: unknown
+}
+
+interface PrefetchStrategy {
+  visibility?: boolean
+  visibilityMargin?: string
+  hover?: boolean
+  hoverDelay?: number
+}
+```
+
+The current writer emits schema v2. Missing `v` and v1 snapshots are rejected
+unless the application explicitly installs the migration matching its deployed
+legacy writer. Format detection is intentionally not heuristic.
+
+`onSnapshotIssue` reports diagnostics only. If `onSnapshotRejected` is
+configured, the loader disengages before invoking it once; the application is
+responsible for mounting its CSR root. Callback failure is reported as
+`snapshot_fallback_failed`. Without this callback, Fict never mounts CSR
+automatically.
+
+See [SSR / Resume Stability Contract](./ssr-resume-stability-contract.md) for
+the historical writer map, complete issue-code contract, and deployment rules.
+
 ---
 
 ## More Resources

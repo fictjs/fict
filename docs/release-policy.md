@@ -70,6 +70,30 @@ The release PR should include the verification command output or CI link for:
   or optimizer behavior changed
 - `pnpm size` when runtime or public entrypoints changed
 
+## Snapshot Schema Release Gate
+
+Any snapshot schema, value codec, migration, or rejection behavior change must
+include all of the following:
+
+1. Changesets for every user-visible owner, including `@fictjs/runtime`,
+   `@fictjs/ssr`, and `fict` when its loader bridge changes.
+2. A release note naming the writer version, the versions rejected by default,
+   and every explicitly supported legacy dialect.
+3. Tests for current output, missing-version and old-version rejection, each
+   accepted migration, and the application-owned `onSnapshotRejected` CSR path.
+4. `pnpm test:ssr-matrix` output, including the SSR-to-client fallback E2E.
+5. An atomic deployment plan that pins SSR server, HTML/snapshot, client
+   loader, manifest, QRL chunks, PPR patches, and external stream runtime to one
+   build ID.
+6. A purge plan for CDN HTML, PPR/ISR, KV/pre-rendered artifacts, and
+   service-worker document/manifest caches.
+7. A rollback plan that switches the full compatibility unit and purges
+   derived HTML again; rolling back only the server or one package is invalid.
+
+Explicit legacy migrations are deployment-specific bridges. Release notes must
+say whether cached writers require `raw-props` or `encoded-props`; they must not
+suggest choosing from payload shape.
+
 ## API Stability Labels
 
 Use the stability tiers from `docs/api-freeze-v1.md`:

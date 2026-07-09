@@ -53,12 +53,11 @@ Internal tiers. For the current coverage of the degradation contract below
 
 ## Current Preview surface
 
-| API / capability                           | Host package                       | Why still Preview                                                                                                                                                           |
-| ------------------------------------------ | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `renderToPartial` (partial prerendering)   | `@fictjs/ssr/experimental`         | Return shape (`{ shell, stream, … }`) not frozen.                                                                                                                           |
-| Resumable handlers / QRL extraction        | `@fictjs/compiler` + `@fictjs/ssr` | Not a stable Qwik-compatible contract.                                                                                                                                      |
-| SSR snapshot schema (`data-fict-snapshot`) | `@fictjs/runtime`+ `@fictjs/ssr`   | A version field (`SSRState.v`) and a `snapshotMigrations` hook (runtime `loader.ts`) already exist; the cross-version **stability/migration commitment** is not yet frozen. |
-| `fict/experimental` exports                | `fict`                             | Staging area; contents change freely.                                                                                                                                       |
+| API / capability                           | Host package                       | Why still Preview                                                                                                                                    |
+| ------------------------------------------ | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `renderToPartial` (partial prerendering)   | `@fictjs/ssr/experimental`         | Return shape (`{ shell, stream, … }`) not frozen.                                                                                                    |
+| Resumable handlers / QRL extraction        | `@fictjs/compiler` + `@fictjs/ssr` | Not a stable Qwik-compatible contract.                                                                                                               |
+| SSR snapshot schema (`data-fict-snapshot`) | `@fictjs/runtime` + `@fictjs/ssr`  | The v2 writer, explicit legacy migrations, and application-owned rejection callback exist; the long-term cross-version support window is not frozen. |
 
 ## Graduation gate (Preview → Stable)
 
@@ -71,9 +70,9 @@ exit criterion that keeps Preview from becoming a permanent limbo.
       [ssr-runtime-matrix](./ssr-runtime-matrix.md) /
       [tooling-runtime-matrix](./tooling-runtime-matrix.md) pass — including
       CSP, stream abort, backpressure, and edge runtime where applicable.
-- [ ] **Snapshot schema commitment frozen** (for resume/SSR): `v` field +
-      `snapshotMigrations` already exist — freeze and document the
-      migration/invalidation rule plus a back-compat window.
+- [ ] **Snapshot schema commitment frozen** (for resume/SSR): v2, explicit
+      `snapshotMigrations`, and invalidation behavior are documented; a
+      long-term back-compat support window still needs to be frozen.
 - [ ] At least one maintained example exercises the happy path **and** one
       failure path.
 
@@ -91,14 +90,22 @@ behavior for each failure below.
 
 ### Resume failure modes
 
-| Failure                                             | Required behavior                                                                                           | Default if unspecified |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------- |
-| Snapshot missing / malformed JSON                   | Fall back to client render (CSR) for the affected root; emit a single dev warning; **never throw to user**. | Full CSR fallback      |
-| Snapshot schema version mismatch (`v` newer/older)  | Invalidate snapshot; CSR fallback for affected scopes only; do not attempt partial deserialize.             | Full CSR fallback      |
-| Scope id present in DOM but absent from snapshot    | Hydrate that scope from scratch (treat as fresh mount); keep sibling scopes resumed.                        | Per-scope re-init      |
-| Scope deserializes but a slot value fails to revive | Invalidate **only that scope**; re-run it; log which slot/type failed.                                      | Per-scope invalidate   |
-| DOM/snapshot structural mismatch during claim       | Stop claiming at the mismatch; mount fallback subtree; surface a `hydration` diagnostic.                    | Subtree remount        |
-| QRL module fails to load on interaction             | Surface to nearest `ErrorBoundary`; if none, log and no-op the handler (do not crash the page).             | ErrorBoundary / no-op  |
+| Failure                                                 | Required behavior                                                                                                                                                                                             | Default without an application callback                  |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| Initial snapshot script is absent                       | Do not guess state. A later interaction whose scope is unavailable reports `scope_snapshot_missing`; applications that require eager CSR should detect the missing script before installing the loader.       | No eager error; affected resumable handler cannot run    |
+| Snapshot JSON malformed / shape invalid                 | Reject without merging. Report one structured issue. If `onSnapshotRejected` exists, disengage the loader before invoking the application-owned CSR callback once. Never throw the parse failure to the user. | Report and keep the rejected payload out of active state |
+| Snapshot schema version mismatches or migration fails   | Fail closed; never partially deserialize or infer a legacy codec. An explicit matching migration may accept a known writer. Otherwise use the same application-owned rejection path.                          | Report and keep the rejected payload out of active state |
+| Scope id is present in DOM but absent from the snapshot | Report `scope_snapshot_missing`. With `onSnapshotRejected`, disengage and invoke the application's CSR callback. Without it, skip that handler; event-path scanning may continue to a valid ancestor scope.   | Skip the affected handler                                |
+| Serialized scope state cannot be revived                | Report `snapshot_invalid_shape`; do not execute its handler. With `onSnapshotRejected`, use the application-owned CSR path.                                                                                   | Skip the affected handler                                |
+| Resume module/export/function fails on interaction      | Emit `resume_import_failed`, `resume_function_missing`, or `resume_failed`; do not run the handler. Keep unrelated scopes usable. No ErrorBoundary routing or automatic CSR is promised.                      | Structured diagnostic and no-op                          |
+| Handler module/export/function fails on interaction     | Emit `handler_import_failed`, `handler_missing`, or `handler_failed`; do not crash the page. No ErrorBoundary routing or automatic CSR is promised.                                                           | Structured diagnostic and no-op                          |
+| DOM/snapshot structural mismatch during hydration claim | Stop claiming at the mismatch; mount the hydration fallback subtree; surface an `onHydrationIssue` diagnostic.                                                                                                | Subtree remount                                          |
+
+`onSnapshotIssue` is telemetry-only. `onSnapshotRejected` is the explicit
+application integration point for CSR: Fict removes the loader's listeners,
+snapshot observer, prefetch work, and affected resumable state before calling
+it. The callback may be async and is invoked once; callback failure is reported
+as `snapshot_fallback_failed`.
 
 ### Streaming failure modes
 
@@ -115,5 +122,6 @@ behavior for each failure below.
 - Each row above is a test case, not a doc sentence. Prefer driving them through
   the existing `@fictjs/ssr` test harness and the runtime stress budgets
   (`pnpm guardrails:runtime`).
-- Snapshot-schema changes must include a fixture at the **old** version proving
-  the mismatch path degrades, not crashes.
+- Snapshot-schema changes must include fixtures for the **old** version proving
+  default rejection, every supported explicit migration dialect, and the
+  application-owned CSR path.

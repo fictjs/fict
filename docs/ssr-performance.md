@@ -67,12 +67,27 @@ Target:
 
 ### For shell-first / partial
 
-- cache shell HTML aggressively (CDN)
-- stream deferred patches dynamically when required
+- cache only public, non-personalized shells whose cache key pins the route,
+  build ID, and snapshot schema
+- keep every deferred patch on the same build/schema as its shell
+- retain hashed loader and QRL assets for at least the maximum shell and
+  service-worker TTL
 
 ### For mostly static routes
 
-- pre-render once, serve from edge cache with revalidation
+- pre-render once and serve from edge cache only when the embedded snapshot has
+  no user-specific or authorization-derived data
+
+### For personalized routes
+
+- use `private, no-store` for HTML containing personalized snapshot state
+- never let a fixed-name manifest use stale-while-revalidate independently
+  from the HTML
+
+Cache correctness is part of resumability correctness: an old shell paired with
+a new loader, manifest, or patch stream can reject its snapshot or load the
+wrong QRL. Follow the atomic rollout, purge, and rollback procedure in the
+[SSR Deployment Guide](./ssr-deployment.md).
 
 ## 6) Runtime Cost on Server
 
@@ -110,4 +125,6 @@ function getSnapshotBytes(doc: Document): number {
 - Suspense boundaries map to real async islands
 - Compression enabled
 - CDN cache policy verified
+- HTML, manifest, loader, QRL chunks, and PPR patches pinned to one build ID
+- Schema changes purge CDN/PPR/ISR/KV/pre-rendered/service-worker document caches
 - Route-level metrics dashboard in place

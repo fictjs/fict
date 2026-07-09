@@ -23,6 +23,66 @@ You can visit [Fict](https://github.com/fictjs/fict) for more documentation.
 - `@fictjs/runtime/loader`: SSR/resume loader entrypoint.
 - `@fictjs/runtime/internal`: compiler ABI for generated code only; do not import by hand.
 
+## Resumable Snapshot Loader
+
+The current SSR writer emits snapshot schema v2. The loader rejects missing
+versions, v1, and other unsupported versions by default; it never guesses which
+historical value codec produced cached HTML.
+
+Applications that intentionally keep old SSR output can opt in to the exact
+writer family they deployed:
+
+```ts
+import {
+  UNVERSIONED_SNAPSHOT_MIGRATION_KEY,
+  createLegacySnapshotMigration,
+  installResumableLoader,
+} from '@fictjs/runtime/loader'
+
+installResumableLoader({
+  snapshotMigrations: {
+    // Pick only the dialect that matches the deployed v1 writer:
+    1: createLegacySnapshotMigration('encoded-props'),
+
+    // Optional for a known unversioned raw-props writer cohort:
+    [UNVERSIONED_SNAPSHOT_MIGRATION_KEY]: createLegacySnapshotMigration('raw-props'),
+  },
+})
+```
+
+Historical writer families:
+
+| Writer          | Key                                  | Format          |
+| --------------- | ------------------------------------ | --------------- |
+| v0.5-v0.8       | `UNVERSIONED_SNAPSHOT_MIGRATION_KEY` | `raw-props`     |
+| v0.9-v0.21, v1  | `1`                                  | `raw-props`     |
+| v0.22-v0.26, v1 | `1`                                  | `encoded-props` |
+
+Do not select a format from payload shape. In v1, `{ "__t": "u" }` can be
+either literal user data or the encoded form of `undefined`.
+
+Snapshot rejection fallback is application-owned:
+
+```ts
+installResumableLoader({
+  onSnapshotIssue: issue => reportSnapshotIssue(issue),
+  onSnapshotRejected: async issue => {
+    await mountClientRoot(issue)
+  },
+})
+```
+
+`onSnapshotIssue` only reports diagnostics. When `onSnapshotRejected` is
+provided, the loader removes its listeners, prefetch work, snapshot observer,
+and resumable state before invoking the callback once. The callback must mount
+the CSR root. Async callback failure is reported as `snapshot_fallback_failed`.
+Without this callback, rejected data stays unmerged and Fict does not mount CSR
+automatically.
+
+See the repository
+[SSR / Resume Stability Contract](../../docs/ssr-resume-stability-contract.md)
+for the complete compatibility and deployment policy.
+
 ## Reactive Getter Contract
 
 Runtime value paths do not infer reactivity from function arity. A plain

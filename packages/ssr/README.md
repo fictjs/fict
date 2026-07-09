@@ -89,11 +89,15 @@ const html = renderToString(() => <App />, {
 
 ```typescript
 // entry-client.tsx
+import { render } from 'fict'
 import { installResumableLoader } from 'fict/loader'
+import { App } from './App'
 
 // Load manifest (production)
 async function loadManifest() {
-  const res = await fetch('/fict.manifest.json')
+  // Prefer a build-scoped URL. If the manifest has a fixed name, revalidate it
+  // instead of allowing it to become stale independently from the HTML.
+  const res = await fetch('/fict.manifest.json', { cache: 'no-store' })
   if (res.ok) {
     globalThis.__FICT_MANIFEST__ = await res.json()
   }
@@ -104,6 +108,12 @@ async function init() {
 
   installResumableLoader({
     events: ['click', 'input', 'change', 'submit'],
+    onSnapshotIssue: issue => reportSnapshotIssue(issue),
+    onSnapshotRejected: () => {
+      const root = document.getElementById('app')!
+      root.replaceChildren()
+      render(() => <App />, root)
+    },
     prefetch: {
       visibility: true,
       visibilityMargin: '200px',
@@ -144,7 +154,7 @@ During server-side rendering, component state is serialized into JSON and inject
 ```html
 <script id="__FICT_SNAPSHOT__" type="application/json">
   {
-    "v": 1,
+    "v": 2,
     "scopes": {
       "s1": {
         "id": "s1",
@@ -162,16 +172,25 @@ During server-side rendering, component state is serialized into JSON and inject
 
 **Supported Serialization Types:**
 
-| Type      | Tag                       | Description                |
-| --------- | ------------------------- | -------------------------- |
-| Date      | `__t: 'd'`                | Stored as timestamp        |
-| Map       | `__t: 'm'`                | Stored as entries array    |
-| Set       | `__t: 's'`                | Stored as array            |
-| RegExp    | `__t: 'r'`                | Stored as source + flags   |
-| undefined | `__t: 'u'`                | Special tag                |
-| NaN       | `__t: 'n'`                | Special tag                |
-| Infinity  | `__t: '+i'` / `__t: '-i'` | Positive/Negative Infinity |
-| BigInt    | `__t: 'b'`                | Stored as string           |
+| Type / shape                  | Tag                         | Preserved detail                                  |
+| ----------------------------- | --------------------------- | ------------------------------------------------- |
+| Date                          | `__t: 'd'`                  | Timestamp or invalid-date marker                  |
+| Map / Set                     | `__t: 'm'` / `__t: 's'`     | Recursively encoded entries/items                 |
+| RegExp                        | `__t: 'r'`                  | Source, flags, and `lastIndex`                    |
+| Global/well-known Symbol      | `__t: 'sym'`                | Symbol registry kind and name                     |
+| Special object representation | `__t: 'o'`                  | Symbol keys, null prototype, or literal `__t` key |
+| Array hole                    | `__t: 'h'`                  | Distinguishes a hole from `undefined`             |
+| undefined / NaN / negative 0  | `__t: 'u'` / `'n'` / `'-0'` | Values JSON cannot represent faithfully           |
+| Infinity                      | `__t: '+i'` / `__t: '-i'`   | Positive/negative infinity                        |
+| BigInt                        | `__t: 'b'`                  | Decimal string                                    |
+| Shared/circular reference     | `__t: 'ref'`                | Path to an already encoded object                 |
+
+Schema v2 escapes plain objects that themselves contain `__t`, so literal user
+data cannot be confused with a serialization marker. Unsupported object shapes
+and functions stored inside value-bearing containers fail serialization rather
+than being silently corrupted. Function-valued component-prop properties and
+function-valued raw slots are intentionally omitted by the existing compiler
+ABI.
 
 ### 3. Scope Registration
 
@@ -383,8 +402,21 @@ interface ResumableLoaderOptions {
   document?: Document
   snapshotScriptId?: string
   events?: string[] // Default: DelegatedEvents
+  snapshotMigrations?: Record<number, SnapshotMigration>
   onSnapshotIssue?: (issue: SnapshotIssue) => void
+  onSnapshotRejected?: (issue: SnapshotIssue) => void | Promise<void>
   prefetch?: PrefetchStrategy | false
+}
+
+type SnapshotMigration = (
+  snapshot: Record<string, unknown>,
+  context: SnapshotMigrationContext,
+) => unknown
+
+interface SnapshotMigrationContext {
+  fromVersion: number
+  toVersion: number
+  source: string
 }
 
 interface SnapshotIssue {
@@ -392,12 +424,25 @@ interface SnapshotIssue {
     | 'snapshot_parse_error'
     | 'snapshot_invalid_shape'
     | 'snapshot_unsupported_version'
+    | 'snapshot_migration_failed'
+    | 'snapshot_fallback_failed'
     | 'scope_snapshot_missing'
+    | 'resume_import_failed'
+    | 'resume_function_missing'
+    | 'resume_failed'
+    | 'handler_import_failed'
+    | 'handler_missing'
+    | 'handler_failed'
   message: string
   source: string
   expectedVersion: number
   actualVersion?: number
   scopeId?: string
+  qrl?: string
+  url?: string
+  exportName?: string
+  eventType?: string
+  error?: unknown
 }
 
 interface PrefetchStrategy {
@@ -406,7 +451,22 @@ interface PrefetchStrategy {
   hover?: boolean // Default: true
   hoverDelay?: number // Default: 50
 }
+
+type LegacySnapshotFormat = 'raw-props' | 'encoded-props'
+const UNVERSIONED_SNAPSHOT_MIGRATION_KEY = 0
+function createLegacySnapshotMigration(format: LegacySnapshotFormat): SnapshotMigration
 ```
+
+The current writer emits v2. Missing `v` and v1 fail closed unless the
+application explicitly selects the matching historical writer dialect. The
+loader cannot infer whether v1 `{ "__t": "u" }` bytes mean literal data or an
+encoded `undefined` value. See the
+[SSR / Resume Stability Contract](../../docs/ssr-resume-stability-contract.md)
+for the version map and migration examples.
+
+`onSnapshotIssue` is telemetry-only. `onSnapshotRejected` runs once after the
+loader disengages; the application must mount the CSR root. Fict does not mount
+CSR automatically, and it does not route QRL failures to an ErrorBoundary.
 
 ## Architecture Design
 
@@ -428,26 +488,12 @@ interface PrefetchStrategy {
 
 **Generated Code Structure:**
 
-```javascript
-// Main bundle
-const __fict_r0 = (scopeId, host) => {
-  // Resume Function: Restore state + Bind reactivity
-  const scope = __fictGetSSRScope(scopeId)
-  let count = __fictRestoreSignal(scope, 0)
-
-  $effect(() => {
-    /* Bind DOM update */
-  })
-}
-
-__fictRegisterResume('__fict_r0', __fict_r0)
-
-// Handler chunk (separate file)
-export default (scopeId, event, el) => {
-  const [count] = __fictUseLexicalScope(scopeId, ['count'])
-  count++ // Trigger signal update
-}
-```
+The exact generated ABI is compiler-owned and may change while resumability is
+Preview. Conceptually, the main bundle registers a resume function that restores
+the scope and reconnects reactive bindings. Each extracted handler chunk exports
+the function named by its QRL; the loader restores the lexical scope before it
+invokes that handler. Use compiler fixture output and package tests—not copied
+generated snippets—as the compatibility source of truth.
 
 ### Runtime
 
@@ -487,6 +533,11 @@ Generated detailed `fict.manifest.json` during production build, mapping virtual
 }
 ```
 
+Treat the manifest, SSR server, HTML snapshots, client loader, QRL chunks, and
+external stream runtime as one build. Prefer a build-scoped manifest URL. If a
+fixed `/fict.manifest.json` is unavoidable, serve it with `no-store` or mandatory
+revalidation; do not let it use stale-while-revalidate independently from HTML.
+
 ## Integration with Vite
 
 ## Partial Prerendering
@@ -497,6 +548,8 @@ Generated detailed `fict.manifest.json` during production build, mapping virtual
 2. **Deferred phase**: deliver `stream` patches for resolved Suspense boundaries.
 
 This keeps shell TTFB low while still allowing server-resolved dynamic islands.
+The shell and every deferred patch must come from the same build and snapshot
+schema; never combine a cached shell with a newer server's patch stream.
 
 ## Edge Runtime
 
