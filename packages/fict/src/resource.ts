@@ -400,14 +400,14 @@ export function resource<T, Args = void>(
     return reset
   }
 
-  const evictOverflowEntries = (cache: Cache) => {
+  const evictOverflowEntries = (cache: Cache, protectedEntry?: ResourceEntry<T, Args>) => {
     const maxEntries = resolvedCacheOptions.maxEntries
     if (!Number.isFinite(maxEntries) || maxEntries <= 0) return
     if (cache.size <= maxEntries) return
     for (const [entryKey, entry] of cache) {
       if (cache.size <= maxEntries) break
       // Never evict entries with work in progress.
-      if (entry.inFlight || entry.pendingToken) continue
+      if (entry === protectedEntry || entry.inFlight || entry.pendingToken) continue
       cache.delete(entryKey)
     }
   }
@@ -438,7 +438,9 @@ export function resource<T, Args = void>(
       controller: undefined,
     }
     cache.set(key, state)
-    evictOverflowEntries(cache)
+    // The caller may start work on this new entry immediately after return.
+    // Do not evict it in the brief interval before inFlight is assigned.
+    evictOverflowEntries(cache, state)
     return state
   }
 
@@ -530,6 +532,10 @@ export function resource<T, Args = void>(
         if (entry.controller === controller) {
           entry.controller = undefined
         }
+        // A full cache may temporarily retain in-flight entries. Re-apply the
+        // bound once work settles so concurrent prefetches cannot leave it
+        // permanently above maxEntries.
+        evictOverflowEntries(cache)
       })
 
     entry.inFlight = fetchPromise

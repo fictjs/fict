@@ -1191,4 +1191,27 @@ describe('resource', () => {
     expect(fetcher).toHaveBeenCalledTimes(4)
     dispose3()
   })
+
+  it('evicts overflow entries after concurrent fetches settle', async () => {
+    const resolvers = new Map<number, (value: string) => void>()
+    const fetcher = vi.fn(
+      (_, id: number) =>
+        new Promise<string>(resolve => {
+          resolvers.set(id, resolve)
+        }),
+    )
+    const r = resource<string, number>({ fetch: fetcher, cache: { maxEntries: 2 } })
+
+    r.prefetch(1)
+    r.prefetch(2)
+    r.prefetch(3)
+    expect(fetcher).toHaveBeenCalledTimes(3)
+
+    for (const [id, resolve] of resolvers) resolve(`v:${id}`)
+    await vi.runAllTimersAsync()
+    await tick()
+
+    r.prefetch(1)
+    expect(fetcher).toHaveBeenCalledTimes(4)
+  })
 })
