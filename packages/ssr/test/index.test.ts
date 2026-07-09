@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { parseHTML } from 'linkedom'
 
-import type { FictNode } from '@fictjs/runtime'
+import { Suspense, createSuspenseToken, type FictNode } from '@fictjs/runtime'
 import {
   FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
   __fictQrl,
@@ -9,9 +9,68 @@ import {
   __fictUseSignal,
 } from '@fictjs/runtime/internal'
 
-import { renderToDocument, renderToString } from '../src/index'
+import { renderToDocument, renderToString, renderToStringAsync } from '../src/index'
 
 describe('@fictjs/ssr', () => {
+  describe('renderToStringAsync', () => {
+    it('waits for Suspense boundaries and returns their final content', async () => {
+      const pending = createSuspenseToken()
+      let ready = false
+
+      const AsyncChild = (): FictNode => {
+        if (!ready) throw pending.token
+        return { type: 'span', props: { children: 'resolved content' } }
+      }
+
+      const htmlPromise = renderToStringAsync(
+        () => ({
+          type: Suspense as any,
+          props: {
+            fallback: { type: 'span', props: { children: 'loading content' } },
+            children: { type: AsyncChild, props: {} },
+          },
+        }),
+        { includeSnapshot: false },
+      )
+      let settled = false
+      void htmlPromise.then(() => {
+        settled = true
+      })
+
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(settled).toBe(false)
+
+      ready = true
+      pending.resolve()
+
+      const html = await htmlPromise
+      expect(html).toContain('resolved content')
+      expect(html).not.toContain('loading content')
+    })
+
+    it('keeps renderToString synchronous and fallback-first', () => {
+      const pending = createSuspenseToken()
+      const AsyncChild = (): FictNode => {
+        throw pending.token
+      }
+
+      const html = renderToString(
+        () => ({
+          type: Suspense as any,
+          props: {
+            fallback: { type: 'span', props: { children: 'synchronous fallback' } },
+            children: { type: AsyncChild, props: {} },
+          },
+        }),
+        { includeSnapshot: false },
+      )
+
+      expect(html).toContain('synchronous fallback')
+      pending.resolve()
+    })
+  })
+
   describe('DOM name validation', () => {
     it.each(['1div', 'div name', 'div><script data-fict-xss="tag">', 'svg/onload'])(
       'rejects an invalid dynamic element name: %s',

@@ -261,6 +261,17 @@ should use Fict's render-provided document/ownerDocument paths; set `exposeGloba
 legacy code that still reads DOM globals during server render. That compatibility mode is restored
 on `dispose()`, but it is not concurrency-safe while overlapping renders are active.
 
+### renderToStringAsync
+
+```typescript
+function renderToStringAsync(view: () => FictNode, options?: RenderToStringOptions): Promise<string>
+```
+
+Waits until all Suspense boundaries have resolved, then serializes their final content. Its output
+options and defaults match `renderToString`; in particular, it returns the rendered container's
+children unless `fullDocument` or `includeContainer` is requested. Use `renderToString` when a
+synchronous fallback shell is desired instead.
+
 ### renderToDocument
 
 ```typescript

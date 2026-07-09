@@ -267,7 +267,32 @@ export async function renderToStringAsync(
   view: () => FictNode,
   options: RenderToStringOptions = {},
 ): Promise<string> {
-  return renderToString(view, options)
+  let html = ''
+  const renderResult = startStreamingRender(
+    view,
+    {
+      ...options,
+      mode: 'all',
+      // Streaming defaults to a full document, while the string APIs default
+      // to the rendered container's children. Preserve renderToString's
+      // output contract unless the caller explicitly requests a document.
+      fullDocument: options.fullDocument ?? false,
+    },
+    {
+      write(chunk) {
+        html += chunk
+      },
+      close() {},
+      abort() {},
+    },
+  )
+
+  // `allReady` is the async stability point: every registered Suspense
+  // boundary has resolved and its final DOM has been rendered. Await
+  // `shellReady` as well so render failures settle both readiness promises
+  // without leaving an unobserved rejection.
+  await Promise.all([renderResult.shellReady, renderResult.allReady])
+  return html
 }
 
 export function renderToStream(
