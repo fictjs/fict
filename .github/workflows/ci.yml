@@ -203,6 +203,19 @@ jobs:
       - run: pnpm install
       - run: FICT_STRICT_GUARANTEE=1 pnpm build
       - run: pnpm test:coverage
+
+      - name: Merge package coverage reports
+        run: |
+          set -euo pipefail
+          mkdir -p coverage
+          find packages -type f -path '*/coverage/lcov.info' -print | sort > "${RUNNER_TEMP}/lcov-files"
+          if [[ ! -s "${RUNNER_TEMP}/lcov-files" ]]; then
+            echo "::error::No package LCOV reports were produced."
+            exit 1
+          fi
+          xargs cat < "${RUNNER_TEMP}/lcov-files" > coverage/lcov.info
+          test -s coverage/lcov.info
+
       - run: FICT_STRICT_GUARANTEE=1 pnpm test:bundlers
 
       - name: Upload coverage

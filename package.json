@@ -18,7 +18,7 @@
     "test:api-boundaries": "node scripts/check-api-boundaries.mjs",
     "test": "turbo run test",
     "test:watch": "turbo run test:watch",
-    "test:coverage": "turbo run test:coverage",
+    "test:coverage": "turbo run test:coverage -- --coverage.reporter=lcov",
     "test:e2e": "pnpm -C packages/fict test:e2e",
     "test:ssr-matrix": "pnpm --filter @fictjs/ssr test:matrix",
     "test:runtime-package-smoke": "node scripts/runtime-package-smoke.mjs",
