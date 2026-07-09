@@ -1,5 +1,13 @@
 # @fictjs/vscode-extension
 
+## 0.21.1
+
+### Patch Changes
+
+- Package Marketplace-valid VSIX archives with all runtime dependencies bundled.
+- Compile preview TypeScript with the same lowering order as the supported Fict toolchain.
+- Upgrade the bundled Babel and WebSocket dependencies to patched releases.
+
 ## 0.21.0
 
 ### Minor Changes
