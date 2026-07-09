@@ -398,6 +398,13 @@ describe('submitAction', () => {
     expect(result.id).toBe('123')
   })
 
+  it('should forward route parameters to the action function', async () => {
+    const updateUser = action(async (_formData, { params }) => params.id, 'updateUser')
+    const formData = new FormData()
+
+    await expect(submitAction(updateUser, formData, { id: '42' })).resolves.toBe('42')
+  })
+
   it('should handle errors', async () => {
     const failingAction = action(async () => {
       throw new Error('Action failed')

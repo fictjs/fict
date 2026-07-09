@@ -381,7 +381,7 @@ export interface Action<T = unknown> {
   /** Action URL */
   url: string
   /** Submit the action */
-  submit: (formData: FormData) => Promise<T>
+  submit: (formData: FormData, params?: Params) => Promise<T>
   /** Action name */
   name?: string
 }

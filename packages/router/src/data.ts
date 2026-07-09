@@ -300,7 +300,7 @@ export function action<T>(fn: ActionFunction<T>, name?: string): Action<T> {
   return {
     url: actionUrl,
     name: actionName,
-    submit: async (formData: FormData): Promise<T> => {
+    submit: async (formData: FormData, params: Params = {}): Promise<T> => {
       // Create a mock request with a base URL for Node.js/jsdom compatibility
       const baseUrl =
         typeof window !== 'undefined' && window.location
@@ -311,7 +311,7 @@ export function action<T>(fn: ActionFunction<T>, name?: string): Action<T> {
         body: formData,
       })
 
-      return fn(formData, { params: {}, request }) as Promise<T>
+      return fn(formData, { params, request }) as Promise<T>
     },
   }
 }
@@ -381,7 +381,7 @@ export async function submitAction<T>(
 
   try {
     // Execute the action
-    const result = await action.submit(formData)
+    const result = await action.submit(formData, params)
 
     // Update submission with result
     submission.result = result
