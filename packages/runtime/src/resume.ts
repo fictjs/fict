@@ -583,7 +583,7 @@ function isSerializedMarker(value: unknown): value is SerializedMarker {
   return (
     typeof value === 'object' &&
     value !== null &&
-    '__t' in value &&
+    Object.prototype.hasOwnProperty.call(value, '__t') &&
     typeof (value as SerializedMarker).__t === 'string'
   )
 }

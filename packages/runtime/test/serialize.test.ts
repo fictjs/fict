@@ -479,6 +479,14 @@ describe('serializeValue / deserializeValue', () => {
       expect(result).toEqual(obj)
     })
 
+    it('should ignore inherited serialization markers', () => {
+      const snapshot = Object.assign(Object.create({ __t: 'u' }) as Record<string, unknown>, {
+        safe: 1,
+      })
+
+      expect(deserializeValue(snapshot)).toEqual({ safe: 1 })
+    })
+
     it('should preserve own __proto__ data properties during serialization', () => {
       const obj = JSON.parse('{"__proto__":{"polluted":true},"a":1}') as Record<string, unknown>
 
