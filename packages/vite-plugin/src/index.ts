@@ -16,7 +16,7 @@ import {
   type FictCompilerOptions,
   type ModuleReactiveMetadata,
 } from '@fictjs/compiler'
-import type { Plugin, ResolvedConfig, TransformResult } from 'vite'
+import { createFilter, type Plugin, type ResolvedConfig, type TransformResult } from 'vite'
 
 import { createVitePluginCacheFingerprint } from './cache-fingerprint'
 
@@ -322,6 +322,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   const libraryOptions = normalizeLibraryOptions(libraryOption)
   const includePatterns =
     include ?? (libraryOptions.enabled ? DEFAULT_LIBRARY_INCLUDE : DEFAULT_APP_INCLUDE)
+  const transformFilter = createFilter(includePatterns, exclude)
 
   let config: ResolvedConfig | undefined
   let isDev = false
@@ -449,7 +450,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     if (resolvedSource) {
       const resolvedMetadata = lookupStoredMetadata(resolvedSource)
       if (resolvedMetadata) return resolvedMetadata
-      if (shouldTransform(resolvedSource, includePatterns, exclude)) {
+      if (shouldTransform(resolvedSource, transformFilter)) {
         throw new Error(
           `[fict] Local module metadata for "${source}" imported by "${importerFile}" ` +
             `was not prepared (${resolvedSource}).`,
@@ -538,7 +539,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
 
       for (const source of collectStaticModuleSources(code)) {
         const resolved = await resolveGraphDependency(context, source, normalizedFilename)
-        if (!resolved || !shouldTransform(resolved, includePatterns, exclude)) continue
+        if (!resolved || !shouldTransform(resolved, transformFilter)) continue
         resolvedLocalModules.set(createLocalResolutionKey(normalizedFilename, source), resolved)
         node.dependencies.add(resolved)
         await visit(resolved)
@@ -860,7 +861,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       const filename = stripQuery(id)
 
       // Skip non-matching files
-      if (!shouldTransform(filename, includePatterns, exclude)) {
+      if (!shouldTransform(filename, transformFilter)) {
         return null
       }
 
@@ -1054,7 +1055,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       }
 
       // Force full reload for .tsx/.jsx files to ensure reactive graph is rebuilt
-      if (shouldTransform(file, includePatterns, exclude)) {
+      if (shouldTransform(file, transformFilter)) {
         server.ws.send({
           type: 'full-reload',
           path: '*',
@@ -1140,7 +1141,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
 /**
  * Check if a file should be transformed based on include/exclude patterns
  */
-function shouldTransform(id: string, include: string[], exclude: string[]): boolean {
+function shouldTransform(id: string, filter: ReturnType<typeof createFilter>): boolean {
   // Normalize path separators
   const withoutQuery = stripQuery(id)
   if (isInternalModuleId(withoutQuery)) {
@@ -1149,21 +1150,7 @@ function shouldTransform(id: string, include: string[], exclude: string[]): bool
 
   const normalizedId = withoutQuery.replace(/\\/g, '/')
 
-  // Check exclude patterns first
-  for (const pattern of exclude) {
-    if (matchPattern(normalizedId, pattern)) {
-      return false
-    }
-  }
-
-  // Check include patterns
-  for (const pattern of include) {
-    if (matchPattern(normalizedId, pattern)) {
-      return true
-    }
-  }
-
-  return false
+  return filter(normalizedId)
 }
 
 function isInternalModuleId(id: string): boolean {
@@ -1174,34 +1161,6 @@ function isInternalModuleId(id: string): boolean {
     id.startsWith('/@vite/') ||
     id.startsWith('@vite/')
   )
-}
-
-/**
- * Simple glob pattern matching
- * Supports: **\/*.ext, *.ext, exact matches
- */
-function matchPattern(id: string, pattern: string): boolean {
-  // Exact match
-  if (id === pattern) return true
-
-  // Simple check: if pattern ends with extension like *.tsx, just check if file ends with it
-  if (pattern.startsWith('**/') || pattern.startsWith('*')) {
-    const ext = pattern.replace(/^\*\*?\//, '')
-    if (ext.startsWith('*')) {
-      // **/*.tsx -> check if ends with .tsx
-      const ending = ext.replace(/^\*/, '')
-      return id.endsWith(ending)
-    }
-  }
-
-  // Convert glob pattern to regex
-  const regexPattern = pattern
-    .replace(/\./g, '\\.') // Escape dots
-    .replace(/\*\*/g, '.*') // ** matches any path
-    .replace(/\*/g, '[^/]*') // * matches any non-slash
-
-  const regex = new RegExp(`^${regexPattern}$`)
-  return regex.test(id)
 }
 
 /**
