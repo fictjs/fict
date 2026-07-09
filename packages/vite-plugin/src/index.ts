@@ -826,11 +826,6 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           __DEV__: String(devMode),
           ...(userConfig.define ?? {}),
         },
-        esbuild: {
-          // Disable esbuild JSX handling for .tsx/.jsx files
-          // Our plugin will handle the full transformation
-          include: /\.(ts|js|mts|mjs|cjs)$/,
-        },
         build: {
           rollupOptions: {
             // Preserve exports in entry chunks to prevent tree-shaking of handler exports

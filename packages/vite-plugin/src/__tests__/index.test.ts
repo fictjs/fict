@@ -272,6 +272,43 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it('leaves Vite TypeScript lowering enabled for excluded TSX modules', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-excluded-tsx-'))
+    const entry = path.join(root, 'plain.tsx')
+
+    try {
+      await writeFile(entry, 'export const answer: number = 42')
+
+      const result = await build({
+        root,
+        logLevel: 'silent',
+        plugins: [
+          fict({
+            include: ['**/compiled-only.tsx'],
+            cache: false,
+            useTypeScriptProject: false,
+            functionSplitting: false,
+          }),
+        ],
+        build: {
+          write: false,
+          lib: { entry, formats: ['es'], fileName: () => 'plain.js' },
+        },
+      })
+      const outputs = Array.isArray(result) ? result : [result]
+      const code = outputs
+        .flatMap(output => ('output' in output ? output.output : []))
+        .filter(output => output.type === 'chunk')
+        .map(output => output.code)
+        .join('\n')
+
+      expect(code).toContain('42')
+      expect(code).not.toContain(': number')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it.each([
     { extension: '.js', typeAnnotation: '' },
     { extension: '.mjs', typeAnnotation: '' },
