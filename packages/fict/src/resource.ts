@@ -225,23 +225,54 @@ const STRUCTURAL_KEY_PREFIX = '\u0000fict:args:'
  * identity keying.
  */
 function stableStringify(value: unknown, seen: WeakSet<object>): string {
-  if (value === null || typeof value !== 'object') {
-    if (typeof value === 'function' || typeof value === 'symbol') {
-      throw new Error('non-serializable')
-    }
-    return value === undefined ? 'undefined' : (JSON.stringify(value) ?? 'null')
+  if (value === null) return 'null'
+  if (value === undefined) return 'undefined'
+  if (typeof value === 'boolean') return value ? 'boolean:true' : 'boolean:false'
+  if (typeof value === 'string') return `string:${JSON.stringify(value)}`
+  if (typeof value === 'bigint') return `bigint:${value.toString()}`
+  if (typeof value === 'number') {
+    if (Number.isNaN(value)) return 'number:NaN'
+    if (Object.is(value, -0)) return 'number:-0'
+    if (value === Number.POSITIVE_INFINITY) return 'number:+Infinity'
+    if (value === Number.NEGATIVE_INFINITY) return 'number:-Infinity'
+    return `number:${String(value)}`
+  }
+  if (typeof value !== 'object') {
+    throw new Error('non-serializable')
   }
   if (seen.has(value)) throw new Error('cyclic')
   seen.add(value)
   try {
+    if (Object.getOwnPropertySymbols(value).length > 0) {
+      throw new Error('non-serializable')
+    }
     if (Array.isArray(value)) {
-      return '[' + value.map(item => stableStringify(item, seen)).join(',') + ']'
+      const arrayKeys = Object.keys(value)
+      if (
+        arrayKeys.some(key => {
+          const index = Number(key)
+          return (
+            !Number.isInteger(index) || index < 0 || index >= value.length || String(index) !== key
+          )
+        })
+      ) {
+        throw new Error('non-serializable')
+      }
+      const items: string[] = []
+      for (let i = 0; i < value.length; i++) {
+        items.push(
+          Object.prototype.hasOwnProperty.call(value, i)
+            ? stableStringify(value[i], seen)
+            : 'array-hole',
+        )
+      }
+      return `array:[${items.join(',')}]`
     }
     const proto = Object.getPrototypeOf(value)
     if (proto !== Object.prototype && proto !== null) throw new Error('non-plain')
     const keys = Object.keys(value).sort()
     return (
-      '{' +
+      (proto === null ? 'null-object:{' : 'object:{') +
       keys
         .map(
           key =>
@@ -264,7 +295,6 @@ function stableStringify(value: unknown, seen: WeakSet<object>): string {
  * identity keying.
  */
 function structuralArgsKey(argsValue: unknown): unknown {
-  if (argsValue === null || typeof argsValue !== 'object') return argsValue
   try {
     return STRUCTURAL_KEY_PREFIX + stableStringify(argsValue, new WeakSet())
   } catch {

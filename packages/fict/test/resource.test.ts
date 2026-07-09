@@ -1088,6 +1088,31 @@ describe('resource', () => {
     expect(fetcher).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps structurally different cache keys distinct', async () => {
+    const fetcher = vi.fn((_, arg: unknown) => Promise.resolve(arg))
+    const r = resource<unknown, unknown>({ fetch: fetcher })
+    const oldEncodedObjectKey = '\u0000fict:args:{"id":1}'
+    const sparse = Array<unknown>(1)
+    const args: unknown[] = [
+      oldEncodedObjectKey,
+      { id: 1 },
+      { value: null },
+      { value: Number.NaN },
+      { value: 0 },
+      { value: -0 },
+      [],
+      sparse,
+    ]
+
+    for (const arg of args) {
+      r.prefetch(arg)
+      await vi.runAllTimersAsync()
+      await tick()
+    }
+
+    expect(fetcher).toHaveBeenCalledTimes(args.length)
+  })
+
   it('does not abort in-flight fetches when equal args objects are re-read', async () => {
     const abortSpy = vi.fn()
     let resolveFetch: ((value: string) => void) | undefined
