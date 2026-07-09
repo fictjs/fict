@@ -88,7 +88,8 @@
   },
   "pnpm": {
     "overrides": {
-      "@modelcontextprotocol/sdk>ajv": "^8.18.0"
+      "@modelcontextprotocol/sdk>ajv": "^8.18.0",
+      "picomatch@>=4.0.0 <4.0.4": "4.0.5"
     }
   },
   "lint-staged": {
