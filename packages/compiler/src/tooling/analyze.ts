@@ -475,6 +475,8 @@ function parseSourceAstSafely(source: string, fileName: string): BabelCore.types
   try {
     const ast = parseSync(source, {
       filename: fileName,
+      configFile: false,
+      babelrc: false,
       sourceType: 'module',
       parserOpts: {
         sourceType: 'module',
@@ -748,6 +750,8 @@ function shouldIncludeFunction(fn: HIRFunction, macroNames: AnalyzeMacroNames): 
 function parseFileAst(code: string, fileName: string): BabelCore.types.File {
   const ast = parseSync(code, {
     filename: fileName,
+    configFile: false,
+    babelrc: false,
     sourceType: 'module',
     parserOpts: {
       sourceType: 'module',

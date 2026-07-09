@@ -53,6 +53,10 @@ Core defaults:
   - memory cache always on
   - persistent cache defaults to `true` during `vite build`, otherwise in-memory only
 
+The Vite plugin owns an isolated Babel pass and does not load project `.babelrc` or
+`babel.config.*` files. Use `@fictjs/babel-preset` in an explicit Babel pipeline when other Babel
+plugins must compose with Fict compilation.
+
 ## Library Publishing
 
 Use `library: true` when building a third-party Fict hook library with Vite library mode:

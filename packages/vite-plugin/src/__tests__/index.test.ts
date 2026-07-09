@@ -42,6 +42,27 @@ function getTestPlugin(options?: Parameters<typeof fict>[0]): TestPlugin {
   return fict(options) as TestPlugin
 }
 
+async function buildFictEntry(root: string, entry: string): Promise<string> {
+  const result = await build({
+    root,
+    logLevel: 'silent',
+    plugins: [fict({ cache: false, useTypeScriptProject: false, functionSplitting: false })],
+    build: {
+      write: false,
+      lib: { entry, formats: ['es'], fileName: () => 'app.js' },
+      rollupOptions: {
+        external: id => id === 'fict' || id.startsWith('fict/'),
+      },
+    },
+  })
+  const outputs = Array.isArray(result) ? result : [result]
+  return outputs
+    .flatMap(output => ('output' in output ? output.output : []))
+    .filter(output => output.type === 'chunk')
+    .map(output => output.code)
+    .join('\n')
+}
+
 interface SourceMapLike {
   mappings: string
   sources?: string[]
@@ -409,6 +430,82 @@ describe('fict vite-plugin', () => {
       expect(code).not.toMatch(/\bnamespace\s+Defaults\b/)
       expect(code).not.toContain('declare status')
     } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('ignores a consumer .babelrc that references an unavailable plugin', async () => {
+    const root = await mkdtemp(path.join(process.cwd(), '.fict-vite-babelrc-'))
+    const entry = path.join(root, 'App.tsx')
+
+    try {
+      await writeFile(
+        path.join(root, '.babelrc'),
+        JSON.stringify({ plugins: ['./missing-consumer-babel-plugin.cjs'] }),
+      )
+      await writeFile(
+        entry,
+        `
+          import { $state } from 'fict'
+          export function App() {
+            const count = $state(1)
+            return <div>{count}</div>
+          }
+        `,
+      )
+
+      const code = await buildFictEntry(root, entry)
+
+      expect(code).toContain('fict/internal')
+      expect(code).not.toContain('$state')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('ignores a consumer babel.config that would change compiled semantics', async () => {
+    const originalCwd = process.cwd()
+    const root = await mkdtemp(path.join(originalCwd, '.fict-vite-babel-config-'))
+    const entry = path.join(root, 'marker.js')
+
+    try {
+      await writeFile(
+        path.join(root, 'babel.config.cjs'),
+        `
+          module.exports = {
+            plugins: [function mutateMarker() {
+              return {
+                visitor: {
+                  StringLiteral(path) {
+                    if (path.node.value === 'original-marker') {
+                      path.node.value = 'mutated-marker'
+                    }
+                  }
+                }
+              }
+            }]
+          }
+        `,
+      )
+      await writeFile(
+        entry,
+        `
+          import { $state } from 'fict'
+          export function useMarker() {
+            const marker = $state('original-marker')
+            return marker
+          }
+        `,
+      )
+      process.chdir(root)
+
+      const code = await buildFictEntry(root, entry)
+
+      expect(code).toContain('original-marker')
+      expect(code).not.toContain('mutated-marker')
+      expect(code).not.toContain('$state')
+    } finally {
+      process.chdir(originalCwd)
       await rm(root, { recursive: true, force: true })
     }
   })

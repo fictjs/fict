@@ -1,11 +1,44 @@
 import path from 'node:path'
 
-import { transformSync } from '@babel/core'
+import { transformSync, type PluginObj } from '@babel/core'
 import { describe, expect, it } from 'vitest'
 
 import fictPreset from '../../babel-preset/src'
 
 describe('@fictjs/babel-preset TypeScript integration', () => {
+  it('composes with Babel plugins explicitly configured by the user', () => {
+    const configuredPlugin: PluginObj = {
+      name: 'configured-marker-plugin',
+      visitor: {
+        StringLiteral(path) {
+          if (path.node.value === 'original-marker') {
+            path.node.value = 'configured-marker'
+          }
+        },
+      },
+    }
+    const result = transformSync(
+      `
+        import { $state } from 'fict'
+        export function useMarker() {
+          const marker = $state('original-marker')
+          return marker
+        }
+      `,
+      {
+        filename: 'configured-preset.ts',
+        configFile: false,
+        babelrc: false,
+        plugins: [configuredPlugin],
+        presets: [[fictPreset, { dev: false, strictGuarantee: false }]],
+      },
+    )
+
+    expect(result?.code).toContain('configured-marker')
+    expect(result?.code).not.toContain('original-marker')
+    expect(result?.code).toContain('__fictUseSignal')
+  })
+
   it('lowers runtime TypeScript before Fict and preserves hook metadata', () => {
     const filename = path.resolve('babel-typescript-integration.ts')
     const moduleMetadata = new Map()

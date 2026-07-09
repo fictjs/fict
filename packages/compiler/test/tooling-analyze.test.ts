@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import { analyzeFictFile } from '../src/index'
@@ -51,6 +54,23 @@ function hasTraceMarker(
 }
 
 describe('analyzeFictFile', () => {
+  it('ignores consumer Babel configuration during internal parsing', async () => {
+    const root = await mkdtemp(path.join(process.cwd(), '.fict-analyze-babel-config-'))
+
+    try {
+      await writeFile(
+        path.join(root, '.babelrc'),
+        JSON.stringify({ plugins: ['./missing-consumer-babel-plugin.cjs'] }),
+      )
+
+      const result = analyzeFictFile(SAMPLE_COMPONENT, path.join(root, 'Counter.tsx'))
+
+      expect(result.components.some(component => component.name === 'Counter')).toBe(true)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('returns component analysis with trace markers and regions', () => {
     const result = analyzeFictFile(SAMPLE_COMPONENT, 'counter.tsx', {
       includeRegions: true,

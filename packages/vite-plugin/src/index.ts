@@ -1694,6 +1694,8 @@ async function compileFictCompilerStage(
   plugins.push(['@babel/plugin-syntax-jsx', {}], [createFictPlugin, fictOptions])
   const result = await transformAsync(code, {
     filename,
+    configFile: false,
+    babelrc: false,
     sourceMaps: fictOptions.sourcemap,
     sourceFileName: filename,
     plugins,
