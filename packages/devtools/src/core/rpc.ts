@@ -80,6 +80,9 @@ export class ChromeExtensionTransport implements RPCTransport {
   private tabId: number
   private reconnectAttempts = 0
   private readonly maxReconnectAttempts = 5
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private resetTimer: ReturnType<typeof setTimeout> | null = null
+  private destroyed = false
 
   constructor(tabId: number) {
     this.tabId = tabId
@@ -87,30 +90,43 @@ export class ChromeExtensionTransport implements RPCTransport {
   }
 
   private connect(): void {
+    if (this.destroyed) return
     if (typeof chrome === 'undefined' || !chrome.runtime?.connect) return
 
     try {
-      this.port = chrome.runtime.connect({ name: String(this.tabId) })
+      const port = chrome.runtime.connect({ name: String(this.tabId) })
+      this.port = port
 
       // Reset retry count if connection persists for 5s
-      const resetTimer = setTimeout(() => {
+      this.resetTimer = setTimeout(() => {
+        this.resetTimer = null
         this.reconnectAttempts = 0
       }, 5000)
 
-      this.port.onMessage.addListener((message: RPCMessage) => {
+      port.onMessage.addListener((message: RPCMessage) => {
         for (const handler of this.handlers) {
           handler(message)
         }
       })
 
-      this.port.onDisconnect.addListener(() => {
-        this.port = null
-        clearTimeout(resetTimer)
+      port.onDisconnect.addListener(() => {
+        if (this.port === port) {
+          this.port = null
+        }
+        if (this.resetTimer) {
+          clearTimeout(this.resetTimer)
+          this.resetTimer = null
+        }
+
+        if (this.destroyed) return
 
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
           this.reconnectAttempts++
           const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 10000)
-          setTimeout(() => this.connect(), delay)
+          this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null
+            this.connect()
+          }, delay)
         } else {
           console.warn('[RPC] Chrome extension transport reconnection failed after max attempts')
         }
@@ -136,9 +152,20 @@ export class ChromeExtensionTransport implements RPCTransport {
   }
 
   destroy(): void {
-    if (this.port) {
-      this.port.disconnect()
-      this.port = null
+    this.destroyed = true
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
+    if (this.resetTimer) {
+      clearTimeout(this.resetTimer)
+      this.resetTimer = null
+    }
+
+    const port = this.port
+    this.port = null
+    if (port) {
+      port.disconnect()
     }
     this.handlers.clear()
   }
