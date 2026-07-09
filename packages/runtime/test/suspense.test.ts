@@ -568,6 +568,168 @@ describe('Suspense', () => {
     expect(mounted).toBe(0)
   })
 
+  it('lets an outer Suspense capture a token thrown by its fallback', async () => {
+    const childPending = createSuspenseToken()
+    const fallbackPending = createSuspenseToken()
+    const container = document.createElement('div')
+    let fallbackRenders = 0
+
+    const Child = () => {
+      throw childPending.token
+    }
+
+    const PendingFallback = () => {
+      fallbackRenders += 1
+      throw fallbackPending.token
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: 'outer loading',
+          children: {
+            type: Suspense,
+            props: {
+              fallback: { type: PendingFallback, props: {} },
+              children: { type: Child, props: {} },
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    expect(container.textContent).toBe('outer loading')
+    expect(fallbackRenders).toBe(1)
+
+    dispose()
+  })
+
+  it('bubbles a token thrown while evaluating a fallback function', async () => {
+    const childPending = createSuspenseToken()
+    const fallbackPending = createSuspenseToken()
+    const container = document.createElement('div')
+    let fallbackCalls = 0
+
+    const Child = () => {
+      throw childPending.token
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: 'outer loading',
+          children: {
+            type: Suspense,
+            props: {
+              fallback: () => {
+                fallbackCalls += 1
+                throw fallbackPending.token
+              },
+              children: { type: Child, props: {} },
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    expect(container.textContent).toBe('outer loading')
+    expect(fallbackCalls).toBe(1)
+
+    dispose()
+  })
+
+  it('keeps fallback effects outside their own Suspense capture scope', async () => {
+    const childPending = createSuspenseToken()
+    const fallbackPending = createSuspenseToken()
+    const shouldSuspend = createSignal(false)
+    const container = document.createElement('div')
+
+    const Child = () => {
+      throw childPending.token
+    }
+
+    const PendingFallback = () => {
+      createEffect(() => {
+        if (shouldSuspend()) throw fallbackPending.token
+      })
+      return 'inner loading'
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: 'outer loading',
+          children: {
+            type: Suspense,
+            props: {
+              fallback: { type: PendingFallback, props: {} },
+              children: { type: Child, props: {} },
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    expect(container.textContent).toBe('inner loading')
+
+    shouldSuspend(true)
+    await tick()
+    expect(container.textContent).toBe('outer loading')
+
+    dispose()
+  })
+
+  it('lets an ErrorBoundary capture an error thrown by a Suspense fallback once', async () => {
+    const { token } = createSuspenseToken()
+    const container = document.createElement('div')
+    const fallbackError = new Error('fallback failed')
+    const captured: unknown[] = []
+    let fallbackRenders = 0
+
+    const Child = () => {
+      throw token
+    }
+
+    const ThrowingFallback = () => {
+      fallbackRenders += 1
+      throw fallbackError
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'error handled',
+          onError: err => captured.push(err),
+          children: {
+            type: Suspense,
+            props: {
+              fallback: { type: ThrowingFallback, props: {} },
+              children: { type: Child, props: {} },
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    expect(container.textContent).toBe('error handled')
+    expect(fallbackRenders).toBe(1)
+    expect(captured).toEqual([fallbackError])
+
+    dispose()
+  })
+
   it('calls onReject when token rejects', async () => {
     const { token, reject } = createSuspenseToken()
     const container = document.createElement('div')
