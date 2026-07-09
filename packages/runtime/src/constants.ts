@@ -17,6 +17,10 @@ const isDev =
     ? __DEV__
     : typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'
 
+// Keep the condition inline on large development-only tables. Production
+// bundlers can fold a configured `__DEV__` before paying for their contents;
+// a local alias is not propagated by all minifiers.
+
 // ============================================================================
 // Boolean Attributes
 // ============================================================================
@@ -25,7 +29,11 @@ const isDev =
  * Complete list of boolean attributes (lowercase)
  * These attributes are set as empty strings when true, removed when false
  */
-const booleans = isDev
+const booleans = (
+  typeof __DEV__ !== 'undefined'
+    ? __DEV__
+    : typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'
+)
   ? [
       'allowfullscreen',
       'async',
@@ -82,7 +90,11 @@ export const BooleanAttributes = new Set<string>(booleans)
  * Properties that should be set via DOM property (not attribute)
  * Includes camelCase versions of boolean attributes
  */
-const properties = isDev
+const properties = (
+  typeof __DEV__ !== 'undefined'
+    ? __DEV__
+    : typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'
+)
   ? [
       // Core properties
       'className',
@@ -151,99 +163,102 @@ export const Aliases: Record<string, string> = {
  * Maps lowercase attribute names to their camelCase property equivalents
  * Only for specific elements that have these properties
  */
-const PropAliases: Record<string, string | { $: string; [tagName: string]: string | number }> =
-  isDev
-    ? {
-        // Direct mapping
-        class: 'className',
+const PropAliases: Record<string, string | { $: string; [tagName: string]: string | number }> = (
+  typeof __DEV__ !== 'undefined'
+    ? __DEV__
+    : typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'
+)
+  ? {
+      // Direct mapping
+      class: 'className',
 
-        // Element-specific mappings
-        novalidate: {
-          $: 'noValidate',
-          FORM: 1,
-        },
-        formnovalidate: {
-          $: 'formNoValidate',
-          BUTTON: 1,
-          INPUT: 1,
-        },
-        ismap: {
-          $: 'isMap',
-          IMG: 1,
-        },
-        nomodule: {
-          $: 'noModule',
-          SCRIPT: 1,
-        },
-        playsinline: {
-          $: 'playsInline',
-          VIDEO: 1,
-        },
-        readonly: {
-          $: 'readOnly',
-          INPUT: 1,
-          TEXTAREA: 1,
-        },
+      // Element-specific mappings
+      novalidate: {
+        $: 'noValidate',
+        FORM: 1,
+      },
+      formnovalidate: {
+        $: 'formNoValidate',
+        BUTTON: 1,
+        INPUT: 1,
+      },
+      ismap: {
+        $: 'isMap',
+        IMG: 1,
+      },
+      nomodule: {
+        $: 'noModule',
+        SCRIPT: 1,
+      },
+      playsinline: {
+        $: 'playsInline',
+        VIDEO: 1,
+      },
+      readonly: {
+        $: 'readOnly',
+        INPUT: 1,
+        TEXTAREA: 1,
+      },
 
-        // Experimental element-specific
-        adauctionheaders: {
-          $: 'adAuctionHeaders',
-          IFRAME: 1,
-        },
-        allowfullscreen: {
-          $: 'allowFullscreen',
-          IFRAME: 1,
-        },
-        browsingtopics: {
-          $: 'browsingTopics',
-          IMG: 1,
-        },
-        defaultchecked: {
-          $: 'defaultChecked',
-          INPUT: 1,
-        },
-        defaultmuted: {
-          $: 'defaultMuted',
-          AUDIO: 1,
-          VIDEO: 1,
-        },
-        defaultselected: {
-          $: 'defaultSelected',
-          OPTION: 1,
-        },
-        disablepictureinpicture: {
-          $: 'disablePictureInPicture',
-          VIDEO: 1,
-        },
-        disableremoteplayback: {
-          $: 'disableRemotePlayback',
-          AUDIO: 1,
-          VIDEO: 1,
-        },
-        preservespitch: {
-          $: 'preservesPitch',
-          AUDIO: 1,
-          VIDEO: 1,
-        },
-        shadowrootclonable: {
-          $: 'shadowRootClonable',
-          TEMPLATE: 1,
-        },
-        shadowrootdelegatesfocus: {
-          $: 'shadowRootDelegatesFocus',
-          TEMPLATE: 1,
-        },
-        shadowrootserializable: {
-          $: 'shadowRootSerializable',
-          TEMPLATE: 1,
-        },
-        sharedstoragewritable: {
-          $: 'sharedStorageWritable',
-          IFRAME: 1,
-          IMG: 1,
-        },
-      }
-    : {}
+      // Experimental element-specific
+      adauctionheaders: {
+        $: 'adAuctionHeaders',
+        IFRAME: 1,
+      },
+      allowfullscreen: {
+        $: 'allowFullscreen',
+        IFRAME: 1,
+      },
+      browsingtopics: {
+        $: 'browsingTopics',
+        IMG: 1,
+      },
+      defaultchecked: {
+        $: 'defaultChecked',
+        INPUT: 1,
+      },
+      defaultmuted: {
+        $: 'defaultMuted',
+        AUDIO: 1,
+        VIDEO: 1,
+      },
+      defaultselected: {
+        $: 'defaultSelected',
+        OPTION: 1,
+      },
+      disablepictureinpicture: {
+        $: 'disablePictureInPicture',
+        VIDEO: 1,
+      },
+      disableremoteplayback: {
+        $: 'disableRemotePlayback',
+        AUDIO: 1,
+        VIDEO: 1,
+      },
+      preservespitch: {
+        $: 'preservesPitch',
+        AUDIO: 1,
+        VIDEO: 1,
+      },
+      shadowrootclonable: {
+        $: 'shadowRootClonable',
+        TEMPLATE: 1,
+      },
+      shadowrootdelegatesfocus: {
+        $: 'shadowRootDelegatesFocus',
+        TEMPLATE: 1,
+      },
+      shadowrootserializable: {
+        $: 'shadowRootSerializable',
+        TEMPLATE: 1,
+      },
+      sharedstoragewritable: {
+        $: 'sharedStorageWritable',
+        IFRAME: 1,
+        IMG: 1,
+      },
+    }
+  : {}
 
 /**
  * Get the property alias for a given attribute and tag name
@@ -280,7 +295,11 @@ export const DelegatedEvents = new Set<string>(DelegatedEventNames)
 /**
  * SVG element names (excluding common ones that overlap with HTML)
  */
-const svgElements = isDev
+const svgElements = (
+  typeof __DEV__ !== 'undefined'
+    ? __DEV__
+    : typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'
+)
   ? [
       'altGlyph',
       'altGlyphDef',
