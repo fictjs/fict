@@ -26,6 +26,30 @@ describe('query', () => {
     expect(typeof fetchUser).toBe('function')
   })
 
+  it('does not install the browser cleanup interval during SSR', () => {
+    const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window')
+    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval')
+    cleanupDataUtilities()
+    setIntervalSpy.mockClear()
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      writable: true,
+      value: undefined,
+    })
+
+    try {
+      query(async () => 'value', 'serverQuery')
+      expect(setIntervalSpy).not.toHaveBeenCalled()
+    } finally {
+      if (windowDescriptor) {
+        Object.defineProperty(globalThis, 'window', windowDescriptor)
+      } else {
+        Reflect.deleteProperty(globalThis, 'window')
+      }
+      setIntervalSpy.mockRestore()
+    }
+  })
+
   it('should return an accessor function', () => {
     const fetchUser = query(async (id: string) => ({ id, name: 'Test User' }), 'fetchUser')
 

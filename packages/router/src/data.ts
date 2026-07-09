@@ -112,6 +112,9 @@ function runCacheCleanup() {
  * Start the cache cleanup interval
  */
 function startCacheCleanup() {
+  // Request-scoped SSR caches are released with their session WeakMap keys.
+  // A server-side interval would do no useful work and keep the process alive.
+  if (typeof window === 'undefined') return
   if (cacheCleanupTimer) return
 
   cacheCleanupTimer = setInterval(runCacheCleanup, currentCleanupInterval)
