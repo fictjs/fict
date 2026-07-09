@@ -166,6 +166,14 @@ interface PathSegment {
   paramName?: string
 }
 
+function decodePathSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return segment
+  }
+}
+
 /**
  * Parse a path pattern into segments
  */
@@ -277,7 +285,7 @@ export function createMatcher(
               return null
             }
           }
-          params[segment.paramName!] = decodeURIComponent(pathSegment)
+          params[segment.paramName!] = decodePathSegment(pathSegment)
           matchedPath += '/' + pathSegment
           pathIndex++
           break
@@ -312,7 +320,7 @@ export function createMatcher(
                 break
               }
             }
-            params[segment.paramName!] = decodeURIComponent(pathSegment)
+            params[segment.paramName!] = decodePathSegment(pathSegment)
             matchedPath += '/' + pathSegment
             pathIndex++
           }
@@ -323,14 +331,7 @@ export function createMatcher(
           // Capture remaining path
           // Decode each segment individually to handle encoded slashes correctly
           const remainingSegments = pathSegments.slice(pathIndex)
-          const decodedSegments = remainingSegments.map(seg => {
-            try {
-              return decodeURIComponent(seg)
-            } catch {
-              // If decoding fails (malformed URI), use the original segment
-              return seg
-            }
-          })
+          const decodedSegments = remainingSegments.map(decodePathSegment)
           params[segment.paramName!] = decodedSegments.join('/')
           matchedPath += remainingSegments.length > 0 ? '/' + remainingSegments.join('/') : ''
           pathIndex = pathSegments.length

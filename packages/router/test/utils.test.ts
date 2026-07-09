@@ -151,6 +151,14 @@ describe('createMatcher', () => {
     expect(match?.params.id).toBe('123')
   })
 
+  it('should not throw for malformed encoded parameters', () => {
+    const dynamicMatcher = createMatcher('/users/:id')
+    const optionalMatcher = createMatcher('/users/:id?')
+
+    expect(dynamicMatcher('/users/%')?.params.id).toBe('%')
+    expect(optionalMatcher('/users/%E0%A4%A')?.params.id).toBe('%E0%A4%A')
+  })
+
   it('should match optional segments', () => {
     const matcher = createMatcher('/users/:id?')
     expect(matcher('/users')).toBeTruthy()
