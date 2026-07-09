@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 
+const { registeredCleanups } = vi.hoisted(() => ({
+  registeredCleanups: [] as Array<() => void>,
+}))
+
 // Mock @fictjs/runtime
 vi.mock('@fictjs/runtime', () => ({
   createContext: <T>(defaultValue: T) => {
@@ -14,6 +18,7 @@ vi.mock('@fictjs/runtime', () => ({
     }
   },
   useContext: <T>(context: { _getValue: () => T }) => context._getValue(),
+  onCleanup: (cleanup: () => void) => registeredCleanups.push(cleanup),
 }))
 
 import {
@@ -405,5 +410,24 @@ describe('useBeforeLeave', () => {
     expect(() => {
       useBeforeLeave(async () => {})
     }).not.toThrow()
+  })
+
+  it('should unregister the handler when its owner is cleaned up', () => {
+    registeredCleanups.length = 0
+    const removeHandler = vi.fn()
+    const addHandler = vi.fn(() => removeHandler)
+    const handler = vi.fn()
+
+    BeforeLeaveContext.Provider({
+      value: { addHandler, confirm: async () => true },
+      children: null,
+    })
+    useBeforeLeave(handler)
+
+    expect(addHandler).toHaveBeenCalledWith(handler)
+    expect(registeredCleanups).toHaveLength(1)
+
+    registeredCleanups[0]!()
+    expect(removeHandler).toHaveBeenCalledOnce()
   })
 })

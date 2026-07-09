@@ -5,7 +5,7 @@
  * routing state without prop drilling. Uses Fict's context API.
  */
 
-import { batch, createContext, useContext } from '@fictjs/runtime'
+import { batch, createContext, onCleanup, useContext } from '@fictjs/runtime'
 import { createSignal } from '@fictjs/runtime/advanced'
 
 import { wrapAccessor, wrapValue } from './accessor-utils'
@@ -516,8 +516,5 @@ export function useIsActive(
  */
 export function useBeforeLeave(handler: BeforeLeaveHandler): void {
   const context = useBeforeLeaveContext()
-  const _cleanup = context.addHandler(handler)
-
-  // Note: In Fict, cleanup happens automatically when the component unmounts
-  // via the RootContext cleanup system
+  onCleanup(context.addHandler(handler))
 }
