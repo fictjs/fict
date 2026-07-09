@@ -282,11 +282,18 @@ export function revalidate(keys?: string | string[] | RegExp): void {
   }
 
   if (keys instanceof RegExp) {
-    // Regex pattern
-    for (const cacheKey of queryCache.keys()) {
-      if (keys.test(cacheKey)) {
-        queryCache.delete(cacheKey)
+    // Global/sticky regexes mutate lastIndex. Test each cache key from the
+    // same starting position and leave the caller's RegExp state untouched.
+    const originalLastIndex = keys.lastIndex
+    try {
+      for (const cacheKey of queryCache.keys()) {
+        keys.lastIndex = 0
+        if (keys.test(cacheKey)) {
+          queryCache.delete(cacheKey)
+        }
       }
+    } finally {
+      keys.lastIndex = originalLastIndex
     }
   }
 }

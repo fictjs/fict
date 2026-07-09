@@ -462,6 +462,26 @@ describe('revalidate', () => {
     // Query should refetch on next call
     expect(true).toBe(true)
   })
+
+  it('invalidates every matching key with a global regular expression', async () => {
+    const fetcher = vi.fn((id: string) => Promise.resolve(id))
+    const fetchUser = query(fetcher, 'regexInvalidation')
+
+    fetchUser('first')
+    fetchUser('second')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(fetcher).toHaveBeenCalledTimes(2)
+
+    const pattern = /^regexInvalidation:/g
+    pattern.lastIndex = 3
+    revalidate(pattern)
+    expect(pattern.lastIndex).toBe(3)
+
+    fetchUser('first')
+    fetchUser('second')
+    expect(fetcher).toHaveBeenCalledTimes(4)
+  })
 })
 
 describe('action', () => {
