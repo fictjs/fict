@@ -32,6 +32,8 @@ interface SessionRecord {
   summary: PlaygroundSessionSummary
   viteServer: ViteDevServerLike
   configOverrides: Partial<PlaygroundConfig>
+  disposing: boolean
+  disposePromise?: Promise<void>
 }
 
 interface SessionManagerOptions {
@@ -179,6 +181,7 @@ export class PlaygroundSessionManager {
       summary,
       viteServer: preview.server,
       configOverrides,
+      disposing: false,
     })
 
     return this.getSessionState(sessionId, access)
@@ -221,7 +224,7 @@ export class PlaygroundSessionManager {
     patch: Partial<PlaygroundConfig>,
     access: PlaygroundAuthContext = SYSTEM_ACCESS_CONTEXT,
   ): Promise<PlaygroundSessionSummary> {
-    return this.enqueueSessionTask(sessionId, async () => {
+    return this.enqueueSessionTask(sessionId, access, async () => {
       const session = this.requireSession(sessionId, access)
       const nextOverrides = {
         ...session.configOverrides,
@@ -257,7 +260,7 @@ export class PlaygroundSessionManager {
     content: string,
     access: PlaygroundAuthContext = SYSTEM_ACCESS_CONTEXT,
   ): Promise<PlaygroundSessionState> {
-    return this.enqueueSessionTask(sessionId, async () => {
+    return this.enqueueSessionTask(sessionId, access, async () => {
       const session = this.requireSession(sessionId, access)
       const normalizedPath = normalizeRelativeFilePath(filePath)
       const absolutePath = resolveSessionFilePath(session.summary.rootDir, normalizedPath)
@@ -275,7 +278,7 @@ export class PlaygroundSessionManager {
     filePath: string,
     access: PlaygroundAuthContext = SYSTEM_ACCESS_CONTEXT,
   ): Promise<PlaygroundSessionState> {
-    return this.enqueueSessionTask(sessionId, async () => {
+    return this.enqueueSessionTask(sessionId, access, async () => {
       const session = this.requireSession(sessionId, access)
       const normalizedPath = normalizeRelativeFilePath(filePath)
       const absolutePath = resolveSessionFilePath(session.summary.rootDir, normalizedPath)
@@ -291,7 +294,7 @@ export class PlaygroundSessionManager {
     sessionId: string,
     access: PlaygroundAuthContext = SYSTEM_ACCESS_CONTEXT,
   ): Promise<PlaygroundDiagnosticsResult> {
-    return this.enqueueSessionTask(sessionId, async () => {
+    return this.enqueueSessionTask(sessionId, access, async () => {
       const session = this.requireSession(sessionId, access)
       const diagnostics = await collectSessionDiagnostics({
         rootDir: session.summary.rootDir,
@@ -306,7 +309,7 @@ export class PlaygroundSessionManager {
     sessionId: string,
     access: PlaygroundAuthContext = SYSTEM_ACCESS_CONTEXT,
   ): Promise<PlaygroundVerificationResult> {
-    return this.enqueueSessionTaskWithCompletion(sessionId, async () => {
+    return this.enqueueSessionTaskWithCompletion(sessionId, access, async () => {
       const releaseLimiterSlot = await this.verifyLimiter.acquire()
       let released = false
       const releaseOnce = (): void => {
@@ -367,7 +370,7 @@ export class PlaygroundSessionManager {
     sessionId: string,
     access: PlaygroundAuthContext = SYSTEM_ACCESS_CONTEXT,
   ): Promise<PlaygroundSessionSnapshot> {
-    return this.enqueueSessionTask(sessionId, async () => {
+    return this.enqueueSessionTask(sessionId, access, async () => {
       const session = this.requireSession(sessionId, access)
       const files = await readProjectFiles(session.summary.rootDir)
       const summary = cloneSessionSummary(session.summary)
@@ -388,11 +391,11 @@ export class PlaygroundSessionManager {
   ): Promise<void> {
     const session = this.requireSessionOrNull(sessionId, access)
     if (!session) return
+    if (session.disposePromise) return session.disposePromise
 
-    this.sessions.delete(sessionId)
-    await session.viteServer.close()
-    await fs.rm(session.summary.rootDir, { recursive: true, force: true })
-    this.sessionQueueTails.delete(sessionId)
+    session.disposing = true
+    session.disposePromise = this.enqueueSessionDisposal(sessionId, session)
+    return session.disposePromise
   }
 
   async disposeAll(): Promise<void> {
@@ -436,7 +439,12 @@ export class PlaygroundSessionManager {
     return session
   }
 
-  private enqueueSessionTask<T>(sessionId: string, task: () => Promise<T>): Promise<T> {
+  private enqueueSessionTask<T>(
+    sessionId: string,
+    access: PlaygroundAuthContext,
+    task: () => Promise<T>,
+  ): Promise<T> {
+    this.assertSessionAcceptingTasks(sessionId, access)
     const previous = this.sessionQueueTails.get(sessionId) ?? Promise.resolve()
     const result = previous.catch(noop).then(task)
     const nextTail = result.then(noop, noop)
@@ -451,8 +459,10 @@ export class PlaygroundSessionManager {
 
   private enqueueSessionTaskWithCompletion<T>(
     sessionId: string,
+    access: PlaygroundAuthContext,
     task: () => Promise<{ result: Promise<T>; completion: Promise<unknown> }>,
   ): Promise<T> {
+    this.assertSessionAcceptingTasks(sessionId, access)
     const previous = this.sessionQueueTails.get(sessionId) ?? Promise.resolve()
     const started = previous.catch(noop).then(task)
     const result = started.then(operation => operation.result)
@@ -465,6 +475,42 @@ export class PlaygroundSessionManager {
       }
     })
     return result
+  }
+
+  private assertSessionAcceptingTasks(sessionId: string, access: PlaygroundAuthContext): void {
+    const session = this.requireSession(sessionId, access)
+    if (session.disposing) {
+      throw new Error(`Playground session is being disposed: ${sessionId}`)
+    }
+  }
+
+  private enqueueSessionDisposal(sessionId: string, session: SessionRecord): Promise<void> {
+    const previous = this.sessionQueueTails.get(sessionId) ?? Promise.resolve()
+    const result = previous.catch(noop).then(async () => {
+      const errors: unknown[] = []
+      try {
+        await session.viteServer.close()
+      } catch (error) {
+        errors.push(error)
+      }
+      try {
+        await fs.rm(session.summary.rootDir, { recursive: true, force: true })
+      } catch (error) {
+        errors.push(error)
+      }
+      if (errors.length > 0) throw errors[0]
+    })
+    const nextTail = result.then(noop, noop)
+    this.sessionQueueTails.set(sessionId, nextTail)
+
+    return result.finally(() => {
+      if (this.sessions.get(sessionId) === session) {
+        this.sessions.delete(sessionId)
+      }
+      if (this.sessionQueueTails.get(sessionId) === nextTail) {
+        this.sessionQueueTails.delete(sessionId)
+      }
+    })
   }
 
   private async enforceSessionCapacity(): Promise<void> {
