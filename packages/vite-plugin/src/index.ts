@@ -2313,6 +2313,102 @@ function collectPackageTargets(
   return targets
 }
 
+function collectPackageExportEntries(value: unknown): [string, unknown][] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [['.', value]]
+  const entries = Object.entries(value as Record<string, unknown>)
+  if (!entries.some(([key]) => key === '.' || key.startsWith('./'))) return [['.', value]]
+  return entries.filter(([key]) => key === '.' || key.startsWith('./'))
+}
+
+function collectConditionalTargets(value: unknown): string[] {
+  if (typeof value === 'string') return [value]
+  if (Array.isArray(value)) return value.flatMap(collectConditionalTargets)
+  if (!value || typeof value !== 'object') return []
+  return Object.values(value as Record<string, unknown>).flatMap(collectConditionalTargets)
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function matchRepeatedWildcardPattern(pattern: string, value: string): string | null {
+  if (!pattern.includes('*')) return null
+  const parts = pattern.split('*')
+  let source = `^${escapeRegExp(parts[0] ?? '')}(.*?)`
+  for (let index = 1; index < parts.length; index++) {
+    source += escapeRegExp(parts[index] ?? '')
+    if (index < parts.length - 1) source += '(?:\\1)'
+  }
+  const match = new RegExp(`${source}$`).exec(value)
+  return match?.[1] ?? null
+}
+
+function replaceWildcardPattern(pattern: string, matched: string): string {
+  return pattern.split('*').join(matched)
+}
+
+function comparePackageExportPatterns(left: string, right: string): number {
+  const leftPrefixLength = left.indexOf('*') + 1
+  const rightPrefixLength = right.indexOf('*') + 1
+  return rightPrefixLength - leftPrefixLength || right.length - left.length
+}
+
+function resolvePackageExportEntry(
+  exportsValue: unknown,
+  subpath: string,
+): { value: unknown; wildcard: string | null } | null {
+  const entries = collectPackageExportEntries(exportsValue)
+  const exact = entries.find(([key]) => key === subpath)
+  if (exact) return { value: exact[1], wildcard: null }
+
+  const patterns = entries
+    .filter(([key]) => key.includes('*'))
+    .map(([key, value]) => ({
+      key,
+      value,
+      wildcard: matchRepeatedWildcardPattern(key, subpath),
+    }))
+    .filter(
+      (entry): entry is { key: string; value: unknown; wildcard: string } =>
+        entry.wildcard !== null,
+    )
+    .sort((left, right) => comparePackageExportPatterns(left.key, right.key))
+  const selected = patterns[0]
+  return selected ? { value: selected.value, wildcard: selected.wildcard } : null
+}
+
+function collectPatternExportSubpaths(
+  exportsValue: unknown,
+  chunkPackagePath: string,
+): Set<string> {
+  const subpaths = new Set<string>()
+  for (const [subpathPattern, value] of collectPackageExportEntries(exportsValue)) {
+    if (!subpathPattern.includes('*')) continue
+    for (const target of collectConditionalTargets(value)) {
+      const targetPattern = normalizePackageJsonTarget(target)
+      if (!targetPattern?.includes('*')) continue
+      const wildcard = matchRepeatedWildcardPattern(targetPattern, chunkPackagePath)
+      if (wildcard === null) continue
+
+      const candidate = replaceWildcardPattern(subpathPattern, wildcard)
+      const selected = resolvePackageExportEntry(exportsValue, candidate)
+      if (!selected) continue
+      const selectedTargets = collectConditionalTargets(selected.value)
+      const selectsChunk = selectedTargets.some(selectedTarget => {
+        const normalizedTarget = normalizePackageJsonTarget(selectedTarget)
+        if (!normalizedTarget) return false
+        const concreteTarget =
+          selected.wildcard === null
+            ? normalizedTarget
+            : replaceWildcardPattern(normalizedTarget, selected.wildcard)
+        return concreteTarget === chunkPackagePath
+      })
+      if (selectsChunk) subpaths.add(candidate)
+    }
+  }
+  return subpaths
+}
+
 function buildFictPackageMappingResult(
   assets: Iterable<LibraryMetadataAsset>,
   pkg: Record<string, unknown>,
@@ -2341,8 +2437,11 @@ function buildFictPackageMappingResult(
       packageDir,
       path.resolve(outDir, asset.metadataFileName),
     )
-    const subpaths = targetToSubpaths.get(chunkPackagePath)
-    if (subpaths?.size) {
+    const subpaths = new Set(targetToSubpaths.get(chunkPackagePath) ?? [])
+    for (const subpath of collectPatternExportSubpaths(pkg.exports, chunkPackagePath)) {
+      subpaths.add(subpath)
+    }
+    if (subpaths.size) {
       for (const subpath of subpaths) mappings.set(subpath, metadataPackagePath)
     } else {
       unmappedAssets.push(asset)
@@ -3082,6 +3181,7 @@ function computePackageMetadataCacheFingerprint(
 
 export const __fictVitePluginInternals = {
   computePackageMetadataCacheFingerprint,
+  buildFictPackageMappingResult,
 }
 
 function hashString(value: string): string {

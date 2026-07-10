@@ -3145,7 +3145,7 @@ describe('fict vite-plugin', () => {
           type: 'module',
           exports: {
             '.': './dist/index.js',
-            './hooks': './dist/hooks.js',
+            './*': './dist/*.js',
           },
         }),
       )
@@ -3236,11 +3236,66 @@ describe('fict vite-plugin', () => {
         exports: {
           '.': './dist/index.fict.meta.json',
           './hooks': './dist/hooks.fict.meta.json',
+          './index': './dist/index.fict.meta.json',
         },
       })
     } finally {
       await rm(root, { recursive: true, force: true })
     }
+  })
+
+  it('does not publish wildcard metadata through exact or null export shadows', () => {
+    const assets = [
+      {
+        chunkFileName: 'private/secret.js',
+        metadataFileName: 'private/secret.fict.meta.json',
+      },
+    ]
+    const packageDir = path.join(path.sep, 'project')
+    const outDir = path.join(packageDir, 'dist')
+    const map = (exports: Record<string, unknown>) =>
+      __fictVitePluginInternals.buildFictPackageMappingResult(
+        assets,
+        { exports },
+        packageDir,
+        outDir,
+      )
+
+    const exactShadow = map({
+      './*': './dist/*.js',
+      './private/secret': './dist/public-secret.js',
+    })
+    expect([...exactShadow.mappings]).toEqual([])
+    expect(exactShadow.unmappedAssets).toEqual(assets)
+
+    const nullShadow = map({
+      './*': './dist/*.js',
+      './private/*': null,
+    })
+    expect([...nullShadow.mappings]).toEqual([])
+    expect(nullShadow.unmappedAssets).toEqual(assets)
+  })
+
+  it('requires repeated target wildcards to resolve to the same segment', () => {
+    const packageDir = path.join(path.sep, 'project')
+    const outDir = path.join(packageDir, 'dist')
+    const map = (chunkFileName: string) =>
+      __fictVitePluginInternals.buildFictPackageMappingResult(
+        [
+          {
+            chunkFileName,
+            metadataFileName: chunkFileName.replace(/\.js$/, '.fict.meta.json'),
+          },
+        ],
+        { exports: { './mirror/*': './dist/*/copy/*.js' } },
+        packageDir,
+        outDir,
+      )
+
+    expect([...map('alpha/copy/alpha.js').mappings]).toEqual([
+      ['./mirror/alpha', './dist/alpha/copy/alpha.fict.meta.json'],
+    ])
+    expect([...map('alpha/copy/beta.js').mappings]).toEqual([])
   })
 
   it('emits metadata under metadataDir without mutating package.json when packageJson is false', async () => {
