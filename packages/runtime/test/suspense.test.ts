@@ -52,6 +52,83 @@ describe('Suspense', () => {
     dispose()
   })
 
+  it('accepts a callable thenable as a suspension token', async () => {
+    let resolveToken!: () => void
+    const promise = new Promise<void>(resolve => {
+      resolveToken = resolve
+    })
+    const token = Object.assign(() => {}, { then: promise.then.bind(promise) })
+    const container = document.createElement('div')
+    let ready = false
+
+    const Child = () => {
+      if (!ready) throw token
+      return 'ready'
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense,
+        props: { fallback: 'loading', children: { type: Child, props: {} } },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('loading')
+    ready = true
+    resolveToken()
+    await tick()
+    await tick()
+    expect(container.textContent).toBe('ready')
+
+    dispose()
+  })
+
+  it('routes a callable thenable rejection to an ErrorBoundary', async () => {
+    let rejectToken!: (error: unknown) => void
+    const promise = new Promise<void>((_resolve, reject) => {
+      rejectToken = reject
+    })
+    const token = Object.assign(() => {}, { then: promise.then.bind(promise) })
+    const error = new Error('callable token failed')
+    const container = document.createElement('div')
+    let captured: unknown
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'error',
+          onError: value => {
+            captured = value
+          },
+          children: {
+            type: Suspense,
+            props: {
+              fallback: 'loading',
+              children: {
+                type: () => {
+                  throw token
+                },
+                props: {},
+              },
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('loading')
+    rejectToken(error)
+    await tick()
+    await tick()
+    expect(captured).toBe(error)
+    expect(container.textContent).toBe('error')
+
+    dispose()
+  })
+
   it('does not let a Suspense boundary catch sibling effect tokens', async () => {
     const sibling = createSuspenseToken()
     const trigger = createSignal(false)

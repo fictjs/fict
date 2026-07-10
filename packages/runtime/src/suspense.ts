@@ -52,7 +52,7 @@ export function createSuspenseToken(): SuspenseHandle {
 }
 
 const isThenable = (value: unknown): value is PromiseLike<unknown> =>
-  typeof value === 'object' &&
+  (typeof value === 'object' || typeof value === 'function') &&
   value !== null &&
   typeof (value as PromiseLike<unknown>).then === 'function'
 
