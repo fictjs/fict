@@ -164,6 +164,7 @@ export function Suspense(props: SuspenseProps): FictNode {
   let activeNodes: Node[] = []
   let streamBoundaryId: string | null = null
   let streamPending = false
+  let streamResolveScheduled = false
   let disposed = false
 
   if (streamHooks?.registerBoundary) {
@@ -174,15 +175,45 @@ export function Suspense(props: SuspenseProps): FictNode {
     }
   }
 
-  const onResolveMaybe = () => {
-    if (!resolvedOnce) {
-      resolvedOnce = true
+  const onResolveMaybe = (): boolean => {
+    if (resolvedOnce) return true
+    resolvedOnce = true
+    try {
       props.onResolve?.()
+    } catch (resolveError) {
+      const handled = handleError(resolveError, { source: 'render' }, hostRoot)
+      if (!handled) {
+        if (streamHooks?.onError) {
+          streamHooks.onError(resolveError, streamBoundaryId ?? undefined)
+          return false
+        }
+        throw resolveError
+      }
     }
+    return true
   }
 
   const isSettledInEpoch = (expectedEpoch: number) =>
     !disposed && epoch === expectedEpoch && untrack(() => pending()) === 0
+
+  const scheduleStreamResolution = (expectedEpoch: number) => {
+    const boundaryId = streamBoundaryId
+    const resolveBoundary = streamHooks?.boundaryResolved
+    if (streamResolveScheduled || !streamPending || !boundaryId || !resolveBoundary) return
+    streamResolveScheduled = true
+    // Signal writes from onResolve flush in a microtask. Let that work reveal
+    // any new suspension before the stream is allowed to finalize.
+    void Promise.resolve().then(() => {
+      runInCapturedSSRSession(() => {
+        streamResolveScheduled = false
+        if (epoch !== expectedEpoch || untrack(() => pending()) !== 0 || !streamPending) {
+          return
+        }
+        streamPending = false
+        resolveBoundary(boundaryId)
+      })
+    })
+  }
 
   withRootContext(boundaryRoot, () => {
     registerSuspenseHandler(token => {
@@ -235,11 +266,14 @@ export function Suspense(props: SuspenseProps): FictNode {
               // Rendering can immediately reveal another token. Only settle the
               // boundary after checking the live state produced by that render.
               if (isSettledInEpoch(tokenEpoch)) {
-                if (streamPending && streamBoundaryId && streamHooks?.boundaryResolved) {
-                  streamPending = false
-                  streamHooks.boundaryResolved(streamBoundaryId)
-                }
-                onResolveMaybe()
+                if (!onResolveMaybe()) return
+                // onResolve can synchronously flush a reset (for example through
+                // batch), which may register a new token before it returns.
+                // Do not include `disposed` here: an outer ErrorBoundary may have
+                // handled an onResolve error by disposing this boundary, while the
+                // existing stream boundary still needs to settle.
+                if (epoch !== tokenEpoch || untrack(() => pending()) !== 0) return
+                scheduleStreamResolution(tokenEpoch)
               }
             }
           })

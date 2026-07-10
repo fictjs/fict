@@ -1026,6 +1026,53 @@ describe('@fictjs/ssr streaming', () => {
     expect((error as Error).message).toContain('reject-boom')
   })
 
+  it('aborts a shell stream when Suspense onResolve throws', async () => {
+    const token = createSuspenseToken()
+    const resolveError = new Error('resolve-hook-boom')
+    const errors: unknown[] = []
+    let ready = false
+    let destroyed = false
+
+    function AsyncChild(): FictNode {
+      if (!ready) throw token.token
+      return { type: 'span', props: { children: 'ResolveHookDone' } }
+    }
+
+    function App(): FictNode {
+      onDestroy(() => {
+        destroyed = true
+      })
+      return {
+        type: Suspense,
+        props: {
+          fallback: { type: 'div', props: { children: 'ResolveHookLoading' } },
+          onResolve() {
+            throw resolveError
+          },
+          children: { type: AsyncChild, props: {} },
+        },
+      }
+    }
+
+    const stream = renderToStream(() => ({ type: App, props: {} }), {
+      mode: 'shell',
+      onError(error) {
+        errors.push(error)
+      },
+    })
+    const readAll = readReadableStream(stream)
+
+    await Promise.resolve()
+    ready = true
+    token.resolve()
+
+    await expect(withTimeout(readAll, 500, 'onResolve stream failure')).rejects.toThrow(
+      'resolve-hook-boom',
+    )
+    expect(errors).toEqual([resolveError])
+    expect(destroyed).toBe(true)
+  })
+
   it('streams multiple suspense boundaries in resolve order', async () => {
     const first = createSuspenseToken()
     const second = createSuspenseToken()
