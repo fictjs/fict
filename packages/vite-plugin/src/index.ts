@@ -651,11 +651,15 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       methods[method] = async (...args: unknown[]) => {
         const currentRequest = metadataRequestStorage.getStore()
         const currentRequestActive = !!currentRequest && currentRequest.activeScopes > 0
+        const isWarmupRequest = kind === 'environment' && method === 'warmupRequest'
         const activeRequest =
           currentRequestActive && currentRequest.environment === environment
             ? currentRequest
             : undefined
         if (currentRequestActive && currentRequest.state.retired) {
+          // Vite deliberately fire-and-forgets dependency warmups. The enclosing request
+          // owns the generation retry, so a stale nested warmup must settle quietly.
+          if (isWarmupRequest && activeRequest) return undefined
           throw new StaleMetadataRequestError()
         }
         const inheritsUntrustedProvenance = currentRequest?.trusted === false
@@ -721,6 +725,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             moduleGraph.invalidateAll()
             retryCount++
             continue
+          }
+          if (
+            isWarmupRequest &&
+            activeRequest &&
+            stale &&
+            (!failed || failure instanceof StaleMetadataRequestError)
+          ) {
+            return undefined
           }
           if (failed) throw failure
           if (state.retired) throw new StaleMetadataRequestError()

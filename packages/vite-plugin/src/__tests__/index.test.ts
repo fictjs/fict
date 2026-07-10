@@ -819,6 +819,97 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it('settles detached dependency warmups after HMR retires their request', async () => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-vite-retired-warmup-')))
+    const srcDir = path.join(root, 'src')
+    const appPath = path.join(srcDir, 'App.tsx')
+    const slowPath = path.join(srcDir, 'slow.txt')
+    const deferred = () => {
+      let resolve!: () => void
+      const promise = new Promise<void>(done => {
+        resolve = done
+      })
+      return { promise, resolve }
+    }
+    const warmupStarted = deferred()
+    const releaseWarmup = deferred()
+    const hmrSeen = deferred()
+    const unhandledRejections: unknown[] = []
+    const onUnhandledRejection = (reason: unknown) => unhandledRejections.push(reason)
+    let server: Awaited<ReturnType<typeof createServer>> | undefined
+
+    try {
+      process.on('unhandledRejection', onUnhandledRejection)
+      await mkdir(srcDir, { recursive: true })
+      const runtimePath = path.join(srcDir, 'fict-runtime.ts')
+      await writeFile(runtimePath, `export {}`)
+      await writeFile(slowPath, `slow`)
+      const appSource = (label: string) => `
+        import { $state } from 'fict'
+        import text from './slow.txt?raw'
+        export const version = ${JSON.stringify(label)}
+        export function App() {
+          const count = $state(1)
+          return <div>{text}{count}</div>
+        }
+      `
+      await writeFile(appPath, appSource('old'))
+
+      server = await createServer({
+        root,
+        configFile: false,
+        logLevel: 'silent',
+        resolve: {
+          alias: {
+            'fict/internal': runtimePath,
+            fict: runtimePath,
+          },
+        },
+        plugins: [
+          {
+            name: 'test-retired-warmup-gate',
+            enforce: 'pre',
+            async load(id) {
+              if (!id.endsWith('/slow.txt?raw')) return null
+              warmupStarted.resolve()
+              await releaseWarmup.promise
+              return `export default 'slow'`
+            },
+          },
+          fict({ cache: false, useTypeScriptProject: false, functionSplitting: false }),
+          {
+            name: 'test-retired-warmup-hmr-probe',
+            handleHotUpdate(context) {
+              if (path.normalize(context.file) === path.normalize(appPath)) hmrSeen.resolve()
+            },
+          },
+        ],
+        server: { middlewareMode: true, watch: null },
+      })
+
+      const initial = await server.transformRequest('/src/App.tsx')
+      expect(initial?.code).toContain('old')
+      await warmupStarted.promise
+
+      await server.watcher.unwatch(appPath)
+      await writeFile(appPath, appSource('new'))
+      server.watcher.emit('change', appPath)
+      await hmrSeen.promise
+      releaseWarmup.resolve()
+      await new Promise(resolve => setImmediate(resolve))
+      await new Promise(resolve => setImmediate(resolve))
+
+      expect(unhandledRejections).toEqual([])
+      const updated = await server.transformRequest('/src/App.tsx')
+      expect(updated?.code).toContain('new')
+    } finally {
+      releaseWarmup.resolve()
+      await server?.close()
+      process.off('unhandledRejection', onUnhandledRejection)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('isolates client and SSR metadata during concurrent dev transforms', async () => {
     const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-vite-dev-environments-')))
     const srcDir = path.join(root, 'src')
