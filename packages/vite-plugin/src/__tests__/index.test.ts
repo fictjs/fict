@@ -3073,6 +3073,65 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it('publishes every package subpath that targets the same entry chunk', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-library-package-aliases-'))
+
+    try {
+      const sourcePath = path.join(root, 'src', 'index.ts')
+      await writeFile(
+        path.join(root, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          type: 'module',
+          exports: {
+            '.': './dist/index.js',
+            './alias': './dist/index.js',
+          },
+        }),
+      )
+
+      const plugin = getTestPlugin({ library: true, useTypeScriptProject: false })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+      await plugin.transform?.call(
+        { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() },
+        `
+          import { $state } from 'fict'
+          export function useCounter() {
+            const count = $state(0)
+            return count
+          }
+        `,
+        sourcePath,
+      )
+
+      plugin.generateBundle?.call(
+        { emitFile: vi.fn(() => 'asset-id'), warn: vi.fn() },
+        {},
+        {
+          'index.js': {
+            type: 'chunk',
+            fileName: 'index.js',
+            isEntry: true,
+            facadeModuleId: sourcePath,
+            modules: { [sourcePath]: {} },
+            exports: ['useCounter'],
+          },
+        },
+      )
+      await plugin.writeBundle?.call({ warn: vi.fn(), error: vi.fn() }, {}, {})
+
+      const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
+      expect(pkg.fict).toEqual({
+        exports: {
+          '.': './dist/index.fict.meta.json',
+          './alias': './dist/index.fict.meta.json',
+        },
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('writes fict.exports to package.json for multi-entry library builds', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-library-package-subpaths-'))
 

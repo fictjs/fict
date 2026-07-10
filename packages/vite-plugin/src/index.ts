@@ -2320,12 +2320,13 @@ function buildFictPackageMappingResult(
   outDir: string,
 ): FictPackageMappingResult {
   const packageTargets = collectPackageTargets(pkg)
-  const targetToSubpath = new Map<string, string>()
+  const targetToSubpaths = new Map<string, Set<string>>()
   for (const { subpath, target } of packageTargets) {
     const normalizedTarget = normalizePackageJsonTarget(target)
-    if (normalizedTarget && !targetToSubpath.has(normalizedTarget)) {
-      targetToSubpath.set(normalizedTarget, subpath)
-    }
+    if (!normalizedTarget) continue
+    const subpaths = targetToSubpaths.get(normalizedTarget) ?? new Set<string>()
+    subpaths.add(subpath)
+    targetToSubpaths.set(normalizedTarget, subpaths)
   }
 
   const mappings = new Map<string, string>()
@@ -2340,9 +2341,9 @@ function buildFictPackageMappingResult(
       packageDir,
       path.resolve(outDir, asset.metadataFileName),
     )
-    const subpath = targetToSubpath.get(chunkPackagePath)
-    if (subpath) {
-      mappings.set(subpath, metadataPackagePath)
+    const subpaths = targetToSubpaths.get(chunkPackagePath)
+    if (subpaths?.size) {
+      for (const subpath of subpaths) mappings.set(subpath, metadataPackagePath)
     } else {
       unmappedAssets.push(asset)
     }
