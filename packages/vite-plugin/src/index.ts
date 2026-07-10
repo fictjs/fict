@@ -129,6 +129,15 @@ interface MetadataGraphNode {
   filename: string
   code: string
   dependencies: Set<string>
+  loadOptions?: MetadataLoadOptions
+}
+
+interface MetadataLoadOptions {
+  id: string
+  attributes?: Record<string, string> | null
+  meta?: Record<string, unknown> | null
+  moduleSideEffects?: boolean | 'no-treeshake' | null
+  syntheticNamedExports?: boolean | string | null
 }
 
 interface MetadataResolveContext {
@@ -136,7 +145,8 @@ interface MetadataResolveContext {
     source: string,
     importer?: string,
     options?: { skipSelf?: boolean },
-  ) => Promise<{ id: string; external?: boolean | 'absolute' | 'relative' } | null>
+  ) => Promise<(MetadataLoadOptions & { external?: boolean | 'absolute' | 'relative' }) | null>
+  load?: (options: MetadataLoadOptions) => Promise<unknown>
 }
 
 interface NormalizedLibraryOptions {
@@ -351,6 +361,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   const moduleMetadata: FictCompilerOptions['moduleMetadata'] = new Map()
   const resolvedLocalModules = new Map<string, string>()
   const preparedCompilerTransforms = new Map<string, PreparedCompilerTransform>()
+  const pipelineCompilerInputs = new Map<string, string>()
+  const pipelineTransformsInProgress = new Map<string, number>()
+  const pipelineTransformedModules = new Set<string>()
   let metadataPreparationQueue: Promise<void> = Promise.resolve()
   const extractedHandlers = new Map<string, ExtractedHandler>()
   const libraryMetadataAssets = new Map<string, LibraryMetadataAsset>()
@@ -408,6 +421,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     moduleMetadata.clear()
     resolvedLocalModules.clear()
     preparedCompilerTransforms.clear()
+    pipelineCompilerInputs.clear()
+    pipelineTransformsInProgress.clear()
+    pipelineTransformedModules.clear()
     metadataPreparationQueue = Promise.resolve()
     extractedHandlers.clear()
     libraryMetadataAssets.clear()
@@ -537,21 +553,27 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     context: MetadataResolveContext,
     source: string,
     importer: string,
-  ): Promise<string | null> => {
+  ): Promise<{ filename: string; loadOptions: MetadataLoadOptions } | null> => {
     if (hasModuleRequestSuffix(source)) return null
     if (context.resolve) {
       const resolved = await context.resolve(source, importer, { skipSelf: true })
       if (resolved && !resolved.external && !isInternalModuleId(resolved.id)) {
         const resolvedFile = resolveExistingModuleFile(stripQuery(resolved.id))
-        if (resolvedFile) return normalizeFileName(resolvedFile, config?.root)
+        if (resolvedFile) {
+          return {
+            filename: normalizeFileName(resolvedFile, config?.root),
+            loadOptions: resolved,
+          }
+        }
       }
     }
-    return resolveLocalModuleSource(
+    const resolved = resolveLocalModuleSource(
       source,
       importer,
       config?.root,
       normalizeAliases(config?.resolve?.alias),
     )
+    return resolved ? { filename: resolved, loadOptions: { id: resolved } } : null
   }
 
   const discoverMetadataGraph = async (
@@ -562,25 +584,39 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     const nodes = new Map<string, MetadataGraphNode>()
     const discovered = new Set<string>()
 
-    const visit = async (filename: string, suppliedCode?: string): Promise<void> => {
+    const visit = async (
+      filename: string,
+      suppliedCode?: string,
+      loadOptions?: MetadataLoadOptions,
+    ): Promise<void> => {
       const normalizedFilename = normalizeFileName(filename, config?.root)
       if (discovered.has(normalizedFilename)) return
       discovered.add(normalizedFilename)
 
-      const code = suppliedCode ?? (await fs.readFile(normalizedFilename, 'utf8'))
+      const pipelineCode = suppliedCode ?? pipelineCompilerInputs.get(normalizedFilename)
+      const code = pipelineCode ?? (await fs.readFile(normalizedFilename, 'utf8'))
       const node: MetadataGraphNode = {
         filename: normalizedFilename,
         code,
         dependencies: new Set(),
+        ...(loadOptions ? { loadOptions } : {}),
       }
       nodes.set(normalizedFilename, node)
 
+      // During builds, an uncaptured dependency is a pipeline frontier. Loading it runs
+      // earlier transforms; only their resulting imports are authoritative. Manual plugin
+      // contexts without load support retain the recursive on-disk preparation fallback.
+      if (pipelineCode === undefined && config?.command === 'build' && context.load) return
+
       for (const source of collectStaticModuleSources(code)) {
         const resolved = await resolveGraphDependency(context, source, normalizedFilename)
-        if (!resolved || !shouldCompileModule(resolved)) continue
-        resolvedLocalModules.set(createLocalResolutionKey(normalizedFilename, source), resolved)
-        node.dependencies.add(resolved)
-        await visit(resolved)
+        if (!resolved || !shouldCompileModule(resolved.filename)) continue
+        resolvedLocalModules.set(
+          createLocalResolutionKey(normalizedFilename, source),
+          resolved.filename,
+        )
+        node.dependencies.add(resolved.filename)
+        await visit(resolved.filename, undefined, resolved.loadOptions)
       }
     }
 
@@ -636,9 +672,21 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   const prepareMetadataGraph = async (
     graph: Map<string, MetadataGraphNode>,
     rootFilename: string,
+    pipelinePrepared = new Set<string>(),
   ): Promise<void> => {
     for (const component of getStronglyConnectedMetadataComponents(graph)) {
       const sortedComponent = [...component].sort()
+      const normalizedRoot = normalizeFileName(rootFilename, config?.root)
+      if (
+        sortedComponent.every(
+          filename =>
+            filename !== normalizedRoot &&
+            pipelinePrepared.has(filename) &&
+            moduleMetadata.has(filename),
+        )
+      ) {
+        continue
+      }
       const hasCycle =
         sortedComponent.length > 1 ||
         graph.get(sortedComponent[0]!)?.dependencies.has(sortedComponent[0]!) === true
@@ -731,14 +779,67 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     }
   }
 
+  const preloadPipelineMetadata = async (
+    context: MetadataResolveContext,
+    graph: Map<string, MetadataGraphNode>,
+    rootFilename: string,
+    attemptedLoads: Set<string>,
+  ): Promise<boolean> => {
+    // Dev-server transforms can outlive an HMR invalidation. Build (including Rollup
+    // watch rebuilds) has a serialized buildStart boundary for this shared snapshot.
+    if (config?.command !== 'build' || !context.load) return false
+
+    const normalizedRoot = normalizeFileName(rootFilename, config?.root)
+
+    for (const filename of graph.keys()) {
+      // A back-edge into an active transform would deadlock Rollup's module loader.
+      // Its input has already been captured, so metadata convergence can use that
+      // pipeline source directly instead of recursively loading it again.
+      if (
+        filename === normalizedRoot ||
+        pipelineTransformsInProgress.has(filename) ||
+        attemptedLoads.has(filename)
+      ) {
+        continue
+      }
+      if (!pipelineTransformedModules.has(filename)) {
+        attemptedLoads.add(filename)
+        await context.load(graph.get(filename)?.loadOptions ?? { id: filename })
+        if (!pipelineCompilerInputs.has(filename)) {
+          throw new Error(
+            `[fict] Build pipeline did not provide compiler input for local dependency ${filename}.`,
+          )
+        }
+        return true
+      }
+    }
+    return false
+  }
+
   const prepareReachableMetadata = async (
     context: MetadataResolveContext,
     code: string,
     filename: string,
   ): Promise<void> => {
+    let graph = await discoverMetadataGraph(context, code, filename)
+    const attemptedLoads = new Set<string>()
+    // Refresh after each load: an earlier transform may add or remove imports, so the
+    // raw on-disk dependency graph must not decide which subsequent modules are loaded.
+    while (await preloadPipelineMetadata(context, graph, filename, attemptedLoads)) {
+      graph = await discoverMetadataGraph(context, code, filename)
+    }
+    const normalizedRoot = normalizeFileName(filename, config?.root)
+    const pipelinePrepared = new Set(
+      [...graph.keys()].filter(
+        dependency =>
+          dependency !== normalizedRoot &&
+          pipelineTransformedModules.has(dependency) &&
+          !pipelineTransformsInProgress.has(dependency) &&
+          moduleMetadata.has(dependency),
+      ),
+    )
     const prepare = metadataPreparationQueue.then(async () => {
-      const graph = await discoverMetadataGraph(context, code, filename)
-      await prepareMetadataGraph(graph, filename)
+      await prepareMetadataGraph(graph, filename, pipelinePrepared)
     })
     metadataPreparationQueue = prepare.then(
       () => undefined,
@@ -913,6 +1014,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       }
 
       const normalizedFilename = normalizeFileName(filename, config?.root)
+      const pipelineMetadataEnabled = config?.command === 'build'
+      if (pipelineMetadataEnabled) {
+        pipelineCompilerInputs.set(normalizedFilename, code)
+        pipelineTransformsInProgress.set(
+          normalizedFilename,
+          (pipelineTransformsInProgress.get(normalizedFilename) ?? 0) + 1,
+        )
+      }
       try {
         const precompiledInput = isPrecompiledFictModule(code)
         if (!precompiledInput) {
@@ -966,6 +1075,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             }
             if (cached.moduleMetadata) {
               moduleMetadata.set(normalizedFilename, cached.moduleMetadata)
+            }
+            if (pipelineMetadataEnabled) {
+              pipelineTransformedModules.add(normalizedFilename)
             }
             return {
               code: cached.code,
@@ -1080,6 +1192,10 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           await cacheStore.set(cacheKey, cachedTransform)
         }
 
+        if (pipelineMetadataEnabled) {
+          pipelineTransformedModules.add(normalizedFilename)
+        }
+
         return transformed
       } catch (error) {
         // Better error handling
@@ -1092,6 +1208,15 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         })
 
         return null
+      } finally {
+        if (pipelineMetadataEnabled) {
+          const remaining = (pipelineTransformsInProgress.get(normalizedFilename) ?? 1) - 1
+          if (remaining > 0) {
+            pipelineTransformsInProgress.set(normalizedFilename, remaining)
+          } else {
+            pipelineTransformsInProgress.delete(normalizedFilename)
+          }
+        }
       }
     },
 

@@ -285,6 +285,196 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it('prepares hook metadata from the output of earlier pre transforms', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-pre-transform-metadata-'))
+    const srcDir = path.join(root, 'src')
+    const hookPath = path.join(srcDir, 'use-counter.tsx')
+    const entry = path.join(srcDir, 'App.tsx')
+    let removedDependencyVisited = false
+
+    try {
+      await mkdir(srcDir, { recursive: true })
+      await writeFile(path.join(srcDir, 'removed.ts'), `export const removed = true`)
+      await writeFile(
+        hookPath,
+        `
+          import { $state } from 'fict'
+          import './removed'
+          const makeValue = (value: number) => value
+          export function useCounter() {
+            const count = makeValue(1)
+            return count
+          }
+        `,
+      )
+      await writeFile(
+        entry,
+        `
+          import { useCounter } from './use-counter'
+          export function App() {
+            const count = useCounter()
+            const doubled = count * 2
+            return <div>{doubled}</div>
+          }
+        `,
+      )
+
+      const result = await build({
+        root,
+        logLevel: 'silent',
+        plugins: [
+          {
+            name: 'test-rewrite-hook-state',
+            enforce: 'pre',
+            transform(code, id) {
+              const filename = id.split('?')[0]!
+              if (filename.endsWith('/removed.ts')) {
+                removedDependencyVisited = true
+                return null
+              }
+              if (!filename.endsWith('/use-counter.tsx')) return null
+              return code.replace("import './removed'", '').replace('makeValue(1)', '$state(1)')
+            },
+          },
+          fict({ cache: false, useTypeScriptProject: false, functionSplitting: false }),
+        ],
+        build: {
+          write: false,
+          lib: { entry, formats: ['es'], fileName: () => 'app.js' },
+          rollupOptions: {
+            external: id => id === 'fict' || id.startsWith('fict/'),
+          },
+        },
+      })
+      const outputs = Array.isArray(result) ? result : [result]
+      const code = outputs
+        .flatMap(output => ('output' in output ? output.output : []))
+        .filter(output => output.type === 'chunk')
+        .map(output => output.code)
+        .join('\n')
+
+      expect(code).toMatch(/=>\s*[\w$]+\(\) \* 2,\s*\{\s*name:\s*"doubled"/)
+      expect(code).not.toMatch(/=>\s*[\w$]+ \* 2,\s*\{\s*name:\s*"doubled"/)
+      expect(removedDependencyVisited).toBe(false)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('uses earlier pre-transform inputs when cyclic hook metadata converges', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-pre-transform-cycle-'))
+    const srcDir = path.join(root, 'src')
+    const hookPath = path.join(srcDir, 'use-counter.tsx')
+    const entry = path.join(srcDir, 'App.tsx')
+
+    try {
+      await mkdir(srcDir, { recursive: true })
+      await writeFile(
+        hookPath,
+        `
+          import { $state } from 'fict'
+          import { marker } from './cycle'
+          const makeValue = (value: number) => value
+          export function useCounter() {
+            const count = makeValue(marker)
+            return count
+          }
+        `,
+      )
+      await writeFile(
+        path.join(srcDir, 'cycle.ts'),
+        `
+          export { useCounter } from './use-counter'
+          export const marker = 1
+        `,
+      )
+      await writeFile(
+        entry,
+        `
+          import { useCounter } from './use-counter'
+          export function App() {
+            const count = useCounter()
+            const doubled = count * 2
+            return <div>{doubled}</div>
+          }
+        `,
+      )
+
+      const result = await build({
+        root,
+        logLevel: 'silent',
+        plugins: [
+          {
+            name: 'test-rewrite-cyclic-hook-state',
+            enforce: 'pre',
+            transform(code, id) {
+              if (!id.split('?')[0]!.endsWith('/use-counter.tsx')) return null
+              return code.replace('makeValue(marker)', '$state(marker)')
+            },
+          },
+          fict({ cache: false, useTypeScriptProject: false, functionSplitting: false }),
+        ],
+        build: {
+          write: false,
+          lib: { entry, formats: ['es'], fileName: () => 'app.js' },
+          rollupOptions: {
+            external: id => id === 'fict' || id.startsWith('fict/'),
+          },
+        },
+      })
+      const outputs = Array.isArray(result) ? result : [result]
+      const code = outputs
+        .flatMap(output => ('output' in output ? output.output : []))
+        .filter(output => output.type === 'chunk')
+        .map(output => output.code)
+        .join('\n')
+
+      expect(code).toContain('__fictUseSignal')
+      expect(code).toMatch(/=>\s*[\w$]+\(\) \* 2,\s*\{\s*name:\s*"doubled"/)
+      expect(code).not.toMatch(/=>\s*[\w$]+ \* 2,\s*\{\s*name:\s*"doubled"/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed when a loaded metadata dependency bypasses the Fict pipeline', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-missing-pipeline-input-'))
+    const srcDir = path.join(root, 'src')
+    const hookPath = path.join(srcDir, 'use-counter.tsx')
+    const appPath = path.join(srcDir, 'App.tsx')
+
+    try {
+      await mkdir(srcDir, { recursive: true })
+      await writeFile(hookPath, `export function useCounter() { return 1 }`)
+      const plugin = getTestPlugin({ cache: false, useTypeScriptProject: false })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+      const load = vi.fn(async () => ({}))
+      const context = {
+        load,
+        warn: vi.fn(),
+        emitFile: vi.fn(),
+        error(error: unknown): never {
+          const message =
+            error && typeof error === 'object' && 'message' in error
+              ? String(error.message)
+              : String(error)
+          throw new Error(message)
+        },
+      }
+
+      await expect(
+        plugin.transform?.call(
+          context,
+          `import { useCounter } from './use-counter'; export const count = useCounter()`,
+          appPath,
+        ),
+      ).rejects.toThrow('Build pipeline did not provide compiler input')
+      expect(load).toHaveBeenCalledWith(expect.objectContaining({ id: hookPath }))
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('transforms a TypeScript hook by default before its TSX importer', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-default-ts-hook-'))
     const srcDir = path.join(root, 'src')
