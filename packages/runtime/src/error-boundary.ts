@@ -125,8 +125,6 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
     renderValue(props.children ?? null)
   }
 
-  renderValue(props.children ?? null)
-
   registerRootCleanup(() => {
     if (cleanup) {
       cleanup()
@@ -134,6 +132,11 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
     }
     destroyRoot(boundaryRoot)
   })
+
+  // Register ownership before the initial render. A successful fallback can
+  // still be followed by a throwing `onError`; in that case construction
+  // aborts and the host root must be able to tear the fallback subtree down.
+  renderValue(props.children ?? null)
 
   withRootContext(boundaryRoot, () => {
     registerErrorHandler(err => {

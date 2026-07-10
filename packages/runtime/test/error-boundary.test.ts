@@ -36,6 +36,47 @@ describe('ErrorBoundary', () => {
     dispose()
   })
 
+  it('disposes an initial fallback when onError throws', async () => {
+    const container = document.createElement('div')
+    const dependency = createSignal(0)
+    let fallbackRuns = 0
+    let fallbackDisposals = 0
+
+    const Fallback = () => {
+      createEffect(() => {
+        dependency()
+        fallbackRuns++
+      })
+      onDestroy(() => {
+        fallbackDisposals++
+      })
+      return 'fallback'
+    }
+
+    expect(() =>
+      render(
+        () => ({
+          type: ErrorBoundary,
+          props: {
+            fallback: { type: Fallback, props: {} },
+            onError: () => {
+              throw new Error('onError failed')
+            },
+            children: { type: Thrower, props: {} },
+          },
+        }),
+        container,
+      ),
+    ).toThrow('onError failed')
+
+    expect(fallbackRuns).toBe(1)
+    expect(fallbackDisposals).toBe(1)
+
+    dependency(1)
+    await nextTick()
+    expect(fallbackRuns).toBe(1)
+  })
+
   it('creates boundary marker in container ownerDocument', async () => {
     const foreignDoc = document.implementation.createHTMLDocument('foreign-error-boundary')
     const container = foreignDoc.createElement('div')
