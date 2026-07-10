@@ -3087,6 +3087,7 @@ async function compileFictCompilerStage(
     filename,
     configFile: false,
     babelrc: false,
+    ...(isTypeScript ? { parserOpts: { plugins: ['decorators-legacy'] } } : {}),
     sourceMaps: fictOptions.sourcemap,
     sourceFileName: filename,
     plugins,

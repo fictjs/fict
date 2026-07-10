@@ -1875,6 +1875,57 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it('preserves TypeScript decorators for Vite lowering', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-typescript-decorators-'))
+    const entry = path.join(root, 'decorated.ts')
+
+    try {
+      await writeFile(
+        path.join(root, 'tsconfig.json'),
+        JSON.stringify({ compilerOptions: { experimentalDecorators: true } }),
+      )
+      await writeFile(
+        entry,
+        `
+          function registered(value: any): void {
+            value.registered = true
+          }
+
+          @registered
+          export class Decorated {}
+
+          export const decoratedName = Decorated.name
+          export const isRegistered = (Decorated as any).registered === true
+        `,
+      )
+
+      const result = await build({
+        root,
+        logLevel: 'silent',
+        plugins: [fict({ cache: false, useTypeScriptProject: false, functionSplitting: false })],
+        build: {
+          write: false,
+          lib: { entry, formats: ['es'], fileName: () => 'decorated.js' },
+        },
+      })
+      const outputs = Array.isArray(result) ? result : [result]
+      const code = outputs
+        .flatMap(output => ('output' in output ? output.output : []))
+        .filter(output => output.type === 'chunk')
+        .map(output => output.code)
+        .join('\n')
+      const moduleUrl = `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
+      const builtModule = (await import(moduleUrl)) as { isRegistered: boolean }
+
+      expect(code).toContain('Decorated')
+      expect(code).not.toContain('@registered')
+      expect(code).not.toContain(': any')
+      expect(builtModule.isRegistered).toBe(true)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it.each([
     {
       name: 'preserves ordinary imports with verbatimModuleSyntax',
