@@ -1329,6 +1329,16 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
 
       // Determine if we're in dev mode based on command or mode
       const devMode = env.command === 'serve' || env.mode === 'development'
+      const watchConfig =
+        userConfig.server?.watch === null
+          ? {}
+          : {
+              server: {
+                watch: {
+                  ignored: ['!**/node_modules/@fictjs/**', '!**/node_modules/fict/**'],
+                },
+              },
+            }
 
       return {
         // Define __DEV__ for runtime devtools support
@@ -1347,13 +1357,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           ...(userConfig.resolve ?? {}),
           dedupe: Array.from(dedupe),
         },
-        // Watch workspace packages dist directories for changes in dev mode
-        // This ensures HMR picks up rebuilt packages without needing to restart
-        server: {
-          watch: {
-            ignored: ['!**/node_modules/@fictjs/**', '!**/node_modules/fict/**'],
-          },
-        },
+        // Watch workspace package builds unless the user explicitly disabled watching.
+        // Returning an object for `watch: null` would re-enable Vite's filesystem watcher.
+        ...watchConfig,
         ...(hasDisabledOptimize
           ? { optimizeDeps: userOptimize }
           : {

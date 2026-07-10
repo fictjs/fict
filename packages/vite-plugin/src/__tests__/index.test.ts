@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
-import { build, createServer, type Rollup, type TransformResult } from 'vite'
+import { build, createServer, resolveConfig, type Rollup, type TransformResult } from 'vite'
 import { describe, it, expect, vi } from 'vitest'
 
 import fict, { __fictVitePluginInternals } from '..'
@@ -473,6 +473,38 @@ describe('fict vite-plugin', () => {
     } finally {
       await rm(root, { recursive: true, force: true })
     }
+  })
+
+  it('preserves disabled and custom Vite watcher settings', async () => {
+    const disabled = await resolveConfig(
+      {
+        configFile: false,
+        plugins: [fict({ cache: false, useTypeScriptProject: false })],
+        server: { watch: null },
+      },
+      'serve',
+    )
+    expect(disabled.server.watch).toBeNull()
+
+    const customized = await resolveConfig(
+      {
+        configFile: false,
+        plugins: [fict({ cache: false, useTypeScriptProject: false })],
+        server: {
+          watch: {
+            ignored: ['**/generated/**'],
+            usePolling: true,
+          },
+        },
+      },
+      'serve',
+    )
+    expect(customized.server.watch).toMatchObject({ usePolling: true })
+    expect(customized.server.watch?.ignored).toEqual([
+      '**/generated/**',
+      '!**/node_modules/@fictjs/**',
+      '!**/node_modules/fict/**',
+    ])
   })
 
   it('prepares cyclic earlier-transform hook metadata on the first dev request', async () => {
