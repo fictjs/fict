@@ -553,15 +553,16 @@ export function hashParams(params: Record<string, unknown>): string {
   return JSON.stringify(entries)
 }
 
-const queryFunctionIds = new WeakMap<object, number>()
+const queryObjectIds = new WeakMap<object, number>()
 const querySymbolIds = new Map<symbol, number>()
+const nativeObjectConstructorSource = Function.prototype.toString.call(Object)
 let nextQueryIdentity = 1
 
 function getQueryObjectId(value: object): number {
-  let id = queryFunctionIds.get(value)
+  let id = queryObjectIds.get(value)
   if (id === undefined) {
     id = nextQueryIdentity++
-    queryFunctionIds.set(value, id)
+    queryObjectIds.set(value, id)
   }
   return id
 }
@@ -584,6 +585,23 @@ function isArrayIndexKey(key: string): boolean {
   if (key === '') return false
   const index = Number(key)
   return Number.isInteger(index) && index >= 0 && index < 2 ** 32 - 1 && String(index) === key
+}
+
+function isPlainQueryObject(value: object): boolean {
+  try {
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype === null) return true
+
+    const constructor = Object.getOwnPropertyDescriptor(prototype, 'constructor')?.value
+    return (
+      typeof constructor === 'function' &&
+      Function.prototype.toString.call(constructor) === nativeObjectConstructorSource
+    )
+  } catch {
+    // Exotic objects and proxies with observable prototype traps are opaque
+    // query arguments. Their stable identity is safer than inspecting them.
+    return false
+  }
 }
 
 function encodeQueryValue(value: unknown, path: string, stack: WeakMap<object, string>): unknown {
@@ -667,6 +685,10 @@ function encodeQueryValue(value: unknown, path: string, stack: WeakMap<object, s
       return ['set', entries]
     }
 
+    if (!isPlainQueryObject(objectValue)) {
+      return ['identity', getQueryObjectId(objectValue)]
+    }
+
     const record = value as Record<string, unknown>
     const props = Object.keys(record)
       .sort()
@@ -678,15 +700,7 @@ function encodeQueryValue(value: unknown, path: string, stack: WeakMap<object, s
         encodeQueryValue(Reflect.get(value, symbol), `${path}.${String(symbol)}`, stack),
       ])
       .sort(([a], [b]) => String(a).localeCompare(String(b)))
-    const prototype = Object.getPrototypeOf(value)
-
-    return [
-      'object',
-      Object.prototype.toString.call(value),
-      prototype?.constructor?.name ?? null,
-      props,
-      symbolProps,
-    ]
+    return ['object', props, symbolProps]
   } finally {
     stack.delete(objectValue)
   }

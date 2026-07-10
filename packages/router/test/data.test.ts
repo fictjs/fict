@@ -439,6 +439,103 @@ describe('query', () => {
     expect(second()).toBe('ok')
   })
 
+  it('should keep distinct URLSearchParams query args separate by identity', async () => {
+    const fetcher = vi.fn((value: URLSearchParams) => value.get('viewer'))
+    const fetchValue = query(fetcher, 'urlSearchParamsArgQuery')
+    const aliceParams = new URLSearchParams({ viewer: 'alice' })
+    const bobParams = new URLSearchParams({ viewer: 'bob' })
+
+    const alice = fetchValue(aliceParams)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const aliceAgain = fetchValue(aliceParams)
+    const bob = fetchValue(bobParams)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(alice()).toBe('alice')
+    expect(aliceAgain()).toBe('alice')
+    expect(bob()).toBe('bob')
+  })
+
+  it('should keep distinct URL query args separate by identity', async () => {
+    const fetcher = vi.fn((value: URL) => value.pathname)
+    const fetchValue = query(fetcher, 'urlArgQuery')
+    const firstUrl = new URL('https://example.com/first')
+    const secondUrl = new URL('https://example.com/second')
+
+    const first = fetchValue(firstUrl)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const firstAgain = fetchValue(firstUrl)
+    const second = fetchValue(secondUrl)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(first()).toBe('/first')
+    expect(firstAgain()).toBe('/first')
+    expect(second()).toBe('/second')
+  })
+
+  it('should keep distinct Headers query args separate by identity', async () => {
+    const fetcher = vi.fn((value: Headers) => value.get('x-viewer'))
+    const fetchValue = query(fetcher, 'headersArgQuery')
+    const aliceHeaders = new Headers({ 'x-viewer': 'alice' })
+    const bobHeaders = new Headers({ 'x-viewer': 'bob' })
+
+    const alice = fetchValue(aliceHeaders)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const aliceAgain = fetchValue(aliceHeaders)
+    const bob = fetchValue(bobHeaders)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(alice()).toBe('alice')
+    expect(aliceAgain()).toBe('alice')
+    expect(bob()).toBe('bob')
+  })
+
+  it('should keep custom class query args with hidden state separate by identity', async () => {
+    class ViewerKey {
+      readonly kind = 'viewer'
+      readonly #name: string
+
+      constructor(name: string) {
+        this.#name = name
+      }
+
+      read(): string {
+        return this.#name
+      }
+    }
+
+    const fetcher = vi.fn((value: ViewerKey) => value.read())
+    const fetchValue = query(fetcher, 'customClassArgQuery')
+    const aliceKey = new ViewerKey('alice')
+    const bobKey = new ViewerKey('bob')
+
+    const alice = fetchValue(aliceKey)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const aliceAgain = fetchValue(aliceKey)
+    const bob = fetchValue(bobKey)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(alice()).toBe('alice')
+    expect(aliceAgain()).toBe('alice')
+    expect(bob()).toBe('bob')
+  })
+
   it('should keep nested undefined properties separate from missing properties', async () => {
     type NestedArg = { nested: { value?: undefined } }
     const fetcher = vi.fn((value: NestedArg) =>

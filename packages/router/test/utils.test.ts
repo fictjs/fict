@@ -13,6 +13,7 @@ import {
   createBranches,
   matchRoutes,
   locationsAreEqual,
+  hashQueryArgs,
 } from '../src/utils'
 
 describe('normalizePath', () => {
@@ -134,6 +135,58 @@ describe('createLocation', () => {
     const state = { from: '/home' }
     const location = createLocation('/users', state)
     expect(location.state).toBe(state)
+  })
+})
+
+describe('hashQueryArgs', () => {
+  it('keeps structural value semantics for supported built-in containers', () => {
+    const first = [
+      new Date('2026-07-11T00:00:00.000Z'),
+      /fict/gi,
+      new Map<string, number>([
+        ['b', 2],
+        ['a', 1],
+      ]),
+      new Set(['b', 'a']),
+    ]
+    const second = [
+      new Date('2026-07-11T00:00:00.000Z'),
+      /fict/gi,
+      new Map<string, number>([
+        ['a', 1],
+        ['b', 2],
+      ]),
+      new Set(['a', 'b']),
+    ]
+
+    expect(hashQueryArgs(first)).toBe(hashQueryArgs(second))
+  })
+
+  it('keeps circular plain objects structural and deterministic', () => {
+    interface CircularValue {
+      id: string
+      nested: { enabled: boolean }
+      self?: CircularValue
+    }
+
+    const first: CircularValue = { id: 'same', nested: { enabled: true } }
+    first.self = first
+    const second: CircularValue = { nested: { enabled: true }, id: 'same' }
+    second.self = second
+
+    expect(hashQueryArgs([first])).toBe(hashQueryArgs([second]))
+  })
+
+  it('preserves opaque object identity when nested in plain structures', () => {
+    class OpaqueKey {
+      constructor(readonly label: string) {}
+    }
+
+    const first = new OpaqueKey('same')
+    const second = new OpaqueKey('same')
+
+    expect(hashQueryArgs([{ nested: [first] }])).toBe(hashQueryArgs([{ nested: [first] }]))
+    expect(hashQueryArgs([{ nested: [first] }])).not.toBe(hashQueryArgs([{ nested: [second] }]))
   })
 })
 
