@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -82,6 +90,61 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
       expect(appOutput).toMatch(/count\(\)\s*\*\s*2/)
 
       const hookModule = evaluateCommonJs(compilePresetModule(hookSource, hookPath), source => {
+        if (source === '@fictjs/runtime/advanced') return runtimeAdvanced
+        throw new Error(`Unexpected hook dependency: ${source}`)
+      })
+      const appModule = evaluateCommonJs(appOutput, source => {
+        if (source === './use-count.cts') return hookModule
+        throw new Error(`Unexpected app dependency: ${source}`)
+      })
+
+      expect((appModule.App as () => number)()).toBe(4)
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it('prepares CTS export-assignment metadata before an import-equals importer', () => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-graph-cts-assignment-'))
+    const hookPath = path.join(baseDir, 'use-count.cts')
+    const appPath = path.join(baseDir, 'app.cts')
+    const hookSource = `
+      import { createSignal } from '@fictjs/runtime/advanced'
+      function useCount() {
+        const count = createSignal(2)
+        return count
+      }
+      export = useCount
+    `
+    const appSource = `
+      import useCount = require('./use-count.cts')
+      export function App() {
+        const count = useCount()
+        return count * 2
+      }
+    `
+
+    try {
+      writeFileSync(hookPath, hookSource)
+      writeFileSync(appPath, appSource)
+
+      transformSync(hookSource, {
+        filename: hookPath,
+        configFile: false,
+        babelrc: false,
+        presets: [[fictPreset, { dev: false, strictGuarantee: true, emitModuleMetadata: true }]],
+      })
+      const emittedMetadata = JSON.parse(readFileSync(`${hookPath}.fict.meta.json`, 'utf8')) as {
+        hooks?: Record<string, { directAccessor?: string }>
+      }
+      expect(emittedMetadata.hooks?.default?.directAccessor).toBe('signal')
+
+      const appOutput = compilePresetModule(appSource, appPath)
+      expect(appOutput).toMatch(/count\(\)\s*\*\s*2/)
+
+      const hookOutput = compilePresetModule(hookSource, hookPath)
+      expect(hookOutput).toContain('module.exports =')
+      const hookModule = evaluateCommonJs(hookOutput, source => {
         if (source === '@fictjs/runtime/advanced') return runtimeAdvanced
         throw new Error(`Unexpected hook dependency: ${source}`)
       })
@@ -979,7 +1042,7 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
       },
     )
 
-    expect(result?.code).toContain('require("node:path")')
+    expect(result?.code).toMatch(/require\(["']node:path["']\)/)
     expect(result?.code).toContain('require("fict/internal")')
     expect(result?.code).toContain('module.exports =')
     expect(result?.code).toContain('__fictUseSignal')

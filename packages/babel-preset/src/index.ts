@@ -814,6 +814,118 @@ function commonJsMarkerPlugin(): PluginObj {
   }
 }
 
+interface CtsModuleSyntaxState {
+  importEquals: { local: string; source: string }[]
+  hasExportAssignment: boolean
+}
+
+// TypeScript lowering must run before Fict for enums/namespaces/declare fields, but it would also
+// erase the static edge and default-export identity carried by CTS module syntax. Present an ESM
+// shape during analysis, then restore exact CommonJS binding semantics before Babel's module pass.
+function lowerCtsModuleSyntaxForFict(state: CtsModuleSyntaxState): PluginObj {
+  return {
+    name: 'fict-lower-cts-module-syntax-for-analysis',
+    visitor: {
+      TSImportEqualsDeclaration(importPath) {
+        const { node } = importPath
+        if (node.importKind === 'type') {
+          importPath.remove()
+          return
+        }
+        if (!t.isTSExternalModuleReference(node.moduleReference)) return
+
+        const source = node.moduleReference.expression.value
+        const declaration = t.importDeclaration(
+          [t.importDefaultSpecifier(t.cloneNode(node.id))],
+          t.cloneNode(node.moduleReference.expression),
+        )
+        t.inheritsComments(declaration, node)
+        state.importEquals.push({ local: node.id.name, source })
+        if (node.isExport) {
+          importPath.replaceWithMultiple([
+            declaration,
+            t.exportNamedDeclaration(null, [
+              t.exportSpecifier(t.cloneNode(node.id), t.cloneNode(node.id)),
+            ]),
+          ])
+        } else {
+          importPath.replaceWith(declaration)
+        }
+      },
+      TSExportAssignment(exportPath) {
+        state.hasExportAssignment = true
+        const declaration = t.exportDefaultDeclaration(exportPath.node.expression)
+        t.inheritsComments(declaration, exportPath.node)
+        exportPath.replaceWith(declaration)
+      },
+    },
+  }
+}
+
+function restoreCtsModuleSyntaxAfterFict(state: CtsModuleSyntaxState): PluginObj {
+  return {
+    name: 'fict-restore-cts-commonjs-semantics',
+    visitor: {
+      Program: {
+        exit(programPath) {
+          const pendingImports = new Map(
+            state.importEquals.map(entry => [`${entry.source}\0${entry.local}`, entry]),
+          )
+          let restoredExportAssignment = !state.hasExportAssignment
+          for (const statementPath of programPath.get('body')) {
+            if (statementPath.isImportDeclaration()) {
+              const [specifier] = statementPath.node.specifiers
+              if (
+                statementPath.node.specifiers.length !== 1 ||
+                !t.isImportDefaultSpecifier(specifier)
+              ) {
+                continue
+              }
+              const key = `${statementPath.node.source.value}\0${specifier.local.name}`
+              if (!pendingImports.delete(key)) continue
+              const declaration = t.variableDeclaration('const', [
+                t.variableDeclarator(
+                  t.cloneNode(specifier.local),
+                  t.callExpression(t.identifier('require'), [
+                    t.cloneNode(statementPath.node.source),
+                  ]),
+                ),
+              ])
+              t.inheritsComments(declaration, statementPath.node)
+              statementPath.replaceWith(declaration)
+              continue
+            }
+            if (!restoredExportAssignment && statementPath.isExportDefaultDeclaration()) {
+              if (!t.isExpression(statementPath.node.declaration)) {
+                throw statementPath.buildCodeFrameError(
+                  '[fict] CTS export assignment no longer contains an expression.',
+                )
+              }
+              const expression = statementPath.node.declaration
+              const assignment = t.expressionStatement(
+                t.assignmentExpression(
+                  '=',
+                  t.memberExpression(t.identifier('module'), t.identifier('exports')),
+                  expression,
+                ),
+              )
+              t.inheritsComments(assignment, statementPath.node)
+              statementPath.replaceWith(assignment)
+              restoredExportAssignment = true
+            }
+          }
+          if (!restoredExportAssignment) {
+            throw programPath.buildCodeFrameError(
+              '[fict] CTS export assignment was lost before CommonJS restoration.',
+            )
+          }
+          programPath.scope.crawl()
+        },
+      },
+    },
+  }
+}
+
 interface ImplicitGraphPrepassOptions {
   fingerprint: string
   metadataOnly: boolean
@@ -946,6 +1058,10 @@ function createIsolatedFictPrepass(
       const compileAsCommonJS =
         !!typeScriptTransformOptions &&
         shouldCompileTypeScriptAsCommonJS(file.opts.filename ?? undefined, typescriptOptions)
+      const ctsModuleSyntax: CtsModuleSyntaxState | null = compileAsCommonJS
+        ? { importEquals: [], hasExportAssignment: false }
+        : null
+      if (ctsModuleSyntax) plugins.push(lowerCtsModuleSyntaxForFict(ctsModuleSyntax))
       if (typeScriptTransformOptions) {
         if (getFileDataStore(this.file).get('@babel/plugin-transform-modules-*') === 'commonjs') {
           plugins.push(commonJsMarkerPlugin)
@@ -965,6 +1081,7 @@ function createIsolatedFictPrepass(
         )
       }
       plugins.push([createFictPlugin, effectiveCompilerOptions])
+      if (ctsModuleSyntax) plugins.push(restoreCtsModuleSyntaxAfterFict(ctsModuleSyntax))
       if (typeScriptTransformOptions && typescriptOptions.onlyRemoveTypeImports !== true) {
         plugins.push(removeObsoleteJsxPragmaImportsPlugin(typescriptOptions))
       }

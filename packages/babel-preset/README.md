@@ -104,3 +104,8 @@ current metadata cannot be obtained (for example, an unresolved alias or re-expo
 package metadata entry, or a module cycle). Configure an explicit metadata store/resolver, publish
 package metadata, or use the Vite/Webpack graph integration for those module graphs. Non-strict
 migration builds emit the diagnostic as a warning and retain the opaque value behavior.
+
+For `.cts` files, `import name = require('source')` and `export = value` are exposed to Fict
+analysis as a default import/export, then restored to native CommonJS output. This preserves hook
+metadata across importer-first CTS graphs without changing `require()` or `module.exports` runtime
+semantics.
