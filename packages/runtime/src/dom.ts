@@ -493,13 +493,13 @@ function createElementWithContext(
   // HTML Element
   const tagName = typeof vnode.type === 'string' ? vnode.type : 'div'
   const resolvedNamespace = resolveNamespace(tagName, namespace)
-  assertValidDOMElementName(tagName, resolvedNamespace !== null)
+  const namespaceURI =
+    resolvedNamespace === 'svg' ? SVG_NS : resolvedNamespace === 'mathml' ? MATHML_NS : null
+  assertValidDOMElementName(tagName, resolvedNamespace !== null, namespaceURI ?? undefined)
   const el =
-    resolvedNamespace === 'svg'
-      ? ownerDocument.createElementNS(SVG_NS, tagName)
-      : resolvedNamespace === 'mathml'
-        ? ownerDocument.createElementNS(MATHML_NS, tagName)
-        : ownerDocument.createElement(tagName)
+    namespaceURI !== null
+      ? ownerDocument.createElementNS(namespaceURI, tagName)
+      : ownerDocument.createElement(tagName)
   applyProps(el, vnode.props ?? {}, resolvedNamespace === 'svg')
   appendChildren(
     el as unknown as ParentNode & Node,
@@ -1034,7 +1034,7 @@ function setAttributeNS(
   namespaced: NonNullable<ReturnType<typeof resolveNamespacedAttribute>>,
   value: unknown,
 ): void {
-  assertValidDOMAttributeName(namespaced.qualifiedName, true)
+  assertValidDOMAttributeName(namespaced.qualifiedName, true, namespaced.namespace)
   if (value === undefined || value === null || value === false) {
     el.removeAttributeNS(namespaced.namespace, namespaced.localName)
   } else if (value === true) {

@@ -88,6 +88,20 @@ describe('@fictjs/ssr', () => {
       },
     )
 
+    it.each(['xml:widget', 'xmlns:widget', 'xmlns'])(
+      'rejects a reserved prefix in SVG and MathML namespaces: %s',
+      tagName => {
+        for (const root of ['svg', 'math'] as const) {
+          expect(() =>
+            renderToString(
+              () => ({ type: root, props: { children: { type: tagName, props: {} } } }),
+              { includeSnapshot: false },
+            ),
+          ).toThrowError(/Invalid namespace for element name/)
+        }
+      },
+    )
+
     it('rejects an invalid dynamic prop key', () => {
       const attributeName = 'data-safe"><script data-fict-xss="attribute">'
 

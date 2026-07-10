@@ -631,7 +631,9 @@ export function bindAttribute(el: Element, key: string, getValue: () => unknown)
 export function setAttr(el: Element, key: string, value: unknown): void {
   assertValidDOMAttributeName(key)
   const namespaced = resolveNamespacedAttribute(key)
-  if (namespaced) assertValidDOMAttributeName(namespaced.qualifiedName, true)
+  if (namespaced) {
+    assertValidDOMAttributeName(namespaced.qualifiedName, true, namespaced.namespace)
+  }
   const cacheTarget = el as unknown as Record<PropertyKey, unknown>
   const attrCache =
     (cacheTarget[ATTR_CACHE] as Record<string, unknown> | undefined) ??
@@ -2647,7 +2649,7 @@ function assignProp(
 
   const namespaced = resolveNamespacedAttribute(prop)
   if (namespaced) {
-    assertValidDOMAttributeName(namespaced.qualifiedName, true)
+    assertValidDOMAttributeName(namespaced.qualifiedName, true, namespaced.namespace)
     if (value == null) {
       if (node.hasAttributeNS(namespaced.namespace, namespaced.localName)) {
         node.removeAttributeNS(namespaced.namespace, namespaced.localName)

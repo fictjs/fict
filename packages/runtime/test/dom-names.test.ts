@@ -20,6 +20,18 @@ function expectInvalidCharacterError(fn: () => unknown): void {
   expect((error as DOMException).name).toBe('InvalidCharacterError')
 }
 
+function expectNamespaceError(fn: () => unknown): void {
+  let error: unknown
+  try {
+    fn()
+  } catch (caught) {
+    error = caught
+  }
+
+  expect(error).toBeInstanceOf(DOMException)
+  expect((error as DOMException).name).toBe('NamespaceError')
+}
+
 describe('DOM name handling', () => {
   it.each(['1div', 'div name', 'div><script data-fict-xss="tag">', 'svg/onload'])(
     'rejects an invalid dynamic element name before DOM creation: %s',
@@ -65,6 +77,21 @@ describe('DOM name handling', () => {
     )
     expect(svg.firstElementChild?.getAttribute('aria-label')).toBe('icon')
   })
+
+  it.each(['xml:widget', 'xmlns:widget', 'xmlns'])(
+    'rejects a reserved prefix in SVG and MathML namespaces: %s',
+    name => {
+      for (const root of ['svg', 'math'] as const) {
+        expectNamespaceError(() =>
+          createElement({
+            type: root,
+            props: { children: { type: name, props: {}, key: undefined } },
+            key: undefined,
+          }),
+        )
+      }
+    },
+  )
 
   it.each(['data-safe"><script data-fict-xss="attribute">', 'data unsafe', '1data-value'])(
     'rejects an invalid dynamic JSX attribute name: %s',
@@ -126,5 +153,18 @@ describe('DOM name handling', () => {
     for (const name of [':a', 'a:', 'a:b:c', '1a:b', 'a:1b', 'a b']) {
       expectInvalidCharacterError(() => assertValidDOMAttributeName(name, true))
     }
+
+    expect(() =>
+      assertValidDOMAttributeName('xml:lang', true, 'http://www.w3.org/XML/1998/namespace'),
+    ).not.toThrow()
+    expect(() =>
+      assertValidDOMAttributeName('xmlns:xlink', true, 'http://www.w3.org/2000/xmlns/'),
+    ).not.toThrow()
+    expectNamespaceError(() =>
+      assertValidDOMAttributeName('xml:lang', true, 'http://www.w3.org/2000/svg'),
+    )
+    expectNamespaceError(() =>
+      assertValidDOMAttributeName('xmlns:xlink', true, 'http://www.w3.org/1999/xlink'),
+    )
   })
 })

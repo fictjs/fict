@@ -98,11 +98,15 @@ function serializeElement(element: Element): string {
   const localName = element.localName || element.tagName
   const tagName = element.prefix ? `${element.prefix}:${localName}` : localName
   const isHtml = isHtmlElement(element)
-  assertValidDOMElementName(tagName, !isHtml)
+  assertValidDOMElementName(tagName, !isHtml, isHtml ? undefined : element.namespaceURI)
   let html = `<${tagName}`
 
   for (const attribute of Array.from(element.attributes)) {
-    assertValidDOMAttributeName(attribute.name, attribute.namespaceURI != null)
+    assertValidDOMAttributeName(
+      attribute.name,
+      attribute.namespaceURI != null,
+      attribute.namespaceURI ?? undefined,
+    )
     html += ` ${attribute.name}="${escapeAttributeValue(attribute.value)}"`
   }
 

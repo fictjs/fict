@@ -14,6 +14,8 @@ const XML_NAME = RegExp(
   `^[${XML_NAME_START}][-.${XML_NAME_START}\\d\\u00b7\\u0300-\\u036f\\u203f-\\u2040]*$`,
   'u',
 )
+const XML_NAMESPACE = 'http://www.w3.org/XML/1998/namespace'
+const XMLNS_NAMESPACE = 'http://www.w3.org/2000/xmlns/'
 
 function isValidDOMName(name: string): boolean {
   return XML_NAME.test(name)
@@ -34,24 +36,56 @@ function assertValidDOMName(
   kind: 'element' | 'attribute',
   name: string,
   namespaceAware: boolean,
+  namespaceURI?: string | null,
 ): void {
   const valid = namespaceAware ? isValidDOMQualifiedName(name) : isValidDOMName(name)
-  if (valid) return
+  if (!valid) {
+    throwDOMNameError(kind, name, 'InvalidCharacterError')
+  }
 
-  const message = `[fict] Invalid ${kind} name ${JSON.stringify(name)}.`
+  if (namespaceURI === undefined) return
+
+  const colonIndex = name.indexOf(':')
+  const prefix = colonIndex === -1 ? null : name.slice(0, colonIndex)
+  const hasInvalidNamespace =
+    (prefix !== null && namespaceURI === null) ||
+    (prefix === 'xml' && namespaceURI !== XML_NAMESPACE) ||
+    ((name === 'xmlns' || prefix === 'xmlns') && namespaceURI !== XMLNS_NAMESPACE) ||
+    (namespaceURI === XMLNS_NAMESPACE && name !== 'xmlns' && prefix !== 'xmlns')
+
+  if (hasInvalidNamespace) {
+    throwDOMNameError(kind, name, 'NamespaceError')
+  }
+}
+
+function throwDOMNameError(
+  kind: 'element' | 'attribute',
+  name: string,
+  errorName: 'InvalidCharacterError' | 'NamespaceError',
+): never {
+  const qualifier = errorName === 'NamespaceError' ? 'namespace for ' : ''
+  const message = `[fict] Invalid ${qualifier}${kind} name ${JSON.stringify(name)}.`
   if (typeof DOMException === 'function') {
-    throw new DOMException(message, 'InvalidCharacterError')
+    throw new DOMException(message, errorName)
   }
 
   const error = new Error(message)
-  error.name = 'InvalidCharacterError'
+  error.name = errorName
   throw error
 }
 
-export function assertValidDOMElementName(name: string, namespaceAware = false): void {
-  assertValidDOMName('element', name, namespaceAware)
+export function assertValidDOMElementName(
+  name: string,
+  namespaceAware = false,
+  namespaceURI?: string | null,
+): void {
+  assertValidDOMName('element', name, namespaceAware, namespaceURI)
 }
 
-export function assertValidDOMAttributeName(name: string, namespaceAware = false): void {
-  assertValidDOMName('attribute', name, namespaceAware)
+export function assertValidDOMAttributeName(
+  name: string,
+  namespaceAware = false,
+  namespaceURI?: string | null,
+): void {
+  assertValidDOMName('attribute', name, namespaceAware, namespaceURI)
 }
