@@ -156,7 +156,6 @@ export function flushDeferredRefAssignments(root: RootContext): void {
 }
 
 export function withRootContext<T>(root: RootContext | undefined, fn: () => T): T {
-  if (!root) return fn()
   const prevRoot = currentRoot
   currentRoot = root
   try {
@@ -294,12 +293,10 @@ export function runCleanupList(list: Cleanup[], root?: RootContext): void {
         }
       }
     }
-  })
-  if (didThrow) {
-    if (!handleError(error, { source: 'cleanup' }, root)) {
+    if (didThrow && !handleError(error, { source: 'cleanup' }, root)) {
       throw error
     }
-  }
+  })
 }
 
 function runLifecycle(fn: LifecycleFn): void {

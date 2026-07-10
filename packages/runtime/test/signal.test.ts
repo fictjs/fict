@@ -1,8 +1,21 @@
 import { describe, it, expect } from 'vitest'
 
-import { batch, createEffect, createMemo, createRoot, onCleanup, render } from '../src/index'
+import {
+  batch,
+  createEffect,
+  createMemo,
+  createRoot,
+  createSuspenseToken,
+  onCleanup,
+  render,
+} from '../src/index'
 import { createRenderEffect, createSelector, createSignal } from '../src/advanced'
-import { registerErrorHandler } from '../src/lifecycle'
+import {
+  getCurrentRoot,
+  registerErrorHandler,
+  registerSuspenseHandler,
+  type RootContext,
+} from '../src/lifecycle'
 import {
   __resetReactiveState,
   batch as rawBatch,
@@ -21,6 +34,128 @@ const tick = () =>
   )
 
 describe('signal runtime robustness', () => {
+  it('reruns owned and rootless effects with their exact creation root', () => {
+    const ownedSource = createSignal(0)
+    const rootlessSource = createSignal(0)
+    const ownedRuns: Array<RootContext | undefined> = []
+    const rootlessRuns: Array<RootContext | undefined> = []
+    let ownerRoot: RootContext | undefined
+    let foreignRoot: RootContext | undefined
+
+    const owner = createRoot(() => {
+      ownerRoot = getCurrentRoot()
+      createEffect(() => {
+        ownedSource()
+        ownedRuns.push(getCurrentRoot())
+      })
+    })
+    const stopRootless = createEffect(() => {
+      rootlessSource()
+      rootlessRuns.push(getCurrentRoot())
+    })
+
+    const foreign = createRoot(() => {
+      foreignRoot = getCurrentRoot()
+      batch(() => {
+        ownedSource(1)
+        rootlessSource(1)
+      })
+    })
+
+    expect(foreignRoot).not.toBe(ownerRoot)
+    expect(ownedRuns).toEqual([ownerRoot, ownerRoot])
+    expect(rootlessRuns).toEqual([undefined, undefined])
+
+    stopRootless()
+    foreign.dispose()
+    owner.dispose()
+  })
+
+  it('does not route rootless cleanup errors through an ambient root', () => {
+    const error = new Error('rootless cleanup failed')
+    let handled = 0
+    let caught: unknown
+    const stop = createEffect(() => () => {
+      throw error
+    })
+
+    const foreign = createRoot(() => {
+      registerErrorHandler(() => {
+        handled++
+        return true
+      })
+      try {
+        stop()
+      } catch (err) {
+        caught = err
+      }
+    })
+
+    expect(handled).toBe(0)
+    expect(caught).toBe(error)
+    foreign.dispose()
+  })
+
+  it('runs pending dependency error handlers in the effect owner root', () => {
+    const source = createSignal(false)
+    const error = new Error('memo update failed')
+    let ownerRoot: RootContext | undefined
+    let handlerRoot: RootContext | undefined
+
+    const owner = createRoot(() => {
+      ownerRoot = getCurrentRoot()
+      registerErrorHandler(err => {
+        expect(err).toBe(error)
+        handlerRoot = getCurrentRoot()
+        return true
+      })
+      const derived = createMemo(() => {
+        if (source()) throw error
+        return 0
+      })
+      createEffect(() => {
+        derived()
+      })
+    })
+
+    const foreign = createRoot(() => {
+      batch(() => source(true))
+    })
+
+    expect(handlerRoot).toBe(ownerRoot)
+    foreign.dispose()
+    owner.dispose()
+  })
+
+  it('does not route rootless suspension through an ambient root', () => {
+    const source = createSignal(false)
+    const { token, resolve } = createSuspenseToken()
+    let handled = 0
+    let caught: unknown
+    const stop = createEffect(() => {
+      if (source()) throw token
+    })
+
+    const foreign = createRoot(() => {
+      registerSuspenseHandler(() => {
+        handled++
+        return true
+      })
+      try {
+        batch(() => source(true))
+      } catch (err) {
+        caught = err
+      }
+    })
+
+    expect(handled).toBe(0)
+    expect(caught).toBe(token)
+
+    stop()
+    resolve()
+    foreign.dispose()
+  })
+
   for (const [name, create] of [
     ['createEffect', createEffect],
     ['createRenderEffect', createRenderEffect],

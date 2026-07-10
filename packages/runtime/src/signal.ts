@@ -150,6 +150,8 @@ export interface ComputedNode<T = unknown> extends BaseNode {
   depsTail: Link | undefined
   /** Getter function to compute the value */
   getter: (oldValue: T | undefined) => T
+  /** Root context captured when the computed was created */
+  root?: RootContext
   /** DevTools ID */
   __id?: number | undefined
   /** Equality check */
@@ -176,7 +178,7 @@ export interface EffectNode extends BaseNode {
   depsTail: Link | undefined
   /** Optional cleanup runner to be called before checkDirty */
   runCleanup?: () => void
-  /** Root context for error/suspense handling */
+  /** Root context captured when the effect was created */
   root?: RootContext
   /** Debug name */
   name?: string
@@ -894,7 +896,7 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
   activeSub = c
 
   try {
-    const newValue = c.getter(oldValue)
+    const newValue = withRootContext(c.root, () => c.getter(oldValue))
     activeSub = prevSub
     c.flags &= ~Running
     purgeDeps(c)
@@ -939,6 +941,12 @@ const SelfNotified = Recursed | Pending
  * @param e - The effect node
  */
 function runEffect(e: EffectNode): void {
+  withRootContext(e.root, () => {
+    runEffectInRoot(e)
+  })
+}
+
+function runEffectInRoot(e: EffectNode): void {
   const flags = e.flags
   const isDisposed = () => e.disposed === true
   if (isDisposed()) return
@@ -1294,6 +1302,8 @@ export function computed<T>(
   if (options?.name !== undefined) c.name = options.name
   if (options?.devToolsSource !== undefined) c.devToolsSource = options.devToolsSource
   if (options?.internal === true) c.devToolsInternal = true
+  const root = getCurrentRoot()
+  if (root) c.root = root
   if (isDev) registerComputedDevtools(c)
   const bound = (computedOper as (this: ComputedNode<T>) => T).bind(
     c as any,
@@ -1332,7 +1342,7 @@ function computedOper<T>(this: ComputedNode<T>): T {
     this.flags = MutableRunning
     const prevSub = setActiveSub(this)
     try {
-      this.value = this.getter(undefined)
+      this.value = withRootContext(this.root, () => this.getter(undefined))
       if (isDev) updateComputedDevtools(this, this.value)
     } catch (err) {
       // Initial evaluation failed: remove partially tracked dependencies
@@ -1388,7 +1398,7 @@ export function effect(fn: () => void, options?: EffectOptions): EffectDisposer 
   let didThrow = false
   let thrown: unknown
   try {
-    e.fn()
+    withRootContext(e.root, e.fn)
   } catch (err) {
     didThrow = true
     thrown = err
@@ -1453,7 +1463,7 @@ export function effectWithCleanup(
   let didThrow = false
   let thrown: unknown
   try {
-    e.fn()
+    withRootContext(e.root, e.fn)
   } catch (err) {
     didThrow = true
     thrown = err

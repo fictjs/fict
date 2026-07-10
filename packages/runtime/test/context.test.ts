@@ -8,6 +8,7 @@ import {
   Fragment,
   ErrorBoundary,
   createEffect,
+  createMemo,
   onDestroy,
 } from '../src/index'
 import { createSignal, reactive } from '../src/advanced'
@@ -72,6 +73,106 @@ describe('Context', () => {
 
       expect(capturedTheme).toBe('dark')
       expect(container.textContent).toBe('dark')
+
+      dispose()
+    })
+
+    it('evaluates provider-owned memos in their creation context', () => {
+      const ThemeContext = createContext('default')
+      const version = createSignal(0)
+      const container = document.createElement('div')
+      let lazyMemo!: () => string
+      let reactiveMemo!: () => string
+      let initialReactiveValue: string | undefined
+
+      const Child = () => {
+        lazyMemo = createMemo(() => useContext(ThemeContext))
+        reactiveMemo = createMemo(() => {
+          version()
+          return useContext(ThemeContext)
+        })
+        initialReactiveValue = reactiveMemo()
+        return { type: 'span', props: { children: 'child' } }
+      }
+
+      const dispose = render(
+        () => ({
+          type: ThemeContext.Provider,
+          props: {
+            value: 'provided',
+            children: { type: Child, props: {} },
+          },
+        }),
+        container,
+      )
+
+      expect(initialReactiveValue).toBe('provided')
+      expect(lazyMemo()).toBe('provided')
+
+      version(1)
+      expect(reactiveMemo()).toBe('provided')
+
+      dispose()
+    })
+
+    it('does not let rootless memos borrow a provider context', () => {
+      const ThemeContext = createContext('default')
+      const rootlessMemo = createMemo(() => useContext(ThemeContext))
+      const container = document.createElement('div')
+      let captured: string | undefined
+
+      const Child = () => {
+        captured = rootlessMemo()
+        return { type: 'span', props: { children: captured } }
+      }
+
+      const dispose = render(
+        () => ({
+          type: ThemeContext.Provider,
+          props: {
+            value: 'provided',
+            children: { type: Child, props: {} },
+          },
+        }),
+        container,
+      )
+
+      expect(captured).toBe('default')
+      expect(container.textContent).toBe('default')
+
+      dispose()
+    })
+
+    it('reruns provider-owned effects in their creation context', async () => {
+      const ThemeContext = createContext('default')
+      const version = createSignal(0)
+      const container = document.createElement('div')
+      const seen: string[] = []
+
+      const Child = () => {
+        createEffect(() => {
+          version()
+          seen.push(useContext(ThemeContext))
+        })
+        return { type: 'span', props: { children: 'child' } }
+      }
+
+      const dispose = render(
+        () => ({
+          type: ThemeContext.Provider,
+          props: {
+            value: 'provided',
+            children: { type: Child, props: {} },
+          },
+        }),
+        container,
+      )
+
+      expect(seen).toEqual(['provided'])
+
+      version(1)
+      await tick()
+      expect(seen).toEqual(['provided', 'provided'])
 
       dispose()
     })
