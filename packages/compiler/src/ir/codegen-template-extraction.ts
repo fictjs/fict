@@ -681,31 +681,34 @@ export function extractHIRStaticHtml(
       let passive = false
       let once = false
 
-      const knownEvent = parseKnownEventNameWithModifiers(eventName)
-      if (knownEvent) {
-        eventName = knownEvent.eventName
-        capture ||= knownEvent.capture
-        passive = knownEvent.passive
-        once = knownEvent.once
-      } else {
-        // Parse event modifiers
-        let changed = true
-        while (changed) {
-          changed = false
-          if (eventName.endsWith('Capture')) {
-            eventName = eventName.slice(0, -7)
-            capture = true
-            changed = true
-          }
-          if (eventName.endsWith('Passive')) {
-            eventName = eventName.slice(0, -7)
-            passive = true
-            changed = true
-          }
-          if (eventName.endsWith('Once')) {
-            eventName = eventName.slice(0, -4)
-            once = true
-            changed = true
+      // `on:`/`oncapture:` delimit the complete, case-sensitive event name. Modifier
+      // suffixes are only part of the React-style camel-case event convention.
+      if (!namespacedEvent) {
+        const knownEvent = parseKnownEventNameWithModifiers(eventName)
+        if (knownEvent) {
+          eventName = knownEvent.eventName
+          capture ||= knownEvent.capture
+          passive = knownEvent.passive
+          once = knownEvent.once
+        } else {
+          let changed = true
+          while (changed) {
+            changed = false
+            if (eventName.endsWith('Capture')) {
+              eventName = eventName.slice(0, -7)
+              capture = true
+              changed = true
+            }
+            if (eventName.endsWith('Passive')) {
+              eventName = eventName.slice(0, -7)
+              passive = true
+              changed = true
+            }
+            if (eventName.endsWith('Once')) {
+              eventName = eventName.slice(0, -4)
+              once = true
+              changed = true
+            }
           }
         }
       }

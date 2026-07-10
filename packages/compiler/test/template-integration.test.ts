@@ -8571,6 +8571,54 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('preserves modifier-like suffixes in namespaced custom event names', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const calls: string[] = []
+
+      export function App() {
+        return (
+          <div>
+            <div data-id="once" on:alphaEventOnce={() => calls.push('once')} />
+            <div data-id="passive" on:betaEventPassive={() => calls.push('passive')} />
+            <div data-id="capture" on:gammaEventCapture={() => calls.push('capture')} />
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      calls: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const once = container.querySelector('[data-id="once"]') as HTMLDivElement
+    const passive = container.querySelector('[data-id="passive"]') as HTMLDivElement
+    const capture = container.querySelector('[data-id="capture"]') as HTMLDivElement
+
+    once.dispatchEvent(new CustomEvent('alphaEvent'))
+    passive.dispatchEvent(new CustomEvent('betaEvent'))
+    capture.dispatchEvent(new CustomEvent('gammaEvent'))
+    for (let iteration = 0; iteration < 2; iteration++) {
+      once.dispatchEvent(new CustomEvent('alphaEventOnce'))
+      passive.dispatchEvent(new CustomEvent('betaEventPassive'))
+      capture.dispatchEvent(new CustomEvent('gammaEventCapture'))
+    }
+    await flushUpdates()
+
+    expect(mod.calls).toEqual(['once', 'passive', 'capture', 'once', 'passive', 'capture'])
+
+    teardown()
+    container.remove()
+  })
+
   it('wires namespaced on: event handlers in VNode fallback mode', async () => {
     const source = `
       import { render } from 'fict'
