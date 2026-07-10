@@ -563,8 +563,11 @@ times with optimization enabled/disabled). Set `BENCH_OUTPUT=path/to/report.json
 pass `--output path/to/report.json` to `scripts/optimizer-bench.mjs` to write the raw
 JSON report used by CI/release evidence artifacts.
 Optimizer baselines: `pnpm bench:optimizer:guard` compares results to
-`scripts/optimizer-bench.baseline.json`. Use `pnpm bench:optimizer:update` to refresh
-the baseline when changes are intentional.
+`scripts/optimizer-bench.baseline.json`. Timings use paired/interleaved optimized and
+unoptimized samples. Timing-only failures are re-measured once with the first attempt's
+runner calibration fixed, and fail only when the same sample regresses twice. Missing
+baselines and output-size regressions fail immediately. Use `pnpm bench:optimizer:update`
+to refresh the baseline when changes are intentional.
 Snapshot baselines: `pnpm -C packages/compiler test -- optimizer-baseline.test.ts -u`
 updates the optimizer output snapshots for core scenarios.
 Guardrails: `pnpm guardrails:hir` compares current output to

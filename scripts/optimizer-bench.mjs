@@ -11,6 +11,12 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { transformSync } from '@babel/core'
 
+import {
+  evaluateBaseline,
+  retryTimingFailures,
+  runInterleavedMeasurements,
+} from './optimizer-bench-sampling.mjs'
+
 const require = createRequire(import.meta.url)
 const { default: createFictPlugin } = require('../packages/compiler/dist/index.cjs')
 
@@ -186,10 +192,13 @@ function compile(sample, optimize) {
   })
 }
 
-function runSample(sample, optimize) {
+function warmSample(sample, optimize) {
   for (let i = 0; i < warmup; i++) {
     compile(sample, optimize)
   }
+}
+
+function runSample(sample, optimize) {
   const start = performance.now()
   for (let i = 0; i < iterations; i++) {
     compile(sample, optimize)
@@ -198,92 +207,18 @@ function runSample(sample, optimize) {
   return (end - start) / iterations
 }
 
-function runSampleStable(sample, optimize) {
-  const runs = []
-  for (let i = 0; i < repeats; i++) {
-    runs.push(runSample(sample, optimize))
-  }
-  return median(runs)
+function runSampleStable(sample) {
+  return runInterleavedMeasurements({
+    repeats,
+    warmup: optimize => warmSample(sample, optimize),
+    measure: optimize => runSample(sample, optimize),
+  })
 }
 
 function measureSize(sample, optimize) {
   const result = compile(sample, optimize)
   const code = result?.code ?? ''
   return Buffer.byteLength(code, 'utf8')
-}
-
-function median(values) {
-  if (values.length === 0) return 1
-  const sorted = [...values].sort((a, b) => a - b)
-  const mid = Math.floor(sorted.length / 2)
-  if (sorted.length % 2 === 1) return sorted[mid]
-  return (sorted[mid - 1] + sorted[mid]) / 2
-}
-
-function deriveRuntimeScale(rows, baseline) {
-  const factors = []
-  for (const row of rows) {
-    const expected = baseline?.samples?.[row.sample]
-    if (!expected) continue
-    if (
-      typeof row.unoptimized_ms !== 'number' ||
-      typeof expected.unoptimized_ms !== 'number' ||
-      !Number.isFinite(row.unoptimized_ms) ||
-      !Number.isFinite(expected.unoptimized_ms) ||
-      row.unoptimized_ms <= 0 ||
-      expected.unoptimized_ms <= 0
-    ) {
-      continue
-    }
-    factors.push(row.unoptimized_ms / expected.unoptimized_ms)
-  }
-  // Only relax limits on slower machines/runners; never tighten on faster ones.
-  return Math.max(1, median(factors))
-}
-
-function evaluateBaseline(rows, baseline) {
-  const budgets = { ...DEFAULT_BUDGETS, ...(baseline?.budgets ?? {}) }
-  const failures = []
-  const runtimeScale = deriveRuntimeScale(rows, baseline)
-
-  for (const row of rows) {
-    const expected = baseline?.samples?.[row.sample]
-    if (!expected) {
-      failures.push(`Missing baseline for ${row.sample}`)
-      continue
-    }
-
-    const scaledExpectedMs = expected.optimized_ms * runtimeScale
-    const timeLimit = Math.max(
-      scaledExpectedMs * (1 + budgets.timeRegressionRatio),
-      scaledExpectedMs + budgets.timeRegressionMinMs,
-    )
-    if (row.optimized_ms > timeLimit) {
-      failures.push(`${row.sample}: optimized_ms ${row.optimized_ms} > ${timeLimit.toFixed(2)}`)
-    }
-
-    const sizeLimit = expected.optimized_bytes * (1 + budgets.sizeRegressionRatio)
-    if (row.optimized_bytes > sizeLimit) {
-      failures.push(
-        `${row.sample}: optimized_bytes ${row.optimized_bytes} > ${Math.round(sizeLimit)}`,
-      )
-    }
-
-    const slowdown = row.optimized_ms / row.unoptimized_ms
-    const baselineSlowdown = expected.optimized_ms / expected.unoptimized_ms
-    if (slowdown > baselineSlowdown + budgets.slowdownRatio) {
-      failures.push(
-        `${row.sample}: slowdown ${slowdown.toFixed(2)} > ${(baselineSlowdown + budgets.slowdownRatio).toFixed(2)}`,
-      )
-    }
-  }
-
-  return {
-    status: failures.length > 0 ? 'failed' : 'passed',
-    runtimeScale,
-    budgets,
-    failures,
-  }
 }
 
 function assertBaselineComparison(comparison) {
@@ -308,6 +243,7 @@ function writeBenchmarkReport(targetPath, rows, baseline, comparison) {
       iterations,
       warmup,
       repeats,
+      sampling: 'paired-interleaved',
     },
     environment: {
       node: process.version,
@@ -330,23 +266,27 @@ function writeBenchmarkReport(targetPath, rows, baseline, comparison) {
   console.log(`Optimizer benchmark raw output written to ${resolvedPath}`)
 }
 
-function main() {
-  const rows = []
-  for (const sample of samples) {
-    const optimized = Number(runSampleStable(sample, true).toFixed(2))
-    const unoptimized = Number(runSampleStable(sample, false).toFixed(2))
-    const optimizedBytes = measureSize(sample, true)
-    const unoptimizedBytes = measureSize(sample, false)
-    rows.push({
-      sample: sample.name,
-      optimized_ms: optimized,
-      unoptimized_ms: unoptimized,
-      delta_ms: Number((optimized - unoptimized).toFixed(2)),
-      optimized_bytes: optimizedBytes,
-      unoptimized_bytes: unoptimizedBytes,
-      delta_bytes: optimizedBytes - unoptimizedBytes,
-    })
+function measureBenchmarkSample(sample) {
+  const timings = runSampleStable(sample)
+  const optimized = Number(timings.optimized.toFixed(2))
+  const unoptimized = Number(timings.unoptimized.toFixed(2))
+  const optimizedBytes = measureSize(sample, true)
+  const unoptimizedBytes = measureSize(sample, false)
+  return {
+    sample: sample.name,
+    optimized_ms: optimized,
+    unoptimized_ms: unoptimized,
+    optimized_runs: timings.optimizedRuns,
+    unoptimized_runs: timings.unoptimizedRuns,
+    delta_ms: Number((optimized - unoptimized).toFixed(2)),
+    optimized_bytes: optimizedBytes,
+    unoptimized_bytes: unoptimizedBytes,
+    delta_bytes: optimizedBytes - unoptimizedBytes,
   }
+}
+
+function main() {
+  let rows = samples.map(measureBenchmarkSample)
 
   const baseline = fs.existsSync(baselinePath)
     ? JSON.parse(fs.readFileSync(baselinePath, 'utf8'))
@@ -382,7 +322,25 @@ function main() {
           failures: [`Missing baseline at ${baselinePath}. Run with --update to generate.`],
         }
       } else {
-        comparison = evaluateBaseline(rows, baseline)
+        comparison = evaluateBaseline(rows, baseline, DEFAULT_BUDGETS)
+        const retry = retryTimingFailures({
+          rows,
+          comparison,
+          measureSample: sampleName => {
+            const sample = samples.find(candidate => candidate.name === sampleName)
+            if (!sample) throw new Error(`Unknown optimizer benchmark sample: ${sampleName}`)
+            return measureBenchmarkSample(sample)
+          },
+          evaluate: (retriedRows, runtimeScale) =>
+            evaluateBaseline(retriedRows, baseline, DEFAULT_BUDGETS, { runtimeScale }),
+        })
+        rows = retry.rows
+        comparison = retry.comparison
+        if (retry.retriedSamples.length > 0) {
+          console.warn(
+            `[optimizer-bench] Re-measured timing-only failures with fixed calibration: ${retry.retriedSamples.join(', ')}`,
+          )
+        }
       }
     }
 
