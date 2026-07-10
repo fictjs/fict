@@ -437,6 +437,88 @@ describe('signal runtime robustness', () => {
     expect(seen).toEqual([0, 1])
   })
 
+  it.each([undefined, null, false, 0, ''])('preserves a falsy batch exception: %s', thrown => {
+    let didCatch = false
+    let caught: unknown = Symbol('not caught')
+
+    try {
+      batch(() => {
+        throw thrown
+      })
+    } catch (error) {
+      didCatch = true
+      caught = error
+    }
+
+    expect(didCatch).toBe(true)
+    expect(caught).toBe(thrown)
+  })
+
+  it('keeps a thrown undefined when the final batch flush also fails', () => {
+    const value = createSignal(0)
+    const flushError = new Error('flush failed')
+    const stop = createEffect(() => {
+      if (value() === 1) throw flushError
+    })
+    let didCatch = false
+    let caught: unknown = Symbol('not caught')
+
+    try {
+      batch(() => {
+        value(1)
+        throw undefined
+      })
+    } catch (error) {
+      didCatch = true
+      caught = error
+    }
+
+    expect(didCatch).toBe(true)
+    expect(caught).toBeUndefined()
+    stop()
+  })
+
+  it('preserves undefined thrown by a final batch flush', () => {
+    const value = createSignal(0)
+    const stop = createEffect(() => {
+      if (value() === 1) throw undefined
+    })
+    let didCatch = false
+    let caught: unknown = Symbol('not caught')
+
+    try {
+      batch(() => {
+        value(1)
+      })
+    } catch (error) {
+      didCatch = true
+      caught = error
+    }
+
+    expect(didCatch).toBe(true)
+    expect(caught).toBeUndefined()
+    stop()
+  })
+
+  it('preserves thrown undefined through nested batches', () => {
+    let didCatch = false
+    let caught: unknown = Symbol('not caught')
+
+    try {
+      batch(() =>
+        batch(() => {
+          throw undefined
+        }),
+      )
+    } catch (error) {
+      didCatch = true
+      caught = error
+    }
+
+    expect(didCatch).toBe(true)
+    expect(caught).toBeUndefined()
+  })
+
   it('cleans up selector effects with the owning root', async () => {
     const selected = createSignal(1)
     let select: ((key: number) => boolean) | undefined

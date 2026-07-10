@@ -1585,10 +1585,12 @@ export function batch<T>(fn: () => T): T {
     batchStartDevtools()
   }
   let result!: T
+  let didThrow = false
   let error: unknown
   try {
     result = fn()
   } catch (e) {
+    didThrow = true
     error = e
   } finally {
     --batchDepth
@@ -1599,13 +1601,14 @@ export function batch<T>(fn: () => T): T {
       try {
         flush()
       } catch (flushErr) {
-        if (error === undefined) {
+        if (!didThrow) {
+          didThrow = true
           error = flushErr
         }
       }
     }
   }
-  if (error !== undefined) {
+  if (didThrow) {
     throw error
   }
   return result
