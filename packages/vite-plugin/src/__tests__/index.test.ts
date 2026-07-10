@@ -65,11 +65,26 @@ function waitForWatchEnd(watcher: Rollup.RollupWatcher, timeoutMs = 10_000): Pro
   })
 }
 
-async function buildFictEntry(root: string, entry: string): Promise<string> {
+async function buildFictEntry(
+  root: string,
+  entry: string,
+  options?: {
+    plugin?: Parameters<typeof fict>[0]
+    esbuild?: NonNullable<Parameters<typeof build>[0]>['esbuild']
+  },
+): Promise<string> {
   const result = await build({
     root,
     logLevel: 'silent',
-    plugins: [fict({ cache: false, useTypeScriptProject: false, functionSplitting: false })],
+    plugins: [
+      fict({
+        cache: false,
+        useTypeScriptProject: false,
+        functionSplitting: false,
+        ...options?.plugin,
+      }),
+    ],
+    ...(options?.esbuild !== undefined ? { esbuild: options.esbuild } : {}),
     build: {
       write: false,
       lib: { entry, formats: ['es'], fileName: () => 'app.js' },
@@ -84,6 +99,44 @@ async function buildFictEntry(root: string, entry: string): Promise<string> {
     .filter(output => output.type === 'chunk')
     .map(output => output.code)
     .join('\n')
+}
+
+async function writeTypeScriptImportFixture(
+  root: string,
+  options: {
+    marker: string
+    relativeDir?: string
+    typeOnlyExport?: boolean
+  },
+): Promise<string> {
+  const sourceDir = path.join(root, options.relativeDir ?? 'src')
+  const entry = path.join(sourceDir, 'main.ts')
+  await mkdir(sourceDir, { recursive: true })
+  await writeFile(
+    path.join(sourceDir, 'dep.ts'),
+    `
+      globalThis.${options.marker} = true
+      export ${options.typeOnlyExport ? 'interface Marker {}' : 'class Marker {}'}
+    `,
+  )
+  await writeFile(
+    path.join(sourceDir, 'types.ts'),
+    `
+      globalThis.__fict_explicit_type_import_side_effect__ = true
+      export interface Shape {}
+    `,
+  )
+  await writeFile(
+    entry,
+    `
+      import { Marker } from './dep'
+      import type { Shape } from './types'
+
+      const marker: Marker | null = null
+      export const value: Shape | null = marker
+    `,
+  )
+  return entry
 }
 
 interface SourceMapLike {
@@ -623,12 +676,18 @@ describe('fict vite-plugin', () => {
       const appPath = path.join(srcDir, 'App.tsx')
       const appSource = 'export const value: number = 1'
       await writeFile(appPath, appSource)
-      await writeFile(baseConfigPath, JSON.stringify({ extends: './missing.jsonc' }))
+      await writeFile(
+        baseConfigPath,
+        `{
+          // TypeScript accepts JSONC and extends arrays.
+          "extends": ["./missing.jsonc",],
+        }`,
+      )
       await writeFile(
         path.join(root, 'tsconfig.json'),
         JSON.stringify({ extends: '../shared/base.jsonc', include: ['src/**/*'] }),
       )
-      const extendsPlugin = getTestPlugin({ cache: false }) as any
+      const extendsPlugin = getTestPlugin({ cache: false, useTypeScriptProject: false }) as any
       extendsPlugin.configResolved({ ...mockBuildConfig, command: 'serve', root })
       const extendsAdd = vi.fn()
       extendsPlugin.configureServer.handler({ watcher: { add: extendsAdd }, environments: {} })
@@ -1449,6 +1508,355 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it.each([
+    {
+      name: 'preserves ordinary imports with verbatimModuleSyntax',
+      compilerOptions: { verbatimModuleSyntax: true },
+      preservesSideEffect: true,
+    },
+    {
+      name: 'removes imports used only as types by default',
+      compilerOptions: {},
+      preservesSideEffect: false,
+    },
+  ])('$name', async ({ compilerOptions, preservesSideEffect }) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-import-elision-'))
+    const marker = '__fict_value_import_side_effect__'
+
+    try {
+      const entry = await writeTypeScriptImportFixture(root, { marker })
+      await writeFile(path.join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions }))
+
+      const code = await buildFictEntry(root, entry)
+
+      expect(code.includes(marker)).toBe(preservesSideEffect)
+      expect(code).not.toContain('__fict_explicit_type_import_side_effect__')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves only module side effects for legacy importsNotUsedAsValues', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-legacy-import-elision-'))
+    const marker = '__fict_legacy_import_side_effect__'
+
+    try {
+      const entry = await writeTypeScriptImportFixture(root, {
+        marker,
+        typeOnlyExport: true,
+      })
+      await writeFile(
+        path.join(root, 'tsconfig.json'),
+        JSON.stringify({ compilerOptions: { importsNotUsedAsValues: 'preserve' } }),
+      )
+
+      const code = await buildFictEntry(root, entry, { esbuild: false })
+
+      expect(code).toContain(marker)
+      expect(code).not.toContain('__fict_explicit_type_import_side_effect__')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('emits legacy side-effect-only imports before downstream Vite transforms', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-legacy-pre-transform-'))
+    const marker = '__fict_legacy_pre_transform_side_effect__'
+
+    try {
+      const entry = await writeTypeScriptImportFixture(root, {
+        marker,
+        typeOnlyExport: true,
+      })
+      const source = await readFile(entry, 'utf8')
+      await writeFile(
+        path.join(root, 'tsconfig.json'),
+        JSON.stringify({ compilerOptions: { importsNotUsedAsValues: 'preserve' } }),
+      )
+      const plugin = getTestPlugin({
+        cache: false,
+        useTypeScriptProject: false,
+        functionSplitting: false,
+      })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+      const result = await plugin.transform?.call(
+        {
+          error(error: unknown): never {
+            throw error instanceof Error ? error : new Error(String(error))
+          },
+          warn: vi.fn(),
+          emitFile: vi.fn(),
+        },
+        source,
+        entry,
+      )
+      const code = result && typeof result === 'object' && 'code' in result ? result.code : ''
+
+      expect(code).toMatch(/import\s+["']\.\/dep["']/)
+      expect(code).not.toMatch(/import\s*{[^}]*Marker/)
+      expect(code).not.toContain('./types')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps write-only imports during legacy side-effect preservation', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-legacy-import-write-'))
+    const entry = path.join(root, 'main.ts')
+
+    try {
+      await writeFile(
+        path.join(root, 'tsconfig.json'),
+        JSON.stringify({ compilerOptions: { importsNotUsedAsValues: 'preserve' } }),
+      )
+      await writeFile(path.join(root, 'dep.ts'), 'export let Marker = 0')
+      const source = `
+        import { Marker } from './dep'
+        Marker = 1
+        export const value = 1
+      `
+      await writeFile(entry, source)
+      const plugin = getTestPlugin({
+        cache: false,
+        useTypeScriptProject: false,
+        functionSplitting: false,
+      })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+      const result = await plugin.transform?.call(
+        {
+          error(error: unknown): never {
+            throw error instanceof Error ? error : new Error(String(error))
+          },
+          warn: vi.fn(),
+          emitFile: vi.fn(),
+        },
+        source,
+        entry,
+      )
+      const code = result && typeof result === 'object' && 'code' in result ? result.code : ''
+
+      expect(code).toMatch(/import\s*{\s*Marker\s*}\s*from\s*["']\.\/dep["']/)
+      expect(code).toContain('Marker = 1')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('uses the closest tsconfig for each transformed TypeScript file', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-nested-import-elision-'))
+    const relativeDir = path.join('src', 'feature')
+    const marker = '__fict_nested_tsconfig_side_effect__'
+
+    try {
+      const entry = await writeTypeScriptImportFixture(root, { marker, relativeDir })
+      await writeFile(
+        path.join(root, 'tsconfig.json'),
+        JSON.stringify({ compilerOptions: { verbatimModuleSyntax: false } }),
+      )
+      await writeFile(
+        path.join(root, relativeDir, 'tsconfig.json'),
+        JSON.stringify({ compilerOptions: { verbatimModuleSyntax: true } }),
+      )
+
+      const code = await buildFictEntry(root, entry)
+
+      expect(code).toContain(marker)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('invalidates nested import-elision configs without a TypeScript project', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-nested-import-hmr-'))
+    const relativeDir = path.join('src', 'feature')
+    const configPath = path.join(root, relativeDir, 'tsconfig.json')
+    const baseConfigPath = path.join(root, relativeDir, 'tsconfig.base.jsonc')
+    const marker = '__fict_nested_hmr_side_effect__'
+
+    try {
+      const entry = await writeTypeScriptImportFixture(root, { marker, relativeDir })
+      const source = await readFile(entry, 'utf8')
+      await writeFile(
+        baseConfigPath,
+        JSON.stringify({ compilerOptions: { verbatimModuleSyntax: false } }),
+      )
+      await writeFile(configPath, JSON.stringify({ extends: './tsconfig.base.jsonc' }))
+      const plugin = getTestPlugin({
+        cache: false,
+        useTypeScriptProject: false,
+        functionSplitting: false,
+      })
+      plugin.configResolved?.({ ...mockBuildConfig, command: 'serve', root })
+      const context = {
+        error(error: unknown): never {
+          throw error instanceof Error ? error : new Error(String(error))
+        },
+        warn: vi.fn(),
+        emitFile: vi.fn(),
+      }
+
+      const first = await plugin.transform?.call(context, source, entry)
+      const firstCode = first && typeof first === 'object' && 'code' in first ? first.code : ''
+      expect(firstCode).not.toContain('./dep')
+
+      await writeFile(
+        baseConfigPath,
+        JSON.stringify({ compilerOptions: { verbatimModuleSyntax: true } }),
+      )
+      const send = vi.fn()
+      expect(plugin.handleHotUpdate?.({ file: baseConfigPath, server: { ws: { send } } })).toEqual(
+        [],
+      )
+      expect(send).toHaveBeenCalledWith({ type: 'full-reload', path: '*' })
+
+      const second = await plugin.transform?.call(context, source, entry)
+      const secondCode = second && typeof second === 'object' && 'code' in second ? second.code : ''
+      expect(secondCode).toContain('./dep')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('recovers when a missing external extended config is created', async () => {
+    const container = await mkdtemp(path.join(tmpdir(), 'fict-vite-missing-extends-hmr-'))
+    const root = path.join(container, 'app')
+    const baseConfigPath = path.join(container, 'shared', 'base.jsonc')
+    const marker = '__fict_missing_extends_side_effect__'
+
+    try {
+      const entry = await writeTypeScriptImportFixture(root, { marker })
+      const source = await readFile(entry, 'utf8')
+      await writeFile(
+        path.join(root, 'tsconfig.json'),
+        JSON.stringify({ extends: '../shared/base.jsonc' }),
+      )
+      const plugin = getTestPlugin({
+        cache: false,
+        useTypeScriptProject: false,
+        functionSplitting: false,
+      }) as any
+      plugin.configResolved({ ...mockBuildConfig, command: 'serve', root })
+      const add = vi.fn()
+      plugin.configureServer.handler({ watcher: { add }, environments: {} })
+      const context = {
+        error(error: unknown): never {
+          throw error instanceof Error ? error : new Error(String(error))
+        },
+        warn: vi.fn(),
+        emitFile: vi.fn(),
+      }
+
+      const first = await plugin.transform.call(context, source, entry)
+      expect(first.code).not.toContain('./dep')
+      expect(add.mock.calls.flatMap(call => call[0])).toContain(path.normalize(baseConfigPath))
+
+      await mkdir(path.dirname(baseConfigPath), { recursive: true })
+      await writeFile(
+        baseConfigPath,
+        JSON.stringify({ compilerOptions: { verbatimModuleSyntax: true } }),
+      )
+      const send = vi.fn()
+      expect(plugin.handleHotUpdate({ file: baseConfigPath, server: { ws: { send } } })).toEqual([])
+      expect(send).toHaveBeenCalledWith({ type: 'full-reload', path: '*' })
+
+      const second = await plugin.transform.call(context, source, entry)
+      expect(second.code).toContain('./dep')
+    } finally {
+      await rm(container, { recursive: true, force: true })
+    }
+  })
+
+  it('honors Vite esbuild.tsconfigRaw import elision overrides', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-tsconfig-raw-import-elision-'))
+    const marker = '__fict_tsconfig_raw_side_effect__'
+
+    try {
+      const entry = await writeTypeScriptImportFixture(root, { marker })
+      await writeFile(
+        path.join(root, 'tsconfig.json'),
+        JSON.stringify({ compilerOptions: { verbatimModuleSyntax: false } }),
+      )
+
+      const code = await buildFictEntry(root, entry, {
+        esbuild: { tsconfigRaw: { compilerOptions: { verbatimModuleSyntax: true } } },
+      })
+
+      expect(code).toContain(marker)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('isolates tsconfig parsing between standalone plugin instances', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-standalone-tsconfig-'))
+    const marker = '__fict_standalone_tsconfig_side_effect__'
+
+    try {
+      const entry = await writeTypeScriptImportFixture(root, { marker })
+      const source = await readFile(entry, 'utf8')
+      const configPath = path.join(root, 'tsconfig.json')
+      const context = {
+        error(error: unknown): never {
+          throw error instanceof Error ? error : new Error(String(error))
+        },
+        warn: vi.fn(),
+        emitFile: vi.fn(),
+      }
+      const createStandalonePlugin = () =>
+        getTestPlugin({
+          cache: false,
+          useTypeScriptProject: false,
+          functionSplitting: false,
+        })
+
+      await writeFile(
+        configPath,
+        JSON.stringify({ compilerOptions: { verbatimModuleSyntax: false } }),
+      )
+      const first = await createStandalonePlugin().transform?.call(context, source, entry)
+      const firstCode = first && typeof first === 'object' && 'code' in first ? first.code : ''
+      expect(firstCode).not.toContain('./dep')
+
+      await writeFile(
+        configPath,
+        JSON.stringify({ compilerOptions: { verbatimModuleSyntax: true } }),
+      )
+      const second = await createStandalonePlugin().transform?.call(context, source, entry)
+      const secondCode = second && typeof second === 'object' && 'code' in second ? second.code : ''
+      expect(secondCode).toContain('./dep')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keys persistent transforms by the effective import elision mode', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-import-elision-cache-'))
+    const marker = '__fict_cached_import_side_effect__'
+    const cacheDir = path.join(root, '.fict-cache')
+    const configPath = path.join(root, 'tsconfig.json')
+
+    try {
+      const entry = await writeTypeScriptImportFixture(root, { marker })
+      await writeFile(
+        configPath,
+        JSON.stringify({ compilerOptions: { verbatimModuleSyntax: false } }),
+      )
+      const plugin = { cache: { persistent: true, dir: cacheDir } } as const
+
+      const first = await buildFictEntry(root, entry, { plugin })
+      expect(first).not.toContain(marker)
+
+      await writeFile(
+        configPath,
+        JSON.stringify({ compilerOptions: { verbatimModuleSyntax: true } }),
+      )
+      const second = await buildFictEntry(root, entry, { plugin })
+      expect(second).toContain(marker)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('ignores a consumer .babelrc that references an unavailable plugin', async () => {
     const root = await mkdtemp(path.join(process.cwd(), '.fict-vite-babelrc-'))
     const entry = path.join(root, 'App.tsx')
@@ -1788,6 +2196,54 @@ describe('fict vite-plugin', () => {
       const secondCode = await readFile(path.join(outDir, 'app.js'), 'utf8')
       expect(secondCode).toMatch(/count\s*\*\s*2/)
       expect(secondCode).not.toMatch(/count\(\)\s*\*\s*2/)
+    } finally {
+      await watcher?.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 20_000)
+
+  it('rebuilds with fresh import elision when tsconfig changes in build watch mode', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-watch-import-elision-'))
+    const outDir = path.join(root, 'dist')
+    const configPath = path.join(root, 'tsconfig.json')
+    const baseConfigPath = path.join(root, 'tsconfig.base.jsonc')
+    const marker = '__fict_watch_import_side_effect__'
+    let watcher: Rollup.RollupWatcher | undefined
+
+    try {
+      const entry = await writeTypeScriptImportFixture(root, { marker })
+      await writeFile(
+        baseConfigPath,
+        JSON.stringify({ compilerOptions: { verbatimModuleSyntax: false } }),
+      )
+      await writeFile(configPath, JSON.stringify({ extends: './tsconfig.base.jsonc' }))
+      watcher = (await build({
+        root,
+        logLevel: 'silent',
+        esbuild: false,
+        plugins: [fict({ cache: false, useTypeScriptProject: false, functionSplitting: false })],
+        build: {
+          outDir,
+          emptyOutDir: true,
+          minify: false,
+          lib: { entry, formats: ['es'], fileName: () => 'app.js' },
+          watch: { buildDelay: 10 },
+        },
+      })) as Rollup.RollupWatcher
+
+      await waitForWatchEnd(watcher)
+      const firstCode = await readFile(path.join(outDir, 'app.js'), 'utf8')
+      expect(firstCode).not.toContain(marker)
+
+      const rebuilt = waitForWatchEnd(watcher)
+      await writeFile(
+        baseConfigPath,
+        JSON.stringify({ compilerOptions: { verbatimModuleSyntax: true } }),
+      )
+      await rebuilt
+
+      const secondCode = await readFile(path.join(outDir, 'app.js'), 'utf8')
+      expect(secondCode).toContain(marker)
     } finally {
       await watcher?.close()
       await rm(root, { recursive: true, force: true })

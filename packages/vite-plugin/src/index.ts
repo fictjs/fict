@@ -1,12 +1,13 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash } from 'node:crypto'
-import { existsSync, promises as fs, readFileSync } from 'node:fs'
+import { existsSync, promises as fs, readFileSync, realpathSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { transformAsync, type PluginItem } from '@babel/core'
 import _generate from '@babel/generator'
-import { parse } from '@babel/parser'
+import { parse, parseExpression } from '@babel/parser'
 import transformTypeScript from '@babel/plugin-transform-typescript'
 import _traverse from '@babel/traverse'
 import type { NodePath, Scope } from '@babel/traverse'
@@ -18,7 +19,13 @@ import {
   type FictCompilerOptions,
   type ModuleReactiveMetadata,
 } from '@fictjs/compiler'
-import { createFilter, type Plugin, type ResolvedConfig, type TransformResult } from 'vite'
+import {
+  createFilter,
+  transformWithEsbuild,
+  type Plugin,
+  type ResolvedConfig,
+  type TransformResult,
+} from 'vite'
 
 import { createVitePluginCacheFingerprint } from './cache-fingerprint'
 
@@ -126,6 +133,8 @@ interface PreparedCompilerTransform {
   preparationKey: string
 }
 
+type TypeScriptImportElision = 'remove' | 'preserve-side-effect' | 'verbatim'
+
 interface MetadataGraphNode {
   filename: string
   code: string
@@ -154,6 +163,10 @@ interface MetadataTransformState {
   extractedHandlers: Map<string, ExtractedHandler>
   tsConfigDependencies: Set<string>
   tsConfigWatchFiles: Set<string>
+  tsConfigDependencyClosures: Map<string, string[]>
+  tsDeclaredConfigDependencies: Map<string, DeclaredTypeScriptConfigDependencies | null>
+  tsImportElisions: Map<string, Promise<TypeScriptImportElision>>
+  tsImportElisionConfig: ResolvedConfig | null
   tsProject: TypeScriptProject | null
   tsProjectInit: Promise<TypeScriptProject | null> | null
   activeRequests: number
@@ -292,7 +305,7 @@ interface TypeScriptApi {
   ) => { resolvedModule?: { resolvedFileName?: string } } | undefined
 }
 
-const CACHE_VERSION = 3
+const CACHE_VERSION = 4
 let transformCacheFingerprint: string | undefined
 
 // Lazy: both fingerprints read package artifacts from disk, so the cost is
@@ -306,6 +319,12 @@ function getTransformCacheFingerprint(): string {
   ))
 }
 const TYPESCRIPT_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts']
+const TYPESCRIPT_IMPORT_PROBE_SOURCE = '__fict_ts_import_probe__'
+const TYPESCRIPT_IMPORT_PROBE = `
+  import { __FictTypeProbe } from '${TYPESCRIPT_IMPORT_PROBE_SOURCE}'
+  type __FictTypeProbeUsage = __FictTypeProbe
+  export {}
+`
 const MODULE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts']
 const DEFAULT_APP_INCLUDE = MODULE_EXTENSIONS.map(extension => `**/*${extension}`)
 const DEFAULT_LIBRARY_INCLUDE = DEFAULT_APP_INCLUDE
@@ -410,6 +429,10 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       extractedHandlers: new Map(),
       tsConfigDependencies: new Set(),
       tsConfigWatchFiles: new Set(),
+      tsConfigDependencyClosures: new Map(),
+      tsDeclaredConfigDependencies: new Map(),
+      tsImportElisions: new Map(),
+      tsImportElisionConfig: null,
       tsProject: null,
       tsProjectInit: null,
       activeRequests: 0,
@@ -465,6 +488,10 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     state.extractedHandlers.clear()
     state.tsConfigDependencies.clear()
     state.tsConfigWatchFiles.clear()
+    state.tsConfigDependencyClosures.clear()
+    state.tsDeclaredConfigDependencies.clear()
+    state.tsImportElisions.clear()
+    state.tsImportElisionConfig = null
     state.metadataPreparationQueue = Promise.resolve()
     state.environment = null
     transformStates.delete(state)
@@ -709,10 +736,23 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     if (!useTypeScriptProject) return null
     if (state.tsProject) return state.tsProject
     if (!state.tsProjectInit) {
+      const rootDir = config?.root ?? process.cwd()
+      const explicitConfigPath = tsconfigPath
+        ? path.normalize(path.resolve(rootDir, tsconfigPath))
+        : undefined
+      trackTypeScriptConfigFiles(
+        state,
+        collectSynchronousTypeScriptConfigDependencies(
+          state,
+          path.join(rootDir, '__fict_project_entry__.ts'),
+          explicitConfigPath,
+        ),
+        config,
+        addTypeScriptConfigWatchFiles,
+      )
       state.tsProjectInit = (async () => {
         const ts = await loadTypeScript()
         if (!ts) return null
-        const rootDir = config?.root ?? process.cwd()
         const resolvedConfigPath = resolveTsconfigPath(ts, rootDir, tsconfigPath)
         for (const candidate of collectTsconfigSearchCandidates(
           rootDir,
@@ -729,12 +769,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           state.tsConfigDependencies,
           state.tsConfigWatchFiles,
         )
-        addTypeScriptConfigWatchFiles?.(
-          [...state.tsConfigWatchFiles].filter(candidate => {
-            const rootDirectory = path.parse(candidate).root
-            return existsSync(candidate) || path.dirname(candidate) !== rootDirectory
-          }),
-        )
+        if (!state.retired) {
+          addTypeScriptConfigWatchFiles?.(
+            [...state.tsConfigWatchFiles].filter(candidate => {
+              const rootDirectory = path.parse(candidate).root
+              return existsSync(candidate) || path.dirname(candidate) !== rootDirectory
+            }),
+          )
+        }
         return project
       })()
     }
@@ -760,7 +802,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     shouldTransform(id, transformFilter) && !isFrameworkBuildArtifact(id)
 
   const isTypeScriptConfigDependency = (state: MetadataTransformState, file: string): boolean =>
-    useTypeScriptProject && state.tsConfigDependencies.has(normalizeFileName(file, config?.root))
+    state.tsConfigDependencies.has(normalizeFileName(file, config?.root)) ||
+    state.tsConfigDependencies.has(normalizeTypeScriptConfigDependency(file, config?.root))
 
   const affectsFictTransform = (
     file: string,
@@ -872,7 +915,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     state: MetadataTransformState,
     code: string,
     normalizedFilename: string,
-  ): Promise<{ fictOptions: FictCompilerOptions; project: TypeScriptProject | null }> => {
+    tsImportElisionOverride?: TypeScriptImportElision,
+  ): Promise<{
+    fictOptions: FictCompilerOptions
+    project: TypeScriptProject | null
+    tsImportElision: TypeScriptImportElision
+  }> => {
     assertTransformStateActive(state)
     const fictOptions: FictCompilerOptions = {
       ...compilerOptions,
@@ -884,7 +932,16 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         resolveCompilerModuleMetadata(state, source, importer),
     }
 
-    const project = await ensureTypeScriptProject(state)
+    const [project, tsImportElision] = await Promise.all([
+      ensureTypeScriptProject(state),
+      tsImportElisionOverride ??
+        resolveTypeScriptImportElision(
+          state,
+          normalizedFilename,
+          config,
+          addTypeScriptConfigWatchFiles,
+        ),
+    ])
     assertTransformStateActive(state)
     if (project) {
       project.updateFile(normalizedFilename, code)
@@ -900,7 +957,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         configPath: project.configPath,
       }
     }
-    return { fictOptions, project }
+    return { fictOptions, project, tsImportElision }
   }
 
   const resolveGraphDependency = async (
@@ -983,12 +1040,19 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   const getPreparationKey = async (
     state: MetadataTransformState,
     node: MetadataGraphNode,
+    tsImportElision: TypeScriptImportElision,
   ): Promise<{
     key: string
     fictOptions: FictCompilerOptions
+    tsImportElision: TypeScriptImportElision
   }> => {
     assertTransformStateActive(state)
-    const { fictOptions, project } = await createCompilerOptions(state, node.code, node.filename)
+    const { fictOptions, project } = await createCompilerOptions(
+      state,
+      node.code,
+      node.filename,
+      tsImportElision,
+    )
     const dependencyFingerprint = computePackageMetadataCacheFingerprint(
       node.code,
       node.filename,
@@ -1005,9 +1069,11 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         node.code,
         fictOptions,
         project,
+        tsImportElision,
         dependencyFingerprint,
       ),
       fictOptions,
+      tsImportElision,
     }
   }
 
@@ -1015,9 +1081,15 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     state: MetadataTransformState,
     node: MetadataGraphNode,
     fictOptions: FictCompilerOptions,
+    tsImportElision: TypeScriptImportElision,
   ): Promise<Omit<PreparedCompilerTransform, 'preparationKey'>> => {
     assertTransformStateActive(state)
-    const compiled = await compileFictCompilerStage(node.code, node.filename, fictOptions)
+    const compiled = await compileFictCompilerStage(
+      node.code,
+      node.filename,
+      fictOptions,
+      tsImportElision,
+    )
     assertTransformStateActive(state)
     const generatedMetadata = state.moduleMetadata.get(node.filename)
     if (!generatedMetadata) {
@@ -1037,6 +1109,19 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     pipelinePrepared = new Set<string>(),
   ): Promise<void> => {
     assertTransformStateActive(state)
+    const fixedTsImportElisions = new Map<string, TypeScriptImportElision>()
+    const getFixedTsImportElision = async (filename: string) => {
+      const existing = fixedTsImportElisions.get(filename)
+      if (existing) return existing
+      const resolved = await resolveTypeScriptImportElision(
+        state,
+        filename,
+        config,
+        addTypeScriptConfigWatchFiles,
+      )
+      fixedTsImportElisions.set(filename, resolved)
+      return resolved
+    }
     for (const component of getStronglyConnectedMetadataComponents(graph)) {
       const sortedComponent = [...component].sort()
       const normalizedRoot = normalizeFileName(rootFilename, config?.root)
@@ -1069,12 +1154,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         prepared: PreparedCompilerTransform | undefined
         key: string
         fictOptions: FictCompilerOptions
+        tsImportElision: TypeScriptImportElision
       }[] = []
       // TypeScriptProject is a shared mutable language-service snapshot. Prepare
       // candidate keys deterministically so updateFile/getProgram never race.
       for (const filename of sortedComponent) {
         const node = graph.get(filename)!
-        const preparation = await getPreparationKey(state, node)
+        const tsImportElision = await getFixedTsImportElision(filename)
+        const preparation = await getPreparationKey(state, node, tsImportElision)
         preparedCandidates.push({
           filename,
           prepared: state.preparedCompilerTransforms.get(filename),
@@ -1093,9 +1180,10 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       if (!hasCycle) {
         const filename = sortedComponent[0]!
         const node = graph.get(filename)!
-        const { fictOptions } = await getPreparationKey(state, node)
-        const compiled = await compileMetadataNode(state, node, fictOptions)
-        const { key } = await getPreparationKey(state, node)
+        const tsImportElision = await getFixedTsImportElision(filename)
+        const { fictOptions } = await getPreparationKey(state, node, tsImportElision)
+        const compiled = await compileMetadataNode(state, node, fictOptions, tsImportElision)
+        const { key } = await getPreparationKey(state, node, tsImportElision)
         state.preparedCompilerTransforms.set(filename, { ...compiled, preparationKey: key })
         continue
       }
@@ -1116,8 +1204,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         const passResults = new Map<string, Omit<PreparedCompilerTransform, 'preparationKey'>>()
         for (const filename of sortedComponent) {
           const node = graph.get(filename)!
-          const { fictOptions } = await getPreparationKey(state, node)
-          passResults.set(filename, await compileMetadataNode(state, node, fictOptions))
+          const tsImportElision = await getFixedTsImportElision(filename)
+          const { fictOptions } = await getPreparationKey(state, node, tsImportElision)
+          passResults.set(
+            filename,
+            await compileMetadataNode(state, node, fictOptions, tsImportElision),
+          )
         }
         latestResults = passResults
         const after = stableStringify(
@@ -1136,7 +1228,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       for (const filename of sortedComponent) {
         const node = graph.get(filename)!
         const result = latestResults.get(filename)!
-        const { key } = await getPreparationKey(state, node)
+        const tsImportElision = await getFixedTsImportElision(filename)
+        const { key } = await getPreparationKey(state, node, tsImportElision)
         state.preparedCompilerTransforms.set(filename, { ...result, preparationKey: key })
       }
     }
@@ -1240,7 +1333,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           packageBoundaryCache,
         )?.root ?? normalizeFileName(config.root)
       isDev = config.command === 'serve' || config.mode === 'development'
-      if (config.command !== 'serve') addTypeScriptConfigWatchFiles = null
+      addTypeScriptConfigWatchFiles = null
       // Rebuild cache with resolved config so cacheDir is available
       resetCache()
       // A plugin instance can be reused by Vite restarts. Retire request-scoped dev
@@ -1252,6 +1345,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     },
 
     buildStart() {
+      const context = this as { addWatchFile?: (file: string) => void } | undefined
+      const addWatchFile = context?.addWatchFile
+      addTypeScriptConfigWatchFiles =
+        typeof addWatchFile === 'function'
+          ? files => {
+              for (const file of files) addWatchFile.call(context, file)
+            }
+          : null
       // Vite can reuse plugin instances across watch rebuilds.
       // Reset per-build metadata to avoid unbounded growth.
       replaceBuildTransformState()
@@ -1449,11 +1550,11 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           await prepareReachableMetadata(state, metadataContext, code, normalizedFilename)
           assertTransformStateActive(state)
         }
-        const { fictOptions, project: tsProject } = await createCompilerOptions(
-          state,
-          code,
-          normalizedFilename,
-        )
+        const {
+          fictOptions,
+          project: tsProject,
+          tsImportElision,
+        } = await createCompilerOptions(state, code, normalizedFilename)
         const aliasEntries = normalizeAliases(config?.resolve?.alias)
         const dependencyFingerprint = computePackageMetadataCacheFingerprint(
           code,
@@ -1475,6 +1576,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               code,
               fictOptions,
               tsProject,
+              tsImportElision,
               shouldSplit,
               dependencyFingerprint,
             )
@@ -1524,6 +1626,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             code,
             fictOptions,
             tsProject,
+            tsImportElision,
             dependencyFingerprint,
           )
           const prepared = state.preparedCompilerTransforms.get(normalizedFilename)
@@ -1531,7 +1634,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           if (prepared?.preparationKey === preparationKey) {
             result = prepared
           } else {
-            result = await compileFictCompilerStage(code, normalizedFilename, fictOptions)
+            result = await compileFictCompilerStage(
+              code,
+              normalizedFilename,
+              fictOptions,
+              tsImportElision,
+            )
             assertTransformStateActive(state)
             const generatedMetadata = state.moduleMetadata.get(normalizedFilename)
             if (generatedMetadata) {
@@ -1883,6 +1991,15 @@ function normalizeFileName(id: string, root?: string): string {
   return path.normalize(path.resolve(clean))
 }
 
+function normalizeTypeScriptConfigDependency(id: string, root?: string): string {
+  const normalized = normalizeFileName(id, root)
+  try {
+    return path.normalize(realpathSync(normalized))
+  } catch {
+    return normalized
+  }
+}
+
 type EmitAsset = (asset: { type: 'asset'; fileName: string; source: string }) => string
 
 interface BundleChunkLike {
@@ -2228,6 +2345,270 @@ function joinBasePath(base: string, fileName: string): string {
   return `${normalized}${fileName}`
 }
 
+function collectClosestTsconfigCandidates(
+  filename: string,
+  resolvedConfigPath: string | null,
+): string[] {
+  const candidates: string[] = []
+  const stopDirectory = resolvedConfigPath
+    ? path.dirname(resolvedConfigPath)
+    : path.parse(filename).root
+  let directory = path.dirname(filename)
+  while (true) {
+    candidates.push(path.normalize(path.join(directory, 'tsconfig.json')))
+    if (directory === stopDirectory) break
+    const parent = path.dirname(directory)
+    if (parent === directory) break
+    directory = parent
+  }
+  return candidates
+}
+
+interface DeclaredTypeScriptConfigDependencies {
+  extended: string[]
+  referenced: string[]
+}
+
+function getStaticObjectProperty(object: t.ObjectExpression, name: string): t.Expression | null {
+  for (let index = object.properties.length - 1; index >= 0; index -= 1) {
+    const property = object.properties[index]
+    if (!t.isObjectProperty(property) || property.computed) continue
+    const key = property.key
+    const keyName = t.isIdentifier(key) ? key.name : t.isStringLiteral(key) ? key.value : null
+    if (keyName !== name || !t.isExpression(property.value)) continue
+    return property.value
+  }
+  return null
+}
+
+function readDeclaredTypeScriptConfigDependencies(
+  configPath: string,
+): DeclaredTypeScriptConfigDependencies | null {
+  let expression: t.Expression
+  try {
+    expression = parseExpression(readFileSync(configPath, 'utf8').replace(/^\uFEFF/, ''), {
+      sourceType: 'script',
+    })
+  } catch {
+    return null
+  }
+  if (!t.isObjectExpression(expression)) return null
+
+  const extendedValue = getStaticObjectProperty(expression, 'extends')
+  const extended = t.isStringLiteral(extendedValue)
+    ? [extendedValue.value]
+    : t.isArrayExpression(extendedValue)
+      ? extendedValue.elements.filter(t.isStringLiteral).map(element => element.value)
+      : []
+  const referencedValue = getStaticObjectProperty(expression, 'references')
+  const referenced = t.isArrayExpression(referencedValue)
+    ? referencedValue.elements.flatMap(element => {
+        if (!t.isObjectExpression(element)) return []
+        const referencePath = getStaticObjectProperty(element, 'path')
+        return t.isStringLiteral(referencePath) ? [referencePath.value] : []
+      })
+    : []
+  return { extended, referenced }
+}
+
+function resolveDeclaredExtendedConfigCandidates(specifier: string, configPath: string): string[] {
+  let normalizedSpecifier = specifier
+  if (normalizedSpecifier === '.' || normalizedSpecifier === '..') {
+    normalizedSpecifier = path.join(normalizedSpecifier, 'tsconfig.json')
+  }
+  if (path.isAbsolute(normalizedSpecifier) || normalizedSpecifier.startsWith('.')) {
+    const candidate = path.normalize(path.resolve(path.dirname(configPath), normalizedSpecifier))
+    return [candidate, `${candidate}.json`]
+  }
+
+  const require = createRequire(configPath)
+  for (const candidate of [normalizedSpecifier, `${normalizedSpecifier}/tsconfig.json`]) {
+    try {
+      return [path.normalize(require.resolve(candidate))]
+    } catch {
+      // Try the package tsconfig convention after its direct entry point.
+    }
+  }
+  return []
+}
+
+function resolveDeclaredReferencedConfigCandidate(specifier: string, configPath: string): string {
+  const candidate = path.resolve(path.dirname(configPath), specifier)
+  return path.normalize(
+    specifier.endsWith('.json') ? candidate : path.join(candidate, 'tsconfig.json'),
+  )
+}
+
+function collectSynchronousTypeScriptConfigDependencies(
+  state: MetadataTransformState,
+  filename: string,
+  explicitConfigPath?: string,
+): string[] {
+  const closureKey = explicitConfigPath
+    ? `closure:config:${path.normalize(explicitConfigPath)}`
+    : `closure:directory:${path.normalize(path.dirname(filename))}`
+  const cachedClosure = state.tsConfigDependencyClosures.get(closureKey)
+  if (cachedClosure) return cachedClosure
+
+  const dependencies = new Set<string>()
+  const searchCandidates = explicitConfigPath
+    ? [path.normalize(explicitConfigPath)]
+    : collectClosestTsconfigCandidates(filename, null)
+  for (const candidate of searchCandidates) dependencies.add(candidate)
+
+  const readConfig = (configPath: string) => {
+    const normalized = path.normalize(configPath)
+    if (!state.tsDeclaredConfigDependencies.has(normalized)) {
+      state.tsDeclaredConfigDependencies.set(
+        normalized,
+        readDeclaredTypeScriptConfigDependencies(normalized),
+      )
+    }
+    return state.tsDeclaredConfigDependencies.get(normalized) ?? null
+  }
+  const rootConfig = explicitConfigPath
+    ? path.normalize(explicitConfigPath)
+    : searchCandidates.find(candidate => existsSync(candidate))
+  if (!rootConfig) {
+    const closure = [...dependencies]
+    state.tsConfigDependencyClosures.set(closureKey, closure)
+    return closure
+  }
+
+  const graphKey = `graph:${path.normalize(rootConfig)}`
+  const cachedGraph = state.tsConfigDependencyClosures.get(graphKey)
+  if (cachedGraph) {
+    for (const dependency of cachedGraph) dependencies.add(dependency)
+    const closure = [...dependencies]
+    state.tsConfigDependencyClosures.set(closureKey, closure)
+    return closure
+  }
+
+  const graphDependencies = new Set<string>([rootConfig])
+  const queue = [rootConfig]
+  const visited = new Set<string>()
+  while (queue.length > 0) {
+    const configPath = path.normalize(queue.shift()!)
+    if (visited.has(configPath)) continue
+    visited.add(configPath)
+    const declared = readConfig(configPath)
+    if (!declared) continue
+
+    for (const specifier of declared.extended) {
+      const candidates = resolveDeclaredExtendedConfigCandidates(specifier, configPath)
+      for (const candidate of candidates) graphDependencies.add(candidate)
+      const resolved = candidates.find(candidate => readConfig(candidate) !== null)
+      if (resolved) queue.push(resolved)
+    }
+    for (const specifier of declared.referenced) {
+      const candidate = resolveDeclaredReferencedConfigCandidate(specifier, configPath)
+      graphDependencies.add(candidate)
+      if (readConfig(candidate)) queue.push(candidate)
+    }
+  }
+  const graph = [...graphDependencies]
+  state.tsConfigDependencyClosures.set(graphKey, graph)
+  for (const dependency of graph) dependencies.add(dependency)
+  const closure = [...dependencies]
+  state.tsConfigDependencyClosures.set(closureKey, closure)
+  return closure
+}
+
+function trackTypeScriptConfigFiles(
+  state: MetadataTransformState,
+  configFiles: Iterable<string>,
+  config: ResolvedConfig | undefined,
+  addWatchFiles: ((files: string[]) => void) | null,
+): void {
+  if (state.retired) return
+  const watchFiles: string[] = []
+  for (const configFile of configFiles) {
+    const direct = normalizeFileName(configFile, config?.root)
+    const canonical = normalizeTypeScriptConfigDependency(configFile, config?.root)
+    state.tsConfigDependencies.add(direct)
+    state.tsConfigDependencies.add(canonical)
+    if (state.tsConfigWatchFiles.has(canonical)) continue
+    state.tsConfigWatchFiles.add(canonical)
+    const rootDirectory = path.parse(canonical).root
+    if (existsSync(canonical) || path.dirname(canonical) !== rootDirectory) {
+      watchFiles.push(canonical)
+    }
+  }
+  if (watchFiles.length > 0 && !state.retired) addWatchFiles?.(watchFiles)
+}
+
+function resolveTypeScriptImportElision(
+  state: MetadataTransformState,
+  filename: string,
+  config: ResolvedConfig | undefined,
+  addWatchFiles: ((files: string[]) => void) | null,
+): Promise<TypeScriptImportElision> {
+  if (!TYPESCRIPT_EXTENSIONS.some(extension => filename.endsWith(extension))) {
+    return Promise.resolve('remove')
+  }
+  const cached = state.tsImportElisions.get(filename)
+  if (cached) return cached
+
+  const pending = resolveTypeScriptImportElisionUncached(state, filename, config, addWatchFiles)
+  state.tsImportElisions.set(filename, pending)
+  return pending
+}
+
+async function resolveTypeScriptImportElisionUncached(
+  state: MetadataTransformState,
+  filename: string,
+  config: ResolvedConfig | undefined,
+  addWatchFiles: ((files: string[]) => void) | null,
+): Promise<TypeScriptImportElision> {
+  const configuredEsbuild = config?.esbuild === false ? undefined : config?.esbuild
+  const configuredRaw = configuredEsbuild?.tsconfigRaw
+  if (typeof configuredRaw !== 'string') {
+    trackTypeScriptConfigFiles(
+      state,
+      collectSynchronousTypeScriptConfigDependencies(state, filename),
+      config,
+      addWatchFiles,
+    )
+  }
+
+  // Vite caches parsed tsconfig files by ResolvedConfig identity. Give every Fict
+  // generation its own identity so build-watch/HMR replacements cannot reuse a
+  // previous generation's tsconfig result while still sharing parses across files.
+  const probeConfig = (state.tsImportElisionConfig ??= config
+    ? (Object.create(config) as ResolvedConfig)
+    : ({ root: process.cwd() } as ResolvedConfig))
+
+  let result: Awaited<ReturnType<typeof transformWithEsbuild>>
+  try {
+    result = await transformWithEsbuild(
+      TYPESCRIPT_IMPORT_PROBE,
+      filename,
+      {
+        loader: filename.endsWith('.tsx') ? 'tsx' : 'ts',
+        format: 'esm',
+        target: 'esnext',
+        treeShaking: false,
+        sourcemap: false,
+        ...(configuredRaw === undefined ? {} : { tsconfigRaw: configuredRaw }),
+      },
+      undefined,
+      probeConfig,
+    )
+  } catch {
+    // Vite's normal TypeScript stage will report malformed tsconfig files. Preserve
+    // the historical lowering mode here so the Fict pre-transform does not replace
+    // that diagnostic or make standalone plugin integrations fail earlier.
+    return 'remove'
+  }
+  const ast = parse(result.code, { sourceType: 'module' })
+  const probeImport = ast.program.body.find(
+    (statement): statement is t.ImportDeclaration =>
+      t.isImportDeclaration(statement) && statement.source.value === TYPESCRIPT_IMPORT_PROBE_SOURCE,
+  )
+  if (!probeImport) return 'remove'
+  return probeImport.specifiers.length === 0 ? 'preserve-side-effect' : 'verbatim'
+}
+
 interface AliasEntry {
   find: string | RegExp
   replacement: string
@@ -2325,10 +2706,62 @@ function getStronglyConnectedMetadataComponents(graph: Map<string, MetadataGraph
   return components
 }
 
+function getImportSpecifierSemanticKey(
+  source: string,
+  specifier: t.ImportDeclaration['specifiers'][number],
+): string {
+  if (t.isImportDefaultSpecifier(specifier)) {
+    return JSON.stringify([source, 'default', specifier.local.name])
+  }
+  if (t.isImportNamespaceSpecifier(specifier)) {
+    return JSON.stringify([source, 'namespace', specifier.local.name])
+  }
+  const imported = t.isIdentifier(specifier.imported)
+    ? specifier.imported.name
+    : specifier.imported.value
+  return JSON.stringify([source, 'named', imported, specifier.local.name])
+}
+
+function preserveTypeScriptImportSideEffects(): PluginItem {
+  const sourceSpecifiers = new Set<string>()
+  return {
+    name: 'fict-preserve-typescript-import-side-effects',
+    visitor: {
+      Program: {
+        enter(programPath: NodePath<t.Program>) {
+          for (const statement of programPath.node.body) {
+            if (!t.isImportDeclaration(statement)) continue
+            for (const specifier of statement.specifiers) {
+              sourceSpecifiers.add(getImportSpecifierSemanticKey(statement.source.value, specifier))
+            }
+          }
+        },
+        exit(programPath: NodePath<t.Program>) {
+          programPath.scope.crawl()
+          for (const statement of programPath.get('body')) {
+            if (!statement.isImportDeclaration() || statement.node.specifiers.length === 0) {
+              continue
+            }
+            for (const specifier of statement.get('specifiers')) {
+              const key = getImportSpecifierSemanticKey(statement.node.source.value, specifier.node)
+              if (!sourceSpecifiers.has(key)) continue
+              const binding = programPath.scope.getBinding(specifier.node.local.name)
+              if (binding && !binding.referenced && binding.constantViolations.length === 0) {
+                specifier.remove()
+              }
+            }
+          }
+        },
+      },
+    },
+  }
+}
+
 async function compileFictCompilerStage(
   code: string,
   filename: string,
   fictOptions: FictCompilerOptions,
+  tsImportElision: TypeScriptImportElision,
 ): Promise<{ code: string; map: TransformResult['map'] }> {
   const isTypeScript = TYPESCRIPT_EXTENSIONS.some(extension => filename.endsWith(extension))
   const isTSX = filename.endsWith('.tsx')
@@ -2343,10 +2776,14 @@ async function compileFictCompilerStage(
         allowDeclareFields: true,
         allowNamespaces: true,
         disallowAmbiguousJSXLike: isExplicitModuleTypeScript,
+        onlyRemoveTypeImports: tsImportElision !== 'remove',
       },
     ])
   }
   plugins.push(['@babel/plugin-syntax-jsx', {}], [createFictPlugin, fictOptions])
+  if (isTypeScript && tsImportElision === 'preserve-side-effect') {
+    plugins.push(preserveTypeScriptImportSideEffects())
+  }
   const result = await transformAsync(code, {
     filename,
     configFile: false,
@@ -2570,6 +3007,7 @@ function buildCacheKey(
   code: string,
   options: FictCompilerOptions,
   tsProject: TypeScriptProject | null,
+  tsImportElision: TypeScriptImportElision,
   shouldSplit: boolean,
   packageMetadataFingerprint: string,
 ): string {
@@ -2584,6 +3022,7 @@ function buildCacheKey(
       codeHash,
       optionsHash,
       tsKey,
+      tsImportElision,
       shouldSplit ? 'split' : 'inline',
       packageMetadataFingerprint,
     ].join('|'),
@@ -2595,6 +3034,7 @@ function buildMetadataPreparationKey(
   code: string,
   options: FictCompilerOptions,
   tsProject: TypeScriptProject | null,
+  tsImportElision: TypeScriptImportElision,
   dependencyMetadataFingerprint: string,
 ): string {
   const normalizedOptions = normalizeOptionsForCache(options)
@@ -2614,6 +3054,7 @@ function buildMetadataPreparationKey(
       hashString(code),
       hashString(stableStringify(normalizedOptions)),
       tsProject?.configHash ?? '',
+      tsImportElision,
       dependencyMetadataFingerprint,
     ].join('|'),
   )
@@ -2755,10 +3196,9 @@ function collectDeclaredExtendedConfigCandidates(config: unknown, configPath: st
   const candidates = new Set<string>()
   for (const specifier of specifiers) {
     if (typeof specifier !== 'string') continue
-    if (!path.isAbsolute(specifier) && !specifier.startsWith('.')) continue
-    const candidate = path.normalize(path.resolve(path.dirname(configPath), specifier))
-    candidates.add(candidate)
-    candidates.add(`${candidate}.json`)
+    for (const candidate of resolveDeclaredExtendedConfigCandidates(specifier, configPath)) {
+      candidates.add(candidate)
+    }
   }
   return [...candidates]
 }
