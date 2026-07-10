@@ -2104,6 +2104,15 @@ function getStoredModuleMetadata(
   return store.get(normalized) ?? store.get(moduleId)
 }
 
+function setMetadataRecordValue<T>(record: Record<string, T>, key: string, value: T): void {
+  Object.defineProperty(record, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  })
+}
+
 function mergeMetadata(
   target: ModuleReactiveMetadata,
   source: ModuleReactiveMetadata | undefined,
@@ -2112,13 +2121,13 @@ function mergeMetadata(
   if (!source) return
   for (const [name, kind] of Object.entries(source.exports)) {
     if (allowedExports && !allowedExports.has(name)) continue
-    target.exports[name] = kind
+    setMetadataRecordValue(target.exports, name, kind)
   }
   if (source.hooks) {
     for (const [name, info] of Object.entries(source.hooks)) {
       if (allowedExports && !allowedExports.has(name)) continue
       target.hooks ??= {}
-      target.hooks[name] = info
+      setMetadataRecordValue(target.hooks, name, info)
     }
   }
 }

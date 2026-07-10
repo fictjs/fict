@@ -84,4 +84,47 @@ describe('library entry metadata', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  it.each([
+    {
+      label: 'reactive export',
+      source: `
+        import { createMemo } from 'fict'
+        const value = createMemo(() => 1)
+        export { value as "__proto__" }
+      `,
+      field: 'exports' as const,
+      expected: 'memo',
+    },
+    {
+      label: 'hook export',
+      source: `
+        /** @fictReturn { directAccessor: "signal" } */
+        function useValue() {
+          return 1
+        }
+        export { useValue as "__proto__" }
+      `,
+      field: 'hooks' as const,
+      expected: { directAccessor: 'signal' },
+    },
+  ])('preserves a __proto__ $label in published metadata', async ({ source, field, expected }) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-library-special-metadata-key-'))
+    const entry = path.join(root, 'index.ts')
+
+    try {
+      await writeFile(entry, source)
+
+      const [metadata] = (await buildLibraryMetadata(root, entry)) as Record<
+        string,
+        Record<string, unknown>
+      >[]
+      const record = metadata?.[field]
+
+      expect(Object.prototype.hasOwnProperty.call(record, '__proto__')).toBe(true)
+      expect(record?.['__proto__']).toEqual(expected)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 })
