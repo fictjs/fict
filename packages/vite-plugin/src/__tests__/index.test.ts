@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -505,6 +505,153 @@ describe('fict vite-plugin', () => {
       '!**/node_modules/@fictjs/**',
       '!**/node_modules/fict/**',
     ])
+  })
+
+  it('refreshes TypeScript projects when config files appear or change', async () => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-vite-tsconfig-hmr-')))
+    const srcDir = path.join(root, 'src')
+    const appPath = path.join(srcDir, 'App.tsx')
+    const configPath = path.join(root, 'tsconfig.json')
+    const baseConfigPath = path.join(root, 'tsconfig.base.jsonc')
+    let expectedHmrFile = ''
+    let resolveHmr: (() => void) | undefined
+    let server: Awaited<ReturnType<typeof createServer>> | undefined
+
+    const triggerHmr = async (event: 'add' | 'change' | 'unlink', file: string) => {
+      expectedHmrFile = path.normalize(file)
+      const seen = new Promise<void>(resolve => {
+        resolveHmr = resolve
+      })
+      server!.watcher.emit(event, file)
+      let timeout: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([
+          seen,
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(
+              () => reject(new Error(`Timed out waiting for ${event}: ${file}`)),
+              3_000,
+            )
+          }),
+        ])
+      } finally {
+        clearTimeout(timeout)
+      }
+    }
+
+    try {
+      await mkdir(srcDir, { recursive: true })
+      await writeFile(appPath, 'export const value: number = 1')
+      server = await createServer({
+        root,
+        configFile: false,
+        logLevel: 'silent',
+        server: { middlewareMode: true, watch: null },
+        plugins: [
+          fict({ cache: false, functionSplitting: false }),
+          {
+            name: 'test-tsconfig-hmr-probe',
+            hotUpdate({ file }) {
+              if (path.normalize(file) === expectedHmrFile) {
+                resolveHmr?.()
+                resolveHmr = undefined
+              }
+            },
+          },
+        ],
+      })
+
+      const environment = server.environments.client
+      await environment.transformRequest('/src/App.tsx')
+      const send = vi.spyOn(environment.hot, 'send')
+
+      await writeFile(baseConfigPath, JSON.stringify({ compilerOptions: { strict: false } }))
+      await writeFile(
+        configPath,
+        JSON.stringify({ extends: './tsconfig.base.jsonc', include: ['src/**/*'] }),
+      )
+      await triggerHmr('add', configPath)
+      expect(send).toHaveBeenCalledWith({ type: 'full-reload', path: '*' })
+
+      send.mockClear()
+      await environment.transformRequest('/src/App.tsx')
+      await writeFile(baseConfigPath, JSON.stringify({ compilerOptions: { strict: true } }))
+      await triggerHmr('change', baseConfigPath)
+      expect(send).toHaveBeenCalledWith({ type: 'full-reload', path: '*' })
+
+      send.mockClear()
+      await environment.transformRequest('/src/App.tsx')
+      await rm(configPath, { force: true })
+      await triggerHmr('unlink', configPath)
+      expect(send).toHaveBeenCalledWith({ type: 'full-reload', path: '*' })
+
+      send.mockClear()
+      await environment.transformRequest('/src/App.tsx')
+      await writeFile(
+        configPath,
+        JSON.stringify({ extends: './tsconfig.base.jsonc', include: ['src/**/*'] }),
+      )
+      await triggerHmr('add', configPath)
+      expect(send).toHaveBeenCalledWith({ type: 'full-reload', path: '*' })
+    } finally {
+      resolveHmr?.()
+      await server?.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('watches explicit and missing extended configs outside the Vite root', async () => {
+    const container = await mkdtemp(path.join(tmpdir(), 'fict-vite-external-config-'))
+    const root = path.join(container, 'app')
+    const srcDir = path.join(root, 'src')
+    const configPath = path.join(container, 'shared', 'tsconfig.custom.jsonc')
+    const baseConfigPath = path.join(container, 'shared', 'base.jsonc')
+    const missingBasePath = path.join(container, 'shared', 'missing.jsonc')
+
+    try {
+      await mkdir(srcDir, { recursive: true })
+      await mkdir(path.dirname(configPath), { recursive: true })
+      const explicitPlugin = fict({ tsconfigPath: configPath }) as any
+      explicitPlugin.configResolved({ ...mockBuildConfig, command: 'serve', root })
+      const explicitAdd = vi.fn()
+      explicitPlugin.configureServer.handler({
+        watcher: { add: explicitAdd },
+        environments: {},
+      })
+      expect(explicitAdd).toHaveBeenCalledWith([path.normalize(configPath)])
+
+      const appPath = path.join(srcDir, 'App.tsx')
+      const appSource = 'export const value: number = 1'
+      await writeFile(appPath, appSource)
+      await writeFile(baseConfigPath, JSON.stringify({ extends: './missing.jsonc' }))
+      await writeFile(
+        path.join(root, 'tsconfig.json'),
+        JSON.stringify({ extends: '../shared/base.jsonc', include: ['src/**/*'] }),
+      )
+      const extendsPlugin = getTestPlugin({ cache: false }) as any
+      extendsPlugin.configResolved({ ...mockBuildConfig, command: 'serve', root })
+      const extendsAdd = vi.fn()
+      extendsPlugin.configureServer.handler({ watcher: { add: extendsAdd }, environments: {} })
+      await extendsPlugin.transform.call(
+        {
+          error(error: unknown): never {
+            throw error instanceof Error ? error : new Error(String(error))
+          },
+          warn: vi.fn(),
+          emitFile: vi.fn(),
+        },
+        appSource,
+        appPath,
+      )
+      expect(extendsAdd.mock.calls.flatMap(call => call[0])).toContain(
+        path.normalize(missingBasePath),
+      )
+      expect(extendsAdd.mock.calls.flatMap(call => call[0])).toContain(
+        path.normalize(`${missingBasePath}.json`),
+      )
+    } finally {
+      await rm(container, { recursive: true, force: true })
+    }
   })
 
   it('prepares cyclic earlier-transform hook metadata on the first dev request', async () => {
@@ -1524,6 +1671,51 @@ describe('fict vite-plugin', () => {
         second && typeof second === 'object' && 'code' in second ? String(second.code) : ''
       expect(secondCode).toMatch(/count \* 2/)
       expect(secondCode).not.toMatch(/count\(\) \* 2/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keys persistent transforms with extended TypeScript config contents', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-tsconfig-cache-'))
+    const srcDir = path.join(root, 'src')
+    const cacheDir = path.join(root, '.cache')
+    const appPath = path.join(srcDir, 'App.tsx')
+    const baseConfigPath = path.join(root, 'tsconfig.base.jsonc')
+    const appSource = 'export const value: number = 1'
+    const context = {
+      error(error: unknown): never {
+        throw error instanceof Error ? error : new Error(String(error))
+      },
+      warn: vi.fn(),
+      emitFile: vi.fn(),
+    }
+    const createPlugin = () => {
+      const plugin = getTestPlugin({
+        cache: { persistent: true, dir: cacheDir },
+        functionSplitting: false,
+      })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+      return plugin
+    }
+
+    try {
+      await mkdir(srcDir, { recursive: true })
+      await writeFile(baseConfigPath, JSON.stringify({ compilerOptions: { strict: false } }))
+      await writeFile(
+        path.join(root, 'tsconfig.json'),
+        JSON.stringify({ extends: './tsconfig.base.jsonc', include: ['src/**/*'] }),
+      )
+      await writeFile(appPath, appSource)
+
+      await createPlugin().transform?.call(context, appSource, appPath)
+      const firstCacheFiles = (await readdir(cacheDir)).filter(file => file.endsWith('.json'))
+      expect(firstCacheFiles.length).toBeGreaterThan(0)
+
+      await writeFile(baseConfigPath, JSON.stringify({ compilerOptions: { strict: true } }))
+      await createPlugin().transform?.call(context, appSource, appPath)
+      const secondCacheFiles = (await readdir(cacheDir)).filter(file => file.endsWith('.json'))
+      expect(secondCacheFiles.length).toBeGreaterThan(firstCacheFiles.length)
     } finally {
       await rm(root, { recursive: true, force: true })
     }

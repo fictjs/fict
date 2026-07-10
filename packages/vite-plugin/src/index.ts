@@ -152,6 +152,8 @@ interface MetadataTransformState {
   pipelineTransformedModules: Set<string>
   metadataPreparationQueue: Promise<void>
   extractedHandlers: Map<string, ExtractedHandler>
+  tsConfigDependencies: Set<string>
+  tsConfigWatchFiles: Set<string>
   tsProject: TypeScriptProject | null
   tsProjectInit: Promise<TypeScriptProject | null> | null
   activeRequests: number
@@ -264,6 +266,10 @@ interface TypeScriptApi {
     configPath: string,
     readFile: TypeScriptSystem['readFile'],
   ) => { config: unknown; error?: unknown }
+  parseConfigFileTextToJson?: (
+    configPath: string,
+    text: string,
+  ) => { config?: unknown; error?: unknown }
   parseJsonConfigFileContent: (
     config: unknown,
     host: TypeScriptSystem,
@@ -388,6 +394,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   let config: ResolvedConfig | undefined
   let isDev = false
   let cache: TransformCache | null = null
+  let addTypeScriptConfigWatchFiles: ((files: string[]) => void) | null = null
   const transformStates = new Set<MetadataTransformState>()
   const createTransformState = (environment: object | null = null): MetadataTransformState => {
     const state: MetadataTransformState = {
@@ -401,6 +408,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       pipelineTransformedModules: new Set(),
       metadataPreparationQueue: Promise.resolve(),
       extractedHandlers: new Map(),
+      tsConfigDependencies: new Set(),
+      tsConfigWatchFiles: new Set(),
       tsProject: null,
       tsProjectInit: null,
       activeRequests: 0,
@@ -454,6 +463,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     state.pipelineTransformsInProgress.clear()
     state.pipelineTransformedModules.clear()
     state.extractedHandlers.clear()
+    state.tsConfigDependencies.clear()
+    state.tsConfigWatchFiles.clear()
     state.metadataPreparationQueue = Promise.resolve()
     state.environment = null
     transformStates.delete(state)
@@ -703,8 +714,28 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         if (!ts) return null
         const rootDir = config?.root ?? process.cwd()
         const resolvedConfigPath = resolveTsconfigPath(ts, rootDir, tsconfigPath)
+        for (const candidate of collectTsconfigSearchCandidates(
+          rootDir,
+          tsconfigPath,
+          resolvedConfigPath,
+        )) {
+          state.tsConfigDependencies.add(candidate)
+        }
         if (!resolvedConfigPath) return null
-        return createTypeScriptProject(ts, rootDir, resolvedConfigPath)
+        const project = await createTypeScriptProject(
+          ts,
+          rootDir,
+          resolvedConfigPath,
+          state.tsConfigDependencies,
+          state.tsConfigWatchFiles,
+        )
+        addTypeScriptConfigWatchFiles?.(
+          [...state.tsConfigWatchFiles].filter(candidate => {
+            const rootDirectory = path.parse(candidate).root
+            return existsSync(candidate) || path.dirname(candidate) !== rootDirectory
+          }),
+        )
+        return project
       })()
     }
     state.tsProject = await state.tsProjectInit
@@ -727,6 +758,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
 
   const shouldCompileModule = (id: string): boolean =>
     shouldTransform(id, transformFilter) && !isFrameworkBuildArtifact(id)
+
+  const isTypeScriptConfigDependency = (state: MetadataTransformState, file: string): boolean =>
+    useTypeScriptProject && state.tsConfigDependencies.has(normalizeFileName(file, config?.root))
 
   const affectsFictTransform = (
     file: string,
@@ -1206,6 +1240,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           packageBoundaryCache,
         )?.root ?? normalizeFileName(config.root)
       isDev = config.command === 'serve' || config.mode === 'development'
+      if (config.command !== 'serve') addTypeScriptConfigWatchFiles = null
       // Rebuild cache with resolved config so cacheDir is available
       resetCache()
       // A plugin instance can be reused by Vite restarts. Retire request-scoped dev
@@ -1225,6 +1260,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     configureServer: {
       order: 'pre',
       handler(server) {
+        addTypeScriptConfigWatchFiles = files => {
+          if (files.length > 0) server.watcher.add(files)
+        }
+        if (useTypeScriptProject && tsconfigPath && config) {
+          addTypeScriptConfigWatchFiles([
+            normalizeFileName(path.resolve(config.root, tsconfigPath), config.root),
+          ])
+        }
         for (const environment of Object.values(server.environments)) {
           wrapDevEnvironmentRequests(environment)
         }
@@ -1610,7 +1653,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     hotUpdate({ file, modules }) {
       const environment = this.environment
       const state = getEnvironmentTransformState(environment)
-      const tsConfigChanged = state.tsProject?.configPath === file
+      const tsConfigChanged = isTypeScriptConfigDependency(state, file)
       const affectsTransform = affectsFictTransform(file, modules)
       if (!tsConfigChanged && !affectsTransform) return undefined
 
@@ -1623,8 +1666,16 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     // Keep the compatibility hook callable for existing direct plugin integrations.
     // Vite 7 uses hotUpdate above for update/create/delete events.
     handleHotUpdate({ file, server }) {
-      if (!shouldTransform(file, transformFilter)) return undefined
       const environments = Object.values(server.environments ?? {})
+      const tsConfigChanged =
+        environments.length === 0
+          ? isTypeScriptConfigDependency(buildTransformState, file)
+          : environments.some(environment =>
+              isTypeScriptConfigDependency(getEnvironmentTransformState(environment), file),
+            )
+      if (!tsConfigChanged && !shouldTransform(file, transformFilter)) return undefined
+
+      if (tsConfigChanged) resetCache()
       if (environments.length === 0) {
         replaceBuildTransformState()
       } else {
@@ -2669,24 +2720,114 @@ function resolveTsconfigPath(
   explicitPath?: string,
 ): string | null {
   if (explicitPath) {
-    return path.resolve(rootDir, explicitPath)
+    return path.normalize(path.resolve(rootDir, explicitPath))
   }
-  return ts.findConfigFile(rootDir, ts.sys.fileExists, 'tsconfig.json') ?? null
+  const resolved = ts.findConfigFile(rootDir, ts.sys.fileExists, 'tsconfig.json')
+  return resolved ? path.normalize(resolved) : null
+}
+
+function collectTsconfigSearchCandidates(
+  rootDir: string,
+  explicitPath: string | undefined,
+  resolvedPath: string | null,
+): string[] {
+  if (explicitPath) return [path.normalize(path.resolve(rootDir, explicitPath))]
+
+  const candidates: string[] = []
+  const stopDirectory = resolvedPath
+    ? path.dirname(resolvedPath)
+    : path.parse(path.resolve(rootDir)).root
+  let directory = path.resolve(rootDir)
+  while (true) {
+    candidates.push(path.normalize(path.join(directory, 'tsconfig.json')))
+    if (directory === stopDirectory) break
+    const parent = path.dirname(directory)
+    if (parent === directory) break
+    directory = parent
+  }
+  return candidates
+}
+
+function collectDeclaredExtendedConfigCandidates(config: unknown, configPath: string): string[] {
+  if (!config || typeof config !== 'object' || !('extends' in config)) return []
+  const extended = (config as { extends?: unknown }).extends
+  const specifiers = Array.isArray(extended) ? extended : [extended]
+  const candidates = new Set<string>()
+  for (const specifier of specifiers) {
+    if (typeof specifier !== 'string') continue
+    if (!path.isAbsolute(specifier) && !specifier.startsWith('.')) continue
+    const candidate = path.normalize(path.resolve(path.dirname(configPath), specifier))
+    candidates.add(candidate)
+    candidates.add(`${candidate}.json`)
+  }
+  return [...candidates]
 }
 
 async function createTypeScriptProject(
   ts: TypeScriptApi,
   rootDir: string,
   configPath: string,
+  configDependencies: Set<string>,
+  configWatchFiles: Set<string>,
 ): Promise<TypeScriptProject | null> {
-  const configText = ts.sys.readFile(configPath)
+  const normalizedConfigPath = path.normalize(configPath)
+  configDependencies.add(normalizedConfigPath)
+  configWatchFiles.add(normalizedConfigPath)
+  const configInputSnapshots = new Map<string, string | null>()
+  const trackConfigCandidate = (candidate: string, watch: boolean) => {
+    const normalized = path.normalize(candidate)
+    configDependencies.add(normalized)
+    if (watch) configWatchFiles.add(normalized)
+  }
+  const trackedSystem: TypeScriptSystem = {
+    ...ts.sys,
+    fileExists: candidate => {
+      trackConfigCandidate(candidate, false)
+      return ts.sys.fileExists(candidate)
+    },
+    readFile: candidate => {
+      trackConfigCandidate(candidate, true)
+      const contents = ts.sys.readFile(candidate)
+      configInputSnapshots.set(path.normalize(candidate), contents ?? null)
+      return contents
+    },
+  }
+
+  const configText = trackedSystem.readFile(normalizedConfigPath)
   if (!configText) return null
-  const configHash = hashString(configText)
 
-  const configFile = ts.readConfigFile(configPath, ts.sys.readFile)
+  const configFile = ts.readConfigFile(normalizedConfigPath, trackedSystem.readFile)
   if (configFile.error) return null
+  for (const candidate of collectDeclaredExtendedConfigCandidates(
+    configFile.config,
+    normalizedConfigPath,
+  )) {
+    configDependencies.add(candidate)
+    configWatchFiles.add(candidate)
+  }
 
-  const parsed = ts.parseJsonConfigFileContent(configFile.config, ts.sys, path.dirname(configPath))
+  const parsed = ts.parseJsonConfigFileContent(
+    configFile.config,
+    trackedSystem,
+    path.dirname(normalizedConfigPath),
+  )
+  if (ts.parseConfigFileTextToJson) {
+    for (const [dependency, contents] of configInputSnapshots) {
+      if (contents === null || path.basename(dependency).toLowerCase() === 'package.json') continue
+      const dependencyConfig = ts.parseConfigFileTextToJson(dependency, contents)
+      if (dependencyConfig.error) continue
+      for (const candidate of collectDeclaredExtendedConfigCandidates(
+        dependencyConfig.config,
+        dependency,
+      )) {
+        configDependencies.add(candidate)
+        configWatchFiles.add(candidate)
+      }
+    }
+  }
+  const configHash = hashString(
+    stableStringify([...configInputSnapshots.entries()].sort(([a], [b]) => a.localeCompare(b))),
+  )
 
   const fileSet = new Set<string>(parsed.fileNames.map((name: string) => path.normalize(name)))
   const fileVersions = new Map<string, number>()
@@ -2735,7 +2876,7 @@ async function createTypeScriptProject(
   }
 
   return {
-    configPath,
+    configPath: normalizedConfigPath,
     configHash,
     get projectVersion() {
       return projectVersion
