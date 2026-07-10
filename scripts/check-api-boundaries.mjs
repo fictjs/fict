@@ -105,10 +105,17 @@ assertEqualSet('devtools package exports', packageExports('packages/devtools/pac
   './vite',
 ])
 
+assertEqualSet(
+  'webpack plugin package exports',
+  packageExports('packages/webpack-plugin/package.json'),
+  ['.', './loader'],
+)
+
 for (const packagePath of [
   'packages/compiler/package.json',
   'packages/babel-preset/package.json',
   'packages/vite-plugin/package.json',
+  'packages/webpack-plugin/package.json',
   'packages/testing-library/package.json',
 ]) {
   const packageJson = readJson(packagePath)

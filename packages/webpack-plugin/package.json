@@ -1,0 +1,76 @@
+{
+  "name": "@fictjs/webpack-plugin",
+  "version": "0.26.0",
+  "description": "Webpack integration for the Fict compiler",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fictjs/fict.git",
+    "directory": "packages/webpack-plugin"
+  },
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./loader": {
+      "import": {
+        "types": "./dist/loader.d.ts",
+        "default": "./dist/loader.js"
+      },
+      "require": {
+        "types": "./dist/loader.d.cts",
+        "default": "./dist/loader.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "test": "pnpm build && vitest run",
+    "test:coverage": "pnpm build && vitest run --coverage",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "typecheck:tests": "tsc -p tsconfig.test.json --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "peerDependencies": {
+    "webpack": ">=5.61.0"
+  },
+  "dependencies": {
+    "@babel/core": "^7.29.7",
+    "@fictjs/babel-preset": "workspace:*",
+    "@fictjs/compiler": "workspace:*"
+  },
+  "devDependencies": {
+    "fict": "workspace:*",
+    "tsdown": "^0.22.3",
+    "webpack": "^5.105.2"
+  },
+  "keywords": [
+    "fict",
+    "webpack",
+    "webpack-plugin",
+    "loader",
+    "jsx",
+    "reactive"
+  ],
+  "author": "unadlib",
+  "license": "MIT"
+}

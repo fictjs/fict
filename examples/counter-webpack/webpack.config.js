@@ -1,4 +1,5 @@
 const path = require('path')
+const { FictWebpackPlugin } = require('@fictjs/webpack-plugin')
 const HtmlWebpackPlugin = require('html-webpack-plugin')
 
 module.exports = {
@@ -16,23 +17,12 @@ module.exports = {
       {
         test: /\.(tsx|ts|jsx|js)$/,
         include: path.resolve(__dirname, 'src'),
-        use: {
-          loader: 'babel-loader',
-          options: {
-            presets: [
-              [
-                '@fictjs/babel-preset',
-                {
-                  emitModuleMetadata: false,
-                },
-              ],
-            ],
-          },
-        },
+        use: [{ loader: require.resolve('@fictjs/webpack-plugin/loader') }],
       },
     ],
   },
   plugins: [
+    new FictWebpackPlugin(),
     new HtmlWebpackPlugin({
       template: './index.html',
     }),
