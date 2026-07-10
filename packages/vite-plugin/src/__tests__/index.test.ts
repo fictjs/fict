@@ -557,6 +557,27 @@ describe('fict vite-plugin', () => {
       '**/generated/**',
       '!**/node_modules/@fictjs/**',
       '!**/node_modules/fict/**',
+      '!**/node_modules/**/package.json',
+      '!**/node_modules/**/*.fict.meta.json',
+    ])
+
+    const buildWatch = await resolveConfig(
+      {
+        configFile: false,
+        plugins: [fict({ cache: false, useTypeScriptProject: false })],
+        build: {
+          watch: {
+            chokidar: { ignored: ['**/generated/**'], usePolling: true },
+          },
+        },
+      },
+      'build',
+    )
+    expect(buildWatch.build.watch?.chokidar).toMatchObject({ usePolling: true })
+    expect(buildWatch.build.watch?.chokidar?.ignored).toEqual([
+      '**/generated/**',
+      '!**/node_modules/**/package.json',
+      '!**/node_modules/**/*.fict.meta.json',
     ])
   })
 
@@ -2377,6 +2398,103 @@ describe('fict vite-plugin', () => {
     }
   }, 20_000)
 
+  it('rebuilds importers when package metadata sidecars change', async () => {
+    const root = await realpath(
+      await mkdtemp(path.join(tmpdir(), 'fict-vite-watch-package-metadata-')),
+    )
+    const outDir = path.join(root, 'dist')
+    const packageDir = path.join(root, 'node_modules', 'hook-lib')
+    const metadataPath = path.join(packageDir, 'index.fict.meta.json')
+    const entry = path.join(root, 'App.tsx')
+    const metadataDependency = vi.fn()
+    let bundleWatchFiles: string[] = []
+    let watcher: Rollup.RollupWatcher | undefined
+
+    try {
+      await mkdir(packageDir, { recursive: true })
+      await writeFile(
+        path.join(packageDir, 'package.json'),
+        JSON.stringify({
+          name: 'hook-lib',
+          type: 'module',
+          exports: './index.js',
+          fict: { metadata: './index.fict.meta.json' },
+        }),
+      )
+      await writeFile(path.join(packageDir, 'index.js'), `export const useCounter = () => 1`)
+      await writeFile(
+        metadataPath,
+        JSON.stringify({
+          version: 1,
+          exports: {},
+          hooks: { useCounter: { directAccessor: 'signal' } },
+        }),
+      )
+      await writeFile(
+        entry,
+        `
+          import { useCounter } from 'hook-lib'
+          export function App() {
+            const count = useCounter()
+            return <div>{count * 2}</div>
+          }
+        `,
+      )
+
+      watcher = (await build({
+        root,
+        logLevel: 'silent',
+        plugins: [
+          fict({
+            cache: false,
+            useTypeScriptProject: false,
+            functionSplitting: false,
+            onModuleMetadataDependency: metadataDependency,
+          }),
+        ],
+        build: {
+          outDir,
+          emptyOutDir: true,
+          minify: false,
+          lib: { entry, formats: ['es'], fileName: () => 'app.js' },
+          rollupOptions: {
+            external: id => id === 'hook-lib' || id === 'fict' || id.startsWith('fict/'),
+          },
+          watch: { buildDelay: 10 },
+        },
+      })) as Rollup.RollupWatcher
+      watcher.on('event', event => {
+        if (event.code === 'BUNDLE_END') bundleWatchFiles = event.result.watchFiles
+      })
+
+      await waitForWatchEnd(watcher)
+      expect(metadataDependency).toHaveBeenCalledWith(path.normalize(await realpath(metadataPath)))
+      expect(bundleWatchFiles.map(file => path.normalize(file))).toContain(
+        path.normalize(await realpath(metadataPath)),
+      )
+      const firstCode = await readFile(path.join(outDir, 'app.js'), 'utf8')
+      expect(firstCode).toMatch(/count\(\)\s*\*\s*2/)
+
+      const rebuilt = waitForWatchEnd(watcher)
+      await writeFile(
+        metadataPath,
+        JSON.stringify({
+          version: 1,
+          exports: {},
+          hooks: { useCounter: {} },
+        }),
+      )
+      await rebuilt
+
+      const secondCode = await readFile(path.join(outDir, 'app.js'), 'utf8')
+      expect(secondCode).toMatch(/count\s*\*\s*2/)
+      expect(secondCode).not.toMatch(/count\(\)\s*\*\s*2/)
+    } finally {
+      await watcher?.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 20_000)
+
   it('rebuilds with fresh import elision when tsconfig changes in build watch mode', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-watch-import-elision-'))
     const outDir = path.join(root, 'dist')
@@ -2673,6 +2791,15 @@ describe('fict vite-plugin', () => {
 
       expect(result && typeof result === 'object').toBe(true)
       expect(result.code as string).toMatch(/count\(\) \* 2/)
+
+      const send = vi.fn()
+      expect(
+        plugin.handleHotUpdate?.({
+          file: path.join(packageDir, 'dist', 'index.fict.meta.json'),
+          server: { ws: { send } },
+        }),
+      ).toEqual([])
+      expect(send).toHaveBeenCalledWith({ type: 'full-reload', path: '*' })
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -3451,13 +3578,19 @@ describe('fict vite-plugin', () => {
       `
 
       const appPath = path.join(root, 'src', 'App.tsx')
+      const metadataDependencies: string[] = []
       const firstFingerprint = __fictVitePluginInternals.computePackageMetadataCacheFingerprint(
         appSource,
         appPath,
         { emitModuleMetadata: false },
         new Map(),
         root,
+        [],
+        new Set(),
+        undefined,
+        file => metadataDependencies.push(file),
       )
+      expect(metadataDependencies).toEqual([path.join(packageDir, 'package.json'), metaPath])
 
       await writeFile(
         metaPath,

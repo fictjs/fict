@@ -484,6 +484,7 @@ export function resolvePackageModuleMetadata(
 
   const packageJsonPath = findPackageJsonPath(parsedSource.packageName, importer)
   if (!packageJsonPath) return undefined
+  options?.onModuleMetadataDependency?.(packageJsonPath)
 
   const packageConfig = readPackageConfig(packageJsonPath)
   if (!packageConfig) return undefined
@@ -497,6 +498,7 @@ export function resolvePackageModuleMetadata(
 
   const normalizedMetaPath = normalizePackageMetadataPath(packageDir, metadataPath)
   if (!normalizedMetaPath) return undefined
+  options?.onModuleMetadataDependency?.(normalizedMetaPath)
 
   const store = getMetadataStore(options)
   const existing = store.get(normalizedMetaPath)

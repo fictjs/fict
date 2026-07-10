@@ -521,6 +521,53 @@ describe('module metadata safety', () => {
     }
   })
 
+  it('reports package manifests and sidecars consulted during metadata resolution', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_package_metadata_dependencies__')
+    const packageDir = path.join(baseDir, 'node_modules', 'fict-hook-lib')
+    const importer = path.join(baseDir, 'src', 'consumer.tsx')
+    const packageJsonPath = path.join(packageDir, 'package.json')
+    const metaPath = path.join(packageDir, 'dist', 'index.fict.meta.json')
+    const dependencies: string[] = []
+
+    try {
+      mkdirSync(path.dirname(metaPath), { recursive: true })
+      mkdirSync(path.dirname(importer), { recursive: true })
+      writeFileSync(
+        packageJsonPath,
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          fict: { metadata: './dist/index.fict.meta.json' },
+        }),
+        'utf8',
+      )
+      writeFileSync(
+        metaPath,
+        JSON.stringify({
+          exports: {},
+          hooks: { useCounter: { directAccessor: 'signal' } },
+        }),
+        'utf8',
+      )
+
+      expect(
+        resolveModuleMetadata('fict-hook-lib', importer, {
+          emitModuleMetadata: false,
+          onModuleMetadataDependency: file => dependencies.push(file),
+        }),
+      ).toEqual({
+        exports: {},
+        hooks: { useCounter: { directAccessor: 'signal' } },
+      })
+      expect(dependencies).toEqual([packageJsonPath, metaPath])
+    } finally {
+      if (existsSync(baseDir)) {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+      clearModuleMetadata()
+    }
+  })
+
   it('prefers modern package metadata exports over legacy fictMetadata declarations', () => {
     clearModuleMetadata()
     const baseDir = path.join(process.cwd(), '__fict_package_modern_metadata_with_legacy__')

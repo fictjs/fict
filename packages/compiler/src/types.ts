@@ -217,6 +217,8 @@ export interface FictCompilerOptions {
     source: string,
     importer?: string,
   ) => ModuleReactiveMetadata | null | undefined
+  /** Notify integrations about package manifests/sidecars consulted during metadata resolution. */
+  onModuleMetadataDependency?: (filename: string) => void
   /**
    * Optional TypeScript integration data provided by tooling (e.g., Vite plugin).
    * The compiler currently ignores this, but it enables future type-aware passes.

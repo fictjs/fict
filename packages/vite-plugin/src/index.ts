@@ -37,6 +37,11 @@ const generate = (
   typeof _generate === 'function' ? _generate : (_generate as { default: typeof _generate }).default
 ) as typeof _generate
 
+const PACKAGE_METADATA_WATCH_GLOBS = [
+  '!**/node_modules/**/package.json',
+  '!**/node_modules/**/*.fict.meta.json',
+] as const
+
 type BabelGeneratorOptions = NonNullable<Parameters<typeof generate>[1]>
 
 interface BabelGeneratorOptionsWithInputSourceMap extends BabelGeneratorOptions {
@@ -161,6 +166,7 @@ interface MetadataTransformState {
   pipelineTransformedModules: Set<string>
   metadataPreparationQueue: Promise<void>
   extractedHandlers: Map<string, ExtractedHandler>
+  packageMetadataDependencies: Set<string>
   tsConfigDependencies: Set<string>
   tsConfigWatchFiles: Set<string>
   tsConfigDependencyClosures: Map<string, string[]>
@@ -436,6 +442,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       pipelineTransformedModules: new Set(),
       metadataPreparationQueue: Promise.resolve(),
       extractedHandlers: new Map(),
+      packageMetadataDependencies: new Set(),
       tsConfigDependencies: new Set(),
       tsConfigWatchFiles: new Set(),
       tsConfigDependencyClosures: new Map(),
@@ -495,6 +502,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     state.pipelineTransformsInProgress.clear()
     state.pipelineTransformedModules.clear()
     state.extractedHandlers.clear()
+    state.packageMetadataDependencies.clear()
     state.tsConfigDependencies.clear()
     state.tsConfigWatchFiles.clear()
     state.tsConfigDependencyClosures.clear()
@@ -855,6 +863,19 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     state.tsConfigDependencies.has(normalizeFileName(file, config?.root)) ||
     state.tsConfigDependencies.has(normalizeTypeScriptConfigDependency(file, config?.root))
 
+  const registerPackageMetadataDependency = (state: MetadataTransformState, file: string) => {
+    const normalized = normalizeFileName(file, config?.root)
+    const real = normalizeTypeScriptConfigDependency(file, config?.root)
+    state.packageMetadataDependencies.add(normalized)
+    state.packageMetadataDependencies.add(real)
+    addTypeScriptConfigWatchFiles?.(normalized === real ? [normalized] : [normalized, real])
+    compilerOptions.onModuleMetadataDependency?.(file)
+  }
+
+  const isPackageMetadataDependency = (state: MetadataTransformState, file: string): boolean =>
+    state.packageMetadataDependencies.has(normalizeFileName(file, config?.root)) ||
+    state.packageMetadataDependencies.has(normalizeTypeScriptConfigDependency(file, config?.root))
+
   const affectsFictTransform = (
     file: string,
     modules: {
@@ -959,6 +980,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     return resolvePackageModuleMetadata(source, importerFile, {
       ...compilerOptions,
       moduleMetadata: state.moduleMetadata,
+      onModuleMetadataDependency: file => registerPackageMetadataDependency(state, file),
     })
   }
 
@@ -1113,6 +1135,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       normalizeAliases(config?.resolve?.alias),
       new Set(),
       state.resolvedLocalModules,
+      file => registerPackageMetadataDependency(state, file),
     )
     return {
       key: buildMetadataPreparationKey(
@@ -1377,6 +1400,18 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
 
     configResolved(resolvedConfig) {
       config = resolvedConfig
+      if (resolvedConfig.build.watch) {
+        const chokidar = (resolvedConfig.build.watch.chokidar ??= {})
+        const ignored = Array.isArray(chokidar.ignored)
+          ? chokidar.ignored
+          : chokidar.ignored == null
+            ? []
+            : [chokidar.ignored]
+        chokidar.ignored = [
+          ...ignored,
+          ...PACKAGE_METADATA_WATCH_GLOBS.filter(pattern => !ignored.includes(pattern)),
+        ]
+      }
       packageBoundaryCache.clear()
       projectPackageRoot =
         findOwningPackageBoundary(
@@ -1530,7 +1565,11 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           : {
               server: {
                 watch: {
-                  ignored: ['!**/node_modules/@fictjs/**', '!**/node_modules/fict/**'],
+                  ignored: [
+                    '!**/node_modules/@fictjs/**',
+                    '!**/node_modules/fict/**',
+                    ...PACKAGE_METADATA_WATCH_GLOBS,
+                  ],
                 },
               },
             }
@@ -1616,6 +1655,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           aliasEntries,
           new Set(),
           state.resolvedLocalModules,
+          file => registerPackageMetadataDependency(state, file),
         )
         const cacheStore = ensureCache()
         const shouldSplit =
@@ -1813,10 +1853,11 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       const environment = this.environment
       const state = getEnvironmentTransformState(environment)
       const tsConfigChanged = isTypeScriptConfigDependency(state, file)
+      const packageMetadataChanged = isPackageMetadataDependency(state, file)
       const affectsTransform = affectsFictTransform(file, modules)
-      if (!tsConfigChanged && !affectsTransform) return undefined
+      if (!tsConfigChanged && !packageMetadataChanged && !affectsTransform) return undefined
 
-      if (tsConfigChanged) resetCache()
+      if (tsConfigChanged || packageMetadataChanged) resetCache()
       replaceInvalidatedEnvironmentState(environment)
       environment.hot.send({ type: 'full-reload', path: '*' })
       return []
@@ -1832,9 +1873,17 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           : environments.some(environment =>
               isTypeScriptConfigDependency(getEnvironmentTransformState(environment), file),
             )
-      if (!tsConfigChanged && !shouldTransform(file, transformFilter)) return undefined
+      const packageMetadataChanged =
+        environments.length === 0
+          ? isPackageMetadataDependency(buildTransformState, file)
+          : environments.some(environment =>
+              isPackageMetadataDependency(getEnvironmentTransformState(environment), file),
+            )
+      if (!tsConfigChanged && !packageMetadataChanged && !shouldTransform(file, transformFilter)) {
+        return undefined
+      }
 
-      if (tsConfigChanged) resetCache()
+      if (tsConfigChanged || packageMetadataChanged) resetCache()
       if (environments.length === 0) {
         replaceBuildTransformState()
       } else {
@@ -2975,6 +3024,7 @@ function computePackageMetadataCacheFingerprint(
   aliases: AliasEntry[] = [],
   visited = new Set<string>(),
   resolvedLocalModules?: ReadonlyMap<string, string>,
+  onPackageMetadataDependency?: (filename: string) => void,
 ): string {
   const normalizedFilename = normalizeFileName(filename, root)
   if (visited.has(normalizedFilename)) return '[]'
@@ -3003,6 +3053,7 @@ function computePackageMetadataCacheFingerprint(
           aliases,
           visited,
           resolvedLocalModules,
+          onPackageMetadataDependency,
         )
         entries.push([
           source,
@@ -3018,6 +3069,9 @@ function computePackageMetadataCacheFingerprint(
       const metadata = resolvePackageModuleMetadata(source, normalizedFilename, {
         ...compilerOptions,
         moduleMetadata,
+        ...(onPackageMetadataDependency
+          ? { onModuleMetadataDependency: onPackageMetadataDependency }
+          : {}),
       })
       entries.push([source, metadata ? stableStringify(metadata) : null])
     }
