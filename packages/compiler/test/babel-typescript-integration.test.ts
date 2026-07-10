@@ -152,6 +152,47 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
     expect(message).toContain('$state() must be imported from "fict"')
   })
 
+  it('compiles CTS import-equals, export assignment, and Fict macros to CommonJS', () => {
+    const result = transformSync(
+      `
+        import path = require('node:path')
+        import { $state } from 'fict'
+
+        function useValue() {
+          const value = $state(path.sep.length)
+          return value
+        }
+
+        export = { useValue }
+      `,
+      {
+        filename: 'module.cts',
+        configFile: false,
+        babelrc: false,
+        presets: [[fictPreset, { dev: false, strictGuarantee: false }]],
+      },
+    )
+
+    expect(result?.code).toContain('require("node:path")')
+    expect(result?.code).toContain('require("fict/internal")')
+    expect(result?.code).toContain('module.exports =')
+    expect(result?.code).toContain('__fictUseSignal')
+    expect(result?.code).not.toContain('$state')
+    expect(result?.code).not.toMatch(/\b(?:import|export)\s/)
+  })
+
+  it('compiles ESM-style exports in CTS files to CommonJS', () => {
+    const result = transformSync(`export const answer: number = 42`, {
+      filename: 'module.cts',
+      configFile: false,
+      babelrc: false,
+      presets: [[fictPreset, { dev: false, strictGuarantee: false }]],
+    })
+
+    expect(result?.code).toContain('exports.answer =')
+    expect(result?.code).not.toContain('export const')
+  })
+
   it('detects TypeScript and TSX syntax from the file extension', () => {
     const typed = transformSync(
       `

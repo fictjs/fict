@@ -4,6 +4,7 @@ import {
   type PluginObj,
   type TransformOptions,
 } from '@babel/core'
+import transformModulesCommonJS from '@babel/plugin-transform-modules-commonjs'
 import transformTypeScript from '@babel/plugin-transform-typescript'
 import { createFictPlugin, type FictCompilerOptions } from '@fictjs/compiler'
 
@@ -88,6 +89,13 @@ function resolveTypeScriptTransformOptions(
   return null
 }
 
+function shouldCompileTypeScriptAsCommonJS(
+  filename: string | undefined,
+  options: TypeScriptOptions,
+): boolean {
+  return !options.allExtensions && !!filename && /\.cts$/i.test(filename)
+}
+
 function commonJsMarkerPlugin(): PluginObj {
   return {
     name: 'fict-inherited-commonjs-marker',
@@ -111,6 +119,9 @@ function createIsolatedFictPrepass(
       const typeScriptTransformOptions = typescript
         ? resolveTypeScriptTransformOptions(file.opts.filename ?? undefined, typescriptOptions)
         : null
+      const compileAsCommonJS =
+        !!typeScriptTransformOptions &&
+        shouldCompileTypeScriptAsCommonJS(file.opts.filename ?? undefined, typescriptOptions)
       if (typeScriptTransformOptions) {
         if (getFileDataStore(this.file).get('@babel/plugin-transform-modules-*') === 'commonjs') {
           plugins.push(commonJsMarkerPlugin)
@@ -118,6 +129,9 @@ function createIsolatedFictPrepass(
         plugins.push([transformTypeScript, typeScriptTransformOptions])
       }
       plugins.push([createFictPlugin, compilerOptions])
+      if (compileAsCommonJS) {
+        plugins.push([transformModulesCommonJS, { allowTopLevelThis: true }])
+      }
 
       let inner: ReturnType<typeof transformFromAstSync>
       try {
@@ -219,7 +233,21 @@ export default function fictPreset(
           plugins: [['@babel/plugin-syntax-typescript', { isTSX: false }]],
         },
         {
-          test: /\.[cm]ts$/i,
+          test: /\.mts$/i,
+          sourceType: 'module',
+          plugins: [
+            [
+              '@babel/plugin-syntax-typescript',
+              {
+                isTSX: false,
+                disallowAmbiguousJSXLike: true,
+              },
+            ],
+          ],
+        },
+        {
+          test: /\.cts$/i,
+          sourceType: 'unambiguous',
           plugins: [
             [
               '@babel/plugin-syntax-typescript',

@@ -331,6 +331,9 @@ importers:
       '@babel/plugin-syntax-typescript':
         specifier: ^7.27.1
         version: 7.27.1(@babel/core@7.29.7)
+      '@babel/plugin-transform-modules-commonjs':
+        specifier: ^7.28.6
+        version: 7.28.6(@babel/core@7.29.7)
       '@babel/plugin-transform-typescript':
         specifier: ^7.28.5
         version: 7.28.5(@babel/core@7.29.7)
