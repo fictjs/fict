@@ -1,5 +1,6 @@
 import { enterRootGuard, exitRootGuard } from './cycle-guard'
 import { getSafeDevtoolsHook as getDevtoolsHook } from './devtools'
+import { untrack } from './signal'
 import type { Cleanup, ErrorInfo, SuspenseToken } from './types'
 
 const isDev =
@@ -8,6 +9,7 @@ const isDev =
     : typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'
 
 type LifecycleFn = () => void | Cleanup
+type MountPhase = 'pending' | 'flushing' | 'mounted'
 
 export interface RootContext {
   parent?: RootContext | undefined
@@ -34,6 +36,7 @@ type SuspenseHandler = (token: SuspenseToken | PromiseLike<unknown>) => boolean 
 let currentRoot: RootContext | undefined
 let currentEffectCleanups: Cleanup[] | undefined
 const rootDevtoolsIds = new WeakMap<RootContext, number>()
+const rootMountPhases = new WeakMap<RootContext, MountPhase>()
 let nextRootDevtoolsId = 0
 
 function registerRootDevtools(root: RootContext): void {
@@ -70,6 +73,7 @@ export function createRootContext(parent?: RootContext): RootContext {
     destroyCallbacks: [],
     suspended: false,
   }
+  rootMountPhases.set(root, 'pending')
   registerRootDevtools(root)
   return root
 }
@@ -95,8 +99,11 @@ export function popRoot(prev: RootContext | undefined): void {
 }
 
 export function onMount(fn: LifecycleFn): void {
-  if (currentRoot) {
-    ;(currentRoot.onMountCallbacks ||= []).push(fn)
+  const root = currentRoot
+  if (root) {
+    if (root.destroying || root.destroyed) return
+    ;(root.onMountCallbacks ||= []).push(fn)
+    if (rootMountPhases.get(root) === 'mounted') flushOnMount(root)
     return
   }
   runLifecycle(fn)
@@ -115,19 +122,30 @@ export function onCleanup(fn: Cleanup): void {
 }
 
 export function flushOnMount(root: RootContext): void {
+  if (root.destroying || root.destroyed) {
+    if (root.onMountCallbacks) root.onMountCallbacks.length = 0
+    return
+  }
+  if (rootMountPhases.get(root) === 'flushing') return
   const cbs = root.onMountCallbacks
-  if (!cbs || cbs.length === 0) return
+  if (!cbs || cbs.length === 0) {
+    rootMountPhases.set(root, 'mounted')
+    return
+  }
+  rootMountPhases.set(root, 'flushing')
   try {
     withRootContext(root, () => {
       for (let i = 0; i < cbs.length; i++) {
-        const cleanup = cbs[i]!()
+        const cleanup = untrack(cbs[i]!)
         if (typeof cleanup === 'function') {
-          root.cleanups.push(cleanup)
+          if (root.destroying || root.destroyed) untrack(cleanup)
+          else root.cleanups.push(cleanup)
         }
       }
     })
   } finally {
     cbs.length = 0
+    if (!root.destroying && !root.destroyed) rootMountPhases.set(root, 'mounted')
   }
 }
 

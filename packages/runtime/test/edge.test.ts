@@ -9,6 +9,7 @@ import {
   createEffect,
   batch,
   onCleanup,
+  onDestroy,
   render,
   ErrorBoundary,
   Suspense,
@@ -38,6 +39,7 @@ import {
   pushRoot,
   popRoot,
   createRootContext,
+  destroyRoot,
   flushOnMount,
   onMount,
 } from '../src/lifecycle'
@@ -788,5 +790,42 @@ describe('flushOnMount error recovery', () => {
     expect(root.onMountCallbacks?.length).toBe(0)
 
     popRoot(prev)
+  })
+
+  it('accepts new onMount callbacks after a failed flush without replaying old work', () => {
+    const root = createRootContext()
+    const calls: string[] = []
+    let prev = pushRoot(root)
+
+    onMount(() => {
+      calls.push('throwing')
+      throw new Error('mount error')
+    })
+    onMount(() => calls.push('discarded'))
+    popRoot(prev)
+
+    expect(() => flushOnMount(root)).toThrow('mount error')
+
+    prev = pushRoot(root)
+    onMount(() => calls.push('late'))
+    popRoot(prev)
+
+    expect(calls).toEqual(['throwing', 'late'])
+  })
+
+  it('ignores onMount registered while root teardown is running', () => {
+    const root = createRootContext()
+    const calls: string[] = []
+    const prev = pushRoot(root)
+
+    onCleanup(() => onMount(() => calls.push('from-cleanup')))
+    onDestroy(() => onMount(() => calls.push('from-destroy')))
+    popRoot(prev)
+    flushOnMount(root)
+
+    destroyRoot(root)
+
+    expect(calls).toEqual([])
+    expect(root.onMountCallbacks ?? []).toHaveLength(0)
   })
 })

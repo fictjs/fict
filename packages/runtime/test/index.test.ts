@@ -129,6 +129,125 @@ describe('fict runtime', () => {
     expect(cleaned).toBe(1)
   })
 
+  it('runs late onMount callbacks without tracking their reads', async () => {
+    const trigger = createSignal(0)
+    const incidental = createSignal('first')
+    const calls: string[] = []
+    let effectRuns = 0
+
+    const root = createRoot(() => {
+      createEffect(() => {
+        effectRuns++
+        const value = trigger()
+        if (value === 0) return
+        onMount(() => {
+          calls.push(`mount:${value}:${incidental()}`)
+          return () => calls.push(`cleanup:${value}`)
+        })
+      })
+    })
+
+    trigger(1)
+    await tick()
+    expect(calls).toEqual(['mount:1:first'])
+    expect(effectRuns).toBe(2)
+
+    incidental('second')
+    await tick()
+    expect(calls).toEqual(['mount:1:first'])
+    expect(effectRuns).toBe(2)
+
+    trigger(2)
+    await tick()
+    expect(calls).toEqual(['mount:1:first', 'mount:2:second'])
+
+    root.dispose()
+    expect(calls).toEqual(['mount:1:first', 'mount:2:second', 'cleanup:2', 'cleanup:1'])
+  })
+
+  it('runs onMount from a lazy memo after an empty initial flush', () => {
+    const calls: string[] = []
+    const root = createRoot(() =>
+      createMemo(() => {
+        onMount(() => {
+          calls.push('mount')
+          return () => calls.push('cleanup')
+        })
+        return 42
+      }),
+    )
+
+    expect(calls).toEqual([])
+    expect(root.value()).toBe(42)
+    expect(calls).toEqual(['mount'])
+
+    root.dispose()
+    expect(calls).toEqual(['mount', 'cleanup'])
+  })
+
+  it('runs onMount registered by an effect cleanup after mount', async () => {
+    const trigger = createSignal(0)
+    const calls: string[] = []
+    const root = createRoot(() => {
+      createEffect(() => {
+        const value = trigger()
+        onCleanup(() => {
+          if (value !== 0) return
+          onMount(() => {
+            calls.push('mount-from-cleanup')
+            return () => calls.push('cleanup-from-mount')
+          })
+        })
+      })
+    })
+
+    trigger(1)
+    await tick()
+    expect(calls).toEqual(['mount-from-cleanup'])
+
+    root.dispose()
+    expect(calls).toEqual(['mount-from-cleanup', 'cleanup-from-mount'])
+  })
+
+  it('preserves nested onMount registration order', () => {
+    const calls: string[] = []
+    const root = createRoot(() => {
+      onMount(() => {
+        calls.push('first:start')
+        onMount(() => calls.push('nested'))
+        calls.push('first:end')
+      })
+      onMount(() => calls.push('second'))
+    })
+
+    expect(calls).toEqual(['first:start', 'first:end', 'second', 'nested'])
+    root.dispose()
+  })
+
+  it('immediately cleans up a late onMount that disposes its root', async () => {
+    const trigger = createSignal(false)
+    const calls: string[] = []
+    let dispose = () => {}
+    const root = createRoot(() => {
+      createEffect(() => {
+        if (!trigger()) return
+        onMount(() => {
+          calls.push('mount')
+          dispose()
+          return () => calls.push('cleanup')
+        })
+      })
+    })
+    dispose = root.dispose
+
+    trigger(true)
+    await tick()
+
+    expect(calls).toEqual(['mount', 'cleanup'])
+    dispose()
+    expect(calls).toEqual(['mount', 'cleanup'])
+  })
+
   it('makes root disposal reentrant and idempotent', () => {
     const calls: string[] = []
     let dispose = () => {}
