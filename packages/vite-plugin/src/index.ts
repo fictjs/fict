@@ -941,6 +941,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     )
     const aliasEntries = normalizeAliases(config?.resolve?.alias)
     let resolvedSource = exactResolution ?? null
+    let packageSource: string | null = isBarePackageSource(source) ? source : null
 
     if (!resolvedSource) {
       if (path.isAbsolute(source)) {
@@ -950,13 +951,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       } else {
         const aliased = applyAlias(source, aliasEntries)
         if (aliased) {
+          packageSource = isBarePackageSource(aliased) ? aliased : null
           if (path.isAbsolute(aliased)) {
             resolvedSource = resolveExistingModuleFile(aliased)
           } else if (aliased.startsWith('.')) {
             resolvedSource = resolveExistingModuleFile(
               path.resolve(path.dirname(importerFile), aliased),
             )
-          } else if (config?.root) {
+          } else if (!packageSource && config?.root) {
             resolvedSource = resolveExistingModuleFile(path.resolve(config.root, aliased))
           }
         }
@@ -977,7 +979,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       }
     }
 
-    return resolvePackageModuleMetadata(source, importerFile, {
+    if (!packageSource) return undefined
+    return resolvePackageModuleMetadata(packageSource, importerFile, {
       ...compilerOptions,
       moduleMetadata: state.moduleMetadata,
       onModuleMetadataDependency: file => registerPackageMetadataDependency(state, file),
@@ -2891,6 +2894,12 @@ function isBarePackageSource(source: string): boolean {
   return !path.isAbsolute(source) && !source.startsWith('.') && !source.startsWith('/@fs/')
 }
 
+function resolveAliasedPackageSource(source: string, aliases: AliasEntry[]): string | null {
+  const aliased = applyAlias(source, aliases)
+  if (aliased) return isBarePackageSource(aliased) ? aliased : null
+  return isBarePackageSource(source) ? source : null
+}
+
 function shouldSkipMetadataForModuleQuery(source: string): boolean {
   const queryStart = source.indexOf('?')
   if (queryStart === -1) return false
@@ -3225,15 +3234,21 @@ function computePackageMetadataCacheFingerprint(
       }
       continue
     }
-    if (isBarePackageSource(source)) {
-      const metadata = resolvePackageModuleMetadata(source, normalizedFilename, {
+    const packageSource = resolveAliasedPackageSource(source, aliases)
+    if (packageSource) {
+      const metadata = resolvePackageModuleMetadata(packageSource, normalizedFilename, {
         ...compilerOptions,
         moduleMetadata,
         ...(onPackageMetadataDependency
           ? { onModuleMetadataDependency: onPackageMetadataDependency }
           : {}),
       })
-      entries.push([source, metadata ? stableStringify(metadata) : null])
+      const serializedMetadata = metadata ? stableStringify(metadata) : null
+      entries.push(
+        packageSource === source
+          ? [source, serializedMetadata]
+          : [source, serializedMetadata, `alias:${packageSource}`],
+      )
     }
   }
   return stableStringify(entries)

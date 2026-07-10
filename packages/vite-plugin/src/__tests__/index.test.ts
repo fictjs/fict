@@ -2945,7 +2945,7 @@ describe('fict vite-plugin', () => {
     }
   })
 
-  it('invalidates transform cache when bare package metadata changes', async () => {
+  it('invalidates transform cache through bare package aliases', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-package-meta-cache-'))
     const packageDir = path.join(root, 'node_modules', 'fict-hook-lib')
     const metaPath = path.join(packageDir, 'dist', 'index.fict.meta.json')
@@ -2971,11 +2971,17 @@ describe('fict vite-plugin', () => {
 
       const plugin = fict({ useTypeScriptProject: false }) as any
       if (typeof plugin.configResolved === 'function') {
-        plugin.configResolved({ ...mockBuildConfig, root } as any)
+        plugin.configResolved({
+          ...mockBuildConfig,
+          root,
+          resolve: {
+            alias: [{ find: 'hook-alias', replacement: 'fict-hook-lib' }],
+          },
+        } as any)
       }
 
       const sample = `
-        import { useCounter } from 'fict-hook-lib'
+        import { useCounter } from 'hook-alias'
 
         export function App() {
           const count = useCounter()
