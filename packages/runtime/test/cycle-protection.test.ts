@@ -102,6 +102,47 @@ describe('framework cycle protection', () => {
       warn.mockRestore()
     })
 
+    it('restores ordering-only watchers after dropping an over-budget queue', async () => {
+      await tick()
+      const trigger = createSignal(0)
+      const recovery = createSignal(0)
+      let middleRuns = 0
+
+      const stopOuter = createEffect(() => {
+        createEffect(() => {
+          recovery()
+          middleRuns++
+          createEffect(() => {
+            trigger()
+          })
+        })
+      })
+
+      setCycleProtectionOptions({
+        enabled: true,
+        maxFlushCyclesPerMicrotask: 1,
+        maxEffectRunsPerFlush: 1,
+        devMode: false,
+      })
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      trigger(1)
+      await tick()
+      const middleRunsAfterDrop = middleRuns
+
+      setCycleProtectionOptions({
+        maxFlushCyclesPerMicrotask: 10,
+        maxEffectRunsPerFlush: 10,
+      })
+      recovery(1)
+      await tick()
+
+      expect(middleRuns).toBeGreaterThan(middleRunsAfterDrop)
+
+      stopOuter()
+      warn.mockRestore()
+    })
+
     it('throws when flush budget is exceeded in devMode', async () => {
       setCycleProtectionOptions({
         maxFlushCyclesPerMicrotask: 2,

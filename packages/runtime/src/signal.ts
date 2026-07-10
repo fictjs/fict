@@ -1110,16 +1110,18 @@ function flush(): void {
     // Dev mode will throw inside beforeEffectRunGuard; this branch is for prod warnings.
     for (let i = 0; i < highPriorityQueue.length; i++) {
       const queued = highPriorityQueue[i]
-      if (queued && queued.flags !== 0) {
-        queued.flags = Watching
+      if (queued) {
         queued.queuedPriority = undefined
+        if (queued.disposed === true) continue
+        queued.flags = Watching
       }
     }
     for (let i = 0; i < lowPriorityQueue.length; i++) {
       const queued = lowPriorityQueue[i]
-      if (queued && queued.flags !== 0) {
-        queued.flags = Watching
+      if (queued) {
         queued.queuedPriority = undefined
+        if (queued.disposed === true) continue
+        queued.flags = Watching
       }
     }
     highPriorityQueue.length = 0
