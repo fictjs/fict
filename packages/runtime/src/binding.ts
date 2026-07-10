@@ -2379,10 +2379,12 @@ function updateChildrenBinding(
 
   if (!state) {
     const valueSignal = signal<FictNode | undefined>(value)
-    const cleanup = bindAssignedChildren(
-      node,
-      () => resolveAssignedChildrenValue(valueSignal() as FictNode | undefined),
-      createFn,
+    const cleanup = untrack(() =>
+      bindAssignedChildren(
+        node,
+        () => resolveAssignedChildrenValue(valueSignal() as FictNode | undefined),
+        createFn,
+      ),
     )
     const nextState: ChildrenBindingState = {
       cleanup,

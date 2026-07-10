@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 import {
+  batch,
   createEffect,
   createRoot,
   onDestroy,
@@ -1161,6 +1162,24 @@ describe('Binding Edge Cases', () => {
       expect(el.id).toBe('next')
       expect(el.hasAttribute('title')).toBe(false)
       expect(el.textContent).toBe('')
+
+      dispose()
+    })
+
+    it('keeps assigned child tracking alive across same-root spread updates', () => {
+      const el = document.createElement('div')
+      const props = createSignal<Record<string, unknown>>({ children: 'first' })
+
+      const { dispose } = createRoot(() => {
+        spread(el, () => props(), false, false)
+        expect(el.textContent).toBe('first')
+
+        batch(() => props({ children: 'second' }))
+        expect(el.textContent).toBe('second')
+
+        batch(() => props({}))
+        expect(el.textContent).toBe('')
+      })
 
       dispose()
     })
