@@ -129,6 +129,64 @@ describe('fict runtime', () => {
     expect(cleaned).toBe(1)
   })
 
+  it('makes root disposal reentrant and idempotent', () => {
+    const calls: string[] = []
+    let dispose = () => {}
+    const root = createRoot(() => {
+      onCleanup(() => {
+        calls.push('reentrant-cleanup')
+        dispose()
+      })
+      onCleanup(() => calls.push('cleanup'))
+      onDestroy(() => calls.push('destroy'))
+    })
+    dispose = root.dispose
+
+    expect(() => dispose()).not.toThrow()
+    expect(calls).toEqual(['cleanup', 'reentrant-cleanup', 'destroy'])
+
+    dispose()
+    expect(calls).toEqual(['cleanup', 'reentrant-cleanup', 'destroy'])
+  })
+
+  it('drains lifecycle work registered while a root is being destroyed', () => {
+    const calls: string[] = []
+    const root = createRoot(() => {
+      onCleanup(() => {
+        calls.push('cleanup')
+        onCleanup(() => calls.push('nested-cleanup'))
+      })
+      onDestroy(() => {
+        calls.push('destroy')
+        onCleanup(() => calls.push('cleanup-from-destroy'))
+      })
+    })
+
+    root.dispose()
+
+    expect(calls).toEqual(['cleanup', 'nested-cleanup', 'destroy', 'cleanup-from-destroy'])
+  })
+
+  it('disposes effects created while root cleanup is running', async () => {
+    const trigger = createSignal(0)
+    let runs = 0
+    const root = createRoot(() => {
+      onCleanup(() => {
+        createEffect(() => {
+          trigger()
+          runs++
+        })
+      })
+    })
+
+    root.dispose()
+    expect(runs).toBe(1)
+
+    trigger(1)
+    await tick()
+    expect(runs).toBe(1)
+  })
+
   it('finishes root teardown when an effect cleanup throws', async () => {
     const trigger = createSignal(0)
     const calls: string[] = []

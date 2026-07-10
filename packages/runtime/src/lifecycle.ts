@@ -20,6 +20,8 @@ export interface RootContext {
   errorHandlers?: ErrorHandler[]
   suspenseHandlers?: SuspenseHandler[]
   suspended?: boolean
+  destroying?: boolean
+  destroyed?: boolean
 }
 
 export interface CreateRootOptions {
@@ -181,30 +183,51 @@ export function clearRoot(root: RootContext): void {
 }
 
 export function destroyRoot(root: RootContext): void {
+  if (root.destroying || root.destroyed) return
+  root.destroying = true
   let error: unknown
   let didThrow = false
   try {
-    clearRoot(root)
-  } catch (err) {
-    error = err
-    didThrow = true
-  }
+    do {
+      try {
+        clearRoot(root)
+      } catch (err) {
+        if (!didThrow) {
+          error = err
+          didThrow = true
+        }
+      }
 
-  try {
-    runCleanupList(root.destroyCallbacks, root)
-  } catch (err) {
-    if (!didThrow) {
-      error = err
-      didThrow = true
-    }
+      try {
+        runCleanupList(root.destroyCallbacks, root)
+      } catch (err) {
+        if (!didThrow) {
+          error = err
+          didThrow = true
+        }
+      }
+    } while (root.cleanups.length > 0 || root.destroyCallbacks.length > 0)
   } finally {
+    if (root.onMountCallbacks) {
+      root.onMountCallbacks.length = 0
+    }
+    if (root.deferredRefAssignments) {
+      root.deferredRefAssignments.length = 0
+    }
+    root.deferredRefAssignments = undefined
+    root.deferRefAssignments = false
     if (root.errorHandlers) {
       root.errorHandlers.length = 0
     }
     if (root.suspenseHandlers) {
       root.suspenseHandlers.length = 0
     }
-    disposeRootDevtools(root)
+    try {
+      disposeRootDevtools(root)
+    } finally {
+      root.destroying = false
+      root.destroyed = true
+    }
   }
 
   if (didThrow) throw error
@@ -260,9 +283,9 @@ export function runCleanupList(list: Cleanup[], root?: RootContext): void {
   let error: unknown
   let didThrow = false
   withRootContext(root, () => {
-    for (let i = list.length - 1; i >= 0; i--) {
+    while (list.length > 0) {
       try {
-        const cleanup = list[i]
+        const cleanup = list.pop()
         if (cleanup) cleanup()
       } catch (err) {
         if (!didThrow) {
@@ -272,7 +295,6 @@ export function runCleanupList(list: Cleanup[], root?: RootContext): void {
       }
     }
   })
-  list.length = 0
   if (didThrow) {
     if (!handleError(error, { source: 'cleanup' }, root)) {
       throw error
