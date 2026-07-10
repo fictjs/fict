@@ -49,6 +49,12 @@ module.exports = {
           allExtensions: true,
           allowNamespaces: true,
           allowDeclareFields: true,
+          onlyRemoveTypeImports: false,
+          optimizeConstEnums: false,
+          jsxPragma: 'React.createElement',
+          jsxPragmaFrag: 'React.Fragment',
+          disallowAmbiguousJSXLike: false,
+          rewriteImportExtensions: false,
         },
         // Compiler options (forwarded)
         strictGuarantee: true,

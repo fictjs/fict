@@ -1,9 +1,11 @@
 import {
   transformFromAstSync,
+  types as t,
   type ConfigAPI,
   type PluginObj,
   type TransformOptions,
 } from '@babel/core'
+import type * as BabelCore from '@babel/core'
 import transformModulesCommonJS from '@babel/plugin-transform-modules-commonjs'
 import transformTypeScript from '@babel/plugin-transform-typescript'
 import { createFictPlugin, type FictCompilerOptions } from '@fictjs/compiler'
@@ -43,6 +45,24 @@ export interface FictPresetOptions extends Omit<FictCompilerOptions, 'typescript
      * @default true
      */
     allowDeclareFields?: boolean
+
+    /** Preserve ordinary imports even when they are referenced only in type positions. */
+    onlyRemoveTypeImports?: boolean
+
+    /** Inline exported and local const enums instead of emitting enum objects. */
+    optimizeConstEnums?: boolean
+
+    /** JSX factory identifier used to retain its value import during TypeScript lowering. */
+    jsxPragma?: string
+
+    /** JSX fragment identifier used to retain its value import during TypeScript lowering. */
+    jsxPragmaFrag?: string
+
+    /** Reject syntax that is ambiguous with JSX in all-extensions mode. */
+    disallowAmbiguousJSXLike?: boolean
+
+    /** Rewrite relative TypeScript import extensions to their JavaScript equivalents. */
+    rewriteImportExtensions?: boolean
   }
 }
 
@@ -63,12 +83,17 @@ function resolveTypeScriptTransformOptions(
   const baseOptions = {
     allowNamespaces: options.allowNamespaces ?? true,
     allowDeclareFields: options.allowDeclareFields ?? true,
+    onlyRemoveTypeImports: options.onlyRemoveTypeImports,
+    optimizeConstEnums: options.optimizeConstEnums,
+    jsxPragma: options.jsxPragma,
+    jsxPragmaFrag: options.jsxPragmaFrag,
   }
   if (options.allExtensions) {
     return {
       ...baseOptions,
       isTSX: options.isTSX ?? true,
       allExtensions: true,
+      disallowAmbiguousJSXLike: options.disallowAmbiguousJSXLike ?? false,
     }
   }
   if (!filename) return null
@@ -94,6 +119,78 @@ function shouldCompileTypeScriptAsCommonJS(
   options: TypeScriptOptions,
 ): boolean {
   return !options.allExtensions && !!filename && /\.cts$/i.test(filename)
+}
+
+function rewriteTypeScriptExtension(source: string): string {
+  if (!/^\.\.?\//.test(source)) return source
+  return source.replace(
+    /\.(tsx)$|((?:\.d)?)((?:\.[^./]+)?)\.([cm]?)ts$/i,
+    (match, tsx: string | undefined, declaration: string, extension: string, cm: string) => {
+      if (tsx) return '.js'
+      if (declaration && (!extension || !cm)) return match
+      return `${declaration}${extension}.${cm.toLowerCase()}js`
+    },
+  )
+}
+
+function createDynamicImportExtensionRewrite(
+  expression: BabelCore.types.Expression,
+): BabelCore.types.Expression {
+  return t.callExpression(
+    t.memberExpression(
+      t.binaryExpression('+', expression, t.stringLiteral('')),
+      t.identifier('replace'),
+    ),
+    [t.regExpLiteral('([\\\\/].*\\.[mc]?)tsx?$'), t.stringLiteral('$1js')],
+  )
+}
+
+function rewriteTypeScriptImportsPlugin(): PluginObj {
+  return {
+    name: 'fict-rewrite-typescript-imports',
+    visitor: {
+      Program: {
+        exit(path) {
+          path.traverse({
+            ImportDeclaration(importPath) {
+              importPath.node.source.value = rewriteTypeScriptExtension(
+                importPath.node.source.value,
+              )
+            },
+            ExportAllDeclaration(exportPath) {
+              exportPath.node.source.value = rewriteTypeScriptExtension(
+                exportPath.node.source.value,
+              )
+            },
+            ExportNamedDeclaration(exportPath) {
+              if (exportPath.node.source) {
+                exportPath.node.source.value = rewriteTypeScriptExtension(
+                  exportPath.node.source.value,
+                )
+              }
+            },
+            CallExpression(callPath) {
+              if (!t.isImport(callPath.node.callee)) return
+              const source = callPath.node.arguments[0]
+              if (t.isStringLiteral(source)) {
+                source.value = rewriteTypeScriptExtension(source.value)
+              } else if (source && t.isExpression(source)) {
+                callPath.node.arguments[0] = createDynamicImportExtensionRewrite(source)
+              }
+            },
+            ImportExpression(importPath) {
+              const source = importPath.node.source
+              if (t.isStringLiteral(source)) {
+                source.value = rewriteTypeScriptExtension(source.value)
+              } else {
+                importPath.node.source = createDynamicImportExtensionRewrite(source)
+              }
+            },
+          })
+        },
+      },
+    },
+  }
 }
 
 function commonJsMarkerPlugin(): PluginObj {
@@ -129,6 +226,9 @@ function createIsolatedFictPrepass(
         plugins.push([transformTypeScript, typeScriptTransformOptions])
       }
       plugins.push([createFictPlugin, compilerOptions])
+      if (typeScriptTransformOptions && typescriptOptions.rewriteImportExtensions) {
+        plugins.push(rewriteTypeScriptImportsPlugin)
+      }
       if (compileAsCommonJS) {
         plugins.push([transformModulesCommonJS, { allowTopLevelThis: true }])
       }
@@ -220,6 +320,7 @@ export default function fictPreset(
         '@babel/plugin-syntax-typescript',
         {
           isTSX,
+          disallowAmbiguousJSXLike: typescriptOptions.disallowAmbiguousJSXLike ?? false,
         },
       ])
     } else {

@@ -193,6 +193,135 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
     expect(result?.code).not.toContain('export const')
   })
 
+  it('honors onlyRemoveTypeImports and optimizeConstEnums', () => {
+    const result = transformSync(
+      `
+        import { Shape } from './dep'
+        const enum Status { Ready = 2 }
+        export const value: Shape = { status: Status.Ready } as Shape
+      `,
+      {
+        filename: 'options.ts',
+        configFile: false,
+        babelrc: false,
+        presets: [
+          [
+            fictPreset,
+            {
+              dev: false,
+              strictGuarantee: false,
+              typescriptOptions: {
+                onlyRemoveTypeImports: true,
+                optimizeConstEnums: true,
+              },
+            },
+          ],
+        ],
+      },
+    )
+
+    expect(result?.code).toContain(`import { Shape } from './dep'`)
+    expect(result?.code).not.toContain('function (Status)')
+    expect(result?.code).not.toContain('Status.Ready')
+    expect(result?.code).toContain('status: 2')
+  })
+
+  it('honors explicit JSX pragma imports before a sibling JSX transform', () => {
+    const result = transformSync(
+      `
+        "use fict-compiler-disable"
+        import { h, Fragment } from './factory'
+        export const view = <><div /></>
+      `,
+      {
+        filename: 'pragma.tsx',
+        configFile: false,
+        babelrc: false,
+        plugins: [['@babel/plugin-transform-react-jsx', { pragma: 'h', pragmaFrag: 'Fragment' }]],
+        presets: [
+          [
+            fictPreset,
+            {
+              dev: false,
+              strictGuarantee: false,
+              typescriptOptions: { jsxPragma: 'h', jsxPragmaFrag: 'Fragment' },
+            },
+          ],
+        ],
+      },
+    )
+
+    expect(result?.code).toContain(`import { h, Fragment } from './factory'`)
+    expect(result?.code).toContain('h(Fragment')
+  })
+
+  it('rewrites TypeScript extensions after resolving hook metadata', () => {
+    const filename = path.resolve('rewrite-importer.tsx')
+    const hookFilename = path.resolve('use-count.ts')
+    const moduleMetadata = new Map([
+      [
+        hookFilename,
+        {
+          version: 1 as const,
+          exports: {},
+          hooks: { useCount: { directAccessor: 'signal' as const } },
+        },
+      ],
+    ])
+    const result = transformSync(
+      `
+        import { useCount } from './use-count.ts'
+        export const load = () => import('./lazy.mts')
+        export function App() {
+          const count = useCount()
+          return <div>{count * 2}</div>
+        }
+      `,
+      {
+        filename,
+        configFile: false,
+        babelrc: false,
+        presets: [
+          [
+            fictPreset,
+            {
+              dev: false,
+              strictGuarantee: false,
+              moduleMetadata,
+              typescriptOptions: { rewriteImportExtensions: true },
+            },
+          ],
+        ],
+      },
+    )
+
+    expect(result?.code).toMatch(/from ["']\.\/use-count\.js["']/)
+    expect(result?.code).toMatch(/import\(["']\.\/lazy\.mjs["']\)/)
+    expect(result?.code).toMatch(/count\(\)\s*\*\s*2/)
+  })
+
+  it('honors disallowAmbiguousJSXLike in all-extensions mode', () => {
+    expect(() =>
+      transformSync(`export const value = <number>input`, {
+        filename: 'ambiguous.ts',
+        configFile: false,
+        babelrc: false,
+        presets: [
+          [
+            fictPreset,
+            {
+              typescriptOptions: {
+                allExtensions: true,
+                isTSX: false,
+                disallowAmbiguousJSXLike: true,
+              },
+            },
+          ],
+        ],
+      }),
+    ).toThrow(/syntax is reserved|disallowAmbiguousJSLike|angle-bracket/i)
+  })
+
   it('detects TypeScript and TSX syntax from the file extension', () => {
     const typed = transformSync(
       `
