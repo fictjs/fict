@@ -171,6 +171,34 @@ describe('playground session config profiles', () => {
     expect(persisted.config.functionSplitting).toBe(true)
   })
 
+  it('closes a replacement preview when the previous server fails to close', async () => {
+    const closeError = new Error('previous preview close failed')
+    const previousClose = vi.fn().mockRejectedValueOnce(closeError).mockResolvedValue(undefined)
+    const replacementClose = vi.fn(async () => {})
+    const previewHarness = manager as unknown as PreviewServerHarness
+    vi.mocked(previewHarness.startPreviewServer)
+      .mockReset()
+      .mockResolvedValueOnce({
+        server: { listen: async () => {}, close: previousClose },
+        previewUrl: 'http://127.0.0.1/initial/',
+      })
+      .mockResolvedValueOnce({
+        server: { listen: async () => {}, close: replacementClose },
+        previewUrl: 'http://127.0.0.1/replacement/',
+      })
+
+    const created = await manager.createSession({ templateId: 'counter' })
+    await expect(manager.updateSessionConfig(created.id, { profile: 'ci-hard-gate' })).rejects.toBe(
+      closeError,
+    )
+
+    expect(previousClose).toHaveBeenCalledTimes(1)
+    expect(replacementClose).toHaveBeenCalledTimes(1)
+    const unchanged = await manager.getSessionState(created.id)
+    expect(unchanged.previewUrl).toBe('http://127.0.0.1/initial/')
+    expect(unchanged.config.profile).toBe('app-default')
+  })
+
   it('preserves override provenance across snapshot import', async () => {
     const created = await manager.createSession({ templateId: 'counter' })
     await manager.updateSessionConfig(created.id, { strictReactivity: false })

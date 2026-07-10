@@ -240,7 +240,22 @@ export class PlaygroundSessionManager {
 
       const nextPreview = await this.startPreviewServer(session.summary.rootDir, mergedConfig)
 
-      await session.viteServer.close()
+      try {
+        await session.viteServer.close()
+      } catch (swapError) {
+        try {
+          await nextPreview.server.close()
+        } catch (cleanupError) {
+          throw Object.assign(
+            new Error('Failed to replace the playground preview server cleanly'),
+            {
+              cause: swapError,
+              cleanupError,
+            },
+          )
+        }
+        throw swapError
+      }
       session.viteServer = nextPreview.server
       session.configOverrides = nextOverrides
       session.summary = {
