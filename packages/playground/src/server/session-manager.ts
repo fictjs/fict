@@ -306,7 +306,7 @@ export class PlaygroundSessionManager {
     sessionId: string,
     access: PlaygroundAuthContext = SYSTEM_ACCESS_CONTEXT,
   ): Promise<PlaygroundVerificationResult> {
-    return this.enqueueSessionTask(sessionId, async () => {
+    return this.enqueueSessionTaskWithCompletion(sessionId, async () => {
       const releaseLimiterSlot = await this.verifyLimiter.acquire()
       let released = false
       const releaseOnce = (): void => {
@@ -356,22 +356,9 @@ export class PlaygroundSessionManager {
         }
       })()
 
-      void verificationPromise.finally(releaseOnce).catch(noop)
-
-      let timedOut = false
-      try {
-        return await withTimeout(
-          this.verifyTimeoutMs,
-          timeoutMessage,
-          async () => verificationPromise,
-        )
-      } catch (error) {
-        timedOut = error instanceof Error && error.message === timeoutMessage
-        throw error
-      } finally {
-        if (!timedOut) {
-          releaseOnce()
-        }
+      return {
+        result: withTimeout(this.verifyTimeoutMs, timeoutMessage, async () => verificationPromise),
+        completion: verificationPromise.finally(releaseOnce),
       }
     })
   }
@@ -460,6 +447,24 @@ export class PlaygroundSessionManager {
         this.sessionQueueTails.delete(sessionId)
       }
     })
+  }
+
+  private enqueueSessionTaskWithCompletion<T>(
+    sessionId: string,
+    task: () => Promise<{ result: Promise<T>; completion: Promise<unknown> }>,
+  ): Promise<T> {
+    const previous = this.sessionQueueTails.get(sessionId) ?? Promise.resolve()
+    const started = previous.catch(noop).then(task)
+    const result = started.then(operation => operation.result)
+    const nextTail = started.then(operation => operation.completion).then(noop, noop)
+    this.sessionQueueTails.set(sessionId, nextTail)
+
+    void nextTail.then(() => {
+      if (this.sessionQueueTails.get(sessionId) === nextTail) {
+        this.sessionQueueTails.delete(sessionId)
+      }
+    })
+    return result
   }
 
   private async enforceSessionCapacity(): Promise<void> {
