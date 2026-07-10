@@ -3595,8 +3595,8 @@ describe('fict vite-plugin', () => {
         JSON.stringify({
           name: 'fict-hook-lib',
           type: 'module',
-          module: './dist/index.js',
-          main: './dist/index.cjs',
+          module: 'dist/index.js',
+          main: 'dist/index.cjs',
         }),
       )
 

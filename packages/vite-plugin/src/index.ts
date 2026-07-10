@@ -2274,9 +2274,22 @@ function toPackageJsonRelativePath(packageDir: string, absoluteFilePath: string)
   return relative.startsWith('.') ? relative : `./${relative}`
 }
 
-function normalizePackageJsonTarget(value: string): string | null {
-  if (!value.startsWith('./')) return null
-  return `./${value.slice(2).replace(/\\/g, '/')}`
+function normalizePackageJsonTarget(
+  value: string,
+  allowRelativeWithoutPrefix = false,
+): string | null {
+  const normalized = value.replace(/\\/g, '/')
+  if (normalized.startsWith('./')) return `./${normalized.slice(2)}`
+  if (
+    !allowRelativeWithoutPrefix ||
+    !normalized ||
+    normalized.startsWith('/') ||
+    normalized.startsWith('../') ||
+    normalized.includes('\0')
+  ) {
+    return null
+  }
+  return `./${normalized}`
 }
 
 function collectExportTargets(
@@ -2307,7 +2320,8 @@ function collectPackageTargets(
   const targets = collectExportTargets(pkg.exports)
   for (const field of ['module', 'main'] as const) {
     if (typeof pkg[field] === 'string') {
-      targets.push({ subpath: '.', target: pkg[field] })
+      const target = normalizePackageJsonTarget(pkg[field], true)
+      if (target) targets.push({ subpath: '.', target })
     }
   }
   return targets
