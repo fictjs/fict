@@ -1061,9 +1061,14 @@ export function insert(
   let currentRoot: RootContext | null = null
 
   const clearCurrentNodes = () => {
-    if (currentNodes.length > 0) {
-      removeNodes(currentNodes)
-      currentNodes = []
+    const root = currentRoot
+    const nodes = currentNodes
+    currentRoot = null
+    currentNodes = []
+    try {
+      if (root) destroyRoot(root)
+    } finally {
+      removeNodes(nodes)
     }
   }
 
@@ -1089,110 +1094,133 @@ export function insert(
     currentNodes = insertedNodes
   }
 
-  const dispose = createRenderEffect(() => {
-    const value = getValue()
-    const parentNode = marker.parentNode as (ParentNode & Node) | null
-    const isPrimitive =
-      value == null ||
-      value === false ||
-      typeof value === 'string' ||
-      typeof value === 'number' ||
-      typeof value === 'boolean'
+  let dispose: Cleanup
+  try {
+    dispose = createRenderEffect(() => {
+      const value = getValue()
+      const parentNode = marker.parentNode as (ParentNode & Node) | null
+      const isPrimitive =
+        value == null ||
+        value === false ||
+        typeof value === 'string' ||
+        typeof value === 'number' ||
+        typeof value === 'boolean'
 
-    if (isPrimitive) {
-      if (currentRoot) {
-        destroyRoot(currentRoot)
-        currentRoot = null
-      }
-      if (!parentNode) {
-        clearCurrentNodes()
+      if (isPrimitive) {
+        if (currentRoot) clearCurrentNodes()
+        if (!parentNode) {
+          clearCurrentNodes()
+          return
+        }
+        const textValue = value == null || typeof value === 'boolean' ? '' : String(value)
+        const shouldInsert = value != null && typeof value !== 'boolean'
+        setTextNode(textValue, shouldInsert, parentNode)
         return
       }
-      const textValue = value == null || typeof value === 'boolean' ? '' : String(value)
-      const shouldInsert = value != null && typeof value !== 'boolean'
-      setTextNode(textValue, shouldInsert, parentNode)
-      return
-    }
 
-    if (currentRoot) {
-      destroyRoot(currentRoot)
-      currentRoot = null
-    }
-    clearCurrentNodes()
+      clearCurrentNodes()
 
-    const root = createRootContext(hostRoot)
-    const prev = pushRoot(root)
-    let nodes: Node[]
-    let handledError = false
-    try {
-      const ownerDocument = parentNode?.ownerDocument ?? markerOwnerDocument
-      const createValue = () => {
-        if (isNodeLike(value, ownerDocument)) {
-          return value
+      const root = createRootContext(hostRoot)
+      const prev = pushRoot(root)
+      let nodes: Node[] = []
+      let committed = false
+      let released = false
+      const release = () => {
+        if (released) return
+        released = true
+        if (currentRoot === root) currentRoot = null
+        if (currentNodes === nodes) currentNodes = []
+        try {
+          destroyRoot(root)
+        } finally {
+          removeNodes(nodes)
         }
-        if (Array.isArray(value)) {
-          if (value.every(v => isNodeLike(v, ownerDocument))) {
-            return value as Node[]
+      }
+      try {
+        const ownerDocument = parentNode?.ownerDocument ?? markerOwnerDocument
+        const createValue = () => {
+          if (isNodeLike(value, ownerDocument)) {
+            return value
           }
-          if (createFn) {
-            const mapped: Node[] = []
-            for (const item of value) {
-              mapped.push(...toNodeArray(createFn(item as any), ownerDocument))
+          if (Array.isArray(value)) {
+            if (value.every(v => isNodeLike(v, ownerDocument))) {
+              return value as Node[]
             }
-            return mapped
+            if (createFn) {
+              const mapped: Node[] = []
+              for (const item of value) {
+                mapped.push(...toNodeArray(createFn(item as any), ownerDocument))
+              }
+              return mapped
+            }
+            return ownerDocument.createTextNode(String(value))
           }
-          return ownerDocument.createTextNode(String(value))
+          return createFn ? createFn(value) : ownerDocument.createTextNode(String(value))
         }
-        return createFn ? createFn(value) : ownerDocument.createTextNode(String(value))
-      }
 
-      const newNode: Node | Node[] = untrack(createValue)
+        const newNode: Node | Node[] = untrack(createValue)
 
-      nodes = toNodeArray(newNode, ownerDocument)
-      if (root.suspended) {
-        handledError = true
-        destroyRoot(root)
-        return
+        nodes = toNodeArray(newNode, ownerDocument)
+        if (root.suspended) {
+          release()
+          return
+        }
+        if (parentNode) {
+          nodes = insertNodesBefore(parentNode, nodes, marker)
+        }
+        currentRoot = root
+        currentNodes = nodes
+        committed = true
+      } catch (err) {
+        if (handleSuspend(err as any, root)) {
+          release()
+          return
+        }
+        if (handleError(err, { source: 'renderChild' }, root)) {
+          release()
+          return
+        }
+        release()
+        throw err
+      } finally {
+        popRoot(prev)
+        if (committed) {
+          flushOnMount(root)
+        } else {
+          release()
+        }
       }
-      if (parentNode) {
-        nodes = insertNodesBefore(parentNode, nodes, marker)
-      }
-    } catch (err) {
-      if (handleSuspend(err as any, root)) {
-        handledError = true
-        destroyRoot(root)
-        return
-      }
-      if (handleError(err, { source: 'renderChild' }, root)) {
-        handledError = true
-        destroyRoot(root)
-        return
-      }
-      throw err
+    })
+  } catch (error) {
+    const root = currentRoot
+    const nodes = currentNodes
+    currentRoot = null
+    currentNodes = []
+    try {
+      if (root) destroyRoot(root)
     } finally {
-      popRoot(prev)
-      if (!handledError) {
-        flushOnMount(root)
+      removeNodes(nodes)
+      if (ownsMarker) {
+        marker.parentNode?.removeChild(marker)
       }
     }
-
-    // If we reach here, no error was handled (handledError blocks return early)
-    currentRoot = root
-    currentNodes = nodes
-  })
+    throw error
+  }
 
   let disposed = false
   const cleanup = () => {
     if (disposed) return
     disposed = true
-    dispose()
-    if (currentRoot) {
-      destroyRoot(currentRoot)
-      currentRoot = null
-    }
-    clearCurrentNodes()
-    if (ownsMarker) {
-      marker.parentNode?.removeChild(marker)
+    try {
+      dispose()
+    } finally {
+      try {
+        clearCurrentNodes()
+      } finally {
+        if (ownsMarker) {
+          marker.parentNode?.removeChild(marker)
+        }
+      }
     }
   }
   registerRootCleanup(cleanup)
@@ -1227,9 +1255,14 @@ export function insertBetween(
   }
 
   const clearCurrentNodes = () => {
-    if (currentNodes.length > 0) {
-      removeNodes(currentNodes)
-      currentNodes = []
+    const root = currentRoot
+    const nodes = currentNodes
+    currentRoot = null
+    currentNodes = []
+    try {
+      if (root) destroyRoot(root)
+    } finally {
+      removeNodes(nodes)
     }
   }
 
@@ -1258,131 +1291,171 @@ export function insertBetween(
     }
   }
 
-  const dispose = createRenderEffect(() => {
-    const value = getValue()
-    const parentNode = start.parentNode as (ParentNode & Node) | null
-    const isPrimitive =
-      value == null ||
-      value === false ||
-      typeof value === 'string' ||
-      typeof value === 'number' ||
-      typeof value === 'boolean'
-
-    if (isPrimitive) {
-      if (initialHydrating && isHydratingActive() && parentNode) {
-        const existing = collectBetween()
-        if (existing.length > 0) {
-          currentNodes = existing
-          const only = existing.length === 1 ? existing[0] : null
-          currentText = only && only.nodeType === 3 ? (only as Text) : null
+  let dispose: Cleanup
+  try {
+    dispose = createRenderEffect(() => {
+      let value: FictNode
+      try {
+        value = getValue()
+      } catch (error) {
+        if (initialHydrating) {
+          currentNodes = collectBetween()
+          initialHydrating = false
         }
+        throw error
       }
-      if (currentRoot) {
-        destroyRoot(currentRoot)
-        currentRoot = null
-      }
-      if (!parentNode) {
-        clearCurrentNodes()
+      const parentNode = start.parentNode as (ParentNode & Node) | null
+      const isPrimitive =
+        value == null ||
+        value === false ||
+        typeof value === 'string' ||
+        typeof value === 'number' ||
+        typeof value === 'boolean'
+
+      if (isPrimitive) {
+        if (initialHydrating && isHydratingActive() && parentNode) {
+          const existing = collectBetween()
+          if (existing.length > 0) {
+            currentNodes = existing
+            const only = existing.length === 1 ? existing[0] : null
+            currentText = only && only.nodeType === 3 ? (only as Text) : null
+          }
+        }
+        if (currentRoot) clearCurrentNodes()
+        if (!parentNode) {
+          clearCurrentNodes()
+          return
+        }
+        const textValue = value == null || typeof value === 'boolean' ? '' : String(value)
+        const shouldInsert = value != null && typeof value !== 'boolean'
+        setTextNode(textValue, shouldInsert)
+        initialHydrating = false
         return
       }
-      const textValue = value == null || typeof value === 'boolean' ? '' : String(value)
-      const shouldInsert = value != null && typeof value !== 'boolean'
-      setTextNode(textValue, shouldInsert)
-      initialHydrating = false
-      return
-    }
 
-    if (currentRoot) {
-      destroyRoot(currentRoot)
-      currentRoot = null
-    }
-    clearCurrentNodes()
+      clearCurrentNodes()
 
-    const root = createRootContext(hostRoot)
-    const prev = pushRoot(root)
-    let nodes: Node[]
-    let handledError = false
-    try {
-      let newNode: Node | Node[] = undefined as unknown as Node | Node[]
-      const ownerDocument = parentNode?.ownerDocument ?? markerOwnerDocument
-      const createValue = () => {
-        if (isNodeLike(value, ownerDocument)) {
-          return value
+      const root = createRootContext(hostRoot)
+      const prev = pushRoot(root)
+      let nodes: Node[]
+      let ownedNodes: Node[] = []
+      let committed = false
+      let released = false
+      const release = () => {
+        if (released) return
+        released = true
+        if (currentRoot === root) currentRoot = null
+        if (currentNodes === ownedNodes) currentNodes = []
+        try {
+          destroyRoot(root)
+        } finally {
+          removeNodes(ownedNodes)
         }
-        if (Array.isArray(value)) {
-          if (value.every(v => isNodeLike(v, ownerDocument))) {
-            return value as Node[]
+      }
+      try {
+        let newNode: Node | Node[] = undefined as unknown as Node | Node[]
+        const ownerDocument = parentNode?.ownerDocument ?? markerOwnerDocument
+        const createValue = () => {
+          if (isNodeLike(value, ownerDocument)) {
+            return value
           }
-          if (createElementFn) {
-            const mapped: Node[] = []
-            for (const item of value) {
-              mapped.push(...toNodeArray(createElementFn(item as any), ownerDocument))
+          if (Array.isArray(value)) {
+            if (value.every(v => isNodeLike(v, ownerDocument))) {
+              return value as Node[]
             }
-            return mapped
+            if (createElementFn) {
+              const mapped: Node[] = []
+              for (const item of value) {
+                mapped.push(...toNodeArray(createElementFn(item as any), ownerDocument))
+              }
+              return mapped
+            }
+            return ownerDocument.createTextNode(String(value))
           }
-          return ownerDocument.createTextNode(String(value))
+          return createElementFn
+            ? createElementFn(value)
+            : ownerDocument.createTextNode(String(value))
         }
-        return createElementFn
-          ? createElementFn(value)
-          : ownerDocument.createTextNode(String(value))
-      }
 
-      if (initialHydrating && isHydratingActive() && parentNode) {
-        withHydrationRange(
-          start.nextSibling,
-          end,
-          parentNode.ownerDocument ?? markerOwnerDocument,
-          () => {
-            newNode = untrack(createValue)
-          },
-        )
-      } else {
-        newNode = untrack(createValue)
-      }
+        if (initialHydrating && isHydratingActive() && parentNode) {
+          withHydrationRange(
+            start.nextSibling,
+            end,
+            parentNode.ownerDocument ?? markerOwnerDocument,
+            () => {
+              newNode = untrack(createValue)
+            },
+          )
+        } else {
+          newNode = untrack(createValue)
+        }
 
-      nodes = toNodeArray(newNode, ownerDocument)
-      if (root.suspended) {
-        handledError = true
-        destroyRoot(root)
-        return
+        nodes = toNodeArray(newNode, ownerDocument)
+        ownedNodes = nodes
+        if (root.suspended) {
+          if (initialHydrating) {
+            currentNodes = collectBetween()
+            ownedNodes = []
+            initialHydrating = false
+          }
+          release()
+          return
+        }
+        if (parentNode && !initialHydrating) {
+          nodes = insertNodesBefore(parentNode, nodes, end)
+        }
+        ownedNodes = initialHydrating ? collectBetween() : nodes
+        currentRoot = root
+        currentNodes = ownedNodes
+        initialHydrating = false
+        committed = true
+      } catch (err) {
+        if (initialHydrating) {
+          currentNodes = collectBetween()
+          ownedNodes = []
+          initialHydrating = false
+        }
+        if (handleSuspend(err as any, root)) {
+          release()
+          return
+        }
+        if (handleError(err, { source: 'renderChild' }, root)) {
+          release()
+          return
+        }
+        release()
+        throw err
+      } finally {
+        popRoot(prev)
+        if (committed) {
+          flushOnMount(root)
+        } else {
+          release()
+        }
       }
-      if (parentNode && !initialHydrating) {
-        nodes = insertNodesBefore(parentNode, nodes, end)
-      }
-    } catch (err) {
-      if (handleSuspend(err as any, root)) {
-        handledError = true
-        destroyRoot(root)
-        return
-      }
-      if (handleError(err, { source: 'renderChild' }, root)) {
-        handledError = true
-        destroyRoot(root)
-        return
-      }
-      throw err
+    })
+  } catch (error) {
+    const root = currentRoot
+    const nodes = currentNodes
+    currentRoot = null
+    currentNodes = []
+    try {
+      if (root) destroyRoot(root)
     } finally {
-      popRoot(prev)
-      if (!handledError) {
-        flushOnMount(root)
-      }
+      removeNodes(nodes)
     }
-
-    currentRoot = root
-    currentNodes = initialHydrating ? collectBetween() : nodes
-    initialHydrating = false
-  })
+    throw error
+  }
 
   let disposed = false
   const cleanup = () => {
     if (disposed) return
     disposed = true
-    dispose()
-    if (currentRoot) {
-      destroyRoot(currentRoot)
-      currentRoot = null
+    try {
+      dispose()
+    } finally {
+      clearCurrentNodes()
     }
-    clearCurrentNodes()
   }
   registerRootCleanup(cleanup)
   return cleanup
@@ -1410,62 +1483,93 @@ export function createChildBinding(
   parent.appendChild(marker)
   const hostRoot = getCurrentRoot()
   let disposed = false
+  let activeRelease: Cleanup | undefined
 
-  const dispose = createRenderEffect(() => {
-    if (disposed) return
-    const root = createRootContext(hostRoot)
-    const prev = pushRoot(root)
-    let nodes: Node[] = []
-    let handledError = false
-    let keepRoot = false
+  let dispose: Cleanup
+  try {
+    dispose = createRenderEffect(() => {
+      if (disposed) return
+      activeRelease?.()
+      const root = createRootContext(hostRoot)
+      const prev = pushRoot(root)
+      let nodes: Node[] = []
+      let committed = false
+      let released = false
+      const release = () => {
+        if (released) return
+        released = true
+        if (activeRelease === release) activeRelease = undefined
+        try {
+          destroyRoot(root)
+        } finally {
+          removeNodes(nodes)
+        }
+      }
+      try {
+        const value = getValue()
+
+        // Skip if value is null/undefined/false
+        if (value == null || value === false) {
+          release()
+          return
+        }
+
+        const output = untrack(() => createElementFn(value))
+        nodes = toNodeArray(output, marker.ownerDocument ?? parent.ownerDocument ?? document)
+        const parentNode = marker.parentNode as (ParentNode & Node) | null
+        if (parentNode) {
+          nodes = insertNodesBefore(parentNode, nodes, marker)
+        }
+        committed = true
+        activeRelease = release
+      } catch (err) {
+        if (handleSuspend(err as any, root)) {
+          release()
+          return
+        }
+        if (handleError(err, { source: 'renderChild' }, root)) {
+          release()
+          return
+        }
+        release()
+        throw err
+      } finally {
+        popRoot(prev)
+        if (committed) {
+          flushOnMount(root)
+        } else {
+          release()
+        }
+      }
+      return committed ? release : undefined
+    })
+  } catch (error) {
     try {
-      const value = getValue()
-
-      // Skip if value is null/undefined/false
-      if (value == null || value === false) {
-        destroyRoot(root)
-        return
-      }
-
-      const output = untrack(() => createElementFn(value))
-      nodes = toNodeArray(output, marker.ownerDocument ?? parent.ownerDocument ?? document)
-      const parentNode = marker.parentNode as (ParentNode & Node) | null
-      if (parentNode) {
-        nodes = insertNodesBefore(parentNode, nodes, marker)
-      }
-      keepRoot = true
-      return () => {
-        destroyRoot(root)
-        removeNodes(nodes)
-      }
-    } catch (err) {
-      if (handleSuspend(err as any, root)) {
-        handledError = true
-        destroyRoot(root)
-        return
-      }
-      if (handleError(err, { source: 'renderChild' }, root)) {
-        handledError = true
-        destroyRoot(root)
-        return
-      }
-      throw err
+      activeRelease?.()
     } finally {
-      popRoot(prev)
-      if (!handledError && keepRoot) {
-        flushOnMount(root)
+      marker.parentNode?.removeChild(marker)
+    }
+    throw error
+  }
+
+  const handleDispose = () => {
+    if (disposed) return
+    disposed = true
+    try {
+      dispose()
+    } finally {
+      try {
+        activeRelease?.()
+      } finally {
+        marker.parentNode?.removeChild(marker)
       }
     }
-  })
+  }
+  registerRootCleanup(handleDispose)
 
   return {
     marker,
-    dispose: () => {
-      if (disposed) return
-      disposed = true
-      dispose()
-      marker.parentNode?.removeChild(marker)
-    },
+    dispose: handleDispose,
   }
 }
 
@@ -2049,15 +2153,16 @@ function bindAssignedChildren(
   const collectCurrentChildren = (): Node[] => Array.from(node.childNodes)
 
   const clearCurrentNodes = () => {
-    if (currentRoot) {
-      destroyRoot(currentRoot)
-      currentRoot = null
-    }
-    if (currentNodes.length > 0) {
-      removeNodes(currentNodes)
-      currentNodes = []
-    }
+    const root = currentRoot
+    const nodes = currentNodes
+    currentRoot = null
+    currentNodes = []
     currentText = null
+    try {
+      if (root) destroyRoot(root)
+    } finally {
+      removeNodes(nodes)
+    }
   }
 
   const setTextNode = (textValue: string, shouldInsert: boolean) => {
@@ -2094,14 +2199,7 @@ function bindAssignedChildren(
       return
     }
 
-    if (currentRoot) {
-      destroyRoot(currentRoot)
-      currentRoot = null
-    }
-    if (currentNodes.length > 0) {
-      removeNodes(currentNodes)
-      currentNodes = []
-    }
+    clearCurrentNodes()
 
     node.replaceChildren(textNode)
     currentText = textNode
@@ -2109,103 +2207,154 @@ function bindAssignedChildren(
     initialHydrating = false
   }
 
-  const dispose = createRenderEffect(() => {
-    const value = getValue()
-    const isPrimitive =
-      value == null ||
-      value === false ||
-      typeof value === 'string' ||
-      typeof value === 'number' ||
-      typeof value === 'boolean'
-
-    if (isPrimitive) {
-      const textValue = value == null || typeof value === 'boolean' ? '' : String(value)
-      const shouldInsert = value != null && typeof value !== 'boolean'
-      setTextNode(textValue, shouldInsert)
-      return
-    }
-
-    clearCurrentNodes()
-
-    const root = createRootContext(hostRoot)
-    const prev = pushRoot(root)
-    let nodes: Node[]
-    let currentHydratedNodes: Node[] | undefined
-    let handledError = false
-    try {
-      const ownerDocument = node.ownerDocument ?? hostRoot?.ownerDocument ?? document
-      const createValue = () => {
-        if (isNodeLike(value, ownerDocument)) {
-          return value
+  let dispose: Cleanup
+  try {
+    dispose = createRenderEffect(() => {
+      let value: FictNode
+      try {
+        value = getValue()
+      } catch (error) {
+        if (initialHydrating) {
+          currentNodes = collectCurrentChildren()
+          initialHydrating = false
         }
-        if (Array.isArray(value)) {
-          if (value.every(v => isNodeLike(v, ownerDocument))) {
-            return value as Node[]
-          }
-          if (createFn) {
-            const mapped: Node[] = []
-            for (const item of value) {
-              mapped.push(...toNodeArray(createFn(item as any), ownerDocument))
-            }
-            return mapped
-          }
-          return ownerDocument.createTextNode(String(value))
-        }
-        return createFn ? createFn(value) : ownerDocument.createTextNode(String(value))
+        throw error
       }
+      const isPrimitive =
+        value == null ||
+        value === false ||
+        typeof value === 'string' ||
+        typeof value === 'number' ||
+        typeof value === 'boolean'
 
-      const newNode =
-        initialHydrating && isHydratingActive()
-          ? withHydration(node, () => untrack(createValue))
-          : untrack(createValue)
-
-      nodes = toNodeArray(newNode, ownerDocument)
-      if (root.suspended) {
-        handledError = true
-        destroyRoot(root)
+      if (isPrimitive) {
+        const textValue = value == null || typeof value === 'boolean' ? '' : String(value)
+        const shouldInsert = value != null && typeof value !== 'boolean'
+        setTextNode(textValue, shouldInsert)
         return
       }
 
-      if (initialHydrating) {
-        const hydratedNodes = collectCurrentChildren()
-        const reuseHydratedNodes =
-          hydratedNodes.length === nodes.length &&
-          nodes.every((candidate, index) => candidate === hydratedNodes[index])
-        if (reuseHydratedNodes) {
-          currentHydratedNodes = hydratedNodes
+      clearCurrentNodes()
+
+      const root = createRootContext(hostRoot)
+      const prev = pushRoot(root)
+      let nodes: Node[]
+      let ownedNodes: Node[] = []
+      let currentHydratedNodes: Node[] | undefined
+      let committed = false
+      let released = false
+      const release = () => {
+        if (released) return
+        released = true
+        if (currentRoot === root) currentRoot = null
+        if (currentNodes === ownedNodes) currentNodes = []
+        try {
+          destroyRoot(root)
+        } finally {
+          removeNodes(ownedNodes)
+        }
+      }
+      try {
+        const ownerDocument = node.ownerDocument ?? hostRoot?.ownerDocument ?? document
+        const createValue = () => {
+          if (isNodeLike(value, ownerDocument)) {
+            return value
+          }
+          if (Array.isArray(value)) {
+            if (value.every(v => isNodeLike(v, ownerDocument))) {
+              return value as Node[]
+            }
+            if (createFn) {
+              const mapped: Node[] = []
+              for (const item of value) {
+                mapped.push(...toNodeArray(createFn(item as any), ownerDocument))
+              }
+              return mapped
+            }
+            return ownerDocument.createTextNode(String(value))
+          }
+          return createFn ? createFn(value) : ownerDocument.createTextNode(String(value))
+        }
+
+        const newNode =
+          initialHydrating && isHydratingActive()
+            ? withHydration(node, () => untrack(createValue))
+            : untrack(createValue)
+
+        nodes = toNodeArray(newNode, ownerDocument)
+        ownedNodes = nodes
+        if (root.suspended) {
+          if (initialHydrating) {
+            currentNodes = collectCurrentChildren()
+            ownedNodes = []
+            initialHydrating = false
+          }
+          release()
+          return
+        }
+
+        if (initialHydrating) {
+          const hydratedNodes = collectCurrentChildren()
+          const reuseHydratedNodes =
+            hydratedNodes.length === nodes.length &&
+            nodes.every((candidate, index) => candidate === hydratedNodes[index])
+          if (reuseHydratedNodes) {
+            currentHydratedNodes = hydratedNodes
+          } else {
+            node.replaceChildren(...nodes)
+          }
         } else {
           node.replaceChildren(...nodes)
         }
-      } else {
-        node.replaceChildren(...nodes)
+        ownedNodes = currentHydratedNodes ?? nodes
+        currentRoot = root
+        currentNodes = ownedNodes
+        initialHydrating = false
+        committed = true
+      } catch (err) {
+        if (initialHydrating) {
+          currentNodes = collectCurrentChildren()
+          ownedNodes = []
+          initialHydrating = false
+        }
+        if (handleSuspend(err as any, root)) {
+          release()
+          return
+        }
+        if (handleError(err, { source: 'renderChild' }, root)) {
+          release()
+          return
+        }
+        release()
+        throw err
+      } finally {
+        popRoot(prev)
+        if (committed) {
+          flushOnMount(root)
+        } else {
+          release()
+        }
       }
-    } catch (err) {
-      if (handleSuspend(err as any, root)) {
-        handledError = true
-        destroyRoot(root)
-        return
-      }
-      if (handleError(err, { source: 'renderChild' }, root)) {
-        handledError = true
-        destroyRoot(root)
-        return
-      }
-      throw err
+    })
+  } catch (error) {
+    const root = currentRoot
+    const nodes = currentNodes
+    currentRoot = null
+    currentNodes = []
+    try {
+      if (root) destroyRoot(root)
     } finally {
-      popRoot(prev)
-      if (!handledError) {
-        flushOnMount(root)
-      }
+      removeNodes(nodes)
     }
-
-    currentRoot = root
-    currentNodes = currentHydratedNodes ?? nodes
-    initialHydrating = false
-  })
+    throw error
+  }
 
   return () => {
-    dispose()
-    clearCurrentNodes()
+    try {
+      dispose()
+    } finally {
+      clearCurrentNodes()
+    }
   }
 }
 
@@ -2742,6 +2891,17 @@ export function createConditional(
   let pendingRender = false
   let initialHydrating = __fictIsHydrating()
   let disposed = false
+  const clearCurrentBranch = () => {
+    const root = currentRoot
+    const nodes = currentNodes
+    currentRoot = null
+    currentNodes = []
+    try {
+      if (root) destroyRoot(root)
+    } finally {
+      removeNodes(nodes)
+    }
+  }
 
   const collectBetween = (): Node[] => {
     const nodes: Node[] = []
@@ -2780,15 +2940,17 @@ export function createConditional(
       // the conditional effect own child dependencies.
       output = trackBranchReads ? render() : untrack(render)
     } catch (err) {
-      if (handleSuspend(err as any, root)) {
+      try {
+        if (handleSuspend(err as any, root)) {
+          return { root: null, nodes: [], handled: true }
+        }
+        if (handleError(err, { source: 'renderChild' }, root)) {
+          return { root: null, nodes: [], handled: true }
+        }
+        throw err
+      } finally {
         destroyRoot(root)
-        return { root: null, nodes: [], handled: true }
       }
-      if (handleError(err, { source: 'renderChild' }, root)) {
-        destroyRoot(root)
-        return { root: null, nodes: [], handled: true }
-      }
-      throw err
     } finally {
       popRoot(prevRender)
     }
@@ -2805,15 +2967,17 @@ export function createConditional(
         handled: false,
       }
     } catch (err) {
-      if (handleSuspend(err as any, root)) {
+      try {
+        if (handleSuspend(err as any, root)) {
+          return { root: null, nodes: [], handled: true }
+        }
+        if (handleError(err, { source: 'renderChild' }, root)) {
+          return { root: null, nodes: [], handled: true }
+        }
+        throw err
+      } finally {
         destroyRoot(root)
-        return { root: null, nodes: [], handled: true }
       }
-      if (handleError(err, { source: 'renderChild' }, root)) {
-        destroyRoot(root)
-        return { root: null, nodes: [], handled: true }
-      }
-      throw err
     } finally {
       popRoot(prevCreate)
     }
@@ -2865,7 +3029,16 @@ export function createConditional(
   }
 
   const runConditional = () => {
-    const cond = conditionMemo()
+    let cond: boolean
+    try {
+      cond = conditionMemo()
+    } catch (error) {
+      if (initialHydrating) {
+        currentNodes = collectBetween()
+        initialHydrating = false
+      }
+      throw error
+    }
     const parent = startMarker.parentNode as (ParentNode & Node) | null
     if (!parent) {
       pendingRender = true
@@ -2885,7 +3058,7 @@ export function createConditional(
 
       const root = createRootContext(hostRoot)
       const prev = pushRoot(root)
-      let handledError = false
+      let committed = false
       try {
         // Call render() INSIDE withHydrationRange so that template() and insertBetween
         // see the correct hydration context for the conditional content
@@ -2902,25 +3075,25 @@ export function createConditional(
           },
         )
         currentNodes = collectBetween()
+        currentRoot = root
+        committed = true
       } catch (err) {
-        if (handleSuspend(err as any, root)) {
-          handledError = true
+        currentNodes = collectBetween()
+        try {
+          if (handleSuspend(err as any, root)) {
+            return
+          }
+          if (handleError(err, { source: 'renderChild' }, root)) {
+            return
+          }
+          throw err
+        } finally {
           destroyRoot(root)
-          return
         }
-        if (handleError(err, { source: 'renderChild' }, root)) {
-          handledError = true
-          destroyRoot(root)
-          return
-        }
-        throw err
       } finally {
         popRoot(prev)
-        if (!handledError) {
+        if (committed) {
           flushOnMount(root)
-          currentRoot = root
-        } else {
-          currentRoot = null
         }
       }
       return
@@ -2952,7 +3125,13 @@ export function createConditional(
     commitBranch(cond, next.root, next.nodes, parent)
   }
 
-  const dispose = createRenderEffect(runConditional)
+  let dispose: Cleanup
+  try {
+    dispose = createRenderEffect(runConditional)
+  } catch (error) {
+    clearCurrentBranch()
+    throw error
+  }
 
   return {
     marker: fragment,
@@ -2965,15 +3144,16 @@ export function createConditional(
     dispose: () => {
       if (disposed) return
       disposed = true
-      dispose()
-      if (currentRoot) {
-        destroyRoot(currentRoot)
-        currentRoot = null
+      try {
+        dispose()
+      } finally {
+        try {
+          clearCurrentBranch()
+        } finally {
+          startMarker.parentNode?.removeChild(startMarker)
+          endMarker.parentNode?.removeChild(endMarker)
+        }
       }
-      removeNodes(currentNodes)
-      currentNodes = []
-      startMarker.parentNode?.removeChild(startMarker)
-      endMarker.parentNode?.removeChild(endMarker)
     },
   }
 }
@@ -3034,74 +3214,102 @@ export function createPortal(
   let currentNodes: Node[] = []
   let currentRoot: RootContext | null = null
   let disposed = false
-
-  const dispose = createRenderEffect(() => {
-    if (disposed) return
-    // Clean up previous
-    if (currentRoot) {
-      destroyRoot(currentRoot)
-      currentRoot = null
-    }
-    if (currentNodes.length > 0) {
-      removeNodes(currentNodes)
-      currentNodes = []
-    }
-
-    // Create new content
-    const root = createRootContext(parentRoot)
-    root.ownerDocument = container.ownerDocument ?? parentRoot?.ownerDocument ?? document
-    const prev = pushRoot(root)
-    let handledError = false
+  const clearCurrentContent = () => {
+    const root = currentRoot
+    const nodes = currentNodes
+    currentRoot = null
+    currentNodes = []
     try {
-      const output = render()
-      if (output != null && output !== false) {
-        const el = untrack(() => createElementFn(output))
-        const nodes = toNodeArray(el, markerOwnerDocument)
-        if (marker.parentNode) {
-          currentNodes = insertNodesBefore(marker.parentNode as ParentNode & Node, nodes, marker)
-        } else {
-          currentNodes = nodes
+      if (root) destroyRoot(root)
+    } finally {
+      removeNodes(nodes)
+    }
+  }
+
+  let dispose: Cleanup
+  try {
+    dispose = createRenderEffect(() => {
+      if (disposed) return
+      // Clean up previous
+      clearCurrentContent()
+
+      // Create new content
+      const root = createRootContext(parentRoot)
+      root.ownerDocument = container.ownerDocument ?? parentRoot?.ownerDocument ?? document
+      const prev = pushRoot(root)
+      let nodes: Node[] = []
+      let committed = false
+      let released = false
+      const release = () => {
+        if (released) return
+        released = true
+        if (currentRoot === root) currentRoot = null
+        if (currentNodes === nodes) currentNodes = []
+        try {
+          destroyRoot(root)
+        } finally {
+          removeNodes(nodes)
         }
       }
-    } catch (err) {
-      if (handleSuspend(err as any, root)) {
-        handledError = true
-        destroyRoot(root)
-        currentNodes = []
-        return
-      }
-      if (handleError(err, { source: 'renderChild' }, root)) {
-        handledError = true
-        destroyRoot(root)
-        currentNodes = []
-        return
-      }
-      throw err
-    } finally {
-      popRoot(prev)
-      if (!handledError) {
-        flushOnMount(root)
+      try {
+        const output = render()
+        if (output != null && output !== false) {
+          const el = untrack(() => createElementFn(output))
+          nodes = toNodeArray(el, markerOwnerDocument)
+          if (marker.parentNode) {
+            nodes = insertNodesBefore(marker.parentNode as ParentNode & Node, nodes, marker)
+          }
+        }
+        currentNodes = nodes
         currentRoot = root
-      } else {
-        currentRoot = null
+        committed = true
+      } catch (err) {
+        if (handleSuspend(err as any, root)) {
+          release()
+          return
+        }
+        if (handleError(err, { source: 'renderChild' }, root)) {
+          release()
+          return
+        }
+        release()
+        throw err
+      } finally {
+        popRoot(prev)
+        if (committed) {
+          flushOnMount(root)
+        } else {
+          release()
+        }
       }
+    })
+  } catch (error) {
+    const root = currentRoot
+    const nodes = currentNodes
+    currentRoot = null
+    currentNodes = []
+    try {
+      if (root) destroyRoot(root)
+    } finally {
+      removeNodes(nodes)
+      marker.parentNode?.removeChild(marker)
     }
-  })
+    throw error
+  }
 
   // The portal's dispose function must be named so we can register it for cleanup
   const portalDispose = () => {
     if (disposed) return
     disposed = true
-    dispose()
-    if (currentRoot) {
-      destroyRoot(currentRoot)
-      currentRoot = null
+    try {
+      dispose()
+    } finally {
+      try {
+        clearCurrentContent()
+      } finally {
+        marker.parentNode?.removeChild(marker)
+      }
     }
-    if (currentNodes.length > 0) {
-      removeNodes(currentNodes)
-      currentNodes = []
-    }
-    marker.parentNode?.removeChild(marker)
   }
 
   // Register the portal's cleanup with the parent component's root context

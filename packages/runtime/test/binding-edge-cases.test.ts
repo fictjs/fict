@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 import {
+  createEffect,
   createRoot,
   onDestroy,
   onMount,
@@ -8,7 +9,7 @@ import {
   Fragment,
   ErrorBoundary,
 } from '../src/index'
-import { createSignal, reactive } from '../src/advanced'
+import { createChildBinding, createSignal, reactive } from '../src/advanced'
 import {
   bindRef,
   bindEvent,
@@ -29,7 +30,10 @@ import {
   addEventListener,
   createConditional,
   createPortal,
+  hydrateComponent,
   insert,
+  insertBetween,
+  template,
   callEventHandler,
 } from '../src/internal'
 import {
@@ -94,6 +98,35 @@ describe('setStyle', () => {
 
 const pushCleanup = <T>(log: T[], value: T): void => {
   log.push(value)
+}
+
+function createMountFailureFixture() {
+  const dependency = createSignal(0)
+  const error = new Error('child mount failed')
+  let effectRuns = 0
+  let destroyRuns = 0
+
+  function Child() {
+    createEffect(() => {
+      dependency()
+      effectRuns++
+    })
+    onDestroy(() => {
+      destroyRuns++
+    })
+    onMount(() => {
+      throw error
+    })
+    return { type: 'span', props: { children: 'owned child' }, key: undefined }
+  }
+
+  return {
+    Child,
+    dependency,
+    error,
+    effectRuns: () => effectRuns,
+    destroyRuns: () => destroyRuns,
+  }
 }
 
 describe('Binding Edge Cases', () => {
@@ -3730,6 +3763,395 @@ describe('Binding Edge Cases', () => {
       expect(secondSpan).not.toBe(firstSpan)
 
       dispose()
+    })
+  })
+
+  describe('materializer mount ownership', () => {
+    it('keeps insert ownership when child onMount is handled', async () => {
+      const parent = document.createElement('div')
+      const fixture = createMountFailureFixture()
+      const errors: unknown[] = []
+      const root = createRoot(() => {
+        registerErrorHandler(error => {
+          errors.push(error)
+          return true
+        })
+        insert(parent, () => ({ type: fixture.Child, props: {}, key: undefined }), createElement)
+      })
+
+      expect(errors).toEqual([fixture.error])
+      expect(parent.textContent).toBe('owned child')
+      expect(fixture.effectRuns()).toBe(1)
+
+      root.dispose()
+      expect(parent.childNodes).toHaveLength(0)
+      expect(fixture.destroyRuns()).toBe(1)
+      fixture.dependency(1)
+      await tick()
+      expect(fixture.effectRuns()).toBe(1)
+    })
+
+    it('keeps insertBetween ownership when child onMount is handled', async () => {
+      const parent = document.createElement('div')
+      const start = document.createComment('start')
+      const end = document.createComment('end')
+      parent.append(start, end)
+      const fixture = createMountFailureFixture()
+      const errors: unknown[] = []
+      const root = createRoot(() => {
+        registerErrorHandler(error => {
+          errors.push(error)
+          return true
+        })
+        insertBetween(
+          start,
+          end,
+          () => ({ type: fixture.Child, props: {}, key: undefined }),
+          createElement,
+        )
+      })
+
+      expect(errors).toEqual([fixture.error])
+      expect(parent.textContent).toBe('owned child')
+
+      root.dispose()
+      expect(Array.from(parent.childNodes)).toEqual([start, end])
+      expect(fixture.destroyRuns()).toBe(1)
+      fixture.dependency(1)
+      await tick()
+      expect(fixture.effectRuns()).toBe(1)
+    })
+
+    it('keeps createChildBinding ownership when child onMount is handled', async () => {
+      const parent = document.createElement('div')
+      const fixture = createMountFailureFixture()
+      const errors: unknown[] = []
+      const root = createRoot(() => {
+        registerErrorHandler(error => {
+          errors.push(error)
+          return true
+        })
+        createChildBinding(
+          parent,
+          () => ({ type: fixture.Child, props: {}, key: undefined }),
+          createElement,
+        )
+      })
+
+      expect(errors).toEqual([fixture.error])
+      expect(parent.textContent).toBe('owned child')
+
+      root.dispose()
+      expect(parent.childNodes).toHaveLength(0)
+      expect(fixture.destroyRuns()).toBe(1)
+      fixture.dependency(1)
+      await tick()
+      expect(fixture.effectRuns()).toBe(1)
+    })
+
+    it('keeps spread children ownership when child onMount is handled', async () => {
+      const parent = document.createElement('div')
+      const fixture = createMountFailureFixture()
+      const errors: unknown[] = []
+      const root = createRoot(() => {
+        registerErrorHandler(error => {
+          errors.push(error)
+          return true
+        })
+        spread(parent, {
+          children: reactive(() => ({ type: fixture.Child, props: {}, key: undefined })),
+        })
+      })
+
+      expect(errors).toEqual([fixture.error])
+      expect(parent.textContent).toBe('owned child')
+
+      root.dispose()
+      expect(parent.childNodes).toHaveLength(0)
+      expect(fixture.destroyRuns()).toBe(1)
+      fixture.dependency(1)
+      await tick()
+      expect(fixture.effectRuns()).toBe(1)
+    })
+
+    it('keeps portal ownership when child onMount is handled', async () => {
+      const target = document.createElement('div')
+      const fixture = createMountFailureFixture()
+      const errors: unknown[] = []
+      const root = createRoot(() => {
+        registerErrorHandler(error => {
+          errors.push(error)
+          return true
+        })
+        createPortal(
+          target,
+          () => ({ type: fixture.Child, props: {}, key: undefined }),
+          createElement,
+        )
+      })
+
+      expect(errors).toEqual([fixture.error])
+      expect(target.textContent).toBe('owned child')
+
+      root.dispose()
+      expect(target.childNodes).toHaveLength(0)
+      expect(fixture.destroyRuns()).toBe(1)
+      fixture.dependency(1)
+      await tick()
+      expect(fixture.effectRuns()).toBe(1)
+    })
+
+    it('rolls back inserted DOM and markers when initial onMount is unhandled', async () => {
+      const parent = document.createElement('div')
+      const fixture = createMountFailureFixture()
+
+      expect(() =>
+        insert(parent, () => ({ type: fixture.Child, props: {}, key: undefined }), createElement),
+      ).toThrow(fixture.error)
+
+      expect(parent.childNodes).toHaveLength(0)
+      expect(fixture.destroyRuns()).toBe(1)
+      fixture.dependency(1)
+      await tick()
+      expect(fixture.effectRuns()).toBe(1)
+    })
+
+    it('keeps the previous inserted subtree when the next getter fails', async () => {
+      const parent = document.createElement('div')
+      const fail = createSignal(false)
+      const error = new Error('next getter failed')
+      const errors: unknown[] = []
+      const root = createRoot(() => {
+        registerErrorHandler(caught => {
+          errors.push(caught)
+          return true
+        })
+        insert(
+          parent,
+          () => {
+            if (fail()) throw error
+            return { type: 'span', props: { children: 'stable child' }, key: undefined }
+          },
+          createElement,
+        )
+      })
+
+      const stable = parent.querySelector('span')
+      fail(true)
+      await tick()
+
+      expect(errors).toEqual([error])
+      expect(parent.querySelector('span')).toBe(stable)
+      expect(parent.textContent).toBe('stable child')
+      root.dispose()
+    })
+
+    it('commits the next inserted subtree when old cleanup errors are handled', async () => {
+      const parent = document.createElement('div')
+      const version = createSignal(0)
+      const cleanupError = new Error('old child cleanup failed')
+      const errors: unknown[] = []
+
+      const OldChild = () => {
+        onDestroy(() => {
+          throw cleanupError
+        })
+        return 'old child'
+      }
+
+      const root = createRoot(() => {
+        registerErrorHandler(caught => {
+          errors.push(caught)
+          return true
+        })
+        insert(
+          parent,
+          () =>
+            version() === 0
+              ? { type: OldChild, props: {}, key: undefined }
+              : { type: 'span', props: { children: 'new child' }, key: undefined },
+          createElement,
+        )
+      })
+
+      version(1)
+      await tick()
+
+      expect(errors).toEqual([cleanupError])
+      expect(parent.textContent).toBe('new child')
+      root.dispose()
+    })
+
+    it('removes spread children when child cleanup throws', () => {
+      const parent = document.createElement('div')
+      const cleanupError = new Error('spread cleanup failed')
+      const Child = () => {
+        onDestroy(() => {
+          throw cleanupError
+        })
+        return 'spread child'
+      }
+      const root = createRoot(() => {
+        spread(parent, {
+          children: reactive(() => ({ type: Child, props: {}, key: undefined })),
+        })
+      })
+
+      expect(() => root.dispose()).toThrow(cleanupError)
+      expect(parent.childNodes).toHaveLength(0)
+    })
+
+    it('removes conditional nodes and markers when branch cleanup throws', () => {
+      const cleanupError = new Error('conditional cleanup failed')
+      const Child = () => {
+        onDestroy(() => {
+          throw cleanupError
+        })
+        return 'conditional child'
+      }
+      const handle = createConditional(
+        () => true,
+        () => ({ type: Child, props: {}, key: undefined }),
+        createElement,
+      )
+      container.appendChild(handle.marker)
+      handle.flush?.()
+
+      expect(() => handle.dispose()).toThrow(cleanupError)
+      expect(container.childNodes).toHaveLength(0)
+    })
+
+    it('destroys a partial conditional branch when initial render throws', async () => {
+      const dependency = createSignal(0)
+      const renderError = new Error('conditional render failed')
+      let effectRuns = 0
+      let destroyRuns = 0
+      expect(() =>
+        createConditional(
+          () => true,
+          () => {
+            createEffect(() => {
+              dependency()
+              effectRuns++
+            })
+            onDestroy(() => {
+              destroyRuns++
+            })
+            throw renderError
+          },
+          createElement,
+        ),
+      ).toThrow(renderError)
+      expect(destroyRuns).toBe(1)
+      dependency(1)
+      await tick()
+      expect(effectRuns).toBe(1)
+    })
+
+    it('owns hydrated insertBetween nodes when the initial getter error is handled', async () => {
+      container.innerHTML = '<div><!--start--><span>server child</span><!--end--></div>'
+      const hydratedHost = template('<div></div>')
+      const shouldFail = createSignal(true)
+      const error = new Error('hydrated insert getter failed')
+      const errors: unknown[] = []
+
+      const teardown = hydrateComponent(() => {
+        registerErrorHandler(caught => {
+          errors.push(caught)
+          return true
+        })
+        const host = hydratedHost()
+        const comments = Array.from(host.childNodes).filter(
+          node => node.nodeType === Node.COMMENT_NODE,
+        ) as Comment[]
+        insertBetween(comments[0]!, comments[1]!, () => {
+          if (shouldFail()) throw error
+          return 'client child'
+        })
+      }, container)
+
+      expect(errors).toEqual([error])
+      expect(container.textContent).toBe('server child')
+
+      shouldFail(false)
+      await tick()
+      expect(container.textContent).toBe('client child')
+      expect(container.querySelector('span')).toBeNull()
+
+      teardown()
+      expect(container.textContent).toBe('')
+    })
+
+    it('owns hydrated spread children when the initial getter error is handled', async () => {
+      container.innerHTML = '<div><span>server child</span></div>'
+      const hydratedHost = template('<div></div>')
+      const shouldFail = createSignal(true)
+      const error = new Error('hydrated spread getter failed')
+      const errors: unknown[] = []
+
+      const teardown = hydrateComponent(() => {
+        registerErrorHandler(caught => {
+          errors.push(caught)
+          return true
+        })
+        const host = hydratedHost() as Element
+        spread(host, {
+          children: reactive(() => {
+            if (shouldFail()) throw error
+            return 'client child'
+          }),
+        })
+      }, container)
+
+      expect(errors).toEqual([error])
+      expect(container.textContent).toBe('server child')
+
+      shouldFail(false)
+      await tick()
+      expect(container.textContent).toBe('client child')
+      expect(container.querySelector('span')).toBeNull()
+
+      teardown()
+      expect(container.textContent).toBe('')
+    })
+
+    it('owns hydrated conditional nodes when the initial condition error is handled', async () => {
+      container.innerHTML =
+        '<div><!--fict:cond:start--><span>server child</span><!--fict:cond:end--></div>'
+      const hydratedHost = template('<div></div>')
+      const clientChild = template('<span>client child</span>')
+      const shouldFail = createSignal(true)
+      const error = new Error('hydrated condition failed')
+      const errors: unknown[] = []
+
+      const teardown = hydrateComponent(() => {
+        registerErrorHandler(caught => {
+          errors.push(caught)
+          return true
+        })
+        const host = hydratedHost()
+        const comments = Array.from(host.childNodes).filter(
+          node => node.nodeType === Node.COMMENT_NODE,
+        ) as Comment[]
+        const handle = createConditional(
+          () => {
+            if (shouldFail()) throw error
+            return true
+          },
+          () => clientChild(),
+          createElement,
+          undefined,
+          comments[0]!,
+          comments[1]!,
+        )
+        onDestroy(handle.dispose)
+      }, container)
+
+      expect(errors).toEqual([error])
+      expect(container.textContent).toBe('server child')
+
+      teardown()
+      expect(container.textContent).toBe('')
     })
   })
 
