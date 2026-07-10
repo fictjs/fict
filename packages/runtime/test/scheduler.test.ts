@@ -172,6 +172,28 @@ describe('Multi-Priority Scheduler', () => {
       expect(order[0]).toBe('high:1')
       expect(order.slice(1).sort()).toEqual(['low-a:1', 'low-b:1'])
     })
+
+    it('schedules high-priority work queued by the final low-priority effect', async () => {
+      const low = createSignal(0)
+      const high = createSignal(0)
+      const order: string[] = []
+
+      createEffect(() => {
+        if (low() !== 1) return
+        order.push('low:start')
+        batch(() => high(1))
+        order.push('low:end')
+      })
+      createEffect(() => {
+        if (high() === 1) order.push('high')
+      })
+
+      startTransition(() => low(1))
+      await tick()
+      await tick()
+
+      expect(order).toEqual(['low:start', 'low:end', 'high'])
+    })
   })
 
   describe('startTransition', () => {

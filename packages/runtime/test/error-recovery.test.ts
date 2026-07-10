@@ -17,6 +17,46 @@ const tick = () =>
   )
 
 describe('effect self-write convergence', () => {
+  it('preserves self-writes made through a nested batch during a flush', () => {
+    __resetReactiveState()
+    const value = rawSignal(0)
+    const seen: number[] = []
+
+    rawEffect(() => {
+      const current = value()
+      seen.push(current)
+      if (current === 1) {
+        rawBatch(() => value(2))
+      }
+    })
+
+    rawBatch(() => value(1))
+    expect(seen).toEqual([0, 1, 2])
+
+    rawBatch(() => value(3))
+    expect(seen).toEqual([0, 1, 2, 3])
+  })
+
+  it('does not run sibling effects reentrantly from a nested batch', () => {
+    __resetReactiveState()
+    const value = rawSignal(0)
+    const order: string[] = []
+
+    rawEffect(() => {
+      if (value() !== 1) return
+      order.push('first:start')
+      rawBatch(() => {})
+      order.push('first:end')
+    })
+    rawEffect(() => {
+      if (value() === 1) order.push('second')
+    })
+
+    rawBatch(() => value(1))
+
+    expect(order).toEqual(['first:start', 'first:end', 'second'])
+  })
+
   it('re-runs an effect that writes its own dependency until it converges', async () => {
     __resetReactiveState()
     const x = rawSignal(0)

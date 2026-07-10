@@ -286,6 +286,7 @@ let cycle = 0
 let batchDepth = 0
 let activeSub: ReactiveNode | undefined
 let flushScheduled = false
+let isFlushing = false
 let currentFlushId = 0
 let activeCleanupFlushId = 0
 // Dual-priority queue for scheduler
@@ -1086,6 +1087,19 @@ export function scheduleFlush(): void {
  * High priority effects execute first; low priority can be interrupted
  */
 function flush(): void {
+  // A batch can finish while an effect is already being flushed. Let the
+  // outer loop drain newly queued work so queue indices cannot invalidate one another.
+  if (isFlushing) return
+  isFlushing = true
+  try {
+    flushQueues()
+  } finally {
+    isFlushing = false
+    scheduleFlush()
+  }
+}
+
+function flushQueues(): void {
   beginFlushGuard()
   let flushReported = false
   const finishFlush = () => {
@@ -1664,6 +1678,7 @@ export function __resetReactiveState(): void {
   batchDepth = 0
   activeSub = undefined
   flushScheduled = false
+  isFlushing = false
   isInTransition = false
   inCleanup = false
   cycle = 0
