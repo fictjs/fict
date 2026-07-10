@@ -1,3 +1,5 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 import { transformSync, types as t, type PluginObj } from '@babel/core'
@@ -13,6 +15,24 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
       return <div>{value}</div>
     }
   `
+
+  it('resolves syntax plugins from the preset in an isolated consumer cwd', () => {
+    const consumerCwd = mkdtempSync(path.join(tmpdir(), 'fict-babel-preset-consumer-'))
+    try {
+      const result = transformSync(reactiveComponent, {
+        cwd: consumerCwd,
+        filename: path.join(consumerCwd, 'App.tsx'),
+        configFile: false,
+        babelrc: false,
+        presets: [[fictPreset, { dev: false, strictGuarantee: false }]],
+      })
+
+      expect(result?.code).toContain('__fictUseSignal')
+      expect(result?.code).not.toContain('$state')
+    } finally {
+      rmSync(consumerCwd, { recursive: true, force: true })
+    }
+  })
 
   it.each([
     {

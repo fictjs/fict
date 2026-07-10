@@ -21,6 +21,7 @@ export default defineConfig({
     neverBundle: [
       '@babel/core',
       '@babel/plugin-syntax-jsx',
+      '@babel/plugin-syntax-typescript',
       '@babel/plugin-transform-typescript',
       '@fictjs/compiler',
     ],

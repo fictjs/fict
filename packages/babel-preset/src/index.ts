@@ -1,3 +1,6 @@
+// eslint-disable-next-line @typescript-eslint/triple-slash-reference -- upstream has no declarations
+/// <reference path="./babel-plugin-syntax-typescript.d.ts" />
+
 import {
   transformFromAstSync,
   types as t,
@@ -6,6 +9,8 @@ import {
   type TransformOptions,
 } from '@babel/core'
 import type * as BabelCore from '@babel/core'
+import syntaxJsx from '@babel/plugin-syntax-jsx'
+import syntaxTypeScript from '@babel/plugin-syntax-typescript'
 import transformModulesCommonJS from '@babel/plugin-transform-modules-commonjs'
 import transformTypeScript from '@babel/plugin-transform-typescript'
 import { createFictPlugin, type FictCompilerOptions } from '@fictjs/compiler'
@@ -376,7 +381,7 @@ export default function fictPreset(
   if (typescript) {
     if (allExtensions) {
       plugins.push([
-        '@babel/plugin-syntax-typescript',
+        syntaxTypeScript,
         {
           isTSX,
           disallowAmbiguousJSXLike: typescriptOptions.disallowAmbiguousJSXLike ?? false,
@@ -386,18 +391,18 @@ export default function fictPreset(
       overrides.push(
         {
           test: TSX_FILENAME_RE,
-          plugins: [['@babel/plugin-syntax-typescript', { isTSX: true }]],
+          plugins: [[syntaxTypeScript, { isTSX: true }]],
         },
         {
           test: TS_FILENAME_RE,
-          plugins: [['@babel/plugin-syntax-typescript', { isTSX: false }]],
+          plugins: [[syntaxTypeScript, { isTSX: false }]],
         },
         {
           test: MTS_FILENAME_RE,
           sourceType: 'module',
           plugins: [
             [
-              '@babel/plugin-syntax-typescript',
+              syntaxTypeScript,
               {
                 isTSX: false,
                 disallowAmbiguousJSXLike: true,
@@ -410,7 +415,7 @@ export default function fictPreset(
           sourceType: 'unambiguous',
           plugins: [
             [
-              '@babel/plugin-syntax-typescript',
+              syntaxTypeScript,
               {
                 isTSX: false,
                 disallowAmbiguousJSXLike: true,
@@ -423,7 +428,7 @@ export default function fictPreset(
   }
 
   // Add JSX syntax plugin
-  plugins.push(['@babel/plugin-syntax-jsx', {}])
+  plugins.push([syntaxJsx, {}])
 
   // Compile Fict in `pre`, before sibling visitors in the outer Babel pass.
   plugins.push(createIsolatedFictPrepass(compilerOptions, typescript, typescriptOptions))
