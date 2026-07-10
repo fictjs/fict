@@ -770,13 +770,25 @@ console.log(__fictGetResume('__fict_r0')) // Should return function
 
 **Solution:**
 
-```typescript
-// Use lazy initialization
-let data = $state(null) // Initial null
-onMount(async () => {
-  data = await fetchData() // Fetch on client
-})
+```tsx
+// Serialize only lightweight state, then load details from a resumable client interaction.
+let data = $state(null)
+
+return (
+  <button
+    onClick$={async () => {
+      data = await fetchData(itemId)
+    }}
+  >
+    Load details
+  </button>
+)
 ```
+
+`onMount` is synchronous and also runs during server rendering. Do not use an async `onMount`
+callback for client bootstrapping: returned promises are not awaited, and a cleanup resolved from a
+promise is not registered. If data must load automatically on the client, use an explicit
+client-only/CSR bootstrap instead.
 
 ### Debugging Tips
 
