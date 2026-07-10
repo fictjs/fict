@@ -773,6 +773,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       resetTransformState()
     },
 
+    shouldTransformCachedModule({ id }) {
+      // Importer output depends on metadata from its local dependency graph. Rollup's
+      // watch cache only keys the importer by its own source, so a changed hook can
+      // otherwise leave an unchanged importer compiled against stale accessor metadata.
+      // Return null for unrelated modules so later plugins can still opt into this hook.
+      return shouldCompileModule(id) ? true : null
+    },
+
     resolveId(id: string) {
       // Handle virtual handler modules
       if (id.startsWith(VIRTUAL_HANDLER_RESOLVE_PREFIX)) {

@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
-import { build } from 'vite'
+import { build, type Rollup } from 'vite'
 import { describe, it, expect, vi } from 'vitest'
 
 import fict, { __fictVitePluginInternals } from '..'
@@ -40,6 +40,29 @@ type TestPlugin = ReturnType<typeof fict> & {
 
 function getTestPlugin(options?: Parameters<typeof fict>[0]): TestPlugin {
   return fict(options) as TestPlugin
+}
+
+function waitForWatchEnd(watcher: Rollup.RollupWatcher, timeoutMs = 10_000): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const onEvent = (event: Rollup.RollupWatcherEvent) => {
+      if (event.code === 'ERROR') {
+        cleanup()
+        reject(event.error)
+      } else if (event.code === 'END') {
+        cleanup()
+        resolve()
+      }
+    }
+    const timer = setTimeout(() => {
+      watcher.off('event', onEvent)
+      reject(new Error('Timed out waiting for Vite watch build.'))
+    }, timeoutMs)
+    const cleanup = () => {
+      clearTimeout(timer)
+      watcher.off('event', onEvent)
+    }
+    watcher.on('event', onEvent)
+  })
 }
 
 async function buildFictEntry(root: string, entry: string): Promise<string> {
@@ -746,6 +769,79 @@ describe('fict vite-plugin', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  it('retransforms unchanged importers when local hook metadata changes in build watch mode', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-watch-metadata-'))
+    const srcDir = path.join(root, 'src')
+    const outDir = path.join(root, 'dist')
+    const hookPath = path.join(srcDir, 'use-counter.tsx')
+    const appPath = path.join(srcDir, 'App.tsx')
+    let watcher: Rollup.RollupWatcher | undefined
+
+    try {
+      await mkdir(srcDir, { recursive: true })
+      await writeFile(
+        hookPath,
+        `
+            import { $state } from 'fict'
+            export function useCounter() {
+              const count = $state(1)
+              return count
+            }
+          `,
+      )
+      await writeFile(
+        appPath,
+        `
+            import { useCounter } from './use-counter'
+            export function App() {
+              const count = useCounter()
+              const doubled = count * 2
+              return <div>{doubled}</div>
+            }
+          `,
+      )
+
+      watcher = (await build({
+        root,
+        logLevel: 'silent',
+        plugins: [fict({ cache: false, useTypeScriptProject: false, functionSplitting: false })],
+        build: {
+          outDir,
+          emptyOutDir: true,
+          minify: false,
+          lib: { entry: appPath, formats: ['es'], fileName: () => 'app.js' },
+          rollupOptions: {
+            external: id => id === 'fict' || id.startsWith('fict/'),
+          },
+          watch: { buildDelay: 10 },
+        },
+      })) as Rollup.RollupWatcher
+
+      await waitForWatchEnd(watcher)
+      const firstCode = await readFile(path.join(outDir, 'app.js'), 'utf8')
+      expect(firstCode).toMatch(/count\(\)\s*\*\s*2/)
+
+      const rebuilt = waitForWatchEnd(watcher)
+      await writeFile(
+        hookPath,
+        `
+            export function useCounter() {
+              const count = 1
+              return count
+            }
+          `,
+      )
+      await rebuilt
+
+      const secondCode = await readFile(path.join(outDir, 'app.js'), 'utf8')
+      expect(secondCode).toMatch(/count\s*\*\s*2/)
+      expect(secondCode).not.toMatch(/count\(\)\s*\*\s*2/)
+    } finally {
+      await watcher?.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 20_000)
 
   it('applies the Babel transformer', async () => {
     const plugin = fict() as any
