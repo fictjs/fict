@@ -172,6 +172,7 @@ interface MetadataTransformState {
   activeRequests: number
   idleResolvers: Set<() => void>
   retired: boolean
+  retryableAfterRetire: boolean
 }
 
 interface MetadataRequestStore {
@@ -179,6 +180,13 @@ interface MetadataRequestStore {
   environment: object
   state: MetadataTransformState
   trusted: boolean
+}
+
+class StaleMetadataRequestError extends Error {
+  constructor() {
+    super('[fict] A pre-HMR dev request cannot start nested pipeline work after invalidation.')
+    this.name = 'StaleMetadataRequestError'
+  }
 }
 
 interface MetadataResolveContext {
@@ -306,6 +314,7 @@ interface TypeScriptApi {
 }
 
 const CACHE_VERSION = 4
+const MAX_STALE_DEV_REQUEST_RETRIES = 3
 let transformCacheFingerprint: string | undefined
 
 // Lazy: both fingerprints read package artifacts from disk, so the cost is
@@ -438,6 +447,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       activeRequests: 0,
       idleResolvers: new Set(),
       retired: false,
+      retryableAfterRetire: false,
     }
     transformStates.add(state)
     return state
@@ -447,7 +457,6 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   const detachedPendingRequests = new WeakMap<object, Set<Promise<unknown>>>()
   const metadataRequestStorage = new AsyncLocalStorage<MetadataRequestStore>()
   const wrappedDevEnvironments = new WeakSet<object>()
-  const staleMetadataRequest = Symbol('stale Fict metadata request')
   const libraryMetadataAssets = new Map<string, LibraryMetadataAsset>()
   const packageBoundaryCache = new Map<string, PackageBoundary | null>()
   let projectPackageRoot: string | undefined
@@ -523,7 +532,10 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     blockUnscopedTransforms = false,
   ) => {
     const previous = environmentTransformStates.get(environment)
-    if (previous) retireTransformState(previous)
+    if (previous) {
+      previous.retryableAfterRetire = true
+      retireTransformState(previous)
+    }
     const next = createTransformState(environment)
     next.blockUnscopedTransforms = blockUnscopedTransforms
     environmentTransformStates.set(environment, next)
@@ -560,7 +572,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   }
 
   const assertTransformStateActive = (state: MetadataTransformState) => {
-    if (state.retired) throw staleMetadataRequest
+    if (state.retired) throw new StaleMetadataRequestError()
   }
 
   const retainTransformState = (state: MetadataTransformState) => {
@@ -644,9 +656,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             ? currentRequest
             : undefined
         if (currentRequestActive && currentRequest.state.retired) {
-          throw new Error(
-            '[fict] A pre-HMR dev request cannot start nested pipeline work after invalidation.',
-          )
+          throw new StaleMetadataRequestError()
         }
         const inheritsUntrustedProvenance = currentRequest?.trusted === false
         if (kind === 'environment' && inheritsUntrustedProvenance) {
@@ -671,22 +681,50 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               'still settling; retry after that request completes.',
           )
         }
-        const state = activeRequest?.state ?? getEnvironmentTransformState(environment)
-        const releaseState = retainTransformState(state)
-        const request: MetadataRequestStore = activeRequest ?? {
-          activeScopes: 0,
-          environment,
-          state,
-          trusted,
-        }
-        request.activeScopes++
-        try {
-          const invoke = () => Reflect.apply(original, receiver, args) as unknown
-          if (activeRequest) return await invoke()
-          return await metadataRequestStorage.run(request, invoke)
-        } finally {
-          request.activeScopes--
-          releaseState()
+        const canRetry = kind === 'environment' && !activeRequest
+        let retryCount = 0
+        while (true) {
+          const state = activeRequest?.state ?? getEnvironmentTransformState(environment)
+          const releaseState = retainTransformState(state)
+          const request: MetadataRequestStore = activeRequest ?? {
+            activeScopes: 0,
+            environment,
+            state,
+            trusted,
+          }
+          request.activeScopes++
+          let result: unknown
+          let failure: unknown
+          let failed = false
+          try {
+            const invoke = () => Reflect.apply(original, receiver, args) as unknown
+            result = activeRequest
+              ? await invoke()
+              : await metadataRequestStorage.run(request, invoke)
+          } catch (error) {
+            failed = true
+            failure = error
+          } finally {
+            request.activeScopes--
+            releaseState()
+          }
+
+          const stale = state.retired || failure instanceof StaleMetadataRequestError
+          if (
+            canRetry &&
+            stale &&
+            state.retryableAfterRetire &&
+            retryCount < MAX_STALE_DEV_REQUEST_RETRIES
+          ) {
+            const moduleGraph = (environment as { moduleGraph: { invalidateAll: () => void } })
+              .moduleGraph
+            moduleGraph.invalidateAll()
+            retryCount++
+            continue
+          }
+          if (failed) throw failure
+          if (state.retired) throw new StaleMetadataRequestError()
+          return result
         }
       }
     }
@@ -1534,7 +1572,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         })
         return null
       }
-      if (state.retired) return null
+      if (state.retired) throw new StaleMetadataRequestError()
       const releaseState = retainTransformState(state)
       const pipelineMetadataEnabled = hasMetadataPipelineLoader(metadataContext)
       if (pipelineMetadataEnabled) {
@@ -1734,7 +1772,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
 
         return transformed
       } catch (error) {
-        if (error === staleMetadataRequest) return null
+        if (error instanceof StaleMetadataRequestError) throw error
         // Better error handling
         const message =
           error instanceof Error ? error.message : 'Unknown error during Fict transformation'

@@ -885,7 +885,7 @@ describe('fict vite-plugin', () => {
     }
   })
 
-  it('does not let an older pre-pipeline request overwrite fresh HMR handlers', async () => {
+  it('retries an older pre-pipeline request without overwriting fresh HMR handlers', async () => {
     const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-vite-hmr-generation-')))
     const srcDir = path.join(root, 'src')
     const appPath = path.join(srcDir, 'App.tsx')
@@ -987,9 +987,8 @@ describe('fict vite-plugin', () => {
       expect(beforeOldResumes).not.toContain('old-handler')
 
       releaseOld.resolve()
-      await expect(within(oldRequest, 'old transform completion')).rejects.toThrow(
-        'pre-HMR dev request',
-      )
+      const retriedOld = await within(oldRequest, 'old transform completion')
+      expect(retriedOld?.code).toContain('virtual:fict-handler:')
 
       const afterOldResumes = await loadHandler()
       expect(afterOldResumes).toContain('new-handler')
@@ -1004,6 +1003,91 @@ describe('fict vite-plugin', () => {
     } finally {
       releaseOld.resolve()
       if (oldRequest) await Promise.allSettled([oldRequest])
+      await server?.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('retries when HMR retires a request after Fict transform', async () => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-vite-hmr-post-transform-')))
+    const srcDir = path.join(root, 'src')
+    const appPath = path.join(srcDir, 'App.tsx')
+    const deferred = () => {
+      let resolve!: () => void
+      const promise = new Promise<void>(done => {
+        resolve = done
+      })
+      return { promise, resolve }
+    }
+    const source = (label: string) => `
+      import { $state } from 'fict'
+      export const label = ${JSON.stringify(label)}
+      export function useCount() {
+        const count = $state(1)
+        return count
+      }
+    `
+    const transformReached = deferred()
+    const releaseTransform = deferred()
+    const hmrSeen = deferred()
+    let gated = false
+    let server: Awaited<ReturnType<typeof createServer>> | undefined
+
+    try {
+      await mkdir(srcDir, { recursive: true })
+      await writeFile(appPath, source('old-label'))
+      server = await createServer({
+        root,
+        configFile: false,
+        logLevel: 'silent',
+        dev: { preTransformRequests: false },
+        optimizeDeps: { noDiscovery: true },
+        server: { middlewareMode: true, watch: null },
+        plugins: [
+          {
+            name: 'test-post-transform-runtime-resolve',
+            resolveId(id) {
+              return id === 'fict/internal' ? { id, external: true } : null
+            },
+          },
+          fict({
+            include: ['**/*.tsx'],
+            cache: false,
+            useTypeScriptProject: false,
+            functionSplitting: false,
+          }),
+          {
+            name: 'test-post-fict-transform-gate',
+            async transform(code, id) {
+              if (id.split('?')[0] !== appPath || gated) return null
+              gated = true
+              expect(code).toContain('__fictUseSignal')
+              transformReached.resolve()
+              await releaseTransform.promise
+              return null
+            },
+            handleHotUpdate(context) {
+              if (path.normalize(context.file) === path.normalize(appPath)) hmrSeen.resolve()
+            },
+          },
+        ],
+      })
+
+      const request = server.environments.client.transformRequest('/src/App.tsx')
+      await transformReached.promise
+      await server.watcher.unwatch(appPath)
+      await writeFile(appPath, source('new-label'))
+      server.watcher.emit('change', appPath)
+      await hmrSeen.promise
+      releaseTransform.resolve()
+
+      const result = await request
+      expect(result?.code).toContain('new-label')
+      expect(result?.code).not.toContain('old-label')
+      expect(result?.code).toContain('__fictUseSignal')
+      expect(result?.code).not.toContain('$state')
+    } finally {
+      releaseTransform.resolve()
       await server?.close()
       await rm(root, { recursive: true, force: true })
     }
