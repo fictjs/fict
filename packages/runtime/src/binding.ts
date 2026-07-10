@@ -38,6 +38,7 @@ import {
   popRoot,
   queueDeferredRefAssignment,
   registerRootCleanup,
+  withRootContext,
   type RootContext,
 } from './lifecycle'
 import { toNodeArray, removeNodes, insertNodesBefore } from './node-ops'
@@ -1907,37 +1908,38 @@ function createEventInvoker(
   node: Element,
   rootRef: RootContext | undefined,
 ): EventListener {
-  return (event: Event) => {
-    try {
-      if (Array.isArray(handler)) {
-        const resolvedHandler = resolveEventHandlerValue(
-          handler[0] as EventListenerOrEventListenerObject | null | undefined,
-        )
-        const hasData = handler.length > 1
-        const data = hasData ? resolveEventData(handler[1], event) : undefined
-        callEventHandler(
-          resolvedHandler,
-          event,
-          node,
-          data,
-          handler[2] === DELEGATED_DATA_ONLY_MARKER || handler[2] === DELEGATED_DATA_PLAIN_MARKER,
-          handler[2] === DELEGATED_DATA_PLAIN_MARKER,
-          hasData,
-        )
-        return
-      }
+  return (event: Event) =>
+    withRootContext(rootRef, () => {
+      try {
+        if (Array.isArray(handler)) {
+          const resolvedHandler = resolveEventHandlerValue(
+            handler[0] as EventListenerOrEventListenerObject | null | undefined,
+          )
+          const hasData = handler.length > 1
+          const data = hasData ? resolveEventData(handler[1], event) : undefined
+          callEventHandler(
+            resolvedHandler,
+            event,
+            node,
+            data,
+            handler[2] === DELEGATED_DATA_ONLY_MARKER || handler[2] === DELEGATED_DATA_PLAIN_MARKER,
+            handler[2] === DELEGATED_DATA_PLAIN_MARKER,
+            hasData,
+          )
+          return
+        }
 
-      const resolvedHandler = resolveEventHandlerValue(
-        handler as EventListenerOrEventListenerObject | null | undefined,
-      )
-      callEventHandler(resolvedHandler, event, node)
-    } catch (err) {
-      if (handleError(err, { source: 'event', eventName }, getEventErrorRoot(node) ?? rootRef)) {
-        return
+        const resolvedHandler = resolveEventHandlerValue(
+          handler as EventListenerOrEventListenerObject | null | undefined,
+        )
+        callEventHandler(resolvedHandler, event, node)
+      } catch (err) {
+        if (handleError(err, { source: 'event', eventName }, getEventErrorRoot(node) ?? rootRef)) {
+          return
+        }
+        throw err
       }
-      throw err
-    }
-  }
+    })
 }
 
 // ============================================================================

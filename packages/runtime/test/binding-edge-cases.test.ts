@@ -40,6 +40,7 @@ import {
 import {
   createRootContext,
   destroyRoot,
+  getCurrentRoot,
   popRoot,
   pushRoot,
   registerErrorHandler,
@@ -298,6 +299,161 @@ describe('Binding Edge Cases', () => {
       expect(handler).toHaveBeenCalled()
 
       cleanup()
+    })
+
+    it.each([
+      { eventName: 'click', bubbles: true },
+      { eventName: 'focus', bubbles: false },
+    ])('runs $eventName handlers in their owner root', ({ eventName, bubbles }) => {
+      const el = document.createElement('button')
+      container.appendChild(el)
+      let ownerRoot = getCurrentRoot()
+      let foreignRoot = getCurrentRoot()
+      let handlerRoot = getCurrentRoot()
+      let destroyRuns = 0
+
+      const owner = createRoot(() => {
+        ownerRoot = getCurrentRoot()
+        bindEvent(el, eventName, () => {
+          handlerRoot = getCurrentRoot()
+          onDestroy(() => {
+            destroyRuns++
+          })
+        })
+      })
+      const foreign = createRoot(() => {
+        foreignRoot = getCurrentRoot()
+        el.dispatchEvent(new Event(eventName, { bubbles }))
+      })
+
+      expect(handlerRoot).toBe(ownerRoot)
+      expect(handlerRoot).not.toBe(foreignRoot)
+
+      foreign.dispose()
+      expect(destroyRuns).toBe(0)
+      owner.dispose()
+      expect(destroyRuns).toBe(1)
+    })
+
+    it.each([
+      { eventName: 'click', bubbles: true },
+      { eventName: 'focus', bubbles: false },
+    ])('keeps rootless $eventName handlers rootless', ({ eventName, bubbles }) => {
+      const el = document.createElement('button')
+      container.appendChild(el)
+      let handlerRoot = getCurrentRoot()
+      let destroyRuns = 0
+      const cleanup = bindEvent(el, eventName, () => {
+        handlerRoot = getCurrentRoot()
+        onDestroy(() => {
+          destroyRuns++
+        })
+      })
+
+      const foreign = createRoot(() => {
+        expect(getCurrentRoot()).toBeDefined()
+        el.dispatchEvent(new Event(eventName, { bubbles }))
+      })
+
+      expect(handlerRoot).toBeUndefined()
+      expect(destroyRuns).toBe(1)
+      foreign.dispose()
+      expect(destroyRuns).toBe(1)
+      cleanup()
+    })
+
+    it('runs tuple resolution and invocation in the owner root', () => {
+      const el = document.createElement('button')
+      container.appendChild(el)
+      const observed: Array<[string, ReturnType<typeof getCurrentRoot>]> = []
+      let ownerRoot = getCurrentRoot()
+      const finalHandler = vi.fn(() => {
+        observed.push(['handler', getCurrentRoot()])
+      })
+      const handlerAccessor = reactive(() => {
+        observed.push(['handler-accessor', getCurrentRoot()])
+        return finalHandler
+      })
+      const dataAccessor = () => {
+        observed.push(['data-accessor', getCurrentRoot()])
+        return 'row-1'
+      }
+
+      const owner = createRoot(() => {
+        ownerRoot = getCurrentRoot()
+        addEventListener(el, 'click', [handlerAccessor, dataAccessor] as any, true)
+      })
+      const foreign = createRoot(() => {
+        el.dispatchEvent(new Event('click', { bubbles: true }))
+      })
+
+      expect(observed).toEqual([
+        ['handler-accessor', ownerRoot],
+        ['data-accessor', ownerRoot],
+        ['handler', ownerRoot],
+      ])
+      expect(finalHandler).toHaveBeenCalledWith('row-1', expect.any(Event))
+
+      foreign.dispose()
+      owner.dispose()
+    })
+
+    it('preserves handleEvent this and owner root', () => {
+      const el = document.createElement('input')
+      let ownerRoot = getCurrentRoot()
+      let handlerRoot = getCurrentRoot()
+      let handlerThis: unknown
+      const handler = {
+        handleEvent(this: unknown) {
+          handlerThis = this
+          handlerRoot = getCurrentRoot()
+        },
+      }
+
+      const owner = createRoot(() => {
+        ownerRoot = getCurrentRoot()
+        bindEvent(el, 'focus', handler)
+      })
+      const foreign = createRoot(() => {
+        el.dispatchEvent(new Event('focus'))
+      })
+
+      expect(handlerThis).toBe(handler)
+      expect(handlerRoot).toBe(ownerRoot)
+
+      foreign.dispose()
+      owner.dispose()
+    })
+
+    it('runs event error handlers in the event owner root', () => {
+      const el = document.createElement('button')
+      container.appendChild(el)
+      const error = new Error('event failed')
+      let ownerRoot = getCurrentRoot()
+      let errorRoot = getCurrentRoot()
+      let errorInfo: { source?: string; eventName?: string } | undefined
+
+      const owner = createRoot(() => {
+        ownerRoot = getCurrentRoot()
+        registerErrorHandler((received, info) => {
+          expect(received).toBe(error)
+          errorRoot = getCurrentRoot()
+          errorInfo = info
+          return true
+        })
+        bindEvent(el, 'click', () => {
+          throw error
+        })
+      })
+      const foreign = createRoot(() => {
+        el.dispatchEvent(new Event('click', { bubbles: true }))
+      })
+
+      expect(errorRoot).toBe(ownerRoot)
+      expect(errorInfo).toMatchObject({ source: 'event', eventName: 'click' })
+
+      foreign.dispose()
+      owner.dispose()
     })
 
     it('uses the element ownerDocument for delegated events', () => {
