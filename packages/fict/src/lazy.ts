@@ -92,6 +92,7 @@ export function lazy<TProps extends Record<string, unknown> = Record<string, unk
 
   let loaded: Component<TProps> | null = null
   let loadError: unknown = null
+  let hasLoadError = false
   let loadingPromise: Promise<void> | null = null
   let pendingToken: ReturnType<typeof createSuspenseToken> | null = null
   let retryCount = 0
@@ -120,6 +121,7 @@ export function lazy<TProps extends Record<string, unknown> = Record<string, unk
         }
         loaded = resolved
         loadError = null
+        hasLoadError = false
         retryCount = 0
         pendingToken?.resolve()
       })
@@ -144,6 +146,7 @@ export function lazy<TProps extends Record<string, unknown> = Record<string, unk
           throw err
         }
         loadError = err
+        hasLoadError = true
         pendingToken?.reject(err)
         throw err
       })
@@ -169,7 +172,7 @@ export function lazy<TProps extends Record<string, unknown> = Record<string, unk
     if (loaded) {
       return loaded(props)
     }
-    if (loadError) {
+    if (hasLoadError) {
       throw loadError
     }
     if (!pendingToken) {
@@ -193,6 +196,7 @@ export function lazy<TProps extends Record<string, unknown> = Record<string, unk
     loadGeneration++
     const suspendedToken = pendingToken
     loadError = null
+    hasLoadError = false
     loadingPromise = null
     pendingToken = null
     retryCount = 0
@@ -209,6 +213,9 @@ export function lazy<TProps extends Record<string, unknown> = Record<string, unk
   component.preload = (): Promise<void> => {
     if (loaded) {
       return Promise.resolve()
+    }
+    if (hasLoadError) {
+      return Promise.reject(loadError)
     }
     if (loadingPromise) {
       return loadingPromise

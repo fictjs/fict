@@ -53,6 +53,31 @@ describe('lazy', () => {
     expect(() => LazyComp({})).toThrow(error)
   })
 
+  it.each([undefined, null, false, 0, ''])(
+    'caches a falsy loader rejection until reset: %j',
+    async reason => {
+      const loader = vi.fn(() => Promise.reject(reason))
+      const LazyComp = lazy(loader)
+
+      await expect(LazyComp.preload()).rejects.toBe(reason)
+
+      const notThrown = Symbol('not thrown')
+      let thrown: unknown = notThrown
+      try {
+        LazyComp({})
+      } catch (error) {
+        thrown = error
+      }
+      expect(thrown).toBe(reason)
+      await expect(LazyComp.preload()).rejects.toBe(reason)
+      expect(loader).toHaveBeenCalledTimes(1)
+
+      LazyComp.reset()
+      await expect(LazyComp.preload()).rejects.toBe(reason)
+      expect(loader).toHaveBeenCalledTimes(2)
+    },
+  )
+
   it('normalizes synchronous loader failures into rejected preloads', async () => {
     const error = new Error('sync load failed')
     const loader = vi.fn(() => {
