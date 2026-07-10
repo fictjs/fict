@@ -2513,6 +2513,35 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it('does not require module metadata for query-suffixed resource imports', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-query-resource-'))
+
+    try {
+      const entry = path.join(root, 'App.tsx')
+      await writeFile(path.join(root, 'source.ts'), `export const rawMarker = true`)
+      await writeFile(
+        entry,
+        `
+          import { $state } from 'fict'
+          import source from './source.ts?raw'
+
+          export function App() {
+            const count = $state(1)
+            return <pre>{source}{count}</pre>
+          }
+        `,
+      )
+
+      const code = await buildFictEntry(root, entry)
+
+      expect(code).toContain('rawMarker')
+      expect(code).toContain('fict/internal')
+      expect(code).not.toContain('$state')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('skips bundler virtual runtime modules in library mode', async () => {
     const plugin = fict({ library: true, useTypeScriptProject: false }) as any
     const transform = plugin.transform as any

@@ -911,6 +911,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   ): ModuleReactiveMetadata | undefined => {
     const userResolved = compilerOptions.resolveModuleMetadata?.(source, importer)
     if (userResolved) return userResolved
+    if (hasModuleQuerySuffix(source)) return undefined
     if (!importer) return undefined
 
     const importerFile = normalizeFileName(importer, config?.root)
