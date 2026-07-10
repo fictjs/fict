@@ -198,6 +198,10 @@ export function applyImportedReactiveMetadata(
         if (hookInfo && hooks?.setImportedHookInfo) {
           hooks.setImportedHookInfo(localName, hookInfo)
         }
+        const namespaceMeta = getOwnRecordValue(meta.namespaces, 'default')
+        if (namespaceMeta) {
+          namespaces.set(localName, namespaceMeta)
+        }
         markHookImport(localName, 'default', !!hookInfo)
         continue
       }
@@ -248,16 +252,19 @@ export function buildModuleReactiveMetadata(
     explicitExportNames.add(exportName)
     delete metadata.exports[exportName]
     delete hookExports[exportName]
+    delete namespaceExports[exportName]
   }
   const addStarExport = (
     exportName: string,
     kind: unknown,
     hookInfo: HookReturnInfoSerializable | undefined,
+    namespaceInfo: ModuleReactiveMetadata | undefined,
   ) => {
     if (exportName === 'default' || explicitExportNames.has(exportName)) return
     if (starExportNames.has(exportName)) {
       delete metadata.exports[exportName]
       delete hookExports[exportName]
+      delete namespaceExports[exportName]
       return
     }
     starExportNames.add(exportName)
@@ -266,6 +273,9 @@ export function buildModuleReactiveMetadata(
     }
     if (hookInfo) {
       setMetadataRecordValue(hookExports, exportName, hookInfo)
+    }
+    if (namespaceInfo) {
+      setMetadataRecordValue(namespaceExports, exportName, namespaceInfo)
     }
   }
   const getSpecifierName = (
@@ -278,6 +288,28 @@ export function buildModuleReactiveMetadata(
     if (t.isStringLiteral(member.property)) return member.property.value
     if (t.isNumericLiteral(member.property)) return member.property.value
     return null
+  }
+  const getStaticMemberPath = (expr: BabelCore.types.Expression): string[] | null => {
+    if (t.isIdentifier(expr)) return [deSSAVarName(expr.name)]
+    if (!t.isMemberExpression(expr) && !t.isOptionalMemberExpression(expr)) return null
+    const objectPath = getStaticMemberPath(expr.object as BabelCore.types.Expression)
+    const memberName = getStaticMemberName(expr)
+    if (!objectPath || memberName === null) return null
+    return [...objectPath, String(memberName)]
+  }
+  const resolveNamespaceMember = (
+    member: BabelCore.types.MemberExpression,
+  ): { metadata: ModuleReactiveMetadata; key: string } | null => {
+    const memberPath = getStaticMemberPath(member)
+    if (!memberPath || memberPath.length < 2) return null
+    const rootName = memberPath[0]!
+    let namespaceMeta = ctx.localNamespaces?.get(rootName) ?? ctx.importedNamespaces?.get(rootName)
+    if (!namespaceMeta) return null
+    for (let index = 1; index < memberPath.length - 1; index++) {
+      namespaceMeta = getOwnRecordValue(namespaceMeta.namespaces, memberPath[index]!)
+      if (!namespaceMeta) return null
+    }
+    return { metadata: namespaceMeta, key: memberPath[memberPath.length - 1]! }
   }
   const isStaticUndefined = (expr: BabelCore.types.Expression): boolean =>
     t.isIdentifier(expr, { name: 'undefined' }) ||
@@ -560,6 +592,11 @@ export function buildModuleReactiveMetadata(
   }
   const addExport = (exportName: string, localName: string) => {
     markExplicitExport(exportName)
+    const namespaceInfo =
+      ctx.localNamespaces?.get(localName) ?? ctx.importedNamespaces?.get(localName)
+    if (namespaceInfo) {
+      setMetadataRecordValue(namespaceExports, exportName, namespaceInfo)
+    }
     const kind =
       classifyReactiveExport(localName, ctx) ?? localReactiveKinds.get(deSSAVarName(localName))
     if (kind) {
@@ -600,6 +637,10 @@ export function buildModuleReactiveMetadata(
     if (hookInfo) {
       setMetadataRecordValue(hookExports, exportName, hookInfo)
     }
+    const namespaceInfo = getOwnRecordValue(sourceMeta.namespaces, importedName)
+    if (namespaceInfo) {
+      setMetadataRecordValue(namespaceExports, exportName, namespaceInfo)
+    }
   }
   const addDefaultExportKind = (kind: ReactiveExportKind | null) => {
     markExplicitExport('default')
@@ -610,19 +651,15 @@ export function buildModuleReactiveMetadata(
   const addDefaultExportFromNamespaceMember = (
     member: BabelCore.types.MemberExpression,
   ): boolean => {
-    if (!t.isIdentifier(member.object)) return false
-    const namespaceMeta = ctx.importedNamespaces?.get(member.object.name)
-    if (!namespaceMeta) return false
-    const memberName = getStaticMemberName(member)
-    if (memberName === null) return false
+    const resolved = resolveNamespaceMember(member)
+    if (!resolved) return false
 
     markExplicitExport('default')
-    const key = String(memberName)
-    const kind = getOwnReactiveExportKind(namespaceMeta, key)
+    const kind = getOwnReactiveExportKind(resolved.metadata, resolved.key)
     if (kind) {
       setMetadataRecordValue(metadata.exports, 'default', kind)
     }
-    const hookInfo = namespaceMeta.hooks?.[key]
+    const hookInfo = resolved.metadata.hooks?.[resolved.key]
     if (hookInfo) {
       setMetadataRecordValue(hookExports, 'default', hookInfo)
     }
@@ -685,12 +722,14 @@ export function buildModuleReactiveMetadata(
       const starNames = new Set([
         ...Object.keys(sourceMeta.exports),
         ...Object.keys(sourceMeta.hooks ?? {}),
+        ...Object.keys(sourceMeta.namespaces ?? {}),
       ])
       for (const exportName of starNames) {
         addStarExport(
           exportName,
           getOwnReactiveExportKind(sourceMeta, exportName),
           sourceMeta.hooks?.[exportName],
+          sourceMeta.namespaces?.[exportName],
         )
       }
       continue

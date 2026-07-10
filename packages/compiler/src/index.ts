@@ -21,6 +21,11 @@ import type {
   ReactiveExportKind,
 } from './types'
 import {
+  analyzeTypeScriptNamespaces,
+  collectTypeScriptNamespaceWrapperFunctions,
+  type TypeScriptNamespaceAnalysis,
+} from './typescript-namespace'
+import {
   DirectiveType,
   getRootIdentifier,
   hasDirective,
@@ -61,6 +66,16 @@ function getOwnHookReturnInfo(
     return undefined
   }
   return meta.hooks[exportName]
+}
+
+function getOwnNamespaceMetadata(
+  meta: ModuleReactiveMetadata,
+  exportName: string,
+): ModuleReactiveMetadata | undefined {
+  if (!meta.namespaces || !Object.prototype.hasOwnProperty.call(meta.namespaces, exportName)) {
+    return undefined
+  }
+  return meta.namespaces[exportName]
 }
 
 function getStaticMemberKeyForDiagnostics(
@@ -2400,6 +2415,10 @@ function createHIREntrypointVisitor(
   t: typeof BabelCore.types,
   options: FictCompilerOptions,
 ): BabelCore.PluginObj['visitor'] {
+  const namespaceAnalysisByProgram = new WeakMap<
+    BabelCore.types.Program,
+    TypeScriptNamespaceAnalysis
+  >()
   const collectPatternIdentifiers = (pattern: BabelCore.types.PatternLike): string[] => {
     const ids: string[] = []
     const visit = (p: BabelCore.types.PatternLike) => {
@@ -2441,8 +2460,22 @@ function createHIREntrypointVisitor(
 
   return {
     Program: {
+      enter(path) {
+        if (hasDirective(path, DirectiveType.FictCompilerDisable, t)) return
+        const hub = path.hub as unknown as { file?: { opts?: { filename?: string } } }
+        const analysis = analyzeTypeScriptNamespaces(path, t, options, hub.file?.opts?.filename)
+        if (analysis.namespaceNames.size > 0) {
+          namespaceAnalysisByProgram.set(path.node, analysis)
+        }
+      },
       exit(path) {
         if (hasDirective(path, DirectiveType.FictCompilerDisable, t)) return
+        const typeScriptNamespaceAnalysis = namespaceAnalysisByProgram.get(path.node)
+        const typeScriptNamespaceWrappers = collectTypeScriptNamespaceWrapperFunctions(
+          path,
+          typeScriptNamespaceAnalysis,
+          t,
+        )
         // TypeScript lowering plugins run their declaration visitors before Program.exit.
         // Validate only what remains at the point where Fict actually starts compiling so
         // legal runtime TS constructs can be lowered by an earlier Babel plugin first.
@@ -2569,6 +2602,13 @@ function createHIREntrypointVisitor(
           let current: BabelCore.NodePath | null = nodePath
           while (current) {
             if (current.isFunction?.()) {
+              if (
+                current.isFunctionExpression?.() &&
+                typeScriptNamespaceWrappers.has(current.node as BabelCore.types.Function)
+              ) {
+                current = current.parentPath
+                continue
+              }
               depth++
               if (
                 isReactiveScopeCallbackNode(
@@ -3066,9 +3106,9 @@ function createHIREntrypointVisitor(
           BabelCore.types.Identifier,
           HookReturnInfoSerializable
         >()
-        const hookNamespaceReturnInfoByBinding = new Map<
+        const namespaceMetadataByBinding = new Map<
           BabelCore.types.Identifier,
-          NonNullable<ModuleReactiveMetadata['hooks']>
+          ModuleReactiveMetadata
         >()
         const hookReturnBindingInfo = new Map<
           BabelCore.types.Identifier,
@@ -3079,6 +3119,15 @@ function createHIREntrypointVisitor(
           name === 'createMemo' ||
           name === 'createSelector' ||
           name === 'createRenderEffect'
+        typeScriptNamespaceAnalysis?.localNamespaces.forEach((metadata, localName) => {
+          const binding = path.scope.getBinding(localName)
+          if (binding) {
+            namespaceMetadataByBinding.set(
+              binding.identifier as BabelCore.types.Identifier,
+              metadata,
+            )
+          }
+        })
         path.traverse({
           ImportDeclaration(importPath) {
             const source = importPath.node.source.value
@@ -3183,7 +3232,6 @@ function createHIREntrypointVisitor(
             )
             if (!meta) return
             const hasReactiveExports = Object.keys(meta.exports).length > 0
-            const hasHookExports = !!meta.hooks && Object.keys(meta.hooks).length > 0
             for (const spec of importPath.node.specifiers) {
               if (t.isImportSpecifier(spec)) {
                 const importedName = t.isIdentifier(spec.imported)
@@ -3202,6 +3250,16 @@ function createHIREntrypointVisitor(
                     hookFunctionReturnInfoByBinding.set(
                       binding.identifier as BabelCore.types.Identifier,
                       hookInfo,
+                    )
+                  }
+                }
+                const namespaceInfo = getOwnNamespaceMetadata(meta, importedName)
+                if (namespaceInfo) {
+                  const binding = importPath.scope.getBinding(spec.local.name)
+                  if (binding) {
+                    namespaceMetadataByBinding.set(
+                      binding.identifier as BabelCore.types.Identifier,
+                      namespaceInfo,
                     )
                   }
                 }
@@ -3224,6 +3282,16 @@ function createHIREntrypointVisitor(
                     )
                   }
                 }
+                const namespaceInfo = getOwnNamespaceMetadata(meta, 'default')
+                if (namespaceInfo) {
+                  const binding = importPath.scope.getBinding(spec.local.name)
+                  if (binding) {
+                    namespaceMetadataByBinding.set(
+                      binding.identifier as BabelCore.types.Identifier,
+                      namespaceInfo,
+                    )
+                  }
+                }
                 continue
               }
               if (t.isImportNamespaceSpecifier(spec) && hasReactiveExports) {
@@ -3232,12 +3300,12 @@ function createHIREntrypointVisitor(
                   importedReactiveBindingIds.add(binding.identifier as BabelCore.types.Identifier)
                 }
               }
-              if (t.isImportNamespaceSpecifier(spec) && hasHookExports && meta.hooks) {
+              if (t.isImportNamespaceSpecifier(spec)) {
                 const binding = importPath.scope.getBinding(spec.local.name)
                 if (binding) {
-                  hookNamespaceReturnInfoByBinding.set(
+                  namespaceMetadataByBinding.set(
                     binding.identifier as BabelCore.types.Identifier,
-                    meta.hooks,
+                    meta,
                   )
                 }
               }
@@ -3392,15 +3460,26 @@ function createHIREntrypointVisitor(
               : null
           }
           if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee)) return null
-          if (!t.isIdentifier(callee.object)) return null
-          const objectBinding = callPath.scope.getBinding(callee.object.name)
+          const memberPath: string[] = []
+          let root: BabelCore.types.Expression | BabelCore.types.Super = callee
+          while (t.isMemberExpression(root) || t.isOptionalMemberExpression(root)) {
+            const key = getStaticMemberKeyForDiagnostics(root, t)
+            if (!key) return null
+            memberPath.unshift(key)
+            root = root.object as BabelCore.types.Expression | BabelCore.types.Super
+          }
+          if (!t.isIdentifier(root) || memberPath.length === 0) return null
+          const objectBinding = callPath.scope.getBinding(root.name)
           if (!objectBinding) return null
-          const namespaceHooks = hookNamespaceReturnInfoByBinding.get(
+          let namespaceMetadata = namespaceMetadataByBinding.get(
             objectBinding.identifier as BabelCore.types.Identifier,
           )
-          if (!namespaceHooks) return null
-          const key = getStaticMemberKeyForDiagnostics(callee, t)
-          return key ? (namespaceHooks[key] ?? null) : null
+          if (!namespaceMetadata) return null
+          for (let index = 0; index < memberPath.length - 1; index++) {
+            namespaceMetadata = getOwnNamespaceMetadata(namespaceMetadata, memberPath[index]!)
+            if (!namespaceMetadata) return null
+          }
+          return namespaceMetadata.hooks?.[memberPath[memberPath.length - 1]!] ?? null
         }
         path.traverse({
           VariableDeclarator(declPath) {
@@ -4778,13 +4857,19 @@ function createHIREntrypointVisitor(
               optimizeLevel: optionsWithWarnings.optimizeLevel ?? 'safe',
             })
           : hir
-        const lowered = lowerHIRWithRegions(optimized, t, optionsWithWarnings, {
-          state: stateMacroNames,
-          effect: effectMacroNames,
-          memo: memoMacroNames,
-          store: storeMacroNames,
-          strictMacroBindings: true,
-        })
+        const lowered = lowerHIRWithRegions(
+          optimized,
+          t,
+          optionsWithWarnings,
+          {
+            state: stateMacroNames,
+            effect: effectMacroNames,
+            memo: memoMacroNames,
+            store: storeMacroNames,
+            strictMacroBindings: true,
+          },
+          typeScriptNamespaceAnalysis,
+        )
 
         path.node.body = lowered.program.body
         path.node.directives = lowered.program.directives

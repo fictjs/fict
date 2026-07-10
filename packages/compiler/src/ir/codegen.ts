@@ -9,6 +9,7 @@ import type {
   ModuleReactiveMetadata,
   ReactiveExportKind,
 } from '../types'
+import type { TypeScriptNamespaceAnalysis } from '../typescript-namespace'
 import { isLogicalAssignmentOperator } from '../utils'
 import { DiagnosticCode, reportDiagnostic } from '../validation'
 
@@ -1315,6 +1316,8 @@ export interface CodegenContext {
   namespaceStoreAliasVars?: Set<string> | undefined
   /** Namespace import metadata for reactive exports (used for obj.signal access) */
   importedNamespaces?: Map<string, ModuleReactiveMetadata> | undefined
+  /** Reactive metadata for TypeScript namespaces declared by the current module. */
+  localNamespaces?: Map<string, ModuleReactiveMetadata> | undefined
   /** Static object-rest exclusion arrays emitted by syntax lowering. */
   staticRestExclusionKeys?: Map<string, Set<string>> | undefined
   /** Variables initialized with $state (signal accessors) */
@@ -1519,6 +1522,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     resourceResultVars: new Set(),
     namespaceStoreAliasVars: new Set(),
     importedNamespaces: new Map(),
+    localNamespaces: new Map(),
     staticRestExclusionKeys: new Map(),
     signalVars: new Set(),
     knownArrayVars: new Set(),
@@ -1784,20 +1788,13 @@ function resolveNamespaceHookCallInfo(
   if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return null
   const callee = expr.callee
   if (callee.kind !== 'MemberExpression' && callee.kind !== 'OptionalMemberExpression') return null
-  if (callee.object.kind !== 'Identifier') return null
-
-  const namespaceName = deSSAVarName(callee.object.name)
-  const nsMeta = getImportedNamespaceMetadata(namespaceName, ctx)
-  if (!nsMeta?.hooks) return null
-
-  const propName = getStaticMemberMetadataKey(callee.property as Expression, callee.computed)
-  if (propName === null) return null
-
-  if (!Object.prototype.hasOwnProperty.call(nsMeta.hooks, propName)) return null
-  const serialized = nsMeta.hooks[propName]
+  const resolved = resolveNamespaceMemberMetadata(callee, ctx)
+  if (!resolved?.metadata.hooks) return null
+  if (!Object.prototype.hasOwnProperty.call(resolved.metadata.hooks, resolved.key)) return null
+  const serialized = resolved.metadata.hooks[resolved.key]
   if (!isSerializedHookReturnInfo(serialized)) return null
 
-  const hookName = `${namespaceName}.${propName}`
+  const hookName = resolved.path.join('.')
   const info = deserializeHookReturnInfo(serialized)
   ctx.hookReturnInfo = ctx.hookReturnInfo ?? new Map()
   ctx.hookReturnInfo.set(hookName, info)
@@ -1985,18 +1982,63 @@ function isSerializedHookReturnInfo(value: unknown): value is HookReturnInfoSeri
   return true
 }
 
-function getImportedNamespaceMetadata(
+function getNamespaceRootMetadata(
   name: string,
   ctx: CodegenContext,
 ): ModuleReactiveMetadata | undefined {
   const baseName = deSSAVarName(name)
-  if (
-    (ctx.shadowedNames?.has(baseName) ?? false) ||
-    (ctx.localDeclaredNames?.has(baseName) ?? false)
-  ) {
+  if (ctx.shadowedNames?.has(baseName) || ctx.currentFunctionDeclaredNames?.has(baseName)) {
     return undefined
   }
+  const local = ctx.localNamespaces?.get(baseName)
+  if (local) return local
+  if (ctx.localDeclaredNames?.has(baseName)) return undefined
   return ctx.importedNamespaces?.get(baseName)
+}
+
+interface NamespaceMemberMetadata {
+  key: string
+  metadata: ModuleReactiveMetadata
+  path: string[]
+}
+
+function resolveNamespaceMetadataPath(
+  path: string[] | null,
+  ctx: CodegenContext,
+): NamespaceMemberMetadata | null {
+  if (!path || path.length < 2) return null
+  let metadata = getNamespaceRootMetadata(path[0]!, ctx)
+  if (!metadata) return null
+  for (let index = 1; index < path.length - 1; index++) {
+    const segment = path[index]!
+    if (!Object.prototype.hasOwnProperty.call(metadata.namespaces ?? {}, segment)) return null
+    metadata = metadata.namespaces?.[segment]
+    if (!metadata) return null
+  }
+  return { key: path[path.length - 1]!, metadata, path }
+}
+
+function resolveNamespaceMemberMetadata(
+  expr: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
+  ctx: CodegenContext,
+): NamespaceMemberMetadata | null {
+  const getMetadataPath = (value: Expression): string[] | null => {
+    if (value.kind === 'Identifier') return [deSSAVarName(value.name)]
+    if (value.kind !== 'MemberExpression' && value.kind !== 'OptionalMemberExpression') return null
+    const objectPath = getMetadataPath(value.object as Expression)
+    const propertyName = getStaticMemberMetadataKey(value.property as Expression, value.computed)
+    if (!objectPath || propertyName === null) return null
+    return [...objectPath, propertyName]
+  }
+  return resolveNamespaceMetadataPath(getMetadataPath(expr), ctx)
+}
+
+function resolveBabelNamespaceMemberMetadata(
+  expr: BabelCore.types.MemberExpression | BabelCore.types.OptionalMemberExpression,
+  ctx: CodegenContext,
+  t: typeof BabelCore.types,
+): NamespaceMemberMetadata | null {
+  return resolveNamespaceMetadataPath(getStaticBabelMetadataMemberPath(expr, t), ctx)
 }
 
 function markHookReactiveLocal(
@@ -2086,17 +2128,11 @@ function assertWritableImportedNamespaceMember(
   expr: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
   ctx: CodegenContext,
 ): void {
-  if (expr.object.kind !== 'Identifier') return
-  const namespaceName = deSSAVarName(expr.object.name)
-  const nsMeta = getImportedNamespaceMetadata(namespaceName, ctx)
-  if (!nsMeta) return
-
-  const exportName = getStaticMemberMetadataKey(expr.property as Expression, expr.computed)
-  if (exportName === null) return
-
-  const kind = nsMeta.exports[exportName]
+  const resolved = resolveNamespaceMemberMetadata(expr, ctx)
+  if (!resolved) return
+  const kind = resolved.metadata.exports[resolved.key]
   if (isReadOnlyImportedReactiveKind(kind)) {
-    throwImportedReactiveWrite(`${namespaceName}.${exportName}`, kind, ctx, expr.loc)
+    throwImportedReactiveWrite(resolved.path.join('.'), kind, ctx, expr.loc)
   }
 }
 
@@ -3489,6 +3525,30 @@ function lowerComponentExpressionFunctionValue(
   return buildFunctionDeclaratorExpression({ fn, stmt: lowered }, ctx.t)
 }
 
+function lowerNamedHookExpressionFunctionValue(
+  value: Expression,
+  ctx: CodegenContext,
+): BabelCore.types.Expression | null {
+  if (value.kind !== 'FunctionExpression' || !value.name || !isHookName(value.name)) return null
+  const fn = functionValueToHIRFunction(value, value.name)
+  const lowered = lowerFunctionWithRegions(fn, ctx, { forceHookContext: true })
+  if (!lowered) return null
+  return buildFunctionDeclaratorExpression({ fn, stmt: lowered }, ctx.t)
+}
+
+function lowerNamedComponentExpressionFunctionValue(
+  value: Expression,
+  ctx: CodegenContext,
+): BabelCore.types.Expression | null {
+  if (value.kind !== 'FunctionExpression' || !value.name || !isComponentName(value.name)) {
+    return null
+  }
+  const fn = functionValueToHIRFunction(value, value.name)
+  const lowered = lowerFunctionWithRegions(fn, ctx, { forceComponentContext: true })
+  if (!lowered) return null
+  return buildFunctionDeclaratorExpression({ fn, stmt: lowered }, ctx.t)
+}
+
 function lowerExpressionComponentCandidate(
   value: Expression,
   ctx: CodegenContext,
@@ -4309,6 +4369,19 @@ function lowerExpressionImpl(
     return t.memberExpression(object, property, member.computed, member.optional)
   }
 
+  const lowerNamespaceMemberWithoutAccessorCall = (
+    member: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
+  ): BabelCore.types.MemberExpression | BabelCore.types.OptionalMemberExpression => {
+    const resolved = resolveNamespaceMemberMetadata(member, ctx)
+    if (!resolved) return lowerMemberExpressionWithoutAccessorCall(member)
+    const object = lowerExpression(member.object, ctx)
+    const property = member.computed ? t.stringLiteral(resolved.key) : t.identifier(resolved.key)
+    if (member.kind === 'OptionalMemberExpression') {
+      return t.optionalMemberExpression(object, property, member.computed, member.optional)
+    }
+    return t.memberExpression(object, property, member.computed, member.optional)
+  }
+
   const lowerWithHookReturnObject = (
     member: Extract<Expression, { kind: 'MemberExpression' }>,
     build: (object: BabelCore.types.Expression) => BabelCore.types.Expression | null,
@@ -4473,12 +4546,9 @@ function lowerExpressionImpl(
     if (callee.kind !== 'MemberExpression' && callee.kind !== 'OptionalMemberExpression') {
       return false
     }
-    if (callee.object.kind !== 'Identifier') return false
-    const nsMeta = getImportedNamespaceMetadata(callee.object.name, ctx)
-    if (!nsMeta) return false
-    const propName = getStaticMemberMetadataKey(callee.property as Expression, callee.computed)
-    if (propName === null) return false
-    const kind = nsMeta.exports[propName]
+    const resolved = resolveNamespaceMemberMetadata(callee, ctx)
+    if (!resolved) return false
+    const kind = resolved.metadata.exports[resolved.key]
     return kind === 'signal' || kind === 'memo'
   }
 
@@ -4725,25 +4795,15 @@ function lowerExpressionImpl(
       if (!ctx.listKeyConstificationDisabled && matchesListKeyPattern(expr, ctx)) {
         return t.identifier(ctx.listKeyParamName!)
       }
-      if (expr.object.kind === 'Identifier') {
-        const nsMeta = getImportedNamespaceMetadata(expr.object.name, ctx)
-        if (nsMeta) {
-          const propName = getStaticMemberMetadataKey(expr.property as Expression, expr.computed)
-          if (propName !== null) {
-            const kind = nsMeta.exports[propName]
-            if (kind === 'signal' || kind === 'memo') {
-              const member = t.memberExpression(
-                t.identifier(deSSAVarName(expr.object.name)),
-                expr.computed ? t.stringLiteral(propName) : t.identifier(propName),
-                expr.computed,
-                expr.optional,
-              )
-              if (ctx.preserveHookReturnAccessors) {
-                return member
-              }
-              return t.callExpression(member, [])
-            }
+      {
+        const resolved = resolveNamespaceMemberMetadata(expr, ctx)
+        const kind = resolved?.metadata.exports[resolved.key]
+        if (kind === 'signal' || kind === 'memo') {
+          const member = lowerNamespaceMemberWithoutAccessorCall(expr)
+          if (ctx.preserveHookReturnAccessors) {
+            return member
           }
+          return t.callExpression(member, [])
         }
       }
       if (
@@ -5003,6 +5063,10 @@ function lowerExpressionImpl(
     case 'FunctionExpression': {
       const componentLowered = lowerComponentExpressionFunctionValue(expr, ctx)
       if (componentLowered) return componentLowered
+      const namedComponentLowered = lowerNamedComponentExpressionFunctionValue(expr, ctx)
+      if (namedComponentLowered) return namedComponentLowered
+      const hookLowered = lowerNamedHookExpressionFunctionValue(expr, ctx)
+      if (hookLowered) return hookLowered
       const reactiveLowered = lowerReactiveScopeExpression(expr)
       if (reactiveLowered) return reactiveLowered
       const paramIds = buildFunctionParams(expr.params, expr.rawParams, ctx)
@@ -5269,11 +5333,10 @@ function lowerExpressionImpl(
     case 'OptionalMemberExpression': {
       const optionalMember = expr as HIROptionalMemberExpression
       if (shouldUnwrapOptionalAccessorMember(optionalMember)) {
-        return t.optionalCallExpression(
-          lowerMemberExpressionWithoutAccessorCall(optionalMember),
-          [],
-          true,
-        )
+        const member = isNamespaceReactiveAccessorMember(optionalMember)
+          ? lowerNamespaceMemberWithoutAccessorCall(optionalMember)
+          : lowerMemberExpressionWithoutAccessorCall(optionalMember)
+        return t.optionalCallExpression(member, [], true)
       }
       return t.optionalMemberExpression(
         lowerExpression(optionalMember.object, ctx),
@@ -5816,12 +5879,9 @@ function unwrapAccessorCalls(
   const isNamespaceAccessorMember = (
     member: BabelCore.types.MemberExpression | BabelCore.types.OptionalMemberExpression,
   ): boolean => {
-    if (!t.isIdentifier(member.object)) return false
-    const nsMeta = getImportedNamespaceMetadata(member.object.name, ctx)
-    if (!nsMeta) return false
-    const propName = getStaticBabelMetadataPropertyName(member.property, member.computed, t)
-    if (!propName) return false
-    const kind = nsMeta.exports[propName]
+    const resolved = resolveBabelNamespaceMemberMetadata(member, ctx, t)
+    if (!resolved) return false
+    const kind = resolved.metadata.exports[resolved.key]
     return kind === 'signal' || kind === 'memo'
   }
 
@@ -6172,6 +6232,19 @@ function getStaticBabelMemberPath(
   const objectPath = getStaticBabelMemberPath(node.object as BabelCore.types.Expression, t)
   if (!objectPath) return null
   const propName = getStaticBabelPropertyName(node.property, node.computed, t)
+  if (propName === null) return null
+  return [...objectPath, propName]
+}
+
+function getStaticBabelMetadataMemberPath(
+  node: BabelCore.types.Expression,
+  t: typeof BabelCore.types,
+): string[] | null {
+  if (t.isIdentifier(node)) return [deSSAVarName(node.name)]
+  if (!t.isMemberExpression(node) && !t.isOptionalMemberExpression(node)) return null
+  const objectPath = getStaticBabelMetadataMemberPath(node.object as BabelCore.types.Expression, t)
+  if (!objectPath) return null
+  const propName = getStaticBabelMetadataPropertyName(node.property, node.computed, t)
   if (propName === null) return null
   return [...objectPath, propName]
 }
@@ -7937,12 +8010,14 @@ export function lowerHIRWithRegions(
   t: typeof BabelCore.types,
   options?: FictCompilerOptions,
   macroAliases?: MacroAliases,
+  typeScriptNamespaceAnalysis?: TypeScriptNamespaceAnalysis,
 ): BabelCore.types.File {
   const ctx = createCodegenContext(t)
   ctx.programFunctions = new Map(
     program.functions.filter(fn => !!fn.name).map(fn => [fn.name as string, fn]),
   )
   ctx.options = options
+  ctx.localNamespaces = new Map(typeScriptNamespaceAnalysis?.localNamespaces ?? [])
   const originalBody = (program.originalBody ?? []) as BabelCore.types.Statement[]
   ctx.jsxComponentNames = collectJSXComponentNames(originalBody, t)
   for (const name of collectExportedComponentNames(originalBody, t)) {
@@ -8258,8 +8333,7 @@ export function lowerHIRWithRegions(
       const defaultExpr = stmt.declaration
       const isStaticImportedNamespaceMemberDefault =
         t.isMemberExpression(defaultExpr) &&
-        t.isIdentifier(defaultExpr.object) &&
-        getImportedNamespaceMetadata(defaultExpr.object.name, ctx) !== undefined &&
+        resolveBabelNamespaceMemberMetadata(defaultExpr, ctx, t) !== null &&
         ((!defaultExpr.computed && t.isIdentifier(defaultExpr.property)) ||
           t.isStringLiteral(defaultExpr.property) ||
           t.isNumericLiteral(defaultExpr.property))
@@ -8637,12 +8711,9 @@ function transformControlFlowReturns(
   ): boolean => {
     if (!expr) return false
     if (t.isMemberExpression(expr) || t.isOptionalMemberExpression(expr)) {
-      if (t.isIdentifier(expr.object)) {
-        const nsMeta = getImportedNamespaceMetadata(expr.object.name, ctx)
-        const propName = getStaticBabelMetadataPropertyName(expr.property, expr.computed, t)
-        if (nsMeta && propName && nsMeta.exports[propName] === 'store') {
-          return true
-        }
+      const resolved = resolveBabelNamespaceMemberMetadata(expr, ctx, t)
+      if (resolved?.metadata.exports[resolved.key] === 'store') {
+        return true
       }
       return isNamespaceStoreMemberExpression(expr.object as BabelCore.types.Expression)
     }

@@ -557,4 +557,270 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
       directAccessor: 'signal',
     })
   })
+
+  it('preserves reactive values declared by TypeScript namespaces', () => {
+    const filename = path.resolve('typescript-namespace-signal.tsx')
+    const moduleMetadata = new Map()
+    const result = transformSync(
+      `
+        import { createMemo, createSignal } from 'fict/advanced'
+
+        export namespace State {
+          export const count = createSignal(1)
+        }
+
+        export namespace State {
+          export const doubled = createMemo(() => 2)
+        }
+
+        export function App() {
+          return <div>{State.count * 2}{State.doubled}</div>
+        }
+      `,
+      {
+        filename,
+        configFile: false,
+        babelrc: false,
+        presets: [
+          [
+            fictPreset,
+            {
+              dev: false,
+              strictGuarantee: true,
+              emitModuleMetadata: true,
+              moduleMetadata,
+            },
+          ],
+        ],
+      },
+    )
+
+    expect(result?.code).toMatch(/State\.count\(\)\s*\*\s*2/)
+    expect(result?.code).toMatch(/State\.doubled\(\)/)
+    expect(moduleMetadata.get(filename)?.namespaces?.State?.exports).toEqual({
+      count: 'signal',
+      doubled: 'memo',
+    })
+  })
+
+  it('compiles reactive hooks declared by TypeScript namespaces', () => {
+    const filename = path.resolve('typescript-namespace-hook.tsx')
+    const moduleMetadata = new Map()
+    const result = transformSync(
+      `
+        import { $state } from 'fict'
+
+        export namespace Hooks {
+          export function useCount() {
+            const count = $state(1)
+            return count
+          }
+        }
+
+        export function App() {
+          const count = Hooks.useCount()
+          return <div>{count * 2}</div>
+        }
+      `,
+      {
+        filename,
+        configFile: false,
+        babelrc: false,
+        presets: [
+          [
+            fictPreset,
+            {
+              dev: false,
+              strictGuarantee: true,
+              emitModuleMetadata: true,
+              moduleMetadata,
+            },
+          ],
+        ],
+      },
+    )
+
+    expect(result?.code).toContain('__fictUseSignal')
+    expect(result?.code).toMatch(/count\(\)\s*\*\s*2/)
+    expect(moduleMetadata.get(filename)?.namespaces?.Hooks?.hooks?.useCount).toEqual({
+      directAccessor: 'signal',
+    })
+  })
+
+  it('compiles reactive components declared by TypeScript namespaces', () => {
+    const result = transformSync(
+      `
+        import { $state } from 'fict'
+
+        export namespace UI {
+          export function Counter() {
+            const count = $state(1)
+            return <button>{count}</button>
+          }
+        }
+
+        export function App() {
+          return <UI.Counter />
+        }
+      `,
+      {
+        filename: 'typescript-namespace-component.tsx',
+        configFile: false,
+        babelrc: false,
+        presets: [[fictPreset, { dev: false, strictGuarantee: true }]],
+      },
+    )
+
+    expect(result?.code).toContain('__fictUseSignal')
+    expect(result?.code).not.toContain('$state')
+    expect(result?.code).toContain('UI.Counter = Counter')
+  })
+
+  it('preserves top-level hook aliases exported through TypeScript namespaces', () => {
+    const filename = path.resolve('typescript-namespace-hook-alias.tsx')
+    const moduleMetadata = new Map()
+    const result = transformSync(
+      `
+        import { $state } from 'fict'
+
+        export function useRootCount() {
+          const count = $state(1)
+          return count
+        }
+
+        export namespace Hooks {
+          export const useCount = useRootCount
+        }
+
+        export function App() {
+          const count = Hooks.useCount()
+          return <div>{count * 2}</div>
+        }
+      `,
+      {
+        filename,
+        configFile: false,
+        babelrc: false,
+        presets: [
+          [
+            fictPreset,
+            {
+              dev: false,
+              strictGuarantee: true,
+              emitModuleMetadata: true,
+              moduleMetadata,
+            },
+          ],
+        ],
+      },
+    )
+
+    expect(result?.code).toMatch(/count\(\)\s*\*\s*2/)
+    expect(moduleMetadata.get(filename)?.namespaces?.Hooks?.hooks?.useCount).toEqual({
+      directAccessor: 'signal',
+    })
+  })
+
+  it('fails closed for unsafe reactive TypeScript namespace members', () => {
+    expect(() =>
+      transformSync(
+        `
+          import { $state } from 'fict'
+          import { createSignal } from 'fict/advanced'
+
+          const rootCount = createSignal(1)
+
+          export namespace State {
+            export const count = rootCount
+          }
+
+          export namespace Hooks {
+            export const useCount = () => {
+              const count = $state(1)
+              return count
+            }
+          }
+        `,
+        {
+          filename: 'unsafe-typescript-namespace.tsx',
+          configFile: false,
+          babelrc: false,
+          presets: [[fictPreset, { dev: false, strictGuarantee: true }]],
+        },
+      ),
+    ).toThrow(/namespace member "count" cannot alias an accessor/)
+
+    expect(() =>
+      transformSync(
+        `
+          import { $state } from 'fict'
+
+          export namespace Hooks {
+            export const useCount = () => {
+              const count = $state(1)
+              return count
+            }
+          }
+        `,
+        {
+          filename: 'unsafe-typescript-namespace-hook.tsx',
+          configFile: false,
+          babelrc: false,
+          presets: [[fictPreset, { dev: false, strictGuarantee: false }]],
+        },
+      ),
+    ).toThrow(/namespace hook "useCount" must use an exported function declaration/)
+
+    expect(() =>
+      transformSync(
+        `
+          import { $state } from 'fict'
+
+          export namespace UI {
+            export const Counter = () => {
+              const count = $state(1)
+              return <button>{count}</button>
+            }
+          }
+        `,
+        {
+          filename: 'unsafe-typescript-namespace-component.tsx',
+          configFile: false,
+          babelrc: false,
+          presets: [[fictPreset, { dev: false, strictGuarantee: false }]],
+        },
+      ),
+    ).toThrow(/namespace component "Counter" must use an exported function declaration/)
+  })
+
+  it('does not apply TypeScript namespace metadata to shadowing locals', () => {
+    const result = transformSync(
+      `
+        import { createSignal } from 'fict/advanced'
+
+        namespace State {
+          export const count = createSignal(1)
+        }
+        export { State }
+
+        function read(State: { count: number }) {
+          return State.count
+        }
+
+        export function App() {
+          return State.count + read({ count: 2 })
+        }
+      `,
+      {
+        filename: 'typescript-namespace-shadow.tsx',
+        configFile: false,
+        babelrc: false,
+        presets: [[fictPreset, { dev: false, strictGuarantee: true }]],
+      },
+    )
+
+    expect(result?.code).toMatch(/function read\(State\) \{\s*return State\.count;/s)
+    expect(result?.code).toMatch(/return State\.count\(\) \+ read/)
+    expect(result?.code).not.toMatch(/function read\(State\) \{\s*return State\.count\(\)/s)
+  })
 })

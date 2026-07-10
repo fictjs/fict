@@ -3350,6 +3350,149 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toMatch(/count\(\)/)
     })
 
+    it('propagates TypeScript namespace metadata through named and star imports', () => {
+      const producerPath = path.join(baseDir, 'typescript-namespace-producer.tsx')
+      const moduleMetadata = new Map()
+      transform(
+        `
+          import { $state } from 'fict'
+          import { createSignal } from 'fict/advanced'
+
+          export namespace State {
+            export const count = createSignal(1)
+          }
+
+          export namespace Hooks {
+            export function useCount() {
+              const count = $state(2)
+              return count
+            }
+          }
+
+          export namespace Outer {
+            export namespace Inner {
+              export const count = createSignal(3)
+            }
+          }
+
+          export default State
+        `,
+        { moduleMetadata, strictGuarantee: true },
+        producerPath,
+      )
+
+      expect(moduleMetadata.get(path.resolve(producerPath))?.namespaces).toMatchObject({
+        State: { exports: { count: 'signal' } },
+        Hooks: { hooks: { useCount: { directAccessor: 'signal' } } },
+        Outer: { namespaces: { Inner: { exports: { count: 'signal' } } } },
+        default: { exports: { count: 'signal' } },
+      })
+
+      const namedOutput = transform(
+        `
+          import DefaultState, { Hooks, Outer, State } from './typescript-namespace-producer'
+
+          export function App() {
+            const count = Hooks.useCount()
+            return <div>{State.count * 2}{DefaultState.count}{Outer.Inner.count}{count * 2}</div>
+          }
+        `,
+        { moduleMetadata, strictGuarantee: true },
+        path.join(baseDir, 'typescript-namespace-named-consumer.tsx'),
+      )
+      const starOutput = transform(
+        `
+          import * as library from './typescript-namespace-producer'
+
+          export function App() {
+            const count = library.Hooks.useCount()
+            return <div>{library.State.count * 2}{library.State.count()}{library.Outer.Inner.count}{count * 2}</div>
+          }
+        `,
+        { moduleMetadata, strictGuarantee: true },
+        path.join(baseDir, 'typescript-namespace-star-consumer.tsx'),
+      )
+
+      expect(namedOutput).toMatch(/State\.count\(\)\s*\*\s*2/)
+      expect(namedOutput).toMatch(/DefaultState\.count\(\)/)
+      expect(namedOutput).toMatch(/Outer\.Inner\.count\(\)/)
+      expect(namedOutput).toMatch(/count\(\)\s*\*\s*2/)
+      expect(starOutput).toMatch(/library\.State\.count\(\)\s*\*\s*2/)
+      expect(starOutput).toMatch(/library\.Outer\.Inner\.count\(\)/)
+      expect(starOutput).toMatch(/count\(\)\s*\*\s*2/)
+      expect(starOutput).not.toMatch(/library\.State\.count\(\)\(\)/)
+    })
+
+    it('propagates imported hooks aliased by TypeScript namespaces', () => {
+      const hookPath = path.join(baseDir, 'typescript-namespace-hook-source.tsx')
+      const wrapperPath = path.join(baseDir, 'typescript-namespace-hook-wrapper.ts')
+      const moduleMetadata = new Map()
+      transform(
+        `
+          import { $state } from 'fict'
+          import { createSignal } from 'fict/advanced'
+
+          export const globalCount = createSignal(2)
+
+          export function useRootCount() {
+            const count = $state(1)
+            return count
+          }
+        `,
+        { moduleMetadata, strictGuarantee: true },
+        hookPath,
+      )
+      transform(
+        `
+          import { globalCount, useRootCount } from './typescript-namespace-hook-source'
+          import * as source from './typescript-namespace-hook-source'
+
+          export namespace Hooks {
+            export const useCount = useRootCount
+            export const useNamespacedCount = source.useRootCount
+
+            export function useGlobalCount() {
+              return globalCount
+            }
+
+            export function useNamespacedGlobalCount() {
+              return source.globalCount
+            }
+          }
+        `,
+        { moduleMetadata, strictGuarantee: true },
+        wrapperPath,
+      )
+
+      expect(moduleMetadata.get(path.resolve(wrapperPath))?.namespaces?.Hooks?.hooks).toEqual({
+        useCount: { directAccessor: 'signal' },
+        useNamespacedCount: { directAccessor: 'signal' },
+        useGlobalCount: { directAccessor: 'signal' },
+        useNamespacedGlobalCount: { directAccessor: 'signal' },
+      })
+
+      const output = transform(
+        `
+          import { Hooks } from './typescript-namespace-hook-wrapper'
+
+          export function App() {
+            const count = Hooks.useCount()
+            const globalCount = Hooks.useGlobalCount()
+            const namespacedCount = Hooks.useNamespacedCount()
+            const namespacedGlobalCount = Hooks.useNamespacedGlobalCount()
+            return count * 2 + globalCount + namespacedCount + namespacedGlobalCount
+          }
+        `,
+        { moduleMetadata, strictGuarantee: true },
+        path.join(baseDir, 'typescript-namespace-hook-alias-consumer.tsx'),
+      )
+
+      expect(output).toMatch(/return count\(\) \* 2/)
+      expect(output).toMatch(/\+ globalCount\(\)/)
+      expect(output).toMatch(/\+ namespacedCount\(\)/)
+      expect(output).toMatch(/\+ namespacedGlobalCount\(\)/)
+    })
+
     it('propagates reactive export metadata through namespace re-exports', () => {
       const storeSource = `
         import { createSignal } from 'fict/advanced'
