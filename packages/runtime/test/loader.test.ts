@@ -288,6 +288,56 @@ describe('resumable loader snapshot validation', () => {
     expect(globalPrefetchLink).toBeNull()
   })
 
+  it('observes visibility prefetch targets in the installed document realm', () => {
+    const iframe = document.createElement('iframe')
+    document.body.appendChild(iframe)
+    const doc = iframe.contentDocument
+    const view = iframe.contentWindow
+    expect(doc).not.toBeNull()
+    expect(view).not.toBeNull()
+
+    const observed: Element[] = []
+    let observerConstructions = 0
+    class ForeignIntersectionObserver {
+      constructor() {
+        observerConstructions++
+      }
+
+      observe(target: Element) {
+        observed.push(target)
+      }
+
+      unobserve() {}
+
+      disconnect() {}
+    }
+    Object.defineProperty(view!, 'IntersectionObserver', {
+      configurable: true,
+      value: ForeignIntersectionObserver,
+    })
+    vi.stubGlobal('IntersectionObserver', undefined)
+
+    try {
+      const button = doc!.createElement('button')
+      button.setAttribute('data-fict-h', '/foreign-prefetch.js#default')
+      doc!.body.appendChild(button)
+      expect(doc!.defaultView?.IntersectionObserver).toBe(ForeignIntersectionObserver)
+      expect(doc!.querySelectorAll('[data-fict-h]')).toHaveLength(1)
+
+      installResumableLoader({
+        document: doc!,
+        events: [],
+        prefetch: { visibility: true, hover: false },
+      })
+
+      expect(observerConstructions).toBe(1)
+      expect(observed).toEqual([button])
+    } finally {
+      vi.unstubAllGlobals()
+      iframe.remove()
+    }
+  })
+
   it('rejects unsupported snapshot schema versions', () => {
     const issues: SnapshotIssue[] = []
     const doc = createDocumentWithSnapshots(

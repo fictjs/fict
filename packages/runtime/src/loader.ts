@@ -1117,12 +1117,12 @@ function setupPrefetch(installation: LoaderInstallation, strategy: PrefetchStrat
 
 function setupVisibilityPrefetch(installation: LoaderInstallation, rootMargin: string): () => void {
   const doc = installation.document
-  // Check if IntersectionObserver is available
-  if (typeof IntersectionObserver === 'undefined') {
+  const VisibilityObserver = doc.defaultView?.IntersectionObserver ?? globalThis.IntersectionObserver
+  if (!VisibilityObserver) {
     return () => {}
   }
 
-  const observer = new IntersectionObserver(
+  const observer = new VisibilityObserver(
     entries => {
       if (!isLoaderInstallationActive(installation)) return
       for (const entry of entries) {
