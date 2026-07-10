@@ -39,7 +39,7 @@ const generate = (
 
 const PACKAGE_METADATA_WATCH_GLOBS = [
   '!**/node_modules/**/package.json',
-  '!**/node_modules/**/*.fict.meta.json',
+  '!**/node_modules/**/*.json',
 ] as const
 
 type BabelGeneratorOptions = NonNullable<Parameters<typeof generate>[1]>
@@ -866,9 +866,10 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   const registerPackageMetadataDependency = (state: MetadataTransformState, file: string) => {
     const normalized = normalizeFileName(file, config?.root)
     const real = normalizeTypeScriptConfigDependency(file, config?.root)
+    const watchedFiles = normalized === real ? [normalized] : [normalized, real]
     state.packageMetadataDependencies.add(normalized)
     state.packageMetadataDependencies.add(real)
-    addTypeScriptConfigWatchFiles?.(normalized === real ? [normalized] : [normalized, real])
+    addTypeScriptConfigWatchFiles?.(watchedFiles)
     compilerOptions.onModuleMetadataDependency?.(file)
   }
 

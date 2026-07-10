@@ -558,7 +558,7 @@ describe('fict vite-plugin', () => {
       '!**/node_modules/@fictjs/**',
       '!**/node_modules/fict/**',
       '!**/node_modules/**/package.json',
-      '!**/node_modules/**/*.fict.meta.json',
+      '!**/node_modules/**/*.json',
     ])
 
     const buildWatch = await resolveConfig(
@@ -577,7 +577,7 @@ describe('fict vite-plugin', () => {
     expect(buildWatch.build.watch?.chokidar?.ignored).toEqual([
       '**/generated/**',
       '!**/node_modules/**/package.json',
-      '!**/node_modules/**/*.fict.meta.json',
+      '!**/node_modules/**/*.json',
     ])
   })
 
@@ -2626,21 +2626,21 @@ describe('fict vite-plugin', () => {
     )
     const outDir = path.join(root, 'dist')
     const packageDir = path.join(root, 'node_modules', 'hook-lib')
-    const metadataPath = path.join(packageDir, 'index.fict.meta.json')
+    const metadataPath = path.join(packageDir, 'metadata', 'reactivity.json')
     const entry = path.join(root, 'App.tsx')
     const metadataDependency = vi.fn()
     let bundleWatchFiles: string[] = []
     let watcher: Rollup.RollupWatcher | undefined
 
     try {
-      await mkdir(packageDir, { recursive: true })
+      await mkdir(path.dirname(metadataPath), { recursive: true })
       await writeFile(
         path.join(packageDir, 'package.json'),
         JSON.stringify({
           name: 'hook-lib',
           type: 'module',
           exports: './index.js',
-          fict: { metadata: './index.fict.meta.json' },
+          fict: { metadata: './metadata/reactivity.json' },
         }),
       )
       await writeFile(path.join(packageDir, 'index.js'), `export const useCounter = () => 1`)
