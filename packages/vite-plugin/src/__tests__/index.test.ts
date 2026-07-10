@@ -581,6 +581,37 @@ describe('fict vite-plugin', () => {
     ])
   })
 
+  it('merges Vite arrays once while removing workspace optimize includes', async () => {
+    const resolved = await resolveConfig(
+      {
+        configFile: false,
+        plugins: [fict({ cache: false, useTypeScriptProject: false })],
+        define: { CUSTOM_FLAG: 'true' },
+        resolve: {
+          alias: [{ find: '@fixture', replacement: '/fixture' }],
+          dedupe: ['custom-runtime'],
+        },
+        optimizeDeps: {
+          entries: ['src/first.ts', 'src/second.ts'],
+          include: ['fict', 'custom-dependency'],
+          exclude: ['already-excluded'],
+        },
+      },
+      'serve',
+    )
+
+    expect(resolved.resolve.alias.filter(alias => alias.find === '@fixture')).toHaveLength(1)
+    expect(resolved.resolve.dedupe.filter(dep => dep === 'custom-runtime')).toHaveLength(1)
+    expect(resolved.resolve.dedupe.filter(dep => dep === 'fict')).toHaveLength(1)
+    expect(resolved.optimizeDeps.entries).toEqual(['src/first.ts', 'src/second.ts'])
+    expect(resolved.optimizeDeps.include).toEqual(['custom-dependency'])
+    expect(
+      (resolved.optimizeDeps.exclude ?? []).filter(dep => dep === 'already-excluded'),
+    ).toHaveLength(1)
+    expect((resolved.optimizeDeps.exclude ?? []).filter(dep => dep === 'fict')).toHaveLength(1)
+    expect(resolved.define?.CUSTOM_FLAG).toBe('true')
+  })
+
   it('refreshes TypeScript projects when config files appear or change', async () => {
     const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-vite-tsconfig-hmr-')))
     const srcDir = path.join(root, 'src')

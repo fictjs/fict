@@ -1515,10 +1515,6 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       const hasDisabledOptimize =
         hasUserOptimize && (userOptimize as { disabled?: boolean }).disabled === true
 
-      const include = new Set(userOptimize?.include ?? [])
-      const exclude = new Set(userOptimize?.exclude ?? [])
-      const dedupe = new Set((userConfig.resolve?.dedupe ?? []) as string[])
-
       // Avoid duplicate runtime instances between pre-bundled deps and /@fs modules.
       // Exclude all workspace packages from prebundling to ensure changes take effect
       // immediately without requiring node_modules reinstall.
@@ -1545,10 +1541,6 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         '@fictjs/ssr',
         '@fictjs/testing-library',
       ]
-      for (const dep of workspaceDeps) {
-        include.delete(dep)
-        exclude.add(dep)
-      }
       // Only dedupe core runtime packages to avoid duplicate instances
       const dedupePackages = [
         'fict',
@@ -1556,8 +1548,15 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         '@fictjs/runtime',
         '@fictjs/runtime/internal',
       ]
-      for (const dep of dedupePackages) {
-        dedupe.add(dep)
+      const userDedupe = new Set((userConfig.resolve?.dedupe ?? []) as string[])
+      const dedupeAdditions = dedupePackages.filter(dep => !userDedupe.has(dep))
+      const userExclude = new Set(userOptimize?.exclude ?? [])
+      const excludeAdditions = workspaceDeps.filter(dep => !userExclude.has(dep))
+      if (!hasDisabledOptimize && userOptimize?.include) {
+        const workspaceDepSet = new Set(workspaceDeps)
+        userOptimize.include = Array.from(
+          new Set(userOptimize.include.filter(dep => !workspaceDepSet.has(dep))),
+        )
       }
 
       // Determine if we're in dev mode based on command or mode
@@ -1581,8 +1580,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         // Define __DEV__ for runtime devtools support
         // In dev mode, enable devtools; in production, disable them for smaller bundles
         define: {
-          __DEV__: String(devMode),
-          ...(userConfig.define ?? {}),
+          __DEV__: userConfig.define?.__DEV__ ?? String(devMode),
         },
         build: {
           rollupOptions: {
@@ -1591,19 +1589,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           },
         },
         resolve: {
-          ...(userConfig.resolve ?? {}),
-          dedupe: Array.from(dedupe),
+          dedupe: dedupeAdditions,
         },
         // Watch workspace package builds unless the user explicitly disabled watching.
         // Returning an object for `watch: null` would re-enable Vite's filesystem watcher.
         ...watchConfig,
-        ...(hasDisabledOptimize
-          ? { optimizeDeps: userOptimize }
-          : {
-              optimizeDeps: hasUserOptimize
-                ? { ...userOptimize, include: Array.from(include), exclude: Array.from(exclude) }
-                : { exclude: workspaceDeps },
-            }),
+        ...(!hasDisabledOptimize
+          ? { optimizeDeps: { exclude: hasUserOptimize ? excludeAdditions : workspaceDeps } }
+          : {}),
       }
     },
 
