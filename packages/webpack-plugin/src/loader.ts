@@ -1,8 +1,10 @@
+import { existsSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 
 import { transformAsync, type TransformOptions } from '@babel/core'
 import type { FictPresetOptions } from '@fictjs/babel-preset'
+import { resolvePackageModuleMetadata } from '@fictjs/compiler'
 
 import {
   createLocalResolutionKey,
@@ -27,6 +29,8 @@ interface FictLoaderContext {
     content?: string,
     sourceMap?: NonNullable<TransformOptions['inputSourceMap']> | null,
   ) => void
+  addDependency(file: string): void
+  addMissingDependency(file: string): void
   cacheable(flag?: boolean): void
   getOptions(): FictWebpackLoaderOptions
   mode?: string
@@ -50,6 +54,21 @@ function normalizeInputSourceMap(
     return JSON.parse(sourceMap) as NonNullable<TransformOptions['inputSourceMap']>
   } catch {
     return undefined
+  }
+}
+
+function resolveThroughExistingAncestor(filename: string): string {
+  let current = filename
+  const missingSegments: string[] = []
+  while (true) {
+    try {
+      return path.join(realpathSync(current), ...missingSegments)
+    } catch {
+      const parent = path.dirname(current)
+      if (parent === current) return filename
+      missingSegments.unshift(path.basename(current))
+      current = parent
+    }
   }
 }
 
@@ -80,8 +99,18 @@ export default function fictWebpackLoader(
   if (!binding.state.moduleMetadata.has(filename)) {
     binding.state.moduleMetadata.set(filename, { exports: {} })
   }
+  binding.state.metadataDependenciesByFilename.set(filename, new Set())
 
   const options = this.getOptions()
+  const registerMetadataDependency = (dependency: string): void => {
+    const normalized = path.resolve(dependency)
+    const dependencies = new Set([normalized, resolveThroughExistingAncestor(normalized)])
+    for (const watched of dependencies) {
+      binding.state.metadataDependenciesByFilename.get(filename)!.add(watched)
+      if (existsSync(watched)) this.addDependency(watched)
+      else this.addMissingDependency(watched)
+    }
+  }
   const compilerOptions: FictPresetOptions = {
     ...options,
     dev: options.dev ?? this.mode !== 'production',
@@ -92,7 +121,12 @@ export default function fictWebpackLoader(
       const dependency = binding.state.resolvedLocalModules.get(
         createLocalResolutionKey(importer, sourceRequest),
       )
-      return dependency ? binding.state.moduleMetadata.get(dependency) : undefined
+      if (dependency) return binding.state.moduleMetadata.get(dependency)
+      return resolvePackageModuleMetadata(sourceRequest, importer, {
+        emitModuleMetadata: false,
+        moduleMetadata: binding.state.moduleMetadata,
+        onModuleMetadataDependency: registerMetadataDependency,
+      })
     },
     sourcemap: this.sourceMap,
   }

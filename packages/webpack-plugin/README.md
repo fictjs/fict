@@ -26,4 +26,7 @@ after Fict compilation. Do not also configure `@fictjs/babel-preset` in that Bab
 
 Local reactive metadata and importer dependency fingerprints are persisted in Webpack module build
 information, so watch rebuilds and filesystem-cache restores keep unchanged importers correct.
+Bare package imports can consume published `fict.metadata` / `fict.exports` declarations; every
+consulted package manifest and metadata sidecar is registered as a Webpack dependency and included
+in the importer fingerprint. See [Third-party library metadata](../../docs/third-party-libraries.md).
 Webpack library metadata publishing remains a separate capability.

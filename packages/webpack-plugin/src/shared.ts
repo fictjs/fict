@@ -11,12 +11,14 @@ interface StoredFictWebpackMetadata {
   filename: string
   metadataJson: string
   dependencyFingerprint: string | null
+  metadataDependencies: string[]
 }
 
 export interface RestoredFictWebpackMetadata {
   filename: string
   metadata: ModuleReactiveMetadata
   dependencyFingerprint: string | null
+  metadataDependencies: string[]
 }
 
 export interface FictWebpackCompilationState {
@@ -26,6 +28,7 @@ export interface FictWebpackCompilationState {
   resolvedLocalModules: Map<string, string>
   compiledDependencyFingerprints: Map<string, string | null>
   pendingDependencyFingerprints: Map<string, string>
+  metadataDependenciesByFilename: Map<string, Set<string>>
 }
 
 export interface FictWebpackLoaderBinding {
@@ -41,6 +44,7 @@ export function createCompilationState(): FictWebpackCompilationState {
     resolvedLocalModules: new Map(),
     compiledDependencyFingerprints: new Map(),
     pendingDependencyFingerprints: new Map(),
+    metadataDependenciesByFilename: new Map(),
   }
 }
 
@@ -90,6 +94,9 @@ export function storeFictModuleMetadata(
     filename: normalizeFileName(filename),
     metadataJson: JSON.stringify(metadata),
     dependencyFingerprint,
+    metadataDependencies: [
+      ...(state.metadataDependenciesByFilename.get(normalizeFileName(filename)) ?? []),
+    ].sort(),
   }
   buildInfo[FICT_WEBPACK_BUILD_INFO_KEY] = stored
   state.compiledDependencyFingerprints.set(stored.filename, dependencyFingerprint)
@@ -109,7 +116,10 @@ export function restoreFictModuleMetadata(
     typeof candidate.filename !== 'string' ||
     typeof candidate.metadataJson !== 'string' ||
     (candidate.dependencyFingerprint !== null &&
-      typeof candidate.dependencyFingerprint !== 'string')
+      typeof candidate.dependencyFingerprint !== 'string') ||
+    (candidate.metadataDependencies !== undefined &&
+      (!Array.isArray(candidate.metadataDependencies) ||
+        candidate.metadataDependencies.some(dependency => typeof dependency !== 'string')))
   ) {
     throw new Error('[fict] Cached Webpack module metadata is malformed.')
   }
@@ -135,6 +145,9 @@ export function restoreFictModuleMetadata(
     filename: normalizeFileName(candidate.filename),
     metadata: metadata as ModuleReactiveMetadata,
     dependencyFingerprint: candidate.dependencyFingerprint,
+    metadataDependencies: [
+      ...new Set((candidate.metadataDependencies ?? []).map(normalizeFileName)),
+    ].sort(),
   }
 }
 

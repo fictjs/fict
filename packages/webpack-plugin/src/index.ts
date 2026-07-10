@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+
 import type { Compilation, Compiler, NormalModule } from 'webpack'
 
 import {
@@ -142,6 +145,16 @@ function hydrateCachedModuleMetadata(
     const filename = registerFictModule(state, restored.filename, module as NormalModule)
     state.moduleMetadata.set(filename, restored.metadata)
     state.compiledDependencyFingerprints.set(filename, restored.dependencyFingerprint)
+    state.metadataDependenciesByFilename.set(filename, new Set(restored.metadataDependencies))
+  }
+}
+
+function fileFingerprint(filename: string): string {
+  try {
+    return createHash('sha256').update(readFileSync(filename)).digest('hex')
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    return `unreadable:${typeof code === 'string' ? code : 'UNKNOWN'}`
   }
 }
 
@@ -149,14 +162,19 @@ function dependencyFingerprint(
   node: MetadataGraphNode,
   state: FictWebpackCompilationState,
 ): string {
-  const dependencies = [...node.dependencies].sort().map(filename => {
+  const localDependencies = [...node.dependencies].sort().map(filename => {
     const metadata = state.moduleMetadata.get(filename)
     if (!metadata) {
       throw new Error(`[fict] Missing Webpack module metadata for ${filename}.`)
     }
     return [filename, metadata]
   })
-  return stableStringify(dependencies)
+  const packageMetadataDependencies = [
+    ...(state.metadataDependenciesByFilename.get(node.filename) ?? []),
+  ]
+    .sort()
+    .map(filename => [filename, fileFingerprint(filename)])
+  return stableStringify({ localDependencies, packageMetadataDependencies })
 }
 
 async function rebuildModuleWithFingerprint(
@@ -172,11 +190,19 @@ async function rebuildModuleWithFingerprint(
     state.pendingDependencyFingerprints.delete(node.filename)
   }
   const persistedFingerprint = state.compiledDependencyFingerprints.get(node.filename)
-  if (persistedFingerprint !== fingerprint) {
+  const currentFingerprint = dependencyFingerprint(node, state)
+  if (persistedFingerprint !== fingerprint && persistedFingerprint !== currentFingerprint) {
     throw new Error(
       `[fict] Webpack did not persist the metadata fingerprint for ${node.filename} ` +
         `(expected ${fingerprint}, received ${String(persistedFingerprint)}).`,
     )
+  }
+  if (persistedFingerprint !== currentFingerprint) {
+    const metadata = state.moduleMetadata.get(node.filename)
+    if (!metadata) {
+      throw new Error(`[fict] Missing Webpack module metadata for ${node.filename}.`)
+    }
+    storeFictModuleMetadata(state, node.module, node.filename, metadata, currentFingerprint)
   }
 }
 
@@ -205,7 +231,7 @@ async function convergeMetadataGraph(
       const node = graph.get(filename)!
       const fingerprint = dependencyFingerprint(node, state)
       if (state.compiledDependencyFingerprints.get(filename) !== fingerprint) {
-        if (node.dependencies.size === 0) {
+        if (node.dependencies.size === 0 && compilation.builtModules.has(node.module)) {
           const metadata = state.moduleMetadata.get(filename)
           if (!metadata) {
             throw new Error(`[fict] Missing Webpack module metadata for ${filename}.`)

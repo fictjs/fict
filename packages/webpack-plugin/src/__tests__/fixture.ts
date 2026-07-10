@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import webpack, { type Configuration, type Stats } from 'webpack'
+import webpack, { type Compiler, type Configuration, type Stats, type Watching } from 'webpack'
 
 import { FictWebpackPlugin } from '../index'
 
@@ -33,16 +33,21 @@ export function createWebpackConfiguration(
   options: {
     alias?: Record<string, string>
     cache?: Configuration['cache']
+    externals?: Record<string, string>
+    plugins?: NonNullable<Configuration['plugins']>
+    snapshot?: Configuration['snapshot']
   } = {},
 ): Configuration {
   return {
     ...(options.cache ? { cache: options.cache } : {}),
+    ...(options.snapshot ? { snapshot: options.snapshot } : {}),
     context: root,
     devtool: false,
     entry: './entry.ts',
     externals: {
       fict: `commonjs ${fictEntry}`,
       'fict/internal': `commonjs ${fictInternalEntry}`,
+      ...options.externals,
     },
     mode: 'development',
     module: {
@@ -60,13 +65,82 @@ export function createWebpackConfiguration(
       library: { type: 'commonjs2' },
       path: path.join(root, 'dist'),
     },
-    plugins: [new FictWebpackPlugin()],
+    plugins: [new FictWebpackPlugin(), ...(options.plugins ?? [])],
     resolve: {
       ...(options.alias ? { alias: options.alias } : {}),
       extensions: ['.tsx', '.ts', '.jsx', '.js'],
     },
     target: 'node',
   }
+}
+
+function validateStats(error: Error | null | undefined, stats: Stats | undefined): Stats {
+  if (error) throw error
+  if (!stats) throw new Error('Webpack returned no stats.')
+  if (stats.hasErrors()) {
+    throw new Error(stats.toString({ all: false, errors: true }))
+  }
+  return stats
+}
+
+export interface BuildQueue {
+  next(): Promise<Stats>
+  push(error: Error | null | undefined, stats: Stats | undefined): void
+}
+
+export function createBuildQueue(): BuildQueue {
+  const queued: { error: Error | null | undefined; stats: Stats | undefined }[] = []
+  const waiters: {
+    resolve: (stats: Stats) => void
+    reject: (error: unknown) => void
+  }[] = []
+
+  const settle = (waiter: (typeof waiters)[number], result: (typeof queued)[number]): void => {
+    try {
+      waiter.resolve(validateStats(result.error, result.stats))
+    } catch (error) {
+      waiter.reject(error)
+    }
+  }
+
+  return {
+    next() {
+      const result = queued.shift()
+      if (result) {
+        return Promise.resolve().then(() => validateStats(result.error, result.stats))
+      }
+      return new Promise((resolve, reject) => waiters.push({ resolve, reject }))
+    },
+    push(error, stats) {
+      const waiter = waiters.shift()
+      if (waiter) settle(waiter, { error, stats })
+      else queued.push({ error, stats })
+    },
+  }
+}
+
+export function closeWatching(watching: Watching, compiler: Compiler): Promise<void> {
+  return new Promise((resolve, reject) => {
+    watching.close(watchError => {
+      if (watchError) {
+        reject(watchError)
+        return
+      }
+      compiler.close(closeError => {
+        if (closeError) reject(closeError)
+        else resolve()
+      })
+    })
+  })
+}
+
+export function builtFixtureFiles(stats: Stats, root: string): string[] {
+  return [...stats.compilation.modules]
+    .filter(module => stats.compilation.builtModules.has(module))
+    .map(module => (module as { resource?: unknown }).resource)
+    .filter(
+      (resource): resource is string => typeof resource === 'string' && resource.startsWith(root),
+    )
 }
 
 export function runCompiler(configuration: Configuration): Promise<Stats> {

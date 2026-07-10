@@ -1,9 +1,17 @@
 import { rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import webpack, { type Compiler, type Stats, type Watching } from 'webpack'
+import webpack from 'webpack'
 
-import { createFixture, createWebpackConfiguration, runApp, runCompiler } from './fixture'
+import {
+  builtFixtureFiles,
+  closeWatching,
+  createBuildQueue,
+  createFixture,
+  createWebpackConfiguration,
+  runApp,
+  runCompiler,
+} from './fixture'
 
 const signalHook = (value: number): string => `
   import { $state } from 'fict'
@@ -26,75 +34,6 @@ const entrySource = `
     return count * 2
   }
 `
-
-function validateStats(error: Error | null | undefined, stats: Stats | undefined): Stats {
-  if (error) throw error
-  if (!stats) throw new Error('Webpack returned no stats.')
-  if (stats.hasErrors()) {
-    throw new Error(stats.toString({ all: false, errors: true }))
-  }
-  return stats
-}
-
-interface BuildQueue {
-  next(): Promise<Stats>
-  push(error: Error | null | undefined, stats: Stats | undefined): void
-}
-
-function createBuildQueue(): BuildQueue {
-  const queued: { error: Error | null | undefined; stats: Stats | undefined }[] = []
-  const waiters: {
-    resolve: (stats: Stats) => void
-    reject: (error: unknown) => void
-  }[] = []
-
-  const settle = (waiter: (typeof waiters)[number], result: (typeof queued)[number]): void => {
-    try {
-      waiter.resolve(validateStats(result.error, result.stats))
-    } catch (error) {
-      waiter.reject(error)
-    }
-  }
-
-  return {
-    next() {
-      const result = queued.shift()
-      if (result) {
-        return Promise.resolve().then(() => validateStats(result.error, result.stats))
-      }
-      return new Promise((resolve, reject) => waiters.push({ resolve, reject }))
-    },
-    push(error, stats) {
-      const waiter = waiters.shift()
-      if (waiter) settle(waiter, { error, stats })
-      else queued.push({ error, stats })
-    },
-  }
-}
-
-function closeWatching(watching: Watching, compiler: Compiler): Promise<void> {
-  return new Promise((resolve, reject) => {
-    watching.close(watchError => {
-      if (watchError) {
-        reject(watchError)
-        return
-      }
-      compiler.close(closeError => {
-        if (closeError) reject(closeError)
-        else resolve()
-      })
-    })
-  })
-}
-
-function builtFixtureFiles(stats: Stats, root: string): string[] {
-  return [...stats.compilation.modules]
-    .filter(module => stats.compilation.builtModules.has(module))
-    .map(module => (module as { resource?: unknown }).resource)
-    .filter(
-      (resource): resource is string => typeof resource === 'string' && resource.startsWith(root),
-    )
-}
 
 describe('@fictjs/webpack-plugin incremental metadata', () => {
   it('rebuilds unchanged importers across signal ↔ plain watch transitions', async () => {
