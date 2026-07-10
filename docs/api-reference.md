@@ -410,7 +410,7 @@ function SelectableList() {
 
 ### onMount
 
-Run after the component mounts and its DOM is connected.
+Run synchronously after the component's DOM is committed to its current host or container.
 
 ```typescript
 function onMount(fn: () => void | (() => void)): void
@@ -425,7 +425,7 @@ function Chart() {
   let canvasRef: HTMLCanvasElement | null = null
 
   onMount(() => {
-    // DOM is ready
+    // The component's DOM is available in the current render container
     const ctx = canvasRef?.getContext('2d')
     ctx?.fillRect(0, 0, 100, 100)
 
@@ -439,8 +439,8 @@ function Chart() {
 }
 ```
 
-> Note: `onMount` is deferred for nodes rendered into detached containers or fragments until
-> they are inserted into the document.
+> Note: A detached render container does not delay `onMount`. Its callbacks run before
+> `render()` returns; inserting that container into the document later does not run them again.
 
 ---
 
