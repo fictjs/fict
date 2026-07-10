@@ -2542,6 +2542,41 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it('resolves hook metadata through pass-through query imports', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-query-hook-'))
+
+    try {
+      const entry = path.join(root, 'App.tsx')
+      await writeFile(
+        path.join(root, 'use-count.ts'),
+        `
+          import { $state } from 'fict'
+          export function useCount() {
+            const count = $state(1)
+            return count
+          }
+        `,
+      )
+      await writeFile(
+        entry,
+        `
+          import { useCount } from './use-count.ts?import'
+          export function App() {
+            const count = useCount()
+            return <div>{count * 2}</div>
+          }
+        `,
+      )
+
+      const code = await buildFictEntry(root, entry)
+
+      expect(code).toMatch(/\(\)\s*=>\s*[A-Za-z_$][\w$]*\(\)\s*\*\s*2/)
+      expect(code).not.toMatch(/\(\)\s*=>\s*[A-Za-z_$][\w$]*\s*\*\s*2/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('skips bundler virtual runtime modules in library mode', async () => {
     const plugin = fict({ library: true, useTypeScriptProject: false }) as any
     const transform = plugin.transform as any

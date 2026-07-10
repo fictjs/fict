@@ -911,7 +911,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   ): ModuleReactiveMetadata | undefined => {
     const userResolved = compilerOptions.resolveModuleMetadata?.(source, importer)
     if (userResolved) return userResolved
-    if (hasModuleQuerySuffix(source)) return undefined
+    if (shouldSkipMetadataForModuleQuery(source)) return undefined
     if (!importer) return undefined
 
     const importerFile = normalizeFileName(importer, config?.root)
@@ -1016,7 +1016,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     source: string,
     importer: string,
   ): Promise<{ filename: string; loadOptions: MetadataLoadOptions } | null> => {
-    if (hasModuleQuerySuffix(source)) return null
+    if (shouldSkipMetadataForModuleQuery(source)) return null
     if (context.resolve) {
       const resolved = await context.resolve(source, importer, { skipSelf: true })
       if (resolved && !resolved.external && !isInternalModuleId(resolved.id)) {
@@ -2728,8 +2728,27 @@ function isBarePackageSource(source: string): boolean {
   return !path.isAbsolute(source) && !source.startsWith('.') && !source.startsWith('/@fs/')
 }
 
-function hasModuleQuerySuffix(source: string): boolean {
-  return source.includes('?')
+function shouldSkipMetadataForModuleQuery(source: string): boolean {
+  const queryStart = source.indexOf('?')
+  if (queryStart === -1) return false
+  const fragmentStart = source.indexOf('#', queryStart + 1)
+  const query = source.slice(queryStart + 1, fragmentStart === -1 ? undefined : fragmentStart)
+  if (!query) return false
+
+  // Vite's import/cache-busting queries preserve the JavaScript module's exports.
+  // Other built-in and third-party queries may turn the file into a URL, string,
+  // worker constructor, or another virtual shape, so they cannot reuse source metadata.
+  const passThroughQueries = new Set(['import', 't', 'v'])
+  return query.split('&').some(part => {
+    const rawKey = part.split('=', 1)[0] ?? ''
+    let key = rawKey
+    try {
+      key = decodeURIComponent(rawKey)
+    } catch {
+      // An invalid query escape is not safe to classify as the source module.
+    }
+    return !!key && !passThroughQueries.has(key)
+  })
 }
 
 function createLocalResolutionKey(importer: string, source: string): string {
