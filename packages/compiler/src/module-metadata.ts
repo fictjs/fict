@@ -82,6 +82,13 @@ const clearFsProbeCache = (): void => sharedFsProbeCache.clear()
 const canReuseStoredMetadata = (key: string): boolean => !diskLoadedMetadataKeys.has(key)
 
 function cacheFsProbeResult(cache: FsProbeCache, pathName: string, exists: boolean): void {
+  // A missing manifest or sidecar can be created by another compiler process at
+  // any time. Keeping a negative entry, even briefly, makes the next transform
+  // observe stale metadata and can change emitted accessor semantics.
+  if (!exists) {
+    cache.delete(pathName)
+    return
+  }
   if (cache.size >= FS_PROBE_CACHE_MAX_SIZE) {
     cache.clear()
   }

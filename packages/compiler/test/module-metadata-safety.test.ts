@@ -603,6 +603,70 @@ describe('module metadata safety', () => {
     }
   })
 
+  it('observes package manifests created immediately after a resolution miss', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_package_manifest_created_after_miss__')
+    const packageDir = path.join(baseDir, 'node_modules', 'fict-hook-lib')
+    const importer = path.join(baseDir, 'src', 'consumer.tsx')
+    const metaPath = path.join(packageDir, 'dist', 'index.fict.meta.json')
+
+    try {
+      mkdirSync(path.dirname(importer), { recursive: true })
+      expect(
+        resolveModuleMetadata('fict-hook-lib', importer, { emitModuleMetadata: false }),
+      ).toBeUndefined()
+
+      mkdirSync(path.dirname(metaPath), { recursive: true })
+      writeFileSync(
+        path.join(packageDir, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          fict: { metadata: './dist/index.fict.meta.json' },
+        }),
+      )
+      writeFileSync(metaPath, JSON.stringify({ exports: { value: 'signal' } }))
+
+      expect(
+        resolveModuleMetadata('fict-hook-lib', importer, { emitModuleMetadata: false }),
+      ).toEqual({ exports: { value: 'signal' } })
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+      clearModuleMetadata()
+    }
+  })
+
+  it('observes package sidecars created immediately after a resolution miss', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_package_sidecar_created_after_miss__')
+    const packageDir = path.join(baseDir, 'node_modules', 'fict-hook-lib')
+    const importer = path.join(baseDir, 'src', 'consumer.tsx')
+    const metaPath = path.join(packageDir, 'dist', 'index.fict.meta.json')
+
+    try {
+      mkdirSync(path.dirname(metaPath), { recursive: true })
+      mkdirSync(path.dirname(importer), { recursive: true })
+      writeFileSync(
+        path.join(packageDir, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          fict: { metadata: './dist/index.fict.meta.json' },
+        }),
+      )
+      expect(
+        resolveModuleMetadata('fict-hook-lib', importer, { emitModuleMetadata: false }),
+      ).toBeUndefined()
+
+      writeFileSync(metaPath, JSON.stringify({ exports: { value: 'memo' } }))
+
+      expect(
+        resolveModuleMetadata('fict-hook-lib', importer, { emitModuleMetadata: false }),
+      ).toEqual({ exports: { value: 'memo' } })
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+      clearModuleMetadata()
+    }
+  })
+
   it('prefers modern package metadata exports over legacy fictMetadata declarations', () => {
     clearModuleMetadata()
     const baseDir = path.join(process.cwd(), '__fict_package_modern_metadata_with_legacy__')
@@ -1090,7 +1154,7 @@ describe('module metadata safety', () => {
     }
   })
 
-  it('does not permanently cache metadata resolution misses', async () => {
+  it('observes metadata sidecars created immediately after a resolution miss', () => {
     clearModuleMetadata()
     const baseDir = path.join(process.cwd(), '__fict_metadata_negative_cache__')
     const importer = path.join(baseDir, 'consumer.ts')
@@ -1114,8 +1178,6 @@ describe('module metadata safety', () => {
         'utf8',
       )
 
-      await new Promise(resolve => setTimeout(resolve, 300))
-
       const resolved = resolveModuleMetadata('./dep', importer, {
         emitModuleMetadata: false,
       })
@@ -1136,7 +1198,7 @@ describe('module metadata safety', () => {
     }
   })
 
-  it('refreshes disk-loaded metadata when sidecars change', async () => {
+  it('refreshes disk-loaded metadata immediately when sidecars change', () => {
     clearModuleMetadata()
     const baseDir = path.join(process.cwd(), '__fict_metadata_refresh__')
     const importer = path.join(baseDir, 'consumer.ts')
@@ -1173,8 +1235,6 @@ describe('module metadata safety', () => {
         }),
         'utf8',
       )
-
-      await new Promise(resolve => setTimeout(resolve, 300))
 
       const second = resolveModuleMetadata('./dep', importer, {
         emitModuleMetadata: false,
