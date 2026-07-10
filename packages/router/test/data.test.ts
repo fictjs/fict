@@ -7,6 +7,7 @@ import {
 } from '@fictjs/runtime/internal'
 import {
   query,
+  preloadQuery,
   revalidate,
   action,
   useSubmission,
@@ -78,6 +79,97 @@ describe('query', () => {
     // The function should still only be called once
     // (cache lookup happens on accessor call)
     expect(callCount).toBe(1)
+  })
+
+  it('expires unused preloads after the short preload cache window', async () => {
+    let now = 1_000
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const fetcher = vi.fn(async (id: string) => `value:${id}`)
+      const fetchValue = query(fetcher, 'expiringPreload')
+
+      preloadQuery(fetchValue, 'first')
+      await Promise.resolve()
+      await Promise.resolve()
+
+      now += 4_999
+      preloadQuery(fetchValue, 'first')
+      expect(fetcher).toHaveBeenCalledTimes(1)
+
+      now += 2
+      preloadQuery(fetchValue, 'first')
+      expect(fetcher).toHaveBeenCalledTimes(2)
+    } finally {
+      nowSpy.mockRestore()
+    }
+  })
+
+  it('does not shorten an existing navigation cache when preloading it', async () => {
+    let now = 1_000
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const fetcher = vi.fn(async (id: string) => `value:${id}`)
+      const fetchValue = query(fetcher, 'navigationThenPreload')
+
+      fetchValue('first')
+      await Promise.resolve()
+      await Promise.resolve()
+
+      now += 5_001
+      preloadQuery(fetchValue, 'first')
+      expect(fetcher).toHaveBeenCalledTimes(1)
+    } finally {
+      nowSpy.mockRestore()
+    }
+  })
+
+  it('promotes a consumed preload to the navigation cache window', async () => {
+    let now = 1_000
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const fetcher = vi.fn(async (id: string) => `value:${id}`)
+      const fetchValue = query(fetcher, 'consumedPreload')
+
+      preloadQuery(fetchValue, 'first')
+      await Promise.resolve()
+      await Promise.resolve()
+
+      now += 4_000
+      expect(fetchValue('first')()).toBe('value:first')
+
+      now += 2_000
+      expect(fetchValue('first')()).toBe('value:first')
+      expect(fetcher).toHaveBeenCalledTimes(1)
+    } finally {
+      nowSpy.mockRestore()
+    }
+  })
+
+  it('promotes a pending preload when navigation consumes its request', async () => {
+    let now = 1_000
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    let resolveFetch!: (value: string) => void
+    try {
+      const fetcher = vi.fn(
+        () =>
+          new Promise<string>(resolve => {
+            resolveFetch = resolve
+          }),
+      )
+      const fetchValue = query(fetcher, 'pendingConsumedPreload')
+
+      preloadQuery(fetchValue)
+      fetchValue()
+      resolveFetch('ready')
+      await Promise.resolve()
+      await Promise.resolve()
+
+      now += 5_001
+      expect(fetchValue()()).toBe('ready')
+      expect(fetcher).toHaveBeenCalledTimes(1)
+    } finally {
+      nowSpy.mockRestore()
+    }
   })
 
   it('does not share query data when an active SSR fallback loses async context', async () => {

@@ -41,12 +41,16 @@ const FAST_CLEANUP_INTERVAL = 10 * 1000
 
 type QueryCache = Map<string, QueryCacheEntry<unknown>>
 type SSRSession = NonNullable<ReturnType<typeof __fictGetCurrentSSRSession>>
+type QueryInvocationIntent = Extract<NavigationIntent, 'navigate' | 'preload'>
 
 /** Shared browser cache. SSR requests use isolated caches below. */
 const sharedQueryCache: QueryCache = new Map()
 
 /** Request-local caches are released with their SSR sessions. */
 let requestQueryCaches = new WeakMap<SSRSession, QueryCache>()
+
+/** Internal preload entry points keyed by the public query function. */
+const queryPreloaders = new WeakMap<object, (args: unknown[]) => void>()
 
 function resolveQueryCache(): QueryCache {
   const session = __fictGetCurrentSSRSession()
@@ -165,7 +169,7 @@ export function query<T, Args extends unknown[]>(
 ): (...args: Args) => () => T | undefined {
   startCacheCleanup()
 
-  return (...args: Args) => {
+  const invoke = (intent: QueryInvocationIntent, args: Args): (() => T | undefined) => {
     // Capture the request cache before starting asynchronous work. Promise
     // callbacks run after the synchronous SSR session stack has unwound.
     const queryCache = resolveQueryCache()
@@ -178,6 +182,7 @@ export function query<T, Args extends unknown[]>(
       const maxAge = cached.intent === 'preload' ? PRELOAD_CACHE_DURATION : CACHE_DURATION
 
       if (Date.now() - cached.timestamp < maxAge) {
+        if (intent === 'navigate') cached.intent = 'navigate'
         return () => cached.result
       }
     }
@@ -188,6 +193,7 @@ export function query<T, Args extends unknown[]>(
     const loadingSignal = createSignal<boolean>(true)
 
     if (cached && !cached.settled) {
+      if (intent === 'navigate') cached.intent = 'navigate'
       void cached.promise.then(result => {
         batch(() => {
           resultSignal(result)
@@ -214,10 +220,11 @@ export function query<T, Args extends unknown[]>(
           settled: true,
           result,
           hasResult: true,
-          intent: 'navigate',
+          intent,
         }
         const currentEntry = queryCache.get(cacheKey)
         if (currentEntry?.promise === (promise as Promise<T>)) {
+          entry.intent = currentEntry.intent
           queryCache.set(cacheKey, entry)
           evictOldestEntries(queryCache)
         }
@@ -247,13 +254,19 @@ export function query<T, Args extends unknown[]>(
       timestamp: Date.now(),
       promise: promise as Promise<T>,
       settled: false,
-      intent: 'navigate',
+      intent,
       ...(cached?.hasResult ? { result: cached.result as T, hasResult: true } : {}),
     }
     queryCache.set(cacheKey, pendingEntry)
 
     return () => resultSignal()
   }
+
+  const queryFn = (...args: Args) => invoke('navigate', args)
+  queryPreloaders.set(queryFn, args => {
+    invoke('preload', args as Args)
+  })
+  return queryFn
 }
 
 /**
@@ -467,7 +480,11 @@ export function preloadQuery<T, Args extends unknown[]>(
   queryFn: (...args: Args) => () => T | undefined,
   ...args: Args
 ): void {
-  // The query function handles caching internally
+  const preload = queryPreloaders.get(queryFn)
+  if (preload) {
+    preload(args)
+    return
+  }
   queryFn(...args)
 }
 
