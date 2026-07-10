@@ -322,6 +322,71 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
     ).toThrow(/syntax is reserved|disallowAmbiguousJSLike|angle-bracket/i)
   })
 
+  it('removes an obsolete default JSX pragma import after Fict consumes JSX', () => {
+    const result = transformSync(
+      `
+        import React from 'react'
+        export function App() {
+          return <div />
+        }
+      `,
+      {
+        filename: 'react-import.tsx',
+        configFile: false,
+        babelrc: false,
+        presets: [[fictPreset, { dev: false, strictGuarantee: false }]],
+      },
+    )
+
+    expect(result?.code).toContain('template("<div></div>")')
+    expect(result?.code).not.toContain("from 'react'")
+    expect(result?.code).not.toContain('from "react"')
+  })
+
+  it('preserves JSX pragma imports with runtime uses or explicit import preservation', () => {
+    const runtimeUse = transformSync(
+      `
+        import React from 'react'
+        export const version = React.version
+        export function App() {
+          return <div />
+        }
+      `,
+      {
+        filename: 'react-runtime.tsx',
+        configFile: false,
+        babelrc: false,
+        presets: [[fictPreset, { dev: false, strictGuarantee: false }]],
+      },
+    )
+    const preserveImports = transformSync(
+      `
+        import React from 'react'
+        export function App() {
+          return <div />
+        }
+      `,
+      {
+        filename: 'react-preserved.tsx',
+        configFile: false,
+        babelrc: false,
+        presets: [
+          [
+            fictPreset,
+            {
+              dev: false,
+              strictGuarantee: false,
+              typescriptOptions: { onlyRemoveTypeImports: true },
+            },
+          ],
+        ],
+      },
+    )
+
+    expect(runtimeUse?.code).toMatch(/import React from ["']react["']/)
+    expect(preserveImports?.code).toMatch(/import React from ["']react["']/)
+  })
+
   it('detects TypeScript and TSX syntax from the file extension', () => {
     const typed = transformSync(
       `

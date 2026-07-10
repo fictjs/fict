@@ -193,6 +193,57 @@ function rewriteTypeScriptImportsPlugin(): PluginObj {
   }
 }
 
+function removeObsoleteJsxPragmaImportsPlugin(options: TypeScriptOptions): PluginObj {
+  return {
+    name: 'fict-remove-obsolete-jsx-pragma-imports',
+    visitor: {
+      Program: {
+        exit(path, state) {
+          let hasJsx = false
+          path.traverse({
+            'JSXElement|JSXFragment'(jsxPath) {
+              hasJsx = true
+              jsxPath.stop()
+            },
+          })
+          if (hasJsx) return
+
+          let jsxPragma = options.jsxPragma ?? 'React.createElement'
+          let jsxPragmaFrag = options.jsxPragmaFrag ?? 'React.Fragment'
+          const pragmaPattern = /\*?\s*@jsx((?:Frag)?)\s+(\S+)/
+          for (const comment of state.file.ast.comments ?? []) {
+            const match = pragmaPattern.exec(comment.value)
+            if (!match) continue
+            if (match[1]) jsxPragmaFrag = match[2] ?? jsxPragmaFrag
+            else jsxPragma = match[2] ?? jsxPragma
+          }
+          const pragmaBindings = new Set(
+            [jsxPragma, jsxPragmaFrag]
+              .map(pragma => pragma.split('.')[0])
+              .filter((name): name is string => !!name),
+          )
+          if (pragmaBindings.size === 0) return
+
+          path.scope.crawl()
+          for (const statementPath of path.get('body')) {
+            if (!statementPath.isImportDeclaration()) continue
+            let removed = false
+            for (const specifierPath of statementPath.get('specifiers')) {
+              const localName = specifierPath.node.local.name
+              if (!pragmaBindings.has(localName)) continue
+              const binding = path.scope.getBinding(localName)
+              if (!binding || binding.referenced) continue
+              specifierPath.remove()
+              removed = true
+            }
+            if (removed && statementPath.node.specifiers.length === 0) statementPath.remove()
+          }
+        },
+      },
+    },
+  }
+}
+
 function commonJsMarkerPlugin(): PluginObj {
   return {
     name: 'fict-inherited-commonjs-marker',
@@ -226,6 +277,9 @@ function createIsolatedFictPrepass(
         plugins.push([transformTypeScript, typeScriptTransformOptions])
       }
       plugins.push([createFictPlugin, compilerOptions])
+      if (typeScriptTransformOptions && typescriptOptions.onlyRemoveTypeImports !== true) {
+        plugins.push(removeObsoleteJsxPragmaImportsPlugin(typescriptOptions))
+      }
       if (typeScriptTransformOptions && typescriptOptions.rewriteImportExtensions) {
         plugins.push(rewriteTypeScriptImportsPlugin)
       }
