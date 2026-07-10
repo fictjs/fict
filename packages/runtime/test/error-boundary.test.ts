@@ -1327,6 +1327,73 @@ describe('ErrorBoundary', () => {
     dispose()
   })
 
+  it('does not commit a child render superseded by a synchronous effect error', async () => {
+    const container = document.createElement('div')
+    const dependency = createSignal(0)
+    const initialError = new Error('initial failure')
+    const effectError = new Error('effect failure')
+    const captured: unknown[] = []
+    let phase = 0
+    let resetFn: (() => void) | undefined
+    let childDisposals = 0
+    let fallbackRenders = 0
+    let fallbackDisposals = 0
+
+    const Child = () => {
+      if (phase === 0) throw initialError
+      createEffect(() => {
+        dependency()
+        if (phase === 1) throw effectError
+      })
+      onDestroy(() => {
+        childDisposals++
+      })
+      return { type: 'span', props: { children: 'stale child' } }
+    }
+
+    const Fallback = (_error: unknown, reset?: () => void) => {
+      resetFn = reset
+      fallbackRenders++
+      onDestroy(() => {
+        fallbackDisposals++
+      })
+      return { type: 'b', props: { children: 'fallback' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: Fallback,
+          onError: error => captured.push(error),
+          children: { type: Child, props: {} },
+        },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('fallback')
+    phase = 1
+    resetFn?.()
+
+    expect(container.textContent).toBe('fallback')
+    expect(container.querySelectorAll('b')).toHaveLength(1)
+    expect(container.querySelector('span')).toBeNull()
+    expect(childDisposals).toBe(1)
+    expect(fallbackRenders).toBe(2)
+
+    phase = 2
+    dependency(1)
+    await nextTick()
+
+    expect(container.querySelectorAll('b')).toHaveLength(1)
+    expect(fallbackRenders).toBe(2)
+    expect(captured).toEqual([initialError, effectError])
+
+    dispose()
+    expect(fallbackDisposals).toBe(2)
+  })
+
   it('renders a throwing fallback only once for errors from dynamic children', async () => {
     const container = document.createElement('div')
     const showCrash = createSignal(false)

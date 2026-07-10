@@ -37,6 +37,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
   let renderingFallback = false
   let disposing = false
   let disposed = false
+  let renderGeneration = 0
 
   let reset = () => {}
   const toFallback = (err: unknown): FictNode =>
@@ -49,14 +50,20 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
     parentRoot: RootContext | undefined = boundaryRoot,
   ) => {
     if (disposing || disposed) return
-    if (cleanup) {
-      cleanup()
-      cleanup = undefined
+    const generation = ++renderGeneration
+    const previousCleanup = cleanup
+    const previousNodes = activeNodes
+    cleanup = undefined
+    activeNodes = []
+    try {
+      previousCleanup?.()
+    } finally {
+      removeNodes(previousNodes)
     }
-    if (activeNodes.length) {
-      removeNodes(activeNodes)
-      activeNodes = []
-    }
+
+    // Cleanup may synchronously report an error and install a fallback. Do not
+    // let the render which triggered that cleanup replace the newer attempt.
+    if (generation !== renderGeneration) return
 
     if (value == null || value === false) {
       return
@@ -66,14 +73,29 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
     const prev = pushRoot(root)
     let nodes: Node[] = []
     let didPopRoot = false
+    let attemptDestroyed = false
     const restoreRoot = () => {
       if (didPopRoot) return
       popRoot(prev)
       didPopRoot = true
     }
+    const destroyAttempt = () => {
+      restoreRoot()
+      if (attemptDestroyed) return
+      attemptDestroyed = true
+      try {
+        destroyRoot(root)
+      } finally {
+        removeNodes(nodes)
+      }
+    }
     try {
       const output = untrack(() => createElement(value))
       nodes = toNodeArray(output, markerOwnerDocument)
+      if (generation !== renderGeneration) {
+        destroyAttempt()
+        return
+      }
       const parentNode = marker.parentNode as (ParentNode & Node) | null
       if (parentNode) {
         nodes = insertNodesBefore(parentNode, nodes, marker)
@@ -81,12 +103,14 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
       nodes.forEach(node => setEventErrorRoot(node, root))
       restoreRoot()
       flushOnMount(root)
+      if (generation !== renderGeneration) {
+        destroyAttempt()
+        return
+      }
     } catch (err) {
-      restoreRoot()
-      destroyRoot(root)
-      removeNodes(nodes)
+      destroyAttempt()
       // Fall back immediately on render errors, avoid infinite recursion
-      if (renderingFallback) {
+      if (renderingFallback || generation !== renderGeneration) {
         throw err
       }
       captureError(err)
@@ -94,8 +118,11 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
     }
 
     cleanup = () => {
-      destroyRoot(root)
-      removeNodes(nodes)
+      try {
+        destroyRoot(root)
+      } finally {
+        removeNodes(nodes)
+      }
     }
     activeNodes = nodes
   }
@@ -136,6 +163,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
 
   registerRootCleanup(() => {
     disposing = true
+    renderGeneration++
     try {
       if (cleanup) {
         cleanup()
