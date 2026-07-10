@@ -1593,6 +1593,92 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it('lowers CTS import-equals and export assignments to executable Vite output', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-cts-commonjs-'))
+    const entry = path.join(root, 'entry.cts')
+
+    try {
+      await writeFile(
+        entry,
+        `
+          import path = require('node:path')
+          const getValue: () => string = () => path.basename('/tmp/value')
+          export = getValue
+        `,
+      )
+
+      const result = await build({
+        root,
+        logLevel: 'silent',
+        plugins: [fict({ cache: false, useTypeScriptProject: false, functionSplitting: false })],
+        build: {
+          write: false,
+          lib: { entry, formats: ['es'], fileName: () => 'entry.js' },
+          rollupOptions: { external: id => id.startsWith('node:') },
+        },
+      })
+      const outputs = Array.isArray(result) ? result : [result]
+      const code = outputs
+        .flatMap(output => ('output' in output ? output.output : []))
+        .filter(output => output.type === 'chunk')
+        .map(output => output.code)
+        .join('\n')
+      const moduleUrl = `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
+      const builtModule = (await import(moduleUrl)) as { default: () => string }
+
+      expect(code).not.toContain('export =')
+      expect(code).not.toContain('import path =')
+      expect(builtModule.default()).toBe('value')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('compiles Fict macros before lowering CTS export assignments', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-cts-fict-export-'))
+    const entry = path.join(root, 'use-doubled.cts')
+
+    try {
+      await writeFile(
+        entry,
+        `
+          import { $state } from 'fict'
+          function useDoubled() {
+            const count: number = $state(2)
+            return count * 2
+          }
+          export = useDoubled
+        `,
+      )
+
+      const result = await build({
+        root,
+        logLevel: 'silent',
+        plugins: [fict({ cache: false, useTypeScriptProject: false, functionSplitting: false })],
+        build: {
+          write: false,
+          lib: { entry, formats: ['es'], fileName: () => 'use-doubled.js' },
+          rollupOptions: {
+            external: id => id === 'fict' || id.startsWith('fict/'),
+          },
+        },
+      })
+      const outputs = Array.isArray(result) ? result : [result]
+      const code = outputs
+        .flatMap(output => ('output' in output ? output.output : []))
+        .filter(output => output.type === 'chunk')
+        .map(output => output.code)
+        .join('\n')
+
+      expect(code).not.toContain('$state')
+      expect(code).not.toContain('export =')
+      expect(code).not.toContain(': number')
+      expect(code).toMatch(/\}\)\(\) \* 2/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('keeps bare package requests on the package metadata path when tsconfig maps them locally', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-bare-tsconfig-path-'))
     const srcDir = path.join(root, 'src')

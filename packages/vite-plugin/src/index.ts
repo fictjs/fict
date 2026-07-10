@@ -3002,6 +3002,43 @@ function preserveTypeScriptImportSideEffects(): PluginItem {
   }
 }
 
+function lowerCtsModuleSyntax(): PluginItem {
+  return {
+    name: 'fict-lower-cts-module-syntax',
+    visitor: {
+      TSImportEqualsDeclaration(importPath: NodePath<t.TSImportEqualsDeclaration>) {
+        const { node } = importPath
+        if (node.importKind === 'type') {
+          importPath.remove()
+          return
+        }
+        if (!t.isTSExternalModuleReference(node.moduleReference)) return
+
+        const declaration = t.importDeclaration(
+          [t.importDefaultSpecifier(t.cloneNode(node.id))],
+          t.cloneNode(node.moduleReference.expression),
+        )
+        t.inheritsComments(declaration, node)
+        if (node.isExport) {
+          importPath.replaceWithMultiple([
+            declaration,
+            t.exportNamedDeclaration(null, [
+              t.exportSpecifier(t.cloneNode(node.id), t.cloneNode(node.id)),
+            ]),
+          ])
+        } else {
+          importPath.replaceWith(declaration)
+        }
+      },
+      TSExportAssignment(exportPath: NodePath<t.TSExportAssignment>) {
+        const declaration = t.exportDefaultDeclaration(exportPath.node.expression)
+        t.inheritsComments(declaration, exportPath.node)
+        exportPath.replaceWith(declaration)
+      },
+    },
+  }
+}
+
 async function compileFictCompilerStage(
   code: string,
   filename: string,
@@ -3012,6 +3049,7 @@ async function compileFictCompilerStage(
   const isTSX = filename.endsWith('.tsx')
   const isExplicitModuleTypeScript = filename.endsWith('.mts') || filename.endsWith('.cts')
   const plugins: PluginItem[] = []
+  if (filename.endsWith('.cts')) plugins.push(lowerCtsModuleSyntax())
   if (isTypeScript) {
     plugins.push([
       transformTypeScript,
