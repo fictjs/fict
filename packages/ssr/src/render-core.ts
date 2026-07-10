@@ -1131,20 +1131,5 @@ function serializeDoctype(document: Document, override?: string | null): string 
 
   const doctype = document.doctype
   if (!doctype) return ''
-
-  const name = doctype.name || 'html'
-  const publicId = doctype.publicId
-  const systemId = doctype.systemId
-
-  let id = ''
-  if (publicId) {
-    id = ` PUBLIC "${publicId}"`
-    if (systemId) {
-      id += ` "${systemId}"`
-    }
-  } else if (systemId) {
-    id = ` SYSTEM "${systemId}"`
-  }
-
-  return `<!DOCTYPE ${name}${id}>`
+  return serializeHtmlNode(doctype)
 }

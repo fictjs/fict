@@ -162,6 +162,29 @@ describe('@fictjs/ssr', () => {
       expect(globals.document).toBe(previousDocument)
     })
 
+    it.each(['publicId', 'systemId'] as const)(
+      'keeps a hostile document doctype %s inert at the final serialization boundary',
+      property => {
+        const dom = createSSRDocument()
+        const doctype = dom.document.doctype
+        expect(doctype).not.toBeNull()
+        Object.defineProperty(doctype!, property, {
+          value: '"><script data-fict-xss="doctype">unsafe</script>',
+          configurable: true,
+        })
+
+        const html = renderToString(() => ({ type: 'main', props: { children: 'safe' } }), {
+          dom,
+          fullDocument: true,
+          includeSnapshot: false,
+        })
+        const { document } = parseHTML(html)
+
+        expect(document.querySelector('[data-fict-xss="doctype"]')).toBeNull()
+        expect(document.querySelector('main')?.textContent).toBe('safe')
+      },
+    )
+
     it('tears down a completed render when snapshot serialization fails', () => {
       let destroyed = false
 
