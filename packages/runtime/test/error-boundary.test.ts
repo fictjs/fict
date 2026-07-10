@@ -336,6 +336,57 @@ describe('ErrorBoundary', () => {
     expect(container.textContent).toBe('ok')
   })
 
+  it('ignores a captured reset after the boundary is disposed', async () => {
+    const container = document.createElement('div')
+    const dependency = createSignal(0)
+    let resetFn: (() => void) | undefined
+    let shouldThrow = true
+    let childRenders = 0
+    let effectRuns = 0
+    let childDisposals = 0
+
+    const Child = () => {
+      if (shouldThrow) throw new Error('initial failure')
+      childRenders++
+      createEffect(() => {
+        dependency()
+        effectRuns++
+      })
+      onDestroy(() => {
+        childDisposals++
+      })
+      return 'child'
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: (_error, reset) => {
+            resetFn = reset
+            return 'fallback'
+          },
+          children: { type: Child, props: {} },
+        },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('fallback')
+    expect(resetFn).toBeTypeOf('function')
+
+    dispose()
+    shouldThrow = false
+    resetFn?.()
+    dependency(1)
+    await nextTick()
+
+    expect(container.textContent).toBe('')
+    expect(childRenders).toBe(0)
+    expect(effectRuns).toBe(0)
+    expect(childDisposals).toBe(0)
+  })
+
   it('captures effect errors and switches to fallback', async () => {
     const container = document.createElement('div')
     const trigger = createSignal(0)

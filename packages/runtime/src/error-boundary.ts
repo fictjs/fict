@@ -35,6 +35,8 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
   let cleanup: (() => void) | undefined
   let activeNodes: Node[] = []
   let renderingFallback = false
+  let disposing = false
+  let disposed = false
 
   let reset = () => {}
   const toFallback = (err: unknown): FictNode =>
@@ -46,6 +48,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
     value: FictNode | null,
     parentRoot: RootContext | undefined = boundaryRoot,
   ) => {
+    if (disposing || disposed) return
     if (cleanup) {
       cleanup()
       cleanup = undefined
@@ -98,6 +101,11 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
   }
 
   const captureError = (err: unknown) => {
+    if (disposed) return
+    if (disposing) {
+      untrack(() => props.onError?.(err))
+      return
+    }
     renderingFallback = true
     let rendered = false
     let fallbackError: unknown
@@ -121,16 +129,23 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
   }
 
   reset = () => {
+    if (disposing || disposed) return
     renderingFallback = false
     renderValue(props.children ?? null)
   }
 
   registerRootCleanup(() => {
-    if (cleanup) {
-      cleanup()
-      cleanup = undefined
+    disposing = true
+    try {
+      if (cleanup) {
+        cleanup()
+        cleanup = undefined
+      }
+      destroyRoot(boundaryRoot)
+    } finally {
+      disposing = false
+      disposed = true
     }
-    destroyRoot(boundaryRoot)
   })
 
   // Register ownership before the initial render. A successful fallback can
