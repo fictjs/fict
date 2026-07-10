@@ -657,6 +657,64 @@ describe('@fictjs/ssr streaming', () => {
     expect(html).toContain('data-fict-suspense')
   })
 
+  it('keeps a pipeable stream open when one token reveals another token', async () => {
+    const first = createSuspenseToken()
+    const second = createSuspenseToken()
+    let phase = 0
+
+    function AsyncChild(): FictNode {
+      if (phase === 0) throw first.token
+      if (phase === 1) throw second.token
+      return { type: 'span', props: { children: 'ChainedDone' } }
+    }
+
+    const { pipe, shellReady, allReady } = renderToPipeableStream(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: { type: 'div', props: { children: 'ChainedLoading' } },
+          children: { type: AsyncChild, props: {} },
+        },
+      }),
+      { mode: 'shell' },
+    )
+
+    const chunks: Buffer[] = []
+    const writable = new PassThrough()
+    writable.on('data', chunk => chunks.push(chunk as Buffer))
+    const ended = new Promise<void>((resolve, reject) => {
+      writable.once('end', resolve)
+      writable.once('error', reject)
+    })
+    pipe(writable)
+
+    await shellReady
+    let readiness: 'pending' | 'resolved' | 'rejected' = 'pending'
+    void allReady.then(
+      () => {
+        readiness = 'resolved'
+      },
+      () => {
+        readiness = 'rejected'
+      },
+    )
+
+    phase = 1
+    first.resolve()
+    await new Promise<void>(resolve => setImmediate(resolve))
+
+    expect(readiness).toBe('pending')
+
+    phase = 2
+    second.resolve()
+    await withTimeout(allReady, 500, 'chained Suspense allReady')
+    await withTimeout(ended, 500, 'chained Suspense output stream')
+
+    const html = Buffer.concat(chunks).toString('utf8')
+    expect(html).toContain('ChainedLoading')
+    expect(html).toContain('ChainedDone')
+  })
+
   it('pipeable stream buffers output before pipe() and flushes after attach', async () => {
     const token = createSuspenseToken()
     let ready = false

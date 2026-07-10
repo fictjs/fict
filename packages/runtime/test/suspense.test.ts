@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 
 import {
   Suspense,
@@ -10,8 +10,13 @@ import {
   createEffect,
 } from '../src/index'
 import { createSignal, reactive, type FictDevtoolsHook } from '../src/advanced'
+import { __fictSetSSRStreamHooks } from '../src/ssr-stream'
 
 const tick = () => Promise.resolve()
+
+afterEach(() => {
+  __fictSetSSRStreamHooks(null)
+})
 
 describe('Suspense', () => {
   it('renders fallback while pending and resumes on resolve', async () => {
@@ -1119,6 +1124,126 @@ describe('Suspense', () => {
     await tick()
     expect(container.textContent).toBe('ready-2')
     expect(onResolve).toHaveBeenCalledTimes(3)
+
+    dispose()
+  })
+
+  it('keeps stream hooks pending when one token reveals another token', async () => {
+    const container = document.createElement('div')
+    const first = createSuspenseToken()
+    const second = createSuspenseToken()
+    const boundaryPending = vi.fn()
+    const boundaryResolved = vi.fn()
+    const onResolve = vi.fn()
+    let phase = 0
+
+    __fictSetSSRStreamHooks({
+      registerBoundary: () => 'chained-boundary',
+      boundaryPending,
+      boundaryResolved,
+    })
+
+    const Child = () => {
+      if (phase === 0) throw first.token
+      if (phase === 1) throw second.token
+      return 'ready'
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: 'loading',
+          onResolve,
+          children: { type: Child, props: {} },
+        },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('loading')
+    expect(boundaryPending).toHaveBeenCalledTimes(1)
+    expect(boundaryResolved).not.toHaveBeenCalled()
+
+    phase = 1
+    first.resolve()
+    await tick()
+    await tick()
+
+    expect(container.textContent).toBe('loading')
+    expect(boundaryPending).toHaveBeenCalledTimes(1)
+    expect(boundaryResolved).not.toHaveBeenCalled()
+    expect(onResolve).not.toHaveBeenCalled()
+
+    phase = 2
+    second.resolve()
+    await tick()
+    await tick()
+
+    expect(container.textContent).toBe('ready')
+    expect(boundaryPending).toHaveBeenCalledTimes(1)
+    expect(boundaryResolved).toHaveBeenCalledTimes(1)
+    expect(onResolve).toHaveBeenCalledTimes(1)
+
+    dispose()
+  })
+
+  it('keeps stream hooks pending when a reset render suspends again', async () => {
+    const container = document.createElement('div')
+    const reset = createSignal(0)
+    const stale = createSuspenseToken()
+    let current = stale
+    let shouldSuspend = true
+    const boundaryPending = vi.fn()
+    const boundaryResolved = vi.fn()
+    const onResolve = vi.fn()
+
+    __fictSetSSRStreamHooks({
+      registerBoundary: () => 'reset-boundary',
+      boundaryPending,
+      boundaryResolved,
+    })
+
+    const Child = () => {
+      if (shouldSuspend) throw current.token
+      return 'ready'
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: 'loading',
+          onResolve,
+          resetKeys: reactive(() => reset()),
+          children: { type: Child, props: {} },
+        },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('loading')
+    expect(boundaryPending).toHaveBeenCalledTimes(1)
+
+    current = createSuspenseToken()
+    reset(1)
+    await tick()
+    await tick()
+
+    expect(container.textContent).toBe('loading')
+    expect(boundaryPending).toHaveBeenCalledTimes(1)
+    expect(boundaryResolved).not.toHaveBeenCalled()
+    expect(onResolve).not.toHaveBeenCalled()
+
+    shouldSuspend = false
+    current.resolve()
+    await tick()
+    await tick()
+
+    expect(container.textContent).toBe('ready')
+    expect(boundaryPending).toHaveBeenCalledTimes(1)
+    expect(boundaryResolved).toHaveBeenCalledTimes(1)
+    expect(onResolve).toHaveBeenCalledTimes(1)
 
     dispose()
   })

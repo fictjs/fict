@@ -181,6 +181,9 @@ export function Suspense(props: SuspenseProps): FictNode {
     }
   }
 
+  const isSettledInEpoch = (expectedEpoch: number) =>
+    !disposed && epoch === expectedEpoch && untrack(() => pending()) === 0
+
   withRootContext(boundaryRoot, () => {
     registerSuspenseHandler(token => {
       if (disposed) return false
@@ -229,11 +232,15 @@ export function Suspense(props: SuspenseProps): FictNode {
             if (newPending === 0) {
               // Directly render children instead of using switchView
               renderView(props.children ?? null)
-              if (streamPending && streamBoundaryId && streamHooks?.boundaryResolved) {
-                streamPending = false
-                streamHooks.boundaryResolved(streamBoundaryId)
+              // Rendering can immediately reveal another token. Only settle the
+              // boundary after checking the live state produced by that render.
+              if (isSettledInEpoch(tokenEpoch)) {
+                if (streamPending && streamBoundaryId && streamHooks?.boundaryResolved) {
+                  streamPending = false
+                  streamHooks.boundaryResolved(streamBoundaryId)
+                }
+                onResolveMaybe()
               }
-              onResolveMaybe()
             }
           })
         },
@@ -295,12 +302,17 @@ export function Suspense(props: SuspenseProps): FictNode {
       const next = getter ? getter() : props.resetKeys
       if (resetKeysChanged(prev, next)) {
         prev = next
-        epoch++
+        const resetEpoch = ++epoch
         pending(0)
         resolvedOnce = false
         // Directly render children instead of using switchView
         renderView(props.children ?? null)
-        if (streamPending && streamBoundaryId && streamHooks?.boundaryResolved) {
+        if (
+          isSettledInEpoch(resetEpoch) &&
+          streamPending &&
+          streamBoundaryId &&
+          streamHooks?.boundaryResolved
+        ) {
           streamPending = false
           streamHooks.boundaryResolved(streamBoundaryId)
         }
