@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   createMemo,
   createEffect,
+  createRoot,
   render,
   createElement,
   onMount,
@@ -115,6 +116,114 @@ describe('Memory and Lifecycle Tests', () => {
       b(50)
       await tick()
       expect(derived()).toBe(100)
+    })
+
+    it('disposes root-owned memos and freezes their last successful value', async () => {
+      const source = createSignal(0)
+      const externalTrigger = createSignal(0)
+      const seen: number[] = []
+      let getterRuns = 0
+      let memo!: () => number
+
+      const owner = createRoot(() => {
+        memo = createMemo(() => {
+          getterRuns++
+          return source()
+        })
+        expect(memo()).toBe(0)
+      })
+      const stopExternal = createEffect(() => {
+        externalTrigger()
+        seen.push(memo())
+      })
+
+      expect(getterRuns).toBe(1)
+      expect(seen).toEqual([0])
+
+      owner.dispose()
+      source(1)
+      await tick()
+
+      expect(getterRuns).toBe(1)
+      expect(seen).toEqual([0])
+      expect(memo()).toBe(0)
+
+      externalTrigger(1)
+      await tick()
+      expect(seen).toEqual([0, 0])
+      expect(getterRuns).toBe(1)
+
+      stopExternal()
+    })
+
+    it('rejects a root-owned memo disposed before its first evaluation', () => {
+      const owner = createRoot(() => createMemo(() => 1))
+
+      owner.dispose()
+
+      expect(() => owner.value()).toThrow('disposed before its first successful evaluation')
+    })
+
+    it('does not relink a memo when its getter disposes the owner root', () => {
+      const source = createSignal(0)
+      let getterRuns = 0
+      let disposeOwner = () => {}
+      let memo!: () => number
+
+      const owner = createRoot(() => {
+        memo = createMemo(() => {
+          getterRuns++
+          const value = source()
+          if (value === 1) disposeOwner()
+          return value
+        })
+        expect(memo()).toBe(0)
+      })
+      disposeOwner = owner.dispose
+
+      source(1)
+      expect(memo()).toBe(1)
+      expect(getterRuns).toBe(2)
+
+      source(2)
+      expect(memo()).toBe(1)
+      expect(getterRuns).toBe(2)
+
+      owner.dispose()
+    })
+
+    it('preserves a cached memo error after the owner root is disposed', () => {
+      const shouldThrow = createSignal(false)
+      const error = new Error('memo failed')
+      const owner = createRoot(() =>
+        createMemo(() => {
+          if (shouldThrow()) throw error
+          return 1
+        }),
+      )
+
+      expect(owner.value()).toBe(1)
+      shouldThrow(true)
+      expect(() => owner.value()).toThrow(error)
+
+      owner.dispose()
+      shouldThrow(false)
+      expect(() => owner.value()).toThrow(error)
+    })
+
+    it('allows onDestroy to read the final memo snapshot', () => {
+      let destroyedValue: number | undefined
+      const owner = createRoot(() => {
+        const memo = createMemo(() => 42)
+        expect(memo()).toBe(42)
+        onDestroy(() => {
+          destroyedValue = memo()
+        })
+      })
+
+      owner.dispose()
+
+      expect(destroyedValue).toBe(42)
     })
   })
 

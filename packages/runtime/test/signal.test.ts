@@ -439,6 +439,30 @@ describe('signal runtime robustness', () => {
     expect(seen).toEqual([0, 2, 4])
   })
 
+  it('keeps the previous computed snapshot when cleanup disposes its root', async () => {
+    const count = createSignal(0)
+    const seen: number[] = []
+    let disposeOwner = () => {}
+
+    const owner = createRoot(() => {
+      const value = createMemo(() => count())
+      createEffect(() => {
+        value()
+        onCleanup(() => {
+          disposeOwner()
+          seen.push(value())
+        })
+      })
+    })
+    disposeOwner = owner.dispose
+
+    count(1)
+    await tick()
+
+    expect(seen).toEqual([0])
+    owner.dispose()
+  })
+
   it('does not run cleanup when memo value is unchanged', async () => {
     const count = createSignal(0)
     const stepped = createMemo(() => Math.floor(count() / 2))

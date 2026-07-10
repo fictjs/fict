@@ -18,6 +18,7 @@ describe('devtools hook integration', () => {
     elements?: HTMLElement[]
   }>
   let lifecycleEvents: string[]
+  let dependencyEvents: string[]
   let effectRunDurations: number[]
   let rootEvents: Array<{
     type: 'root:register' | 'root:dispose' | 'root:suspend'
@@ -31,6 +32,7 @@ describe('devtools hook integration', () => {
     events = []
     componentEvents = []
     lifecycleEvents = []
+    dependencyEvents = []
     effectRunDurations = []
     rootEvents = []
     container = document.createElement('div')
@@ -65,6 +67,12 @@ describe('devtools hook integration', () => {
       },
       disposeEffect: (id: number) => {
         lifecycleEvents.push(`effect:${id}:dispose`)
+      },
+      trackDependency: (subscriberId: number, dependencyId: number) => {
+        dependencyEvents.push(`track:${subscriberId}:${dependencyId}`)
+      },
+      untrackDependency: (subscriberId: number, dependencyId: number) => {
+        dependencyEvents.push(`untrack:${subscriberId}:${dependencyId}`)
       },
       batchStart: () => {
         lifecycleEvents.push('batch:start')
@@ -233,6 +241,67 @@ describe('devtools hook integration', () => {
     expect(
       lifecycleEvents.some(event => event.includes('effect:') && event.endsWith(':dispose')),
     ).toBe(true)
+  })
+
+  it('emits computed disposal when its owning root is disposed', () => {
+    const { dispose } = createRoot(() => {
+      const value = createSignal(1)
+      const memo = createMemo(() => value() * 2)
+      expect(memo()).toBe(2)
+    })
+    const registration = events.find(
+      event => event.startsWith('computed:') && event.includes(':register:'),
+    )
+    const signalRegistration = events.find(
+      event => event.startsWith('signal:') && event.includes(':register:1'),
+    )
+    const computedId = Number(registration?.split(':')[1])
+    const signalId = Number(signalRegistration?.split(':')[1])
+
+    expect(Number.isFinite(computedId)).toBe(true)
+    expect(Number.isFinite(signalId)).toBe(true)
+    expect(dependencyEvents).toContain(`track:${computedId}:${signalId}`)
+    dispose()
+
+    expect(lifecycleEvents).toContain(`computed:${computedId}:dispose`)
+    expect(dependencyEvents).toContain(`untrack:${computedId}:${signalId}`)
+  })
+
+  it('untracks computed dependencies collected after reentrant owner disposal', () => {
+    const innerSource = createSignal(10)
+    const trigger = createSignal(0)
+    const inner = createMemo(() => innerSource())
+    let outer!: () => number
+    let disposeOwner = () => {}
+
+    const owner = createRoot(() => {
+      outer = createMemo(() => {
+        const value = trigger()
+        if (value === 1) {
+          disposeOwner()
+          return inner()
+        }
+        return value
+      })
+      expect(outer()).toBe(0)
+    })
+    disposeOwner = owner.dispose
+
+    const innerRegistration = events.find(
+      event => event.startsWith('computed:') && event.includes(':register:'),
+    )
+    const sourceRegistration = events.find(
+      event => event.startsWith('signal:') && event.includes(':register:10'),
+    )
+    const innerId = Number(innerRegistration?.split(':')[1])
+    const sourceId = Number(sourceRegistration?.split(':')[1])
+    dependencyEvents.length = 0
+
+    trigger(1)
+    expect(outer()).toBe(10)
+
+    expect(dependencyEvents).toContain(`track:${innerId}:${sourceId}`)
+    expect(dependencyEvents).toContain(`untrack:${innerId}:${sourceId}`)
   })
 
   it('reports non-negative effect run duration in devtools hook', () => {

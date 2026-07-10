@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
-import { createRoot, onDestroy, createEffect, onCleanup } from '../src/index'
+import { createRoot, onDestroy, createEffect, createMemo, onCleanup } from '../src/index'
 import { createSignal, createScope, runInScope } from '../src/advanced'
 
 const tick = () =>
@@ -91,6 +91,28 @@ describe('Reactive Scope', () => {
       count(2)
       await tick()
       expect(log).toEqual(['effect: 0', 'effect: 1'])
+    })
+
+    it('stop freezes memos owned by the scope', () => {
+      const source = createSignal(0)
+      let runs = 0
+      let memo!: () => number
+      const { value: scope, dispose } = createRoot(() => createScope())
+
+      scope.run(() => {
+        memo = createMemo(() => {
+          runs++
+          return source()
+        })
+        expect(memo()).toBe(0)
+      })
+
+      scope.stop()
+      source(1)
+
+      expect(memo()).toBe(0)
+      expect(runs).toBe(1)
+      dispose()
     })
 
     it('run disposes previous scope when called again', async () => {

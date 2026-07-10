@@ -152,6 +152,10 @@ export interface ComputedNode<T = unknown> extends BaseNode {
   getter: (oldValue: T | undefined) => T
   /** Root context captured when the computed was created */
   root?: RootContext
+  /** Whether the getter has completed successfully at least once */
+  hasValue?: boolean
+  /** Whether the owning root permanently disposed this computed */
+  disposed?: boolean
   /** DevTools ID */
   __id?: number | undefined
   /** Equality check */
@@ -582,6 +586,9 @@ function unlink(lnk: Link, sub: ReactiveNode = lnk.sub): Link | undefined {
  * @param dep - The dependency node
  */
 function unwatched(dep: ReactiveNode): void {
+  if ('getter' in dep && dep.getter !== undefined && dep.disposed === true) {
+    return
+  }
   if (!(dep.flags & Mutable)) {
     disposeNode(dep)
   } else if ('getter' in dep && dep.getter !== undefined) {
@@ -846,15 +853,6 @@ function disposeNode(node: ReactiveNode): void {
   if ('fn' in node && typeof node.fn === 'function') {
     ;(node as EffectNode).disposed = true
   }
-  if (isDev) {
-    if ('fn' in node && typeof node.fn === 'function') {
-      disposeEffectDevtools(node as EffectNode)
-    } else if ('getter' in node && typeof node.getter === 'function') {
-      disposeComputedDevtools(node as ComputedNode)
-    } else if ('currentValue' in node) {
-      disposeSignalDevtools(node as SignalNode)
-    }
-  }
 
   node.depsTail = undefined
   node.flags = 0
@@ -865,6 +863,23 @@ function disposeNode(node: ReactiveNode): void {
     unlink(sub)
     sub = next
   }
+
+  if (isDev) {
+    if ('fn' in node && typeof node.fn === 'function') {
+      disposeEffectDevtools(node as EffectNode)
+    } else if ('getter' in node && typeof node.getter === 'function') {
+      disposeComputedDevtools(node as ComputedNode)
+    } else if ('currentValue' in node) {
+      disposeSignalDevtools(node as SignalNode)
+    }
+  }
+}
+
+function disposeComputedPermanently<T>(node: ComputedNode<T>): void {
+  if (node.disposed === true) return
+  node.disposed = true
+  delete node.root
+  disposeNode(node)
 }
 /**
  * Update a signal node
@@ -898,8 +913,10 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
 
   try {
     const newValue = withRootContext(c.root, () => c.getter(oldValue))
+    c.hasValue = true
     activeSub = prevSub
     c.flags &= ~Running
+    if (isComputedDisposed(c)) c.depsTail = undefined
     purgeDeps(c)
     c.thrownError = undefined
     if (valuesDiffer(c, oldValue, newValue)) {
@@ -913,6 +930,7 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
   } catch (e) {
     activeSub = prevSub
     c.flags &= ~Running
+    if (isComputedDisposed(c)) c.depsTail = undefined
     // Keep dependency graph consistent even when getter throws.
     // Without this, stale old deps can remain subscribed.
     purgeDeps(c)
@@ -1317,7 +1335,10 @@ export function computed<T>(
   if (options?.devToolsSource !== undefined) c.devToolsSource = options.devToolsSource
   if (options?.internal === true) c.devToolsInternal = true
   const root = getCurrentRoot()
-  if (root) c.root = root
+  if (root) {
+    c.root = root
+    registerRootCleanup(() => disposeComputedPermanently(c))
+  }
   if (isDev) registerComputedDevtools(c)
   const bound = (computedOper as (this: ComputedNode<T>) => T).bind(
     c as any,
@@ -1334,6 +1355,8 @@ function computedOper<T>(this: ComputedNode<T>): T {
     }
     return this.value
   }
+
+  if (isComputedDisposed(this)) return readDisposedComputed(this)
 
   const flags = this.flags
 
@@ -1357,12 +1380,17 @@ function computedOper<T>(this: ComputedNode<T>): T {
     const prevSub = setActiveSub(this)
     try {
       this.value = withRootContext(this.root, () => this.getter(undefined))
+      this.hasValue = true
       if (isDev) updateComputedDevtools(this, this.value)
     } catch (err) {
       // Initial evaluation failed: remove partially tracked dependencies
       // and allow a future read to retry from a clean slate.
       this.flags = 0
+      this.depsTail = undefined
       purgeDeps(this)
+      if (isComputedDisposed(this)) {
+        this.thrownError = { error: err }
+      }
       throw err
     } finally {
       setActiveSub(prevSub)
@@ -1372,9 +1400,27 @@ function computedOper<T>(this: ComputedNode<T>): T {
     }
   }
 
+  if (isComputedDisposed(this)) {
+    this.depsTail = undefined
+    purgeDeps(this)
+    return readDisposedComputed(this)
+  }
   if (activeSub !== undefined) link(this, activeSub, cycle)
   if (this.thrownError !== undefined) throw this.thrownError.error
   return this.value
+}
+
+function isComputedDisposed(computed: { disposed?: boolean }): boolean {
+  return computed.disposed === true
+}
+
+function readDisposedComputed<T>(computed: ComputedNode<T>): T {
+  if (computed.thrownError !== undefined) throw computed.thrownError.error
+  if (computed.hasValue === true) return computed.value
+  const message = isDev
+    ? '[fict] Cannot read a memo disposed before its first successful evaluation.'
+    : 'FICT:E_DISPOSED_MEMO'
+  throw new Error(message)
 }
 // ============================================================================
 // Effect
