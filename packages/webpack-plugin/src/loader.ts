@@ -4,7 +4,12 @@ import path from 'node:path'
 import { transformAsync, type TransformOptions } from '@babel/core'
 import type { FictPresetOptions } from '@fictjs/babel-preset'
 
-import { createLocalResolutionKey, getLoaderBinding, normalizeFileName } from './shared'
+import {
+  createLocalResolutionKey,
+  getLoaderBinding,
+  registerFictModule,
+  storeFictModuleMetadata,
+} from './shared'
 
 export type FictWebpackLoaderOptions = Omit<
   FictPresetOptions,
@@ -65,18 +70,13 @@ export default function fictWebpackLoader(
   }
 
   this.cacheable(true)
-  const filename = normalizeFileName(this.resourcePath)
-  const existingModule = binding.state.modulesByFilename.get(filename)
-  if (existingModule && existingModule !== binding.module) {
-    callback(
-      new Error(
-        `[fict] Multiple Webpack modules for "${filename}" cannot share one reactive metadata record.`,
-      ),
-    )
+  let filename: string
+  try {
+    filename = registerFictModule(binding.state, this.resourcePath, binding.module)
+  } catch (error) {
+    callback(error instanceof Error ? error : new Error(String(error)))
     return
   }
-  binding.state.modulesByFilename.set(filename, binding.module)
-  binding.state.filenamesByModule.set(binding.module, filename)
   if (!binding.state.moduleMetadata.has(filename)) {
     binding.state.moduleMetadata.set(filename, { exports: {} })
   }
@@ -116,6 +116,23 @@ export default function fictWebpackLoader(
     result => {
       if (!result?.code) {
         callback(new Error(`[fict] Babel returned no output for ${filename}.`))
+        return
+      }
+      const metadata = binding.state.moduleMetadata.get(filename)
+      if (!metadata) {
+        callback(new Error(`[fict] Compiler did not emit module metadata for ${filename}.`))
+        return
+      }
+      try {
+        storeFictModuleMetadata(
+          binding.state,
+          binding.module,
+          filename,
+          metadata,
+          binding.state.pendingDependencyFingerprints.get(filename) ?? null,
+        )
+      } catch (error) {
+        callback(error instanceof Error ? error : new Error(String(error)))
         return
       }
       callback(

@@ -4,6 +4,9 @@ import {
   attachLoaderBinding,
   createCompilationState,
   createLocalResolutionKey,
+  registerFictModule,
+  restoreFictModuleMetadata,
+  storeFictModuleMetadata,
   type FictWebpackCompilationState,
 } from './shared'
 
@@ -21,13 +24,17 @@ export interface FictWebpackPluginOptions {
 }
 
 function stableStringify(value: unknown): string {
+  if (value === undefined || typeof value === 'function' || typeof value === 'symbol') {
+    return 'null'
+  }
   if (value === null || typeof value !== 'object') {
-    return JSON.stringify(value) ?? 'undefined'
+    return JSON.stringify(value)
   }
   if (Array.isArray(value)) {
     return `[${value.map(stableStringify).join(',')}]`
   }
   return `{${Object.keys(value)
+    .filter(key => (value as Record<string, unknown>)[key] !== undefined)
     .sort()
     .map(
       key => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`,
@@ -114,12 +121,63 @@ function getStronglyConnectedComponents(graph: Map<string, MetadataGraphNode>): 
 }
 
 function rebuildModule(compilation: Compilation, module: NormalModule): Promise<void> {
+  if (compilation.rebuildQueue.isDone(module)) {
+    compilation.rebuildQueue.invalidate(module)
+  }
   return new Promise((resolve, reject) => {
     compilation.rebuildModule(module, error => {
       if (error) reject(error)
       else resolve()
     })
   })
+}
+
+function hydrateCachedModuleMetadata(
+  compilation: Compilation,
+  state: FictWebpackCompilationState,
+): void {
+  for (const module of compilation.modules) {
+    const restored = restoreFictModuleMetadata(module as NormalModule)
+    if (!restored) continue
+    const filename = registerFictModule(state, restored.filename, module as NormalModule)
+    state.moduleMetadata.set(filename, restored.metadata)
+    state.compiledDependencyFingerprints.set(filename, restored.dependencyFingerprint)
+  }
+}
+
+function dependencyFingerprint(
+  node: MetadataGraphNode,
+  state: FictWebpackCompilationState,
+): string {
+  const dependencies = [...node.dependencies].sort().map(filename => {
+    const metadata = state.moduleMetadata.get(filename)
+    if (!metadata) {
+      throw new Error(`[fict] Missing Webpack module metadata for ${filename}.`)
+    }
+    return [filename, metadata]
+  })
+  return stableStringify(dependencies)
+}
+
+async function rebuildModuleWithFingerprint(
+  compilation: Compilation,
+  state: FictWebpackCompilationState,
+  node: MetadataGraphNode,
+): Promise<void> {
+  const fingerprint = dependencyFingerprint(node, state)
+  state.pendingDependencyFingerprints.set(node.filename, fingerprint)
+  try {
+    await rebuildModule(compilation, node.module)
+  } finally {
+    state.pendingDependencyFingerprints.delete(node.filename)
+  }
+  const persistedFingerprint = state.compiledDependencyFingerprints.get(node.filename)
+  if (persistedFingerprint !== fingerprint) {
+    throw new Error(
+      `[fict] Webpack did not persist the metadata fingerprint for ${node.filename} ` +
+        `(expected ${fingerprint}, received ${String(persistedFingerprint)}).`,
+    )
+  }
 }
 
 function componentMetadataSnapshot(
@@ -145,21 +203,39 @@ async function convergeMetadataGraph(
     if (!hasCycle) {
       const filename = sortedComponent[0]!
       const node = graph.get(filename)!
-      if (node.dependencies.size > 0) {
-        await rebuildModule(compilation, node.module)
+      const fingerprint = dependencyFingerprint(node, state)
+      if (state.compiledDependencyFingerprints.get(filename) !== fingerprint) {
+        if (node.dependencies.size === 0) {
+          const metadata = state.moduleMetadata.get(filename)
+          if (!metadata) {
+            throw new Error(`[fict] Missing Webpack module metadata for ${filename}.`)
+          }
+          storeFictModuleMetadata(state, node.module, filename, metadata, fingerprint)
+        } else {
+          await rebuildModuleWithFingerprint(compilation, state, node)
+        }
       }
       continue
     }
 
     const passLimit = maxMetadataPasses ?? Math.max(8, sortedComponent.length * 4)
+    const fingerprintsAreCurrent = (): boolean =>
+      sortedComponent.every(filename => {
+        const node = graph.get(filename)!
+        return (
+          state.compiledDependencyFingerprints.get(filename) === dependencyFingerprint(node, state)
+        )
+      })
+    if (fingerprintsAreCurrent()) continue
+
     let converged = false
     for (let pass = 0; pass < passLimit; pass++) {
       const before = componentMetadataSnapshot(sortedComponent, state)
       for (const filename of sortedComponent) {
-        await rebuildModule(compilation, graph.get(filename)!.module)
+        await rebuildModuleWithFingerprint(compilation, state, graph.get(filename)!)
       }
       const after = componentMetadataSnapshot(sortedComponent, state)
-      if (after === before) {
+      if (after === before && fingerprintsAreCurrent()) {
         converged = true
         break
       }
@@ -202,7 +278,9 @@ export class FictWebpackPlugin {
       { name: PLUGIN_NAME, stage: Number.MAX_SAFE_INTEGER },
       async compilation => {
         const state = this.#states.get(compilation)
-        if (!state || state.modulesByFilename.size === 0) return
+        if (!state) return
+        hydrateCachedModuleMetadata(compilation, state)
+        if (state.modulesByFilename.size === 0) return
         await convergeMetadataGraph(compilation, state, this.#options.maxMetadataPasses)
       },
     )

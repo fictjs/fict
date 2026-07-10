@@ -24,5 +24,6 @@ module.exports = {
 If another Babel transform is needed, place its loader to the left of the Fict loader so it runs
 after Fict compilation. Do not also configure `@fictjs/babel-preset` in that Babel loader.
 
-This initial integration coordinates metadata within one cold Webpack compilation. Incremental
-watch/cache persistence and Webpack library metadata publishing are separate capabilities.
+Local reactive metadata and importer dependency fingerprints are persisted in Webpack module build
+information, so watch rebuilds and filesystem-cache restores keep unchanged importers correct.
+Webpack library metadata publishing remains a separate capability.
