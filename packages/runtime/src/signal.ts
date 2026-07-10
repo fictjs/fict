@@ -186,6 +186,8 @@ export interface EffectNode extends BaseNode {
   __id?: number | undefined
   /** Queue priority for a pending scheduler entry */
   queuedPriority?: 1 | 2 | undefined
+  /** Whether the effect has been permanently detached */
+  disposed?: boolean
 }
 
 /**
@@ -838,6 +840,9 @@ function purgeDeps(sub: ReactiveNode): void {
  * @param node - The node to dispose
  */
 function disposeNode(node: ReactiveNode): void {
+  if ('fn' in node && typeof node.fn === 'function') {
+    ;(node as EffectNode).disposed = true
+  }
   if (isDev) {
     if ('fn' in node && typeof node.fn === 'function') {
       disposeEffectDevtools(node as EffectNode)
@@ -935,6 +940,8 @@ const SelfNotified = Recursed | Pending
  */
 function runEffect(e: EffectNode): void {
   const flags = e.flags
+  const isDisposed = () => e.disposed === true
+  if (isDisposed()) return
   const runCleanup = () => {
     if (!e.runCleanup) return
     if (isDev) effectCleanupDevtools(e)
@@ -956,7 +963,7 @@ function runEffect(e: EffectNode): void {
       // A throwing cleanup must not brick the effect: leave it subscribed
       // with plain Watching flags so future writes re-queue it (this run is
       // skipped), then let the error propagate.
-      if (e.flags !== 0) {
+      if (!isDisposed()) {
         e.flags = Watching
       }
       throw err
@@ -965,6 +972,7 @@ function runEffect(e: EffectNode): void {
   if (flags & Dirty) {
     // Run cleanup before re-run; values are still the previous commit.
     runCleanupOrDetach()
+    if (isDisposed()) return
     ++cycle
     e.depsTail = undefined
     e.flags = WatchingRunning
@@ -974,6 +982,10 @@ function runEffect(e: EffectNode): void {
       e.fn()
       activeSub = prevSub
       const ranFlags = e.flags
+      if (isDisposed()) {
+        purgeDeps(e)
+        return
+      }
       e.flags = Watching
       purgeDeps(e)
       if ((ranFlags & SelfNotified) === SelfNotified) {
@@ -981,7 +993,9 @@ function runEffect(e: EffectNode): void {
       }
     } catch (err) {
       activeSub = prevSub
-      e.flags = Watching
+      if (!isDisposed()) {
+        e.flags = Watching
+      }
       // Keep dependency graph consistent even when effect throws.
       // Without this, stale old deps can remain subscribed.
       purgeDeps(e)
@@ -993,23 +1007,25 @@ function runEffect(e: EffectNode): void {
       isDirty = checkDirty(e.deps, e)
     } catch (err) {
       if (handleSuspend(err as SuspenseToken, e.root)) {
-        if (e.flags !== 0) {
+        if (!isDisposed()) {
           e.flags = Watching
         }
         return
       }
       if (handleError(err, { source: 'effect' }, e.root)) {
-        if (e.flags !== 0) {
+        if (!isDisposed()) {
           e.flags = Watching
         }
         return
       }
       throw err
     }
+    if (isDisposed()) return
     if (isDirty) {
       // Only run cleanup if the effect will actually re-run.
       // Cleanup reads should observe previous values for this flush.
       runCleanupOrDetach()
+      if (isDisposed()) return
       ++cycle
       e.depsTail = undefined
       e.flags = WatchingRunning
@@ -1019,6 +1035,10 @@ function runEffect(e: EffectNode): void {
         e.fn()
         activeSub = prevSub
         const ranFlags = e.flags
+        if (isDisposed()) {
+          purgeDeps(e)
+          return
+        }
         e.flags = Watching
         purgeDeps(e)
         if ((ranFlags & SelfNotified) === SelfNotified) {
@@ -1026,7 +1046,9 @@ function runEffect(e: EffectNode): void {
         }
       } catch (err) {
         activeSub = prevSub
-        e.flags = Watching
+        if (!isDisposed()) {
+          e.flags = Watching
+        }
         // Keep dependency graph consistent even when effect throws.
         // Without this, stale old deps can remain subscribed.
         purgeDeps(e)

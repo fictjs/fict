@@ -21,6 +21,190 @@ const tick = () =>
   )
 
 describe('signal runtime robustness', () => {
+  for (const [name, create] of [
+    ['createEffect', createEffect],
+    ['createRenderEffect', createRenderEffect],
+  ] as const) {
+    it(`${name} cleanup can dispose its own effect without recursion`, () => {
+      let cleanupRuns = 0
+      let stop = () => {}
+      const root = createRoot(() => {
+        stop = create(() => {
+          return () => {
+            cleanupRuns++
+            stop()
+          }
+        })
+      })
+
+      expect(() => stop()).not.toThrow()
+      expect(cleanupRuns).toBe(1)
+      expect(() => stop()).not.toThrow()
+
+      root.dispose()
+      expect(cleanupRuns).toBe(1)
+    })
+
+    it(`${name} drains registered cleanup when initial execution fails`, () => {
+      const error = new Error('initial effect failed')
+      let cleanupRuns = 0
+
+      expect(() =>
+        create(() => {
+          onCleanup(() => {
+            cleanupRuns++
+          })
+          throw error
+        }),
+      ).toThrow(error)
+      expect(cleanupRuns).toBe(1)
+    })
+
+    it(`${name} does not rerun after its cleanup disposes the effect`, async () => {
+      const value = createSignal(0)
+      let effectRuns = 0
+      let cleanupRuns = 0
+      let stop = () => {}
+
+      stop = create(() => {
+        value()
+        effectRuns++
+        onCleanup(() => {
+          cleanupRuns++
+          stop()
+        })
+      })
+
+      value(1)
+      await tick()
+      expect(effectRuns).toBe(1)
+      expect(cleanupRuns).toBe(1)
+
+      value(2)
+      await tick()
+      expect(effectRuns).toBe(1)
+      expect(cleanupRuns).toBe(1)
+    })
+
+    it(`${name} drains in-flight cleanup and dependencies when the effect stops itself`, async () => {
+      const trigger = createSignal(0)
+      const tail = createSignal(0)
+      let effectRuns = 0
+      let cleanupRuns = 0
+      let stop = () => {}
+
+      stop = create(() => {
+        const current = trigger()
+        effectRuns++
+        if (current === 1) {
+          onCleanup(() => {
+            cleanupRuns++
+          })
+          stop()
+          tail()
+        }
+      })
+
+      trigger(1)
+      await tick()
+      expect(effectRuns).toBe(2)
+      expect(cleanupRuns).toBe(1)
+
+      tail(1)
+      trigger(2)
+      await tick()
+      expect(effectRuns).toBe(2)
+      expect(cleanupRuns).toBe(1)
+    })
+
+    it(`${name} stays disposed when it was queued before stop`, async () => {
+      const value = createSignal(0)
+      let effectRuns = 0
+      let cleanupRuns = 0
+
+      const stop = create(() => {
+        value()
+        effectRuns++
+        onCleanup(() => {
+          cleanupRuns++
+        })
+      })
+
+      value(1)
+      stop()
+      expect(cleanupRuns).toBe(1)
+
+      await tick()
+      expect(effectRuns).toBe(1)
+
+      value(2)
+      await tick()
+      expect(effectRuns).toBe(1)
+      expect(cleanupRuns).toBe(1)
+    })
+
+    it(`${name} stays disposed when memo validation stops the pending effect`, async () => {
+      const source = createSignal(0)
+      let effectRuns = 0
+      let stop = () => {}
+      const stable = createMemo(() => {
+        const current = source()
+        if (current === 1) stop()
+        return 0
+      })
+
+      stop = create(() => {
+        stable()
+        effectRuns++
+      })
+
+      source(1)
+      await tick()
+      expect(effectRuns).toBe(1)
+
+      source(2)
+      await tick()
+      expect(effectRuns).toBe(1)
+    })
+
+    it(`${name} drains cleanup registered before a handled error disposes its owner`, async () => {
+      const value = createSignal(0)
+      const error = new Error('effect failed')
+      let effectRuns = 0
+      let cleanupRuns = 0
+      let disposeOwner = () => {}
+
+      const root = createRoot(() => {
+        registerErrorHandler(caught => {
+          expect(caught).toBe(error)
+          disposeOwner()
+          return true
+        })
+        create(() => {
+          const current = value()
+          effectRuns++
+          if (current === 1) {
+            onCleanup(() => {
+              cleanupRuns++
+            })
+            throw error
+          }
+        })
+      })
+      disposeOwner = root.dispose
+
+      value(1)
+      await tick()
+      expect(effectRuns).toBe(2)
+      expect(cleanupRuns).toBe(1)
+
+      value(2)
+      await tick()
+      expect(effectRuns).toBe(2)
+      expect(cleanupRuns).toBe(1)
+    })
+  }
+
   it('scopes onCleanup callbacks to render effect reruns and disposal', async () => {
     const value = createSignal(0)
     const order: string[] = []
