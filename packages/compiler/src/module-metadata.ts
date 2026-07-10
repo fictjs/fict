@@ -59,9 +59,8 @@ interface FictPackageConfig {
 
 const sharedFsProbeCache: FsProbeCache = new Map()
 
-function shouldUseResolutionCache(options?: FictCompilerOptions): boolean {
-  return !options?.resolveModuleMetadata && !options?.moduleMetadata
-}
+const shouldUseResolutionCache = (options?: FictCompilerOptions): boolean =>
+  !options?.resolveModuleMetadata && !options?.moduleMetadata
 
 function getResolutionCache(options?: FictCompilerOptions): Map<string, ModuleReactiveMetadata> {
   if (!options) return defaultResolutionCache
@@ -78,13 +77,9 @@ function clearResolutionCaches(): void {
   resolutionCacheByOptions = new WeakMap<FictCompilerOptions, Map<string, ModuleReactiveMetadata>>()
 }
 
-function clearFsProbeCache(): void {
-  sharedFsProbeCache.clear()
-}
+const clearFsProbeCache = (): void => sharedFsProbeCache.clear()
 
-function canReuseStoredMetadata(key: string): boolean {
-  return !diskLoadedMetadataKeys.has(key)
-}
+const canReuseStoredMetadata = (key: string): boolean => !diskLoadedMetadataKeys.has(key)
 
 function cacheFsProbeResult(cache: FsProbeCache, pathName: string, exists: boolean): void {
   if (cache.size >= FS_PROBE_CACHE_MAX_SIZE) {
@@ -96,9 +91,8 @@ function cacheFsProbeResult(cache: FsProbeCache, pathName: string, exists: boole
   })
 }
 
-function isWindowsDrivePath(fileName: string): boolean {
-  return /^[a-zA-Z]:[\\/]/.test(fileName) || fileName.startsWith('\\\\')
-}
+const isWindowsDrivePath = (fileName: string): boolean =>
+  /^[a-zA-Z]:[\\/]/.test(fileName) || fileName.startsWith('\\\\')
 
 function isVirtualFileName(fileName: string): boolean {
   const trimmed = fileName.trim()
@@ -145,9 +139,7 @@ function stripUrlLikeSuffix(value: string): string {
   return normalized
 }
 
-function hasQuerySuffix(source: string): boolean {
-  return source.includes('?')
-}
+const hasQuerySuffix = (source: string): boolean => source.includes('?')
 
 function resolveMetadataWriteMode(options?: FictCompilerOptions): MetadataWriteMode {
   const opt = options?.emitModuleMetadata
@@ -158,32 +150,24 @@ function resolveMetadataWriteMode(options?: FictCompilerOptions): MetadataWriteM
   return 'cache'
 }
 
-function normalizeConcreteFileName(fileName: string | undefined): string | null {
-  if (!fileName || isVirtualFileName(fileName)) return null
-  return normalizeFileName(fileName)
-}
+const normalizeConcreteFileName = (fileName: string | undefined): string | null =>
+  !fileName || isVirtualFileName(fileName) ? null : normalizeFileName(fileName)
 
-function getMetadataStore(options?: FictCompilerOptions): Map<string, ModuleReactiveMetadata> {
-  return options?.moduleMetadata ?? globalMetadata
-}
+const getMetadataStore = (options?: FictCompilerOptions): Map<string, ModuleReactiveMetadata> =>
+  options?.moduleMetadata ?? globalMetadata
 
-function getMetadataExtension(options?: FictCompilerOptions): string {
-  return options?.moduleMetadataExtension ?? DEFAULT_META_EXTENSION
-}
+const getMetadataExtension = (options?: FictCompilerOptions): string =>
+  options?.moduleMetadataExtension ?? DEFAULT_META_EXTENSION
 
 function getMetadataCacheDir(options?: FictCompilerOptions): string {
-  if (options?.moduleMetadataCacheDir && options.moduleMetadataCacheDir.trim().length > 0) {
-    return path.resolve(options.moduleMetadataCacheDir)
-  }
-  return path.resolve(DEFAULT_META_CACHE_DIR)
+  const configured = options?.moduleMetadataCacheDir
+  return path.resolve(configured?.trim() ? configured : DEFAULT_META_CACHE_DIR)
 }
 
-function getAdjacentMetadataFilePath(
+const getAdjacentMetadataFilePath = (
   normalizedFileName: string,
   options?: FictCompilerOptions,
-): string {
-  return `${normalizedFileName}${getMetadataExtension(options)}`
-}
+): string => `${normalizedFileName}${getMetadataExtension(options)}`
 
 function getCachedMetadataFilePath(
   normalizedFileName: string,
@@ -206,13 +190,11 @@ function getMetadataWritePath(
   writeMode: MetadataWriteMode,
   options?: FictCompilerOptions,
 ): string | null {
-  if (writeMode === 'adjacent') {
-    return getAdjacentMetadataFilePath(normalizedFileName, options)
-  }
-  if (writeMode === 'cache') {
-    return getCachedMetadataFilePath(normalizedFileName, options)
-  }
-  return null
+  return writeMode === 'adjacent'
+    ? getAdjacentMetadataFilePath(normalizedFileName, options)
+    : writeMode === 'cache'
+      ? getCachedMetadataFilePath(normalizedFileName, options)
+      : null
 }
 
 function warnMetadata(
@@ -714,4 +696,23 @@ export function clearModuleMetadata(options?: FictCompilerOptions): void {
   lastWrittenMetadataPayload.clear()
   clearResolutionCaches()
   clearFsProbeCache()
+}
+
+/** @internal Removes one integration-owned metadata entry and both possible sidecar files. */
+export function invalidateModuleMetadata(fileName: string, options?: FictCompilerOptions): void {
+  const normalized = normalizeConcreteFileName(fileName)
+  if (!normalized) return
+  globalMetadata.delete(normalized)
+  options?.moduleMetadata?.delete(normalized)
+  diskLoadedMetadataKeys.delete(normalized)
+  clearResolutionCaches()
+  for (const metaPath of getMetadataReadPaths(normalized, options)) {
+    lastWrittenMetadataPayload.delete(metaPath)
+    try {
+      unlinkSync(metaPath)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    cacheFsProbeResult(sharedFsProbeCache, metaPath, false)
+  }
 }

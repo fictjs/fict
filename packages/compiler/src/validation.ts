@@ -68,6 +68,7 @@ export enum DiagnosticCode {
   FICT_M = 'FICT-M',
   FICT_H = 'FICT-H',
   FICT_H002 = 'FICT-H002', // Inconsistent hook return accessor shape across branches
+  FICT_H003 = 'FICT-H003', // Imported hook metadata unavailable
   FICT_HIR_UNSUPPORTED = 'FICT-HIR-UNSUPPORTED',
 
   // Performance (FICT-X*)
@@ -76,15 +77,11 @@ export enum DiagnosticCode {
 
 export function matchesDiagnosticCode(code: string, pattern: string): boolean {
   if (code === pattern) return true
-  if (!code.startsWith(pattern)) return false
-  const suffix = code.slice(pattern.length)
-  return /^[0-9]/.test(suffix)
+  return code.startsWith(pattern) && /^[0-9]/.test(code.slice(pattern.length))
 }
 
 export function matchesAnyDiagnosticCode(code: string, patterns: Iterable<string>): boolean {
-  for (const pattern of patterns) {
-    if (matchesDiagnosticCode(code, pattern)) return true
-  }
+  for (const pattern of patterns) if (matchesDiagnosticCode(code, pattern)) return true
   return false
 }
 
@@ -134,6 +131,8 @@ export const DiagnosticMessages: Record<DiagnosticCode, string> = {
   [DiagnosticCode.FICT_H]: 'Dynamic property access widens dependency tracking.',
   [DiagnosticCode.FICT_H002]:
     'Hook returns a field with an inconsistent shape across branches; each return slot must consistently be a plain value or the same reactive accessor kind so consumers can be rewritten.',
+  [DiagnosticCode.FICT_H003]:
+    'Imported hook metadata is unavailable; provide authoritative metadata or break the unresolved module cycle.',
   [DiagnosticCode.FICT_HIR_UNSUPPORTED]:
     'The HIR conversion encountered syntax that it cannot faithfully represent.',
 
@@ -173,6 +172,7 @@ const BaseDiagnosticSeverities: Record<DiagnosticCode, DiagnosticSeverity> = {
   [DiagnosticCode.FICT_M]: DiagnosticSeverity.Warning,
   [DiagnosticCode.FICT_H]: DiagnosticSeverity.Warning,
   [DiagnosticCode.FICT_H002]: DiagnosticSeverity.Warning,
+  [DiagnosticCode.FICT_H003]: DiagnosticSeverity.Warning,
   [DiagnosticCode.FICT_HIR_UNSUPPORTED]: DiagnosticSeverity.Error,
 
   [DiagnosticCode.FICT_X003]: DiagnosticSeverity.Hint,

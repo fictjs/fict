@@ -38,16 +38,13 @@ import { matchesAnyDiagnosticCode, matchesDiagnosticCode } from './validation'
 
 export type { FictCompilerOptions, CompilerWarning } from './types'
 
-function importSpecifierImportedName(
+const importSpecifierImportedName = (
   spec: BabelCore.types.ImportSpecifier,
   t: typeof BabelCore.types,
-): string {
-  return t.isIdentifier(spec.imported) ? spec.imported.name : String(spec.imported.value)
-}
+): string => (t.isIdentifier(spec.imported) ? spec.imported.name : String(spec.imported.value))
 
-function isReactiveExportKind(value: unknown): value is ReactiveExportKind {
-  return value === 'signal' || value === 'memo' || value === 'store'
-}
+const isReactiveExportKind = (value: unknown): value is ReactiveExportKind =>
+  value === 'signal' || value === 'memo' || value === 'store'
 
 function getOwnReactiveExportKind(
   meta: ModuleReactiveMetadata,
@@ -524,7 +521,7 @@ function createWarningDispatcher(
 ): WarningSink {
   validateStrictGuaranteeConfig(options, suppressions)
   const hasEscalation = hasErrorEscalation(options)
-  if (!dev && !hasEscalation) return () => {}
+  if (!dev && !hasEscalation && !onWarn) return () => {}
   return (warning, path) => {
     if (shouldSuppressWarning(suppressions, warning.code, warning.line)) return
     const level = resolveWarningLevel(warning.code, options)
@@ -2521,6 +2518,7 @@ function createHIREntrypointVisitor(
           dev,
           sourceCode,
         )
+        for (const diagnostic of options.integrationDiagnostics ?? []) warn(diagnostic)
         const optionsWithWarnings: FictCompilerOptions = {
           ...options,
           onWarn: warn,
@@ -4947,6 +4945,7 @@ export function getCompilerCacheFingerprint(): string {
 
 export {
   clearModuleMetadata,
+  invalidateModuleMetadata,
   resolveModuleMetadata,
   resolvePackageModuleMetadata,
   setModuleMetadata,
@@ -4961,6 +4960,7 @@ export type {
   ReactiveExportKind,
 } from './types'
 export { MODULE_REACTIVE_METADATA_VERSION } from './types'
+export { DiagnosticCode } from './validation'
 export { analyzeFictFile, inferTraceMarkersForComponent, minimizeSourceByLines } from './tooling'
 export type {
   AnalyzeDiagnostic,

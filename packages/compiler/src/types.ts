@@ -122,6 +122,8 @@ export interface FictCompilerOptions {
   dev?: boolean
   sourcemap?: boolean
   onWarn?: (warning: CompilerWarning) => void
+  /** Diagnostics prepared by an official integration before compiler traversal. @internal */
+  integrationDiagnostics?: CompilerWarning[]
   /**
    * Emit a structured explanation artifact for compiler decisions.
    * When true, the artifact is attached to Babel result metadata as `fictExplain`.

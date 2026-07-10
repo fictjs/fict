@@ -1,8 +1,15 @@
 // eslint-disable-next-line @typescript-eslint/triple-slash-reference -- upstream has no declarations
 /// <reference path="./babel-plugin-syntax-typescript.d.ts" />
 
+import { createHash } from 'node:crypto'
+import { readFileSync, realpathSync, statSync } from 'node:fs'
+import { builtinModules } from 'node:module'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import {
   transformFromAstSync,
+  transformSync,
   types as t,
   type ConfigAPI,
   type PluginObj,
@@ -13,7 +20,16 @@ import syntaxJsx from '@babel/plugin-syntax-jsx'
 import syntaxTypeScript from '@babel/plugin-syntax-typescript'
 import transformModulesCommonJS from '@babel/plugin-transform-modules-commonjs'
 import transformTypeScript from '@babel/plugin-transform-typescript'
-import { createFictPlugin, type FictCompilerOptions } from '@fictjs/compiler'
+import {
+  createFictPlugin,
+  DiagnosticCode,
+  invalidateModuleMetadata,
+  resolveModuleMetadata as resolveCompilerModuleMetadata,
+  setModuleMetadata,
+  type CompilerWarning,
+  type FictCompilerOptions,
+  type ModuleReactiveMetadata,
+} from '@fictjs/compiler'
 
 export interface FictPresetOptions extends Omit<FictCompilerOptions, 'typescript'> {
   /**
@@ -72,6 +88,12 @@ export interface FictPresetOptions extends Omit<FictCompilerOptions, 'typescript
 }
 
 type TypeScriptOptions = NonNullable<FictPresetOptions['typescriptOptions']>
+interface InternalFictPresetOptions extends FictPresetOptions {
+  __fictGraphFingerprint?: string
+  __fictMetadataOnly?: boolean
+  __fictGraphSession?: string
+}
+
 interface BabelFileDataStore {
   get(key: string): unknown
   set(key: string, value: unknown): void
@@ -81,6 +103,534 @@ const TS_FILENAME_RE = /\.ts(?:[?#].*)?$/i
 const TSX_FILENAME_RE = /\.tsx(?:[?#].*)?$/i
 const MTS_FILENAME_RE = /\.mts(?:[?#].*)?$/i
 const CTS_FILENAME_RE = /\.cts(?:[?#].*)?$/i
+const LOCAL_MODULE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs']
+const LOCAL_MODULE_EXTENSION_SET = new Set(LOCAL_MODULE_EXTENSIONS)
+const RESOURCE_IMPORT_RE = /\?/
+const NODE_BUILTIN_SOURCES = new Set(
+  builtinModules.flatMap(source =>
+    source.startsWith('node:') ? [source] : [source, `node:${source}`],
+  ),
+)
+const OPAQUE_MODULE_METADATA: ModuleReactiveMetadata = Object.freeze({
+  version: 1,
+  exports: Object.freeze({}),
+})
+
+interface ImplicitGraphMetadataEntry {
+  sourceHash: string
+  metadata: ModuleReactiveMetadata
+  incomplete: boolean
+}
+
+interface ImplicitGraphSession {
+  metadata: Map<string, ImplicitGraphMetadataEntry>
+  compilerMetadata: Map<string, ModuleReactiveMetadata>
+  compiling: Set<string>
+}
+
+const implicitGraphSessions = new Map<string, ImplicitGraphSession>()
+let implicitGraphSessionCounter = 0
+
+function createImplicitGraphSessionId(): string {
+  implicitGraphSessionCounter += 1
+  return `${process.pid.toString(36)}-${implicitGraphSessionCounter.toString(36)}`
+}
+
+function hashText(value: string): string {
+  return createHash('sha256').update(value).digest('hex')
+}
+
+function normalizeFingerprintValue(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  ) {
+    return value
+  }
+  if (typeof value === 'bigint') return `${value}n`
+  if (typeof value === 'function') return `[function:${value.name || 'anonymous'}]`
+  if (typeof value !== 'object') return String(value)
+  if (seen.has(value)) return '[circular]'
+  seen.add(value)
+  if (Array.isArray(value)) {
+    return value.map(item => normalizeFingerprintValue(item, seen))
+  }
+  const normalized: Record<string, unknown> = {}
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    normalized[key] = normalizeFingerprintValue((value as Record<string, unknown>)[key], seen)
+  }
+  return normalized
+}
+
+function createGraphOptionsFingerprint(
+  compilerOptions: FictCompilerOptions,
+  typescript: boolean,
+  typescriptOptions: TypeScriptOptions,
+): string {
+  const metadataNeutralOptions = new Set([
+    'emitModuleMetadata',
+    'explain',
+    'filename',
+    'integrationDiagnostics',
+    'moduleMetadataCacheDir',
+    'moduleMetadataExtension',
+    'onModuleMetadata',
+    'onModuleMetadataDependency',
+    'onWarn',
+    'sourcemap',
+  ])
+  const relevantOptions = Object.fromEntries(
+    Object.entries(compilerOptions).filter(([key]) => !metadataNeutralOptions.has(key)),
+  )
+  return hashText(
+    JSON.stringify(
+      normalizeFingerprintValue({
+        compiler: relevantOptions,
+        typescript,
+        typescriptOptions,
+      }),
+    ),
+  )
+}
+
+function normalizeGraphFilename(filename: string | undefined): string | null {
+  if (!filename || filename === '<unknown>' || filename.startsWith('\0')) return null
+  let normalized = filename
+  const suffixIndex = normalized.search(/[?#]/)
+  if (suffixIndex !== -1) normalized = normalized.slice(0, suffixIndex)
+  if (normalized.startsWith('/@fs/')) {
+    normalized = normalized.slice('/@fs'.length)
+  }
+  if (normalized.startsWith('file://')) {
+    try {
+      normalized = fileURLToPath(normalized)
+    } catch {
+      return null
+    }
+  }
+  if (normalized.includes('://') && !/^[a-zA-Z]:[\\/]/.test(normalized)) return null
+  return path.resolve(normalized)
+}
+
+function isFile(filename: string): boolean {
+  try {
+    return statSync(filename).isFile()
+  } catch {
+    return false
+  }
+}
+
+type LocalModuleResolution =
+  | { kind: 'external' }
+  | { kind: 'resource' }
+  | { kind: 'missing' }
+  | { kind: 'file'; filename: string }
+
+function resolveLocalModuleSource(
+  source: string,
+  importer: string | undefined,
+): LocalModuleResolution {
+  if (RESOURCE_IMPORT_RE.test(source)) return { kind: 'resource' }
+  const isWindowsPath = /^[a-zA-Z]:[\\/]/.test(source) || source.startsWith('\\\\')
+  const isLocal =
+    source.startsWith('.') ||
+    source.startsWith('/') ||
+    source.startsWith('/@fs/') ||
+    source.startsWith('file://') ||
+    isWindowsPath
+  if (!isLocal) return { kind: 'external' }
+
+  const normalizedImporter = normalizeGraphFilename(importer)
+  let rawTarget = source
+  const fragmentIndex = rawTarget.indexOf('#')
+  if (fragmentIndex !== -1) rawTarget = rawTarget.slice(0, fragmentIndex)
+  if (rawTarget.startsWith('/@fs/')) rawTarget = rawTarget.slice('/@fs'.length)
+  if (rawTarget.startsWith('file://')) {
+    try {
+      rawTarget = fileURLToPath(rawTarget)
+    } catch {
+      return { kind: 'missing' }
+    }
+  }
+  if (!path.isAbsolute(rawTarget) && !isWindowsPath) {
+    if (!normalizedImporter) return { kind: 'missing' }
+    rawTarget = path.resolve(path.dirname(normalizedImporter), rawTarget)
+  } else {
+    rawTarget = path.resolve(rawTarget)
+  }
+
+  const extension = path.extname(rawTarget).toLowerCase()
+  if (extension && !LOCAL_MODULE_EXTENSION_SET.has(extension)) {
+    return { kind: 'missing' }
+  }
+
+  const candidates: string[] = [rawTarget]
+  if (!LOCAL_MODULE_EXTENSION_SET.has(extension)) {
+    for (const suffix of LOCAL_MODULE_EXTENSIONS) candidates.push(`${rawTarget}${suffix}`)
+    for (const suffix of LOCAL_MODULE_EXTENSIONS) {
+      candidates.push(path.join(rawTarget, `index${suffix}`))
+    }
+  } else if (extension === '.js' || extension === '.jsx') {
+    candidates.push(rawTarget.slice(0, -extension.length) + '.ts')
+    candidates.push(rawTarget.slice(0, -extension.length) + '.tsx')
+  } else if (extension === '.mjs') {
+    candidates.push(rawTarget.slice(0, -extension.length) + '.mts')
+  } else if (extension === '.cjs') {
+    candidates.push(rawTarget.slice(0, -extension.length) + '.cts')
+  }
+
+  const filename = candidates.find(isFile)
+  return filename
+    ? { kind: 'file', filename: canonicalGraphFilename(filename) }
+    : { kind: 'missing' }
+}
+
+function canonicalGraphFilename(filename: string): string {
+  const resolved = path.resolve(filename)
+  try {
+    return realpathSync(resolved)
+  } catch {
+    return resolved
+  }
+}
+
+function graphCacheKey(fingerprint: string, filename: string): string {
+  return `${fingerprint}\0${canonicalGraphFilename(filename)}`
+}
+
+interface GraphModuleResolution {
+  metadata: ModuleReactiveMetadata
+  resolved: boolean
+}
+
+const HOOK_NAME_RE = /^use[A-Z0-9_]/
+const FICT_RUNTIME_SOURCES = new Set([
+  'fict',
+  'fict/advanced',
+  'fict/internal',
+  'fict/internal/list',
+  'fict/jsx-runtime',
+  'fict/jsx-dev-runtime',
+  'fict/loader',
+  'fict/plus',
+  'fict/slim',
+  '@fictjs/runtime',
+  '@fictjs/runtime/advanced',
+  '@fictjs/runtime/internal',
+  '@fictjs/runtime/internal/list',
+  '@fictjs/runtime/jsx-runtime',
+  '@fictjs/runtime/jsx-dev-runtime',
+  '@fictjs/runtime/loader',
+])
+
+const isHookName = (name: string | undefined): boolean => !!name && HOOK_NAME_RE.test(name)
+const isNodeBuiltinSource = (source: string): boolean =>
+  source.startsWith('node:') || NODE_BUILTIN_SOURCES.has(source)
+
+function requiresHookMetadata(source: string): boolean {
+  if (source.includes('?')) return false
+  return !FICT_RUNTIME_SOURCES.has(source.split('#', 1)[0]!)
+}
+
+function staticMemberName(
+  member: BabelCore.types.MemberExpression | BabelCore.types.OptionalMemberExpression,
+): string | null {
+  if (!member.computed && t.isIdentifier(member.property)) return member.property.name
+  if (t.isStringLiteral(member.property) || t.isNumericLiteral(member.property)) {
+    return String(member.property.value)
+  }
+  return null
+}
+
+const moduleExportName = (
+  name: BabelCore.types.Identifier | BabelCore.types.StringLiteral,
+): string => (t.isIdentifier(name) ? name.name : name.value)
+
+function staticPropertyName(
+  property: BabelCore.types.Expression | BabelCore.types.PrivateName,
+  computed: boolean,
+): string | null {
+  if (!computed && t.isIdentifier(property)) return property.name
+  if (t.isStringLiteral(property) || t.isNumericLiteral(property)) {
+    return String(property.value)
+  }
+  return null
+}
+
+function targetContainsHookName(node: BabelCore.types.Node | null | undefined): boolean {
+  if (!node) return false
+  if (t.isIdentifier(node)) return isHookName(node.name)
+  if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+    const memberName = staticMemberName(node)
+    return memberName === null || isHookName(memberName)
+  }
+  if (t.isAssignmentPattern(node)) return targetContainsHookName(node.left)
+  if (t.isRestElement(node)) return targetContainsHookName(node.argument)
+  if (t.isArrayPattern(node)) {
+    return node.elements.some(element => targetContainsHookName(element))
+  }
+  if (t.isObjectPattern(node)) {
+    return node.properties.some(property => {
+      if (t.isRestElement(property)) return targetContainsHookName(property.argument)
+      const propertyName = staticPropertyName(property.key, property.computed)
+      return (
+        propertyName === null || isHookName(propertyName) || targetContainsHookName(property.value)
+      )
+    })
+  }
+  return false
+}
+
+function isTransparentExpressionParent(
+  parentPath: BabelCore.NodePath,
+  child: BabelCore.types.Node,
+): boolean {
+  const node = parentPath.node
+  return (
+    (t.isTSAsExpression(node) ||
+      t.isTSSatisfiesExpression(node) ||
+      t.isTSTypeAssertion(node) ||
+      t.isTSNonNullExpression(node) ||
+      t.isTypeCastExpression(node) ||
+      t.isParenthesizedExpression(node)) &&
+    node.expression === child
+  )
+}
+
+function expressionFlowsToHookLikeTarget(
+  expressionPath: BabelCore.NodePath,
+  namespaceValue = false,
+  visitedBindings = new Set<object>(),
+): boolean {
+  let currentPath = expressionPath
+  let currentIsNamespace = namespaceValue
+  while (currentPath.parentPath) {
+    const parentPath = currentPath.parentPath
+    if (
+      (parentPath.isMemberExpression() || parentPath.isOptionalMemberExpression()) &&
+      parentPath.node.object === currentPath.node
+    ) {
+      const memberName = staticMemberName(parentPath.node)
+      if (memberName === null || isHookName(memberName)) return true
+      currentPath = parentPath
+      currentIsNamespace = false
+      continue
+    }
+    if (isTransparentExpressionParent(parentPath, currentPath.node)) {
+      currentPath = parentPath
+      continue
+    }
+    if (parentPath.isCallExpression() && parentPath.node.callee === currentPath.node) {
+      currentPath = parentPath
+      continue
+    }
+    if (parentPath.isVariableDeclarator() && parentPath.node.init === currentPath.node) {
+      if (targetContainsHookName(parentPath.node.id)) return true
+      if (!t.isIdentifier(parentPath.node.id)) return currentIsNamespace
+      const binding = parentPath.scope.getBinding(parentPath.node.id.name)
+      if (!binding || visitedBindings.has(binding)) return currentIsNamespace
+      visitedBindings.add(binding)
+      return binding.referencePaths.some(referencePath =>
+        expressionFlowsToHookLikeTarget(referencePath, currentIsNamespace, visitedBindings),
+      )
+    }
+    if (parentPath.isAssignmentExpression() && parentPath.node.right === currentPath.node) {
+      if (targetContainsHookName(parentPath.node.left)) return true
+      if (!t.isIdentifier(parentPath.node.left)) return currentIsNamespace
+      const binding = parentPath.scope.getBinding(parentPath.node.left.name)
+      if (!binding || visitedBindings.has(binding)) return currentIsNamespace
+      visitedBindings.add(binding)
+      return binding.referencePaths.some(referencePath =>
+        expressionFlowsToHookLikeTarget(referencePath, currentIsNamespace, visitedBindings),
+      )
+    }
+    if (parentPath.isObjectProperty() && parentPath.node.value === currentPath.node) {
+      const propertyName = staticPropertyName(parentPath.node.key, parentPath.node.computed)
+      return propertyName === null || isHookName(propertyName) || currentIsNamespace
+    }
+    if (parentPath.isExportSpecifier() && parentPath.node.local === currentPath.node) {
+      return isHookName(moduleExportName(parentPath.node.exported))
+    }
+    return currentIsNamespace
+  }
+  return currentIsNamespace
+}
+
+function expressionFlowsToValueExport(
+  expressionPath: BabelCore.NodePath,
+  visitedBindings = new Set<object>(),
+): boolean {
+  let currentPath = expressionPath
+  while (currentPath.parentPath) {
+    const parentPath = currentPath.parentPath
+    if (
+      ((parentPath.isMemberExpression() || parentPath.isOptionalMemberExpression()) &&
+        parentPath.node.object === currentPath.node) ||
+      (parentPath.isCallExpression() && parentPath.node.callee === currentPath.node) ||
+      isTransparentExpressionParent(parentPath, currentPath.node)
+    ) {
+      currentPath = parentPath
+      continue
+    }
+    if (parentPath.isVariableDeclarator() && parentPath.node.init === currentPath.node) {
+      if (parentPath.parentPath?.parentPath?.isExportNamedDeclaration()) return true
+      if (!t.isIdentifier(parentPath.node.id)) return false
+      const binding = parentPath.scope.getBinding(parentPath.node.id.name)
+      if (!binding || visitedBindings.has(binding)) return false
+      visitedBindings.add(binding)
+      return binding.referencePaths.some(referencePath =>
+        expressionFlowsToValueExport(referencePath, visitedBindings),
+      )
+    }
+    if (parentPath.isAssignmentExpression() && parentPath.node.right === currentPath.node) {
+      if (!t.isIdentifier(parentPath.node.left)) return false
+      const binding = parentPath.scope.getBinding(parentPath.node.left.name)
+      if (!binding || visitedBindings.has(binding)) return false
+      visitedBindings.add(binding)
+      return binding.referencePaths.some(referencePath =>
+        expressionFlowsToValueExport(referencePath, visitedBindings),
+      )
+    }
+    if (parentPath.isObjectProperty() && parentPath.node.value === currentPath.node) {
+      const objectPath = parentPath.parentPath
+      if (!objectPath?.isObjectExpression()) return false
+      currentPath = objectPath
+      continue
+    }
+    if (
+      parentPath.isArrayExpression() &&
+      parentPath.node.elements.some(element => element === currentPath.node)
+    ) {
+      currentPath = parentPath
+      continue
+    }
+    if (parentPath.isExportSpecifier() && parentPath.node.local === currentPath.node) {
+      return parentPath.node.exportKind !== 'type'
+    }
+    return parentPath.isExportDefaultDeclaration()
+  }
+  return false
+}
+
+function createImplicitGraphValidationPlugin(options: {
+  fileName: string
+  diagnostics: CompilerWarning[]
+  resolve(source: string): GraphModuleResolution
+  markIncomplete(): void
+}): PluginObj {
+  const addDiagnostic = (path: BabelCore.NodePath, message: string): void => {
+    const loc = path.node.loc?.start
+    options.markIncomplete()
+    options.diagnostics.push({
+      code: DiagnosticCode.FICT_H003,
+      message,
+      fileName: options.fileName,
+      line: loc?.line ?? 0,
+      column: loc ? loc.column + 1 : 0,
+    })
+  }
+
+  return {
+    name: 'fict-implicit-graph-validation',
+    visitor: {
+      Program: {
+        exit(programPath) {
+          programPath.scope.crawl()
+          programPath.traverse({
+            ImportDeclaration(importPath) {
+              const source = importPath.node.source.value
+              if (!requiresHookMetadata(source) || options.resolve(source).resolved) return
+              for (const specifier of importPath.node.specifiers) {
+                if (t.isImportSpecifier(specifier) && specifier.importKind === 'type') continue
+                const binding = importPath.scope.getBinding(specifier.local.name)
+                if (!binding || binding.referencePaths.length === 0) continue
+                if (
+                  binding.referencePaths.some(referencePath =>
+                    expressionFlowsToValueExport(referencePath),
+                  )
+                ) {
+                  options.markIncomplete()
+                }
+                if (t.isImportNamespaceSpecifier(specifier)) {
+                  const unsafeReference = binding.referencePaths.find(referencePath =>
+                    expressionFlowsToHookLikeTarget(referencePath, true),
+                  )
+                  if (unsafeReference) {
+                    addDiagnostic(
+                      unsafeReference,
+                      'Imported namespace metadata is unavailable or belongs to an unresolved module cycle; provide a graph-aware resolver or break the cycle before using this import.',
+                    )
+                  }
+                  continue
+                }
+                const hookMemberReference = binding.referencePaths.find(referencePath =>
+                  expressionFlowsToHookLikeTarget(referencePath),
+                )
+                if (hookMemberReference) {
+                  addDiagnostic(
+                    hookMemberReference,
+                    'Imported namespace metadata is unavailable or belongs to an unresolved module cycle; provide a graph-aware resolver or break the cycle before using this import.',
+                  )
+                  continue
+                }
+                const importedName = t.isImportSpecifier(specifier)
+                  ? t.isIdentifier(specifier.imported)
+                    ? specifier.imported.name
+                    : specifier.imported.value
+                  : 'default'
+                if (isHookName(importedName) || isHookName(specifier.local.name)) {
+                  addDiagnostic(
+                    binding.referencePaths[0]!,
+                    'Imported hook metadata is unavailable or belongs to an unresolved module cycle; provide a graph-aware resolver or break the cycle before using this import.',
+                  )
+                }
+              }
+            },
+            ExportNamedDeclaration(exportPath) {
+              const { source } = exportPath.node
+              if (!source || exportPath.node.exportKind === 'type') return
+              const valueSpecifiers = exportPath.node.specifiers.filter(
+                specifier => !t.isExportSpecifier(specifier) || specifier.exportKind !== 'type',
+              )
+              if (valueSpecifiers.length === 0) return
+              const hookLikeExport = valueSpecifiers.some(specifier => {
+                if (t.isExportSpecifier(specifier)) {
+                  const localName = moduleExportName(
+                    specifier.local as BabelCore.types.Identifier | BabelCore.types.StringLiteral,
+                  )
+                  return isHookName(localName) || isHookName(moduleExportName(specifier.exported))
+                }
+                return isHookName(specifier.exported.name)
+              })
+              if (!requiresHookMetadata(source.value) || options.resolve(source.value).resolved) {
+                return
+              }
+              options.markIncomplete()
+              if (hookLikeExport) {
+                addDiagnostic(
+                  exportPath,
+                  'Re-exported hook metadata is unavailable or belongs to an unresolved module cycle; provide a graph-aware resolver or break the cycle before publishing this module.',
+                )
+              }
+            },
+            ExportAllDeclaration(exportPath) {
+              const source = exportPath.node.source.value
+              if (
+                exportPath.node.exportKind !== 'type' &&
+                requiresHookMetadata(source) &&
+                !options.resolve(source).resolved
+              ) {
+                options.markIncomplete()
+              }
+            },
+          })
+        },
+      },
+    },
+  }
+}
 
 function getFileDataStore(file: unknown): BabelFileDataStore {
   return file as BabelFileDataStore
@@ -264,15 +814,131 @@ function commonJsMarkerPlugin(): PluginObj {
   }
 }
 
+interface ImplicitGraphPrepassOptions {
+  fingerprint: string
+  metadataOnly: boolean
+  presetOptions: FictPresetOptions
+  sessionId?: string
+}
+
+function inheritedParserPluginsFromFile(
+  file: BabelCore.BabelFile,
+): NonNullable<NonNullable<TransformOptions['parserOpts']>['plugins']> {
+  const plugins = file.opts.parserOpts?.plugins ?? []
+  return plugins.filter(plugin => {
+    const name = Array.isArray(plugin) ? plugin[0] : plugin
+    // Let the nested preset choose TS/TSX from the dependency filename. All
+    // other syntax capabilities came from the caller's Babel pipeline and are
+    // required to parse the dependency under the same language contract.
+    return name !== 'typescript' && name !== 'jsx'
+  })
+}
+
 function createIsolatedFictPrepass(
   compilerOptions: FictCompilerOptions,
   typescript: boolean,
   typescriptOptions: TypeScriptOptions,
+  graphOptions: ImplicitGraphPrepassOptions,
 ): PluginObj {
   return {
     name: 'fict-isolated-prepass',
     visitor: {},
     pre(file) {
+      const graphEnabled = !compilerOptions.moduleMetadata && !compilerOptions.resolveModuleMetadata
+      const graphSessionId = graphOptions.sessionId ?? createImplicitGraphSessionId()
+      const ownsGraphSession = graphEnabled && graphOptions.sessionId === undefined
+      let graphSession = implicitGraphSessions.get(graphSessionId)
+      if (!graphSession) {
+        graphSession = { metadata: new Map(), compilerMetadata: new Map(), compiling: new Set() }
+        if (graphEnabled) implicitGraphSessions.set(graphSessionId, graphSession)
+      }
+      const currentFilename = normalizeGraphFilename(file.opts.filename ?? undefined)
+      const currentSourceHash = hashText(file.code)
+      const currentGraphKey = currentFilename
+        ? graphCacheKey(graphOptions.fingerprint, currentFilename)
+        : null
+      const ownsGraphCompilation =
+        graphEnabled && !!currentGraphKey && !graphSession.compiling.has(currentGraphKey)
+      if (ownsGraphCompilation && currentGraphKey) {
+        graphSession.compiling.add(currentGraphKey)
+      }
+      let currentMetadataIncomplete = false
+      const integrationDiagnostics = [...(compilerOptions.integrationDiagnostics ?? [])]
+      const markCurrentMetadataIncomplete = (): void => {
+        if (currentMetadataIncomplete) return
+        currentMetadataIncomplete = true
+        if (currentFilename) invalidateModuleMetadata(currentFilename, compilerOptions)
+      }
+      const resolveGraphModule = (
+        source: string,
+        importer: string | undefined,
+      ): GraphModuleResolution => {
+        const localResolution = resolveLocalModuleSource(source, importer)
+        if (localResolution.kind === 'resource') {
+          return { metadata: OPAQUE_MODULE_METADATA, resolved: true }
+        }
+        if (localResolution.kind === 'external' && isNodeBuiltinSource(source.split('#', 1)[0]!)) {
+          return { metadata: OPAQUE_MODULE_METADATA, resolved: true }
+        }
+        if (localResolution.kind === 'external' || localResolution.kind === 'missing') {
+          const metadata = resolveCompilerModuleMetadata(source, importer, compilerOptions)
+          return metadata
+            ? { metadata, resolved: true }
+            : { metadata: OPAQUE_MODULE_METADATA, resolved: false }
+        }
+
+        const dependencyFilename = localResolution.filename
+        const dependencySource = readFileSync(dependencyFilename, 'utf8')
+        const dependencySourceHash = hashText(dependencySource)
+        const dependencyGraphKey = graphCacheKey(graphOptions.fingerprint, dependencyFilename)
+        const cached = graphSession.metadata.get(dependencyGraphKey)
+        if (cached?.sourceHash === dependencySourceHash) {
+          return cached.incomplete
+            ? { metadata: OPAQUE_MODULE_METADATA, resolved: false }
+            : { metadata: cached.metadata, resolved: true }
+        }
+        if (graphSession.compiling.has(dependencyGraphKey)) {
+          return { metadata: OPAQUE_MODULE_METADATA, resolved: false }
+        }
+
+        const inheritedParserPlugins = inheritedParserPluginsFromFile(file)
+        const nestedOptions: InternalFictPresetOptions = {
+          ...graphOptions.presetOptions,
+          emitModuleMetadata: false,
+          explain: false,
+          sourcemap: false,
+          __fictGraphFingerprint: graphOptions.fingerprint,
+          __fictMetadataOnly: true,
+          __fictGraphSession: graphSessionId,
+        }
+        transformSync(dependencySource, {
+          filename: dependencyFilename,
+          cwd: file.opts.cwd,
+          envName: file.opts.envName,
+          configFile: false,
+          babelrc: false,
+          sourceType: 'unambiguous',
+          ...(inheritedParserPlugins.length > 0
+            ? { parserOpts: { plugins: inheritedParserPlugins } }
+            : {}),
+          presets: [[fictPreset, nestedOptions]],
+        })
+
+        const prepared = graphSession.metadata.get(dependencyGraphKey)
+        return prepared?.sourceHash === dependencySourceHash && !prepared.incomplete
+          ? { metadata: prepared.metadata, resolved: true }
+          : { metadata: OPAQUE_MODULE_METADATA, resolved: false }
+      }
+      const effectiveCompilerOptions: FictCompilerOptions = graphEnabled
+        ? {
+            ...compilerOptions,
+            emitModuleMetadata: false,
+            moduleMetadata: graphSession.compilerMetadata,
+            integrationDiagnostics,
+            resolveModuleMetadata: (source, importer) =>
+              resolveGraphModule(source, importer).metadata,
+          }
+        : compilerOptions
       const plugins: NonNullable<TransformOptions['plugins']> = []
       const typeScriptTransformOptions = typescript
         ? resolveTypeScriptTransformOptions(file.opts.filename ?? undefined, typescriptOptions)
@@ -286,7 +952,19 @@ function createIsolatedFictPrepass(
         }
         plugins.push([transformTypeScript, typeScriptTransformOptions])
       }
-      plugins.push([createFictPlugin, compilerOptions])
+      if (graphEnabled) {
+        if (currentFilename) graphSession.compilerMetadata.delete(currentFilename)
+        plugins.push(
+          createImplicitGraphValidationPlugin({
+            fileName: file.opts.filename ?? '<unknown>',
+            diagnostics: integrationDiagnostics,
+            resolve: source =>
+              resolveGraphModule(source, currentFilename ?? file.opts.filename ?? undefined),
+            markIncomplete: markCurrentMetadataIncomplete,
+          }),
+        )
+      }
+      plugins.push([createFictPlugin, effectiveCompilerOptions])
       if (typeScriptTransformOptions && typescriptOptions.onlyRemoveTypeImports !== true) {
         plugins.push(removeObsoleteJsxPragmaImportsPlugin(typescriptOptions))
       }
@@ -313,12 +991,32 @@ function createIsolatedFictPrepass(
           cloneInputAst: true,
           plugins,
         })
+        if (graphEnabled && currentFilename) {
+          const moduleMetadata = graphSession.compilerMetadata.get(currentFilename)
+          if (moduleMetadata) {
+            graphSession.metadata.set(currentGraphKey!, {
+              sourceHash: currentSourceHash,
+              metadata: moduleMetadata,
+              incomplete: currentMetadataIncomplete,
+            })
+            if (!graphOptions.metadataOnly && !currentMetadataIncomplete) {
+              setModuleMetadata(currentFilename, moduleMetadata, compilerOptions)
+            }
+          }
+        }
       } catch (error) {
         const filename = file.opts.filename
         if (error instanceof Error && filename && error.message.startsWith(`${filename}: `)) {
           error.message = error.message.slice(filename.length + 2)
         }
         throw error
+      } finally {
+        if (ownsGraphCompilation && currentGraphKey) {
+          graphSession.compiling.delete(currentGraphKey)
+        }
+        if (ownsGraphSession) {
+          implicitGraphSessions.delete(graphSessionId)
+        }
       }
       if (!inner?.ast) {
         throw new Error(
@@ -369,7 +1067,17 @@ export default function fictPreset(
 ): TransformOptions {
   api.assertVersion(7)
 
-  const { typescript = true, typescriptOptions = {}, ...compilerOptions } = options
+  const {
+    typescript = true,
+    typescriptOptions = {},
+    __fictGraphFingerprint,
+    __fictMetadataOnly = false,
+    __fictGraphSession,
+    ...compilerOptions
+  } = options as InternalFictPresetOptions
+  const graphFingerprint =
+    __fictGraphFingerprint ??
+    createGraphOptionsFingerprint(compilerOptions, typescript, typescriptOptions)
 
   const allExtensions = typescriptOptions.allExtensions ?? false
   const isTSX = typescriptOptions.isTSX ?? true
@@ -431,7 +1139,18 @@ export default function fictPreset(
   plugins.push([syntaxJsx, {}])
 
   // Compile Fict in `pre`, before sibling visitors in the outer Babel pass.
-  plugins.push(createIsolatedFictPrepass(compilerOptions, typescript, typescriptOptions))
+  plugins.push(
+    createIsolatedFictPrepass(compilerOptions, typescript, typescriptOptions, {
+      fingerprint: graphFingerprint,
+      metadataOnly: __fictMetadataOnly,
+      ...(__fictGraphSession ? { sessionId: __fictGraphSession } : {}),
+      presetOptions: {
+        ...compilerOptions,
+        typescript,
+        typescriptOptions,
+      },
+    }),
+  )
 
   return {
     plugins,

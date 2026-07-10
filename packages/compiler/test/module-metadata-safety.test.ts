@@ -15,10 +15,45 @@ import syntaxJsx from '@babel/plugin-syntax-jsx'
 import { describe, expect, it } from 'vitest'
 
 import createFictPlugin, { type CompilerWarning } from '../src'
-import { clearModuleMetadata, resolveModuleMetadata, setModuleMetadata } from '../src'
+import {
+  clearModuleMetadata,
+  invalidateModuleMetadata,
+  resolveModuleMetadata,
+  setModuleMetadata,
+} from '../src'
 import type { ModuleReactiveMetadata } from '../src/types'
 
 describe('module metadata safety', () => {
+  it('invalidates one module without leaving its global metadata reusable', () => {
+    clearModuleMetadata()
+    const filename = path.resolve('__fict_metadata_single_invalidation__.ts')
+    setModuleMetadata(filename, { exports: { value: 'signal' } }, { emitModuleMetadata: false })
+
+    expect(resolveModuleMetadata(filename, undefined, { emitModuleMetadata: false })).toEqual({
+      exports: { value: 'signal' },
+    })
+    invalidateModuleMetadata(filename, { emitModuleMetadata: false })
+    expect(
+      resolveModuleMetadata(filename, undefined, { emitModuleMetadata: false }),
+    ).toBeUndefined()
+    clearModuleMetadata()
+  })
+
+  it('does not hide failures while removing stale incomplete sidecars', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_metadata_invalidation_failure__')
+    const filename = path.join(baseDir, 'module.ts')
+    const metaPath = `${filename}.fict.meta.json`
+
+    try {
+      mkdirSync(metaPath, { recursive: true })
+      expect(() => invalidateModuleMetadata(filename, { emitModuleMetadata: true })).toThrow()
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+      clearModuleMetadata()
+    }
+  })
+
   it('does not write metadata sidecar for unknown filename', () => {
     const unknownMetaPath = path.resolve('<unknown>.fict.meta.json')
     if (existsSync(unknownMetaPath)) {

@@ -1,11 +1,42 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 import { transformSync, types as t, type PluginObj } from '@babel/core'
+import * as runtimeAdvanced from '@fictjs/runtime/advanced'
 import { describe, expect, it } from 'vitest'
 
 import fictPreset from '../../babel-preset/src'
+
+function compilePresetModule(source: string, filename: string): string {
+  const result = transformSync(source, {
+    filename,
+    configFile: false,
+    babelrc: false,
+    plugins: ['@babel/plugin-transform-modules-commonjs'],
+    presets: [
+      [
+        fictPreset,
+        {
+          dev: false,
+          strictGuarantee: true,
+          emitModuleMetadata: false,
+        },
+      ],
+    ],
+  })
+  return result?.code ?? ''
+}
+
+function evaluateCommonJs(
+  code: string,
+  resolve: (source: string) => Record<string, unknown>,
+): Record<string, unknown> {
+  const module = { exports: {} as Record<string, unknown> }
+  const run = new Function('require', 'module', 'exports', code)
+  run(resolve, module, module.exports)
+  return module.exports
+}
 
 describe('@fictjs/babel-preset TypeScript integration', () => {
   const reactiveComponent = `
@@ -15,6 +46,715 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
       return <div>{value}</div>
     }
   `
+
+  it('prepares local hook metadata before a clean importer-first runtime build', () => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-graph-clean-'))
+    const hookPath = path.join(baseDir, 'use-count.cts')
+    const appPath = path.join(baseDir, 'app.ts')
+    const hookSource = `
+      import { createSignal } from '@fictjs/runtime/advanced'
+
+      enum Seed { Count = 2 }
+      namespace Defaults { export const count = Seed.Count }
+      class Model {
+        declare count: number
+        current = Defaults.count
+      }
+
+      export function useCount() {
+        const count = createSignal(new Model().current)
+        return count
+      }
+    `
+    const appSource = `
+      import { useCount } from './use-count.cts'
+      export function App() {
+        const count = useCount()
+        return count * 2
+      }
+    `
+
+    try {
+      writeFileSync(hookPath, hookSource)
+      writeFileSync(appPath, appSource)
+
+      const appOutput = compilePresetModule(appSource, appPath)
+      expect(appOutput).toMatch(/count\(\)\s*\*\s*2/)
+
+      const hookModule = evaluateCommonJs(compilePresetModule(hookSource, hookPath), source => {
+        if (source === '@fictjs/runtime/advanced') return runtimeAdvanced
+        throw new Error(`Unexpected hook dependency: ${source}`)
+      })
+      const appModule = evaluateCommonJs(appOutput, source => {
+        if (source === './use-count.cts') return hookModule
+        throw new Error(`Unexpected app dependency: ${source}`)
+      })
+
+      expect((appModule.App as () => number)()).toBe(4)
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it('invalidates transitive hook metadata when an unchanged barrel points at changed source', () => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-graph-stale-'))
+    const hookPath = path.join(baseDir, 'use-count.ts')
+    const barrelPath = path.join(baseDir, 'barrel.ts')
+    const appPath = path.join(baseDir, 'app.ts')
+    const signalHookSource = `
+      import { createSignal } from '@fictjs/runtime/advanced'
+      export function useCount() {
+        const count = createSignal(2)
+        return count
+      }
+    `
+    const plainHookSource = `
+      export function useCount() {
+        return 3
+      }
+    `
+    const barrelSource = `export { useCount } from './use-count'`
+    const appSource = `
+      import { useCount } from './barrel'
+      export function App() {
+        const count = useCount()
+        return count * 2
+      }
+    `
+    const loadRuntime = (appOutput: string, hookSource: string): (() => number) => {
+      const hookModule = evaluateCommonJs(compilePresetModule(hookSource, hookPath), source => {
+        if (source === '@fictjs/runtime/advanced') return runtimeAdvanced
+        throw new Error(`Unexpected hook dependency: ${source}`)
+      })
+      const barrelModule = evaluateCommonJs(
+        compilePresetModule(barrelSource, barrelPath),
+        source => {
+          if (source === './use-count') return hookModule
+          throw new Error(`Unexpected barrel dependency: ${source}`)
+        },
+      )
+      const appModule = evaluateCommonJs(appOutput, source => {
+        if (source === './barrel') return barrelModule
+        throw new Error(`Unexpected app dependency: ${source}`)
+      })
+      return appModule.App as () => number
+    }
+
+    try {
+      writeFileSync(hookPath, signalHookSource)
+      writeFileSync(barrelPath, barrelSource)
+      writeFileSync(appPath, appSource)
+
+      const signalOutput = compilePresetModule(appSource, appPath)
+      expect(signalOutput).toMatch(/count\(\)\s*\*\s*2/)
+      expect(loadRuntime(signalOutput, signalHookSource)()).toBe(4)
+
+      writeFileSync(hookPath, plainHookSource)
+      const plainOutput = compilePresetModule(appSource, appPath)
+      expect(plainOutput).toMatch(/count\s*\*\s*2/)
+      expect(plainOutput).not.toMatch(/count\(\)\s*\*\s*2/)
+      expect(loadRuntime(plainOutput, plainHookSource)()).toBe(6)
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps a freshly analyzed ordinary imported use function plain', () => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-graph-plain-'))
+    const hookPath = path.join(baseDir, 'use-value.ts')
+    const appPath = path.join(baseDir, 'app.ts')
+    const hookSource = `export function useValue() { return 5 }`
+    const appSource = `
+      import { useValue } from './use-value'
+      export function App() {
+        const value = useValue()
+        return value * 2
+      }
+    `
+
+    try {
+      writeFileSync(hookPath, hookSource)
+      writeFileSync(appPath, appSource)
+      const appOutput = compilePresetModule(appSource, appPath)
+      expect(appOutput).toMatch(/value\s*\*\s*2/)
+      expect(appOutput).not.toMatch(/value\(\)\s*\*\s*2/)
+
+      const hookModule = evaluateCommonJs(compilePresetModule(hookSource, hookPath), source => {
+        throw new Error(`Unexpected hook dependency: ${source}`)
+      })
+      const appModule = evaluateCommonJs(appOutput, source => {
+        if (source === './use-value') return hookModule
+        throw new Error(`Unexpected app dependency: ${source}`)
+      })
+      expect((appModule.App as () => number)()).toBe(10)
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps resource-query hook imports opaque instead of reading the source module', () => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-graph-resource-'))
+    const hookPath = path.join(baseDir, 'use-count.ts')
+    const appPath = path.join(baseDir, 'app.ts')
+    const hookSource = `
+      import { createSignal } from '@fictjs/runtime/advanced'
+      export function useCount() {
+        const count = createSignal(2)
+        return count
+      }
+    `
+    const appSource = `
+      import { useCount } from './use-count.ts?raw'
+      export function App() {
+        const value = useCount()
+        return value * 2
+      }
+    `
+
+    try {
+      writeFileSync(hookPath, hookSource)
+      writeFileSync(appPath, appSource)
+      const output = compilePresetModule(appSource, appPath)
+
+      expect(output).toMatch(/value\s*\*\s*2/)
+      expect(output).not.toMatch(/value\(\)\s*\*\s*2/)
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps bare resource-query imports opaque even when package metadata exists', () => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-graph-package-resource-'))
+    const packageDir = path.join(baseDir, 'node_modules', 'fict-hook-lib')
+    const metadataPath = path.join(packageDir, 'dist', 'index.fict.meta.json')
+    const appPath = path.join(baseDir, 'app.ts')
+    const appSource = `
+      import { useCount } from 'fict-hook-lib?raw'
+      export function App() {
+        const value = useCount()
+        return value * 2
+      }
+    `
+
+    try {
+      mkdirSync(path.dirname(metadataPath), { recursive: true })
+      writeFileSync(
+        path.join(packageDir, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          fict: { metadata: './dist/index.fict.meta.json' },
+        }),
+      )
+      writeFileSync(
+        metadataPath,
+        JSON.stringify({ exports: {}, hooks: { useCount: { directAccessor: 'signal' } } }),
+      )
+      writeFileSync(appPath, appSource)
+
+      const output = compilePresetModule(appSource, appPath)
+      expect(output).toMatch(/value\s*\*\s*2/)
+      expect(output).not.toMatch(/value\(\)\s*\*\s*2/)
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves explicit non-code local imports for the bundler instead of parsing their files', () => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-graph-assets-'))
+    const stylePath = path.join(baseDir, 'styles.css')
+    const dataPath = path.join(baseDir, 'data.json')
+    const appPath = path.join(baseDir, 'app.ts')
+    const appSource = `
+      import './styles.css'
+      import data from './data.json'
+      export const answer = data.answer
+    `
+
+    try {
+      writeFileSync(stylePath, `.root { color: red; }`)
+      writeFileSync(dataPath, JSON.stringify({ answer: 42 }))
+      writeFileSync(appPath, appSource)
+
+      const output = compilePresetModule(appSource, appPath)
+      expect(output).toContain('require("./styles.css")')
+      expect(output).toContain('require("./data.json")')
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed for a hook-like import from an unsupported local file type', () => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-graph-unsupported-'))
+    const hookPath = path.join(baseDir, 'use-count.vue')
+    const appPath = path.join(baseDir, 'app.ts')
+    const appSource = `
+      import { useCount } from './use-count.vue'
+      export function App() { return useCount() * 2 }
+    `
+
+    try {
+      writeFileSync(hookPath, `<script setup lang="ts">const count = 1</script>`)
+      writeFileSync(appPath, appSource)
+
+      expect(() => compilePresetModule(appSource, appPath)).toThrow(/FICT-H003/)
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it('uses authoritative sidecar metadata for an unsupported local file type', () => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-graph-unsupported-sidecar-'))
+    const hookPath = path.join(baseDir, 'use-count.vue')
+    const metadataPath = `${hookPath}.fict.meta.json`
+    const appPath = path.join(baseDir, 'app.ts')
+    const appSource = `
+      import { useCount } from './use-count.vue'
+      export function App() {
+        const value = useCount()
+        return value * 2
+      }
+    `
+
+    try {
+      writeFileSync(hookPath, `<script setup lang="ts">const count = 1</script>`)
+      writeFileSync(
+        metadataPath,
+        JSON.stringify({ exports: {}, hooks: { useCount: { directAccessor: 'signal' } } }),
+      )
+      writeFileSync(appPath, appSource)
+
+      const output = compilePresetModule(appSource, appPath)
+      expect(output).toMatch(/value\(\)\s*\*\s*2/)
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it('resolves local hash-suffixed hook imports through the current source graph', () => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-graph-fragment-'))
+    const hookPath = path.join(baseDir, 'use-count.ts')
+    const appPath = path.join(baseDir, 'app.ts')
+    const hookSource = `
+      import { createSignal } from '@fictjs/runtime/advanced'
+      export function useCount() {
+        const count = createSignal(2)
+        return count
+      }
+    `
+    const appSource = `
+      import { useCount } from './use-count#fragment'
+      export function App() {
+        const value = useCount()
+        return value * 2
+      }
+    `
+
+    try {
+      writeFileSync(hookPath, hookSource)
+      writeFileSync(appPath, appSource)
+      const output = compilePresetModule(appSource, appPath)
+
+      expect(output).toMatch(/value\(\)\s*\*\s*2/)
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed when a local hook metadata cycle cannot converge', () => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-graph-cycle-'))
+    const firstPath = path.join(baseDir, 'use-first.ts')
+    const secondPath = path.join(baseDir, 'use-second.ts')
+    const appPath = path.join(baseDir, 'app.ts')
+    const firstSource = `
+      import { useSecond } from './use-second'
+      export function useFirst() { return useSecond() }
+    `
+    const secondSource = `
+      import { useFirst } from './use-first'
+      export function useSecond() { return useFirst() }
+    `
+    const appSource = `
+      import { useFirst } from './use-first'
+      export function App() { return useFirst() }
+    `
+
+    try {
+      writeFileSync(firstPath, firstSource)
+      writeFileSync(secondPath, secondSource)
+      writeFileSync(appPath, appSource)
+
+      expect(() => compilePresetModule(appSource, appPath)).toThrow(/FICT-H003/)
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it('canonicalizes symlinked graph identities before detecting a local hook cycle', () => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-graph-symlink-cycle-'))
+    const modulePath = path.join(baseDir, 'module.ts')
+    const loopPath = path.join(baseDir, 'loop')
+    const source = `
+      import { useCount as useLoopCount } from './loop/module'
+      export function useCount() { return useLoopCount() }
+    `
+
+    try {
+      writeFileSync(modulePath, source)
+      symlinkSync('.', loopPath, 'dir')
+
+      expect(() => compilePresetModule(source, modulePath)).toThrow(/FICT-H003/)
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    `export { useCount } from '@/hook'`,
+    `export * from '@/hook'`,
+    `import { useCount } from '@/hook'; export { useCount }`,
+  ])('fails closed when an unresolved re-export would publish empty metadata', barrelSource => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-graph-reexport-'))
+    const barrelPath = path.join(baseDir, 'barrel.ts')
+    const appPath = path.join(baseDir, 'app.ts')
+    const appSource = `
+      import { useCount } from './barrel'
+      export function App() {
+        const count = useCount()
+        return count * 2
+      }
+    `
+
+    try {
+      writeFileSync(barrelPath, barrelSource)
+      writeFileSync(appPath, appSource)
+      expect(() => compilePresetModule(appSource, appPath)).toThrow(/FICT-H003/)
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    `export { foo as default } from '@/hook'`,
+    `import { foo } from '@/hook'; export { foo as default }`,
+    `import { foo } from '@/hook'; const value = foo; export { value as default }`,
+  ])(
+    'keeps an ordinary unresolved default re-export incomplete for hook-named consumers',
+    barrelSource => {
+      const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-graph-default-reexport-'))
+      const barrelPath = path.join(baseDir, 'barrel.ts')
+      const appPath = path.join(baseDir, 'app.ts')
+      const appSource = `
+      import useCount from './barrel'
+      export function App() {
+        const value = useCount()
+        return value * 2
+      }
+    `
+
+      try {
+        writeFileSync(barrelPath, barrelSource)
+        writeFileSync(appPath, appSource)
+        expect(() => compilePresetModule(appSource, appPath)).toThrow(/FICT-H003/)
+      } finally {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it.each([
+    `const useCount = foo; export function App() { return useCount() * 2 }`,
+    `const hooks = { useCount: foo }; export function App() { return hooks.useCount() * 2 }`,
+  ])('tracks an ordinary unresolved import into a hook-like static alias', usage => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-graph-static-alias-'))
+    const barrelPath = path.join(baseDir, 'barrel.ts')
+    const appPath = path.join(baseDir, 'app.ts')
+    const barrelSource = `export { foo } from '@/hook'`
+    const appSource = `import { foo } from './barrel'; ${usage}`
+
+    try {
+      writeFileSync(barrelPath, barrelSource)
+      writeFileSync(appPath, appSource)
+      expect(() => compilePresetModule(appSource, appPath)).toThrow(/FICT-H003/)
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it('tracks an unresolved namespace member into a hook-like static alias', () => {
+    expect(() =>
+      transformSync(
+        `
+          import * as api from '@/hook'
+          const useCount = api.foo
+          export function App() { return useCount() * 2 }
+        `,
+        {
+          filename: path.resolve('namespace-member-hook-alias.ts'),
+          configFile: false,
+          babelrc: false,
+          presets: [[fictPreset, { dev: false, strictGuarantee: true, emitModuleMetadata: false }]],
+        },
+      ),
+    ).toThrow(/FICT-H003/)
+  })
+
+  it('fails closed when an unresolved imported hook escapes through an object alias', () => {
+    expect(() =>
+      transformSync(
+        `
+          import { useCount } from '@/hook'
+          const hooks = { useCount }
+          export function App() { return hooks.useCount() * 2 }
+        `,
+        {
+          filename: path.resolve('escaped-hook-alias.ts'),
+          configFile: false,
+          babelrc: false,
+          presets: [
+            [
+              fictPreset,
+              {
+                dev: false,
+                strictGuarantee: true,
+                emitModuleMetadata: false,
+              },
+            ],
+          ],
+        },
+      ),
+    ).toThrow(/FICT-H003/)
+  })
+
+  it('keeps authoritative builtins and ordinary unresolved re-exports compatible', () => {
+    const named = transformSync(`export { join } from 'node:path'`, {
+      filename: path.resolve('ordinary-named-reexport.ts'),
+      configFile: false,
+      babelrc: false,
+      presets: [[fictPreset, { dev: false, strictGuarantee: true, emitModuleMetadata: false }]],
+    })
+    const star = transformSync(`export * from 'ordinary-utility-package'`, {
+      filename: path.resolve('ordinary-star-reexport.ts'),
+      configFile: false,
+      babelrc: false,
+      presets: [[fictPreset, { dev: false, strictGuarantee: true, emitModuleMetadata: false }]],
+    })
+    const prefixedOnlyBuiltin = transformSync(
+      `import { test as useTest } from 'node:test'; export function App() { return useTest('case', () => {}) }`,
+      {
+        filename: path.resolve('prefixed-only-node-builtin.ts'),
+        configFile: false,
+        babelrc: false,
+        presets: [[fictPreset, { dev: false, strictGuarantee: true, emitModuleMetadata: false }]],
+      },
+    )
+
+    expect(named?.code).toContain(`export { join } from 'node:path'`)
+    expect(star?.code).toContain(`export * from 'ordinary-utility-package'`)
+    expect(prefixedOnlyBuiltin?.code).toMatch(/useTest\(["']case["']/)
+  })
+
+  it('preserves local hook metadata beside an ordinary unresolved named re-export', () => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-named-reexport-hook-'))
+    const barrelPath = path.join(baseDir, 'barrel.ts')
+    const appPath = path.join(baseDir, 'app.ts')
+    const barrelSource = `
+      import { createSignal } from '@fictjs/runtime/advanced'
+      export { join } from 'node:path'
+      export function useCount() {
+        const count = createSignal(2)
+        return count
+      }
+    `
+    const appSource = `
+      import { useCount } from './barrel'
+      export function App() {
+        const count = useCount()
+        return count * 2
+      }
+    `
+
+    try {
+      writeFileSync(barrelPath, barrelSource)
+      writeFileSync(appPath, appSource)
+      const output = compilePresetModule(appSource, appPath)
+      expect(output).toMatch(/count\(\)\s*\*\s*2/)
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it('lets a consumer use ordinary names from an incomplete star barrel', () => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-ordinary-star-'))
+    const barrelPath = path.join(baseDir, 'barrel.ts')
+    const appPath = path.join(baseDir, 'app.ts')
+    const barrelSource = `export * from 'ordinary-utility-package'`
+    const appSource = `
+      import { map } from './barrel'
+      export const value = map([1], item => item + 1)
+    `
+
+    try {
+      writeFileSync(barrelPath, barrelSource)
+      writeFileSync(appPath, appSource)
+      const output = compilePresetModule(appSource, appPath)
+      expect(output).toContain('(0, _barrel.map)([1]')
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps ordinary unresolved namespace members compatible', () => {
+    const result = transformSync(
+      `
+        import * as pathApi from 'node:path'
+        export const value = pathApi.join('a', 'b')
+      `,
+      {
+        filename: path.resolve('ordinary-namespace-import.ts'),
+        configFile: false,
+        babelrc: false,
+        presets: [[fictPreset, { dev: false, strictGuarantee: true, emitModuleMetadata: false }]],
+      },
+    )
+
+    expect(result?.code).toMatch(/pathApi\.join\(["']a["'], ["']b["']\)/)
+  })
+
+  it('fails closed when an unresolved namespace escapes before a hook member call', () => {
+    expect(() =>
+      transformSync(
+        `
+          import * as hooks from '@/hook'
+          const alias = hooks
+          export function App() { return alias.useCount() * 2 }
+        `,
+        {
+          filename: path.resolve('escaped-hook-namespace.ts'),
+          configFile: false,
+          babelrc: false,
+          presets: [
+            [
+              fictPreset,
+              {
+                dev: false,
+                strictGuarantee: true,
+                emitModuleMetadata: false,
+              },
+            ],
+          ],
+        },
+      ),
+    ).toThrow(/FICT-H003/)
+  })
+
+  it('does not publish incomplete star re-export metadata', () => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-incomplete-metadata-'))
+    const barrelPath = path.join(baseDir, 'barrel.ts')
+    const metadataPath = `${barrelPath}.fict.meta.json`
+    const source = `export * from 'ordinary-utility-package'`
+
+    try {
+      writeFileSync(barrelPath, source)
+      writeFileSync(metadataPath, JSON.stringify({ exports: { stale: 'signal' } }))
+      transformSync(source, {
+        filename: barrelPath,
+        configFile: false,
+        babelrc: false,
+        presets: [[fictPreset, { dev: false, strictGuarantee: true, emitModuleMetadata: true }]],
+      })
+
+      expect(existsSync(metadataPath)).toBe(false)
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['@/use-count', '#hooks', 'unpublished-hook-package'])(
+    'fails closed for an unresolved hook-like import from %s',
+    source => {
+      const filename = path.resolve('unresolved-hook-import.ts')
+      expect(() =>
+        transformSync(
+          `
+            import { useCount } from '${source}'
+            export function App() { return useCount() * 2 }
+          `,
+          {
+            filename,
+            configFile: false,
+            babelrc: false,
+            presets: [
+              [
+                fictPreset,
+                {
+                  dev: false,
+                  strictGuarantee: true,
+                  emitModuleMetadata: false,
+                },
+              ],
+            ],
+          },
+        ),
+      ).toThrow(/FICT-H003/)
+    },
+  )
+
+  it('reports unresolved hook metadata as a warning in non-strict builds', () => {
+    const warnings: string[] = []
+    const result = transformSync(
+      `
+        import { useCount } from '@/use-count'
+        export function App() { return useCount() * 2 }
+      `,
+      {
+        filename: path.resolve('unresolved-hook-warning.ts'),
+        configFile: false,
+        babelrc: false,
+        presets: [
+          [
+            fictPreset,
+            {
+              dev: false,
+              strictGuarantee: false,
+              emitModuleMetadata: false,
+              onWarn: (warning: { code: string }) => warnings.push(warning.code),
+            },
+          ],
+        ],
+      },
+    )
+
+    expect(warnings).toContain('FICT-H003')
+    expect(result?.code).toMatch(/useCount\(\)\s*\*\s*2/)
+  })
+
+  it('leaves hook metadata policy to an explicitly supplied integration store', () => {
+    const filename = path.resolve('explicit-hook-metadata-store.ts')
+    const output = transformSync(
+      `
+        import { useCount } from '@/use-count'
+        export function App() { return useCount() * 2 }
+      `,
+      {
+        filename,
+        configFile: false,
+        babelrc: false,
+        presets: [
+          [
+            fictPreset,
+            {
+              dev: false,
+              strictGuarantee: true,
+              emitModuleMetadata: false,
+              moduleMetadata: new Map(),
+            },
+          ],
+        ],
+      },
+    )?.code
+
+    expect(output).toMatch(/useCount\(\)\s*\*\s*2/)
+  })
 
   it('resolves syntax plugins from the preset in an isolated consumer cwd', () => {
     const consumerCwd = mkdtempSync(path.join(tmpdir(), 'fict-babel-preset-consumer-'))
@@ -90,6 +830,52 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
 
     expect(result?.code).toContain('<!--fict:slot:start-->')
     expect(result?.code).not.toContain('consumed-before-fict')
+  })
+
+  it('preserves decorated TypeScript classes for a sibling decorator transform', () => {
+    const legacyDecoratorTransform: PluginObj = {
+      name: 'legacy-decorator-transform-probe',
+      manipulateOptions(_options, parserOptions) {
+        parserOptions.plugins.push('decorators-legacy')
+      },
+      visitor: {
+        ClassDeclaration(classPath) {
+          const decorators = classPath.node.decorators ?? []
+          if (decorators.length === 0 || !classPath.node.id) return
+          classPath.node.decorators = null
+          classPath.insertAfter(
+            t.expressionStatement(
+              t.assignmentExpression(
+                '=',
+                t.memberExpression(t.identifier(classPath.node.id.name), t.identifier('marked')),
+                t.booleanLiteral(true),
+              ),
+            ),
+          )
+        },
+      },
+    }
+    const result = transformSync(
+      `
+        const mark = value => value
+        @mark
+        export class Model {
+          declare count: number
+        }
+      `,
+      {
+        filename: 'decorated-model.ts',
+        configFile: false,
+        babelrc: false,
+        plugins: [legacyDecoratorTransform],
+        presets: [[fictPreset, { dev: false, strictGuarantee: true }]],
+      },
+    )
+
+    expect(result?.code).toContain('class Model')
+    expect(result?.code).toContain('Model.marked = true')
+    expect(result?.code).not.toContain('declare count')
+    expect(result?.code).not.toContain('@mark')
   })
 
   it('inherits a sibling CommonJS marker while lowering TypeScript import-equals', () => {

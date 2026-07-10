@@ -89,3 +89,18 @@ Key defaults:
 - preset `typescript`: `true`
 - preset `typescriptOptions.allExtensions`: `false` (detect from filename)
 - preset `typescriptOptions.allowDeclareFields`: `true`
+
+## Cross-file hook metadata
+
+When no explicit `moduleMetadata` or `resolveModuleMetadata` integration is configured, the
+preset prepares metadata for local filesystem imports before compiling their importer. Each Babel
+transform uses an isolated graph session, so importer-first builds and changed transitive hook
+dependencies cannot reuse metadata from an earlier transform. Dependency preparation uses the same
+TypeScript/CTS options as the importing transform.
+
+Resource imports with a query stay opaque; URL-fragment imports resolve metadata from their base
+module. In strict guarantee mode, an imported hook-like function fails with `FICT-H003` when
+current metadata cannot be obtained (for example, an unresolved alias or re-export, an unpublished
+package metadata entry, or a module cycle). Configure an explicit metadata store/resolver, publish
+package metadata, or use the Vite/Webpack graph integration for those module graphs. Non-strict
+migration builds emit the diagnostic as a warning and retain the opaque value behavior.

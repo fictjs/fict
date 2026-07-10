@@ -49,6 +49,7 @@ describe('DiagnosticCode', () => {
     expect(DiagnosticSeverities[DiagnosticCode.FICT_M]).toBe(DiagnosticSeverity.Error)
     expect(DiagnosticSeverities[DiagnosticCode.FICT_M003]).toBe(DiagnosticSeverity.Error)
     expect(DiagnosticSeverities[DiagnosticCode.FICT_H]).toBe(DiagnosticSeverity.Error)
+    expect(DiagnosticSeverities[DiagnosticCode.FICT_H003]).toBe(DiagnosticSeverity.Error)
   })
 
   it('keeps non-guarantee defaults unchanged in exported severities', () => {

@@ -549,6 +549,27 @@ return flag ? { count: count() } : { count: 'off' }
 return flag ? { count } : { count: () => 'off' }
 ```
 
+### FICT-H003: Imported hook metadata unavailable
+
+**Severity:** Error under `strictGuarantee` (default); Warning in opt-out builds.
+
+**Why:** A hook-like import is used, or a module is re-exported, before the compiler integration can
+prove its current reactive shape. This includes unresolved aliases, packages without published
+Fict metadata, and module cycles that cannot produce complete metadata. Calling the result as an
+accessor without that proof could turn a plain value into a runtime `TypeError`; treating an
+accessor as plain could instead produce invalid arithmetic or stale UI.
+
+**Impact:** Strict builds stop rather than emit code with guessed hook semantics. Opt-out builds
+retain the opaque value behavior and emit a warning.
+
+**Fix:** Make the metadata source authoritative and current: publish package metadata, configure an
+explicit `moduleMetadata` / `resolveModuleMetadata` integration, use the Vite or Webpack graph
+integration, or break the metadata cycle. A hook that intentionally returns only plain values may
+publish empty current metadata to prove that shape.
+
+**Verification:** The importer-first, transitive stale graph, unresolved alias/package, and cycle
+cases are covered by `packages/compiler/test/babel-typescript-integration.test.ts`.
+
 ### FICT-HIR-UNSUPPORTED: Unsupported syntax in HIR conversion
 
 **Severity:** Error
