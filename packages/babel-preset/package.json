@@ -33,7 +33,7 @@
     "clean": "rm -rf dist"
   },
   "peerDependencies": {
-    "@babel/core": ">=7.0.0"
+    "@babel/core": "^7.0.0-0"
   },
   "dependencies": {
     "@babel/plugin-syntax-jsx": "^7.28.6",

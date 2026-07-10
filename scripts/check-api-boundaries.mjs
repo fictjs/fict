@@ -135,6 +135,9 @@ for (const packagePath of [
       `${packageJson.name ?? packagePath} must publish @types/babel__core because its public declarations reference @babel/core`,
     )
   }
+  if (packageJson.peerDependencies?.['@babel/core'] !== '^7.0.0-0') {
+    fail(`${packageJson.name ?? packagePath} must match its Babel 7 api.assertVersion contract`)
+  }
 }
 
 const fictMain = readText('packages/fict/src/index.ts')
