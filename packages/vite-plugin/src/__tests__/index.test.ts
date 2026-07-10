@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
-import { build, type Rollup } from 'vite'
+import { build, createServer, type Rollup, type TransformResult } from 'vite'
 import { describe, it, expect, vi } from 'vitest'
 
 import fict, { __fictVitePluginInternals } from '..'
@@ -468,9 +468,546 @@ describe('fict vite-plugin', () => {
           `import { useCounter } from './use-counter'; export const count = useCounter()`,
           appPath,
         ),
-      ).rejects.toThrow('Build pipeline did not provide compiler input')
+      ).rejects.toThrow('Transform pipeline did not provide compiler input')
       expect(load).toHaveBeenCalledWith(expect.objectContaining({ id: hookPath }))
     } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('prepares cyclic earlier-transform hook metadata on the first dev request', async () => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-vite-dev-pre-transform-')))
+    const srcDir = path.join(root, 'src')
+    const hookPath = path.join(srcDir, 'use-counter.tsx')
+    const flagPath = path.join(srcDir, 'flag.json')
+    let server: Awaited<ReturnType<typeof createServer>> | undefined
+    let resolveHmr!: () => void
+    const hmrSeen = new Promise<void>(resolve => {
+      resolveHmr = resolve
+    })
+
+    try {
+      await mkdir(srcDir, { recursive: true })
+      const runtimePath = path.join(srcDir, 'fict-runtime.ts')
+      await writeFile(runtimePath, `export {}`)
+      await writeFile(flagPath, JSON.stringify({ signal: true }))
+      await writeFile(
+        hookPath,
+        `
+          import { $state } from 'fict'
+          import { marker } from './cycle'
+          import './flag.json'
+          const makeValue = (value: number) => value
+          export function useCounter() {
+            const count = makeValue(marker)
+            return count
+          }
+        `,
+      )
+      await writeFile(
+        path.join(srcDir, 'cycle.ts'),
+        `
+          export { useCounter } from './use-counter'
+          export const marker = 1
+        `,
+      )
+      await writeFile(
+        path.join(srcDir, 'App.tsx'),
+        `
+          import { useCounter } from './use-counter'
+          export function App() {
+            const count = useCounter()
+            const doubled = count * 2
+            return <div>{doubled}</div>
+          }
+        `,
+      )
+
+      server = await createServer({
+        root,
+        configFile: false,
+        logLevel: 'silent',
+        resolve: {
+          alias: {
+            'fict/internal': runtimePath,
+            fict: runtimePath,
+          },
+        },
+        plugins: [
+          {
+            name: 'test-dev-rewrite-hook-state',
+            enforce: 'pre',
+            async transform(code, id) {
+              if (!id.split('?')[0]!.endsWith('/use-counter.tsx')) return null
+              const flag = JSON.parse(await readFile(flagPath, 'utf8')) as { signal: boolean }
+              return flag.signal ? code.replace('makeValue(marker)', '$state(marker)') : null
+            },
+          },
+          fict({ cache: false, useTypeScriptProject: false, functionSplitting: false }),
+          {
+            name: 'test-dev-metadata-hmr-probe',
+            handleHotUpdate(context) {
+              if (path.normalize(context.file) === path.normalize(flagPath)) resolveHmr()
+            },
+          },
+        ],
+        server: { middlewareMode: true, watch: null },
+      })
+
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+      const result = await Promise.race([
+        server.transformRequest('/src/App.tsx'),
+        new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(
+            () => reject(new Error('Timed out transforming cyclic dev metadata.')),
+            3_000,
+          )
+        }),
+      ])
+      clearTimeout(timeoutHandle)
+      expect(result?.code).toMatch(/\bcount\d*\(\) \* 2/)
+      expect(result?.code).not.toMatch(/\bcount\d* \* 2/)
+
+      await server.watcher.unwatch(flagPath)
+      await writeFile(flagPath, JSON.stringify({ signal: false }))
+      server.watcher.emit('change', flagPath)
+      await hmrSeen
+      const updated = await server.transformRequest('/src/App.tsx')
+      expect(updated?.code).toMatch(/\bcount\d* \* 2/)
+      expect(updated?.code).not.toMatch(/\bcount\d*\(\) \* 2/)
+    } finally {
+      await server?.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('isolates client and SSR metadata during concurrent dev transforms', async () => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-vite-dev-environments-')))
+    const srcDir = path.join(root, 'src')
+    const hookPath = path.join(srcDir, 'use-counter.tsx')
+    let server: Awaited<ReturnType<typeof createServer>> | undefined
+
+    try {
+      await mkdir(srcDir, { recursive: true })
+      const runtimePath = path.join(srcDir, 'fict-runtime.ts')
+      await writeFile(runtimePath, `export {}`)
+      await writeFile(
+        hookPath,
+        `
+          import { $state } from 'fict'
+          const makeValue = (value: number) => value
+          export function useCounter() {
+            const count = makeValue(1)
+            return count
+          }
+        `,
+      )
+      await writeFile(
+        path.join(srcDir, 'App.tsx'),
+        `
+          import { useCounter } from './use-counter'
+          export function App() {
+            const count = useCounter()
+            const doubled = count * 2
+            return <div>{doubled}</div>
+          }
+        `,
+      )
+      server = await createServer({
+        root,
+        configFile: false,
+        logLevel: 'silent',
+        resolve: { alias: { 'fict/internal': runtimePath, fict: runtimePath } },
+        server: { middlewareMode: true, watch: null },
+        plugins: [
+          {
+            name: 'test-environment-specific-hook-state',
+            enforce: 'pre',
+            transform(code, id, transformOptions) {
+              if (!id.split('?')[0]!.endsWith('/use-counter.tsx')) return null
+              return transformOptions?.ssr ? null : code.replace('makeValue(1)', '$state(1)')
+            },
+          },
+          fict({ cache: false, useTypeScriptProject: false, functionSplitting: false }),
+        ],
+      })
+
+      const [clientResult, ssrResult] = await Promise.all([
+        server.environments.client.transformRequest('/src/App.tsx'),
+        server.environments.ssr.transformRequest('/src/App.tsx'),
+      ])
+
+      expect(clientResult?.code).toMatch(/\bcount\d*\(\) \* 2/)
+      expect(clientResult?.code).not.toMatch(/\bcount\d* \* 2/)
+      expect(ssrResult?.code).toMatch(/\bcount\d* \* 2/)
+      expect(ssrResult?.code).not.toMatch(/\bcount\d*\(\) \* 2/)
+    } finally {
+      await server?.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not let an older pre-pipeline request overwrite fresh HMR handlers', async () => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-vite-hmr-generation-')))
+    const srcDir = path.join(root, 'src')
+    const appPath = path.join(srcDir, 'App.tsx')
+    const deferred = () => {
+      let resolve!: () => void
+      const promise = new Promise<void>(done => {
+        resolve = done
+      })
+      return { promise, resolve }
+    }
+    const within = async <T>(promise: Promise<T>, label: string): Promise<T> => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        return await Promise.race([
+          promise,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`Timed out: ${label}`)), 3_000)
+          }),
+        ])
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    const source = (label: string) => `
+      import { __fictQrl } from '@fictjs/runtime/internal'
+      export const __fict_e0 = () => ${JSON.stringify(label)}
+      export const handlerUrl = __fictQrl(import.meta.url, '__fict_e0')
+    `
+    const gateEntered = deferred()
+    const releaseOld = deferred()
+    const hmrSeen = deferred()
+    let gated = false
+    let server: Awaited<ReturnType<typeof createServer>> | undefined
+    let oldRequest: Promise<TransformResult | null> | undefined
+
+    try {
+      await mkdir(srcDir, { recursive: true })
+      await writeFile(appPath, source('old-handler'))
+      server = await createServer({
+        root,
+        configFile: false,
+        logLevel: 'silent',
+        dev: { preTransformRequests: false },
+        optimizeDeps: { noDiscovery: true },
+        server: { middlewareMode: true, watch: null },
+        plugins: [
+          {
+            name: 'test-earlier-load-gate',
+            enforce: 'pre',
+            resolveId(id) {
+              if (id === '@fictjs/runtime/internal') return { id, external: true }
+              return null
+            },
+            async load(id) {
+              if (id.split('?')[0] === appPath && !gated) {
+                gated = true
+                const code = await readFile(appPath, 'utf8')
+                gateEntered.resolve()
+                await releaseOld.promise
+                return code
+              }
+              return null
+            },
+          },
+          fict({
+            include: ['**/*.tsx'],
+            cache: false,
+            useTypeScriptProject: false,
+            functionSplitting: true,
+          }),
+          {
+            name: 'test-hmr-generation-probe',
+            handleHotUpdate(context) {
+              if (path.normalize(context.file) === path.normalize(appPath)) hmrSeen.resolve()
+            },
+          },
+        ],
+      })
+
+      const environment = server.environments.client
+      oldRequest = environment.transformRequest('/src/App.tsx')
+      await within(gateEntered.promise, 'old request entering earlier load hook')
+
+      await server.watcher.unwatch(appPath)
+      await writeFile(appPath, source('new-handler'))
+      server.watcher.emit('change', appPath)
+      await within(hmrSeen.promise, 'Fict HMR generation swap')
+      const fresh = await within(environment.transformRequest('/src/App.tsx'), 'fresh transform')
+      expect(fresh?.code).toContain('virtual:fict-handler:')
+
+      const virtualId = `\0fict-handler:${appPath}$$__fict_e0`
+      const loadHandler = async (): Promise<string> => {
+        const loaded = await environment.transformRequest(virtualId)
+        return loaded?.code ?? ''
+      }
+
+      const beforeOldResumes = await loadHandler()
+      expect(beforeOldResumes).toContain('new-handler')
+      expect(beforeOldResumes).not.toContain('old-handler')
+
+      releaseOld.resolve()
+      await expect(within(oldRequest, 'old transform completion')).rejects.toThrow(
+        'pre-HMR dev request',
+      )
+
+      const afterOldResumes = await loadHandler()
+      expect(afterOldResumes).toContain('new-handler')
+      expect(afterOldResumes).not.toContain('old-handler')
+
+      const afterStaleCacheWrite = await environment.transformRequest('/src/App.tsx')
+      expect(afterStaleCacheWrite?.code).toContain('virtual:fict-handler:')
+      expect(afterStaleCacheWrite?.code).not.toContain('old-handler')
+
+      const direct = await environment.pluginContainer.transform(source('new-handler'), appPath)
+      expect(direct.code).toContain('virtual:fict-handler:')
+    } finally {
+      releaseOld.resolve()
+      if (oldRequest) await Promise.allSettled([oldRequest])
+      await server?.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not reuse a completed request context in detached dev work', async () => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-vite-detached-context-')))
+    const srcDir = path.join(root, 'src')
+    const appPath = path.join(srcDir, 'App.tsx')
+    const virtualId = `\0fict-handler:${appPath}$$__fict_e0`
+    const deferred = () => {
+      let resolve!: () => void
+      const promise = new Promise<void>(done => {
+        resolve = done
+      })
+      return { promise, resolve }
+    }
+    const source = (label: string) => `
+      import { __fictQrl } from '@fictjs/runtime/internal'
+      export const __fict_e0 = () => ${JSON.stringify(label)}
+      export const handlerUrl = __fictQrl(import.meta.url, '__fict_e0')
+    `
+    const detachedArmed = deferred()
+    const releaseDetached = deferred()
+    const hmrSeen = deferred()
+    let server: Awaited<ReturnType<typeof createServer>> | undefined
+    let detachedRequest: Promise<TransformResult | null> | undefined
+
+    try {
+      await mkdir(srcDir, { recursive: true })
+      await writeFile(appPath, source('old-handler'))
+      server = await createServer({
+        root,
+        configFile: false,
+        logLevel: 'silent',
+        dev: { preTransformRequests: false },
+        optimizeDeps: { noDiscovery: true },
+        server: { middlewareMode: true, watch: null },
+        plugins: [
+          {
+            name: 'test-detached-context-runtime-resolve',
+            resolveId(id) {
+              return id === '@fictjs/runtime/internal' ? { id, external: true } : null
+            },
+          },
+          fict({
+            include: ['**/*.tsx'],
+            cache: false,
+            useTypeScriptProject: false,
+            functionSplitting: true,
+          }),
+          {
+            name: 'test-detached-context-probe',
+            transform(_code, id) {
+              if (id.split('?')[0] !== appPath || detachedRequest) return null
+              detachedRequest = (async () => {
+                detachedArmed.resolve()
+                await releaseDetached.promise
+                return server!.environments.client.transformRequest(virtualId)
+              })()
+              return null
+            },
+            handleHotUpdate(context) {
+              if (path.normalize(context.file) === path.normalize(appPath)) hmrSeen.resolve()
+            },
+          },
+        ],
+      })
+
+      const environment = server.environments.client
+      const initial = await environment.transformRequest('/src/App.tsx')
+      expect(initial?.code).toContain('virtual:fict-handler:')
+      await detachedArmed.promise
+
+      await server.watcher.unwatch(appPath)
+      await writeFile(appPath, source('new-handler'))
+      server.watcher.emit('change', appPath)
+      await hmrSeen.promise
+
+      const fresh = await environment.transformRequest('/src/App.tsx')
+      expect(fresh?.code).toContain('virtual:fict-handler:')
+
+      releaseDetached.resolve()
+      const detached = await detachedRequest!
+      expect(detached?.code).toContain('new-handler')
+      expect(detached?.code).not.toContain('old-handler')
+
+      const cached = await environment.transformRequest(virtualId)
+      expect(cached?.code).toContain('new-handler')
+      expect(cached?.code).not.toContain('old-handler')
+    } finally {
+      releaseDetached.resolve()
+      if (detachedRequest) await Promise.allSettled([detachedRequest])
+      await server?.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a captured pre-HMR request without blocking later direct transforms', async () => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-vite-captured-request-')))
+    const srcDir = path.join(root, 'src')
+    const appPath = path.join(srcDir, 'App.tsx')
+    const childPath = path.join(srcDir, 'Child.tsx')
+    const unaffectedPath = path.join(srcDir, 'unaffected.js')
+    const deferred = () => {
+      let resolve!: () => void
+      const promise = new Promise<void>(done => {
+        resolve = done
+      })
+      return { promise, resolve }
+    }
+    const source = (label: string) => `
+      import { __fictQrl } from '@fictjs/runtime/internal'
+      export const __fict_e0 = () => ${JSON.stringify(label)}
+      export const handlerUrl = __fictQrl(import.meta.url, '__fict_e0')
+    `
+    const gateEntered = deferred()
+    const releaseOld = deferred()
+    const releaseUntrustedDetached = deferred()
+    const hmrSeen = deferred()
+    let gated = false
+    let oldChildCode = ''
+    let capturedTransform: ((url: string) => Promise<TransformResult | null>) | undefined
+    let server: Awaited<ReturnType<typeof createServer>> | undefined
+    let oldRequest: Promise<TransformResult | null> | undefined
+    let untrustedDetachedRequest: Promise<TransformResult | null> | undefined
+
+    try {
+      await mkdir(srcDir, { recursive: true })
+      await writeFile(appPath, source('old-handler'))
+      await writeFile(childPath, source('old-child'))
+      server = await createServer({
+        root,
+        configFile: false,
+        logLevel: 'silent',
+        dev: { preTransformRequests: false },
+        optimizeDeps: { noDiscovery: true },
+        server: { middlewareMode: true, watch: null },
+        plugins: [
+          {
+            name: 'test-captured-pre-hmr-request',
+            enforce: 'pre',
+            configureServer: {
+              order: 'pre',
+              handler(devServer) {
+                const environment = devServer.environments.client
+                capturedTransform = environment.transformRequest.bind(environment)
+              },
+            },
+            resolveId(id) {
+              return id === '@fictjs/runtime/internal' ? { id, external: true } : null
+            },
+            async load(id) {
+              const cleanId = id.split('?')[0]
+              if (cleanId === childPath && id.includes('oldnested')) return oldChildCode
+              if (cleanId !== appPath || gated) return null
+              gated = true
+              const code = await readFile(appPath, 'utf8')
+              oldChildCode = await readFile(childPath, 'utf8')
+              gateEntered.resolve()
+              await releaseOld.promise
+              await server!.environments.client.transformRequest('/src/Child.tsx?oldnested')
+              return code
+            },
+            transform(_code, id) {
+              if (id !== unaffectedPath || untrustedDetachedRequest) return null
+              untrustedDetachedRequest = (async () => {
+                await releaseUntrustedDetached.promise
+                return server!.environments.client.transformRequest('/src/Child.tsx?oldnested')
+              })()
+              return null
+            },
+          },
+          fict({
+            include: ['**/*.tsx'],
+            cache: false,
+            useTypeScriptProject: false,
+            functionSplitting: true,
+          }),
+          {
+            name: 'test-captured-pre-hmr-probe',
+            handleHotUpdate(context) {
+              if (path.normalize(context.file) === path.normalize(appPath)) hmrSeen.resolve()
+            },
+          },
+        ],
+      })
+
+      const environment = server.environments.client
+      oldRequest = capturedTransform!('/src/App.tsx')
+      await gateEntered.promise
+
+      await server.watcher.unwatch(appPath)
+      await server.watcher.unwatch(childPath)
+      await writeFile(appPath, source('new-handler'))
+      await writeFile(childPath, source('new-child'))
+      server.watcher.emit('change', appPath)
+      await hmrSeen.promise
+
+      const fresh = await environment.transformRequest('/src/App.tsx')
+      expect(fresh?.code).toContain('virtual:fict-handler:')
+      const freshChild = await environment.transformRequest('/src/Child.tsx')
+      expect(freshChild?.code).toContain('virtual:fict-handler:')
+      await environment.moduleGraph.ensureEntryFromUrl(unaffectedPath)
+      await expect(
+        environment.pluginContainer.transform('export const unaffected = true', unaffectedPath),
+      ).resolves.toBeDefined()
+      await expect(
+        environment.pluginContainer.transform(source('new-handler'), appPath),
+      ).rejects.toThrow('pre-HMR request is still settling')
+
+      releaseOld.resolve()
+      await expect(oldRequest).rejects.toThrow('pre-HMR dev request')
+      releaseUntrustedDetached.resolve()
+      await expect(untrustedDetachedRequest).rejects.toThrow('unscoped dev pipeline')
+
+      const direct = await environment.pluginContainer.transform(source('new-handler'), appPath)
+      expect(direct.code).toContain('virtual:fict-handler:')
+
+      const virtualId = `\0fict-handler:${childPath}$$__fict_e0`
+      const handler = await environment.pluginContainer.load(virtualId)
+      const handlerCode =
+        typeof handler === 'string'
+          ? handler
+          : handler && typeof handler === 'object' && 'code' in handler
+            ? String(handler.code)
+            : ''
+      expect(handlerCode).toContain('new-child')
+      expect(handlerCode).not.toContain('old-child')
+
+      const cached = await environment.transformRequest('/src/App.tsx')
+      expect(cached?.code).toContain('virtual:fict-handler:')
+      expect(cached?.code).not.toContain('old-handler')
+      const cachedChild = await environment.transformRequest('/src/Child.tsx')
+      expect(cachedChild?.code).toContain('virtual:fict-handler:')
+      expect(cachedChild?.code).not.toContain('old-child')
+    } finally {
+      releaseOld.resolve()
+      releaseUntrustedDetached.resolve()
+      if (oldRequest) await Promise.allSettled([oldRequest])
+      if (untrustedDetachedRequest) await Promise.allSettled([untrustedDetachedRequest])
+      await server?.close()
       await rm(root, { recursive: true, force: true })
     }
   })

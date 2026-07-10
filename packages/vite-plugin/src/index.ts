@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash } from 'node:crypto'
 import { existsSync, promises as fs, readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -140,6 +141,31 @@ interface MetadataLoadOptions {
   syntheticNamedExports?: boolean | string | null
 }
 
+interface MetadataTransformState {
+  blockUnscopedTransforms: boolean
+  environment: object | null
+  moduleMetadata: Map<string, ModuleReactiveMetadata>
+  resolvedLocalModules: Map<string, string>
+  preparedCompilerTransforms: Map<string, PreparedCompilerTransform>
+  pipelineCompilerInputs: Map<string, string>
+  pipelineTransformsInProgress: Map<string, number>
+  pipelineTransformedModules: Set<string>
+  metadataPreparationQueue: Promise<void>
+  extractedHandlers: Map<string, ExtractedHandler>
+  tsProject: TypeScriptProject | null
+  tsProjectInit: Promise<TypeScriptProject | null> | null
+  activeRequests: number
+  idleResolvers: Set<() => void>
+  retired: boolean
+}
+
+interface MetadataRequestStore {
+  activeScopes: number
+  environment: object
+  state: MetadataTransformState
+  trusted: boolean
+}
+
 interface MetadataResolveContext {
   resolve?: (
     source: string,
@@ -147,6 +173,12 @@ interface MetadataResolveContext {
     options?: { skipSelf?: boolean },
   ) => Promise<(MetadataLoadOptions & { external?: boolean | 'absolute' | 'relative' }) | null>
   load?: (options: MetadataLoadOptions) => Promise<unknown>
+  environment?: {
+    transformRequest?: (url: string) => Promise<unknown>
+    moduleGraph?: {
+      getModuleById: (id: string) => { url: string } | undefined
+    }
+  }
 }
 
 interface NormalizedLibraryOptions {
@@ -356,16 +388,34 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   let config: ResolvedConfig | undefined
   let isDev = false
   let cache: TransformCache | null = null
-  let tsProject: TypeScriptProject | null = null
-  let tsProjectInit: Promise<TypeScriptProject | null> | null = null
-  const moduleMetadata: FictCompilerOptions['moduleMetadata'] = new Map()
-  const resolvedLocalModules = new Map<string, string>()
-  const preparedCompilerTransforms = new Map<string, PreparedCompilerTransform>()
-  const pipelineCompilerInputs = new Map<string, string>()
-  const pipelineTransformsInProgress = new Map<string, number>()
-  const pipelineTransformedModules = new Set<string>()
-  let metadataPreparationQueue: Promise<void> = Promise.resolve()
-  const extractedHandlers = new Map<string, ExtractedHandler>()
+  const transformStates = new Set<MetadataTransformState>()
+  const createTransformState = (environment: object | null = null): MetadataTransformState => {
+    const state: MetadataTransformState = {
+      blockUnscopedTransforms: false,
+      environment,
+      moduleMetadata: new Map(),
+      resolvedLocalModules: new Map(),
+      preparedCompilerTransforms: new Map(),
+      pipelineCompilerInputs: new Map(),
+      pipelineTransformsInProgress: new Map(),
+      pipelineTransformedModules: new Set(),
+      metadataPreparationQueue: Promise.resolve(),
+      extractedHandlers: new Map(),
+      tsProject: null,
+      tsProjectInit: null,
+      activeRequests: 0,
+      idleResolvers: new Set(),
+      retired: false,
+    }
+    transformStates.add(state)
+    return state
+  }
+  let buildTransformState = createTransformState()
+  const environmentTransformStates = new WeakMap<object, MetadataTransformState>()
+  const detachedPendingRequests = new WeakMap<object, Set<Promise<unknown>>>()
+  const metadataRequestStorage = new AsyncLocalStorage<MetadataRequestStore>()
+  const wrappedDevEnvironments = new WeakSet<object>()
+  const staleMetadataRequest = Symbol('stale Fict metadata request')
   const libraryMetadataAssets = new Map<string, LibraryMetadataAsset>()
   const packageBoundaryCache = new Map<string, PackageBoundary | null>()
   let projectPackageRoot: string | undefined
@@ -392,11 +442,263 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     cache = null
   }
 
-  const ensureTypeScriptProject = async () => {
+  const disposeTransformState = (state: MetadataTransformState) => {
+    if (!transformStates.has(state)) return
+    state.tsProject?.dispose()
+    state.tsProject = null
+    state.tsProjectInit = null
+    state.moduleMetadata.clear()
+    state.resolvedLocalModules.clear()
+    state.preparedCompilerTransforms.clear()
+    state.pipelineCompilerInputs.clear()
+    state.pipelineTransformsInProgress.clear()
+    state.pipelineTransformedModules.clear()
+    state.extractedHandlers.clear()
+    state.metadataPreparationQueue = Promise.resolve()
+    state.environment = null
+    transformStates.delete(state)
+  }
+
+  const retireTransformState = (state: MetadataTransformState) => {
+    if (!transformStates.has(state)) return
+    state.retired = true
+    if (state.activeRequests === 0) disposeTransformState(state)
+  }
+
+  const replaceBuildTransformState = () => {
+    retireTransformState(buildTransformState)
+    buildTransformState = createTransformState()
+    libraryMetadataAssets.clear()
+  }
+
+  const getEnvironmentTransformState = (environment: object): MetadataTransformState => {
+    let state = environmentTransformStates.get(environment)
+    if (!state || state.retired) {
+      state = createTransformState(environment)
+      environmentTransformStates.set(environment, state)
+    }
+    return state
+  }
+
+  const replaceEnvironmentTransformState = (
+    environment: object,
+    blockUnscopedTransforms = false,
+  ) => {
+    const previous = environmentTransformStates.get(environment)
+    if (previous) retireTransformState(previous)
+    const next = createTransformState(environment)
+    next.blockUnscopedTransforms = blockUnscopedTransforms
+    environmentTransformStates.set(environment, next)
+    return next
+  }
+
+  const getTransformState = (context?: MetadataResolveContext): MetadataTransformState => {
+    const environment = context?.environment
+    if (
+      config?.command !== 'serve' ||
+      !environment ||
+      typeof environment.transformRequest !== 'function'
+    ) {
+      return buildTransformState
+    }
+    const request = metadataRequestStorage.getStore()
+    if (request && request.activeScopes > 0 && request.environment === environment) {
+      return request.state
+    }
+    return getEnvironmentTransformState(environment)
+  }
+
+  const getTransformInvocationState = (
+    context: MetadataResolveContext,
+  ): MetadataTransformState | null => {
+    const state = getTransformState(context)
+    const environment = context.environment
+    if (config?.command !== 'serve' || !environment) return state
+    const request = metadataRequestStorage.getStore()
+    if (request && request.activeScopes > 0 && request.environment === environment) {
+      return request.trusted ? request.state : null
+    }
+    return state.blockUnscopedTransforms ? null : state
+  }
+
+  const assertTransformStateActive = (state: MetadataTransformState) => {
+    if (state.retired) throw staleMetadataRequest
+  }
+
+  const retainTransformState = (state: MetadataTransformState) => {
+    state.activeRequests++
+    return () => {
+      state.activeRequests--
+      if (state.activeRequests !== 0) return
+      for (const resolve of state.idleResolvers) resolve()
+      state.idleResolvers.clear()
+      if (state.retired) disposeTransformState(state)
+    }
+  }
+
+  const waitForTransformStateIdle = (state: MetadataTransformState): Promise<void> => {
+    if (state.activeRequests === 0) return Promise.resolve()
+    return new Promise(resolve => state.idleResolvers.add(resolve))
+  }
+
+  const replaceInvalidatedEnvironmentState = (environment: object) => {
+    // invalidateAll cannot detach a request that is still blocked in resolve/load before
+    // its ModuleNode exists. Abort Vite's pending-map entry so the post-HMR request starts
+    // independently; the old promise still settles against its retired request state.
+    const pendingRequests = (
+      environment as {
+        _pendingRequests?: Map<unknown, { abort: () => void; request?: Promise<unknown> }>
+      }
+    )._pendingRequests
+    const staleRequests = pendingRequests ? [...pendingRequests.values()] : []
+    for (const pending of staleRequests) {
+      // Vite's abort only detaches the pending-map entry; it does not cancel doTransform.
+      // If that old transform creates its ModuleNode after the first invalidation, it can
+      // still cache stale code. Invalidate once more after each detached promise settles.
+      if (pending.request) {
+        let detached = detachedPendingRequests.get(environment)
+        if (!detached) {
+          detached = new Set()
+          detachedPendingRequests.set(environment, detached)
+        }
+        detached.add(pending.request)
+        const invalidateSettledRequest = () => {
+          detached!.delete(pending.request!)
+          if (detached!.size === 0) detachedPendingRequests.delete(environment)
+          const moduleGraph = (environment as { moduleGraph: { invalidateAll: () => void } })
+            .moduleGraph
+          moduleGraph.invalidateAll()
+        }
+        void pending.request.then(invalidateSettledRequest, invalidateSettledRequest)
+      }
+      pending.abort()
+    }
+
+    // Calls made through a previously captured transformRequest or an unwrapped plugin
+    // container cannot be attributed after this point. Keep unscoped transforms
+    // fail-closed for the lifetime of this generation; normal public entry points carry
+    // their state through the AsyncLocalStorage wrappers below.
+    replaceEnvironmentTransformState(environment, true)
+    const moduleGraph = (environment as { moduleGraph: { invalidateAll: () => void } }).moduleGraph
+    moduleGraph.invalidateAll()
+  }
+
+  const wrapDevEnvironmentRequests = (environment: object) => {
+    if (wrappedDevEnvironments.has(environment)) return
+    wrappedDevEnvironments.add(environment)
+    // Capture the generation before resolve/load and arbitrary earlier transforms run.
+    // Transform-entry epochs are too late: an old request can be suspended in any of them
+    // while HMR installs a new generation.
+    const wrapRequestMethod = (
+      methods: Record<string, unknown>,
+      method: string,
+      receiver: object,
+      kind: 'environment' | 'container',
+      idIndex: number,
+    ) => {
+      const original = methods[method]
+      if (typeof original !== 'function') return
+      methods[method] = async (...args: unknown[]) => {
+        const currentRequest = metadataRequestStorage.getStore()
+        const currentRequestActive = !!currentRequest && currentRequest.activeScopes > 0
+        const activeRequest =
+          currentRequestActive && currentRequest.environment === environment
+            ? currentRequest
+            : undefined
+        if (currentRequestActive && currentRequest.state.retired) {
+          throw new Error(
+            '[fict] A pre-HMR dev request cannot start nested pipeline work after invalidation.',
+          )
+        }
+        const inheritsUntrustedProvenance = currentRequest?.trusted === false
+        if (kind === 'environment' && inheritsUntrustedProvenance) {
+          throw new Error(
+            '[fict] An unscoped dev pipeline cannot start nested environment work after ' +
+              'its request provenance has ended.',
+          )
+        }
+        const hasDetachedRequests = (detachedPendingRequests.get(environment)?.size ?? 0) > 0
+        const trusted =
+          activeRequest?.trusted ??
+          (!inheritsUntrustedProvenance && !(kind === 'container' && hasDetachedRequests))
+        const requestedId = args[idIndex]
+        const targetsFict =
+          typeof requestedId === 'string' &&
+          (requestedId.startsWith(VIRTUAL_HANDLER_PREFIX) ||
+            requestedId.startsWith(VIRTUAL_HANDLER_RESOLVE_PREFIX) ||
+            shouldCompileModule(stripQuery(requestedId)))
+        if (kind === 'container' && !trusted && targetsFict) {
+          throw new Error(
+            '[fict] A direct dev transform cannot start while a pre-HMR request is ' +
+              'still settling; retry after that request completes.',
+          )
+        }
+        const state = activeRequest?.state ?? getEnvironmentTransformState(environment)
+        const releaseState = retainTransformState(state)
+        const request: MetadataRequestStore = activeRequest ?? {
+          activeScopes: 0,
+          environment,
+          state,
+          trusted,
+        }
+        request.activeScopes++
+        try {
+          const invoke = () => Reflect.apply(original, receiver, args) as unknown
+          if (activeRequest) return await invoke()
+          return await metadataRequestStorage.run(request, invoke)
+        } finally {
+          request.activeScopes--
+          releaseState()
+        }
+      }
+    }
+
+    const requestMethods = ['transformRequest', 'warmupRequest', 'fetchModule'] as const
+    const methods = environment as Record<string, unknown>
+    for (const method of requestMethods) {
+      wrapRequestMethod(methods, method, environment, 'environment', 0)
+    }
+
+    // Container methods are also public pipeline entry points. Resolve/load scopes carry
+    // provenance through earlier hooks; otherwise an old captured request could start a
+    // nested transform after HMR and launder stale code into the current generation.
+    const pluginContainer = methods.pluginContainer
+    if (pluginContainer && typeof pluginContainer === 'object') {
+      const containerMethods = pluginContainer as unknown as Record<string, unknown>
+      wrapRequestMethod(containerMethods, 'resolveId', pluginContainer, 'container', 0)
+      wrapRequestMethod(containerMethods, 'load', pluginContainer, 'container', 0)
+      wrapRequestMethod(containerMethods, 'transform', pluginContainer, 'container', 1)
+    }
+
+    const originalClose = methods.close
+    if (typeof originalClose === 'function') {
+      methods.close = async (...args: unknown[]) => {
+        const retireEnvironmentStates = () => {
+          const states = [...transformStates].filter(state => state.environment === environment)
+          for (const state of states) retireTransformState(state)
+          return states
+        }
+        retireEnvironmentStates()
+        try {
+          return await Reflect.apply(originalClose, environment, args)
+        } finally {
+          const states = retireEnvironmentStates()
+          // HMR detaches stale promises from Vite's pending map. Preserve Vite's close
+          // contract by waiting for every generation's request/container wrappers.
+          await Promise.all(states.map(waitForTransformStateIdle))
+          await Promise.allSettled([...(detachedPendingRequests.get(environment) ?? [])])
+          detachedPendingRequests.delete(environment)
+          environmentTransformStates.delete(environment)
+        }
+      }
+    }
+  }
+
+  const ensureTypeScriptProject = async (state: MetadataTransformState) => {
     if (!useTypeScriptProject) return null
-    if (tsProject) return tsProject
-    if (!tsProjectInit) {
-      tsProjectInit = (async () => {
+    if (state.tsProject) return state.tsProject
+    if (!state.tsProjectInit) {
+      state.tsProjectInit = (async () => {
         const ts = await loadTypeScript()
         if (!ts) return null
         const rootDir = config?.root ?? process.cwd()
@@ -405,28 +707,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         return createTypeScriptProject(ts, rootDir, resolvedConfigPath)
       })()
     }
-    tsProject = await tsProjectInit
-    return tsProject
-  }
-
-  const resetTypeScriptProject = () => {
-    if (tsProject) {
-      tsProject.dispose()
-    }
-    tsProject = null
-    tsProjectInit = null
-  }
-
-  const resetTransformState = () => {
-    moduleMetadata.clear()
-    resolvedLocalModules.clear()
-    preparedCompilerTransforms.clear()
-    pipelineCompilerInputs.clear()
-    pipelineTransformsInProgress.clear()
-    pipelineTransformedModules.clear()
-    metadataPreparationQueue = Promise.resolve()
-    extractedHandlers.clear()
-    libraryMetadataAssets.clear()
+    state.tsProject = await state.tsProjectInit
+    return state.tsProject
   }
 
   const isFrameworkBuildArtifact = (filename: string): boolean => {
@@ -446,18 +728,49 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   const shouldCompileModule = (id: string): boolean =>
     shouldTransform(id, transformFilter) && !isFrameworkBuildArtifact(id)
 
-  const lookupStoredMetadata = (resolved: string): ModuleReactiveMetadata | undefined => {
+  const affectsFictTransform = (
+    file: string,
+    modules: {
+      id?: string | null
+      importers?: Iterable<unknown>
+    }[],
+  ): boolean => {
+    if (shouldTransform(file, transformFilter)) return true
+    const queue: unknown[] = [...modules]
+    const seen = new Set<object>()
+    while (queue.length > 0) {
+      const candidate = queue.shift()
+      if (!candidate || typeof candidate !== 'object' || seen.has(candidate)) continue
+      seen.add(candidate)
+      const module = candidate as {
+        id?: string | null
+        importers?: Iterable<unknown>
+      }
+      if (module.id && shouldCompileModule(stripQuery(module.id))) return true
+      if (module.importers) queue.push(...module.importers)
+    }
+    return false
+  }
+
+  const hasMetadataPipelineLoader = (context: MetadataResolveContext): boolean =>
+    (config?.command === 'build' && typeof context.load === 'function') ||
+    (config?.command === 'serve' && typeof context.environment?.transformRequest === 'function')
+
+  const lookupStoredMetadata = (
+    state: MetadataTransformState,
+    resolved: string,
+  ): ModuleReactiveMetadata | undefined => {
     const normalized = normalizeFileName(resolved, config?.root)
-    const direct = moduleMetadata.get(normalized)
+    const direct = state.moduleMetadata.get(normalized)
     if (direct) return direct
     const ext = path.extname(normalized)
     if (!ext) {
       for (const suffix of MODULE_EXTENSIONS) {
-        const byExt = moduleMetadata.get(`${normalized}${suffix}`)
+        const byExt = state.moduleMetadata.get(`${normalized}${suffix}`)
         if (byExt) return byExt
       }
       for (const suffix of MODULE_EXTENSIONS) {
-        const byIndex = moduleMetadata.get(path.join(normalized, `index${suffix}`))
+        const byIndex = state.moduleMetadata.get(path.join(normalized, `index${suffix}`))
         if (byIndex) return byIndex
       }
     }
@@ -465,6 +778,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   }
 
   const resolveCompilerModuleMetadata = (
+    state: MetadataTransformState,
     source: string,
     importer?: string,
   ): ModuleReactiveMetadata | undefined => {
@@ -473,7 +787,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     if (!importer) return undefined
 
     const importerFile = normalizeFileName(importer, config?.root)
-    const exactResolution = resolvedLocalModules.get(createLocalResolutionKey(importerFile, source))
+    const exactResolution = state.resolvedLocalModules.get(
+      createLocalResolutionKey(importerFile, source),
+    )
     const aliasEntries = normalizeAliases(config?.resolve?.alias)
     let resolvedSource = exactResolution ?? null
 
@@ -502,7 +818,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     }
 
     if (resolvedSource) {
-      const resolvedMetadata = lookupStoredMetadata(resolvedSource)
+      const resolvedMetadata = lookupStoredMetadata(state, resolvedSource)
       if (resolvedMetadata) return resolvedMetadata
       if (shouldCompileModule(resolvedSource)) {
         throw new Error(
@@ -514,24 +830,28 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
 
     return resolvePackageModuleMetadata(source, importerFile, {
       ...compilerOptions,
-      moduleMetadata,
+      moduleMetadata: state.moduleMetadata,
     })
   }
 
   const createCompilerOptions = async (
+    state: MetadataTransformState,
     code: string,
     normalizedFilename: string,
   ): Promise<{ fictOptions: FictCompilerOptions; project: TypeScriptProject | null }> => {
+    assertTransformStateActive(state)
     const fictOptions: FictCompilerOptions = {
       ...compilerOptions,
       dev: compilerOptions.dev ?? isDev,
       sourcemap: compilerOptions.sourcemap ?? true,
       filename: normalizedFilename,
-      moduleMetadata,
-      resolveModuleMetadata: resolveCompilerModuleMetadata,
+      moduleMetadata: state.moduleMetadata,
+      resolveModuleMetadata: (source, importer) =>
+        resolveCompilerModuleMetadata(state, source, importer),
     }
 
-    const project = await ensureTypeScriptProject()
+    const project = await ensureTypeScriptProject(state)
+    assertTransformStateActive(state)
     if (project) {
       project.updateFile(normalizedFilename, code)
       const program = project.getProgram()
@@ -577,10 +897,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   }
 
   const discoverMetadataGraph = async (
+    state: MetadataTransformState,
     context: MetadataResolveContext,
     rootCode: string,
     rootFilename: string,
   ): Promise<Map<string, MetadataGraphNode>> => {
+    assertTransformStateActive(state)
     const nodes = new Map<string, MetadataGraphNode>()
     const discovered = new Set<string>()
 
@@ -593,7 +915,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       if (discovered.has(normalizedFilename)) return
       discovered.add(normalizedFilename)
 
-      const pipelineCode = suppliedCode ?? pipelineCompilerInputs.get(normalizedFilename)
+      const pipelineCode = suppliedCode ?? state.pipelineCompilerInputs.get(normalizedFilename)
       const code = pipelineCode ?? (await fs.readFile(normalizedFilename, 'utf8'))
       const node: MetadataGraphNode = {
         filename: normalizedFilename,
@@ -603,15 +925,15 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       }
       nodes.set(normalizedFilename, node)
 
-      // During builds, an uncaptured dependency is a pipeline frontier. Loading it runs
-      // earlier transforms; only their resulting imports are authoritative. Manual plugin
-      // contexts without load support retain the recursive on-disk preparation fallback.
-      if (pipelineCode === undefined && config?.command === 'build' && context.load) return
+      // An uncaptured dependency is a pipeline frontier. Loading it runs earlier transforms;
+      // only their resulting imports are authoritative. Manual plugin contexts without a
+      // pipeline loader retain the recursive on-disk preparation fallback.
+      if (pipelineCode === undefined && hasMetadataPipelineLoader(context)) return
 
       for (const source of collectStaticModuleSources(code)) {
         const resolved = await resolveGraphDependency(context, source, normalizedFilename)
         if (!resolved || !shouldCompileModule(resolved.filename)) continue
-        resolvedLocalModules.set(
+        state.resolvedLocalModules.set(
           createLocalResolutionKey(normalizedFilename, source),
           resolved.filename,
         )
@@ -625,21 +947,23 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   }
 
   const getPreparationKey = async (
+    state: MetadataTransformState,
     node: MetadataGraphNode,
   ): Promise<{
     key: string
     fictOptions: FictCompilerOptions
   }> => {
-    const { fictOptions, project } = await createCompilerOptions(node.code, node.filename)
+    assertTransformStateActive(state)
+    const { fictOptions, project } = await createCompilerOptions(state, node.code, node.filename)
     const dependencyFingerprint = computePackageMetadataCacheFingerprint(
       node.code,
       node.filename,
       compilerOptions,
-      moduleMetadata,
+      state.moduleMetadata,
       config?.root,
       normalizeAliases(config?.resolve?.alias),
       new Set(),
-      resolvedLocalModules,
+      state.resolvedLocalModules,
     )
     return {
       key: buildMetadataPreparationKey(
@@ -654,11 +978,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   }
 
   const compileMetadataNode = async (
+    state: MetadataTransformState,
     node: MetadataGraphNode,
     fictOptions: FictCompilerOptions,
   ): Promise<Omit<PreparedCompilerTransform, 'preparationKey'>> => {
+    assertTransformStateActive(state)
     const compiled = await compileFictCompilerStage(node.code, node.filename, fictOptions)
-    const generatedMetadata = moduleMetadata.get(node.filename)
+    assertTransformStateActive(state)
+    const generatedMetadata = state.moduleMetadata.get(node.filename)
     if (!generatedMetadata) {
       throw new Error(`[fict] Compiler did not emit module metadata for ${node.filename}.`)
     }
@@ -670,10 +997,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   }
 
   const prepareMetadataGraph = async (
+    state: MetadataTransformState,
     graph: Map<string, MetadataGraphNode>,
     rootFilename: string,
     pipelinePrepared = new Set<string>(),
   ): Promise<void> => {
+    assertTransformStateActive(state)
     for (const component of getStronglyConnectedMetadataComponents(graph)) {
       const sortedComponent = [...component].sort()
       const normalizedRoot = normalizeFileName(rootFilename, config?.root)
@@ -682,7 +1011,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           filename =>
             filename !== normalizedRoot &&
             pipelinePrepared.has(filename) &&
-            moduleMetadata.has(filename),
+            state.moduleMetadata.has(filename),
         )
       ) {
         continue
@@ -711,10 +1040,10 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       // candidate keys deterministically so updateFile/getProgram never race.
       for (const filename of sortedComponent) {
         const node = graph.get(filename)!
-        const preparation = await getPreparationKey(node)
+        const preparation = await getPreparationKey(state, node)
         preparedCandidates.push({
           filename,
-          prepared: preparedCompilerTransforms.get(filename),
+          prepared: state.preparedCompilerTransforms.get(filename),
           ...preparation,
         })
       }
@@ -722,7 +1051,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         preparedCandidates.every(candidate => candidate.prepared?.preparationKey === candidate.key)
       ) {
         for (const candidate of preparedCandidates) {
-          moduleMetadata.set(candidate.filename, candidate.prepared!.moduleMetadata)
+          state.moduleMetadata.set(candidate.filename, candidate.prepared!.moduleMetadata)
         }
         continue
       }
@@ -730,16 +1059,16 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       if (!hasCycle) {
         const filename = sortedComponent[0]!
         const node = graph.get(filename)!
-        const { fictOptions } = await getPreparationKey(node)
-        const compiled = await compileMetadataNode(node, fictOptions)
-        const { key } = await getPreparationKey(node)
-        preparedCompilerTransforms.set(filename, { ...compiled, preparationKey: key })
+        const { fictOptions } = await getPreparationKey(state, node)
+        const compiled = await compileMetadataNode(state, node, fictOptions)
+        const { key } = await getPreparationKey(state, node)
+        state.preparedCompilerTransforms.set(filename, { ...compiled, preparationKey: key })
         continue
       }
 
       for (const filename of sortedComponent) {
-        if (!moduleMetadata.has(filename)) {
-          moduleMetadata.set(filename, createEmptyModuleMetadata())
+        if (!state.moduleMetadata.has(filename)) {
+          state.moduleMetadata.set(filename, createEmptyModuleMetadata())
         }
       }
 
@@ -748,17 +1077,17 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       const maxPasses = Math.max(8, sortedComponent.length * 4)
       for (let pass = 0; pass < maxPasses; pass++) {
         const before = stableStringify(
-          sortedComponent.map(filename => [filename, moduleMetadata.get(filename)]),
+          sortedComponent.map(filename => [filename, state.moduleMetadata.get(filename)]),
         )
         const passResults = new Map<string, Omit<PreparedCompilerTransform, 'preparationKey'>>()
         for (const filename of sortedComponent) {
           const node = graph.get(filename)!
-          const { fictOptions } = await getPreparationKey(node)
-          passResults.set(filename, await compileMetadataNode(node, fictOptions))
+          const { fictOptions } = await getPreparationKey(state, node)
+          passResults.set(filename, await compileMetadataNode(state, node, fictOptions))
         }
         latestResults = passResults
         const after = stableStringify(
-          sortedComponent.map(filename => [filename, moduleMetadata.get(filename)]),
+          sortedComponent.map(filename => [filename, state.moduleMetadata.get(filename)]),
         )
         if (after === before) {
           converged = true
@@ -773,41 +1102,51 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       for (const filename of sortedComponent) {
         const node = graph.get(filename)!
         const result = latestResults.get(filename)!
-        const { key } = await getPreparationKey(node)
-        preparedCompilerTransforms.set(filename, { ...result, preparationKey: key })
+        const { key } = await getPreparationKey(state, node)
+        state.preparedCompilerTransforms.set(filename, { ...result, preparationKey: key })
       }
     }
   }
 
   const preloadPipelineMetadata = async (
+    state: MetadataTransformState,
     context: MetadataResolveContext,
     graph: Map<string, MetadataGraphNode>,
     rootFilename: string,
     attemptedLoads: Set<string>,
   ): Promise<boolean> => {
-    // Dev-server transforms can outlive an HMR invalidation. Build (including Rollup
-    // watch rebuilds) has a serialized buildStart boundary for this shared snapshot.
-    if (config?.command !== 'build' || !context.load) return false
+    assertTransformStateActive(state)
+    if (!hasMetadataPipelineLoader(context)) return false
 
     const normalizedRoot = normalizeFileName(rootFilename, config?.root)
 
     for (const filename of graph.keys()) {
-      // A back-edge into an active transform would deadlock Rollup's module loader.
+      // A back-edge into an active transform would deadlock the bundler's module loader.
       // Its input has already been captured, so metadata convergence can use that
       // pipeline source directly instead of recursively loading it again.
       if (
         filename === normalizedRoot ||
-        pipelineTransformsInProgress.has(filename) ||
+        state.pipelineTransformsInProgress.has(filename) ||
         attemptedLoads.has(filename)
       ) {
         continue
       }
-      if (!pipelineTransformedModules.has(filename)) {
+      if (!state.pipelineTransformedModules.has(filename)) {
+        assertTransformStateActive(state)
         attemptedLoads.add(filename)
-        await context.load(graph.get(filename)?.loadOptions ?? { id: filename })
-        if (!pipelineCompilerInputs.has(filename)) {
+        const loadOptions = graph.get(filename)?.loadOptions ?? { id: filename }
+        if (config?.command === 'build') {
+          await context.load!(loadOptions)
+        } else {
+          const environment = context.environment!
+          const requestUrl =
+            environment.moduleGraph?.getModuleById(loadOptions.id)?.url ?? loadOptions.id
+          await environment.transformRequest!(requestUrl)
+        }
+        assertTransformStateActive(state)
+        if (!state.pipelineCompilerInputs.has(filename)) {
           throw new Error(
-            `[fict] Build pipeline did not provide compiler input for local dependency ${filename}.`,
+            `[fict] Transform pipeline did not provide compiler input for local dependency ${filename}.`,
           )
         }
         return true
@@ -817,31 +1156,36 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   }
 
   const prepareReachableMetadata = async (
+    state: MetadataTransformState,
     context: MetadataResolveContext,
     code: string,
     filename: string,
   ): Promise<void> => {
-    let graph = await discoverMetadataGraph(context, code, filename)
+    assertTransformStateActive(state)
+    let graph = await discoverMetadataGraph(state, context, code, filename)
+    assertTransformStateActive(state)
     const attemptedLoads = new Set<string>()
     // Refresh after each load: an earlier transform may add or remove imports, so the
     // raw on-disk dependency graph must not decide which subsequent modules are loaded.
-    while (await preloadPipelineMetadata(context, graph, filename, attemptedLoads)) {
-      graph = await discoverMetadataGraph(context, code, filename)
+    while (await preloadPipelineMetadata(state, context, graph, filename, attemptedLoads)) {
+      assertTransformStateActive(state)
+      graph = await discoverMetadataGraph(state, context, code, filename)
     }
     const normalizedRoot = normalizeFileName(filename, config?.root)
     const pipelinePrepared = new Set(
       [...graph.keys()].filter(
         dependency =>
           dependency !== normalizedRoot &&
-          pipelineTransformedModules.has(dependency) &&
-          !pipelineTransformsInProgress.has(dependency) &&
-          moduleMetadata.has(dependency),
+          state.pipelineTransformedModules.has(dependency) &&
+          !state.pipelineTransformsInProgress.has(dependency) &&
+          state.moduleMetadata.has(dependency),
       ),
     )
-    const prepare = metadataPreparationQueue.then(async () => {
-      await prepareMetadataGraph(graph, filename, pipelinePrepared)
+    const prepare = state.metadataPreparationQueue.then(async () => {
+      assertTransformStateActive(state)
+      await prepareMetadataGraph(state, graph, filename, pipelinePrepared)
     })
-    metadataPreparationQueue = prepare.then(
+    state.metadataPreparationQueue = prepare.then(
       () => undefined,
       () => undefined,
     )
@@ -864,14 +1208,27 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       isDev = config.command === 'serve' || config.mode === 'development'
       // Rebuild cache with resolved config so cacheDir is available
       resetCache()
-      // Reset transform-only state from previous builds.
-      resetTransformState()
+      // A plugin instance can be reused by Vite restarts. Retire request-scoped dev
+      // generations instead of clearing maps that old transforms may still reference.
+      for (const state of [...transformStates]) {
+        if (state !== buildTransformState) retireTransformState(state)
+      }
+      replaceBuildTransformState()
     },
 
     buildStart() {
       // Vite can reuse plugin instances across watch rebuilds.
       // Reset per-build metadata to avoid unbounded growth.
-      resetTransformState()
+      replaceBuildTransformState()
+    },
+
+    configureServer: {
+      order: 'pre',
+      handler(server) {
+        for (const environment of Object.values(server.environments)) {
+          wrapDevEnvironmentRequests(environment)
+        }
+      },
     },
 
     shouldTransformCachedModule({ id }) {
@@ -896,15 +1253,17 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         return null
       }
 
+      const state = getTransformState(this as MetadataResolveContext)
       const handlerId = id.slice(VIRTUAL_HANDLER_PREFIX.length)
       debugLog(`Loading virtual module: ${handlerId}`, {
-        registrySize: extractedHandlers.size,
-        handlers: Array.from(extractedHandlers.keys()),
+        registrySize: state.extractedHandlers.size,
+        handlers: Array.from(state.extractedHandlers.keys()),
       })
-      const handler = extractedHandlers.get(handlerId) ?? manuallyRegisteredHandlers.get(handlerId)
+      const handler =
+        state.extractedHandlers.get(handlerId) ?? manuallyRegisteredHandlers.get(handlerId)
       if (!handler) {
         debugLog(`Virtual module not found: ${handlerId}`, {
-          registrySize: extractedHandlers.size,
+          registrySize: state.extractedHandlers.size,
         })
         return null
       }
@@ -1014,20 +1373,35 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       }
 
       const normalizedFilename = normalizeFileName(filename, config?.root)
-      const pipelineMetadataEnabled = config?.command === 'build'
+      const metadataContext = this as MetadataResolveContext
+      const state = getTransformInvocationState(metadataContext)
+      if (!state) {
+        this.error({
+          message:
+            '[fict] Cannot safely run an unscoped dev transform after HMR; use the current ' +
+            'environment.transformRequest() or environment.pluginContainer.transform() entry point.',
+          id,
+        })
+        return null
+      }
+      if (state.retired) return null
+      const releaseState = retainTransformState(state)
+      const pipelineMetadataEnabled = hasMetadataPipelineLoader(metadataContext)
       if (pipelineMetadataEnabled) {
-        pipelineCompilerInputs.set(normalizedFilename, code)
-        pipelineTransformsInProgress.set(
+        state.pipelineCompilerInputs.set(normalizedFilename, code)
+        state.pipelineTransformsInProgress.set(
           normalizedFilename,
-          (pipelineTransformsInProgress.get(normalizedFilename) ?? 0) + 1,
+          (state.pipelineTransformsInProgress.get(normalizedFilename) ?? 0) + 1,
         )
       }
       try {
         const precompiledInput = isPrecompiledFictModule(code)
         if (!precompiledInput) {
-          await prepareReachableMetadata(this as MetadataResolveContext, code, normalizedFilename)
+          await prepareReachableMetadata(state, metadataContext, code, normalizedFilename)
+          assertTransformStateActive(state)
         }
         const { fictOptions, project: tsProject } = await createCompilerOptions(
+          state,
           code,
           normalizedFilename,
         )
@@ -1036,11 +1410,11 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           code,
           normalizedFilename,
           compilerOptions,
-          moduleMetadata,
+          state.moduleMetadata,
           config?.root,
           aliasEntries,
           new Set(),
-          resolvedLocalModules,
+          state.resolvedLocalModules,
         )
         const cacheStore = ensureCache()
         const shouldSplit =
@@ -1059,11 +1433,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
 
         if (cacheKey) {
           const cached = await cacheStore.get(cacheKey)
+          assertTransformStateActive(state)
           if (cached) {
             if (shouldSplit && cached.extractedHandlers?.length) {
               for (const handler of cached.extractedHandlers) {
                 const handlerId = createHandlerId(handler.sourceModule, handler.exportName)
-                extractedHandlers.set(handlerId, handler)
+                state.extractedHandlers.set(handlerId, handler)
                 if (config?.command === 'build' && !config?.build?.ssr) {
                   this.emitFile({
                     type: 'chunk',
@@ -1074,10 +1449,10 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               }
             }
             if (cached.moduleMetadata) {
-              moduleMetadata.set(normalizedFilename, cached.moduleMetadata)
+              state.moduleMetadata.set(normalizedFilename, cached.moduleMetadata)
             }
             if (pipelineMetadataEnabled) {
-              pipelineTransformedModules.add(normalizedFilename)
+              state.pipelineTransformedModules.add(normalizedFilename)
             }
             return {
               code: cached.code,
@@ -1102,15 +1477,16 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             tsProject,
             dependencyFingerprint,
           )
-          const prepared = preparedCompilerTransforms.get(normalizedFilename)
+          const prepared = state.preparedCompilerTransforms.get(normalizedFilename)
           let result: { code: string; map: TransformResult['map'] }
           if (prepared?.preparationKey === preparationKey) {
             result = prepared
           } else {
             result = await compileFictCompilerStage(code, normalizedFilename, fictOptions)
-            const generatedMetadata = moduleMetadata.get(normalizedFilename)
+            assertTransformStateActive(state)
+            const generatedMetadata = state.moduleMetadata.get(normalizedFilename)
             if (generatedMetadata) {
-              preparedCompilerTransforms.set(normalizedFilename, {
+              state.preparedCompilerTransforms.set(normalizedFilename, {
                 ...result,
                 moduleMetadata: generatedMetadata,
                 preparationKey,
@@ -1135,7 +1511,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             splitResult = extractAndRewriteHandlers(
               finalCode,
               filename,
-              extractedHandlers,
+              state.extractedHandlers,
               finalMap,
             )
           } catch (error) {
@@ -1178,26 +1554,30 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             code: finalCode,
             map: finalMap,
           }
-          const generatedModuleMetadata = moduleMetadata.get(normalizedFilename)
+          const generatedModuleMetadata = state.moduleMetadata.get(normalizedFilename)
           if (generatedModuleMetadata) {
             cachedTransform.moduleMetadata = generatedModuleMetadata
           }
 
           if (shouldSplit && splitResult?.handlers.length) {
             cachedTransform.extractedHandlers = splitResult.handlers
-              .map(handlerName => extractedHandlers.get(createHandlerId(filename, handlerName)))
+              .map(handlerName =>
+                state.extractedHandlers.get(createHandlerId(filename, handlerName)),
+              )
               .filter((handler): handler is ExtractedHandler => !!handler)
           }
 
           await cacheStore.set(cacheKey, cachedTransform)
+          assertTransformStateActive(state)
         }
 
         if (pipelineMetadataEnabled) {
-          pipelineTransformedModules.add(normalizedFilename)
+          state.pipelineTransformedModules.add(normalizedFilename)
         }
 
         return transformed
       } catch (error) {
+        if (error === staleMetadataRequest) return null
         // Better error handling
         const message =
           error instanceof Error ? error.message : 'Unknown error during Fict transformation'
@@ -1210,32 +1590,42 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         return null
       } finally {
         if (pipelineMetadataEnabled) {
-          const remaining = (pipelineTransformsInProgress.get(normalizedFilename) ?? 1) - 1
+          const remaining = (state.pipelineTransformsInProgress.get(normalizedFilename) ?? 1) - 1
           if (remaining > 0) {
-            pipelineTransformsInProgress.set(normalizedFilename, remaining)
+            state.pipelineTransformsInProgress.set(normalizedFilename, remaining)
           } else {
-            pipelineTransformsInProgress.delete(normalizedFilename)
+            state.pipelineTransformsInProgress.delete(normalizedFilename)
           }
         }
+        releaseState()
       }
     },
 
+    hotUpdate({ file, modules }) {
+      const environment = this.environment
+      const state = getEnvironmentTransformState(environment)
+      const tsConfigChanged = state.tsProject?.configPath === file
+      const affectsTransform = affectsFictTransform(file, modules)
+      if (!tsConfigChanged && !affectsTransform) return undefined
+
+      if (tsConfigChanged) resetCache()
+      replaceInvalidatedEnvironmentState(environment)
+      environment.hot.send({ type: 'full-reload', path: '*' })
+      return []
+    },
+
+    // Keep the compatibility hook callable for existing direct plugin integrations.
+    // Vite 7 uses hotUpdate above for update/create/delete events.
     handleHotUpdate({ file, server }) {
-      if (tsProject && file === tsProject.configPath) {
-        resetTypeScriptProject()
-        resetCache()
+      if (!shouldTransform(file, transformFilter)) return undefined
+      const environments = Object.values(server.environments ?? {})
+      if (environments.length === 0) {
+        replaceBuildTransformState()
+      } else {
+        for (const environment of environments) replaceInvalidatedEnvironmentState(environment)
       }
-
-      // Force full reload for transformed source files so the reactive graph is rebuilt.
-      if (shouldTransform(file, transformFilter)) {
-        server.ws.send({
-          type: 'full-reload',
-          path: '*',
-        })
-        return []
-      }
-
-      return undefined
+      server.ws.send({ type: 'full-reload', path: '*' })
+      return []
     },
 
     generateBundle(_options, bundle) {
@@ -1244,7 +1634,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         const emittedMetadataAssets = emitLibraryMetadataAssets(
           this.emitFile.bind(this),
           bundle,
-          moduleMetadata,
+          buildTransformState.moduleMetadata,
           {
             root: config.root,
             metadataDir: libraryOptions.metadataDir,
