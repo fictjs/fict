@@ -38,7 +38,7 @@ import type {
   HashRouterOptions,
   RouterOptions,
 } from './types'
-import { compileRoute, createBranches, matchRoutes, resolvePath } from './utils'
+import { compileRoute, createBranches, hasPathPrefix, matchRoutes, resolvePath } from './utils'
 
 // Use Fict's signal for reactive state
 
@@ -184,7 +184,7 @@ export function Routes(props: RoutesProps) {
       const basePath = parentMatch ? parentMatch.pathname : '/'
 
       // Get path relative to parent
-      const relativePath = locationPath.startsWith(basePath)
+      const relativePath = hasPathPrefix(locationPath, basePath)
         ? locationPath.slice(basePath.length) || '/'
         : locationPath
 

@@ -12,11 +12,14 @@ import {
   useLocation,
   useBeforeLeave,
   usePendingLocation,
+  useHref,
   NavLink,
   Link,
   Form,
   type History,
 } from '../src'
+import { RouterProvider } from '../src/router-provider'
+import { readAccessor } from '../src/context'
 
 function LocationText() {
   const location = useLocation()
@@ -54,6 +57,11 @@ function ReplaceNavigateButton({ to }: { to: string }) {
 function PendingText() {
   const pending = usePendingLocation()
   return <span data-testid="pending">{pending()?.pathname ?? 'none'}</span>
+}
+
+function HrefText({ to }: { to: string }) {
+  const href = useHref(to)
+  return <span data-testid="href" data-href={readAccessor(href)} />
 }
 
 function Guarded({
@@ -95,6 +103,19 @@ function createLegacyMemoryHistory(): History {
 }
 
 describe('Router integration (MemoryRouter)', () => {
+  it('keeps search-only hrefs outside a similarly prefixed base unchanged', () => {
+    const history = createMemoryHistory({ initialEntries: ['/apple'] })
+
+    render(() => (
+      <RouterProvider history={history} routes={[]} base="/app">
+        <HrefText to="?query=value" />
+      </RouterProvider>
+    ))
+
+    expect(screen.getByTestId('href').getAttribute('data-href')).toBe('/apple?query=value')
+    history.destroy?.()
+  })
+
   it('normalizes empty initial entries to the root route', () => {
     render(() => (
       <MemoryRouter initialEntries={[]}>

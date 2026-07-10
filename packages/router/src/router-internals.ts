@@ -1,4 +1,4 @@
-import { stripBasePath } from './utils'
+import { hasPathPrefix, stripBasePath } from './utils'
 
 const isDevEnv =
   (typeof import.meta !== 'undefined' &&
@@ -7,14 +7,9 @@ const isDevEnv =
 
 let didWarnBaseMismatch = false
 
-function hasBasePrefix(pathname: string, base: string): boolean {
-  if (!base) return true
-  return pathname === base || pathname.startsWith(base + '/')
-}
-
 export function stripBaseOrWarn(pathname: string, base: string): string | null {
   if (!base) return pathname
-  if (!hasBasePrefix(pathname, base)) {
+  if (!hasPathPrefix(pathname, base)) {
     if (isDevEnv && !didWarnBaseMismatch) {
       didWarnBaseMismatch = true
       console.warn(
@@ -28,6 +23,6 @@ export function stripBaseOrWarn(pathname: string, base: string): string | null {
 
 export function stripBaseIfPresent(pathname: string, base: string): string {
   if (!base) return pathname
-  if (!hasBasePrefix(pathname, base)) return pathname
+  if (!hasPathPrefix(pathname, base)) return pathname
   return stripBasePath(pathname, base)
 }

@@ -19,7 +19,7 @@ import type {
   To,
   BeforeLeaveHandler,
 } from './types'
-import { stripBasePath, prependBasePath } from './utils'
+import { hasPathPrefix, stripBasePath, prependBasePath } from './utils'
 
 // ============================================================================
 // Router Context
@@ -459,7 +459,7 @@ export function useHref(to: To | (() => To)): () => string {
       const normalizedBase = base === '/' || base === '' ? '' : base
 
       // Check if current location is within the router's base
-      if (normalizedBase && !currentPathname.startsWith(normalizedBase)) {
+      if (normalizedBase && !hasPathPrefix(currentPathname, normalizedBase)) {
         // Current location is outside the base - return raw pathname + search/hash
         // without base manipulation to avoid generating incorrect hrefs
         return currentPathname + search + hash
@@ -495,7 +495,7 @@ export function useIsActive(
     // Strip base from current location pathname for comparison
     const currentPath = readAccessor(router.location).pathname
     const base = readAccessor(router.base)
-    if (base && currentPath !== base && !currentPath.startsWith(base + '/')) {
+    if (base && !hasPathPrefix(currentPath, base)) {
       return false
     }
     let currentPathWithoutBase = stripBasePath(currentPath, base)

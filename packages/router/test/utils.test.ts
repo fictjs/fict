@@ -14,6 +14,8 @@ import {
   matchRoutes,
   locationsAreEqual,
   hashQueryArgs,
+  stripBasePath,
+  prependBasePath,
 } from '../src/utils'
 
 describe('normalizePath', () => {
@@ -53,6 +55,30 @@ describe('joinPaths', () => {
 
   it('should handle undefined segments', () => {
     expect(joinPaths('/users', undefined, '123')).toBe('/users/123')
+  })
+})
+
+describe('base path utilities', () => {
+  it('strips only an exact base or a complete path-segment prefix', () => {
+    expect(stripBasePath('/app', '/app')).toBe('/')
+    expect(stripBasePath('/app/', '/app/')).toBe('/')
+    expect(stripBasePath('/app/child', 'app/')).toBe('/child')
+
+    expect(stripBasePath('/apple', '/app')).toBe('/apple')
+    expect(stripBasePath('/app2/child', '/app/')).toBe('/app2/child')
+  })
+
+  it('keeps base matching case-sensitive and does not decode separators', () => {
+    expect(stripBasePath('/App/child', '/app')).toBe('/App/child')
+    expect(stripBasePath('/app%2Fchild', '/app')).toBe('/app%2Fchild')
+    expect(stripBasePath('/app/%2Fchild', '/app')).toBe('/%2Fchild')
+  })
+
+  it('prepends normalized root and trailing-slash bases', () => {
+    expect(prependBasePath('/child', '')).toBe('/child')
+    expect(prependBasePath('/child', '/')).toBe('/child')
+    expect(prependBasePath('/', '/app/')).toBe('/app')
+    expect(prependBasePath('/child', 'app/')).toBe('/app/child')
   })
 })
 

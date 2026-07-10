@@ -518,6 +518,16 @@ export function locationsAreEqual(a: Location, b: Location): boolean {
 }
 
 /**
+ * Check whether a pathname is inside a base path on a complete segment boundary.
+ */
+export function hasPathPrefix(pathname: string, basePath: string): boolean {
+  if (basePath === '/' || basePath === '') return true
+
+  const normalizedBase = normalizePath(basePath)
+  return pathname === normalizedBase || pathname.startsWith(normalizedBase + '/')
+}
+
+/**
  * Strip the base path from a pathname
  */
 export function stripBasePath(pathname: string, basePath: string): string {
@@ -526,7 +536,7 @@ export function stripBasePath(pathname: string, basePath: string): string {
   }
 
   const normalizedBase = normalizePath(basePath)
-  if (pathname.startsWith(normalizedBase)) {
+  if (hasPathPrefix(pathname, normalizedBase)) {
     const stripped = pathname.slice(normalizedBase.length)
     return stripped || '/'
   }
