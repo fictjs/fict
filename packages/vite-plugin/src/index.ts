@@ -1003,7 +1003,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     source: string,
     importer: string,
   ): Promise<{ filename: string; loadOptions: MetadataLoadOptions } | null> => {
-    if (hasModuleRequestSuffix(source)) return null
+    if (hasModuleQuerySuffix(source)) return null
     if (context.resolve) {
       const resolved = await context.resolve(source, importer, { skipSelf: true })
       if (resolved && !resolved.external && !isInternalModuleId(resolved.id)) {
@@ -1972,12 +1972,13 @@ function isInternalModuleId(id: string): boolean {
   )
 }
 
-/**
- * Remove Vite query parameters (e.g. ?import, ?v=123) from an id
- */
+/** Remove URL query/fragment suffixes while preserving leading package-import `#` specifiers. */
 function stripQuery(id: string): string {
   const queryStart = id.indexOf('?')
-  return queryStart === -1 ? id : id.slice(0, queryStart)
+  const fragmentStart = id.indexOf('#', id.startsWith('#') ? 1 : 0)
+  if (queryStart === -1) return fragmentStart === -1 ? id : id.slice(0, fragmentStart)
+  if (fragmentStart === -1) return id.slice(0, queryStart)
+  return id.slice(0, Math.min(queryStart, fragmentStart))
 }
 
 function normalizeCacheOptions(
@@ -2689,8 +2690,8 @@ function isBarePackageSource(source: string): boolean {
   return !path.isAbsolute(source) && !source.startsWith('.') && !source.startsWith('/@fs/')
 }
 
-function hasModuleRequestSuffix(source: string): boolean {
-  return source.includes('?') || source.includes('#')
+function hasModuleQuerySuffix(source: string): boolean {
+  return source.includes('?')
 }
 
 function createLocalResolutionKey(importer: string, source: string): string {

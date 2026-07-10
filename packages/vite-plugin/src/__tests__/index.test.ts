@@ -2365,7 +2365,7 @@ describe('fict vite-plugin', () => {
     }
   })
 
-  it('transforms files with Vite query params', async () => {
+  it.each(['?import', '#fragment'])('transforms files with Vite URL suffix %s', async suffix => {
     const plugin = fict() as any
     const sample = `
       import { $state } from 'fict'
@@ -2382,8 +2382,8 @@ describe('fict vite-plugin', () => {
     const transform = plugin.transform as any
     const result =
       typeof transform === 'function'
-        ? await transform.call(mockContext, sample, '/project/src/Button.tsx?import')
-        : await transform?.handler.call(mockContext, sample, '/project/src/Button.tsx?import')
+        ? await transform.call(mockContext, sample, `/project/src/Button.tsx${suffix}`)
+        : await transform?.handler.call(mockContext, sample, `/project/src/Button.tsx${suffix}`)
 
     expect(result && typeof result === 'object').toBe(true)
     if (result && typeof result === 'object' && 'code' in result) {
@@ -2391,6 +2391,34 @@ describe('fict vite-plugin', () => {
       const hasHIRMarker = code.includes('__fict_hir_codegen__')
       const hasRuntimeImport = code.includes('@fictjs/runtime') || code.includes('fict/internal')
       expect(hasHIRMarker || hasRuntimeImport).toBe(true)
+    }
+  })
+
+  it('transforms fragment-suffixed imports in a Vite build', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-fragment-import-'))
+
+    try {
+      const entry = path.join(root, 'main.ts')
+      await writeFile(entry, `export { App } from './App.tsx#fragment'`)
+      await writeFile(
+        path.join(root, 'App.tsx'),
+        `
+          import { $state } from 'fict'
+
+          export function App() {
+            const count = $state(1)
+            return <div>{count}</div>
+          }
+        `,
+      )
+
+      const code = await buildFictEntry(root, entry)
+
+      expect(code).toContain('fict/internal')
+      expect(code).not.toContain('$state')
+      expect(code).not.toContain('React.createElement')
+    } finally {
+      await rm(root, { recursive: true, force: true })
     }
   })
 
