@@ -393,8 +393,7 @@ export interface SnapshotIssue {
 interface LoaderInstallation {
   id: number
   active: boolean
-  deactivated: Promise<void>
-  deactivate: () => void
+  cancelWaiters: Set<() => void>
   document: Document
   state: SSRState
   scopeIds: Map<string, string>
@@ -433,13 +432,27 @@ async function waitForActiveInstallation<T>(
 ): Promise<Awaited<T> | typeof INACTIVE_INSTALLATION> {
   if (!isLoaderInstallationActive(installation)) return INACTIVE_INSTALLATION
 
-  const result = await Promise.race([
-    Promise.resolve(value).then(resolved => ({ kind: 'value' as const, value: resolved })),
-    installation.deactivated.then(() => ({ kind: 'inactive' as const })),
-  ])
-  return isLoaderInstallationActive(installation) && result.kind === 'value'
-    ? result.value
-    : INACTIVE_INSTALLATION
+  return new Promise<Awaited<T> | typeof INACTIVE_INSTALLATION>((resolve, reject) => {
+    let settled = false
+    const finish = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      installation.cancelWaiters.delete(cancel)
+      callback()
+    }
+    const cancel = () => finish(() => resolve(INACTIVE_INSTALLATION))
+
+    installation.cancelWaiters.add(cancel)
+    void Promise.resolve(value).then(
+      resolved =>
+        finish(() =>
+          resolve(isLoaderInstallationActive(installation) ? resolved : INACTIVE_INSTALLATION),
+        ),
+      error => finish(() => reject(error)),
+    )
+
+    if (!isLoaderInstallationActive(installation)) cancel()
+  })
 }
 
 /**
@@ -475,6 +488,15 @@ export async function waitForPendingHandlers(): Promise<void> {
   await Promise.allSettled([...pendingHandlers])
 }
 
+/** Return active cancellation waiters for leak regression tests. */
+export function getPendingLoaderWaiterCountForTests(): number {
+  let count = 0
+  for (const installation of loaderInstallations.values()) {
+    count += installation.cancelWaiters.size
+  }
+  return count
+}
+
 /**
  * Clean up all registered event listeners. Useful for testing.
  */
@@ -499,15 +521,10 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
     cleanupLoaderInstallation(previousInstallation)
   }
 
-  let deactivate!: () => void
-  const deactivated = new Promise<void>(resolve => {
-    deactivate = resolve
-  })
   const installation: LoaderInstallation = {
     id: ++nextLoaderInstallationId,
     active: true,
-    deactivated,
-    deactivate,
+    cancelWaiters: new Set(),
     document: doc,
     state: { v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION, scopes: {} },
     scopeIds: new Map(),
@@ -616,7 +633,8 @@ function cleanupLoaderInstallation(
   synchronizeState = true,
 ): void {
   installation.active = false
-  installation.deactivate()
+  for (const cancel of Array.from(installation.cancelWaiters)) cancel()
+  installation.cancelWaiters.clear()
   installation.eventListenerCleanup?.()
   installation.prefetchCleanup?.()
   installation.snapshotObserver?.disconnect()

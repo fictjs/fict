@@ -4,6 +4,7 @@ import {
   UNVERSIONED_SNAPSHOT_MIGRATION_KEY,
   cleanupEventListeners,
   createLegacySnapshotMigration,
+  getPendingLoaderWaiterCountForTests,
   installResumableLoader,
   waitForPendingHandlers,
   type SnapshotIssue,
@@ -1583,11 +1584,44 @@ describe('resumable loader snapshot validation', () => {
         input.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
         await waitForPendingHandlers()
         expect((globalThis as { __fictStaleHandlerCalls?: number }).__fictStaleHandlerCalls).toBe(1)
+        expect(getPendingLoaderWaiterCountForTests()).toBe(0)
       }
 
       delete (globalThis as { __fictStaleHandlerCalls?: number }).__fictStaleHandlerCalls
     },
   )
+
+  it('releases cancellation waiters after successful events', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+    ;(globalThis as { __fictWaiterHandlerCalls?: number }).__fictWaiterHandlerCalls = 0
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    const button = doc.createElement('button')
+    button.setAttribute(
+      'on:click',
+      'data:text/javascript,export function handle(){globalThis.__fictWaiterHandlerCalls++}#handle',
+    )
+    host.appendChild(button)
+    doc.body.appendChild(host)
+    installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+    for (let index = 0; index < 25; index++) {
+      button.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+      await waitForPendingHandlers()
+      expect(getPendingLoaderWaiterCountForTests()).toBe(0)
+    }
+
+    expect((globalThis as { __fictWaiterHandlerCalls?: number }).__fictWaiterHandlerCalls).toBe(25)
+    delete (globalThis as { __fictWaiterHandlerCalls?: number }).__fictWaiterHandlerCalls
+  })
 
   it('allows a later event to retry after a shared resume failure', async () => {
     const issues: SnapshotIssue[] = []
