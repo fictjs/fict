@@ -455,7 +455,7 @@ function onDestroy(fn: () => void): void
 **Example:**
 
 ```tsx
-import { onDestroy } from 'fict'
+import { onDestroy, onMount } from 'fict'
 
 function WebSocketComponent() {
   let ws: WebSocket | null = null
@@ -485,7 +485,7 @@ function onCleanup(fn: () => void): void
 **Example:**
 
 ```tsx
-import { createEffect, onCleanup } from 'fict'
+import { $effect, $state, onCleanup } from 'fict'
 
 function Subscription() {
   let topic = $state('news')
