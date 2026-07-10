@@ -126,6 +126,26 @@ describe('Router integration (MemoryRouter)', () => {
     expect(screen.getByTestId('path').textContent).toBe('/')
   })
 
+  it('renders loading content before a route preload settles', async () => {
+    render(() => (
+      <MemoryRouter initialEntries={['/preloaded']}>
+        <Route
+          path="/preloaded"
+          preload={() => Promise.resolve('ready')}
+          loadingElement={<span data-testid="preload-loading">loading</span>}
+          element={<span data-testid="preload-content">content</span>}
+        />
+      </MemoryRouter>
+    ))
+
+    expect(screen.getByTestId('preload-loading').textContent).toBe('loading')
+
+    await vi.waitFor(() => {
+      expect(screen.getByTestId('preload-content').textContent).toBe('content')
+    })
+    expect(screen.queryByTestId('preload-loading')).toBeNull()
+  })
+
   it('navigates between routes and updates location signal', async () => {
     render(() => (
       <MemoryRouter initialEntries={['/']}>

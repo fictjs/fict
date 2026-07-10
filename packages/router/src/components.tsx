@@ -15,7 +15,7 @@ import {
   type FictNode,
   type Component,
 } from '@fictjs/runtime'
-import { createSignal, runInScope } from '@fictjs/runtime/advanced'
+import { createSignal, reactive, runInScope } from '@fictjs/runtime/advanced'
 
 import { wrapAccessor } from './accessor-utils'
 import { RouteContext, RouteErrorContext, useRouter, useRoute, readAccessor } from './context'
@@ -217,20 +217,20 @@ function CurrentMatchesView(props: CurrentMatchesProps): FictNode {
 
 function RenderMatchesView(props: RenderMatchesProps): FictNode {
   const index = untrack(() => props.index)
+
+  // Keep state initialized before compiler-created reactive regions. The
+  // preload effect runs synchronously when installed and sets loading below.
+  const dataState = createSignal<RouteDataState>({
+    data: undefined,
+    error: undefined,
+    loading: false,
+  })
+  let preloadToken = 0
+
   const match = props.matches.slice(index, index + 1)[0]!
   const route = match.route
   const router = useRouter()
   const hasPreload = typeof route.preload === 'function'
-
-  // Create signals for route data
-  const dataState = createSignal<RouteDataState>({
-    data: undefined,
-    error: undefined,
-    loading: hasPreload,
-  })
-
-  // Token to prevent stale preload results from overwriting newer ones
-  let preloadToken = 0
 
   // Load data if preload is defined
   runInScope(hasPreload, () => {
@@ -312,7 +312,9 @@ function RenderMatchesView(props: RenderMatchesProps): FictNode {
   }
 
   const routeContent: FictNode = (
-    <RouteContext.Provider value={routeContext}>{renderContent()}</RouteContext.Provider>
+    <RouteContext.Provider value={routeContext}>
+      {[reactive(renderContent) as unknown as FictNode]}
+    </RouteContext.Provider>
   )
 
   const errorBoundaryContent: FictNode = route.errorElement ? (
