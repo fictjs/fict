@@ -392,6 +392,9 @@ export interface SnapshotIssue {
 
 interface LoaderInstallation {
   id: number
+  active: boolean
+  deactivated: Promise<void>
+  deactivate: () => void
   document: Document
   state: SSRState
   scopeIds: Map<string, string>
@@ -414,6 +417,30 @@ interface LoaderInstallation {
 
 const loaderInstallations = new Map<Document, LoaderInstallation>()
 let nextLoaderInstallationId = 0
+const INACTIVE_INSTALLATION = Symbol('inactive loader installation')
+
+function isLoaderInstallationActive(installation: LoaderInstallation): boolean {
+  return (
+    installation.active &&
+    !installation.snapshotFallbackStarted &&
+    loaderInstallations.get(installation.document) === installation
+  )
+}
+
+async function waitForActiveInstallation<T>(
+  installation: LoaderInstallation,
+  value: T | PromiseLike<T>,
+): Promise<Awaited<T> | typeof INACTIVE_INSTALLATION> {
+  if (!isLoaderInstallationActive(installation)) return INACTIVE_INSTALLATION
+
+  const result = await Promise.race([
+    Promise.resolve(value).then(resolved => ({ kind: 'value' as const, value: resolved })),
+    installation.deactivated.then(() => ({ kind: 'inactive' as const })),
+  ])
+  return isLoaderInstallationActive(installation) && result.kind === 'value'
+    ? result.value
+    : INACTIVE_INSTALLATION
+}
 
 /**
  * Reset the hydrated scopes set. Useful for testing.
@@ -472,8 +499,15 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
     cleanupLoaderInstallation(previousInstallation)
   }
 
+  let deactivate!: () => void
+  const deactivated = new Promise<void>(resolve => {
+    deactivate = resolve
+  })
   const installation: LoaderInstallation = {
     id: ++nextLoaderInstallationId,
+    active: true,
+    deactivated,
+    deactivate,
     document: doc,
     state: { v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION, scopes: {} },
     scopeIds: new Map(),
@@ -519,6 +553,7 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
   const SnapshotObserver = globalThis.MutationObserver
   if (typeof SnapshotObserver !== 'undefined') {
     installation.snapshotObserver = new SnapshotObserver(mutations => {
+      if (!isLoaderInstallationActive(installation)) return
       for (const mutation of mutations) {
         if (isSnapshotScriptElement(mutation.target, doc)) {
           parseSnapshotScript(installation, mutation.target)
@@ -580,6 +615,8 @@ function cleanupLoaderInstallation(
   installation: LoaderInstallation,
   synchronizeState = true,
 ): void {
+  installation.active = false
+  installation.deactivate()
   installation.eventListenerCleanup?.()
   installation.prefetchCleanup?.()
   installation.snapshotObserver?.disconnect()
@@ -587,6 +624,9 @@ function cleanupLoaderInstallation(
   installation.prefetchCleanup = null
   installation.snapshotObserver = null
   installation.initialized = false
+  installation.pendingScopeResumes.clear()
+  installation.pendingScopeHandlers.clear()
+  installation.hydratedScopes.clear()
   __fictDeleteResumedScopes(Object.keys(installation.state.scopes))
   loaderInstallations.delete(installation.document)
   if (synchronizeState) {
@@ -932,6 +972,7 @@ function migrateRawLegacyProps(scopes: unknown): unknown {
 }
 
 function emitSnapshotIssue(installation: LoaderInstallation, issue: SnapshotIssue): void {
+  if (!isLoaderInstallationActive(installation)) return
   const key =
     `${issue.code}|${issue.source}|${issue.scopeId ?? ''}|` +
     `${issue.actualVersion ?? ''}|${issue.expectedVersion}|${issue.qrl ?? ''}|` +
@@ -1065,6 +1106,7 @@ function setupVisibilityPrefetch(installation: LoaderInstallation, rootMargin: s
 
   const observer = new IntersectionObserver(
     entries => {
+      if (!isLoaderInstallationActive(installation)) return
       for (const entry of entries) {
         if (entry.isIntersecting) {
           const el = entry.target as Element
@@ -1120,6 +1162,7 @@ function setupHoverPrefetch(installation: LoaderInstallation, delay: number): ()
 
     // Debounce prefetch
     hoverTimeout = setTimeout(() => {
+      if (!isLoaderInstallationActive(installation)) return
       prefetchElementQrls(installation, interactiveEl)
     }, delay)
   }
@@ -1145,6 +1188,7 @@ function setupHoverPrefetch(installation: LoaderInstallation, delay: number): ()
 }
 
 function prefetchElementQrls(installation: LoaderInstallation, el: Element): void {
+  if (!isLoaderInstallationActive(installation)) return
   const ownerDocument = el.ownerDocument ?? (typeof document !== 'undefined' ? document : undefined)
   // Prefetch event handler QRLs
   const eventAttrs = ['on:click', 'on:input', 'on:change', 'on:submit', 'on:keydown', 'on:keyup']
@@ -1184,6 +1228,7 @@ function prefetchQrl(
   qrl: string,
   ownerDocument?: Document,
 ): void {
+  if (!isLoaderInstallationActive(installation)) return
   const { url } = parseQrl(qrl)
   if (!url || installation.prefetchedUrls.has(url)) return
 
@@ -1209,6 +1254,7 @@ function prefetchQrl(
  * Wrapper that tracks the async handler promise for testing.
  */
 function handleResumableEvent(installation: LoaderInstallation, event: Event): void {
+  if (!isLoaderInstallationActive(installation)) return
   const promise = handleResumableEventAsync(installation, event)
   pendingHandlers.add(promise)
   void promise
@@ -1228,6 +1274,9 @@ async function resumeScopeForEvent(
   host: Element,
   event: Event,
 ): Promise<{ canRunHandler: boolean; hydratedDuringEvent: boolean }> {
+  if (!isLoaderInstallationActive(installation)) {
+    return { canRunHandler: false, hydratedDuringEvent: false }
+  }
   if (installation.hydratedScopes.has(scopeId)) {
     return { canRunHandler: true, hydratedDuringEvent: false }
   }
@@ -1248,7 +1297,10 @@ async function resumeScopeForEvent(
     installation.pendingScopeResumes.set(scopeId, resumePromise)
   }
 
-  const resumed = await resumePromise
+  const resumed = await waitForActiveInstallation(installation, resumePromise)
+  if (resumed === INACTIVE_INSTALLATION) {
+    return { canRunHandler: false, hydratedDuringEvent: false }
+  }
   return { canRunHandler: resumed, hydratedDuringEvent: resumed }
 }
 
@@ -1259,6 +1311,7 @@ async function resumeScope(
   event: Event,
   resumeQrl: string,
 ): Promise<boolean> {
+  if (!isLoaderInstallationActive(installation)) return false
   const { url: resumeUrl, exportName: resumeExport } = parseQrl(resumeQrl)
   const resolvedResumeUrl = resolveModuleUrl(resumeUrl)
   const resolvedAbsoluteResumeUrl = resolveAbsoluteModuleUrl(
@@ -1270,7 +1323,11 @@ async function resumeScope(
   const normalizedResumeImportUrl = normalizeImportUrl(resolvedResumeUrl)
 
   try {
-    await import(/* @vite-ignore */ normalizedResumeImportUrl)
+    const imported = await waitForActiveInstallation(
+      installation,
+      import(/* @vite-ignore */ normalizedResumeImportUrl),
+    )
+    if (imported === INACTIVE_INSTALLATION) return false
   } catch (error) {
     emitSnapshotIssue(installation, {
       code: 'resume_import_failed',
@@ -1308,7 +1365,11 @@ async function resumeScope(
   }
 
   try {
-    await (resumeFn as (scopeId: string, host: Element) => unknown)(scopeId, host)
+    const resumed = await waitForActiveInstallation(
+      installation,
+      (resumeFn as (scopeId: string, host: Element) => unknown)(scopeId, host),
+    )
+    if (resumed === INACTIVE_INSTALLATION) return false
   } catch (error) {
     emitSnapshotIssue(installation, {
       code: 'resume_failed',
@@ -1363,7 +1424,9 @@ async function runScopeHandler(
 ): Promise<boolean> {
   let replayDefault = false
   try {
-    const resumeResult = await resumePromise
+    if (!isLoaderInstallationActive(installation)) return false
+    const resumeResult = await waitForActiveInstallation(installation, resumePromise)
+    if (resumeResult === INACTIVE_INSTALLATION) return false
     if (!resumeResult.canRunHandler) {
       return false
     }
@@ -1376,7 +1439,12 @@ async function runScopeHandler(
     const normalizedImportUrl = normalizeImportUrl(resolvedUrl)
     let mod: Record<string, unknown>
     try {
-      mod = (await import(/* @vite-ignore */ normalizedImportUrl)) as Record<string, unknown>
+      const imported = await waitForActiveInstallation(
+        installation,
+        import(/* @vite-ignore */ normalizedImportUrl),
+      )
+      if (imported === INACTIVE_INSTALLATION) return false
+      mod = imported as Record<string, unknown>
     } catch (error) {
       emitSnapshotIssue(installation, {
         code: 'handler_import_failed',
@@ -1418,7 +1486,11 @@ async function runScopeHandler(
       },
     })
     try {
-      await (handler as (scopeId: string, ev: Event, el: Element) => unknown)(scopeId, event, node)
+      const handled = await waitForActiveInstallation(
+        installation,
+        (handler as (scopeId: string, ev: Event, el: Element) => unknown)(scopeId, event, node),
+      )
+      if (handled === INACTIVE_INSTALLATION) return false
     } catch (error) {
       emitSnapshotIssue(installation, {
         code: 'handler_failed',
@@ -1458,10 +1530,12 @@ async function handleResumableEventAsync(
   installation: LoaderInstallation,
   event: Event,
 ): Promise<void> {
+  if (!isLoaderInstallationActive(installation)) return
   const path =
     typeof event.composedPath === 'function' ? event.composedPath() : buildEventPath(event)
 
   for (const node of path) {
+    if (!isLoaderInstallationActive(installation)) return
     if (!isElementLike(node)) continue
     const qrl = node.getAttribute(`on:${event.type}`)
     if (!qrl) continue
@@ -1521,6 +1595,7 @@ async function handleResumableEventAsync(
         preemptiveDefault,
       ),
     )
+    if (!isLoaderInstallationActive(installation)) return
     if (shouldStop) {
       return
     }

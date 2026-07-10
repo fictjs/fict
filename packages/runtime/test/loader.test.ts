@@ -1523,6 +1523,72 @@ describe('resumable loader snapshot validation', () => {
     delete (globalThis as { __fictFirstHandlerGate?: Promise<void> }).__fictFirstHandlerGate
   })
 
+  it.each(['cleanup', 'reinstall'] as const)(
+    'does not run an event continuation after loader %s',
+    async action => {
+      const doc = createDocumentWithSnapshots(
+        JSON.stringify({
+          v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+          scopes: {
+            s1: { id: 's1', slots: [] },
+          },
+        }),
+      )
+      let releaseResume!: () => void
+      const resumeGate = new Promise<void>(resolve => {
+        releaseResume = resolve
+      })
+      let resumeCalls = 0
+      ;(globalThis as { __fictStaleHandlerCalls?: number }).__fictStaleHandlerCalls = 0
+
+      const host = doc.createElement('div')
+      host.setAttribute('data-fict-s', 's1')
+      host.setAttribute('data-fict-h', 'data:text/javascript,export default null#__fict_stale')
+      __fictRegisterResume('__fict_stale', () => {
+        resumeCalls++
+        return resumeGate
+      })
+
+      const input = doc.createElement('input')
+      input.type = 'checkbox'
+      input.setAttribute(
+        'on:click',
+        'data:text/javascript,export function handle(){globalThis.__fictStaleHandlerCalls++}#handle',
+      )
+      host.appendChild(input)
+      doc.body.appendChild(host)
+
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+      const staleEvent = new Event('click', { bubbles: true, cancelable: true })
+      const originalPreventDefault = Object.getOwnPropertyDescriptor(staleEvent, 'preventDefault')
+      input.dispatchEvent(staleEvent)
+      await vi.waitFor(() => expect(resumeCalls).toBe(1))
+
+      if (action === 'cleanup') {
+        cleanupEventListeners()
+      } else {
+        installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+      }
+
+      releaseResume()
+      await waitForPendingHandlers()
+
+      expect((globalThis as { __fictStaleHandlerCalls?: number }).__fictStaleHandlerCalls).toBe(0)
+      expect(Object.getOwnPropertyDescriptor(staleEvent, 'preventDefault')).toEqual(
+        originalPreventDefault,
+      )
+
+      if (action === 'reinstall') {
+        input.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+        await waitForPendingHandlers()
+        expect((globalThis as { __fictStaleHandlerCalls?: number }).__fictStaleHandlerCalls).toBe(1)
+      }
+
+      delete (globalThis as { __fictStaleHandlerCalls?: number }).__fictStaleHandlerCalls
+    },
+  )
+
   it('allows a later event to retry after a shared resume failure', async () => {
     const issues: SnapshotIssue[] = []
     const doc = createDocumentWithSnapshots(
