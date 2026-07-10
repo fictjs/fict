@@ -29,8 +29,9 @@ For standard apps, `fict` is the runtime dependency that pairs with this preset.
 - `@fictjs/compiler`
 
 All compiler options are forwarded through this preset.
-Because this is a normal Babel preset, plugins and presets explicitly configured alongside it
-continue to participate in the user's Babel pipeline.
+Fict and TypeScript lowering run in an isolated prepass, so sibling CommonJS or JSX transforms
+receive the compiled Fict AST instead of consuming macros or JSX first. Plugins and presets
+explicitly configured alongside this preset continue to participate in the outer Babel pipeline.
 
 ```js
 // babel.config.js

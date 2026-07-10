@@ -1,11 +1,157 @@
 import path from 'node:path'
 
-import { transformSync, type PluginObj } from '@babel/core'
+import { transformSync, types as t, type PluginObj } from '@babel/core'
 import { describe, expect, it } from 'vitest'
 
 import fictPreset from '../../babel-preset/src'
 
 describe('@fictjs/babel-preset TypeScript integration', () => {
+  const reactiveComponent = `
+    import { $state } from 'fict'
+    export function App() {
+      const value = $state(1)
+      return <div>{value}</div>
+    }
+  `
+
+  it.each([
+    {
+      label: 'CommonJS',
+      plugins: ['@babel/plugin-transform-modules-commonjs'],
+    },
+    {
+      label: 'React JSX',
+      plugins: [['@babel/plugin-transform-react-jsx', { runtime: 'classic' }]],
+    },
+    {
+      label: 'CommonJS and React JSX',
+      plugins: [
+        '@babel/plugin-transform-modules-commonjs',
+        ['@babel/plugin-transform-react-jsx', { runtime: 'classic' }],
+      ],
+    },
+  ])('runs Fict before sibling $label transforms', ({ plugins }) => {
+    const result = transformSync(reactiveComponent, {
+      filename: 'App.tsx',
+      configFile: false,
+      babelrc: false,
+      plugins,
+      presets: [[fictPreset, { dev: false, strictGuarantee: false }]],
+    })
+
+    expect(result?.code).toContain('<!--fict:slot:start-->')
+    expect(result?.code).toContain('__fictUseSignal')
+    expect(result?.code).not.toContain('$state')
+    expect(result?.code).not.toContain('React.createElement')
+  })
+
+  it('runs Fict before sibling Program.enter JSX traversal', () => {
+    const eagerJsxPlugin: PluginObj = {
+      name: 'eager-jsx-consumer',
+      visitor: {
+        Program: {
+          enter(path) {
+            path.traverse({
+              JSXElement(jsxPath) {
+                jsxPath.replaceWith(t.stringLiteral('consumed-before-fict'))
+              },
+            })
+          },
+        },
+      },
+    }
+    const result = transformSync(reactiveComponent, {
+      filename: 'App.tsx',
+      configFile: false,
+      babelrc: false,
+      plugins: [eagerJsxPlugin],
+      presets: [[fictPreset, { dev: false, strictGuarantee: false }]],
+    })
+
+    expect(result?.code).toContain('<!--fict:slot:start-->')
+    expect(result?.code).not.toContain('consumed-before-fict')
+  })
+
+  it('inherits a sibling CommonJS marker while lowering TypeScript import-equals', () => {
+    const result = transformSync(
+      `
+        import fs = require('node:fs')
+        import { $state } from 'fict'
+
+        export function App() {
+          const value = $state(fs.constants.F_OK)
+          return <div>{value}</div>
+        }
+      `,
+      {
+        filename: 'App.tsx',
+        configFile: false,
+        babelrc: false,
+        plugins: ['@babel/plugin-transform-modules-commonjs'],
+        presets: [[fictPreset, { dev: false, strictGuarantee: false }]],
+      },
+    )
+
+    expect(result?.code).toContain('require("node:fs")')
+    expect(result?.code).toContain('require("fict/internal")')
+    expect(result?.code).not.toContain('$state')
+    expect(result?.code).not.toContain('import fs =')
+  })
+
+  it('runs sibling lifecycle hooks once and preserves outer source maps', () => {
+    const lifecycle = { pre: 0, post: 0 }
+    const siblingPlugin: PluginObj = {
+      name: 'sibling-lifecycle-probe',
+      visitor: {},
+      pre() {
+        lifecycle.pre++
+      },
+      post() {
+        lifecycle.post++
+      },
+    }
+    const result = transformSync(reactiveComponent, {
+      filename: 'App.tsx',
+      sourceFileName: 'App.tsx',
+      sourceMaps: true,
+      configFile: false,
+      babelrc: false,
+      plugins: [siblingPlugin],
+      presets: [[fictPreset, { dev: false, strictGuarantee: false }]],
+    })
+
+    expect(lifecycle).toEqual({ pre: 1, post: 1 })
+    expect(result?.map?.sources).toContain('App.tsx')
+    expect(result?.map?.mappings).not.toBe('')
+  })
+
+  it('reports isolated compiler errors with one filename prefix', () => {
+    let thrown: unknown
+    try {
+      transformSync(
+        `
+          export function App() {
+            const value = $state(1)
+            return <div>{value}</div>
+          }
+        `,
+        {
+          filename: 'broken.tsx',
+          configFile: false,
+          babelrc: false,
+          presets: [[fictPreset, { dev: false, strictGuarantee: false }]],
+        },
+      )
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(Error)
+    const message = (thrown as Error).message
+    expect(message.match(/broken\.tsx:/g)).toHaveLength(1)
+    expect(message).toContain('$state() must be imported from "fict"')
+  })
+
   it('detects TypeScript and TSX syntax from the file extension', () => {
     const typed = transformSync(
       `

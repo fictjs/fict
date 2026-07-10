@@ -37,6 +37,7 @@
   },
   "dependencies": {
     "@babel/plugin-syntax-jsx": "^7.28.6",
+    "@babel/plugin-syntax-typescript": "^7.27.1",
     "@babel/plugin-transform-typescript": "^7.28.5",
     "@fictjs/compiler": "workspace:*",
     "@types/babel__core": "^7.20.5"
