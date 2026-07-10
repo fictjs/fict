@@ -50,6 +50,21 @@ describe('SSR HTML serializer DOM name validation', () => {
     expect(document.querySelector('[data-fict-xss="processing-instruction"]')).toBeNull()
   })
 
+  it.each(['>', '->'])('keeps comment data starting with %s inert when reparsed', prefix => {
+    const comment = {
+      nodeType: 8,
+      nodeValue: `${prefix}<script data-fict-xss="comment">unsafe</script>`,
+    } as unknown as Node
+
+    const html = serializeHtmlNode(comment)
+    const { document } = parseHTML(`<html><body>${html}</body></html>`)
+
+    expect(html).toMatch(/^<!-- [>-]/)
+    expect(document.querySelector('[data-fict-xss="comment"]')).toBeNull()
+    expect(document.body.childNodes).toHaveLength(1)
+    expect(document.body.firstChild?.nodeType).toBe(8)
+  })
+
   it('preserves a qualified element name from namespace-aware DOMs', () => {
     const element = {
       nodeType: 1,

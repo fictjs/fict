@@ -145,9 +145,14 @@ function escapeAttributeValue(value: string): string {
 }
 
 function serializeComment(value: string): string {
-  // `--` and a trailing `-` are not valid inside an HTML comment and can make
-  // subsequent markup observable outside the comment when reparsed.
-  const safe = value.replace(/--/g, '- -').replace(/-$/, '- ')
+  // `--`, a trailing `-`, and leading `>` / `->` are not valid in an HTML
+  // comment. In particular, `<!--><script>...` exits the comment immediately,
+  // so an otherwise inert DOM Comment could become active markup when the SSR
+  // output is parsed by a browser.
+  let safe = value.replace(/--/g, '- -').replace(/-$/, '- ')
+  if (safe.startsWith('>') || safe.startsWith('->')) {
+    safe = ` ${safe}`
+  }
   return `<!--${safe}-->`
 }
 
