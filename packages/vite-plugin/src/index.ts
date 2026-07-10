@@ -2130,10 +2130,26 @@ function mergeMetadata(
       setMetadataRecordValue(target.hooks, name, info)
     }
   }
+  if (source.namespaces) {
+    for (const [name, info] of Object.entries(source.namespaces)) {
+      if (allowedExports && !allowedExports.has(name)) continue
+      target.namespaces ??= {}
+      setMetadataRecordValue(target.namespaces, name, info)
+    }
+  }
 }
 
-function hasMetadata(metadata: ModuleReactiveMetadata): boolean {
-  return Object.keys(metadata.exports).length > 0 || Object.keys(metadata.hooks ?? {}).length > 0
+function hasMetadata(
+  metadata: ModuleReactiveMetadata,
+  seen = new Set<ModuleReactiveMetadata>(),
+): boolean {
+  if (seen.has(metadata)) return false
+  seen.add(metadata)
+  return (
+    Object.keys(metadata.exports).length > 0 ||
+    Object.keys(metadata.hooks ?? {}).length > 0 ||
+    Object.values(metadata.namespaces ?? {}).some(namespace => hasMetadata(namespace, seen))
+  )
 }
 
 function buildEntryChunkMetadata(

@@ -127,4 +127,35 @@ describe('library entry metadata', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  it('publishes reactive namespace metadata from a library facade', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-library-namespace-metadata-'))
+    const entry = path.join(root, 'index.ts')
+
+    try {
+      await writeFile(
+        path.join(root, 'signals.ts'),
+        `
+          import { createMemo } from 'fict'
+          export const count = createMemo(() => 1)
+        `,
+      )
+      await writeFile(entry, `export * as signals from './signals'`)
+
+      expect(await buildLibraryMetadata(root, entry)).toEqual([
+        {
+          version: 1,
+          exports: {},
+          namespaces: {
+            signals: {
+              version: 1,
+              exports: { count: 'memo' },
+            },
+          },
+        },
+      ])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 })
