@@ -182,17 +182,20 @@ export function clearRoot(root: RootContext): void {
 
 export function destroyRoot(root: RootContext): void {
   let error: unknown
+  let didThrow = false
   try {
     clearRoot(root)
   } catch (err) {
     error = err
+    didThrow = true
   }
 
   try {
     runCleanupList(root.destroyCallbacks, root)
   } catch (err) {
-    if (error === undefined) {
+    if (!didThrow) {
       error = err
+      didThrow = true
     }
   } finally {
     if (root.errorHandlers) {
@@ -204,7 +207,7 @@ export function destroyRoot(root: RootContext): void {
     disposeRootDevtools(root)
   }
 
-  if (error !== undefined) throw error
+  if (didThrow) throw error
 }
 
 export function createRoot<T>(
@@ -255,20 +258,22 @@ export function registerEffectCleanup(fn: Cleanup): void {
 
 export function runCleanupList(list: Cleanup[], root?: RootContext): void {
   let error: unknown
+  let didThrow = false
   withRootContext(root, () => {
     for (let i = list.length - 1; i >= 0; i--) {
       try {
         const cleanup = list[i]
         if (cleanup) cleanup()
       } catch (err) {
-        if (error === undefined) {
+        if (!didThrow) {
           error = err
+          didThrow = true
         }
       }
     }
   })
   list.length = 0
-  if (error !== undefined) {
+  if (didThrow) {
     if (!handleError(error, { source: 'cleanup' }, root)) {
       throw error
     }

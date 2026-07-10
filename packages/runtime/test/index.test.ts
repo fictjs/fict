@@ -159,6 +159,65 @@ describe('fict runtime', () => {
     expect(effectRuns).toBe(1)
   })
 
+  it('rethrows undefined cleanup failures after completing root teardown', () => {
+    const calls: string[] = []
+    const root = createRoot(() => {
+      onDestroy(() => {
+        calls.push('destroy')
+      })
+      onCleanup(() => {
+        calls.push('cleanup-after')
+      })
+      onCleanup(() => {
+        calls.push('cleanup-throw')
+        throw undefined
+      })
+      onCleanup(() => {
+        calls.push('cleanup-before')
+      })
+    })
+
+    let didThrow = false
+    let thrown: unknown = Symbol('not thrown')
+    try {
+      root.dispose()
+    } catch (error) {
+      didThrow = true
+      thrown = error
+    }
+
+    expect(didThrow).toBe(true)
+    expect(thrown).toBeUndefined()
+    expect(calls).toEqual(['cleanup-before', 'cleanup-throw', 'cleanup-after', 'destroy'])
+  })
+
+  it('rethrows undefined onDestroy failures after running remaining callbacks', () => {
+    const calls: string[] = []
+    const root = createRoot(() => {
+      onDestroy(() => {
+        calls.push('destroy-after')
+      })
+      onDestroy(() => {
+        calls.push('destroy-throw')
+        throw undefined
+      })
+      onDestroy(() => {
+        calls.push('destroy-before')
+      })
+    })
+
+    let didThrow = false
+    try {
+      root.dispose()
+    } catch (error) {
+      didThrow = true
+      expect(error).toBeUndefined()
+    }
+
+    expect(didThrow).toBe(true)
+    expect(calls).toEqual(['destroy-before', 'destroy-throw', 'destroy-after'])
+  })
+
   it('cleans up createRoot effects when setup throws', async () => {
     const trigger = createSignal(0)
     let runs = 0
