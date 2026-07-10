@@ -5,10 +5,7 @@ import type { PlaygroundTemplate } from './types'
 const templateMap = new Map(defaultPlaygroundTemplates.map(template => [template.id, template]))
 
 export function listPlaygroundTemplates(): PlaygroundTemplate[] {
-  return defaultPlaygroundTemplates.map(template => ({
-    ...template,
-    files: { ...template.files },
-  }))
+  return defaultPlaygroundTemplates.map(cloneTemplate)
 }
 
 export function getPlaygroundTemplate(templateId: string): PlaygroundTemplate {
@@ -16,12 +13,17 @@ export function getPlaygroundTemplate(templateId: string): PlaygroundTemplate {
   if (!template) {
     throw new Error(`Unknown playground template: ${templateId}`)
   }
-  return {
-    ...template,
-    files: { ...template.files },
-  }
+  return cloneTemplate(template)
 }
 
 export function createTemplateFiles(templateId: string): Record<string, string> {
   return getPlaygroundTemplate(templateId).files
+}
+
+function cloneTemplate(template: PlaygroundTemplate): PlaygroundTemplate {
+  return {
+    ...template,
+    files: { ...template.files },
+    ...(template.recommendedConfig ? { recommendedConfig: { ...template.recommendedConfig } } : {}),
+  }
 }

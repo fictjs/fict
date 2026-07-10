@@ -19,6 +19,20 @@ describe('playground templates', () => {
     expect(template.files['src/App.tsx']).toContain('$state')
   })
 
+  it('does not expose mutable template recommendations', () => {
+    const first = getPlaygroundTemplate('resumable-lab')
+    expect(first.recommendedConfig).toBeDefined()
+    first.recommendedConfig!.resumable = false
+
+    const second = getPlaygroundTemplate('resumable-lab')
+    expect(second.recommendedConfig?.resumable).toBe(true)
+
+    const catalogEntry = listPlaygroundTemplates().find(template => template.id === 'resumable-lab')
+    catalogEntry!.recommendedConfig!.functionSplitting = false
+
+    expect(getPlaygroundTemplate('resumable-lab').recommendedConfig?.functionSplitting).toBe(true)
+  })
+
   it('throws for unknown template id', () => {
     expect(() => getPlaygroundTemplate('unknown-template')).toThrow(
       'Unknown playground template: unknown-template',
