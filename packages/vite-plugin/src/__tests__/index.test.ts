@@ -5393,4 +5393,42 @@ function Counter() {
       }
     })
   })
+
+  it('preserves compiler callbacks when a root transform would be reused', async () => {
+    const warnings: string[] = []
+    const explainedFiles: string[] = []
+    const plugin = getTestPlugin({
+      cache: true,
+      dev: false,
+      strictGuarantee: false,
+      functionSplitting: false,
+      useTypeScriptProject: false,
+      onWarn: warning => warnings.push(warning.code),
+      explain: artifact => explainedFiles.push(path.normalize(artifact.fileName)),
+    })
+    plugin.configResolved?.(mockBuildConfig)
+    const sourcePath = path.join(mockBuildConfig.root, 'src', 'List.tsx')
+    const source = `
+      import { $state } from 'fict'
+      export function List() {
+        const items = $state([1, 2, 3])
+        return <ul>{items.map(item => <li>{item}</li>)}</ul>
+      }
+    `
+    const context = {
+      error(error: unknown): never {
+        throw error instanceof Error ? error : new Error(String(error))
+      },
+      warn: vi.fn(),
+      emitFile: vi.fn(),
+    }
+
+    const first = await plugin.transform?.call(context, source, sourcePath)
+    const second = await plugin.transform?.call(context, source, sourcePath)
+
+    expect(first && typeof first === 'object').toBe(true)
+    expect(second && typeof second === 'object').toBe(true)
+    expect(warnings.filter(code => code === 'FICT-J002')).toHaveLength(2)
+    expect(explainedFiles).toEqual([path.normalize(sourcePath), path.normalize(sourcePath)])
+  })
 })

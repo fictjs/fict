@@ -1657,17 +1657,23 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         const shouldSplit =
           options.functionSplitting ??
           (config?.command === 'build' && (compilerOptions.resumable || !config?.build?.ssr))
-        const cacheKey = cacheStore.enabled
-          ? buildCacheKey(
-              filename,
-              code,
-              fictOptions,
-              tsProject,
-              tsImportElision,
-              shouldSplit,
-              dependencyFingerprint,
-            )
-          : null
+        // Function callbacks are observable compiler output. Replaying only code/maps from
+        // either cache would silently drop warnings and explain artifacts, so compile the
+        // requested root again while still allowing dependency metadata preparation to dedupe.
+        const hasObservableCompilerCallbacks =
+          typeof fictOptions.onWarn === 'function' || typeof fictOptions.explain === 'function'
+        const cacheKey =
+          cacheStore.enabled && !hasObservableCompilerCallbacks
+            ? buildCacheKey(
+                filename,
+                code,
+                fictOptions,
+                tsProject,
+                tsImportElision,
+                shouldSplit,
+                dependencyFingerprint,
+              )
+            : null
 
         if (cacheKey) {
           const cached = await cacheStore.get(cacheKey)
@@ -1718,7 +1724,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           )
           const prepared = state.preparedCompilerTransforms.get(normalizedFilename)
           let result: { code: string; map: TransformResult['map'] }
-          if (prepared?.preparationKey === preparationKey) {
+          if (!hasObservableCompilerCallbacks && prepared?.preparationKey === preparationKey) {
             result = prepared
           } else {
             result = await compileFictCompilerStage(
