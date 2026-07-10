@@ -13,23 +13,37 @@ import { transformSync } from '@babel/core'
 
 import {
   evaluateBaseline,
+  parseBenchmarkCount,
+  resolveBenchmarkBudgets,
   retryTimingFailures,
   runInterleavedMeasurements,
+  validateBenchmarkRows,
 } from './optimizer-bench-sampling.mjs'
 
 const require = createRequire(import.meta.url)
-const { default: createFictPlugin } = require('../packages/compiler/dist/index.cjs')
-
-const iterations = Number(process.env.BENCH_ITERS ?? 50)
-const warmup = Number(process.env.BENCH_WARMUP ?? 5)
-const repeats = Number(process.env.BENCH_REPEATS ?? 5)
+const iterations = parseBenchmarkCount('BENCH_ITERS', process.env.BENCH_ITERS, 50)
+const warmup = parseBenchmarkCount('BENCH_WARMUP', process.env.BENCH_WARMUP, 5, {
+  allowZero: true,
+})
+const repeats = parseBenchmarkCount('BENCH_REPEATS', process.env.BENCH_REPEATS, 5)
 const updateBaseline = process.argv.includes('--update')
 const compareBaseline = process.argv.includes('--compare')
 const outputPath = getOutputPath(process.argv, process.env.BENCH_OUTPUT)
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
-const baselinePath = path.join(__dirname, 'optimizer-bench.baseline.json')
+const baselinePath = getBaselinePath(
+  process.argv,
+  path.join(__dirname, 'optimizer-bench.baseline.json'),
+)
+let createFictPlugin
+
+if (updateBaseline && compareBaseline) {
+  throw new Error('--update and --compare are mutually exclusive')
+}
+if (outputPath && path.resolve(process.cwd(), outputPath) === baselinePath) {
+  throw new Error('Benchmark output path must differ from the baseline path')
+}
 
 const DEFAULT_BUDGETS = {
   timeRegressionRatio: 0.25,
@@ -170,13 +184,45 @@ function getOutputPath(argv, envOutputPath) {
   return envOutputPath?.trim() ? envOutputPath : null
 }
 
+function getBaselinePath(argv, fallbackPath) {
+  for (let i = 2; i < argv.length; i++) {
+    const arg = argv[i]
+    if (arg === '--baseline') {
+      const value = argv[i + 1]
+      if (!value || value.startsWith('--')) {
+        throw new Error('--baseline requires a file path')
+      }
+      return path.resolve(process.cwd(), value)
+    }
+    if (arg.startsWith('--baseline=')) {
+      const value = arg.slice('--baseline='.length)
+      if (!value) throw new Error('--baseline requires a file path')
+      return path.resolve(process.cwd(), value)
+    }
+  }
+
+  return path.resolve(fallbackPath)
+}
+
+function getFictPlugin() {
+  if (createFictPlugin) return createFictPlugin
+
+  const modulePath = path.join(__dirname, '../packages/compiler/dist/index.cjs')
+  const loaded = require(modulePath)
+  createFictPlugin = loaded?.default ?? loaded
+  if (typeof createFictPlugin !== 'function') {
+    throw new Error(`Benchmark compiler module must export a plugin function: ${modulePath}`)
+  }
+  return createFictPlugin
+}
+
 function compile(sample, optimize) {
   return transformSync(sample.source, {
     filename: 'bench.tsx',
     // Perf benchmark should compare optimizer output/latency, not fail on policy escalation.
     plugins: [
       [
-        createFictPlugin,
+        getFictPlugin(),
         {
           dev: false,
           optimize,
@@ -235,9 +281,9 @@ function assertBaselineComparison(comparison) {
 
 function writeBenchmarkReport(targetPath, rows, baseline, comparison) {
   const resolvedPath = path.resolve(process.cwd(), targetPath)
-  const budgets = comparison?.budgets ?? { ...DEFAULT_BUDGETS, ...(baseline?.budgets ?? {}) }
+  const budgets = comparison?.budgets ?? resolveBenchmarkBudgets(baseline, DEFAULT_BUDGETS)
   const payload = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     benchmark: {
       iterations,
@@ -286,17 +332,30 @@ function measureBenchmarkSample(sample) {
 }
 
 function main() {
-  let rows = samples.map(measureBenchmarkSample)
-
   const baseline = fs.existsSync(baselinePath)
     ? JSON.parse(fs.readFileSync(baselinePath, 'utf8'))
     : null
+  if (compareBaseline && !baseline) {
+    const message = `Missing baseline at ${baselinePath}. Run with --update to generate.`
+    const comparison = {
+      status: 'failed',
+      runtimeScale: null,
+      budgets: resolveBenchmarkBudgets(null, DEFAULT_BUDGETS),
+      failures: [message],
+      failureDetails: [{ type: 'missing', sample: baselinePath, message }],
+    }
+    if (outputPath) writeBenchmarkReport(outputPath, [], null, comparison)
+    assertBaselineComparison(comparison)
+  }
+
+  let rows = samples.map(measureBenchmarkSample)
+  validateBenchmarkRows(rows)
   let reportBaseline = baseline
   let comparison = null
 
   if (updateBaseline) {
     const payload = {
-      budgets: baseline?.budgets ?? DEFAULT_BUDGETS,
+      budgets: resolveBenchmarkBudgets(baseline, DEFAULT_BUDGETS),
       samples: Object.fromEntries(
         rows.map(row => [
           row.sample,
@@ -314,33 +373,24 @@ function main() {
     console.log(`Optimizer bench baseline updated at ${baselinePath}`)
   } else {
     if (compareBaseline) {
-      if (!baseline) {
-        comparison = {
-          status: 'failed',
-          runtimeScale: null,
-          budgets: DEFAULT_BUDGETS,
-          failures: [`Missing baseline at ${baselinePath}. Run with --update to generate.`],
-        }
-      } else {
-        comparison = evaluateBaseline(rows, baseline, DEFAULT_BUDGETS)
-        const retry = retryTimingFailures({
-          rows,
-          comparison,
-          measureSample: sampleName => {
-            const sample = samples.find(candidate => candidate.name === sampleName)
-            if (!sample) throw new Error(`Unknown optimizer benchmark sample: ${sampleName}`)
-            return measureBenchmarkSample(sample)
-          },
-          evaluate: (retriedRows, runtimeScale) =>
-            evaluateBaseline(retriedRows, baseline, DEFAULT_BUDGETS, { runtimeScale }),
-        })
-        rows = retry.rows
-        comparison = retry.comparison
-        if (retry.retriedSamples.length > 0) {
-          console.warn(
-            `[optimizer-bench] Re-measured timing-only failures with fixed calibration: ${retry.retriedSamples.join(', ')}`,
-          )
-        }
+      comparison = evaluateBaseline(rows, baseline, DEFAULT_BUDGETS)
+      const retry = retryTimingFailures({
+        rows,
+        comparison,
+        measureSample: sampleName => {
+          const sample = samples.find(candidate => candidate.name === sampleName)
+          if (!sample) throw new Error(`Unknown optimizer benchmark sample: ${sampleName}`)
+          return measureBenchmarkSample(sample)
+        },
+        evaluate: (retriedRows, runtimeScale) =>
+          evaluateBaseline(retriedRows, baseline, DEFAULT_BUDGETS, { runtimeScale }),
+      })
+      rows = retry.rows
+      comparison = retry.comparison
+      if (retry.retriedSamples.length > 0) {
+        console.warn(
+          `[optimizer-bench] Re-measured timing-only failures with fixed calibration: ${retry.retriedSamples.join(', ')}`,
+        )
       }
     }
 
@@ -362,9 +412,6 @@ function main() {
     )
 
     if (compareBaseline) {
-      if (!baseline) {
-        throw new Error(`Missing baseline at ${baselinePath}. Run with --update to generate.`)
-      }
       assertBaselineComparison(comparison)
       console.log('Optimizer bench baseline check passed.')
     }
@@ -375,9 +422,21 @@ function main() {
   }
 }
 
-try {
-  main()
-} catch (err) {
-  console.error('[optimizer-bench] Failed:', err)
-  process.exitCode = 1
+export function runOptimizerBenchmark({ compilerPlugin } = {}) {
+  if (compilerPlugin !== undefined) {
+    if (typeof compilerPlugin !== 'function') {
+      throw new Error('Injected benchmark compiler must be a plugin function')
+    }
+    createFictPlugin = compilerPlugin
+  }
+  return main()
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  try {
+    runOptimizerBenchmark()
+  } catch (err) {
+    console.error('[optimizer-bench] Failed:', err)
+    process.exitCode = 1
+  }
 }

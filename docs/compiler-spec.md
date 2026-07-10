@@ -561,13 +561,15 @@ Use `optimizeLevel: 'full'` to enable those rewrites for maximum optimization.
 Benchmarking: run `pnpm bench:optimizer` (builds the compiler and prints average compile
 times with optimization enabled/disabled). Set `BENCH_OUTPUT=path/to/report.json` or
 pass `--output path/to/report.json` to `scripts/optimizer-bench.mjs` to write the raw
-JSON report used by CI/release evidence artifacts.
+JSON report used by CI/release evidence artifacts. Pass `--baseline path/to/baseline.json`
+to compare or update an isolated baseline explicitly.
 Optimizer baselines: `pnpm bench:optimizer:guard` compares results to
 `scripts/optimizer-bench.baseline.json`. Timings use paired/interleaved optimized and
 unoptimized samples. Timing-only failures are re-measured once with the first attempt's
 runner calibration fixed, and fail only when the same sample regresses twice. Missing
 baselines and output-size regressions fail immediately. Use `pnpm bench:optimizer:update`
-to refresh the baseline when changes are intentional.
+to refresh the baseline when changes are intentional. Invalid benchmark counts, timings,
+budgets, byte sizes, scales, and malformed baseline samples fail closed.
 Snapshot baselines: `pnpm -C packages/compiler test -- optimizer-baseline.test.ts -u`
 updates the optimizer output snapshots for core scenarios.
 Guardrails: `pnpm guardrails:hir` compares current output to

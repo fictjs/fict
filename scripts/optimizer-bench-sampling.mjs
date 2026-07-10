@@ -3,11 +3,118 @@ export function median(values) {
   const sorted = [...values].sort((a, b) => a - b)
   const mid = Math.floor(sorted.length / 2)
   if (sorted.length % 2 === 1) return sorted[mid]
-  return (sorted[mid - 1] + sorted[mid]) / 2
+  return sorted[mid - 1] + (sorted[mid] - sorted[mid - 1]) / 2
+}
+
+export function parseBenchmarkCount(name, rawValue, fallback, { allowZero = false } = {}) {
+  if (typeof rawValue === 'string' && rawValue.trim() === '') {
+    throw new Error(`${name} must not be empty`)
+  }
+  const value = rawValue === undefined ? fallback : Number(rawValue)
+  const minimum = allowZero ? 0 : 1
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    const requirement = allowZero ? 'a non-negative integer' : 'a positive integer'
+    throw new Error(`${name} must be ${requirement}, received ${String(rawValue ?? fallback)}`)
+  }
+  return value
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function assertFiniteNumber(value, label, { minimum, safeInteger = false }) {
+  if (
+    typeof value !== 'number' ||
+    !Number.isFinite(value) ||
+    value < minimum ||
+    (safeInteger && !Number.isSafeInteger(value))
+  ) {
+    const kind = safeInteger ? 'safe integer' : 'number'
+    throw new Error(`${label} must be a finite ${kind} >= ${minimum}, received ${String(value)}`)
+  }
+}
+
+const BUDGET_FIELDS = [
+  'timeRegressionRatio',
+  'timeRegressionMinMs',
+  'sizeRegressionRatio',
+  'slowdownRatio',
+]
+
+export function resolveBenchmarkBudgets(baseline, defaultBudgets) {
+  if (!isRecord(defaultBudgets)) {
+    throw new Error('Default benchmark budgets must be an object')
+  }
+  if (baseline !== null && baseline !== undefined && !isRecord(baseline)) {
+    throw new Error('Benchmark baseline must be an object')
+  }
+  if (baseline?.budgets !== undefined && !isRecord(baseline.budgets)) {
+    throw new Error('Benchmark baseline budgets must be an object')
+  }
+
+  const budgets = { ...defaultBudgets, ...(baseline?.budgets ?? {}) }
+  for (const field of BUDGET_FIELDS) {
+    assertFiniteNumber(budgets[field], `Benchmark budget ${field}`, { minimum: 0 })
+  }
+  return budgets
+}
+
+export function validateBenchmarkRows(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new Error('Optimizer benchmark comparison requires at least one sample row')
+  }
+
+  for (const row of rows) {
+    if (!isRecord(row) || typeof row.sample !== 'string' || row.sample.trim() === '') {
+      throw new Error('Each optimizer benchmark row must have a non-empty sample name')
+    }
+    assertFiniteNumber(row.optimized_ms, `${row.sample} optimized_ms`, { minimum: Number.EPSILON })
+    assertFiniteNumber(row.unoptimized_ms, `${row.sample} unoptimized_ms`, {
+      minimum: Number.EPSILON,
+    })
+    assertFiniteNumber(row.optimized_bytes, `${row.sample} optimized_bytes`, {
+      minimum: 1,
+      safeInteger: true,
+    })
+    assertFiniteNumber(row.unoptimized_bytes, `${row.sample} unoptimized_bytes`, {
+      minimum: 1,
+      safeInteger: true,
+    })
+  }
+}
+
+function validateBenchmarkInputs(rows, baseline) {
+  validateBenchmarkRows(rows)
+  if (!isRecord(baseline) || !isRecord(baseline.samples)) {
+    throw new Error('Optimizer benchmark baseline must contain a samples object')
+  }
+
+  for (const row of rows) {
+    const expected = baseline.samples[row.sample]
+    if (expected === undefined) continue
+    if (!isRecord(expected)) {
+      throw new Error(`Benchmark baseline sample ${row.sample} must be an object`)
+    }
+    assertFiniteNumber(expected.optimized_ms, `Baseline ${row.sample} optimized_ms`, {
+      minimum: Number.EPSILON,
+    })
+    assertFiniteNumber(expected.unoptimized_ms, `Baseline ${row.sample} unoptimized_ms`, {
+      minimum: Number.EPSILON,
+    })
+    assertFiniteNumber(expected.optimized_bytes, `Baseline ${row.sample} optimized_bytes`, {
+      minimum: 1,
+      safeInteger: true,
+    })
+    assertFiniteNumber(expected.unoptimized_bytes, `Baseline ${row.sample} unoptimized_bytes`, {
+      minimum: 1,
+      safeInteger: true,
+    })
+  }
 }
 
 export function runInterleavedMeasurements({ repeats, warmup, measure }) {
-  if (!Number.isInteger(repeats) || repeats <= 0) {
+  if (!Number.isSafeInteger(repeats) || repeats <= 0) {
     throw new Error(`Benchmark repeats must be a positive integer, received ${repeats}`)
   }
 
@@ -20,6 +127,9 @@ export function runInterleavedMeasurements({ repeats, warmup, measure }) {
     const modes = repeat % 2 === 0 ? [true, false] : [false, true]
     for (const optimize of modes) {
       const result = measure(optimize)
+      assertFiniteNumber(result, optimize ? 'Optimized timing' : 'Unoptimized timing', {
+        minimum: Number.EPSILON,
+      })
       if (optimize) optimizedRuns.push(result)
       else unoptimizedRuns.push(result)
     }
@@ -48,22 +158,32 @@ function deriveRuntimeScale(rows, baseline) {
     ) {
       continue
     }
-    factors.push(row.unoptimized_ms / expected.unoptimized_ms)
+    const factor = row.unoptimized_ms / expected.unoptimized_ms
+    assertFiniteNumber(factor, `${row.sample} runtime scale factor`, {
+      minimum: Number.EPSILON,
+    })
+    factors.push(factor)
   }
   // Only relax limits on slower machines/runners; never tighten on faster ones.
-  return Math.max(1, median(factors))
+  const runtimeScale = Math.max(1, median(factors))
+  assertFiniteNumber(runtimeScale, 'Derived benchmark runtime scale', {
+    minimum: Number.EPSILON,
+  })
+  return runtimeScale
 }
 
 export function evaluateBaseline(rows, baseline, defaultBudgets, options = {}) {
-  const budgets = { ...defaultBudgets, ...(baseline?.budgets ?? {}) }
+  const budgets = resolveBenchmarkBudgets(baseline, defaultBudgets)
+  validateBenchmarkInputs(rows, baseline)
   const failures = []
   const failureDetails = []
-  const runtimeScale =
-    typeof options.runtimeScale === 'number' &&
-    Number.isFinite(options.runtimeScale) &&
-    options.runtimeScale > 0
-      ? options.runtimeScale
-      : deriveRuntimeScale(rows, baseline)
+  const hasRuntimeScale = Object.prototype.hasOwnProperty.call(options ?? {}, 'runtimeScale')
+  if (hasRuntimeScale) {
+    assertFiniteNumber(options.runtimeScale, 'Benchmark runtime scale', {
+      minimum: Number.EPSILON,
+    })
+  }
+  const runtimeScale = hasRuntimeScale ? options.runtimeScale : deriveRuntimeScale(rows, baseline)
 
   function addFailure(type, sample, message) {
     failures.push(message)
@@ -78,10 +198,18 @@ export function evaluateBaseline(rows, baseline, defaultBudgets, options = {}) {
     }
 
     const scaledExpectedMs = expected.optimized_ms * runtimeScale
-    const timeLimit = Math.max(
-      scaledExpectedMs * (1 + budgets.timeRegressionRatio),
-      scaledExpectedMs + budgets.timeRegressionMinMs,
-    )
+    assertFiniteNumber(scaledExpectedMs, `${row.sample} scaled expected time`, {
+      minimum: Number.EPSILON,
+    })
+    const ratioTimeLimit = scaledExpectedMs * (1 + budgets.timeRegressionRatio)
+    const absoluteTimeLimit = scaledExpectedMs + budgets.timeRegressionMinMs
+    assertFiniteNumber(ratioTimeLimit, `${row.sample} ratio time limit`, {
+      minimum: Number.EPSILON,
+    })
+    assertFiniteNumber(absoluteTimeLimit, `${row.sample} absolute time limit`, {
+      minimum: Number.EPSILON,
+    })
+    const timeLimit = Math.max(ratioTimeLimit, absoluteTimeLimit)
     if (row.optimized_ms > timeLimit) {
       addFailure(
         'time',
@@ -91,6 +219,9 @@ export function evaluateBaseline(rows, baseline, defaultBudgets, options = {}) {
     }
 
     const sizeLimit = expected.optimized_bytes * (1 + budgets.sizeRegressionRatio)
+    assertFiniteNumber(sizeLimit, `${row.sample} output size limit`, {
+      minimum: Number.EPSILON,
+    })
     if (row.optimized_bytes > sizeLimit) {
       addFailure(
         'size',
@@ -101,11 +232,21 @@ export function evaluateBaseline(rows, baseline, defaultBudgets, options = {}) {
 
     const slowdown = row.optimized_ms / row.unoptimized_ms
     const baselineSlowdown = expected.optimized_ms / expected.unoptimized_ms
-    if (slowdown > baselineSlowdown + budgets.slowdownRatio) {
+    assertFiniteNumber(slowdown, `${row.sample} optimizer slowdown`, {
+      minimum: Number.EPSILON,
+    })
+    assertFiniteNumber(baselineSlowdown, `${row.sample} baseline optimizer slowdown`, {
+      minimum: Number.EPSILON,
+    })
+    const slowdownLimit = baselineSlowdown + budgets.slowdownRatio
+    assertFiniteNumber(slowdownLimit, `${row.sample} optimizer slowdown limit`, {
+      minimum: Number.EPSILON,
+    })
+    if (slowdown > slowdownLimit) {
       addFailure(
         'slowdown',
         row.sample,
-        `${row.sample}: slowdown ${slowdown.toFixed(2)} > ${(baselineSlowdown + budgets.slowdownRatio).toFixed(2)}`,
+        `${row.sample}: slowdown ${slowdown.toFixed(2)} > ${slowdownLimit.toFixed(2)}`,
       )
     }
   }

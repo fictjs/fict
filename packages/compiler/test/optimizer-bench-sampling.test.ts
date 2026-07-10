@@ -91,6 +91,98 @@ describe('optimizer benchmark sampling', () => {
     expect(result.unoptimizedRuns).toHaveLength(5)
   })
 
+  it.each([0, Number.NaN, Number.POSITIVE_INFINITY])(
+    'rejects a non-positive or non-finite measured timing (%s)',
+    async timing => {
+      const { runInterleavedMeasurements } = await loadSamplingModule()
+
+      expect(() =>
+        runInterleavedMeasurements({
+          repeats: 1,
+          warmup: () => undefined,
+          measure: () => timing,
+        }),
+      ).toThrow('timing must be a finite number')
+    },
+  )
+
+  it('fails closed for malformed rows, baselines, budgets, and fixed scales', async () => {
+    const { evaluateBaseline } = await loadSamplingModule()
+    const budgets = {
+      timeRegressionRatio: 0.25,
+      timeRegressionMinMs: 0.5,
+      sizeRegressionRatio: 0.15,
+      slowdownRatio: 0.35,
+    }
+    const row = {
+      sample: 'fixture',
+      optimized_ms: 1,
+      unoptimized_ms: 1,
+      optimized_bytes: 100,
+      unoptimized_bytes: 100,
+    }
+    const expected = {
+      optimized_ms: 1,
+      unoptimized_ms: 1,
+      optimized_bytes: 100,
+      unoptimized_bytes: 100,
+    }
+
+    expect(() =>
+      evaluateBaseline(
+        [{ ...row, optimized_ms: Number.NaN }],
+        {
+          samples: { fixture: expected },
+        },
+        budgets,
+      ),
+    ).toThrow('fixture optimized_ms')
+    expect(() =>
+      evaluateBaseline(
+        [row],
+        {
+          samples: { fixture: { ...expected, optimized_ms: undefined as unknown as number } },
+        },
+        budgets,
+      ),
+    ).toThrow('Baseline fixture optimized_ms')
+    expect(() =>
+      evaluateBaseline(
+        [row],
+        { budgets: { slowdownRatio: -1 }, samples: { fixture: expected } },
+        budgets,
+      ),
+    ).toThrow('Benchmark budget slowdownRatio')
+    expect(() =>
+      evaluateBaseline([row], { samples: { fixture: expected } }, budgets, {
+        runtimeScale: Number.POSITIVE_INFINITY,
+      }),
+    ).toThrow('Benchmark runtime scale')
+    expect(() =>
+      evaluateBaseline(
+        [{ ...row, unoptimized_ms: Number.MAX_VALUE }],
+        {
+          samples: {
+            fixture: { ...expected, unoptimized_ms: Number.EPSILON },
+          },
+        },
+        budgets,
+      ),
+    ).toThrow('fixture runtime scale factor')
+    expect(() =>
+      evaluateBaseline(
+        [row],
+        {
+          samples: {
+            fixture: { ...expected, optimized_ms: Number.MAX_VALUE },
+          },
+        },
+        budgets,
+        { runtimeScale: Number.MAX_VALUE },
+      ),
+    ).toThrow('fixture scaled expected time')
+  })
+
   it('continues to reject real timing and output-size regressions', async () => {
     const { evaluateBaseline } = await loadSamplingModule()
     const comparison = evaluateBaseline(
