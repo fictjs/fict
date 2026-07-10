@@ -3097,6 +3097,14 @@ function collectStaticModuleSources(code: string): string[] {
 
   const sources = new Set<string>()
   for (const node of ast.program.body) {
+    if (
+      t.isTSImportEqualsDeclaration(node) &&
+      node.importKind !== 'type' &&
+      t.isTSExternalModuleReference(node.moduleReference)
+    ) {
+      sources.add(node.moduleReference.expression.value)
+      continue
+    }
     if (t.isImportDeclaration(node)) {
       sources.add(node.source.value)
       continue

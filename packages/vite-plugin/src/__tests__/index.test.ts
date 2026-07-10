@@ -1679,6 +1679,60 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it('prepares metadata for CTS import-equals dependencies before their importers', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-cts-import-equals-metadata-'))
+    const hookPath = path.join(root, 'use-counter.cts')
+    const entry = path.join(root, 'App.cts')
+
+    try {
+      await writeFile(
+        hookPath,
+        `
+          import { $state } from 'fict'
+          function useCounter() {
+            const count = $state(1)
+            return count
+          }
+          export = useCounter
+        `,
+      )
+      await writeFile(
+        entry,
+        `
+          import useCounter = require('./use-counter.cts')
+          export function App() {
+            const count = useCounter()
+            return count * 2
+          }
+        `,
+      )
+
+      const result = await build({
+        root,
+        logLevel: 'silent',
+        plugins: [fict({ cache: false, useTypeScriptProject: false, functionSplitting: false })],
+        build: {
+          write: false,
+          lib: { entry, formats: ['es'], fileName: () => 'App.js' },
+          rollupOptions: {
+            external: id => id === 'fict' || id.startsWith('fict/'),
+          },
+        },
+      })
+      const outputs = Array.isArray(result) ? result : [result]
+      const code = outputs
+        .flatMap(output => ('output' in output ? output.output : []))
+        .filter(output => output.type === 'chunk')
+        .map(output => output.code)
+        .join('\n')
+
+      expect(code).toMatch(/return\s+[A-Za-z_$][\w$]*\(\)\(\)\s*\*\s*2/)
+      expect(code).not.toMatch(/return\s+[A-Za-z_$][\w$]*\(\)\s*\*\s*2/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('keeps bare package requests on the package metadata path when tsconfig maps them locally', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-bare-tsconfig-path-'))
     const srcDir = path.join(root, 'src')
