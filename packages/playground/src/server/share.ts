@@ -99,7 +99,35 @@ function isValidSnapshot(snapshot: unknown): snapshot is PlaygroundSessionSnapsh
   if (typeof view.templateId !== 'string' || !view.templateId) return false
   if (typeof view.entryFile !== 'string' || !view.entryFile) return false
   if (!isValidConfig(view.config)) return false
+  if (view.configOverrides !== undefined && !isValidConfigPatch(view.configOverrides)) return false
   if (!isStringMap(view.files)) return false
+
+  return true
+}
+
+function isValidConfigPatch(config: unknown): boolean {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return false
+  const view = config as Record<string, unknown>
+
+  for (const [key, value] of Object.entries(view)) {
+    if (key === 'profile') {
+      if (value !== 'app-default' && value !== 'ci-hard-gate' && value !== 'migration') {
+        return false
+      }
+      continue
+    }
+    if (
+      key !== 'strictGuarantee' &&
+      key !== 'strictReactivity' &&
+      key !== 'lazyConditional' &&
+      key !== 'resumable' &&
+      key !== 'functionSplitting' &&
+      key !== 'devtools'
+    ) {
+      return false
+    }
+    if (typeof value !== 'boolean') return false
+  }
 
   return true
 }

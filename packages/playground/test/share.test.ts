@@ -32,6 +32,29 @@ describe('playground share snapshot', () => {
     expect(decoded).toEqual(snapshot)
   })
 
+  it('round-trips config override provenance', () => {
+    const snapshot: PlaygroundSessionSnapshot = {
+      version: 1,
+      templateId: 'counter',
+      entryFile: 'src/App.tsx',
+      config: {
+        profile: 'app-default',
+        strictGuarantee: true,
+        strictReactivity: false,
+        lazyConditional: true,
+        resumable: false,
+        functionSplitting: false,
+        devtools: false,
+      },
+      configOverrides: {
+        strictReactivity: false,
+      },
+      files: {},
+    }
+
+    expect(decodeSessionSnapshot(encodeSessionSnapshot(snapshot))).toEqual(snapshot)
+  })
+
   it('throws on invalid payload', () => {
     expect(() => decodeSessionSnapshot('invalid-token')).toThrow()
   })

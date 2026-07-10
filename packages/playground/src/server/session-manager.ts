@@ -31,6 +31,7 @@ import {
 interface SessionRecord {
   summary: PlaygroundSessionSummary
   viteServer: ViteDevServerLike
+  configOverrides: Partial<PlaygroundConfig>
 }
 
 interface SessionManagerOptions {
@@ -132,6 +133,7 @@ export class PlaygroundSessionManager {
   private async createSessionInternal(
     input: Partial<CreateSessionInput>,
     access: PlaygroundAuthContext,
+    providedConfigOverrides?: Partial<PlaygroundConfig>,
   ): Promise<PlaygroundSessionState> {
     const templateId = input.templateId ?? this.templates[0]?.id
     if (!templateId) {
@@ -148,7 +150,8 @@ export class PlaygroundSessionManager {
     await fs.rm(sessionRoot, { recursive: true, force: true })
     await ensureDir(sessionRoot)
 
-    const config = resolveConfig(template, input.config)
+    const configOverrides = normalizeConfigPatch(providedConfigOverrides ?? input.config)
+    const config = resolveConfig(template, configOverrides)
     const initialFiles = {
       ...createTemplateFiles(template.id),
       ...(input.files ?? {}),
@@ -175,6 +178,7 @@ export class PlaygroundSessionManager {
     this.sessions.set(sessionId, {
       summary,
       viteServer: preview.server,
+      configOverrides,
     })
 
     return this.getSessionState(sessionId, access)
@@ -184,13 +188,19 @@ export class PlaygroundSessionManager {
     snapshot: PlaygroundSessionSnapshot,
     access: PlaygroundAuthContext = SYSTEM_ACCESS_CONTEXT,
   ): Promise<PlaygroundSessionState> {
-    return this.createSession(
-      {
-        templateId: snapshot.templateId,
-        config: snapshot.config,
-        files: snapshot.files,
-      },
-      access,
+    const template = getPlaygroundTemplate(snapshot.templateId)
+    const configOverrides = resolveSnapshotConfigOverrides(template, snapshot)
+
+    return this.sessionCreationLimiter.run(() =>
+      this.createSessionInternal(
+        {
+          templateId: snapshot.templateId,
+          config: snapshot.config,
+          files: snapshot.files,
+        },
+        access,
+        configOverrides,
+      ),
     )
   }
 
@@ -201,7 +211,7 @@ export class PlaygroundSessionManager {
     const session = this.requireSession(sessionId, access)
     const files = await readProjectFiles(session.summary.rootDir)
     return {
-      ...session.summary,
+      ...cloneSessionSummary(session.summary),
       files,
     }
   }
@@ -213,19 +223,23 @@ export class PlaygroundSessionManager {
   ): Promise<PlaygroundSessionSummary> {
     return this.enqueueSessionTask(sessionId, async () => {
       const session = this.requireSession(sessionId, access)
-      const mergedConfig = resolveConfig(undefined, {
-        ...session.summary.config,
-        ...patch,
-      })
+      const nextOverrides = {
+        ...session.configOverrides,
+        ...normalizeConfigPatch(patch),
+      }
+      const template = getPlaygroundTemplate(session.summary.templateId)
+      const mergedConfig = resolveConfig(template, nextOverrides)
 
       if (areConfigsEqual(session.summary.config, mergedConfig)) {
-        return session.summary
+        session.configOverrides = nextOverrides
+        return cloneSessionSummary(session.summary)
       }
 
       const nextPreview = await this.startPreviewServer(session.summary.rootDir, mergedConfig)
 
       await session.viteServer.close()
       session.viteServer = nextPreview.server
+      session.configOverrides = nextOverrides
       session.summary = {
         ...session.summary,
         config: mergedConfig,
@@ -233,7 +247,7 @@ export class PlaygroundSessionManager {
         updatedAt: Date.now(),
       }
 
-      return session.summary
+      return cloneSessionSummary(session.summary)
     })
   }
 
@@ -366,14 +380,19 @@ export class PlaygroundSessionManager {
     sessionId: string,
     access: PlaygroundAuthContext = SYSTEM_ACCESS_CONTEXT,
   ): Promise<PlaygroundSessionSnapshot> {
-    const state = await this.getSessionState(sessionId, access)
-    return {
-      version: 1,
-      templateId: state.templateId,
-      entryFile: state.entryFile,
-      config: state.config,
-      files: state.files,
-    }
+    return this.enqueueSessionTask(sessionId, async () => {
+      const session = this.requireSession(sessionId, access)
+      const files = await readProjectFiles(session.summary.rootDir)
+      const summary = cloneSessionSummary(session.summary)
+      return {
+        version: 1,
+        templateId: summary.templateId,
+        entryFile: summary.entryFile,
+        config: summary.config,
+        configOverrides: { ...session.configOverrides },
+        files,
+      }
+    })
   }
 
   async disposeSession(
@@ -680,15 +699,78 @@ function resolveConfig(
   template: PlaygroundTemplate | undefined,
   patch: Partial<PlaygroundConfig> | undefined,
 ): PlaygroundConfig {
-  const profile = patch?.profile ?? template?.recommendedConfig?.profile ?? 'app-default'
+  const recommendations = normalizeConfigPatch(template?.recommendedConfig)
+  const profile = patch?.profile ?? recommendations.profile ?? 'app-default'
   const base = profileDefaults[profile]
 
   return {
     ...base,
-    ...template?.recommendedConfig,
+    ...recommendations,
     ...patch,
     profile,
   }
+}
+
+const configurableBooleanKeys = [
+  'strictGuarantee',
+  'strictReactivity',
+  'lazyConditional',
+  'resumable',
+  'functionSplitting',
+  'devtools',
+] as const
+
+function normalizeConfigPatch(
+  patch: Partial<PlaygroundConfig> | undefined,
+): Partial<PlaygroundConfig> {
+  if (!patch) return {}
+
+  const normalized: Partial<PlaygroundConfig> = {}
+  if (
+    patch.profile === 'app-default' ||
+    patch.profile === 'ci-hard-gate' ||
+    patch.profile === 'migration'
+  ) {
+    normalized.profile = patch.profile
+  }
+
+  for (const key of configurableBooleanKeys) {
+    const value = patch[key]
+    if (typeof value === 'boolean') {
+      normalized[key] = value
+    }
+  }
+
+  return normalized
+}
+
+function cloneSessionSummary(summary: PlaygroundSessionSummary): PlaygroundSessionSummary {
+  return {
+    ...summary,
+    config: { ...summary.config },
+  }
+}
+
+function resolveSnapshotConfigOverrides(
+  template: PlaygroundTemplate,
+  snapshot: PlaygroundSessionSnapshot,
+): Partial<PlaygroundConfig> {
+  const provided = normalizeConfigPatch(snapshot.configOverrides)
+  if (
+    snapshot.configOverrides &&
+    areConfigsEqual(resolveConfig(template, provided), snapshot.config)
+  ) {
+    return provided
+  }
+
+  const inferred: Partial<PlaygroundConfig> = { profile: snapshot.config.profile }
+  const baseline = resolveConfig(template, inferred)
+  for (const key of configurableBooleanKeys) {
+    if (snapshot.config[key] !== baseline[key]) {
+      inferred[key] = snapshot.config[key]
+    }
+  }
+  return inferred
 }
 
 function areConfigsEqual(left: PlaygroundConfig, right: PlaygroundConfig): boolean {

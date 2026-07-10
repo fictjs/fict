@@ -128,6 +128,7 @@ export interface PlaygroundSessionSnapshot {
   templateId: string
   entryFile: string
   config: PlaygroundConfig
+  configOverrides?: Partial<PlaygroundConfig>
   files: Record<string, string>
 }
 
