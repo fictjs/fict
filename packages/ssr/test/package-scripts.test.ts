@@ -19,6 +19,7 @@ describe('@fictjs/ssr package scripts', () => {
     expect(scripts.build).toContain('pnpm run build:stream-runtime')
     expect(scripts.dev).toContain('--on-success')
     expect(scripts.dev).toContain('pnpm run build:stream-runtime')
+    expect(scripts['test:matrix']).toContain('pnpm run test:node')
     expect(scripts['test:matrix']).toContain('pnpm run test:cjs')
   })
 })

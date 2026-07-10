@@ -83,6 +83,11 @@ export {
   __fictCreateSSRSession,
   __fictRunWithSSRSession,
   __fictGetCurrentSSRSession,
+  __fictInstallSSRSessionCarrier,
+  __fictRetainSSRSession,
+  __fictIsSSRSessionActive,
+  type FictSSRSession,
+  type FictSSRSessionCarrier,
 } from './ssr-session'
 export { __fictGetSSRStreamHooks, __fictSetSSRStreamHooks } from './ssr-stream'
 

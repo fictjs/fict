@@ -7,7 +7,7 @@
 
 import { createEffect, batch } from '@fictjs/runtime'
 import { createSignal } from '@fictjs/runtime/advanced'
-import { __fictGetCurrentSSRSession } from '@fictjs/runtime/internal'
+import { __fictGetCurrentSSRSession, __fictIsSSRSessionActive } from '@fictjs/runtime/internal'
 
 import type {
   QueryFunction,
@@ -50,7 +50,12 @@ let requestQueryCaches = new WeakMap<SSRSession, QueryCache>()
 
 function resolveQueryCache(): QueryCache {
   const session = __fictGetCurrentSSRSession()
-  if (!session) return sharedQueryCache
+  if (!session) {
+    // If an SSR integration loses its async carrier, fail closed instead of
+    // putting request data in the process-wide browser cache. The temporary
+    // cache is captured by the query call for the rest of its async work.
+    return __fictIsSSRSessionActive() ? new Map() : sharedQueryCache
+  }
 
   let cache = requestQueryCaches.get(session)
   if (!cache) {

@@ -6,6 +6,7 @@ import {
   __fictCreateSSRSession,
   __fictGetScopeRegistry,
   __fictGetScopesForBoundary,
+  __fictRetainSSRSession,
   __fictRunWithSSRSession,
   __fictSerializeSSRState,
   __fictSerializeSSRStateForScopes,
@@ -530,9 +531,15 @@ function startStreamingRender(
   control: StreamingControlOptions = {},
 ): { shellReady: Promise<void>; allReady: Promise<void>; abort: (reason?: unknown) => void } {
   const session = __fictCreateSSRSession()
-  return __fictRunWithSSRSession(session, () =>
-    startStreamingRenderInSession(session, view, options, writer, control),
-  )
+  const releaseSession = __fictRetainSSRSession()
+  try {
+    return __fictRunWithSSRSession(session, () =>
+      startStreamingRenderInSession(session, view, options, writer, releaseSession, control),
+    )
+  } catch (error) {
+    releaseSession()
+    throw error
+  }
 }
 
 type SSRSession = ReturnType<typeof __fictCreateSSRSession>
@@ -542,6 +549,7 @@ function startStreamingRenderInSession(
   view: () => FictNode,
   options: RenderToStreamOptions,
   writer: StreamWriter,
+  releaseSession: () => void,
   control: StreamingControlOptions = {},
 ): { shellReady: Promise<void>; allReady: Promise<void>; abort: (reason?: unknown) => void } {
   const runInSession = <T>(fn: () => T): T => __fictRunWithSSRSession(session, fn)
@@ -722,7 +730,11 @@ function startStreamingRenderInSession(
     } catch {
       // Continue with owner/global cleanup even if session reset fails.
     }
-    cleanupRenderResources(teardown, restoreGlobals, restoreManifest, true)
+    try {
+      cleanupRenderResources(teardown, restoreGlobals, restoreManifest, true)
+    } finally {
+      releaseSession()
+    }
   }
 
   const reportErrorAndAbort = (error: unknown) => {

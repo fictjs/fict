@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { createSignal } from '@fictjs/runtime/advanced'
-import { __fictCreateSSRSession, __fictRunWithSSRSession } from '@fictjs/runtime/internal'
+import {
+  __fictCreateSSRSession,
+  __fictGetCurrentSSRSession,
+  __fictRunWithSSRSession,
+} from '@fictjs/runtime/internal'
 import {
   query,
   revalidate,
@@ -74,6 +78,53 @@ describe('query', () => {
     // The function should still only be called once
     // (cache lookup happens on accessor call)
     expect(callCount).toBe(1)
+  })
+
+  it('does not share query data when an active SSR fallback loses async context', async () => {
+    const fetchResolvers: Array<(value: string) => void> = []
+    const fetchViewer = query(
+      vi.fn(
+        (_viewer: string) =>
+          new Promise<string>(resolve => {
+            fetchResolvers.push(resolve)
+          }),
+      ),
+      'isolatedFallbackViewer',
+    )
+    let releaseAlice!: () => void
+    let releaseBob!: () => void
+    const aliceGate = new Promise<void>(resolve => {
+      releaseAlice = resolve
+    })
+    const bobGate = new Promise<void>(resolve => {
+      releaseBob = resolve
+    })
+
+    const aliceRun = __fictRunWithSSRSession(__fictCreateSSRSession(), async () => {
+      await aliceGate
+      expect(__fictGetCurrentSSRSession()).toBeNull()
+      return fetchViewer('viewer')
+    })
+    const bobRun = __fictRunWithSSRSession(__fictCreateSSRSession(), async () => {
+      await bobGate
+      expect(__fictGetCurrentSSRSession()).toBeNull()
+      return fetchViewer('viewer')
+    })
+
+    releaseAlice()
+    const aliceViewer = await aliceRun
+    releaseBob()
+    const bobViewer = await bobRun
+
+    expect(fetchResolvers).toHaveLength(2)
+    fetchResolvers[0]?.('Alice')
+    fetchResolvers[1]?.('Bob')
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(aliceViewer()).toBe('Alice')
+    expect(bobViewer()).toBe('Bob')
   })
 
   it('caches successful undefined results', async () => {

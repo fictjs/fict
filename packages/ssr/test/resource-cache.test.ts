@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { Suspense } from '@fictjs/runtime'
 import { resource } from 'fict/plus'
 
-import { renderToString, renderToStringAsync } from '../src/index'
+import { renderToString, renderToStringAsync } from '../src/index.node'
 
 describe('SSR resource cache isolation', () => {
   it('waits for suspense-enabled resources in async string renders', async () => {
@@ -69,5 +69,45 @@ describe('SSR resource cache isolation', () => {
     expect(bobHtml).toContain('loading:Bob')
     expect(bobHtml).not.toContain('Alice')
     expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
+  it('isolates equal resource keys across concurrent async SSR requests', async () => {
+    const fetchResolvers: Array<(value: string) => void> = []
+    const fetcher = vi.fn(
+      () =>
+        new Promise<string>(resolve => {
+          fetchResolvers.push(resolve)
+        }),
+    )
+    const viewerResource = resource<string, string>({ suspense: true, fetch: fetcher })
+
+    const View = () => {
+      const viewer = viewerResource.read('current-user')
+      return { type: 'span', props: { children: viewer.data } }
+    }
+    const renderViewer = () =>
+      renderToStringAsync(
+        () => ({
+          type: Suspense as any,
+          props: {
+            fallback: { type: 'span', props: { children: 'loading user' } },
+            children: { type: View, props: {} },
+          },
+        }),
+        { includeSnapshot: false },
+      )
+
+    const aliceHtmlPromise = renderViewer()
+    const bobHtmlPromise = renderViewer()
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    fetchResolvers[1]?.('Bob')
+    fetchResolvers[0]?.('Alice')
+
+    const [aliceHtml, bobHtml] = await Promise.all([aliceHtmlPromise, bobHtmlPromise])
+    expect(aliceHtml).toContain('Alice')
+    expect(aliceHtml).not.toContain('Bob')
+    expect(bobHtml).toContain('Bob')
+    expect(bobHtml).not.toContain('Alice')
   })
 })

@@ -3,7 +3,13 @@ import { defineConfig } from 'tsdown'
 import { packageOutExtensions } from '../../scripts/tsdown-presets.mjs'
 
 export default defineConfig({
-  entry: ['src/index.ts', 'src/experimental.ts', 'src/stream-runtime.ts'],
+  entry: [
+    'src/index.ts',
+    'src/index.node.ts',
+    'src/experimental.ts',
+    'src/experimental.node.ts',
+    'src/stream-runtime.ts',
+  ],
   format: ['cjs', 'esm'],
   dts: true,
   clean: true,

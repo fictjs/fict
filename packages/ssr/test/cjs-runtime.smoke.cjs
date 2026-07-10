@@ -5,12 +5,21 @@ const path = require('node:path')
 const { PassThrough } = require('node:stream')
 
 const { Suspense, createSuspenseToken } = require('../../runtime/dist/index.cjs')
-const { renderToPipeableStream, renderToString } = require('../dist/index.cjs')
+const { __fictGetCurrentSSRSession } = require('../../runtime/dist/internal.cjs')
+const { renderToPipeableStream, renderToString } = require('..')
 
 async function run() {
   const tempDir = mkdtempSync(path.join(tmpdir(), 'fict-ssr-cjs-'))
 
   try {
+    let sessionAfterAwait
+    const asyncContextHtml = renderToString(() => {
+      sessionAfterAwait = Promise.resolve().then(() => __fictGetCurrentSSRSession())
+      return { type: 'div', props: { children: 'CJSAsyncContextOK' } }
+    })
+    assert.match(asyncContextHtml, /CJSAsyncContextOK/)
+    assert.ok(await sessionAfterAwait)
+
     const manifestPath = path.join(tempDir, 'manifest.json')
     writeFileSync(manifestPath, JSON.stringify({ '/src/app.tsx': '/assets/app.js' }))
 

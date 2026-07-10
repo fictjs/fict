@@ -1,4 +1,24 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+
+function assertEdgeGraphHasNoAsyncHooks(entryUrl) {
+  const pending = [entryUrl]
+  const visited = new Set()
+
+  while (pending.length > 0) {
+    const current = pending.pop()
+    if (!current || visited.has(current.href)) continue
+    visited.add(current.href)
+    const source = readFileSync(current, 'utf8')
+    assert.doesNotMatch(source, /node:async_hooks/, `${current.pathname} imports node:async_hooks`)
+
+    const staticImport = /(?:import|export)\s+(?:[^'";]*?\sfrom\s*)?['"](\.[^'"]+)['"]/g
+    let match
+    while ((match = staticImport.exec(source))) {
+      pending.push(new URL(match[1], current))
+    }
+  }
+}
 
 import { Suspense, createSuspenseToken } from '../../runtime/dist/index.js'
 import { renderToStream, renderToString } from '../dist/index.js'
@@ -18,6 +38,9 @@ async function readReadableStream(stream) {
 }
 
 async function run() {
+  assertEdgeGraphHasNoAsyncHooks(new URL('../dist/index.js', import.meta.url))
+  assertEdgeGraphHasNoAsyncHooks(new URL('../dist/experimental.js', import.meta.url))
+
   const streamHtml = await readReadableStream(
     renderToStream(
       () => ({

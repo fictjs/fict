@@ -99,6 +99,39 @@ assertEqualSet('runtime package exports', packageExports('packages/runtime/packa
   './loader',
 ])
 
+const ssrPackage = readJson('packages/ssr/package.json')
+for (const [subpath, basename] of [
+  ['.', 'index'],
+  ['./experimental', 'experimental'],
+]) {
+  const entry = ssrPackage.exports?.[subpath]
+  if (
+    entry?.import !== `./dist/${basename}.js` ||
+    entry?.require !== `./dist/${basename}.cjs` ||
+    entry?.node?.import !== `./dist/${basename}.node.js` ||
+    entry?.node?.require !== `./dist/${basename}.node.cjs`
+  ) {
+    fail(
+      `@fictjs/ssr ${subpath} must keep edge-safe defaults and dedicated Node async-context entries`,
+    )
+  }
+}
+
+for (const file of trackedFiles().filter(file => file.startsWith('packages/runtime/src/'))) {
+  if (readText(file).includes('node:async_hooks')) {
+    fail(`@fictjs/runtime browser graph must not import node:async_hooks: ${file}`)
+  }
+}
+for (const file of ['packages/ssr/src/index.ts', 'packages/ssr/src/experimental.ts']) {
+  const source = readText(file)
+  if (source.includes('node:async_hooks') || source.includes('node-session-carrier')) {
+    fail(`@fictjs/ssr edge entry must not install the Node session carrier: ${file}`)
+  }
+}
+if (!readText('packages/ssr/src/node-session-carrier.ts').includes('node:async_hooks')) {
+  fail('@fictjs/ssr Node session carrier must use node:async_hooks')
+}
+
 assertEqualSet('devtools package exports', packageExports('packages/devtools/package.json'), [
   '.',
   './core',

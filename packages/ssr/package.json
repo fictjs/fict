@@ -12,17 +12,25 @@
     "directory": "packages/ssr"
   },
   "type": "module",
-  "main": "dist/index.cjs",
+  "main": "dist/index.node.cjs",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "node": {
+        "import": "./dist/index.node.js",
+        "require": "./dist/index.node.cjs"
+      },
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     },
     "./experimental": {
       "types": "./dist/experimental.d.ts",
+      "node": {
+        "import": "./dist/experimental.node.js",
+        "require": "./dist/experimental.node.cjs"
+      },
       "import": "./dist/experimental.js",
       "require": "./dist/experimental.cjs"
     },
@@ -41,9 +49,10 @@
     "build:stream-runtime": "node scripts/write-stream-runtime-asset.mjs",
     "dev": "tsdown --watch --on-success \"pnpm run build:stream-runtime\"",
     "test": "vitest run",
+    "test:node": "node test/node-runtime.smoke.mjs",
     "test:edge": "node test/edge-runtime.smoke.mjs",
     "test:cjs": "node test/cjs-runtime.smoke.cjs",
-    "test:matrix": "pnpm run test && pnpm run test:edge && pnpm run test:cjs",
+    "test:matrix": "pnpm run test && pnpm run test:node && pnpm run test:edge && pnpm run test:cjs",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",

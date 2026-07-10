@@ -9,6 +9,8 @@ import { Suspense, createSuspenseToken, onDestroy } from '@fictjs/runtime'
 import {
   __fictUseContext,
   __fictUseSignal,
+  __fictGetCurrentSSRSession,
+  __fictIsSSRSessionActive,
   createElement,
   getSlotEnd,
   insertBetween,
@@ -16,8 +18,8 @@ import {
   template,
 } from '@fictjs/runtime/internal'
 
-import { renderToPipeableStream, renderToStream } from '../src/index'
-import { renderToPartial } from '../src/experimental'
+import { renderToPipeableStream, renderToStream } from '../src/index.node'
+import { renderToPartial } from '../src/experimental.node'
 import { createPipeBridge, createQueuedTextStream } from '../src/stream-bridge'
 import { FICT_STREAM_RUNTIME_CODE, createStreamRuntimeCode } from '../src/stream-runtime'
 
@@ -55,6 +57,68 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
 }
 
 describe('@fictjs/ssr streaming', () => {
+  it('keeps concurrent Node stream sessions across async continuations', async () => {
+    let aliceSessionAfterAwait!: Promise<unknown>
+    let bobSessionAfterAwait!: Promise<unknown>
+
+    const createView = (label: 'Alice' | 'Bob') => () => {
+      const sessionDuringRender = __fictGetCurrentSSRSession()
+      expect(sessionDuringRender).not.toBeNull()
+      const captured = Promise.resolve().then(async () => {
+        await Promise.resolve()
+        return __fictGetCurrentSSRSession()
+      })
+      if (label === 'Alice') aliceSessionAfterAwait = captured
+      else bobSessionAfterAwait = captured
+      return { type: 'span', props: { children: label } }
+    }
+
+    const aliceRead = readReadableStream(renderToStream(createView('Alice')))
+    const bobRead = readReadableStream(renderToStream(createView('Bob')))
+    const [aliceHtml, bobHtml, aliceSession, bobSession] = await Promise.all([
+      aliceRead,
+      bobRead,
+      aliceSessionAfterAwait,
+      bobSessionAfterAwait,
+    ])
+
+    expect(aliceHtml).toContain('Alice')
+    expect(bobHtml).toContain('Bob')
+    expect(aliceSession).not.toBeNull()
+    expect(bobSession).not.toBeNull()
+    expect(aliceSession).not.toBe(bobSession)
+  })
+
+  it('keeps a pending stream marked active until cleanup', async () => {
+    const pending = createSuspenseToken()
+    let ready = false
+
+    function AsyncChild(): FictNode {
+      if (!ready) throw pending.token
+      return { type: 'span', props: { children: 'done' } }
+    }
+
+    const stream = renderToStream(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: { type: 'span', props: { children: 'loading' } },
+          children: { type: AsyncChild, props: {} },
+        },
+      }),
+      { mode: 'shell' },
+    )
+    const readAll = readReadableStream(stream)
+
+    await Promise.resolve()
+    expect(__fictIsSSRSessionActive()).toBe(true)
+
+    ready = true
+    pending.resolve()
+    expect(await readAll).toContain('done')
+    expect(__fictIsSSRSessionActive()).toBe(false)
+  })
+
   it('contains errors emitted by the internal Node stream on abort', async () => {
     const globals = globalThis as Record<string, unknown>
     const hadRequire = Object.prototype.hasOwnProperty.call(globals, 'require')

@@ -1,6 +1,10 @@
 import { ErrorBoundary, Suspense, createRoot, render } from '@fictjs/runtime'
 import { createSignal, reactive } from '@fictjs/runtime/advanced'
-import { __fictCreateSSRSession, __fictRunWithSSRSession } from '@fictjs/runtime/internal'
+import {
+  __fictCreateSSRSession,
+  __fictGetCurrentSSRSession,
+  __fictRunWithSSRSession,
+} from '@fictjs/runtime/internal'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 import { resource } from '../src/resource'
@@ -854,6 +858,52 @@ describe('resource', () => {
     bobRoot.dispose()
   })
 
+  it('does not share default resource data when an active SSR fallback loses context', async () => {
+    const fetchResolvers: Array<(value: string) => void> = []
+    const fetcher = vi.fn(
+      () =>
+        new Promise<string>(resolve => {
+          fetchResolvers.push(resolve)
+        }),
+    )
+    const r = resource<string, string>(fetcher)
+    let releaseAlice!: () => void
+    let releaseBob!: () => void
+    const aliceGate = new Promise<void>(resolve => {
+      releaseAlice = resolve
+    })
+    const bobGate = new Promise<void>(resolve => {
+      releaseBob = resolve
+    })
+
+    const aliceRun = __fictRunWithSSRSession(__fictCreateSSRSession(), async () => {
+      await aliceGate
+      expect(__fictGetCurrentSSRSession()).toBeNull()
+      return createRoot(() => r.read('viewer'))
+    })
+    const bobRun = __fictRunWithSSRSession(__fictCreateSSRSession(), async () => {
+      await bobGate
+      expect(__fictGetCurrentSSRSession()).toBeNull()
+      return createRoot(() => r.read('viewer'))
+    })
+
+    releaseAlice()
+    const aliceRoot = await aliceRun
+    releaseBob()
+    const bobRoot = await bobRun
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    fetchResolvers[0]?.('Alice')
+    fetchResolvers[1]?.('Bob')
+    await vi.runAllTimersAsync()
+    await tick()
+
+    expect(aliceRoot.value.data).toBe('Alice')
+    expect(bobRoot.value.data).toBe('Bob')
+    aliceRoot.dispose()
+    bobRoot.dispose()
+  })
+
   it('deduplicates equal reads within one SSR request session', async () => {
     const fetcher = vi.fn().mockResolvedValue('Alice')
     const r = resource<string, string>(fetcher)
@@ -914,6 +964,52 @@ describe('resource', () => {
     expect(aliceRoot.value.data).toBe('Alice')
     expect(bobRoot.value.data).toBe('Alice')
 
+    aliceRoot.dispose()
+    bobRoot.dispose()
+  })
+
+  it('honors explicit shared resource scope after an SSR fallback loses context', async () => {
+    let resolveFetch!: (value: string) => void
+    const fetcher = vi.fn(
+      () =>
+        new Promise<string>(resolve => {
+          resolveFetch = resolve
+        }),
+    )
+    const r = resource<string, string>({
+      fetch: fetcher,
+      cache: { scope: 'shared' },
+    })
+    let releaseAlice!: () => void
+    let releaseBob!: () => void
+    const aliceGate = new Promise<void>(resolve => {
+      releaseAlice = resolve
+    })
+    const bobGate = new Promise<void>(resolve => {
+      releaseBob = resolve
+    })
+
+    const aliceRun = __fictRunWithSSRSession(__fictCreateSSRSession(), async () => {
+      await aliceGate
+      return createRoot(() => r.read('viewer'))
+    })
+    const bobRun = __fictRunWithSSRSession(__fictCreateSSRSession(), async () => {
+      await bobGate
+      return createRoot(() => r.read('viewer'))
+    })
+
+    releaseAlice()
+    const aliceRoot = await aliceRun
+    releaseBob()
+    const bobRoot = await bobRun
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    resolveFetch('Public')
+    await vi.runAllTimersAsync()
+    await tick()
+
+    expect(aliceRoot.value.data).toBe('Public')
+    expect(bobRoot.value.data).toBe('Public')
     aliceRoot.dispose()
     bobRoot.dispose()
   })

@@ -10,7 +10,7 @@
 
 import { createEffect, onCleanup, createSuspenseToken } from '@fictjs/runtime'
 import { createSignal, isReactive } from '@fictjs/runtime/advanced'
-import { __fictGetCurrentSSRSession } from '@fictjs/runtime/internal'
+import { __fictGetCurrentSSRSession, __fictIsSSRSessionActive } from '@fictjs/runtime/internal'
 
 /**
  * The result of reading a resource.
@@ -363,8 +363,15 @@ export function resource<T, Args = void>(
 
   const resolveCache = (): Cache => {
     const session = __fictGetCurrentSSRSession()
-    if (resolvedCacheOptions.scope === 'shared' || !session) {
+    if (resolvedCacheOptions.scope === 'shared') {
       return sharedCache
+    }
+
+    if (!session) {
+      // An active SSR render without a visible session means its async carrier
+      // was lost or is unavailable (for example in an edge fallback). Never
+      // fall back to process-wide memory for the default request scope.
+      return __fictIsSSRSessionActive() ? new Map() : sharedCache
     }
 
     let requestCache = requestCaches.get(session)
