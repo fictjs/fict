@@ -387,6 +387,26 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
     expect(preserveImports?.code).toMatch(/import React from ["']react["']/)
   })
 
+  it('maps the compiler sourcemap option to Babel sourceMaps', () => {
+    const enabled = transformSync(reactiveComponent, {
+      filename: 'preset-sourcemap.tsx',
+      configFile: false,
+      babelrc: false,
+      presets: [[fictPreset, { dev: false, strictGuarantee: false, sourcemap: true }]],
+    })
+    const callerDisabled = transformSync(reactiveComponent, {
+      filename: 'caller-sourcemap.tsx',
+      sourceMaps: false,
+      configFile: false,
+      babelrc: false,
+      presets: [[fictPreset, { dev: false, strictGuarantee: false, sourcemap: true }]],
+    })
+
+    expect(enabled?.map?.sources).toContain('preset-sourcemap.tsx')
+    expect(enabled?.map?.mappings).not.toBe('')
+    expect(callerDisabled?.map).toBeNull()
+  })
+
   it('detects TypeScript and TSX syntax from the file extension', () => {
     const typed = transformSync(
       `

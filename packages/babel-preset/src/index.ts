@@ -426,6 +426,7 @@ export default function fictPreset(
   return {
     plugins,
     ...(overrides.length > 0 ? { overrides } : {}),
+    ...(compilerOptions.sourcemap !== undefined ? { sourceMaps: compilerOptions.sourcemap } : {}),
   }
 }
 
