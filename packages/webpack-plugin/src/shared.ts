@@ -7,7 +7,7 @@ export const FICT_WEBPACK_LOADER_CONTEXT = Symbol.for('@fictjs/webpack-plugin/lo
 const FICT_WEBPACK_BUILD_INFO_KEY = 'fictWebpackMetadata'
 
 interface StoredFictWebpackMetadata {
-  version: 1
+  version: 2
   filename: string
   metadataJson: string
   dependencyFingerprint: string | null
@@ -90,7 +90,7 @@ export function storeFictModuleMetadata(
     throw new Error(`[fict] Webpack did not expose buildInfo for ${filename}.`)
   }
   const stored: StoredFictWebpackMetadata = {
-    version: 1,
+    version: 2,
     filename: normalizeFileName(filename),
     metadataJson: JSON.stringify(metadata),
     dependencyFingerprint,
@@ -110,13 +110,22 @@ export function restoreFictModuleMetadata(
   if (!stored || typeof stored !== 'object') {
     throw new Error('[fict] Cached Webpack module metadata is malformed.')
   }
-  const candidate = stored as Partial<StoredFictWebpackMetadata>
+  const candidate = stored as {
+    version?: unknown
+    filename?: unknown
+    metadataJson?: unknown
+    dependencyFingerprint?: unknown
+    metadataDependencies?: unknown
+  }
+  const isLegacy = candidate.version === 1
+  const isCurrent = candidate.version === 2
   if (
-    candidate.version !== 1 ||
+    (!isLegacy && !isCurrent) ||
     typeof candidate.filename !== 'string' ||
     typeof candidate.metadataJson !== 'string' ||
     (candidate.dependencyFingerprint !== null &&
       typeof candidate.dependencyFingerprint !== 'string') ||
+    (isCurrent && !Array.isArray(candidate.metadataDependencies)) ||
     (candidate.metadataDependencies !== undefined &&
       (!Array.isArray(candidate.metadataDependencies) ||
         candidate.metadataDependencies.some(dependency => typeof dependency !== 'string')))
@@ -144,7 +153,9 @@ export function restoreFictModuleMetadata(
   return {
     filename: normalizeFileName(candidate.filename),
     metadata: metadata as ModuleReactiveMetadata,
-    dependencyFingerprint: candidate.dependencyFingerprint,
+    // V1 did not require metadataDependencies. Preserve its module metadata so the graph can be
+    // reconstructed, but force one rebuild rather than silently treating unknown inputs as empty.
+    dependencyFingerprint: isLegacy ? null : candidate.dependencyFingerprint,
     metadataDependencies: [
       ...new Set((candidate.metadataDependencies ?? []).map(normalizeFileName)),
     ].sort(),

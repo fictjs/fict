@@ -51,6 +51,7 @@ const hookMetadata = (reactive: boolean): string =>
   })
 
 interface StoredWebpackMetadata {
+  version: number
   dependencyFingerprint: string | null
   metadataDependencies: string[]
 }
@@ -100,6 +101,29 @@ function createRebuildObserver(): {
     },
   }
   return observation
+}
+
+function createLegacyCachePlugin(resource: string): { apply(compiler: Compiler): void } {
+  let downgradeNextCompilation = true
+  return {
+    apply(compiler: Compiler): void {
+      compiler.hooks.afterCompile.tap('FictWebpackLegacyCacheFixture', compilation => {
+        if (!downgradeNextCompilation) return
+        downgradeNextCompilation = false
+        const module = [...compilation.modules].find(
+          candidate => (candidate as { resource?: unknown }).resource === resource,
+        ) as { buildInfo?: Record<string, unknown> } | undefined
+        const stored = module?.buildInfo?.fictWebpackMetadata
+        if (!stored || typeof stored !== 'object') {
+          throw new Error(`No persisted Fict metadata found for ${resource}.`)
+        }
+        const legacy = stored as Record<string, unknown>
+        legacy.version = 1
+        legacy.dependencyFingerprint = '{"localDependencies":[],"packageMetadataDependencies":[]}'
+        delete legacy.metadataDependencies
+      })
+    },
+  }
 }
 
 describe('@fictjs/webpack-plugin package metadata', () => {
@@ -271,6 +295,46 @@ describe('@fictjs/webpack-plugin package metadata', () => {
       expect(builtFixtureFiles(changedStats, root)).toContain(entryPath)
     } finally {
       await closeWatching(watching, compiler)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rebuilds a v1 filesystem-cache record that lacks metadata dependencies', async () => {
+    const root = await createFixture({
+      'entry.ts': entrySource,
+      'node_modules/hook-lib/index.js': 'exports.useCounter = () => 1',
+      'node_modules/hook-lib/package.json': packageJson('./hook.fict.meta.json'),
+      'node_modules/hook-lib/hook.fict.meta.json': hookMetadata(true),
+    })
+    const entryPath = path.join(root, 'entry.ts')
+    const cache = {
+      type: 'filesystem' as const,
+      cacheDirectory: path.join(root, '.webpack-cache'),
+    }
+    const rebuildObserver = createRebuildObserver()
+    const legacyCachePlugin = createLegacyCachePlugin(entryPath)
+    const baseOptions = {
+      cache,
+      externals: { 'hook-lib': 'commonjs hook-lib' },
+      plugins: [legacyCachePlugin, rebuildObserver.plugin],
+    }
+    const configuration = () => createWebpackConfiguration(root, baseOptions)
+
+    try {
+      const firstStats = await runCompiler(configuration())
+      expect(await readBundle(root)).toMatch(/count\(\)\s*\*\s*2/)
+      expect(storedMetadata(firstStats, entryPath).version).toBe(1)
+
+      const migratedStats = await runCompiler(configuration())
+      expect(rebuildObserver.builtBeforeFict).not.toContain(entryPath)
+      expect(rebuildObserver.rebuiltByFict).toContain(entryPath)
+      expect(storedMetadata(migratedStats, entryPath).version).toBe(2)
+
+      const recachedStats = await runCompiler(configuration())
+      expect(builtFixtureFiles(recachedStats, root)).toEqual([])
+      expect(rebuildObserver.rebuiltByFict).toEqual([])
+      expect(storedMetadata(recachedStats, entryPath).version).toBe(2)
+    } finally {
       await rm(root, { recursive: true, force: true })
     }
   })
