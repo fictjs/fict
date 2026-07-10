@@ -72,6 +72,11 @@ interface BabelFileDataStore {
   set(key: string, value: unknown): void
 }
 
+const TS_FILENAME_RE = /\.ts(?:[?#].*)?$/i
+const TSX_FILENAME_RE = /\.tsx(?:[?#].*)?$/i
+const MTS_FILENAME_RE = /\.mts(?:[?#].*)?$/i
+const CTS_FILENAME_RE = /\.cts(?:[?#].*)?$/i
+
 function getFileDataStore(file: unknown): BabelFileDataStore {
   return file as BabelFileDataStore
 }
@@ -97,13 +102,13 @@ function resolveTypeScriptTransformOptions(
     }
   }
   if (!filename) return null
-  if (/\.tsx$/i.test(filename)) {
+  if (TSX_FILENAME_RE.test(filename)) {
     return { ...baseOptions, isTSX: true, allExtensions: true }
   }
-  if (/\.ts$/i.test(filename)) {
+  if (TS_FILENAME_RE.test(filename)) {
     return { ...baseOptions, isTSX: false, allExtensions: true }
   }
-  if (/\.[cm]ts$/i.test(filename)) {
+  if (MTS_FILENAME_RE.test(filename) || CTS_FILENAME_RE.test(filename)) {
     return {
       ...baseOptions,
       isTSX: false,
@@ -118,7 +123,7 @@ function shouldCompileTypeScriptAsCommonJS(
   filename: string | undefined,
   options: TypeScriptOptions,
 ): boolean {
-  return !options.allExtensions && !!filename && /\.cts$/i.test(filename)
+  return !options.allExtensions && !!filename && CTS_FILENAME_RE.test(filename)
 }
 
 function rewriteTypeScriptExtension(source: string): string {
@@ -380,15 +385,15 @@ export default function fictPreset(
     } else {
       overrides.push(
         {
-          test: /\.tsx$/i,
+          test: TSX_FILENAME_RE,
           plugins: [['@babel/plugin-syntax-typescript', { isTSX: true }]],
         },
         {
-          test: /\.ts$/i,
+          test: TS_FILENAME_RE,
           plugins: [['@babel/plugin-syntax-typescript', { isTSX: false }]],
         },
         {
-          test: /\.mts$/i,
+          test: MTS_FILENAME_RE,
           sourceType: 'module',
           plugins: [
             [
@@ -401,7 +406,7 @@ export default function fictPreset(
           ],
         },
         {
-          test: /\.cts$/i,
+          test: CTS_FILENAME_RE,
           sourceType: 'unambiguous',
           plugins: [
             [

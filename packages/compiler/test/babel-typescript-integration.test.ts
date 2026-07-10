@@ -407,6 +407,31 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
     expect(callerDisabled?.map).toBeNull()
   })
 
+  it.each([
+    { filename: 'virtual.ts?query', source: `export const value: number = 1`, commonjs: false },
+    {
+      filename: 'virtual.tsx#fragment',
+      source: `export const view: JSX.Element = <div />`,
+      commonjs: false,
+    },
+    { filename: 'virtual.mts?query', source: `export const value: number = 1`, commonjs: false },
+    { filename: 'virtual.cts#fragment', source: `export const value: number = 1`, commonjs: true },
+  ])(
+    'detects TypeScript through a URL-suffixed filename $filename',
+    ({ filename, source, commonjs }) => {
+      const result = transformSync(source, {
+        filename,
+        configFile: false,
+        babelrc: false,
+        presets: [[fictPreset, { dev: false, strictGuarantee: false }]],
+      })
+
+      expect(result?.code).not.toContain(': number')
+      expect(result?.code).not.toContain('JSX.Element')
+      if (commonjs) expect(result?.code).toContain('exports.value =')
+    },
+  )
+
   it('detects TypeScript and TSX syntax from the file extension', () => {
     const typed = transformSync(
       `
