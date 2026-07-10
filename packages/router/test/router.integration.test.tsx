@@ -146,6 +146,27 @@ describe('Router integration (MemoryRouter)', () => {
     expect(screen.queryByTestId('preload-loading')).toBeNull()
   })
 
+  it('renders the route error element when preload rejects with undefined', async () => {
+    render(() => (
+      <MemoryRouter initialEntries={['/failed']}>
+        <Route
+          path="/failed"
+          preload={() => Promise.reject(undefined)}
+          loadingElement={<span data-testid="undefined-error-loading">loading</span>}
+          errorElement={<span data-testid="undefined-error">failed</span>}
+          element={<span data-testid="undefined-error-content">content</span>}
+        />
+      </MemoryRouter>
+    ))
+
+    expect(screen.getByTestId('undefined-error-loading').textContent).toBe('loading')
+
+    await vi.waitFor(() => {
+      expect(screen.getByTestId('undefined-error').textContent).toBe('failed')
+    })
+    expect(screen.queryByTestId('undefined-error-content')).toBeNull()
+  })
+
   it('navigates between routes and updates location signal', async () => {
     render(() => (
       <MemoryRouter initialEntries={['/']}>

@@ -49,6 +49,7 @@ import { compileRoute, createBranches, hasPathPrefix, matchRoutes, resolvePath }
 interface RouteDataState<T = unknown> {
   data: T | undefined
   error: unknown
+  hasError: boolean
   loading: boolean
 }
 
@@ -223,6 +224,7 @@ function RenderMatchesView(props: RenderMatchesProps): FictNode {
   const dataState = createSignal<RouteDataState>({
     data: undefined,
     error: undefined,
+    hasError: false,
     loading: false,
   })
   let preloadToken = 0
@@ -247,19 +249,19 @@ function RenderMatchesView(props: RenderMatchesProps): FictNode {
         // Increment token to invalidate any pending preloads
         const currentToken = ++preloadToken
 
-        dataState({ data: undefined, error: undefined, loading: true })
+        dataState({ data: undefined, error: undefined, hasError: false, loading: true })
 
         Promise.resolve(preload(preloadArgs))
           .then(result => {
             // Only apply result if this preload is still current
             if (currentToken === preloadToken) {
-              dataState({ data: result, error: undefined, loading: false })
+              dataState({ data: result, error: undefined, hasError: false, loading: false })
             }
           })
           .catch(error => {
             // Only apply error if this preload is still current
             if (currentToken === preloadToken) {
-              dataState({ data: undefined, error, loading: false })
+              dataState({ data: undefined, error, hasError: true, loading: false })
             }
           })
       }
@@ -280,7 +282,7 @@ function RenderMatchesView(props: RenderMatchesProps): FictNode {
         }>
       | undefined
 
-    return state.error !== undefined && route.errorElement ? (
+    return state.hasError && route.errorElement ? (
       route.errorElement
     ) : state.loading && route.loadingElement ? (
       route.loadingElement
