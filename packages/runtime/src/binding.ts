@@ -1542,6 +1542,7 @@ function globalEventHandler(e: Event): void {
   const dataKey = `${key}Data` as `$$${string}Data`
   const oriTarget = e.target
   const oriCurrentTarget = e.currentTarget
+  const targetDescriptor = Object.getOwnPropertyDescriptor(e, 'target')
   const currentTargetDescriptor = Object.getOwnPropertyDescriptor(e, 'currentTarget')
   let lastHandled: Element | null = null
 
@@ -1652,9 +1653,14 @@ function globalEventHandler(e: Event): void {
       walkUpTree()
     }
   } finally {
-    // Reset target and remove the temporary currentTarget override. Leaving an
-    // own getter behind makes currentTarget remain non-null after dispatch.
-    retarget(oriTarget as EventTarget)
+    // Restore both descriptors instead of pinning retargeted values as own
+    // properties. The native getters must remain authoritative if an Event is
+    // dispatched again at a different target.
+    if (targetDescriptor) {
+      Object.defineProperty(e, 'target', targetDescriptor)
+    } else {
+      Reflect.deleteProperty(e, 'target')
+    }
     if (currentTargetDescriptor) {
       Object.defineProperty(e, 'currentTarget', currentTargetDescriptor)
     } else {

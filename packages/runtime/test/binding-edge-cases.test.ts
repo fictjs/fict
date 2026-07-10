@@ -1968,6 +1968,43 @@ describe('Binding Edge Cases', () => {
       expect(Object.prototype.hasOwnProperty.call(event, 'currentTarget')).toBe(false)
     })
 
+    it('restores target when the same Event is dispatched at different elements', () => {
+      const first = document.createElement('button')
+      const second = document.createElement('button')
+      first.id = 'first'
+      second.id = 'second'
+      container.append(first, second)
+      delegateEvents(['click'])
+
+      const delegatedTargets: string[] = []
+      const documentTargets: string[] = []
+      ;(first as any).$$click = (event: Event) => {
+        delegatedTargets.push((event.target as Element).id)
+      }
+      ;(second as any).$$click = (event: Event) => {
+        delegatedTargets.push((event.target as Element).id)
+      }
+      const observeDocumentTarget = (event: Event) => {
+        documentTargets.push((event.target as Element).id)
+      }
+      document.addEventListener('click', observeDocumentTarget)
+
+      try {
+        const event = new Event('click', { bubbles: true })
+        expect(Object.prototype.hasOwnProperty.call(event, 'target')).toBe(false)
+
+        first.dispatchEvent(event)
+        second.dispatchEvent(event)
+
+        expect(delegatedTargets).toEqual(['first', 'second'])
+        expect(documentTargets).toEqual(['first', 'second'])
+        expect(event.target).toBe(second)
+        expect(Object.prototype.hasOwnProperty.call(event, 'target')).toBe(false)
+      } finally {
+        document.removeEventListener('click', observeDocumentTarget)
+      }
+    })
+
     it('clears delegated events', () => {
       const el = document.createElement('button')
       container.appendChild(el)
