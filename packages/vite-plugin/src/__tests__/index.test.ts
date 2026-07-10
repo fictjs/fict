@@ -3247,6 +3247,90 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it('preserves entry directories under a custom metadataDir', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-library-metadata-dir-entries-'))
+
+    try {
+      await writeFile(
+        path.join(root, 'package.json'),
+        JSON.stringify({ name: 'fict-hook-lib', type: 'module' }),
+      )
+      const alphaPath = path.join(root, 'src', 'alpha.ts')
+      const betaPath = path.join(root, 'src', 'beta.ts')
+      const plugin = getTestPlugin({
+        library: { metadataDir: 'fict-meta', packageJson: false },
+        useTypeScriptProject: false,
+      })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+      const transformContext = { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() }
+
+      await plugin.transform?.call(
+        transformContext,
+        `
+          import { $state } from 'fict'
+          export function useAlpha() {
+            const value = $state(1)
+            return value
+          }
+        `,
+        alphaPath,
+      )
+      await plugin.transform?.call(
+        transformContext,
+        `
+          import { $state } from 'fict'
+          export function useBeta() {
+            const value = $state(2)
+            return value
+          }
+        `,
+        betaPath,
+      )
+
+      const emitted: { type: 'asset'; fileName: string; source: string }[] = []
+      plugin.generateBundle?.call(
+        {
+          emitFile(asset: (typeof emitted)[number]) {
+            emitted.push(asset)
+            return `asset-${emitted.length}`
+          },
+          warn: vi.fn(),
+        },
+        {},
+        {
+          'a/index.js': {
+            type: 'chunk',
+            fileName: 'a/index.js',
+            isEntry: true,
+            facadeModuleId: alphaPath,
+            modules: { [alphaPath]: {} },
+            exports: ['useAlpha'],
+          },
+          'b/index.js': {
+            type: 'chunk',
+            fileName: 'b/index.js',
+            isEntry: true,
+            facadeModuleId: betaPath,
+            modules: { [betaPath]: {} },
+            exports: ['useBeta'],
+          },
+        },
+      )
+
+      const metadataAssets = emitted.filter(asset => asset.fileName.endsWith('.fict.meta.json'))
+      expect(metadataAssets.map(asset => asset.fileName)).toEqual([
+        'fict-meta/a/index.fict.meta.json',
+        'fict-meta/b/index.fict.meta.json',
+      ])
+      expect(metadataAssets.map(asset => Object.keys(JSON.parse(asset.source).hooks))).toEqual([
+        ['useAlpha'],
+        ['useBeta'],
+      ])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('maps multi-format library metadata through module and main package targets', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-library-main-module-'))
 

@@ -2140,7 +2140,7 @@ function metadataFileNameForChunk(chunkFileName: string, metadataDir: string): s
   const chunkDir = path.posix.dirname(normalized)
   const baseName = path.posix.basename(normalized).replace(/\.(?:mjs|cjs|js)$/, '')
   const defaultDir = chunkDir === '.' ? '' : chunkDir
-  return joinAssetPath(metadataDir || defaultDir, `${baseName}.fict.meta.json`)
+  return joinAssetPath(metadataDir, defaultDir, `${baseName}.fict.meta.json`)
 }
 
 function getStoredModuleMetadata(
