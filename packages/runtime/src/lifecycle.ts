@@ -1,5 +1,5 @@
 import { enterRootGuard, exitRootGuard } from './cycle-guard'
-import { getDevtoolsHook } from './devtools'
+import { getSafeDevtoolsHook as getDevtoolsHook } from './devtools'
 import type { Cleanup, ErrorInfo, SuspenseToken } from './types'
 
 const isDev =

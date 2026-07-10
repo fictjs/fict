@@ -36,7 +36,7 @@ import {
   normalizeSVGAttributeName,
   resolveNamespacedAttribute,
 } from './constants'
-import { getDevtoolsHook } from './devtools'
+import { getSafeDevtoolsHook as getDevtoolsHook } from './devtools'
 import { isDocumentFragmentLike, isHTMLElementLike, isNodeLike } from './dom-guards'
 import { assertValidDOMAttributeName, assertValidDOMElementName } from './dom-names'
 import { __fictPushContext, __fictPopContext, __fictGetCurrentComponentId } from './hooks'

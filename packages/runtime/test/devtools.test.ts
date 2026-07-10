@@ -1,12 +1,23 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
-import { batch, createEffect, createMemo, createRoot, render } from '../src/index'
+import {
+  batch,
+  createEffect,
+  createMemo,
+  createRoot,
+  createSuspenseToken,
+  render,
+} from '../src/index'
 import {
   FICT_DEVTOOLS_MIN_PROTOCOL_VERSION,
   FICT_DEVTOOLS_PROTOCOL_VERSION,
   createSignal,
+  getDevtoolsHook,
   isDevtoolsHookCompatible,
 } from '../src/advanced'
+import { registerSuspenseHandler } from '../src/lifecycle'
+
+const tick = () => Promise.resolve()
 
 describe('devtools hook integration', () => {
   let original: unknown
@@ -130,6 +141,272 @@ describe('devtools hook integration', () => {
 
     count(1)
     expect(events.some(e => e === `signal:${signalId}:update:1`)).toBe(true)
+  })
+
+  it('preserves the public raw hook identity and supports partial legacy hooks', () => {
+    const calls: string[] = []
+    const hook = {
+      registerSignal: (id: number) => calls.push(`signal:${id}`),
+      registerEffect: (id: number) => calls.push(`effect:${id}`),
+    }
+    ;(globalThis as any).__FICT_DEVTOOLS_HOOK__ = hook
+
+    expect(getDevtoolsHook()).toBe(hook)
+    const value = createSignal(0)
+    expect(() => createEffect(() => value())).not.toThrow()
+    expect(calls.some(call => call.startsWith('signal:'))).toBe(true)
+    expect(calls.some(call => call.startsWith('effect:'))).toBe(true)
+  })
+
+  it('keeps safe hook methods bound to the raw hook and observes replacements', () => {
+    const hook = (globalThis as any).__FICT_DEVTOOLS_HOOK__
+    const receivers: unknown[] = []
+    const versions: string[] = []
+    const value = createSignal(0)
+    hook.updateSignal = function (this: unknown) {
+      receivers.push(this)
+      versions.push('first')
+    }
+
+    value(1)
+    hook.updateSignal = function (this: unknown) {
+      receivers.push(this)
+      versions.push('second')
+    }
+    value(2)
+
+    expect(receivers).toEqual([hook, hook])
+    expect(versions).toEqual(['first', 'second'])
+  })
+
+  it('isolates throwing required-method and compatibility getters', async () => {
+    const hook = (globalThis as any).__FICT_DEVTOOLS_HOOK__
+    const error = new Error('observer getter failed')
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const value = createSignal(0)
+    const seen: number[] = []
+    createEffect(() => seen.push(value()))
+    Object.defineProperty(hook, 'updateSignal', {
+      configurable: true,
+      get: () => {
+        throw error
+      },
+    })
+
+    try {
+      expect(() => value(1)).not.toThrow()
+      await tick()
+      expect(seen).toEqual([0, 1])
+
+      Object.defineProperty(hook, 'devtools', {
+        configurable: true,
+        get: () => {
+          throw error
+        },
+      })
+      expect(() => createSignal(2)).not.toThrow()
+      expect(
+        errorSpy.mock.calls.some(([message]) =>
+          String(message).includes('Hook method "compatibility" failed'),
+        ),
+      ).toBe(true)
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
+  it('isolates scheduler and signal hook failures from reactive state', async () => {
+    const hook = (globalThis as any).__FICT_DEVTOOLS_HOOK__
+    const error = new Error('observer failed')
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    hook.batchStart = () => {
+      throw error
+    }
+    hook.batchEnd = () => {
+      throw error
+    }
+    hook.flushStart = () => {
+      throw error
+    }
+    hook.flushEnd = () => {
+      throw error
+    }
+    hook.updateSignal = () => {
+      throw error
+    }
+
+    try {
+      const value = createSignal(0)
+      const seen: number[] = []
+      createEffect(() => seen.push(value()))
+
+      expect(() => batch(() => value(1))).not.toThrow()
+      expect(seen).toEqual([0, 1])
+
+      value(2)
+      await tick()
+      expect(seen).toEqual([0, 1, 2])
+
+      for (const method of ['batchStart', 'batchEnd', 'flushStart', 'flushEnd', 'updateSignal']) {
+        expect(
+          errorSpy.mock.calls.some(([message]) =>
+            String(message).includes(`Hook method "${method}" failed`),
+          ),
+        ).toBe(true)
+      }
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
+  it('isolates component hook throws and async rejections', async () => {
+    const hook = (globalThis as any).__FICT_DEVTOOLS_HOOK__
+    const error = new Error('component observer failed')
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    hook.registerComponent = () => {
+      throw error
+    }
+    hook.componentRender = () => {
+      throw error
+    }
+    hook.componentMount = async () => {
+      throw error
+    }
+    hook.componentUnmount = () => {
+      throw error
+    }
+    hook.registerRoot = () => {
+      throw error
+    }
+    hook.disposeRoot = () => {
+      throw error
+    }
+
+    function Demo() {
+      const div = document.createElement('div')
+      div.textContent = 'safe'
+      return div
+    }
+
+    try {
+      let dispose = () => {}
+      expect(() => {
+        dispose = render(() => ({ type: Demo, props: {}, key: undefined }) as any, container)
+      }).not.toThrow()
+      expect(container.textContent).toBe('safe')
+
+      await tick()
+      expect(() => dispose()).not.toThrow()
+
+      for (const method of [
+        'registerRoot',
+        'disposeRoot',
+        'registerComponent',
+        'componentRender',
+        'componentMount',
+        'componentUnmount',
+      ]) {
+        expect(
+          errorSpy.mock.calls.some(([message]) =>
+            String(message).includes(`Hook method "${method}" failed`),
+          ),
+        ).toBe(true)
+      }
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
+  it('isolates effect lifecycle and dependency-untrack hook failures', async () => {
+    const hook = (globalThis as any).__FICT_DEVTOOLS_HOOK__
+    const error = new Error('reactive observer failed')
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    hook.effectRun = () => {
+      throw error
+    }
+    hook.effectCleanup = () => {
+      throw error
+    }
+    hook.untrackDependency = () => {
+      throw error
+    }
+
+    try {
+      const useFirst = createSignal(true)
+      const first = createSignal(0)
+      const second = createSignal(0)
+      let runs = 0
+      let cleanups = 0
+      const stop = createEffect(() => {
+        runs++
+        if (useFirst()) first()
+        else second()
+        return () => {
+          cleanups++
+        }
+      })
+
+      useFirst(false)
+      await tick()
+      expect(runs).toBe(2)
+      expect(cleanups).toBe(1)
+
+      first(1)
+      await tick()
+      expect(runs).toBe(2)
+
+      second(1)
+      await tick()
+      expect(runs).toBe(3)
+
+      expect(() => stop()).not.toThrow()
+      expect(cleanups).toBe(3)
+      for (const method of ['effectRun', 'effectCleanup', 'untrackDependency']) {
+        expect(
+          errorSpy.mock.calls.some(([message]) =>
+            String(message).includes(`Hook method "${method}" failed`),
+          ),
+        ).toBe(true)
+      }
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
+  it('does not turn handled suspension into an error when rootSuspend fails', () => {
+    const hook = (globalThis as any).__FICT_DEVTOOLS_HOOK__
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    hook.rootSuspend = () => {
+      throw new Error('suspense observer failed')
+    }
+    const source = createSignal(false)
+    const { token, resolve } = createSuspenseToken()
+    let handled = 0
+
+    try {
+      const root = createRoot(() => {
+        registerSuspenseHandler(() => {
+          handled++
+          return true
+        })
+        createEffect(() => {
+          if (source()) throw token
+        })
+      })
+
+      expect(() => batch(() => source(true))).not.toThrow()
+      expect(handled).toBe(1)
+      expect(
+        errorSpy.mock.calls.some(([message]) =>
+          String(message).includes('Hook method "rootSuspend" failed'),
+        ),
+      ).toBe(true)
+
+      resolve()
+      root.dispose()
+    } finally {
+      errorSpy.mockRestore()
+    }
   })
 
   it('ignores hooks outside the runtime devtools protocol range', () => {

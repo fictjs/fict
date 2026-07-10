@@ -1,5 +1,5 @@
 import { beginFlushGuard, beforeEffectRunGuard, endFlushGuard } from './cycle-guard'
-import { getDevtoolsHook } from './devtools'
+import { getSafeDevtoolsHook as getDevtoolsHook } from './devtools'
 import { __fictGetCurrentComponentId } from './hooks'
 import {
   getCurrentRoot,

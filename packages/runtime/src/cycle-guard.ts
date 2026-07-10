@@ -1,4 +1,4 @@
-import { getDevtoolsHook } from './devtools'
+import { getSafeDevtoolsHook as getDevtoolsHook } from './devtools'
 
 const isDev =
   typeof __DEV__ !== 'undefined'
