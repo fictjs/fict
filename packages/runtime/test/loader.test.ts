@@ -626,6 +626,41 @@ describe('resumable loader snapshot validation', () => {
     })
   })
 
+  it('observes streamed snapshots with the installed document realm', async () => {
+    const iframe = document.createElement('iframe')
+    document.body.appendChild(iframe)
+    const doc = iframe.contentDocument
+    const foreignObserver = iframe.contentWindow?.MutationObserver
+    expect(doc).not.toBeNull()
+    expect(foreignObserver).toBeTypeOf('function')
+
+    vi.stubGlobal('MutationObserver', undefined)
+    try {
+      installResumableLoader({ document: doc!, events: [], prefetch: false })
+
+      const script = doc!.createElement('script')
+      script.type = 'application/json'
+      script.setAttribute('data-fict-snapshot', '')
+      script.textContent = JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sForeignStreamed: {
+            id: 'sForeignStreamed',
+            slots: [[0, 'raw', 'foreign-complete']],
+          },
+        },
+      })
+      doc!.body.appendChild(script)
+
+      await vi.waitFor(() => {
+        expect(__fictGetSSRScope('sForeignStreamed')?.slots[0]?.[2]).toBe('foreign-complete')
+      })
+    } finally {
+      vi.unstubAllGlobals()
+      iframe.remove()
+    }
+  })
+
   it('keeps independent document loaders isolated until shared cleanup', async () => {
     const createIslandDocument = (value: string): Document =>
       createDocumentWithSnapshots(

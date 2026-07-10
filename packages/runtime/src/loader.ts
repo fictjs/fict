@@ -567,7 +567,7 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
     return
   }
 
-  const SnapshotObserver = globalThis.MutationObserver
+  const SnapshotObserver = doc.defaultView?.MutationObserver ?? globalThis.MutationObserver
   if (typeof SnapshotObserver !== 'undefined') {
     installation.snapshotObserver = new SnapshotObserver(mutations => {
       if (!isLoaderInstallationActive(installation)) return
