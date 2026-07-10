@@ -1093,6 +1093,41 @@ function formatImportError(error: unknown): string {
 // Prefetch Implementation
 // ============================================================================
 
+const EVENT_QRL_ATTRIBUTE_PREFIX = 'on:'
+const RESUME_QRL_ATTRIBUTE = 'data-fict-h'
+
+function isQrlAttribute(attribute: Attr): boolean {
+  return (
+    !!attribute.value &&
+    (attribute.name === RESUME_QRL_ATTRIBUTE ||
+      (attribute.name.startsWith(EVENT_QRL_ATTRIBUTE_PREFIX) &&
+        attribute.name.length > EVENT_QRL_ATTRIBUTE_PREFIX.length))
+  )
+}
+
+function hasElementQrl(element: Element): boolean {
+  for (let index = 0; index < element.attributes.length; index++) {
+    const attribute = element.attributes.item(index)
+    if (attribute && isQrlAttribute(attribute)) return true
+  }
+  return false
+}
+
+function forEachPrefetchTarget(root: ParentNode, visit: (element: Element) => void): void {
+  for (const element of Array.from(root.querySelectorAll('*'))) {
+    if (hasElementQrl(element)) visit(element)
+  }
+}
+
+function findClosestPrefetchTarget(element: Element): Element | null {
+  let current: Element | null = element
+  while (current) {
+    if (hasElementQrl(current)) return current
+    current = current.parentElement
+  }
+  return null
+}
+
 function setupPrefetch(installation: LoaderInstallation, strategy: PrefetchStrategy): () => void {
   const cleanupFns: (() => void)[] = []
 
@@ -1117,7 +1152,8 @@ function setupPrefetch(installation: LoaderInstallation, strategy: PrefetchStrat
 
 function setupVisibilityPrefetch(installation: LoaderInstallation, rootMargin: string): () => void {
   const doc = installation.document
-  const VisibilityObserver = doc.defaultView?.IntersectionObserver ?? globalThis.IntersectionObserver
+  const VisibilityObserver =
+    doc.defaultView?.IntersectionObserver ?? globalThis.IntersectionObserver
   if (!VisibilityObserver) {
     return () => {}
   }
@@ -1137,15 +1173,7 @@ function setupVisibilityPrefetch(installation: LoaderInstallation, rootMargin: s
     { rootMargin },
   )
 
-  // Observe all elements with on:* attributes
-  const interactiveElements = doc.querySelectorAll(
-    '[on\\:click], [on\\:input], [on\\:change], [on\\:submit], [on\\:keydown], [on\\:keyup]',
-  )
-  interactiveElements.forEach(el => observer.observe(el))
-
-  // Also observe elements with data-fict-h (resumable components)
-  const resumableHosts = doc.querySelectorAll('[data-fict-h]')
-  resumableHosts.forEach(el => observer.observe(el))
+  forEachPrefetchTarget(doc, element => observer.observe(element))
 
   return () => {
     observer.disconnect()
@@ -1161,13 +1189,7 @@ function setupHoverPrefetch(installation: LoaderInstallation, delay: number): ()
     const target = event.target
     if (!isElementLike(target, doc)) return
 
-    // Find the closest element with interactive attributes
-    const interactiveEl =
-      target.closest('[on\\:click]') ||
-      target.closest('[on\\:input]') ||
-      target.closest('[on\\:change]') ||
-      target.closest('[on\\:submit]') ||
-      target.closest('[data-fict-h]')
+    const interactiveEl = findClosestPrefetchTarget(target)
 
     if (!interactiveEl || interactiveEl === lastHoveredElement) return
 
@@ -1208,37 +1230,19 @@ function setupHoverPrefetch(installation: LoaderInstallation, delay: number): ()
 function prefetchElementQrls(installation: LoaderInstallation, el: Element): void {
   if (!isLoaderInstallationActive(installation)) return
   const ownerDocument = el.ownerDocument ?? (typeof document !== 'undefined' ? document : undefined)
-  // Prefetch event handler QRLs
-  const eventAttrs = ['on:click', 'on:input', 'on:change', 'on:submit', 'on:keydown', 'on:keyup']
-  for (const attr of eventAttrs) {
-    const qrl = el.getAttribute(attr)
-    if (qrl) {
-      prefetchQrl(installation, qrl, ownerDocument)
-    }
-  }
-
-  // Prefetch resume handler QRL
-  const resumeQrl = el.getAttribute('data-fict-h')
-  if (resumeQrl) {
-    prefetchQrl(installation, resumeQrl, ownerDocument)
-  }
-
-  // Also check children for nested QRLs
-  const children = el.querySelectorAll(
-    '[on\\:click], [on\\:input], [on\\:change], [on\\:submit], [data-fict-h]',
-  )
-  children.forEach(child => {
-    for (const attr of eventAttrs) {
-      const qrl = child.getAttribute(attr)
-      if (qrl) {
-        prefetchQrl(installation, qrl, ownerDocument)
+  const prefetchOwnQrls = (element: Element) => {
+    for (let index = 0; index < element.attributes.length; index++) {
+      const attribute = element.attributes.item(index)
+      if (attribute && isQrlAttribute(attribute)) {
+        prefetchQrl(installation, attribute.value, ownerDocument)
       }
     }
-    const childResumeQrl = child.getAttribute('data-fict-h')
-    if (childResumeQrl) {
-      prefetchQrl(installation, childResumeQrl, ownerDocument)
-    }
-  })
+  }
+
+  prefetchOwnQrls(el)
+  for (const descendant of Array.from(el.querySelectorAll('*'))) {
+    prefetchOwnQrls(descendant)
+  }
 }
 
 function prefetchQrl(

@@ -338,6 +338,110 @@ describe('resumable loader snapshot validation', () => {
     }
   })
 
+  it('observes pure event QRLs for visibility prefetch', () => {
+    const doc = createDocumentWithSnapshots()
+    const button = doc.createElement('button')
+    button.setAttribute('on:click', '/visibility-event.js#handle')
+    doc.body.appendChild(button)
+
+    const observed: Element[] = []
+    class TestIntersectionObserver {
+      observe(target: Element) {
+        observed.push(target)
+      }
+
+      unobserve() {}
+
+      disconnect() {}
+    }
+    vi.stubGlobal('IntersectionObserver', TestIntersectionObserver)
+
+    try {
+      installResumableLoader({
+        document: doc,
+        events: [],
+        prefetch: { visibility: true, hover: false },
+      })
+
+      expect(observed).toEqual([button])
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('prefetches an ancestor event QRL when hovering its nested content', async () => {
+    const doc = createDocumentWithSnapshots()
+    const button = doc.createElement('button')
+    button.setAttribute('on:click', '/hover-event.js#handle')
+    const label = doc.createElement('span')
+    button.appendChild(label)
+    doc.body.appendChild(button)
+
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: { visibility: false, hover: true, hoverDelay: 0 },
+    })
+
+    label.dispatchEvent(new Event('pointerover', { bubbles: true }))
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+
+    expect(
+      doc.head.querySelector('link[rel="modulepreload"][href*="/hover-event.js"]'),
+    ).toBeTruthy()
+  })
+
+  it('prefetches and deduplicates nested keyboard and pointer event QRLs', () => {
+    const doc = createDocumentWithSnapshots()
+    const host = doc.createElement('section')
+    host.setAttribute('data-fict-h', '/nested-resume.js#default')
+    const input = doc.createElement('input')
+    input.setAttribute('on:keydown', '/nested-keyboard.js#keydown')
+    input.setAttribute('on:keyup', '/nested-keyboard.js#keyup')
+    const nested = doc.createElement('span')
+    nested.setAttribute('on:pointerdown', '/nested-pointer.js#pointerdown')
+    host.append(input, nested)
+    doc.body.appendChild(host)
+
+    let intersect: ((target: Element) => void) | undefined
+    class TestIntersectionObserver {
+      constructor(callback: IntersectionObserverCallback) {
+        intersect = target =>
+          callback(
+            [{ isIntersecting: true, target } as IntersectionObserverEntry],
+            this as unknown as IntersectionObserver,
+          )
+      }
+
+      observe() {}
+
+      unobserve() {}
+
+      disconnect() {}
+    }
+    vi.stubGlobal('IntersectionObserver', TestIntersectionObserver)
+
+    try {
+      installResumableLoader({
+        document: doc,
+        events: [],
+        prefetch: { visibility: true, hover: false },
+      })
+      expect(intersect).toBeDefined()
+
+      intersect!(host)
+
+      expect(
+        doc.head.querySelectorAll('link[rel="modulepreload"][href*="/nested-keyboard.js"]'),
+      ).toHaveLength(1)
+      expect(
+        doc.head.querySelector('link[rel="modulepreload"][href*="/nested-pointer.js"]'),
+      ).toBeTruthy()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('rejects unsupported snapshot schema versions', () => {
     const issues: SnapshotIssue[] = []
     const doc = createDocumentWithSnapshots(
