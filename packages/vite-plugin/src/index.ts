@@ -1637,16 +1637,16 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     enforce: 'pre',
 
     configResolved(resolvedConfig) {
-      if (resolvedConfig.command === 'serve' && compilerOptions.resumable === true) {
+      if (resolvedConfig.command === 'serve') {
         const effectiveRoot =
           resolvedConfig.resolve.preserveSymlinks === true
             ? resolvedConfig.root
             : normalizeIdentityPath(resolvedConfig.root)
         if (effectiveRoot.includes('?') || effectiveRoot.includes('#')) {
           throw new Error(
-            `[fict] Vite cannot transform project roots containing a literal "?" or "#" ` +
-              `in resumable dev mode: ${JSON.stringify(effectiveRoot)}. Rename the project ` +
-              'directory or disable resumable output.',
+            `[fict] Vite cannot serve project roots containing a literal "?" or "#" ` +
+              `in dev mode: ${JSON.stringify(effectiveRoot)}. Rename the project directory ` +
+              'or expose it through a delimiter-free symlink with preserveSymlinks enabled.',
           )
         }
       }
@@ -2735,8 +2735,8 @@ function assertServableViteDevPath(publicPath: string, filename: string): void {
   if (!publicPath.includes('?') && !publicPath.includes('#')) return
   throw new Error(
     `[fict] Cannot create a resumable Vite dev URL for ${JSON.stringify(filename)}: ` +
-      'Vite cannot serve source paths containing a literal "?" or "#". Rename the path ' +
-      'or disable resumable output.',
+      'Vite cannot serve source paths containing a literal "?" or "#". Rename the path or ' +
+      'expose it through a delimiter-free symlink with preserveSymlinks enabled.',
   )
 }
 

@@ -33,6 +33,7 @@ async function createFixtureServer(
     origin?: string
     port?: number
     preserveSymlinks?: boolean
+    resumable?: boolean
   } = {},
 ): Promise<ViteDevServer> {
   return createServer({
@@ -58,7 +59,7 @@ async function createFixtureServer(
         cache: false,
         useTypeScriptProject: false,
         functionSplitting: options.functionSplitting ?? false,
-        resumable: true,
+        resumable: options.resumable ?? true,
         ...(options.include ? { include: options.include } : {}),
       }),
       ...(options.onHotUpdate
@@ -502,29 +503,37 @@ describe('Vite dev resumable module identities', () => {
     }
   })
 
-  it.each(['?', '#'])('rejects resumable dev when the Vite root contains %s', async delimiter => {
-    const workspace = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-dev-root-path-')))
-    const root = path.join(workspace, `project${delimiter}root`)
-    const module = path.join(root, 'src', 'App.tsx')
+  it.each([
+    { delimiter: '?', resumable: true },
+    { delimiter: '#', resumable: true },
+    { delimiter: '?', resumable: false },
+    { delimiter: '#', resumable: false },
+  ])(
+    'rejects dev when the Vite root contains $delimiter with resumable=$resumable',
+    async ({ delimiter, resumable }) => {
+      const workspace = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-dev-root-path-')))
+      const root = path.join(workspace, `project${delimiter}root`)
+      const module = path.join(root, 'src', 'App.tsx')
 
-    try {
-      await mkdir(path.dirname(module), { recursive: true })
-      await Promise.all([
-        writeFile(
-          path.join(root, 'package.json'),
-          JSON.stringify({ name: 'dev-root-path-fixture', type: 'module' }),
-        ),
-        writeFile(module, counterSource),
-      ])
+      try {
+        await mkdir(path.dirname(module), { recursive: true })
+        await Promise.all([
+          writeFile(
+            path.join(root, 'package.json'),
+            JSON.stringify({ name: 'dev-root-path-fixture', type: 'module' }),
+          ),
+          writeFile(module, counterSource),
+        ])
 
-      expect(__fictVitePluginInternals.createDevPublicModuleId(module, root)).toBe('/src/App.tsx')
-      await expect(createFixtureServer(root)).rejects.toThrow(
-        /Vite cannot transform project roots containing a literal "\?" or "#" in resumable dev mode/,
-      )
-    } finally {
-      await rm(workspace, { recursive: true, force: true })
-    }
-  })
+        expect(__fictVitePluginInternals.createDevPublicModuleId(module, root)).toBe('/src/App.tsx')
+        await expect(createFixtureServer(root, { resumable })).rejects.toThrow(
+          /Vite cannot serve project roots containing a literal "\?" or "#" in dev mode/,
+        )
+      } finally {
+        await rm(workspace, { recursive: true, force: true })
+      }
+    },
+  )
 
   it.each(['?', '#'])(
     'rejects a safe root alias to a physical root containing %s by default',
@@ -534,7 +543,7 @@ describe('Vite dev resumable module identities', () => {
       try {
         const creation = createFixtureServer(aliasRoot)
         await expect(creation).rejects.toThrow(
-          /Vite cannot transform project roots containing a literal "\?" or "#" in resumable dev mode/,
+          /Vite cannot serve project roots containing a literal "\?" or "#" in dev mode/,
         )
         await expect(creation).rejects.toThrow(physicalRoot)
       } finally {
