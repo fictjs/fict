@@ -3521,6 +3521,13 @@ describe('fict vite-plugin', () => {
             return count * 2
           }
         `
+        const variantAppSource = `
+          import { useCount } from ${JSON.stringify(`./hook${suffix}`)}
+          export function VariantApp() {
+            const count = useCount()
+            return count * 2
+          }
+        `
         await writeFile(hookPath, hookSource)
         await writeFile(appPath, appSource)
 
@@ -3546,9 +3553,16 @@ describe('fict vite-plugin', () => {
         const appResult = (await plugin.transform?.call(context, appSource, appPath)) as {
           code: string
         }
+        const variantAppResult = (await plugin.transform?.call(
+          context,
+          variantAppSource,
+          `${appPath}${suffix}`,
+        )) as { code: string }
 
         expect(variantResult).toMatchObject({ code: expect.stringContaining('return 2') })
         expect(appResult.code).toMatch(/count\(\)\s*\*\s*2/)
+        expect(variantAppResult.code).toMatch(/count\s*\*\s*2/)
+        expect(variantAppResult.code).not.toMatch(/count\(\)\s*\*\s*2/)
       } finally {
         await rm(root, { recursive: true, force: true })
       }
@@ -3751,6 +3765,83 @@ describe('fict vite-plugin', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  it.each([
+    ['fragment', '#signal', '#plain'],
+    ['query', '?v=signal', '?v=plain'],
+  ])(
+    'keeps hook metadata separate for %s variants after earlier transforms',
+    async (_kind, signalSuffix, plainSuffix) => {
+      const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-variant-hook-metadata-'))
+      const hookPath = path.join(root, 'use-count.ts')
+      const entry = path.join(root, 'App.ts')
+
+      try {
+        await writeFile(
+          hookPath,
+          `
+            import { createSignal } from '@fictjs/runtime/advanced'
+            const makeValue = (value: number) => value
+            export function useCount() {
+              const count = makeValue(2)
+              return count
+            }
+          `,
+        )
+        await writeFile(
+          entry,
+          `
+            import { useCount as useSignalCount } from ${JSON.stringify(`./use-count.ts${signalSuffix}`)}
+            import { useCount as usePlainCount } from ${JSON.stringify(`./use-count.ts${plainSuffix}`)}
+
+            export function useCounts() {
+              const signalCount = useSignalCount()
+              const plainCount = usePlainCount()
+              return signalCount * 2 + plainCount * 3
+            }
+          `,
+        )
+
+        const result = await build({
+          root,
+          logLevel: 'silent',
+          plugins: [
+            {
+              name: 'test-hook-variants',
+              enforce: 'pre',
+              transform(code, id) {
+                if (!id.includes('/use-count.ts')) return null
+                return code.replace(
+                  'makeValue(2)',
+                  id.endsWith(signalSuffix) ? 'createSignal(2)' : '2',
+                )
+              },
+            },
+            fict({ cache: false, useTypeScriptProject: false, functionSplitting: false }),
+          ],
+          build: {
+            write: false,
+            lib: { entry, formats: ['es'], fileName: () => 'app.js' },
+            rollupOptions: {
+              external: id =>
+                id === 'fict' || id.startsWith('fict/') || id === '@fictjs/runtime/advanced',
+            },
+          },
+        })
+        const outputs = Array.isArray(result) ? result : [result]
+        const code = outputs
+          .flatMap(output => ('output' in output ? output.output : []))
+          .filter(output => output.type === 'chunk')
+          .map(output => output.code)
+          .join('\n')
+
+        expect(code).toMatch(/return\s+[\w$]+\(\)\s*\*\s*2\s*\+\s*[\w$]+\s*\*\s*3/)
+        expect(code).not.toMatch(/return\s+[\w$]+\s*\*\s*2/)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+  )
 
   it('skips bundler virtual runtime modules in library mode', async () => {
     const plugin = fict({ library: true, useTypeScriptProject: false }) as any
