@@ -26,6 +26,23 @@ function createHistoryState(
   }
 }
 
+function isUsableHistoryIndex(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value)
+}
+
+function normalizeTraversalDelta(delta: number): number {
+  if (!Number.isFinite(delta)) return 0
+  const modulo = Math.trunc(delta) % 2 ** 32
+  const unsigned = modulo < 0 ? modulo + 2 ** 32 : modulo
+  return unsigned >= 2 ** 31 ? unsigned - 2 ** 32 : unsigned
+}
+
+function normalizeMemoryIndex(index: number | undefined, fallback: number): number {
+  if (index === undefined || !Number.isFinite(index)) return fallback
+  const normalized = Math.trunc(index)
+  return Number.isSafeInteger(normalized) ? normalized : fallback
+}
+
 /**
  * Read a location from window.history.state
  */
@@ -56,7 +73,7 @@ interface PopIndexTracker {
   rebaseCurrent(location: Location, index: number): void
   stampCurrent(location: Location, index: number): void
   sync(): void
-  trackGo(delta: number): void
+  trackGo(delta: number): number
 }
 
 /**
@@ -76,7 +93,7 @@ function createPopIndexTracker(getCurrentIndex: () => number): PopIndexTracker {
 
   function readNavigationIndex(): number | null {
     const navigationIndex = navigation?.currentEntry?.index
-    return typeof navigationIndex === 'number' ? navigationIndex : null
+    return isUsableHistoryIndex(navigationIndex) ? navigationIndex : null
   }
 
   let observedNavigationIndex = readNavigationIndex()
@@ -117,7 +134,7 @@ function createPopIndexTracker(getCurrentIndex: () => number): PopIndexTracker {
       const stateIndex = state?.idx
       const stateGeneration = state?.[POP_HISTORY_GENERATION_STATE_KEY]
       if (
-        typeof stateIndex === 'number' &&
+        isUsableHistoryIndex(stateIndex) &&
         (stateGeneration === generation || acceptForeignIndexes)
       ) {
         if (stateGeneration !== generation) {
@@ -146,8 +163,9 @@ function createPopIndexTracker(getCurrentIndex: () => number): PopIndexTracker {
     stampCurrent,
     sync,
     trackGo(delta) {
-      const normalizedDelta = Number.isFinite(delta) ? Math.trunc(delta) : 0
+      const normalizedDelta = normalizeTraversalDelta(delta)
       pendingPopDelta = normalizedDelta === 0 ? null : normalizedDelta
+      return normalizedDelta
     },
   }
 }
@@ -181,7 +199,7 @@ export function createBrowserHistory(): History {
     window.location.pathname + window.location.search + window.location.hash,
   )
   const initialIndex = window.history.state?.idx
-  let index = typeof initialIndex === 'number' ? initialIndex : 0
+  let index = isUsableHistoryIndex(initialIndex) ? initialIndex : 0
   const popIndexTracker = createPopIndexTracker(() => index)
 
   interface BlockedPopTransition {
@@ -419,8 +437,8 @@ export function createBrowserHistory(): History {
   }
 
   function go(delta: number) {
-    popIndexTracker.trackGo(delta)
-    window.history.go(delta)
+    const normalizedDelta = popIndexTracker.trackGo(delta)
+    window.history.go(normalizedDelta)
   }
 
   popIndexTracker.stampCurrent(location, index)
@@ -508,7 +526,7 @@ export function createHashHistory(options: { hashType?: 'slash' | 'noslash' } = 
   let action: HistoryAction = 'POP'
   let location = readHashLocation()
   const initialIndex = window.history.state?.idx
-  let index = typeof initialIndex === 'number' ? initialIndex : 0
+  let index = isUsableHistoryIndex(initialIndex) ? initialIndex : 0
   const popIndexTracker = createPopIndexTracker(() => index)
 
   interface BlockedPopTransition {
@@ -775,8 +793,8 @@ export function createHashHistory(options: { hashType?: 'slash' | 'noslash' } = 
   }
 
   function go(delta: number) {
-    popIndexTracker.trackGo(delta)
-    window.history.go(delta)
+    const normalizedDelta = popIndexTracker.trackGo(delta)
+    window.history.go(normalizedDelta)
   }
 
   // Mark the current entry as this instance's anchor. Existing numeric indexes
@@ -857,7 +875,7 @@ export function createMemoryHistory(
     createLocation(entry, null, `${i}`),
   )
 
-  let index = initialIndex ?? entries.length - 1
+  let index = normalizeMemoryIndex(initialIndex, entries.length - 1)
   let action: HistoryAction = 'POP'
 
   // Clamp index to valid range
@@ -951,7 +969,8 @@ export function createMemoryHistory(
   }
 
   function go(delta: number, force = false) {
-    const nextIndex = Math.max(0, Math.min(index + delta, entries.length - 1))
+    const normalizedDelta = normalizeTraversalDelta(delta)
+    const nextIndex = Math.max(0, Math.min(index + normalizedDelta, entries.length - 1))
 
     if (nextIndex === index) return
 
@@ -964,12 +983,12 @@ export function createMemoryHistory(
       const retry = () => {
         if (resumed) return
         resumed = true
-        go(delta)
+        go(normalizedDelta)
       }
       const proceed = () => {
         if (resumed) return
         resumed = true
-        go(delta, true)
+        go(normalizedDelta, true)
       }
 
       for (const blocker of blockers) {

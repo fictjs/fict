@@ -7,6 +7,49 @@ import {
 } from '../src/history'
 
 describe('browser-backed history lifecycle', () => {
+  it.each([
+    ['browser', createBrowserHistory, '/history/numeric'],
+    ['hash', createHashHistory, '/#/history/numeric'],
+  ] as const)('rebases invalid %s history indexes before writing new entries', (_, create, url) => {
+    for (const invalidIndex of [NaN, Infinity, -Infinity, 1.5]) {
+      window.history.replaceState(
+        { usr: null, key: 'invalid-history-index', idx: invalidIndex },
+        '',
+        url,
+      )
+      const history = create()
+
+      expect(window.history.state.idx).toBe(0)
+      history.push('/history/numeric-next')
+      expect(window.history.state.idx).toBe(1)
+
+      history.destroy?.()
+    }
+    window.history.replaceState({ usr: null, key: 'root', idx: 0 }, '', '/')
+  })
+
+  it.each([
+    ['browser', createBrowserHistory, '/history/delta'],
+    ['hash', createHashHistory, '/#/history/delta'],
+  ] as const)('normalizes %s traversal deltas before calling the platform', (_, create, url) => {
+    window.history.replaceState({ usr: null, key: 'history-delta', idx: 0 }, '', url)
+    const go = vi.spyOn(window.history, 'go').mockImplementation(() => {})
+    const history = create()
+
+    history.go(1.9)
+    history.go(-1.9)
+    history.go(NaN)
+    history.go(Infinity)
+    history.go(2 ** 32 + 1)
+    history.go(2 ** 31)
+
+    expect(go.mock.calls).toEqual([[1], [-1], [0], [0], [1], [-(2 ** 31)]])
+
+    history.destroy?.()
+    go.mockRestore()
+    window.history.replaceState({ usr: null, key: 'root', idx: 0 }, '', '/')
+  })
+
   it('removes browser listeners and blockers when destroyed', () => {
     const removeEventListener = vi.spyOn(window, 'removeEventListener')
     const history = createBrowserHistory()
@@ -525,6 +568,43 @@ describe('createMemoryHistory', () => {
       initialIndex: -10,
     })
     expect(history.location.pathname).toBe('/users')
+  })
+
+  it.each([
+    [NaN, '/about'],
+    [Infinity, '/about'],
+    [-Infinity, '/about'],
+    [1.9, '/users'],
+  ])('normalizes an initial numeric index of %s', (initialIndex, expectedPathname) => {
+    const history = createMemoryHistory({
+      initialEntries: ['/', '/users', '/about'],
+      initialIndex,
+    })
+
+    expect(history.location.pathname).toBe(expectedPathname)
+  })
+
+  it('normalizes traversal deltas before indexing memory entries', () => {
+    const history = createMemoryHistory({
+      initialEntries: ['/', '/users', '/about'],
+      initialIndex: 2,
+    })
+    const listener = vi.fn()
+    history.listen(listener)
+
+    history.go(-1.9)
+    expect(history.location.pathname).toBe('/users')
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    history.go(NaN)
+    history.go(Infinity)
+    history.go(-Infinity)
+    expect(history.location.pathname).toBe('/users')
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    history.go(2 ** 32 - 1)
+    expect(history.location.pathname).toBe('/')
+    expect(listener).toHaveBeenCalledTimes(2)
   })
 
   it('should truncate forward entries on push', () => {
