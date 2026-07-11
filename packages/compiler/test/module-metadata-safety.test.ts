@@ -216,6 +216,27 @@ describe('module metadata safety', () => {
     }
   })
 
+  it('restores externally overwritten metadata before reusing the last payload', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_metadata_external_overwrite__')
+    const filePath = path.join(baseDir, 'module.ts')
+    const metaPath = `${filePath}.fict.meta.json`
+    const metadata: ModuleReactiveMetadata = { exports: { value: 'signal' } }
+
+    try {
+      setModuleMetadata(filePath, metadata, { emitModuleMetadata: true })
+      const expectedPayload = readFileSync(metaPath, 'utf8')
+
+      writeFileSync(metaPath, '{"exports":{"value":"memo"}}', 'utf8')
+      setModuleMetadata(filePath, metadata, { emitModuleMetadata: true })
+
+      expect(readFileSync(metaPath, 'utf8')).toBe(expectedPayload)
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+      clearModuleMetadata()
+    }
+  })
+
   it('emits versioned module metadata sidecars', () => {
     const baseDir = path.join(process.cwd(), '__fict_metadata_versioned__')
     mkdirSync(baseDir, { recursive: true })

@@ -672,7 +672,13 @@ export function setModuleMetadata(
   const payload = JSON.stringify(metadata)
   const hasMetaFile = pathIsFile(metaPath)
   cacheFsProbeResult(sharedFsProbeCache, metaPath, hasMetaFile)
-  if (lastWrittenMetadataPayload.get(metaPath) === payload && hasMetaFile) return
+  if (lastWrittenMetadataPayload.get(metaPath) === payload && hasMetaFile) {
+    try {
+      if (readFileSync(metaPath, 'utf8') === payload) return
+    } catch {
+      // Recreate the sidecar if it disappeared or became unreadable after the probe.
+    }
+  }
   try {
     writeMetadataAtomically(metaPath, payload)
     lastWrittenMetadataPayload.set(metaPath, payload)
