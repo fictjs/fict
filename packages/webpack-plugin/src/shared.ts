@@ -62,6 +62,10 @@ export function normalizeFileName(filename: string): string {
   return path.resolve(filename)
 }
 
+export function normalizeWebpackResource(resource: string): string {
+  return path.resolve(resource)
+}
+
 export function createLocalResolutionKey(importer: string, source: string): string {
   return `${normalizeFileName(importer)}\0${source}`
 }
@@ -164,13 +168,24 @@ export function restoreFictModuleMetadata(
     throw new Error(`[fict] Cached Webpack module metadata for ${candidate.filename} is invalid.`)
   }
 
+  const storedFilename = normalizeFileName(candidate.filename)
+  const currentResource =
+    typeof module.resource === 'string' && module.resource
+      ? normalizeWebpackResource(module.resource)
+      : storedFilename
+  const resourceIdentityChanged = currentResource !== storedFilename
+
   return {
-    filename: normalizeFileName(candidate.filename),
+    // Webpack's resource (unlike resourcePath) includes the query and fragment. Prefer the
+    // module's current identity so caches written by older plugin releases cannot collapse
+    // distinct query variants back onto one physical filename.
+    filename: currentResource,
     metadata: metadata as ModuleReactiveMetadata,
     // Older records did not persist completeness. Preserve their bookkeeping metadata, but treat
     // it as incomplete and force one rebuild rather than trusting an unknown graph state.
-    incomplete: isCurrent ? candidate.incomplete === true : true,
-    dependencyFingerprint: isCurrent ? candidate.dependencyFingerprint : null,
+    incomplete: resourceIdentityChanged || (isCurrent ? candidate.incomplete === true : true),
+    dependencyFingerprint:
+      isCurrent && !resourceIdentityChanged ? candidate.dependencyFingerprint : null,
     metadataDependencies: [
       ...new Set((candidate.metadataDependencies ?? []).map(normalizeFileName)),
     ].sort(),

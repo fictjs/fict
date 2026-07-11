@@ -4,12 +4,14 @@ import path from 'node:path'
 
 import { transformAsync, type TransformOptions } from '@babel/core'
 import type { FictPresetOptions } from '@fictjs/babel-preset'
-import { resolvePackageModuleMetadata } from '@fictjs/compiler'
+import { resolvePackageModuleMetadata, type ModuleReactiveMetadata } from '@fictjs/compiler'
 
 import { isUnresolvedPackageResolution, readPackageMetadataAtBoundary } from './package-metadata'
 import {
   createLocalResolutionKey,
   getLoaderBinding,
+  normalizeFileName,
+  normalizeWebpackResource,
   registerFictModule,
   storeFictModuleMetadata,
 } from './shared'
@@ -37,6 +39,7 @@ interface FictLoaderContext {
   cacheable(flag?: boolean): void
   getOptions(): FictWebpackLoaderOptions
   mode?: string
+  resource: string
   resourcePath: string
   rootContext: string
   sourceMap: boolean
@@ -92,25 +95,34 @@ export default function fictWebpackLoader(
   }
 
   this.cacheable(true)
-  let filename: string
+  let resourceIdentity: string
   try {
-    filename = registerFictModule(binding.state, this.resourcePath, binding.module)
+    resourceIdentity = registerFictModule(
+      binding.state,
+      normalizeWebpackResource(this.resource),
+      binding.module,
+    )
   } catch (error) {
     callback(error instanceof Error ? error : new Error(String(error)))
     return
   }
-  binding.state.incompleteModuleMetadata.delete(filename)
-  if (!binding.state.moduleMetadata.has(filename)) {
-    binding.state.moduleMetadata.set(filename, { exports: {} })
+  binding.state.incompleteModuleMetadata.delete(resourceIdentity)
+  if (!binding.state.moduleMetadata.has(resourceIdentity)) {
+    binding.state.moduleMetadata.set(resourceIdentity, { exports: {} })
   }
-  binding.state.metadataDependenciesByFilename.set(filename, new Set())
+  binding.state.metadataDependenciesByFilename.set(resourceIdentity, new Set())
 
   const options = this.getOptions()
+  const compilerFilename = normalizeFileName(this.resourcePath)
+  // The compiler deliberately strips URL-like suffixes from filenames. Give each loader
+  // invocation a private store, then hand its result back under Webpack's full resource identity.
+  // This prevents concurrent query variants from overwriting one physical-path entry.
+  const compilerModuleMetadata = new Map<string, ModuleReactiveMetadata>()
   const registerMetadataDependency = (dependency: string): void => {
     const normalized = path.resolve(dependency)
     const dependencies = new Set([normalized, resolveThroughExistingAncestor(normalized)])
     for (const watched of dependencies) {
-      binding.state.metadataDependenciesByFilename.get(filename)!.add(watched)
+      binding.state.metadataDependenciesByFilename.get(resourceIdentity)!.add(watched)
       if (existsSync(watched)) this.addDependency(watched)
       else this.addMissingDependency(watched)
     }
@@ -122,10 +134,10 @@ export default function fictWebpackLoader(
     ...(binding.state.metadataGraphPrepared
       ? { integrationDiagnostics: [], validateIntegrationMetadata: true }
       : {}),
-    moduleMetadata: binding.state.moduleMetadata,
+    moduleMetadata: compilerModuleMetadata,
     resolveModuleMetadata: (sourceRequest, importer) => {
       if (!importer) return undefined
-      const packageResolutions = binding.state.packageResolutionsByFilename.get(filename)
+      const packageResolutions = binding.state.packageResolutionsByFilename.get(resourceIdentity)
       if (packageResolutions?.has(sourceRequest)) {
         const packageResolution = packageResolutions.get(sourceRequest)
         if (packageResolution === 'opaque') return { exports: {} }
@@ -141,14 +153,15 @@ export default function fictWebpackLoader(
         if (result.kind === 'stale-boundary') throw new Error(result.message)
         return result.kind === 'plain' ? { exports: {} } : null
       }
-      if (sourceRequest.includes('?') || sourceRequest.includes('!')) return { exports: {} }
+      if (sourceRequest.includes('!')) return { exports: {} }
       const dependency = binding.state.resolvedLocalModules.get(
-        createLocalResolutionKey(importer, sourceRequest),
+        createLocalResolutionKey(resourceIdentity, sourceRequest),
       )
       if (dependency) {
         if (binding.state.incompleteModuleMetadata.has(dependency)) return null
         return binding.state.moduleMetadata.get(dependency) ?? null
       }
+      if (sourceRequest.includes('?')) return { exports: {} }
       return resolvePackageModuleMetadata(sourceRequest, importer, {
         emitModuleMetadata: false,
         moduleMetadata: binding.state.moduleMetadata,
@@ -168,37 +181,38 @@ export default function fictWebpackLoader(
     },
     configFile: false,
     cwd: fictPresetDirectory,
-    filename,
+    filename: resourceIdentity,
     inputSourceMap: normalizeInputSourceMap(inputSourceMap),
     presets: [[fictPresetPath, compilerOptions]],
-    sourceFileName: filename,
+    sourceFileName: resourceIdentity,
     sourceMaps: this.sourceMap,
   }).then(
     result => {
       if (!result?.code) {
-        callback(new Error(`[fict] Babel returned no output for ${filename}.`))
+        callback(new Error(`[fict] Babel returned no output for ${resourceIdentity}.`))
         return
       }
       if (
         (result.metadata as Record<string, unknown> | undefined)?.fictModuleMetadataIncomplete ===
         true
       ) {
-        binding.state.incompleteModuleMetadata.add(filename)
+        binding.state.incompleteModuleMetadata.add(resourceIdentity)
       } else {
-        binding.state.incompleteModuleMetadata.delete(filename)
+        binding.state.incompleteModuleMetadata.delete(resourceIdentity)
       }
-      const metadata = binding.state.moduleMetadata.get(filename)
+      const metadata = compilerModuleMetadata.get(compilerFilename)
       if (!metadata) {
-        callback(new Error(`[fict] Compiler did not emit module metadata for ${filename}.`))
+        callback(new Error(`[fict] Compiler did not emit module metadata for ${resourceIdentity}.`))
         return
       }
+      binding.state.moduleMetadata.set(resourceIdentity, metadata)
       try {
         storeFictModuleMetadata(
           binding.state,
           binding.module,
-          filename,
+          resourceIdentity,
           metadata,
-          binding.state.pendingDependencyFingerprints.get(filename) ?? null,
+          binding.state.pendingDependencyFingerprints.get(resourceIdentity) ?? null,
         )
       } catch (error) {
         callback(error instanceof Error ? error : new Error(String(error)))
