@@ -813,10 +813,18 @@ describe('@fictjs/ssr streaming', () => {
       completed = true
 
       const html = Buffer.concat(chunks).toString('utf8')
+      const streamedDocument = parseHTML(html).document
+      const snapshotScopeTypes = Array.from(
+        streamedDocument.querySelectorAll('script[data-fict-snapshot]'),
+      ).flatMap(script => {
+        const snapshot = JSON.parse(script.textContent ?? '') as {
+          scopes: Record<string, { t?: string }>
+        }
+        return Object.values(snapshot.scopes).map(scope => scope.t)
+      })
       expect(html).toContain('OuterDone')
-      expect(
-        parseHTML(html).document.querySelectorAll('template[data-fict-suspense]'),
-      ).toHaveLength(1)
+      expect(streamedDocument.querySelectorAll('template[data-fict-suspense]')).toHaveLength(1)
+      expect(snapshotScopeTypes.sort()).toEqual(['OuterContent', 'Suspense'])
     } finally {
       if (!completed) abort(new Error('abandoned nested Suspense test cleanup'))
     }

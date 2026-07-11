@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { render } from '../src'
+
 import {
   FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
   __fictDisableResumable,
@@ -76,6 +78,34 @@ describe('SSR lifecycle state cleanup', () => {
     expect(() => __fictUseLexicalScope('s-resume', ['value'])).toThrow(
       '[fict] Missing resumed scope for s-resume',
     )
+  })
+
+  it('unregisters destroyed scopes without touching a replacement SSR session', () => {
+    __fictEnableSSR()
+
+    function Child() {
+      return { type: 'span', props: { children: 'child' } }
+    }
+
+    const dispose = render(() => ({ type: Child, props: {} }), document.createElement('div'))
+    const retiredRegistry = __fictGetScopeRegistry()
+    expect(retiredRegistry.size).toBe(1)
+
+    __fictDisableSSR()
+    __fictEnableSSR()
+    const replacementId = __fictRegisterScope(
+      { slots: [], cursor: 0 },
+      document.createElement('div'),
+      'Replacement',
+    )
+    const replacementRegistry = __fictGetScopeRegistry()
+    expect(replacementId).toBe('s1')
+    expect(replacementRegistry.size).toBe(1)
+
+    dispose()
+
+    expect(retiredRegistry.size).toBe(0)
+    expect(replacementRegistry.has(replacementId)).toBe(true)
   })
 
   it('keeps hydration active until all nested hydration scopes exit', () => {

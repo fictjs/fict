@@ -1,4 +1,5 @@
 import type { HookContext } from './hooks'
+import { registerRootCleanup } from './lifecycle'
 import { createSignal, isSignal } from './signal'
 import {
   __fictCreateSSRSession,
@@ -294,6 +295,18 @@ export function __fictRegisterScope(
     scopes.add(id)
   }
   scopeRegistry.set(id, record)
+  registerRootCleanup(() => {
+    if (scopeRegistry.get(id) === record) {
+      scopeRegistry.delete(id)
+    }
+    if (record.boundaryId) {
+      const scopes = boundaryScopes.get(record.boundaryId)
+      scopes?.delete(id)
+      if (scopes?.size === 0) {
+        boundaryScopes.delete(record.boundaryId)
+      }
+    }
+  })
   return id
 }
 
