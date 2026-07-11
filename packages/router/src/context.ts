@@ -5,8 +5,7 @@
  * routing state without prop drilling. Uses Fict's context API.
  */
 
-import { batch, createContext, onCleanup, useContext } from '@fictjs/runtime'
-import { createSignal } from '@fictjs/runtime/advanced'
+import { createContext, onCleanup, useContext } from '@fictjs/runtime'
 
 import { wrapAccessor, wrapValue } from './accessor-utils'
 import type {
@@ -31,26 +30,6 @@ export function readAccessor<T>(value: MaybeAccessor<T>): T {
   return typeof value === 'function' ? (value as () => T)() : value
 }
 
-const activeRouter = createSignal<RouterContextValue | null>(null)
-const activeRouterStack: RouterContextValue[] = []
-
-export function pushActiveRouter(router: RouterContextValue): void {
-  activeRouterStack.push(router)
-  batch(() => {
-    activeRouter(router)
-  })
-}
-
-export function popActiveRouter(router: RouterContextValue): void {
-  const index = activeRouterStack.lastIndexOf(router)
-  if (index >= 0) {
-    activeRouterStack.splice(index, 1)
-  }
-  batch(() => {
-    activeRouter(activeRouterStack[activeRouterStack.length - 1] ?? null)
-  })
-}
-
 /**
  * Default router context value (used when no router is present)
  */
@@ -62,49 +41,21 @@ const defaultLocation: Location = {
   key: 'default',
 }
 
-const defaultNavigate = wrapAccessor(((toOrDelta: To | number) => {
-  const router = activeRouter()
-  if (!router) {
-    console.warn('[fict-router] No router found. Wrap your app in a <Router>')
-    return
-  }
-  const navigate = readAccessor(router.navigate as MaybeAccessor<NavigateFunction>)
-  if (typeof toOrDelta === 'number') {
-    return navigate(toOrDelta)
-  }
-  return navigate(toOrDelta)
+const defaultNavigate = wrapAccessor(((_toOrDelta: To | number) => {
+  console.warn('[fict-router] No router found. Wrap your app in a <Router>')
 }) as NavigateFunction)
 
 const defaultResolvePath = wrapAccessor((to: To) => {
-  const router = activeRouter()
-  if (router) {
-    return readAccessor(router.resolvePath as MaybeAccessor<(to: To) => string>)(to)
-  }
   return typeof to === 'string' ? to : to.pathname || '/'
 })
 
 const defaultRouterContext: RouterContextValue = {
-  location: () => {
-    const router = activeRouter()
-    return router ? readAccessor(router.location) : defaultLocation
-  },
-  params: () => {
-    const router = activeRouter()
-    return router ? readAccessor(router.params) : {}
-  },
-  matches: () => {
-    const router = activeRouter()
-    return router ? readAccessor(router.matches) : []
-  },
+  location: () => defaultLocation,
+  params: () => ({}),
+  matches: () => [],
   navigate: defaultNavigate,
-  isRouting: () => {
-    const router = activeRouter()
-    return router ? readAccessor(router.isRouting) : false
-  },
-  pendingLocation: () => {
-    const router = activeRouter()
-    return router ? readAccessor(router.pendingLocation) : null
-  },
+  isRouting: () => false,
+  pendingLocation: () => null,
   base: wrapValue(''),
   resolvePath: defaultResolvePath,
 }
@@ -168,43 +119,11 @@ export interface BeforeLeaveContextValue {
   confirm: (to: Location, from: Location) => Promise<boolean>
 }
 
-const activeBeforeLeave = createSignal<BeforeLeaveContextValue | null>(null)
-const activeBeforeLeaveStack: BeforeLeaveContextValue[] = []
-
-export function pushActiveBeforeLeave(context: BeforeLeaveContextValue): void {
-  activeBeforeLeaveStack.push(context)
-  batch(() => {
-    activeBeforeLeave(context)
-  })
-}
-
-export function popActiveBeforeLeave(context: BeforeLeaveContextValue): void {
-  const index = activeBeforeLeaveStack.lastIndexOf(context)
-  if (index >= 0) {
-    activeBeforeLeaveStack.splice(index, 1)
-  }
-  batch(() => {
-    activeBeforeLeave(activeBeforeLeaveStack[activeBeforeLeaveStack.length - 1] ?? null)
-  })
-}
-
 const defaultBeforeLeaveContext: BeforeLeaveContextValue = {
-  addHandler: wrapAccessor((handler: BeforeLeaveHandler) => {
-    const context = activeBeforeLeave()
-    if (context) {
-      return readAccessor(
-        context.addHandler as MaybeAccessor<(handler: BeforeLeaveHandler) => () => void>,
-      )(handler)
-    }
+  addHandler: wrapAccessor((_handler: BeforeLeaveHandler) => {
     return () => {}
   }),
-  confirm: wrapAccessor((to: Location, from: Location) => {
-    const context = activeBeforeLeave()
-    if (context) {
-      return readAccessor(
-        context.confirm as MaybeAccessor<(to: Location, from: Location) => Promise<boolean>>,
-      )(to, from)
-    }
+  confirm: wrapAccessor((_to: Location, _from: Location) => {
     return Promise.resolve(true)
   }),
 }

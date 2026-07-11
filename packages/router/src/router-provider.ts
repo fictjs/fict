@@ -3,15 +3,7 @@ import { createSignal } from '@fictjs/runtime/advanced'
 import { jsx } from '@fictjs/runtime/jsx-runtime'
 
 import { wrapAccessor, wrapValue } from './accessor-utils'
-import {
-  BeforeLeaveContext,
-  type BeforeLeaveContextValue,
-  RouterContext,
-  pushActiveBeforeLeave,
-  pushActiveRouter,
-  popActiveBeforeLeave,
-  popActiveRouter,
-} from './context'
+import { BeforeLeaveContext, type BeforeLeaveContextValue, RouterContext } from './context'
 import { stripBaseIfPresent, stripBaseOrWarn } from './router-internals'
 import { getScrollRestoration } from './scroll'
 import type {
@@ -436,13 +428,6 @@ export function RouterProvider(props: {
     base: wrapValue(normalizedBase),
     resolvePath: wrapAccessor(resolvePathFn),
   }
-
-  pushActiveRouter(routerContext)
-  pushActiveBeforeLeave(beforeLeaveContext)
-  onCleanup(() => {
-    popActiveBeforeLeave(beforeLeaveContext)
-    popActiveRouter(routerContext)
-  })
 
   const RouterContextProvider = RouterContext.Provider as unknown as (
     props: Record<string, unknown>,
