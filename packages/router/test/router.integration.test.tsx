@@ -9,6 +9,7 @@ import {
   Routes,
   Route,
   createBrowserHistory,
+  createHashHistory,
   createMemoryHistory,
   useNavigate,
   useLocation,
@@ -21,7 +22,9 @@ import {
   Navigate,
   Redirect,
   type History,
+  type NavigateOptions,
   type RouteDefinition,
+  type To,
 } from '../src'
 import { RouterProvider } from '../src/router-provider'
 import { readAccessor } from '../src/context'
@@ -36,6 +39,18 @@ function NavigateButton({ to }: { to: string }) {
   const target = untrack(() => to)
   return (
     <button data-testid={`go-${target}`} onClick={() => navigate(target)}>
+      go
+    </button>
+  )
+}
+
+function ObjectNavigateButton(props: { testId: string; to: To; options?: NavigateOptions }) {
+  const navigate = useNavigate()
+  const testId = untrack(() => props.testId)
+  const to = untrack(() => props.to)
+  const options = untrack(() => props.options)
+  return (
+    <button data-testid={testId} onClick={() => navigate(to, options)}>
       go
     </button>
   )
@@ -1036,6 +1051,209 @@ describe('Router integration (MemoryRouter)', () => {
     })
 
     expect(screen.getByTestId('path').textContent).toBe('/users/123/settings')
+  })
+
+  it('resolves object pathnames like strings and preserves location fields', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/users/42?old=1#old'] })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <ObjectNavigateButton
+            testId="object-relative"
+            to={{
+              pathname: 'settings',
+              search: '?tab=profile',
+              hash: '#panel',
+              state: { source: 'relative-object' },
+              key: 'relative-object-key',
+            }}
+          />
+          <ObjectNavigateButton
+            testId="object-absolute"
+            to={{
+              pathname: '/absolute',
+              search: '?mode=full',
+              hash: '#top',
+              state: { source: 'absolute-object' },
+              key: 'absolute-object-key',
+            }}
+          />
+          <ObjectNavigateButton
+            testId="object-empty"
+            to={{
+              pathname: '',
+              search: '?only=search',
+              hash: '#kept-path',
+              state: { source: 'empty-object' },
+              key: 'empty-object-key',
+            }}
+          />
+        </RouterProvider>
+      ))
+
+      await act(async () => {
+        screen.getByTestId('object-relative').click()
+      })
+      expect(history.location).toMatchObject({
+        pathname: '/users/42/settings',
+        search: '?tab=profile',
+        hash: '#panel',
+        state: { source: 'relative-object' },
+        key: 'relative-object-key',
+      })
+
+      await act(async () => {
+        screen.getByTestId('object-absolute').click()
+      })
+      expect(history.location).toMatchObject({
+        pathname: '/absolute',
+        search: '?mode=full',
+        hash: '#top',
+        state: { source: 'absolute-object' },
+        key: 'absolute-object-key',
+      })
+
+      await act(async () => {
+        screen.getByTestId('object-empty').click()
+      })
+      expect(history.location).toMatchObject({
+        pathname: '/absolute',
+        search: '?only=search',
+        hash: '#kept-path',
+        state: { source: 'empty-object' },
+        key: 'empty-object-key',
+      })
+    } finally {
+      history.destroy?.()
+    }
+  })
+
+  it('resolves object pathnames with path and route modes under a base', async () => {
+    const initialPath = '/app/projects/42/edit/details'
+    const history = createMemoryHistory({ initialEntries: [initialPath] })
+    const routes: RouteDefinition[] = [
+      {
+        path: '/projects/:id',
+        children: [{ path: 'edit/details', element: <span /> }],
+      },
+    ]
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={routes} base="/app">
+          <ObjectNavigateButton testId="object-path-relative" to={{ pathname: 'settings' }} />
+          <ObjectNavigateButton
+            testId="object-route-relative"
+            to={{ pathname: 'settings' }}
+            options={{ relative: 'route' }}
+          />
+          <ObjectNavigateButton
+            testId="object-base-absolute"
+            to={{ pathname: '/app/dashboard' }}
+            options={{ relative: 'route' }}
+          />
+        </RouterProvider>
+      ))
+
+      await act(async () => {
+        screen.getByTestId('object-path-relative').click()
+      })
+      expect(history.location.pathname).toBe('/app/projects/42/edit/details/settings')
+
+      await act(async () => {
+        history.back()
+      })
+      expect(history.location.pathname).toBe(initialPath)
+
+      await act(async () => {
+        screen.getByTestId('object-route-relative').click()
+      })
+      expect(history.location.pathname).toBe('/app/projects/42/edit/details/settings')
+
+      await act(async () => {
+        screen.getByTestId('object-base-absolute').click()
+      })
+      expect(history.location.pathname).toBe('/app/dashboard')
+    } finally {
+      history.destroy?.()
+    }
+  })
+
+  it('resolves relative object pathnames with browser history', async () => {
+    window.history.replaceState({ usr: null, key: 'browser-start', idx: 0 }, '', '/browser/start')
+    const history = createBrowserHistory()
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <ObjectNavigateButton
+            testId="browser-object-relative"
+            to={{
+              pathname: 'next',
+              search: '?source=browser',
+              hash: '#object',
+              state: { kind: 'browser' },
+              key: 'browser-object-key',
+            }}
+          />
+        </RouterProvider>
+      ))
+
+      await act(async () => {
+        screen.getByTestId('browser-object-relative').click()
+      })
+      expect(history.location).toMatchObject({
+        pathname: '/browser/start/next',
+        search: '?source=browser',
+        hash: '#object',
+        state: { kind: 'browser' },
+        key: 'browser-object-key',
+      })
+      expect(window.location.pathname + window.location.search + window.location.hash).toBe(
+        '/browser/start/next?source=browser#object',
+      )
+    } finally {
+      history.destroy?.()
+      window.history.replaceState({ usr: null, key: 'root', idx: 0 }, '', '/')
+    }
+  })
+
+  it('resolves relative object pathnames with hash history', async () => {
+    window.history.replaceState({ usr: null, key: 'hash-start', idx: 0 }, '', '/#/hash/start')
+    const history = createHashHistory()
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <ObjectNavigateButton
+            testId="hash-object-relative"
+            to={{
+              pathname: 'next',
+              search: '?source=hash',
+              hash: '#object',
+              state: { kind: 'hash' },
+              key: 'hash-object-key',
+            }}
+          />
+        </RouterProvider>
+      ))
+
+      await act(async () => {
+        screen.getByTestId('hash-object-relative').click()
+      })
+      expect(history.location).toMatchObject({
+        pathname: '/hash/start/next',
+        search: '?source=hash',
+        hash: '#object',
+        state: { kind: 'hash' },
+        key: 'hash-object-key',
+      })
+      expect(window.location.hash).toBe('#/hash/start/next?source=hash#object')
+    } finally {
+      history.destroy?.()
+      window.history.replaceState({ usr: null, key: 'root', idx: 0 }, '', '/')
+    }
   })
 
   it('keeps relative Link and NavLink href, active state, and navigation aligned', async () => {

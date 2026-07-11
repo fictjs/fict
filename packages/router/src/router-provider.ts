@@ -255,26 +255,21 @@ function createRouterState(
     let targetPath: string
     const currentPathWithoutBase = stripBaseOrWarn(currentLocation.pathname, baseForStrip) || '/'
 
-    if (typeof to === 'string') {
-      // Empty pathname means search/hash-only navigation - keep current path
-      if (toPathname === '') {
-        targetPath = currentPathWithoutBase
-      } else if (options?.relative === 'route') {
-        // Resolve relative to current route
-        const matches = matchesSignal()
-        const currentMatch = matches[matches.length - 1]
-        const currentRoutePath = currentMatch?.pathname || currentPathWithoutBase
-        targetPath = resolvePath(currentRoutePath, toPathname)
-      } else {
-        // Resolve relative to current pathname
-        // Only strip base if it's an absolute path
-        targetPath = toPathname.startsWith('/')
-          ? stripBaseIfPresent(toPathname, baseForStrip)
-          : resolvePath(currentPathWithoutBase, toPathname)
-      }
+    // Empty pathname means search/hash-only navigation - keep current path.
+    if (toPathname === '') {
+      targetPath = currentPathWithoutBase
+    } else if (toPathname.startsWith('/')) {
+      // Absolute targets are independent of the relative mode. Strip an
+      // existing router base before it is applied uniformly below.
+      targetPath = stripBaseIfPresent(toPathname, baseForStrip)
     } else {
-      const rawTargetPath = toPathname || currentPathWithoutBase
-      targetPath = stripBaseIfPresent(rawTargetPath, baseForStrip)
+      const matches = matchesSignal()
+      const currentMatch = matches[matches.length - 1]
+      const resolutionBase =
+        options?.relative === 'route'
+          ? currentMatch?.pathname || currentPathWithoutBase
+          : currentPathWithoutBase
+      targetPath = resolvePath(resolutionBase, toPathname)
     }
 
     // Create the full target location, preserving to.state and to.key
