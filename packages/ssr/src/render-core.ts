@@ -597,6 +597,7 @@ function startStreamingRenderInSession(
   let failureReported = false
   let cleaned = false
   let removeAbortListener = () => {}
+  let canFinalize = false
 
   const mode = options.mode ?? 'shell'
   const includeSnapshot = options.includeSnapshot !== false
@@ -822,7 +823,7 @@ function startStreamingRenderInSession(
   }
 
   const maybeFinalize = () => {
-    if (pendingCount === 0) {
+    if (canFinalize && pendingCount === 0) {
       finalize()
     }
   }
@@ -857,6 +858,15 @@ function startStreamingRenderInSession(
           reportErrorAndAbort(error)
           return
         }
+      }
+      maybeFinalize()
+    },
+    boundaryAbandoned(id: string) {
+      const entry = boundaryMap.get(id)
+      if (!entry) return
+      boundaryMap.delete(id)
+      if (entry.pending) {
+        pendingCount = Math.max(0, pendingCount - 1)
       }
       maybeFinalize()
     },
@@ -908,9 +918,8 @@ function startStreamingRenderInSession(
     teardown = render(view, container)
 
     if (mode === 'all') {
-      if (pendingCount === 0) {
-        finalize()
-      }
+      canFinalize = true
+      maybeFinalize()
       return { shellReady, allReady, abort }
     }
 
@@ -944,6 +953,7 @@ function startStreamingRenderInSession(
     markShellReady()
 
     // If no pending boundaries, finalize immediately.
+    canFinalize = true
     maybeFinalize()
   } catch (err) {
     reportErrorAndAbort(err)

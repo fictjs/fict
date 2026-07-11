@@ -4,6 +4,7 @@ export interface SSRStreamHooks {
   registerBoundary?: (start: Comment, end: Comment) => string | null
   boundaryPending?: (id: string) => void
   boundaryResolved?: (id: string) => void
+  boundaryAbandoned?: (id: string) => void
   onError?: (error: unknown, boundaryId?: string) => void
 }
 

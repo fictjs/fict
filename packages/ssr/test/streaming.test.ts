@@ -753,6 +753,75 @@ describe('@fictjs/ssr streaming', () => {
     expect(html).toContain('ChainedDone')
   })
 
+  it('settles after an outer retry abandons a pending nested boundary', async () => {
+    const inner = createSuspenseToken()
+    const outer = createSuspenseToken()
+    let outerReady = false
+
+    function InnerChild(): FictNode {
+      throw inner.token
+    }
+
+    function OuterBlocker(): FictNode {
+      if (!outerReady) throw outer.token
+      return { type: 'span', props: { children: 'OuterDone' } }
+    }
+
+    function OuterContent(): FictNode {
+      if (outerReady) return { type: 'span', props: { children: 'OuterDone' } }
+      return {
+        type: 'div',
+        props: {
+          children: [
+            {
+              type: Suspense,
+              props: {
+                fallback: { type: 'span', props: { children: 'InnerLoading' } },
+                children: { type: InnerChild, props: {} },
+              },
+            },
+            { type: OuterBlocker, props: {} },
+          ],
+        },
+      }
+    }
+
+    const { pipe, shellReady, allReady, abort } = renderToPipeableStream(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: { type: 'div', props: { children: 'OuterLoading' } },
+          children: { type: OuterContent, props: {} },
+        },
+      }),
+      { mode: 'shell' },
+    )
+    const chunks: Buffer[] = []
+    const writable = new PassThrough()
+    writable.on('data', chunk => chunks.push(chunk as Buffer))
+    writable.on('error', () => undefined)
+    pipe(writable)
+
+    let completed = false
+    try {
+      await shellReady
+      expect(Buffer.concat(chunks).toString('utf8')).toContain('OuterLoading')
+
+      outerReady = true
+      outer.resolve()
+      await withTimeout(allReady, 500, 'abandoned nested Suspense allReady')
+      completed = true
+
+      const html = Buffer.concat(chunks).toString('utf8')
+      expect(html).toContain('OuterDone')
+      expect(
+        parseHTML(html).document.querySelectorAll('template[data-fict-suspense]'),
+      ).toHaveLength(1)
+    } finally {
+      if (!completed) abort(new Error('abandoned nested Suspense test cleanup'))
+    }
+  })
+
   it('pipeable stream buffers output before pipe() and flushes after attach', async () => {
     const token = createSuspenseToken()
     let ready = false

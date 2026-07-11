@@ -325,6 +325,10 @@ export function Suspense(props: SuspenseProps): FictNode {
 
   registerRootCleanup(() => {
     disposed = true
+    if (streamBoundaryId && streamHooks?.boundaryAbandoned) {
+      streamPending = false
+      streamHooks.boundaryAbandoned(streamBoundaryId)
+    }
     cleanupActive()
     destroyRoot(boundaryRoot)
   })
