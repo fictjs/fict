@@ -88,11 +88,15 @@ function HrefText({ to }: { to: string }) {
 function Guarded({
   onCall,
 }: {
-  onCall: (retry: (force?: boolean) => void, prevent: () => void) => void | Promise<void>
+  onCall: (
+    retry: (force?: boolean) => void,
+    prevent: () => void,
+    defaultPrevented: boolean,
+  ) => void | Promise<void>
 }) {
   const handleCall = untrack(() => onCall)
   useBeforeLeave(event => {
-    return handleCall(event.retry, event.preventDefault)
+    return handleCall(event.retry, event.preventDefault, event.defaultPrevented)
   })
   return <div data-testid="guarded" />
 }
@@ -583,8 +587,11 @@ describe('Router integration (MemoryRouter)', () => {
     expect(screen.getByTestId('path').textContent).toBe('/about')
   })
 
-  it('runs beforeLeave handlers and blocks navigation when prevented', async () => {
-    const onCall = vi.fn()
+  it('starts beforeLeave unprevented and lets a no-op handler navigate', async () => {
+    const observedDefaultPrevented: boolean[] = []
+    const onCall = vi.fn((_retry, _prevent, defaultPrevented) => {
+      observedDefaultPrevented.push(defaultPrevented)
+    })
 
     render(() => (
       <MemoryRouter initialEntries={['/from']}>
@@ -607,7 +614,8 @@ describe('Router integration (MemoryRouter)', () => {
     })
 
     expect(onCall).toHaveBeenCalled()
-    expect(screen.getByTestId('path').textContent).toBe('/from')
+    expect(observedDefaultPrevented).toEqual([false])
+    expect(screen.getByTestId('path').textContent).toBe('/to')
   })
 
   it('clears pending location when beforeLeave blocks navigation', async () => {
@@ -788,6 +796,102 @@ describe('Router integration (MemoryRouter)', () => {
     expect(screen.getByTestId('pending').textContent).toBe('none')
   })
 
+  it('lets a later preventDefault override an earlier non-force retry', async () => {
+    const first = vi.fn(retry => retry(false))
+    const second = vi.fn((_retry, prevent, defaultPrevented) => {
+      expect(defaultPrevented).toBe(false)
+      prevent()
+    })
+
+    render(() => (
+      <MemoryRouter initialEntries={['/from']}>
+        <Route
+          path="/from"
+          element={
+            <div>
+              <LocationText />
+              <PendingText />
+              <Guarded onCall={first} />
+              <Guarded onCall={second} />
+              <NavigateButton to="/to" />
+            </div>
+          }
+        />
+        <Route path="/to" element={<LocationText />} />
+      </MemoryRouter>
+    ))
+
+    await act(async () => {
+      screen.getByTestId('go-/to').click()
+      await Promise.resolve()
+    })
+
+    expect(first).toHaveBeenCalledTimes(1)
+    expect(second).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('path').textContent).toBe('/from')
+    expect(screen.getByTestId('pending').textContent).toBe('none')
+  })
+
+  it('allows a non-force retry to release the same handler prevention', async () => {
+    const onCall = vi.fn((retry, prevent) => {
+      prevent()
+      retry(false)
+    })
+
+    render(() => (
+      <MemoryRouter initialEntries={['/from']}>
+        <Route
+          path="/from"
+          element={
+            <div>
+              <LocationText />
+              <Guarded onCall={onCall} />
+              <NavigateButton to="/to" />
+            </div>
+          }
+        />
+        <Route path="/to" element={<LocationText />} />
+      </MemoryRouter>
+    ))
+
+    await act(async () => {
+      screen.getByTestId('go-/to').click()
+    })
+
+    expect(onCall).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('path').textContent).toBe('/to')
+  })
+
+  it('lets a force retry bypass remaining beforeLeave handlers', async () => {
+    const first = vi.fn(retry => retry(true))
+    const second = vi.fn((_retry, prevent) => prevent())
+
+    render(() => (
+      <MemoryRouter initialEntries={['/from']}>
+        <Route
+          path="/from"
+          element={
+            <div>
+              <LocationText />
+              <Guarded onCall={first} />
+              <Guarded onCall={second} />
+              <NavigateButton to="/to" />
+            </div>
+          }
+        />
+        <Route path="/to" element={<LocationText />} />
+      </MemoryRouter>
+    ))
+
+    await act(async () => {
+      screen.getByTestId('go-/to').click()
+    })
+
+    expect(first).toHaveBeenCalledTimes(1)
+    expect(second).not.toHaveBeenCalled()
+    expect(screen.getByTestId('path').textContent).toBe('/to')
+  })
+
   it('allows retry after a failed beforeLeave handler', async () => {
     let calls = 0
     const onCall = vi.fn(retry => {
@@ -891,9 +995,10 @@ describe('Router integration (MemoryRouter)', () => {
 
   it('guards numeric memory navigation and allows an explicit retry', async () => {
     let calls = 0
-    const onCall = vi.fn(retry => {
+    const onCall = vi.fn((retry, prevent) => {
       calls += 1
-      if (calls === 2) retry(true)
+      if (calls === 1) prevent()
+      else retry(true)
     })
 
     render(() => (

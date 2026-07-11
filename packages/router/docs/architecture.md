@@ -382,6 +382,10 @@ Navigation triggered
    (until retry called)
 ```
 
+Handlers run in registration order until one leaves the event prevented. A
+normal `retry()` releases that prevention and continues evaluation, while
+`retry(true)` force-approves the navigation without running later handlers.
+
 ## 10. SSR Integration
 
 ### 10.1 StaticRouter

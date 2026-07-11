@@ -710,11 +710,16 @@ function UnsavedChanges() {
 interface BeforeLeaveEventArgs {
   to: Location // Target location
   from: Location // Current location
-  defaultPrevented: boolean
+  defaultPrevented: boolean // Initially false
   preventDefault(): void // Block navigation
-  retry(force?: boolean): void // Continue navigation
+  retry(force?: boolean): void // Release the block; force=true bypasses later handlers
 }
 ```
+
+Handlers run in registration order. A no-op handler allows navigation. If a
+handler leaves the event prevented, navigation stops. `retry()` releases that
+prevention and continues with later handlers, which can still prevent the
+navigation; `retry(true)` approves immediately and skips the remaining handlers.
 
 ---
 

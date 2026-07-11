@@ -338,11 +338,11 @@ export interface BeforeLeaveEventArgs {
   to: Location
   /** Current location */
   from: Location
-  /** Whether this was prevented */
+  /** Whether a handler has currently prevented this navigation (initially false) */
   defaultPrevented: boolean
   /** Prevent the navigation */
   preventDefault: () => void
-  /** Retry the navigation */
+  /** Release prevention, or force approval and bypass later handlers */
   retry: (force?: boolean) => void
 }
 

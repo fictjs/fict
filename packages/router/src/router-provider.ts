@@ -167,9 +167,10 @@ function createRouterState(
       // Capture current token for this navigation
       const currentToken = ++navigationToken
 
-      // Block by default when any beforeLeave handlers are registered.
-      let defaultPrevented = true
-      let retryRequested = false
+      // Navigation remains allowed until a handler explicitly prevents it.
+      // A normal retry releases the current prevention, while a forced retry
+      // approves immediately without consulting later handlers.
+      let defaultPrevented = false
       let forceRetry = false
 
       const event: BeforeLeaveEventArgs = {
@@ -182,8 +183,11 @@ function createRouterState(
           defaultPrevented = true
         },
         retry(force?: boolean) {
-          retryRequested = true
-          forceRetry = force ?? false
+          if (force === true) {
+            forceRetry = true
+          } else {
+            defaultPrevented = false
+          }
         },
       }
 
@@ -196,12 +200,8 @@ function createRouterState(
           return false
         }
 
-        if (defaultPrevented && !retryRequested) {
-          return false
-        }
-        if (retryRequested && forceRetry) {
-          return true
-        }
+        if (forceRetry) return true
+        if (defaultPrevented) return false
       }
 
       // Final check that this navigation is still current
@@ -209,7 +209,7 @@ function createRouterState(
         return false
       }
 
-      return !defaultPrevented || retryRequested
+      return !defaultPrevented
     },
   }
 
