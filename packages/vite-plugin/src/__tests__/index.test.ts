@@ -1928,6 +1928,83 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it('prepares and splits decorated TypeScript modules with hook imports', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-decorated-hook-'))
+    const entry = path.join(root, 'App.tsx')
+
+    try {
+      await writeFile(
+        path.join(root, 'tsconfig.json'),
+        JSON.stringify({ compilerOptions: { experimentalDecorators: true } }),
+      )
+      await writeFile(
+        path.join(root, 'use-count.ts'),
+        `
+          import { $state } from 'fict'
+          export function useCount() {
+            const count = $state(1)
+            return count
+          }
+        `,
+      )
+      const appSource = `
+          import { useCount } from './use-count'
+
+          function registered(value: any): void {
+            value.registered = true
+          }
+
+          @registered
+          export class Decorated {}
+
+          export function App() {
+            const count = useCount()
+            return (
+              <button onClick$={() => console.log(Decorated.name)}>
+                {count * 2}
+              </button>
+            )
+          }
+        `
+      await writeFile(entry, appSource)
+
+      const warn = vi.fn()
+      const plugin = getTestPlugin({
+        cache: false,
+        useTypeScriptProject: false,
+        functionSplitting: true,
+        resumable: true,
+      })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+      const transformed = await plugin.transform?.call(
+        {
+          error(error: unknown): never {
+            throw error instanceof Error ? error : new Error(String(error))
+          },
+          warn,
+          emitFile: vi.fn(),
+        },
+        appSource,
+        entry,
+      )
+      const transformedCode =
+        transformed && typeof transformed === 'object' && 'code' in transformed
+          ? transformed.code
+          : ''
+      expect(warn).not.toHaveBeenCalled()
+      expect(transformedCode).toContain('virtual:fict-handler:')
+
+      const code = await buildFictEntry(root, entry, {
+        plugin: { functionSplitting: true, resumable: true },
+      })
+
+      expect(code).not.toContain('@registered')
+      expect(code).toMatch(/\(\)\s*=>\s*[A-Za-z_$][\w$]*\(\)\s*\*\s*2/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it.each([
     {
       name: 'preserves ordinary imports with verbatimModuleSyntax',

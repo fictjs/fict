@@ -36,6 +36,7 @@ const traverse = (
 const generate = (
   typeof _generate === 'function' ? _generate : (_generate as { default: typeof _generate }).default
 ) as typeof _generate
+const TYPESCRIPT_PARSER_PLUGINS = ['decorators-legacy', 'jsx', 'typescript'] as const
 
 const PACKAGE_METADATA_WATCH_GLOBS = [
   '!**/node_modules/**/package.json',
@@ -3112,7 +3113,12 @@ async function compileFictCompilerStage(
     filename,
     configFile: false,
     babelrc: false,
-    ...(isTypeScript ? { parserOpts: { plugins: ['decorators-legacy'] } } : {}),
+    ...(isTypeScript
+      ? {
+          parserOpts: { plugins: ['decorators-legacy'] },
+          generatorOpts: { decoratorsBeforeExport: true },
+        }
+      : {}),
     sourceMaps: fictOptions.sourcemap,
     sourceFileName: filename,
     plugins,
@@ -3131,7 +3137,7 @@ function collectStaticModuleSources(code: string): string[] {
   try {
     ast = parse(code, {
       sourceType: 'module',
-      plugins: ['jsx', 'typescript'],
+      plugins: [...TYPESCRIPT_PARSER_PLUGINS],
     })
   } catch {
     return []
@@ -4267,7 +4273,7 @@ function extractAndRewriteHandlers(
   try {
     ast = parse(code, {
       sourceType: 'module',
-      plugins: ['jsx', 'typescript'],
+      plugins: [...TYPESCRIPT_PARSER_PLUGINS],
     })
   } catch (error) {
     throw Object.assign(
