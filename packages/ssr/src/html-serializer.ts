@@ -55,6 +55,25 @@ const HTML_UNSAFE_RESUMABLE_HOST_PARENTS = new Set([
   ...HTML_DOCUMENT_STRUCTURE_ELEMENTS,
 ])
 
+const STREAM_BOUNDARY_START_PREFIX = 'fict:suspense-start:'
+const STREAM_BOUNDARY_END_PREFIX = 'fict:suspense-end:'
+const SCRIPT_SUPPORTING_ELEMENTS = ['script', 'template']
+const HTML_STREAM_BOUNDARY_ALLOWED_CHILDREN = new Map([
+  [
+    'table',
+    new Set(['caption', 'colgroup', 'tbody', 'tfoot', 'thead', ...SCRIPT_SUPPORTING_ELEMENTS]),
+  ],
+  ['tbody', new Set(['tr', ...SCRIPT_SUPPORTING_ELEMENTS])],
+  ['thead', new Set(['tr', ...SCRIPT_SUPPORTING_ELEMENTS])],
+  ['tfoot', new Set(['tr', ...SCRIPT_SUPPORTING_ELEMENTS])],
+  ['tr', new Set(['td', 'th', ...SCRIPT_SUPPORTING_ELEMENTS])],
+  ['colgroup', new Set(['col', 'template'])],
+  ['select', new Set(['hr', 'optgroup', 'option', ...SCRIPT_SUPPORTING_ELEMENTS])],
+  ['optgroup', new Set(['option', ...SCRIPT_SUPPORTING_ELEMENTS])],
+  ['option', new Set<string>()],
+])
+const HTML_STREAM_BOUNDARY_TEXT_CONTEXTS = new Set(['option', 'optgroup', 'select'])
+
 const ELEMENT_NODE = 1
 const TEXT_NODE = 3
 const CDATA_SECTION_NODE = 4
@@ -104,6 +123,11 @@ export function serializeHtmlNodes(
   nodes: Iterable<Node>,
   parentElement: Element | null = null,
 ): string {
+  if (parentElement && isHtmlElement(parentElement)) {
+    const parentTagName = (parentElement.localName || parentElement.tagName).toLowerCase()
+    assertSafeStreamingBoundaryContext(parentElement, parentTagName)
+  }
+
   let html = ''
   for (const node of nodes) html += serializeHtmlNode(node, parentElement)
 
@@ -155,17 +179,97 @@ function assertEmptyHtmlVoidElement(element: Element, tagName: string): void {
   if (childCount === 0) return
 
   const feature = findResumableFeature(element)
-  const discardedResumableState =
-    feature?.kind === 'scope'
-      ? ` The discarded children contain a resumable scope (${feature.detail}), which would leave orphaned snapshot state.`
-      : feature
-        ? ` The discarded children contain a resumable event (${feature.detail}), which would disappear from the parsed document.`
-        : ''
+  const discardedResumableState = describeDiscardedResumableFeature(feature)
   throw new Error(
     `[fict/ssr] Cannot serialize <${tagName}> with ${childCount} child node${childCount === 1 ? '' : 's'}. ` +
       `HTML void elements cannot contain children, and browsers omit every child when serializing or parsing <${tagName}>.${discardedResumableState} ` +
       `Remove all children from <${tagName}> and move the content outside the void element.`,
   )
+}
+
+function assertSafeStreamingBoundaryContext(element: Element, contextTag: string): void {
+  if (HTML_TEXT_ONLY_ELEMENTS.has(contextTag)) {
+    const marker = findStreamingBoundaryMarker(element)
+    if (!marker) return
+    throw new Error(
+      `[fict/ssr] Cannot serialize a streaming Suspense boundary inside <${contextTag}>. ` +
+        `The HTML parser treats its comment markers as text in this context, so the streamed patch can never find boundary ${JSON.stringify(marker.id)}. ` +
+        `Move the streaming boundary outside <${contextTag}> and update this element through an outer component.`,
+    )
+  }
+
+  const allowedChildren = HTML_STREAM_BOUNDARY_ALLOWED_CHILDREN.get(contextTag)
+  if (!allowedChildren) return
+
+  const children = Array.from(element.childNodes)
+  for (let index = 0; index < children.length; index++) {
+    const start = parseStreamingBoundaryMarker(children[index])
+    if (start?.kind !== 'start') continue
+
+    let endIndex = index + 1
+    while (endIndex < children.length) {
+      const end = parseStreamingBoundaryMarker(children[endIndex])
+      if (end?.kind === 'end' && end.id === start.id) break
+      endIndex++
+    }
+    if (endIndex === children.length) {
+      throw new Error(
+        `[fict/ssr] Cannot serialize streaming Suspense boundary ${JSON.stringify(start.id)} inside <${contextTag}> because its sibling end marker is missing.`,
+      )
+    }
+
+    for (let contentIndex = index + 1; contentIndex < endIndex; contentIndex++) {
+      const invalidContent = describeInvalidBoundaryContent(
+        children[contentIndex]!,
+        allowedChildren,
+        HTML_STREAM_BOUNDARY_TEXT_CONTEXTS.has(contextTag),
+      )
+      if (!invalidContent) continue
+      throw new Error(
+        `[fict/ssr] Cannot serialize a streaming Suspense boundary inside <${contextTag}> with direct ${invalidContent} content. ` +
+          `The HTML parser reparents or discards that content, so the boundary markers no longer describe one patchable sibling range. ` +
+          getStreamingBoundaryRewriteSuggestion(contextTag, invalidContent),
+      )
+    }
+  }
+}
+
+function describeInvalidBoundaryContent(
+  node: Node,
+  allowedElements: ReadonlySet<string>,
+  allowText: boolean,
+): string | null {
+  if (node.nodeType === COMMENT_NODE) return null
+  if (node.nodeType === TEXT_NODE || node.nodeType === CDATA_SECTION_NODE) {
+    return allowText || !(node.nodeValue ?? '').trim() ? null : 'non-whitespace text'
+  }
+  if (node.nodeType !== ELEMENT_NODE) return `node type ${node.nodeType}`
+
+  const element = node as Element
+  const tagName = (element.localName || element.tagName).toLowerCase()
+  return isHtmlElement(element) && allowedElements.has(tagName) ? null : `<${tagName}>`
+}
+
+function getStreamingBoundaryRewriteSuggestion(contextTag: string, invalidContent: string): string {
+  if (contextTag === 'table' && invalidContent === '<tr>') {
+    return 'Wrap the boundary and rows in an explicit <tbody>.'
+  }
+  if (contextTag === 'table' && invalidContent === '<col>') {
+    return 'Wrap the boundary and columns in an explicit <colgroup>.'
+  }
+  if (HTML_TABLE_SECTION_ELEMENTS.has(contextTag)) {
+    return `Wrap cells in a native <tr>, or move the boundary outside <${contextTag}>.`
+  }
+  if (contextTag === 'tr') {
+    return 'Render only native <td> or <th> roots inside this boundary.'
+  }
+  if (contextTag === 'colgroup') {
+    return 'Render only native <col> roots inside this boundary.'
+  }
+  if (contextTag === 'select' || contextTag === 'optgroup' || contextTag === 'option') {
+    return 'Use only portable native option content, or move the boundary outside <select>.'
+  }
+  return `Move the boundary outside <${contextTag}> or wrap its content in a parser-stable native container.`
 }
 
 function assertSafeResumableHostContext(element: Element, serializedParent: Element | null): void {
@@ -219,10 +323,35 @@ function getResumableHostRewriteSuggestion(contextTag: string): string {
 type SerializedResumableFeature =
   | { kind: 'scope'; detail: string }
   | { kind: 'event'; detail: string }
+  | { kind: 'boundary'; detail: string }
+
+interface StreamingBoundaryMarker {
+  kind: 'start' | 'end'
+  id: string
+}
+
+function describeDiscardedResumableFeature(feature: SerializedResumableFeature | null): string {
+  if (!feature) return ''
+  if (feature.kind === 'scope') {
+    return ` The discarded children contain a resumable scope (${feature.detail}), which would leave orphaned snapshot state.`
+  }
+  if (feature.kind === 'event') {
+    return ` The discarded children contain a resumable event (${feature.detail}), which would disappear from the parsed document.`
+  }
+  return ` The discarded children contain a streaming Suspense boundary (${feature.detail}), which would leave an unpatchable stream.`
+}
 
 function assertSafeTemplateContent(content: DocumentFragment | Element): void {
   const feature = findResumableFeature(content)
   if (!feature) return
+
+  if (feature.kind === 'boundary') {
+    throw new Error(
+      `[fict/ssr] Cannot serialize <template> content containing a streaming Suspense boundary (${feature.detail}). ` +
+        'Native template content can be cloned more than once, which duplicates the stream boundary id and makes patch targeting ambiguous. ' +
+        'Move the streaming boundary outside <template>.',
+    )
+  }
 
   const label = feature.kind === 'scope' ? 'resumable scope' : 'resumable event'
   throw new Error(
@@ -234,6 +363,13 @@ function assertSafeTemplateContent(content: DocumentFragment | Element): void {
 
 function findResumableFeature(root: Node): SerializedResumableFeature | null {
   for (const child of Array.from(root.childNodes)) {
+    const boundary = parseStreamingBoundaryMarker(child)
+    if (boundary) {
+      return {
+        kind: 'boundary',
+        detail: `${boundary.kind} id ${JSON.stringify(boundary.id)}`,
+      }
+    }
     if (child.nodeType !== ELEMENT_NODE) continue
     const element = child as Element
     const scopeId = element.getAttribute('data-fict-s')
@@ -258,6 +394,39 @@ function findResumableFeature(root: Node): SerializedResumableFeature | null {
         : element
     const nested = findResumableFeature(childRoot)
     if (nested) return nested
+  }
+  return null
+}
+
+function findStreamingBoundaryMarker(root: Node): StreamingBoundaryMarker | null {
+  for (const child of Array.from(root.childNodes)) {
+    const marker = parseStreamingBoundaryMarker(child)
+    if (marker) return marker
+    if (child.nodeType !== ELEMENT_NODE) continue
+
+    const element = child as Element
+    const childRoot =
+      isHtmlElement(element) &&
+      (element.localName || element.tagName).toLowerCase() === 'template' &&
+      'content' in element
+        ? ((element as HTMLTemplateElement).content ?? element)
+        : element
+    const nested = findStreamingBoundaryMarker(childRoot)
+    if (nested) return nested
+  }
+  return null
+}
+
+function parseStreamingBoundaryMarker(node: Node | undefined): StreamingBoundaryMarker | null {
+  if (!node || node.nodeType !== COMMENT_NODE) return null
+  const value = node.nodeValue ?? ''
+  if (value.startsWith(STREAM_BOUNDARY_START_PREFIX)) {
+    const id = value.slice(STREAM_BOUNDARY_START_PREFIX.length)
+    return id ? { kind: 'start', id } : null
+  }
+  if (value.startsWith(STREAM_BOUNDARY_END_PREFIX)) {
+    const id = value.slice(STREAM_BOUNDARY_END_PREFIX.length)
+    return id ? { kind: 'end', id } : null
   }
   return null
 }
