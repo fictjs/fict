@@ -501,8 +501,12 @@ function createElementWithContext(
       ? ownerDocument.createElementNS(namespaceURI, tagName)
       : ownerDocument.createElement(tagName)
   applyProps(el, vnode.props ?? {}, resolvedNamespace === 'svg')
+  const childParent =
+    namespaceURI === null && el.localName === 'template' && 'content' in el
+      ? (el as HTMLTemplateElement).content
+      : (el as unknown as ParentNode & Node)
   appendChildren(
-    el as unknown as ParentNode & Node,
+    childParent,
     vnode.props?.children as FictNode | FictNode[] | undefined,
     tagName === 'foreignObject' ? null : resolvedNamespace,
     ownerDocument,

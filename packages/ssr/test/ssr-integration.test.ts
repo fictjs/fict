@@ -103,6 +103,23 @@ describe('SSR Output + Loader Event Recovery', () => {
     __fictSetSSRState(null)
   })
 
+  it('round-trips direct JSX template children through template.content', () => {
+    const html = renderToString(() => ({
+      type: 'template',
+      props: {
+        children: {
+          type: 'span',
+          props: { children: 'inside-template' },
+        },
+      },
+    }))
+
+    expect(html).toContain('<template><span>inside-template</span></template>')
+    const { document } = parseHTML(`<html><body>${html}</body></html>`)
+    const templateElement = document.querySelector('template') as HTMLTemplateElement
+    expect(templateElement.content.querySelector('span')?.textContent).toBe('inside-template')
+  })
+
   it('renders HTML with scope attributes and snapshot', () => {
     function Counter(props: { initial: number }): FictNode {
       const ctx = __fictUseContext()

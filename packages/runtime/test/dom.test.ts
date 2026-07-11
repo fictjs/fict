@@ -60,6 +60,41 @@ describe('DOM Module', () => {
       teardown()
     })
 
+    it('mounts static and reactive template children into template.content', async () => {
+      const count = createSignal(0)
+      const teardown = render(
+        () => ({
+          type: 'template',
+          props: {
+            children: [
+              { type: 'span', props: { children: 'inside' }, key: undefined },
+              reactive(() => ({
+                type: 'b',
+                props: { children: String(count()) },
+                key: undefined,
+              })),
+            ],
+          },
+          key: undefined,
+        }),
+        container,
+      )
+      const templateElement = container.querySelector('template')!
+
+      expect(templateElement.childNodes).toHaveLength(0)
+      expect(templateElement.content.querySelector('span')?.textContent).toBe('inside')
+      expect(templateElement.content.querySelector('b')?.textContent).toBe('0')
+      expect(container.innerHTML).toContain('<template><span>inside</span>')
+
+      count(1)
+      await tick()
+      expect(templateElement.content.querySelector('b')?.textContent).toBe('1')
+
+      const clone = templateElement.cloneNode(true) as HTMLTemplateElement
+      expect(clone.content.textContent).toBe('inside1')
+      teardown()
+    })
+
     it('replaces container children on render', () => {
       container.innerHTML = '<p>Old content</p>'
 
