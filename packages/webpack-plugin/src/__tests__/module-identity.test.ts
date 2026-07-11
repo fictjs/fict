@@ -306,6 +306,7 @@ describe('@fictjs/webpack-plugin module identity', () => {
 
   it('keeps compiler metadata resolution scoped to static ESM dependencies', async () => {
     const root = await createFixture({
+      'package.json': JSON.stringify({ type: 'commonjs' }),
       'entry.ts': `
         import { useCounter } from './hook'
 
