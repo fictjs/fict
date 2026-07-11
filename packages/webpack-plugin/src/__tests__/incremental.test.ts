@@ -4,6 +4,7 @@ import path from 'node:path'
 import webpack from 'webpack'
 
 import {
+  backdateFixtureInputs,
   builtFixtureFiles,
   closeWatching,
   createBuildQueue,
@@ -79,8 +80,11 @@ describe('@fictjs/webpack-plugin incremental metadata', () => {
       type: 'filesystem' as const,
       cacheDirectory: path.join(root, '.webpack-cache'),
     }
+    const entryPath = path.join(root, 'entry.ts')
+    const hookPath = path.join(root, 'use-counter.ts')
 
     try {
+      await backdateFixtureInputs([entryPath, hookPath])
       await runCompiler(createWebpackConfiguration(root, { cache }))
       expect(runApp(root)).toBe(2)
 
@@ -88,10 +92,10 @@ describe('@fictjs/webpack-plugin incremental metadata', () => {
       expect(runApp(root)).toBe(2)
       expect(builtFixtureFiles(cachedStats, root)).toEqual([])
 
-      await writeFile(path.join(root, 'use-counter.ts'), plainHook(4))
+      await writeFile(hookPath, plainHook(4))
       const changedStats = await runCompiler(createWebpackConfiguration(root, { cache }))
       expect(runApp(root)).toBe(8)
-      expect(builtFixtureFiles(changedStats, root)).toContain(path.join(root, 'entry.ts'))
+      expect(builtFixtureFiles(changedStats, root)).toContain(entryPath)
     } finally {
       await rm(root, { recursive: true, force: true })
     }

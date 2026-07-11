@@ -4,6 +4,7 @@ import path from 'node:path'
 import webpack, { type Compiler, type Configuration, type Stats } from 'webpack'
 
 import {
+  backdateFixtureInputs,
   builtFixtureFiles,
   closeWatching,
   createBuildQueue,
@@ -226,8 +227,13 @@ describe('@fictjs/webpack-plugin package metadata', () => {
 
     try {
       expect(Buffer.byteLength(plainMetadata)).toBe(Buffer.byteLength(signalMetadata))
-      const oldTimestamp = new Date(Date.now() - 10_000)
-      await utimes(sidecarPath, oldTimestamp, oldTimestamp)
+      await backdateFixtureInputs([
+        entryPath,
+        wrapperPath,
+        path.join(root, 'node_modules', 'hook-lib', 'index.js'),
+        path.join(root, 'node_modules', 'hook-lib', 'package.json'),
+        sidecarPath,
+      ])
 
       const firstStats = await runCompiler(configuration())
       expect(await readBundle(root)).toMatch(/count\(\)\s*\*\s*2/)
@@ -235,6 +241,8 @@ describe('@fictjs/webpack-plugin package metadata', () => {
 
       const cachedStats = await runCompiler(configuration())
       expect(builtFixtureFiles(cachedStats, root)).toEqual([])
+      expect(rebuildObserver.builtBeforeFict).toEqual([])
+      expect(rebuildObserver.rebuiltByFict).toEqual([])
 
       const originalStat = await stat(sidecarPath)
       await writeFile(sidecarPath, plainMetadata)
@@ -335,15 +343,12 @@ describe('@fictjs/webpack-plugin package metadata', () => {
     const configuration = () => excludeHookPackage(createWebpackConfiguration(root, baseOptions))
 
     try {
-      const oldTimestamp = new Date(Date.now() - 10_000)
-      await Promise.all(
-        [
-          entryPath,
-          path.join(root, 'node_modules', 'hook-lib', 'index.js'),
-          path.join(root, 'node_modules', 'hook-lib', 'package.json'),
-          path.join(root, 'node_modules', 'hook-lib', 'hook.fict.meta.json'),
-        ].map(filename => utimes(filename, oldTimestamp, oldTimestamp)),
-      )
+      await backdateFixtureInputs([
+        entryPath,
+        path.join(root, 'node_modules', 'hook-lib', 'index.js'),
+        path.join(root, 'node_modules', 'hook-lib', 'package.json'),
+        path.join(root, 'node_modules', 'hook-lib', 'hook.fict.meta.json'),
+      ])
       const firstStats = await runCompiler(configuration())
       expect(await readBundle(root)).toMatch(/count\(\)\s*\*\s*2/)
       expect(storedMetadata(firstStats, entryPath).version).toBe(1)

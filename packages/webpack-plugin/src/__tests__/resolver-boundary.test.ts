@@ -9,6 +9,7 @@ import webpack, {
 } from 'webpack'
 
 import {
+  backdateFixtureInputs,
   builtFixtureFiles,
   closeWatching,
   createBuildQueue,
@@ -1841,6 +1842,12 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
     }
 
     try {
+      await backdateFixtureInputs([
+        entryPath,
+        path.join(realPackage, 'index.js'),
+        path.join(realPackage, 'package.json'),
+        path.join(realPackage, 'index.fict.meta.json'),
+      ])
       const firstStats = await runCompiler(configuration('commonjs actual-a'))
       const firstFingerprint = fingerprint(firstStats.compilation)
       expect(typeof firstFingerprint).toBe('string')
@@ -2004,8 +2011,12 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
 
     try {
       expect(Buffer.byteLength(paddedPlainMetadata)).toBe(Buffer.byteLength(signalMetadata))
-      const oldTimestamp = new Date(Date.now() - 10_000)
-      await utimes(sidecarPath, oldTimestamp, oldTimestamp)
+      await backdateFixtureInputs([
+        entryPath,
+        path.join(root, 'node_modules', 'actual-hook', 'index.js'),
+        path.join(root, 'node_modules', 'actual-hook', 'package.json'),
+        sidecarPath,
+      ])
 
       await runCompiler(configuration())
       expect(await readBundle(root)).toMatch(/count\(\)\s*\*\s*2/)
@@ -2059,17 +2070,14 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
 
     try {
       expect(Buffer.byteLength(signalManifest)).toBe(Buffer.byteLength(plainManifest))
-      const oldTimestamp = new Date(Date.now() - 10_000)
-      await Promise.all(
-        [
-          path.join(root, 'entry.ts'),
-          packageJsonPath,
-          path.join(root, 'node_modules', 'actual-hook', 'signal.js'),
-          path.join(root, 'node_modules', 'actual-hook', 'plain_.js'),
-          path.join(root, 'node_modules', 'actual-hook', 'signal.fict.meta.json'),
-          path.join(root, 'node_modules', 'actual-hook', 'plain_.fict.meta.json'),
-        ].map(filename => utimes(filename, oldTimestamp, oldTimestamp)),
-      )
+      await backdateFixtureInputs([
+        path.join(root, 'entry.ts'),
+        packageJsonPath,
+        path.join(root, 'node_modules', 'actual-hook', 'signal.js'),
+        path.join(root, 'node_modules', 'actual-hook', 'plain_.js'),
+        path.join(root, 'node_modules', 'actual-hook', 'signal.fict.meta.json'),
+        path.join(root, 'node_modules', 'actual-hook', 'plain_.fict.meta.json'),
+      ])
 
       await runCompiler(configuration())
       expect(runApp(root)).toBe(4)
@@ -2233,13 +2241,34 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
     })
     const entryPath = path.join(root, 'entry.ts')
     const hookPath = path.join(root, 'hook.ts')
+    let builtBeforeFict: string[] = []
+    const observer = {
+      apply(compiler: Compiler): void {
+        compiler.hooks.finishMake.tap(
+          { name: 'FictIncompleteCacheObserver', stage: Number.MAX_SAFE_INTEGER - 1 },
+          compilation => {
+            builtBeforeFict = [...compilation.modules]
+              .filter(module => compilation.builtModules.has(module))
+              .map(module => (module as { resource?: unknown }).resource)
+              .filter((resource): resource is string => typeof resource === 'string')
+          },
+        )
+      },
+    }
     const cache = {
       type: 'filesystem' as const,
       cacheDirectory: path.join(root, '.webpack-cache'),
     }
-    const configuration = () => excludeNodeModules(createWebpackConfiguration(root, { cache }))
+    const configuration = () =>
+      excludeNodeModules(createWebpackConfiguration(root, { cache, plugins: [observer] }))
 
     try {
+      await backdateFixtureInputs([
+        entryPath,
+        hookPath,
+        path.join(root, 'node_modules', 'ordinary-utility-package', 'index.js'),
+        path.join(root, 'node_modules', 'ordinary-utility-package', 'package.json'),
+      ])
       const firstStats = await runCompiler(configuration())
       const hookModule = [...firstStats.compilation.modules].find(
         module => (module as { resource?: unknown }).resource === hookPath,
@@ -2260,6 +2289,8 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
         `,
       )
       await expect(runCompiler(configuration())).rejects.toThrow('FICT-H003')
+      expect(builtBeforeFict).toContain(entryPath)
+      expect(builtBeforeFict).not.toContain(hookPath)
     } finally {
       await rm(root, { recursive: true, force: true })
     }

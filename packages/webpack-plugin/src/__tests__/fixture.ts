@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, utimes, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -26,6 +26,13 @@ export async function createFixture(files: Record<string, string>): Promise<stri
     await writeFile(filename, source)
   }
   return root
+}
+
+export async function backdateFixtureInputs(filenames: readonly string[]): Promise<void> {
+  // Webpack rejects snapshots when mtime + its filesystem-accuracy window is newer than the
+  // compilation start. Baseline filesystem-cache tests must not depend on fixture creation timing.
+  const stableTimestamp = new Date(Date.now() - 10_000)
+  await Promise.all(filenames.map(filename => utimes(filename, stableTimestamp, stableTimestamp)))
 }
 
 export function createWebpackConfiguration(
