@@ -428,6 +428,7 @@ export async function submitAction<T>(
     state: 'submitting',
     clear: () => {
       const submissions = new Map(activeSubmissions())
+      if (submissions.get(action.url) !== submission) return
       submissions.delete(action.url)
       activeSubmissions(submissions)
     },
@@ -451,8 +452,10 @@ export async function submitAction<T>(
 
     // Update active submissions
     const updatedSubmissions = new Map(activeSubmissions())
-    updatedSubmissions.set(action.url, submission as Submission<unknown>)
-    activeSubmissions(updatedSubmissions)
+    if (updatedSubmissions.get(action.url) === submission) {
+      updatedSubmissions.set(action.url, submission as Submission<unknown>)
+      activeSubmissions(updatedSubmissions)
+    }
 
     return result
   } catch (error) {
@@ -462,8 +465,10 @@ export async function submitAction<T>(
 
     // Update active submissions
     const updatedSubmissions = new Map(activeSubmissions())
-    updatedSubmissions.set(action.url, submission as Submission<unknown>)
-    activeSubmissions(updatedSubmissions)
+    if (updatedSubmissions.get(action.url) === submission) {
+      updatedSubmissions.set(action.url, submission as Submission<unknown>)
+      activeSubmissions(updatedSubmissions)
+    }
 
     throw error
   }

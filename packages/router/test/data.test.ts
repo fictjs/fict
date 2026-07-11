@@ -826,6 +826,130 @@ describe('submitAction', () => {
 
     await expect(submitAction(failingAction, formData)).rejects.toThrow('Action failed')
   })
+
+  it('keeps the newer submission current when an older submission resolves last', async () => {
+    const resolvers: Array<(value: string) => void> = []
+    const save = action<string>(
+      () =>
+        new Promise<string>(resolve => {
+          resolvers.push(resolve)
+        }),
+      'concurrentResolve',
+    )
+    const current = useSubmission(save)
+
+    const firstPromise = submitAction(save, new FormData())
+    const first = current()!
+    const secondPromise = submitAction(save, new FormData())
+    const second = current()!
+
+    expect(first.key).not.toBe(second.key)
+    expect(current()).toBe(second)
+
+    resolvers[1]!('newer')
+    await expect(secondPromise).resolves.toBe('newer')
+    expect(current()).toBe(second)
+    expect(second).toMatchObject({ state: 'idle', result: 'newer' })
+
+    resolvers[0]!('older')
+    await expect(firstPromise).resolves.toBe('older')
+    expect(first).toMatchObject({ state: 'idle', result: 'older' })
+    expect(current()).toBe(second)
+    expect(current()?.result).toBe('newer')
+  })
+
+  it('keeps the newer submission current when an older submission rejects last', async () => {
+    const settlers: Array<{
+      resolve: (value: string) => void
+      reject: (error: Error) => void
+    }> = []
+    const save = action<string>(
+      () =>
+        new Promise<string>((resolve, reject) => {
+          settlers.push({ resolve, reject })
+        }),
+      'concurrentReject',
+    )
+    const current = useSubmission(save)
+
+    const firstPromise = submitAction(save, new FormData())
+    const first = current()!
+    const secondPromise = submitAction(save, new FormData())
+    const second = current()!
+
+    settlers[1]!.resolve('newer')
+    await expect(secondPromise).resolves.toBe('newer')
+
+    const olderError = new Error('older failed')
+    settlers[0]!.reject(olderError)
+    await expect(firstPromise).rejects.toBe(olderError)
+
+    expect(first).toMatchObject({ state: 'idle', error: olderError })
+    expect(current()).toBe(second)
+    expect(current()).toMatchObject({ state: 'idle', result: 'newer' })
+  })
+
+  it('only clears the submission that is still current for its action', async () => {
+    const resolvers: Array<(value: string) => void> = []
+    const save = action<string>(
+      () =>
+        new Promise<string>(resolve => {
+          resolvers.push(resolve)
+        }),
+      'concurrentClear',
+    )
+    const current = useSubmission(save)
+
+    const firstPromise = submitAction(save, new FormData())
+    const first = current()!
+    const secondPromise = submitAction(save, new FormData())
+    const second = current()!
+
+    first.clear()
+    expect(current()).toBe(second)
+
+    second.clear()
+    expect(current()).toBeUndefined()
+
+    resolvers[1]!('newer')
+    resolvers[0]!('older')
+    await expect(secondPromise).resolves.toBe('newer')
+    await expect(firstPromise).resolves.toBe('older')
+    expect(current()).toBeUndefined()
+  })
+
+  it('does not let the original completion replace its retried submission', async () => {
+    const resolvers: Array<(value: string) => void> = []
+    const save = action<string>(
+      () =>
+        new Promise<string>(resolve => {
+          resolvers.push(resolve)
+        }),
+      'concurrentRetry',
+    )
+    const current = useSubmission(save)
+
+    const originalPromise = submitAction(save, new FormData())
+    const original = current()!
+    original.retry()
+    const retried = current()!
+
+    expect(retried.key).not.toBe(original.key)
+    expect(current()).toBe(retried)
+
+    resolvers[1]!('retried')
+    await vi.waitFor(() => expect(retried).toMatchObject({ state: 'idle', result: 'retried' }))
+    expect(current()).toBe(retried)
+
+    resolvers[0]!('original')
+    await expect(originalPromise).resolves.toBe('original')
+    expect(original).toMatchObject({ state: 'idle', result: 'original' })
+    expect(current()).toBe(retried)
+    expect(current()?.result).toBe('retried')
+
+    original.clear()
+    expect(current()).toBe(retried)
+  })
 })
 
 describe('createResource', () => {
