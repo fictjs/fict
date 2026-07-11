@@ -218,6 +218,30 @@ function ReactiveFormFixture() {
   )
 }
 
+let updateReactiveFormScroll: (
+  action: string,
+  preventScrollReset: boolean | undefined,
+) => void = () => {}
+
+function ReactiveFormScrollFixture() {
+  let action = $state('/no-scroll')
+  let preventScrollReset = $state<boolean | undefined>(true)
+
+  updateReactiveFormScroll = (nextAction, nextPreventScrollReset) => {
+    action = nextAction
+    preventScrollReset = nextPreventScrollReset
+  }
+
+  return (
+    <Form
+      action={action}
+      method="get"
+      preventScrollReset={preventScrollReset}
+      data-testid="reactive-scroll-form"
+    />
+  )
+}
+
 let relativeFormScenario: {
   method: 'get' | 'post'
   initialRelative: 'route' | 'path' | undefined
@@ -1263,6 +1287,93 @@ describe('Router integration (MemoryRouter)', () => {
     expect(firstReactiveFormSubmit).not.toHaveBeenCalled()
     expect(secondReactiveFormSubmit).toHaveBeenCalledTimes(1)
     history.destroy?.()
+  })
+
+  it('uses the current preventScrollReset value for GET navigation', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/form'] })
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    const requestAnimationFrameMock = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation(callback => {
+        callback(0)
+        return 1
+      })
+    const scrollToMock = vi.mocked(window.scrollTo)
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <ReactiveFormScrollFixture />
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('reactive-scroll-form') as HTMLFormElement
+      scrollToMock.mockClear()
+      form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      await vi.waitFor(() => expect(history.location.pathname).toBe('/no-scroll'))
+      expect(scrollToMock).not.toHaveBeenCalled()
+
+      await act(async () => {
+        updateReactiveFormScroll('/scroll-false', false)
+      })
+      scrollToMock.mockClear()
+      form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      await vi.waitFor(() => expect(history.location.pathname).toBe('/scroll-false'))
+      expect(scrollToMock).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        updateReactiveFormScroll('/scroll-default', undefined)
+      })
+      scrollToMock.mockClear()
+      form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      await vi.waitFor(() => expect(history.location.pathname).toBe('/scroll-default'))
+      expect(scrollToMock).toHaveBeenCalledTimes(1)
+    } finally {
+      requestAnimationFrameMock.mockRestore()
+      history.destroy?.()
+    }
+  })
+
+  it('prevents scroll reset for non-GET response redirects', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/form'] })
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    const requestAnimationFrameMock = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation(callback => {
+        callback(0)
+        return 1
+      })
+    const scrollToMock = vi.mocked(window.scrollTo)
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, {
+        status: 200,
+        headers: { Location: '/submitted' },
+      }),
+    )
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <Form
+            action="/submit"
+            method="post"
+            preventScrollReset
+            data-testid="no-scroll-post-form"
+          />
+        </RouterProvider>
+      ))
+
+      scrollToMock.mockClear()
+      const form = screen.getByTestId('no-scroll-post-form') as HTMLFormElement
+      form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+      await vi.waitFor(() => expect(history.location.pathname).toBe('/submitted'))
+      expect(scrollToMock).not.toHaveBeenCalled()
+    } finally {
+      fetchMock.mockRestore()
+      requestAnimationFrameMock.mockRestore()
+      history.destroy?.()
+    }
   })
 
   it.each([

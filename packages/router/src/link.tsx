@@ -504,7 +504,7 @@ export interface FormProps extends Omit<JSX.IntrinsicElements['form'], 'action' 
   replace?: boolean
   /** Relative path resolution */
   relative?: 'route' | 'path'
-  /** Prevent navigation */
+  /** Keep the current scroll position after navigation */
   preventScrollReset?: boolean
   /** Navigate on submit */
   navigate?: boolean
@@ -613,6 +613,7 @@ export function Form(props: FormProps): FictNode {
       method: props.method,
       navigate: props.navigate,
       replace: props.replace,
+      scroll: props.preventScrollReset === true ? false : undefined,
     }))
     const formData = new FormData(form)
     const method = snapshot.method?.toUpperCase() || 'GET'
@@ -633,7 +634,7 @@ export function Form(props: FormProps): FictNode {
             search: '?' + searchParams.toString(),
             hash: snapshot.action.hash,
           },
-          { replace: snapshot.replace },
+          { replace: snapshot.replace, scroll: snapshot.scroll },
         ),
       )
     } else {
@@ -641,6 +642,7 @@ export function Form(props: FormProps): FictNode {
       void submitFormAction(form, snapshot.action.href, method, formData, {
         navigate: snapshot.navigate !== false,
         replace: snapshot.replace ?? false,
+        scroll: snapshot.scroll,
         router,
       }).catch(() => {
         // submitFormAction already reports the failure through `formerror`
@@ -661,6 +663,7 @@ export function Form(props: FormProps): FictNode {
     options: {
       navigate: boolean
       replace: boolean
+      scroll: boolean | undefined
       router: typeof router
     },
   ) {
@@ -688,7 +691,10 @@ export function Form(props: FormProps): FictNode {
       // If navigate is enabled and response includes a redirect location
       const redirectUrl = response.headers.get('X-Redirect') || response.headers.get('Location')
       if (options.navigate && redirectUrl) {
-        options.router.navigate(redirectUrl, { replace: options.replace })
+        options.router.navigate(redirectUrl, {
+          replace: options.replace,
+          scroll: options.scroll,
+        })
       }
 
       // Emit a custom event for the form submission result on the actual form element
