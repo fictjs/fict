@@ -1444,7 +1444,6 @@ async function runScopeHandler(
   preservedControlState: PreservedControlState | null,
   preemptiveDefault: PreemptiveDefaultControl,
 ): Promise<boolean> {
-  let replayDefault = false
   try {
     if (!isLoaderInstallationActive(installation)) return false
     const resumeResult = await waitForActiveInstallation(installation, resumePromise)
@@ -1538,13 +1537,13 @@ async function runScopeHandler(
       return false
     }
 
-    replayDefault = true
     return event.cancelBubble
   } finally {
-    if (replayDefault) {
+    try {
       preemptiveDefault.replayIfNeeded()
+    } finally {
+      preemptiveDefault.restore()
     }
-    preemptiveDefault.restore()
   }
 }
 

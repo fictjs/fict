@@ -1432,6 +1432,41 @@ describe('resumable loader snapshot validation', () => {
     expect(input.checked).toBe(true)
   })
 
+  it.each([
+    ['the handler module fails to import', '/__fict_missing_checkbox_handler__.js#default'],
+    [
+      'the handler throws',
+      'data:text/javascript,export function h(){throw new Error("checkbox boom")}#h',
+    ],
+  ])('replays checkbox click defaults when %s', async (_label, qrl) => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    const input = doc.createElement('input')
+    input.type = 'checkbox'
+    input.setAttribute('on:click', qrl)
+    host.appendChild(input)
+    doc.body.appendChild(host)
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    try {
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+      input.click()
+      await waitForPendingHandlers()
+
+      expect(input.checked).toBe(true)
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
   it('prevents radio click defaults when the handler calls preventDefault', async () => {
     const doc = createDocumentWithSnapshots(
       JSON.stringify({
@@ -1750,7 +1785,10 @@ describe('resumable loader snapshot validation', () => {
 
       installResumableLoader({ document: doc, events: ['click'], prefetch: false })
 
-      const staleEvent = new Event('click', { bubbles: true, cancelable: true })
+      const staleEvent = new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+      })
       const originalPreventDefault = Object.getOwnPropertyDescriptor(staleEvent, 'preventDefault')
       input.dispatchEvent(staleEvent)
       await vi.waitFor(() => expect(resumeCalls).toBe(1))
@@ -1765,14 +1803,17 @@ describe('resumable loader snapshot validation', () => {
       await waitForPendingHandlers()
 
       expect((globalThis as { __fictStaleHandlerCalls?: number }).__fictStaleHandlerCalls).toBe(0)
+      expect(input.checked).toBe(true)
       expect(Object.getOwnPropertyDescriptor(staleEvent, 'preventDefault')).toEqual(
         originalPreventDefault,
       )
+      expect(getPendingLoaderWaiterCountForTests()).toBe(0)
 
       if (action === 'reinstall') {
-        input.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+        input.click()
         await waitForPendingHandlers()
         expect((globalThis as { __fictStaleHandlerCalls?: number }).__fictStaleHandlerCalls).toBe(1)
+        expect(input.checked).toBe(false)
         expect(getPendingLoaderWaiterCountForTests()).toBe(0)
       }
 
