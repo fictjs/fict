@@ -56,6 +56,126 @@ describe('browser-backed history lifecycle', () => {
   })
 })
 
+describe('createBrowserHistory unindexed POP handling', () => {
+  beforeEach(() => {
+    window.history.replaceState({ usr: null, key: 'browser-root', idx: 0 }, '', '/')
+  })
+
+  function waitForBrowserHashChange(navigate: () => void): Promise<void> {
+    return new Promise(resolve => {
+      window.addEventListener('hashchange', () => resolve(), { once: true })
+      navigate()
+    })
+  }
+
+  it('restores an appended fragment POP from a nonzero index', async () => {
+    window.history.replaceState(
+      { usr: null, key: 'browser-from', idx: 12 },
+      '',
+      '/browser/direct#browser-from',
+    )
+    const history = createBrowserHistory()
+    history.push('/browser/direct#browser-tail')
+
+    const listener = vi.fn()
+    history.listen(listener)
+    const blocker = vi.fn(({ proceed }) => {
+      setTimeout(() => proceed?.(), 0)
+    })
+    history.block(blocker)
+    const historyLength = window.history.length
+
+    window.location.hash = '#browser-appended'
+
+    await vi.waitFor(() => expect(history.location.hash).toBe('#browser-appended'))
+    expect(window.location.hash).toBe('#browser-appended')
+    expect(window.history.state.idx).toBe(14)
+    expect(blocker).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(window.history.length).toBe(historyLength + 1)
+
+    history.destroy?.()
+  })
+
+  it('stamps an explicitly traversed legacy entry before retrying', async () => {
+    window.history.replaceState(null, '', '/browser/legacy#browser-a')
+    await waitForBrowserHashChange(() => {
+      window.location.hash = '#browser-b'
+    })
+
+    const history = createBrowserHistory()
+    expect(history.location.hash).toBe('#browser-b')
+    expect(window.history.state.idx).toBe(0)
+
+    const listener = vi.fn()
+    history.listen(listener)
+    let attempts = 0
+    const blocker = vi.fn(({ retry, proceed }) => {
+      attempts++
+      if (attempts === 1) setTimeout(retry, 0)
+      if (attempts === 2) setTimeout(() => proceed?.(), 0)
+    })
+    history.block(blocker)
+    const historyLength = window.history.length
+
+    history.back()
+
+    await vi.waitFor(() => expect(history.location.hash).toBe('#browser-a'))
+    expect(window.history.state.idx).toBe(-1)
+    expect(blocker).toHaveBeenCalledTimes(2)
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(window.history.length).toBe(historyLength)
+
+    history.destroy?.()
+  })
+
+  it('fails open when a middle-stack fragment write has no trustworthy direction', async () => {
+    window.history.replaceState(null, '', '/browser/middle#browser-a')
+    await waitForBrowserHashChange(() => {
+      window.location.hash = '#browser-b'
+    })
+    await waitForBrowserHashChange(() => {
+      window.location.hash = '#browser-c'
+    })
+    await waitForBrowserHashChange(() => window.history.back())
+
+    const history = createBrowserHistory()
+    expect(history.location.hash).toBe('#browser-b')
+
+    const listener = vi.fn()
+    history.listen(listener)
+    const blocker = vi.fn(({ proceed }) => {
+      setTimeout(() => proceed?.(), 0)
+    })
+    history.block(blocker)
+    const historyLength = window.history.length
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    window.location.hash = '#browser-d'
+
+    await vi.waitFor(() => expect(history.location.hash).toBe('#browser-d'))
+    expect(window.location.hash).toBe('#browser-d')
+    expect(window.history.state.idx).toBe(0)
+    expect(blocker).not.toHaveBeenCalled()
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(window.history.length).toBe(historyLength)
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('Cannot safely block an unindexed browser navigation'),
+    )
+
+    history.back()
+    await vi.waitFor(() => expect(history.location.hash).toBe('#browser-b'))
+    expect(window.location.hash).toBe('#browser-b')
+    expect(window.history.state.idx).toBe(-1)
+    expect(blocker).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenCalledTimes(2)
+    expect(window.history.length).toBe(historyLength)
+
+    warn.mockRestore()
+    history.destroy?.()
+  })
+})
+
 describe('createHashHistory POP blocking', () => {
   beforeEach(() => {
     window.history.replaceState({ usr: null, key: 'hash-root', idx: 0 }, '', '/#/')

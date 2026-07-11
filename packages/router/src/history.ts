@@ -43,6 +43,115 @@ function readLocation(
   }
 }
 
+const POP_HISTORY_GENERATION_STATE_KEY = '__fict_history_generation__'
+
+interface PopIndexTracker {
+  createState(
+    location: Location,
+    index: number,
+  ): ReturnType<typeof createHistoryState> & {
+    [POP_HISTORY_GENERATION_STATE_KEY]: string
+  }
+  readIndex(location: Location): number | null
+  rebaseCurrent(location: Location, index: number): void
+  stampCurrent(location: Location, index: number): void
+  sync(): void
+  trackGo(delta: number): void
+}
+
+/**
+ * Track same-document POP positions without guessing when the legacy History
+ * API cannot distinguish an unindexed traversal from a direct fragment write.
+ */
+function createPopIndexTracker(getCurrentIndex: () => number): PopIndexTracker {
+  let observedHistoryLength = window.history.length
+  let pendingPopDelta: number | null = null
+  let generation = createKey()
+  let acceptForeignIndexes = true
+  const navigation = (
+    window as Window & {
+      navigation?: { currentEntry?: { index?: number } | null }
+    }
+  ).navigation
+
+  function readNavigationIndex(): number | null {
+    const navigationIndex = navigation?.currentEntry?.index
+    return typeof navigationIndex === 'number' ? navigationIndex : null
+  }
+
+  let observedNavigationIndex = readNavigationIndex()
+
+  function createState(location: Location, index: number) {
+    return {
+      ...createHistoryState(location, index),
+      [POP_HISTORY_GENERATION_STATE_KEY]: generation,
+    }
+  }
+
+  function sync() {
+    observedHistoryLength = window.history.length
+    observedNavigationIndex = readNavigationIndex()
+  }
+
+  function stampCurrent(location: Location, index: number) {
+    window.history.replaceState(createState(location, index), '', window.location.href)
+    sync()
+  }
+
+  return {
+    createState,
+    readIndex(location) {
+      const requestedDelta = pendingPopDelta
+      pendingPopDelta = null
+      const nextHistoryLength = window.history.length
+      const addedEntry = nextHistoryLength > observedHistoryLength
+      observedHistoryLength = nextHistoryLength
+      const nextNavigationIndex = readNavigationIndex()
+      const navigationDelta =
+        nextNavigationIndex !== null && observedNavigationIndex !== null
+          ? nextNavigationIndex - observedNavigationIndex
+          : null
+      observedNavigationIndex = nextNavigationIndex
+
+      const state = window.history.state
+      const stateIndex = state?.idx
+      const stateGeneration = state?.[POP_HISTORY_GENERATION_STATE_KEY]
+      if (
+        typeof stateIndex === 'number' &&
+        (stateGeneration === generation || acceptForeignIndexes)
+      ) {
+        if (stateGeneration !== generation) {
+          window.history.replaceState(createState(location, stateIndex), '', window.location.href)
+        }
+        return stateIndex
+      }
+
+      const indexDelta =
+        navigationDelta !== null && navigationDelta !== 0
+          ? navigationDelta
+          : addedEntry
+            ? 1
+            : requestedDelta
+      if (indexDelta === null) return null
+
+      const nextIndex = getCurrentIndex() + indexDelta
+      window.history.replaceState(createState(location, nextIndex), '', window.location.href)
+      return nextIndex
+    },
+    rebaseCurrent(location, index) {
+      generation = createKey()
+      acceptForeignIndexes = false
+      stampCurrent(location, index)
+    },
+    stampCurrent,
+    sync,
+    trackGo(delta) {
+      const normalizedDelta = Number.isFinite(delta) ? Math.trunc(delta) : 0
+      pendingPopDelta = normalizedDelta === 0 ? null : normalizedDelta
+    },
+  }
+}
+
 // ============================================================================
 // Browser History
 // ============================================================================
@@ -71,7 +180,9 @@ export function createBrowserHistory(): History {
     window.history.state,
     window.location.pathname + window.location.search + window.location.hash,
   )
-  let index = (window.history.state?.idx as number) ?? 0
+  const initialIndex = window.history.state?.idx
+  let index = typeof initialIndex === 'number' ? initialIndex : 0
+  const popIndexTracker = createPopIndexTracker(() => index)
 
   interface BlockedPopTransition {
     fromIndex: number
@@ -88,7 +199,9 @@ export function createBrowserHistory(): History {
 
   function cancelBlockedPop() {
     if (blockedPop) blockedPop.cancelled = true
+    if (restoringPop) restoringPop.cancelled = true
     blockedPop = null
+    restoringPop = null
     forcedPopIndex = null
   }
 
@@ -117,7 +230,23 @@ export function createBrowserHistory(): History {
       window.location.pathname + window.location.search + window.location.hash,
     )
     const nextAction: HistoryAction = 'POP'
-    const nextIndex = (event.state?.idx as number) ?? 0
+    const nextIndex = popIndexTracker.readIndex(nextLocation)
+
+    if (nextIndex === null) {
+      cancelBlockedPop()
+      if (blockers.size > 0) {
+        console.warn(
+          '[fict-router] Cannot safely block an unindexed browser navigation without a known ' +
+            'traversal direction. The navigation was accepted to keep the URL and router state aligned.',
+        )
+      }
+      index = 0
+      popIndexTracker.rebaseCurrent(nextLocation, index)
+      action = nextAction
+      location = nextLocation
+      notifyListeners()
+      return
+    }
 
     // A blocked POP first has to return the browser to the last accepted entry.
     // That restoration is an implementation detail and must not notify listeners
@@ -240,8 +369,9 @@ export function createBrowserHistory(): History {
     location = nextLocation
     index++
 
-    const historyState = createHistoryState(location, index)
+    const historyState = popIndexTracker.createState(location, index)
     window.history.pushState(historyState, '', createURL(location))
+    popIndexTracker.sync()
 
     notifyListeners()
   }
@@ -281,21 +411,19 @@ export function createBrowserHistory(): History {
     action = nextAction
     location = nextLocation
 
-    const historyState = createHistoryState(location, index)
+    const historyState = popIndexTracker.createState(location, index)
     window.history.replaceState(historyState, '', createURL(location))
+    popIndexTracker.sync()
 
     notifyListeners()
   }
 
   function go(delta: number) {
+    popIndexTracker.trackGo(delta)
     window.history.go(delta)
   }
 
-  // Initialize history state if not set
-  if (window.history.state === null) {
-    const historyState = createHistoryState(location, index)
-    window.history.replaceState(historyState, '', createURL(location))
-  }
+  popIndexTracker.stampCurrent(location, index)
 
   return {
     get action() {
@@ -381,6 +509,7 @@ export function createHashHistory(options: { hashType?: 'slash' | 'noslash' } = 
   let location = readHashLocation()
   const initialIndex = window.history.state?.idx
   let index = typeof initialIndex === 'number' ? initialIndex : 0
+  const popIndexTracker = createPopIndexTracker(() => index)
 
   interface BlockedPopTransition {
     fromIndex: number
@@ -394,23 +523,6 @@ export function createHashHistory(options: { hashType?: 'slash' | 'noslash' } = 
   let blockedPop: BlockedPopTransition | null = null
   let restoringPop: BlockedPopTransition | null = null
   let forcedPopIndex: number | null = null
-  let observedHistoryLength = window.history.length
-  let pendingPopDelta: number | null = null
-  const hashGenerationStateKey = '__fict_hash_history_generation__'
-  let hashGeneration = createKey()
-  let acceptForeignIndexes = true
-  const navigation = (
-    window as Window & {
-      navigation?: { currentEntry?: { index?: number } | null }
-    }
-  ).navigation
-
-  function readNavigationIndex(): number | null {
-    const navigationIndex = navigation?.currentEntry?.index
-    return typeof navigationIndex === 'number' ? navigationIndex : null
-  }
-
-  let observedNavigationIndex = readNavigationIndex()
 
   function readHashLocation(): Location {
     let hash = window.location.hash.slice(1) // Remove the #
@@ -441,70 +553,9 @@ export function createHashHistory(options: { hashType?: 'slash' | 'noslash' } = 
     return '#' + url
   }
 
-  function createHashHistoryState(location: Location, index: number) {
-    return {
-      ...createHistoryState(location, index),
-      [hashGenerationStateKey]: hashGeneration,
-    }
-  }
-
-  function readHashIndex(nextLocation: Location): number | null {
-    const requestedDelta = pendingPopDelta
-    pendingPopDelta = null
-    const nextHistoryLength = window.history.length
-    const addedEntry = nextHistoryLength > observedHistoryLength
-    observedHistoryLength = nextHistoryLength
-    const nextNavigationIndex = readNavigationIndex()
-    const navigationDelta =
-      nextNavigationIndex !== null && observedNavigationIndex !== null
-        ? nextNavigationIndex - observedNavigationIndex
-        : null
-    observedNavigationIndex = nextNavigationIndex
-
-    const state = window.history.state
-    const stateIndex = state?.idx
-    const stateGeneration = state?.[hashGenerationStateKey]
-    if (
-      typeof stateIndex === 'number' &&
-      (stateGeneration === hashGeneration || acceptForeignIndexes)
-    ) {
-      if (stateGeneration !== hashGeneration) {
-        window.history.replaceState(
-          createHashHistoryState(nextLocation, stateIndex),
-          '',
-          window.location.href,
-        )
-      }
-      return stateIndex
-    }
-
-    // Entries created before this history instance and hashes assigned outside
-    // it have no index. A go/back/forward call gives us the exact direction;
-    // otherwise a longer history means a directly assigned hash was appended.
-    // A direct hash write from the middle of the stack can truncate forward
-    // entries without changing history.length. That is indistinguishable from
-    // an unindexed traversal in the legacy History API, so do not guess a
-    // direction when neither signal is available.
-    const indexDelta =
-      navigationDelta !== null && navigationDelta !== 0
-        ? navigationDelta
-        : addedEntry
-          ? 1
-          : requestedDelta
-    if (indexDelta === null) return null
-
-    const nextIndex = index + indexDelta
-    const historyState = createHashHistoryState(nextLocation, nextIndex)
-    window.history.replaceState(historyState, '', window.location.href)
-    return nextIndex
-  }
-
   function anchorUnresolvedHash(nextLocation: Location) {
-    hashGeneration = createKey()
-    acceptForeignIndexes = false
     index = 0
-    const historyState = createHashHistoryState(nextLocation, index)
-    window.history.replaceState(historyState, '', window.location.href)
+    popIndexTracker.rebaseCurrent(nextLocation, index)
   }
 
   function cancelBlockedPop() {
@@ -536,7 +587,7 @@ export function createHashHistory(options: { hashType?: 'slash' | 'noslash' } = 
   function handleHashChange() {
     const nextLocation = readHashLocation()
     const nextAction: HistoryAction = 'POP'
-    const nextIndex = readHashIndex(nextLocation)
+    const nextIndex = popIndexTracker.readIndex(nextLocation)
 
     // Without a trustworthy direction there is no safe delta that can restore
     // the accepted entry. Fail open and re-anchor the current entry instead of
@@ -674,10 +725,9 @@ export function createHashHistory(options: { hashType?: 'slash' | 'noslash' } = 
     location = nextLocation
     index++
 
-    const historyState = createHashHistoryState(location, index)
+    const historyState = popIndexTracker.createState(location, index)
     window.history.pushState(historyState, '', createHashHref(location))
-    observedHistoryLength = window.history.length
-    observedNavigationIndex = readNavigationIndex()
+    popIndexTracker.sync()
 
     notifyListeners()
   }
@@ -717,24 +767,22 @@ export function createHashHistory(options: { hashType?: 'slash' | 'noslash' } = 
     action = nextAction
     location = nextLocation
 
-    const historyState = createHashHistoryState(location, index)
+    const historyState = popIndexTracker.createState(location, index)
     window.history.replaceState(historyState, '', createHashHref(location))
-    observedHistoryLength = window.history.length
-    observedNavigationIndex = readNavigationIndex()
+    popIndexTracker.sync()
 
     notifyListeners()
   }
 
   function go(delta: number) {
-    pendingPopDelta = delta
+    popIndexTracker.trackGo(delta)
     window.history.go(delta)
   }
 
   // Mark the current entry as this instance's anchor. Existing numeric indexes
   // remain usable until an ambiguous external hash navigation starts a fresh
   // generation.
-  const initialHistoryState = createHashHistoryState(location, index)
-  window.history.replaceState(initialHistoryState, '', window.location.href)
+  popIndexTracker.stampCurrent(location, index)
 
   return {
     get action() {
