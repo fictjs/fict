@@ -20,6 +20,13 @@ import {
   toNodeArray,
 } from '../src/internal'
 import { registerErrorHandler } from '../src/lifecycle'
+import {
+  isCommentLike,
+  isDocumentFragmentLike,
+  isElementLike,
+  isHTMLElementLike,
+  isNodeLike,
+} from '../src/dom-guards'
 import type { HydrationIssue } from '../src/internal'
 
 const tick = () =>
@@ -124,6 +131,52 @@ describe('DOM Module', () => {
         expect(span.ownerDocument).toBe(foreignDocument)
         expect(marker.ownerDocument).toBe(foreignDocument)
         expect(foreignContainer.textContent).toBe('main')
+        teardown()
+      } finally {
+        iframe.remove()
+      }
+    })
+
+    it('recognizes cross-realm nodes after they were adopted before render', () => {
+      const iframe = document.createElement('iframe')
+      document.body.appendChild(iframe)
+      const foreignDocument = iframe.contentDocument!
+      const foreignWindow = iframe.contentWindow!
+      const span = foreignDocument.createElement('span')
+      const svg = foreignDocument.createElementNS('http://www.w3.org/2000/svg', 'svg')
+      const fragment = foreignDocument.createDocumentFragment()
+      const marker = foreignDocument.createComment('pre-adopted-marker')
+      const text = foreignDocument.createTextNode('pre-adopted-text')
+      span.textContent = 'pre-adopted'
+
+      for (const node of [span, svg, fragment, marker, text]) document.adoptNode(node)
+
+      try {
+        expect(span).toBeInstanceOf(foreignWindow.HTMLElement)
+        expect(span).not.toBeInstanceOf(HTMLElement)
+        expect(isNodeLike(span, document)).toBe(true)
+        expect(isNodeLike(marker, document)).toBe(true)
+        expect(isElementLike(span, document)).toBe(true)
+        expect(isElementLike(svg, document)).toBe(true)
+        expect(isHTMLElementLike(span, document)).toBe(true)
+        expect(isHTMLElementLike(svg, document)).toBe(false)
+        expect(isDocumentFragmentLike(fragment, document)).toBe(true)
+        expect(isDocumentFragmentLike(span, document)).toBe(false)
+        expect(isCommentLike(marker, document)).toBe(true)
+        expect(isCommentLike(text, document)).toBe(false)
+
+        const plainFake = { nodeType: 8, nodeName: '#comment', ownerDocument: document }
+        const prototypeFake = Object.create(Node.prototype) as Node
+        expect(isNodeLike(plainFake, document)).toBe(false)
+        expect(isCommentLike(plainFake, document)).toBe(false)
+        expect(isNodeLike(prototypeFake, document)).toBe(false)
+        expect(isCommentLike(prototypeFake, document)).toBe(false)
+
+        const teardown = render(() => [span, marker], container)
+
+        expect(container.childNodes[0]).toBe(span)
+        expect(container.childNodes[1]).toBe(marker)
+        expect(container.textContent).toBe('pre-adopted')
         teardown()
       } finally {
         iframe.remove()
