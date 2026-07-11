@@ -2129,7 +2129,7 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
     }
   })
 
-  it('aggregates conditional import and require resources at one metadata boundary', async () => {
+  it('uses the static ESM package boundary when CommonJS shares the request', async () => {
     const root = await createFixture({
       'entry.ts': `
         import { useCounter } from 'dual-hook'
@@ -2159,7 +2159,7 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
     }
   })
 
-  it('fails closed when one request crosses local and package metadata boundaries', async () => {
+  it('uses the static ESM target when CommonJS resolves the same request elsewhere', async () => {
     const root = await createFixture({
       'package.json': JSON.stringify({
         name: 'fixture',
@@ -2190,9 +2190,8 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
     })
 
     try {
-      await expect(
-        runCompiler(excludeNodeModules(createWebpackConfiguration(root))),
-      ).rejects.toThrow('across both local and non-local metadata boundaries')
+      await runCompiler(excludeNodeModules(createWebpackConfiguration(root)))
+      expect(runApp(root)).toBe(4)
     } finally {
       await rm(root, { recursive: true, force: true })
     }

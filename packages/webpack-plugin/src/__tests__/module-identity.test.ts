@@ -53,6 +53,48 @@ function readStoredModules(stats: Stats, resource: string): StoredModuleMetadata
 }
 
 describe('@fictjs/webpack-plugin module identity', () => {
+  it('keeps compiler metadata resolution scoped to static ESM dependencies', async () => {
+    const root = await createFixture({
+      'entry.ts': `
+        import { useCounter } from './hook'
+
+        const plain = require('./hook')
+
+        export function App() {
+          const count = useCounter()
+          return count * 2 + plain.value
+        }
+      `,
+      'hook.ts': `
+        import { $state } from 'fict'
+
+        export function useCounter() {
+          const count = $state(1)
+          return count
+        }
+      `,
+      'hook.js': `
+        exports.value = 40
+      `,
+    })
+
+    try {
+      const configuration = createWebpackConfiguration(root)
+      configuration.resolve = {
+        ...configuration.resolve,
+        byDependency: {
+          esm: { extensions: ['.ts'] },
+          commonjs: { extensions: ['.js'] },
+        },
+      }
+
+      await runCompiler(configuration)
+      expect(runApp(root)).toBe(42)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('isolates metadata for two loader chains targeting the same resource', async () => {
     const root = await createFixture({
       'entry.ts': `

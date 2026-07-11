@@ -764,8 +764,20 @@ async function buildMetadataGraph(
 
   for (const node of graph.values()) {
     for (const connection of compilation.moduleGraph.getOutgoingConnections(node.module)) {
+      const dependency = connection.dependency as {
+        category?: unknown
+        request?: unknown
+        type?: unknown
+      } | null
+      // The compiler consumes metadata only for static ESM import/export sources. Webpack also
+      // exposes CommonJS and import() connections here; including those can conflate two legal
+      // `resolve.byDependency` targets that share the same literal request. Every static harmony
+      // source has exactly one side-effect-evaluation dependency, so use that canonical edge and
+      // ignore its duplicate specifier connections as well as non-static dependency categories.
+      if (dependency?.type !== 'harmony side effect evaluation') continue
+
       const dependencyModule = connection.module
-      const request = (connection.dependency as { request?: unknown } | null)?.request
+      const request = dependency.request
       if (!dependencyModule) {
         if (typeof request !== 'string') continue
         const key = createLocalResolutionKey(node.identifier, request)
@@ -811,8 +823,7 @@ async function buildMetadataGraph(
           )
         }
         nonLocalResolutionKeys.add(key)
-        const dependencyType =
-          (connection.dependency as { category?: unknown } | null)?.category ?? ''
+        const dependencyType = dependency.category ?? ''
         packageResolutionTasks.push(
           resolveWebpackPackageMetadata(
             compilation,
