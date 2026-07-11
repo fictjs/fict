@@ -994,6 +994,10 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     code: string,
     normalizedFilename: string,
     tsImportElisionOverride?: TypeScriptImportElision,
+    transformOptions?: {
+      moduleMetadata?: Map<string, ModuleReactiveMetadata>
+      useTypeScriptProject?: boolean
+    },
   ): Promise<{
     fictOptions: FictCompilerOptions
     project: TypeScriptProject | null
@@ -1005,13 +1009,15 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       dev: compilerOptions.dev ?? isDev,
       sourcemap: compilerOptions.sourcemap ?? true,
       filename: normalizedFilename,
-      moduleMetadata: state.moduleMetadata,
+      moduleMetadata: transformOptions?.moduleMetadata ?? state.moduleMetadata,
       resolveModuleMetadata: (source, importer) =>
         resolveCompilerModuleMetadata(state, source, importer),
     }
 
     const [project, tsImportElision] = await Promise.all([
-      ensureTypeScriptProject(state),
+      transformOptions?.useTypeScriptProject === false
+        ? Promise.resolve(null)
+        : ensureTypeScriptProject(state),
       tsImportElisionOverride ??
         resolveTypeScriptImportElision(
           state,
@@ -1047,11 +1053,13 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     if (context.resolve) {
       const resolved = await context.resolve(source, importer, { skipSelf: true })
       if (resolved && !resolved.external && !isInternalModuleId(resolved.id)) {
+        if (shouldSkipMetadataForModuleQuery(resolved.id)) return null
         const resolvedFile = resolveExistingModuleFile(stripQuery(resolved.id))
         if (resolvedFile) {
+          const canonicalId = stripQuery(resolved.id)
           return {
             filename: normalizeFileName(resolvedFile, config?.root),
-            loadOptions: resolved,
+            loadOptions: canonicalId === resolved.id ? resolved : { ...resolved, id: canonicalId },
           }
         }
       }
@@ -1612,6 +1620,10 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       }
 
       const normalizedFilename = normalizeFileName(filename, config?.root)
+      const isPassThroughVariant = filename !== id
+      const cacheIdentity = isPassThroughVariant
+        ? `${normalizedFilename}${id.slice(filename.length)}`
+        : filename
       const metadataContext = this as MetadataResolveContext
       const state = getTransformInvocationState(metadataContext)
       if (!state) {
@@ -1625,7 +1637,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       }
       if (state.retired) throw new StaleMetadataRequestError()
       const releaseState = retainTransformState(state)
-      const pipelineMetadataEnabled = hasMetadataPipelineLoader(metadataContext)
+      const pipelineMetadataEnabled =
+        !isPassThroughVariant && hasMetadataPipelineLoader(metadataContext)
+      const transformMetadata = isPassThroughVariant
+        ? new Map<string, ModuleReactiveMetadata>()
+        : state.moduleMetadata
+      // Pass-through URL variants still need compiled code, but they must not
+      // publish metadata or TypeScript program inputs under the physical file's
+      // canonical identity. Importers prepare that canonical module separately.
       if (pipelineMetadataEnabled) {
         state.pipelineCompilerInputs.set(normalizedFilename, code)
         state.pipelineTransformsInProgress.set(
@@ -1636,14 +1655,30 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       try {
         const precompiledInput = isPrecompiledFictModule(code)
         if (!precompiledInput) {
-          await prepareReachableMetadata(state, metadataContext, code, normalizedFilename)
+          let metadataGraphCode = code
+          if (isPassThroughVariant) {
+            try {
+              metadataGraphCode = await fs.readFile(normalizedFilename, 'utf8')
+            } catch {
+              // A virtual pass-through variant has no canonical disk source.
+            }
+          }
+          await prepareReachableMetadata(
+            state,
+            metadataContext,
+            metadataGraphCode,
+            normalizedFilename,
+          )
           assertTransformStateActive(state)
         }
         const {
           fictOptions,
           project: tsProject,
           tsImportElision,
-        } = await createCompilerOptions(state, code, normalizedFilename)
+        } = await createCompilerOptions(state, code, normalizedFilename, undefined, {
+          moduleMetadata: transformMetadata,
+          useTypeScriptProject: !isPassThroughVariant,
+        })
         const aliasEntries = normalizeAliases(config?.resolve?.alias)
         const dependencyFingerprint = computePackageMetadataCacheFingerprint(
           code,
@@ -1668,7 +1703,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         const cacheKey =
           cacheStore.enabled && !hasObservableCompilerCallbacks
             ? buildCacheKey(
-                filename,
+                cacheIdentity,
                 code,
                 fictOptions,
                 tsProject,
@@ -1696,7 +1731,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               }
             }
             if (cached.moduleMetadata) {
-              state.moduleMetadata.set(normalizedFilename, cached.moduleMetadata)
+              transformMetadata.set(normalizedFilename, cached.moduleMetadata)
             }
             if (pipelineMetadataEnabled) {
               state.pipelineTransformedModules.add(normalizedFilename)
@@ -1725,7 +1760,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             tsImportElision,
             dependencyFingerprint,
           )
-          const prepared = state.preparedCompilerTransforms.get(normalizedFilename)
+          const prepared = isPassThroughVariant
+            ? undefined
+            : state.preparedCompilerTransforms.get(normalizedFilename)
           let result: { code: string; map: TransformResult['map'] }
           if (!hasObservableCompilerCallbacks && prepared?.preparationKey === preparationKey) {
             result = prepared
@@ -1737,8 +1774,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               tsImportElision,
             )
             assertTransformStateActive(state)
-            const generatedMetadata = state.moduleMetadata.get(normalizedFilename)
-            if (generatedMetadata) {
+            const generatedMetadata = transformMetadata.get(normalizedFilename)
+            if (generatedMetadata && !isPassThroughVariant) {
               state.preparedCompilerTransforms.set(normalizedFilename, {
                 ...result,
                 moduleMetadata: generatedMetadata,
@@ -1807,7 +1844,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             code: finalCode,
             map: finalMap,
           }
-          const generatedModuleMetadata = state.moduleMetadata.get(normalizedFilename)
+          const generatedModuleMetadata = transformMetadata.get(normalizedFilename)
           if (generatedModuleMetadata) {
             cachedTransform.moduleMetadata = generatedModuleMetadata
           }

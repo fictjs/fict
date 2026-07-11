@@ -3058,6 +3058,62 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it.each(['?import', '#fragment'])(
+    'does not let pass-through variant %s replace canonical hook metadata',
+    async suffix => {
+      const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-pass-through-current-module-'))
+
+      try {
+        const hookPath = path.join(root, 'hook.ts')
+        const appPath = path.join(root, 'app.ts')
+        const hookSource = `
+          import { createSignal } from '@fictjs/runtime/advanced'
+          export function useCount() {
+            const count = createSignal(2)
+            return count
+          }
+        `
+        const appSource = `
+          import { useCount } from './hook'
+          export function App() {
+            const count = useCount()
+            return count * 2
+          }
+        `
+        await writeFile(hookPath, hookSource)
+        await writeFile(appPath, appSource)
+
+        const plugin = getTestPlugin({
+          cache: false,
+          useTypeScriptProject: true,
+          functionSplitting: false,
+        })
+        plugin.configResolved?.({ ...mockBuildConfig, root })
+        const context = {
+          error: vi.fn(),
+          warn: vi.fn(),
+          emitFile: vi.fn(),
+          load: vi.fn(async () => null),
+        }
+
+        await plugin.transform?.call(context, hookSource, hookPath)
+        const variantResult = await plugin.transform?.call(
+          context,
+          `export function useCount() { return 2 }`,
+          `${hookPath}${suffix}`,
+        )
+        const appResult = (await plugin.transform?.call(context, appSource, appPath)) as {
+          code: string
+        }
+
+        expect(variantResult).toMatchObject({ code: expect.stringContaining('return 2') })
+        expect(appResult.code).toMatch(/count\(\)\s*\*\s*2/)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+  )
+
   it('transforms fragment-suffixed imports in a Vite build', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-fragment-import-'))
 
