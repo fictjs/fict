@@ -591,6 +591,76 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
     }
   })
 
+  it('preserves callable-object CTS import-equals while analyzing named hook members', () => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-graph-cts-callable-object-'))
+    const packageDir = path.join(baseDir, 'node_modules', 'callable-hook')
+    const appPath = path.join(baseDir, 'app.cts')
+    const appSource = `
+      import hook = require('callable-hook')
+
+      export function App() {
+        const direct = hook()
+        const member = hook.useCounter()
+        return direct * 10 + member
+      }
+    `
+
+    try {
+      mkdirSync(packageDir, { recursive: true })
+      writeFileSync(
+        path.join(packageDir, 'package.json'),
+        JSON.stringify({
+          name: 'callable-hook',
+          version: '1.0.0',
+          exports: { '.': './index.cjs' },
+          fict: { metadata: './index.fict.meta.json' },
+        }),
+      )
+      writeFileSync(path.join(packageDir, 'index.cjs'), 'module.exports = function hook() {}')
+      writeFileSync(
+        path.join(packageDir, 'index.fict.meta.json'),
+        JSON.stringify({
+          version: 1,
+          exports: {},
+          hooks: {
+            default: { directAccessor: 'signal' },
+            useCounter: { directAccessor: 'signal' },
+          },
+        }),
+      )
+      writeFileSync(appPath, appSource)
+
+      const output = compilePresetModule(appSource, appPath)
+      expect(output).toMatch(/direct\(\)\s*\*\s*10/)
+      expect(output).toMatch(/\+\s*member\(\)/)
+      expect(output.match(/require\(["']callable-hook["']\)/g)).toHaveLength(1)
+
+      let requireCalls = 0
+      const callableHook = Object.assign(() => () => 2, { useCounter: () => () => 3 })
+      const appModule = evaluateCommonJs(output, source => {
+        if (source !== 'callable-hook') throw new Error(`Unexpected dependency: ${source}`)
+        requireCalls++
+        return callableHook as unknown as Record<string, unknown>
+      })
+
+      expect((appModule.App as () => number)()).toBe(23)
+      expect(requireCalls).toBe(1)
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not apply the CommonJS import-equals bridge to MTS modules', () => {
+    expect(() =>
+      transformSync(`import hook = require('callable-hook'); export default hook`, {
+        filename: 'entry.mts',
+        configFile: false,
+        babelrc: false,
+        presets: [[fictPreset, { dev: false, strictGuarantee: false }]],
+      }),
+    ).toThrow(/import .*require|import equals|not supported/i)
+  })
+
   it.each([
     `export { useCount } from '@/hook'`,
     `export * from '@/hook'`,

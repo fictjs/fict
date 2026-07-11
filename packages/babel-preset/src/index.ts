@@ -968,13 +968,14 @@ function commonJsMarkerPlugin(): PluginObj {
 }
 
 interface CtsModuleSyntaxState {
-  importEquals: { local: string; source: string }[]
+  importEquals: { local: string; namespaceLocal: string | null; source: string }[]
   hasExportAssignment: boolean
 }
 
 // TypeScript lowering must run before Fict for enums/namespaces/declare fields, but it would also
-// erase the static edge and default-export identity carried by CTS module syntax. Present an ESM
-// shape during analysis, then restore exact CommonJS binding semantics before Babel's module pass.
+// erase the static edge and export identity carried by CTS module syntax. Present the callable
+// binding as a default import and its member reads through a namespace import during analysis,
+// then restore both views to one exact CommonJS binding before Babel's module pass.
 function lowerCtsModuleSyntaxForFict(state: CtsModuleSyntaxState): PluginObj {
   return {
     name: 'fict-lower-cts-module-syntax-for-analysis',
@@ -988,12 +989,38 @@ function lowerCtsModuleSyntaxForFict(state: CtsModuleSyntaxState): PluginObj {
         if (!t.isTSExternalModuleReference(node.moduleReference)) return
 
         const source = node.moduleReference.expression.value
+        const binding = importPath.scope.getBinding(node.id.name)
+        const memberReferences =
+          binding?.referencePaths.filter(referencePath => {
+            const parent = referencePath.parentPath
+            if (!parent) return false
+            return (
+              (parent.isMemberExpression() || parent.isOptionalMemberExpression()) &&
+              parent.node.object === referencePath.node
+            )
+          }) ?? []
+        const namespaceLocal =
+          memberReferences.length > 0
+            ? importPath.scope.generateUidIdentifier(`${node.id.name}Namespace`)
+            : null
+        if (namespaceLocal) {
+          for (const referencePath of memberReferences) {
+            referencePath.replaceWith(t.cloneNode(namespaceLocal))
+          }
+        }
         const declaration = t.importDeclaration(
-          [t.importDefaultSpecifier(t.cloneNode(node.id))],
+          [
+            t.importDefaultSpecifier(t.cloneNode(node.id)),
+            ...(namespaceLocal ? [t.importNamespaceSpecifier(t.cloneNode(namespaceLocal))] : []),
+          ],
           t.cloneNode(node.moduleReference.expression),
         )
         t.inheritsComments(declaration, node)
-        state.importEquals.push({ local: node.id.name, source })
+        state.importEquals.push({
+          local: node.id.name,
+          namespaceLocal: namespaceLocal?.name ?? null,
+          source,
+        })
         if (node.isExport) {
           importPath.replaceWithMultiple([
             declaration,
@@ -1025,21 +1052,39 @@ function restoreCtsModuleSyntaxAfterFict(
     visitor: {
       Program: {
         exit(programPath) {
+          programPath.scope.crawl()
           const pendingImports = new Map(
             state.importEquals.map(entry => [`${entry.source}\0${entry.local}`, entry]),
           )
           let restoredExportAssignment = !state.hasExportAssignment
           for (const statementPath of programPath.get('body')) {
             if (statementPath.isImportDeclaration()) {
-              const [specifier] = statementPath.node.specifiers
+              const specifier = statementPath.node.specifiers.find(t.isImportDefaultSpecifier)
+              if (!specifier) continue
+              const key = `${statementPath.node.source.value}\0${specifier.local.name}`
+              const pending = pendingImports.get(key)
+              if (!pending) continue
+              const namespaceSpecifier = statementPath.node.specifiers.find(
+                t.isImportNamespaceSpecifier,
+              )
               if (
-                statementPath.node.specifiers.length !== 1 ||
-                !t.isImportDefaultSpecifier(specifier)
+                statementPath.node.specifiers.length !== (pending.namespaceLocal ? 2 : 1) ||
+                namespaceSpecifier?.local.name !== pending.namespaceLocal
               ) {
                 continue
               }
-              const key = `${statementPath.node.source.value}\0${specifier.local.name}`
-              if (!pendingImports.delete(key)) continue
+              pendingImports.delete(key)
+              if (pending.namespaceLocal) {
+                const namespaceBinding = statementPath.scope.getBinding(pending.namespaceLocal)
+                if (!namespaceBinding?.path.isImportNamespaceSpecifier()) {
+                  throw statementPath.buildCodeFrameError(
+                    `[fict] CTS import-equals metadata binding "${pending.namespaceLocal}" was lost before CommonJS restoration.`,
+                  )
+                }
+                for (const referencePath of namespaceBinding.referencePaths) {
+                  referencePath.replaceWith(t.identifier(pending.local))
+                }
+              }
               const source = t.cloneNode(statementPath.node.source)
               if (rewriteImportExtensions) {
                 rewriteStaticModuleRequest(source, requestMappings)

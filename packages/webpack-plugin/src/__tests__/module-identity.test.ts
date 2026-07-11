@@ -109,6 +109,100 @@ describe('@fictjs/webpack-plugin module identity', () => {
     }
   })
 
+  it('uses local CommonJS graph metadata for CTS import-equals members', async () => {
+    const root = await createFixture({
+      'entry.cts': `
+        import hook = require('./hook')
+
+        export function App() {
+          const count = hook.useCounter()
+          return count * 2
+        }
+      `,
+      'hook.cts': `
+        import { $state } from 'fict'
+
+        export function useCounter() {
+          const count = $state(2)
+          return count
+        }
+      `,
+    })
+
+    try {
+      const configuration = createWebpackConfiguration(root)
+      configuration.entry = './entry.cts'
+      configuration.resolve = {
+        ...configuration.resolve,
+        extensions: ['.cts', '.ts', '.js'],
+      }
+
+      const stats = await runCompiler(configuration)
+      expect(readStoredBuildMetadata(stats, path.join(root, 'entry.cts'))).toMatchObject({
+        metadataSources: ['./hook'],
+      })
+      expect(runApp(root)).toBe(4)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('analyzes callable CTS import-equals members without duplicating the module', async () => {
+    const loadCounter = '__fictWebpackCallableImportEqualsLoads'
+    const root = await createFixture({
+      'entry.cts': `
+        import hook = require('callable-hook')
+
+        export function App() {
+          const direct = hook()
+          const member = hook.useCounter()
+          return hook.loadCount() * 100 + direct * 10 + member
+        }
+      `,
+      'node_modules/callable-hook/index.cjs': `
+        globalThis.${loadCounter} = (globalThis.${loadCounter} ?? 0) + 1
+        function hook() { return () => 2 }
+        hook.useCounter = () => () => 3
+        hook.loadCount = () => globalThis.${loadCounter}
+        module.exports = hook
+      `,
+      'node_modules/callable-hook/package.json': JSON.stringify({
+        name: 'callable-hook',
+        version: '1.0.0',
+        exports: { '.': './index.cjs' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'node_modules/callable-hook/index.fict.meta.json': JSON.stringify({
+        version: 1,
+        exports: {},
+        hooks: {
+          default: { directAccessor: 'signal' },
+          useCounter: { directAccessor: 'signal' },
+        },
+      }),
+    })
+
+    try {
+      const configuration = createWebpackConfiguration(root)
+      configuration.entry = './entry.cts'
+      configuration.resolve = {
+        ...configuration.resolve,
+        extensions: ['.cts', '.cjs', '.js'],
+      }
+      const rule = configuration.module?.rules?.[0]
+      if (!rule || typeof rule !== 'object') throw new Error('Fixture loader rule is missing.')
+      rule.exclude = /node_modules/
+
+      delete (globalThis as Record<string, unknown>)[loadCounter]
+      await runCompiler(configuration)
+      expect(runApp(root)).toBe(123)
+      expect((globalThis as Record<string, unknown>)[loadCounter]).toBe(1)
+    } finally {
+      delete (globalThis as Record<string, unknown>)[loadCounter]
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('maps rewritten ESM TypeScript requests back to compiler metadata sources', async () => {
     const root = await createFixture({
       'entry.ts': `
