@@ -616,6 +616,64 @@ function isSerializedMarker(value: unknown): value is SerializedMarker {
   )
 }
 
+function assertSerializedMarkerArray(
+  value: unknown,
+  marker: 'm' | 's' | 'o',
+  path: string,
+): asserts value is unknown[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`[fict] Invalid ${marker} marker at ${path}: expected an array.`)
+  }
+  assertDenseSerializedArray(value, path, `${marker} marker`)
+}
+
+function assertDenseSerializedArray(value: unknown[], path: string, label: string): void {
+  const keys = Object.keys(value)
+  if (keys.length !== value.length || keys.some((key, index) => key !== String(index))) {
+    throw new Error(`[fict] Invalid ${label} at ${path}: expected a dense array.`)
+  }
+}
+
+function assertSerializedKeyValueEntry(
+  value: unknown,
+  marker: 'm' | 'o',
+  path: string,
+  index: number,
+): asserts value is [unknown, unknown] {
+  if (!Array.isArray(value) || value.length !== 2) {
+    throw new Error(
+      `[fict] Invalid ${marker} marker entry at ${path}[${index}]: expected a key-value tuple.`,
+    )
+  }
+  assertDenseSerializedArray(value, `${path}[${index}]`, `${marker} marker entry`)
+}
+
+function assertSerializedKeyValueEntries(
+  value: unknown[],
+  marker: 'm' | 'o',
+  path: string,
+): asserts value is [unknown, unknown][] {
+  for (let i = 0; i < value.length; i++) {
+    assertSerializedKeyValueEntry(value[i], marker, path, i)
+  }
+}
+
+function assertSerializedObjectKey(value: unknown, path: string, index: number): void {
+  if (typeof value === 'string') return
+  if (
+    !isRecord(value) ||
+    value.__t !== 'sym' ||
+    !isRecord(value.v) ||
+    (value.v.k !== 'g' && value.v.k !== 'w') ||
+    typeof value.v.n !== 'string' ||
+    (value.v.k === 'w' && !WELL_KNOWN_SYMBOL_BY_NAME.has(value.v.n))
+  ) {
+    throw new Error(
+      `[fict] Invalid o marker key at ${path}[${index}]: expected a serialized string or symbol.`,
+    )
+  }
+}
+
 function serializeSymbol(value: symbol, path: string): SerializedMarker {
   const globalKey = Symbol.keyFor(value)
   if (globalKey !== undefined) {
@@ -985,14 +1043,23 @@ export function deserializeValue(
           return symbol
         }
       case 'o': {
+        assertSerializedMarkerArray(value.v, 'o', path)
+        assertSerializedKeyValueEntries(value.v, 'o', path)
+        if (value.p !== undefined && value.p !== 'n') {
+          throw new Error(`[fict] Invalid o marker at ${path}: invalid prototype.`)
+        }
+        for (let i = 0; i < value.v.length; i++) {
+          assertSerializedObjectKey(value.v[i]![0], path, i)
+        }
         const obj: Record<string | symbol, unknown> = value.p === 'n' ? Object.create(null) : {}
         refs.set(path, obj)
         for (let i = 0; i < value.v.length; i++) {
-          const entry = value.v[i]
-          if (!entry) continue
+          const entry = value.v[i]!
           const [rawKey, rawValue] = entry
           const key = deserializeValue(rawKey, refs, `${path}.key${i}`)
-          if (typeof key !== 'string' && typeof key !== 'symbol') continue
+          if (typeof key !== 'string' && typeof key !== 'symbol') {
+            throw new Error(`[fict] Invalid o marker key at ${path}[${i}].`)
+          }
           defineEnumerableDataProperty(
             obj,
             key,
@@ -1006,11 +1073,12 @@ export function deserializeValue(
         return obj
       }
       case 'm': {
+        assertSerializedMarkerArray(value.v, 'm', path)
+        assertSerializedKeyValueEntries(value.v, 'm', path)
         const map = new Map<unknown, unknown>()
         refs.set(path, map)
         for (let i = 0; i < value.v.length; i++) {
-          const entry = value.v[i]
-          if (!entry) continue
+          const entry = value.v[i]!
           const [k, v] = entry
           map.set(
             deserializeValue(k, refs, `${path}.k${i}`),
@@ -1020,6 +1088,7 @@ export function deserializeValue(
         return map
       }
       case 's': {
+        assertSerializedMarkerArray(value.v, 's', path)
         const set = new Set<unknown>()
         refs.set(path, set)
         for (let i = 0; i < value.v.length; i++) {
@@ -1037,6 +1106,7 @@ export function deserializeValue(
 
   // Handle arrays
   if (Array.isArray(value)) {
+    assertDenseSerializedArray(value, path, 'serialized array')
     const arr: unknown[] = new Array(value.length)
     refs.set(path, arr)
     for (let i = 0; i < value.length; i++) {

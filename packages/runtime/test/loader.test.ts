@@ -986,7 +986,7 @@ describe('resumable loader snapshot validation', () => {
     delete (globalThis as { __fictParentCalls?: number }).__fictParentCalls
   })
 
-  it('reports malformed serialized props without running their handlers', async () => {
+  it('rejects non-array serialized props without iterating forged lengths', async () => {
     const onIssue = vi.fn()
     const doc = createDocumentWithSnapshots(
       JSON.stringify({
@@ -995,7 +995,7 @@ describe('resumable loader snapshot validation', () => {
           sMalformed: {
             id: 'sMalformed',
             slots: [],
-            props: { __t: 's', v: null },
+            props: { __t: 's', v: { length: 4_294_967_295 } },
           },
         },
       }),

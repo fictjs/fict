@@ -913,6 +913,46 @@ describe('serializeValue / deserializeValue', () => {
   })
 
   describe('edge cases', () => {
+    it.each(['m', 's', 'o'] as const)(
+      'should reject non-array %s marker payloads before iterating them',
+      marker => {
+        expect(() => deserializeValue({ __t: marker, v: { length: 0 } } as unknown)).toThrow(
+          /expected an array/,
+        )
+      },
+    )
+
+    it.each(['m', 'o'] as const)('should reject malformed %s marker entries', marker => {
+      expect(() => deserializeValue({ __t: marker, v: [['missing-value']] } as unknown)).toThrow(
+        /expected a key-value tuple/,
+      )
+    })
+
+    it('should reject malformed container entries before exposing partial refs', () => {
+      const refs = new Map<string, unknown>()
+
+      expect(() =>
+        deserializeValue({ __t: 'm', v: [['valid', 1], ['missing-value']] } as unknown, refs),
+      ).toThrow(/expected a key-value tuple/)
+      expect(refs.has('$')).toBe(false)
+    })
+
+    it('should reject non-string object marker keys and invalid prototypes', () => {
+      expect(() => deserializeValue({ __t: 'o', v: [[42, 'value']] } as unknown)).toThrow(
+        /expected a serialized string or symbol/,
+      )
+      expect(() => deserializeValue({ __t: 'o', v: [], p: 'array' } as unknown)).toThrow(
+        /invalid prototype/,
+      )
+    })
+
+    it('should reject sparse encoded arrays before iterating their declared length', () => {
+      expect(() => deserializeValue(new Array(1))).toThrow(/expected a dense array/)
+      expect(() => deserializeValue({ __t: 's', v: new Array(1) } as unknown)).toThrow(
+        /expected a dense array/,
+      )
+    })
+
     it('should handle empty objects and arrays', () => {
       expect(deserializeValue(serializeValue({}))).toEqual({})
       expect(deserializeValue(serializeValue([]))).toEqual([])
