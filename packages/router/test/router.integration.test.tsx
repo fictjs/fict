@@ -668,6 +668,48 @@ describe('Router integration (MemoryRouter)', () => {
     expect(screen.getByTestId('path').textContent).toBe('/about')
   })
 
+  it('replaces the matched route element and starts the target preload', async () => {
+    const aboutPreload = vi.fn(() => 'about data')
+
+    render(() => (
+      <MemoryRouter initialEntries={['/']}>
+        <Route
+          path="/"
+          element={
+            <main data-testid="home-route">
+              home
+              <NavigateButton to="/about" />
+            </main>
+          }
+        />
+        <Route
+          path="/about"
+          preload={aboutPreload}
+          loadingElement={<span data-testid="about-loading">loading</span>}
+          element={<main data-testid="about-route">about</main>}
+        />
+      </MemoryRouter>
+    ))
+
+    expect(screen.getByTestId('home-route').textContent).toContain('home')
+
+    await act(async () => {
+      screen.getByTestId('go-/about').click()
+    })
+
+    await vi.waitFor(() => {
+      expect(screen.getByTestId('about-route').textContent).toBe('about')
+    })
+    expect(screen.queryByTestId('home-route')).toBeNull()
+    expect(screen.queryByTestId('about-loading')).toBeNull()
+    expect(aboutPreload).toHaveBeenCalledOnce()
+    expect(aboutPreload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        location: expect.objectContaining({ pathname: '/about' }),
+      }),
+    )
+  })
+
   it('starts beforeLeave unprevented and lets a no-op handler navigate', async () => {
     const observedDefaultPrevented: boolean[] = []
     const onCall = vi.fn((_retry, _prevent, defaultPrevented) => {

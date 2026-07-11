@@ -20,14 +20,19 @@ for (const key of [
 }
 globalThis.scrollTo = () => {}
 
-const [{ Link, MemoryRouter, Route }, { render }, { createSignal }, { __fictProp }, { jsx }] =
-  await Promise.all([
-    import('../dist/index.js'),
-    import('../../runtime/dist/index.js'),
-    import('../../runtime/dist/advanced.js'),
-    import('../../runtime/dist/internal.js'),
-    import('../../runtime/dist/jsx-runtime.js'),
-  ])
+const [
+  { Link, MemoryRouter, Route, useNavigate },
+  { render },
+  { createSignal },
+  { __fictProp },
+  { jsx },
+] = await Promise.all([
+  import('../dist/index.js'),
+  import('../../runtime/dist/index.js'),
+  import('../../runtime/dist/advanced.js'),
+  import('../../runtime/dist/internal.js'),
+  import('../../runtime/dist/jsx-runtime.js'),
+])
 
 const to = createSignal('/first')
 const disabled = createSignal(false)
@@ -68,4 +73,42 @@ assert.equal(firstCalls, 0)
 assert.equal(secondCalls, 1)
 
 dispose()
+
+let aboutPreloads = 0
+function HomeRoute() {
+  const navigate = useNavigate()
+  return jsx('button', {
+    'data-testid': 'home-route',
+    onClick: () => navigate('/about'),
+    children: 'home',
+  })
+}
+
+const routeApp = jsx(MemoryRouter, {
+  initialEntries: ['/'],
+  children: [
+    jsx(Route, { path: '/', element: jsx(HomeRoute, {}) }),
+    jsx(Route, {
+      path: '/about',
+      preload: () => {
+        aboutPreloads++
+        return 'ready'
+      },
+      element: jsx('main', { 'data-testid': 'about-route', children: 'about' }),
+    }),
+  ],
+})
+
+const disposeRoutes = render(() => routeApp, document.querySelector('#app'))
+document
+  .querySelector('[data-testid=home-route]')
+  .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }))
+await Promise.resolve()
+await Promise.resolve()
+await Promise.resolve()
+assert.equal(document.querySelector('[data-testid=home-route]'), null)
+assert.equal(document.querySelector('[data-testid=about-route]').textContent, 'about')
+assert.equal(aboutPreloads, 1)
+
+disposeRoutes()
 dom.window.close()

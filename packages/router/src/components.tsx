@@ -53,6 +53,29 @@ interface RouteDataState<T = unknown> {
   loading: boolean
 }
 
+function areRouteMatchesEqual(previous: RouteMatch[], next: RouteMatch[]): boolean {
+  if (previous.length !== next.length) return false
+
+  return previous.every((match, index) => {
+    const candidate = next[index]
+    if (
+      !candidate ||
+      match.route !== candidate.route ||
+      match.pathname !== candidate.pathname ||
+      match.pattern !== candidate.pattern
+    ) {
+      return false
+    }
+
+    const keys = Object.keys(match.params)
+    const candidateKeys = Object.keys(candidate.params)
+    return (
+      keys.length === candidateKeys.length &&
+      keys.every(key => match.params[key] === candidate.params[key])
+    )
+  })
+}
+
 // ============================================================================
 // Router Component
 // ============================================================================
@@ -178,7 +201,7 @@ export function Routes(props: RoutesProps) {
     const base = readAccessor(router.base)
     const locationPath = stripBaseOrWarn(location.pathname, base)
     if (locationPath == null) {
-      currentMatches([])
+      if (untrack(() => currentMatches()).length > 0) currentMatches([])
     } else {
       // Calculate the remaining path after parent route
       const basePath = parentMatch ? parentMatch.pathname : '/'
@@ -188,7 +211,15 @@ export function Routes(props: RoutesProps) {
         ? locationPath.slice(basePath.length) || '/'
         : locationPath
 
-      currentMatches(matchRoutes(branches, relativePath) || [])
+      const nextMatches = matchRoutes(branches, relativePath) || []
+      if (
+        !areRouteMatchesEqual(
+          untrack(() => currentMatches()),
+          nextMatches,
+        )
+      ) {
+        currentMatches(nextMatches)
+      }
     }
   })
 
@@ -209,10 +240,16 @@ interface CurrentMatchesProps {
 }
 
 function CurrentMatchesView(props: CurrentMatchesProps): FictNode {
-  const matchesInput = untrack(() => props.matches)
-  const matches = () => (typeof matchesInput === 'function' ? matchesInput() : matchesInput)
+  const matches = () => {
+    const matchesInput = props.matches
+    return typeof matchesInput === 'function' ? matchesInput() : matchesInput
+  }
+  const renderCurrentMatches = (): FictNode => {
+    const currentMatches = matches()
+    return currentMatches.length > 0 ? renderMatches(currentMatches, 0) : null
+  }
 
-  return <>{matches().length > 0 ? renderMatches(matches(), 0) : null}</>
+  return <>{[reactive(renderCurrentMatches) as unknown as FictNode]}</>
 }
 
 function RenderMatchesView(props: RenderMatchesProps): FictNode {
@@ -227,6 +264,9 @@ function RenderMatchesView(props: RenderMatchesProps): FictNode {
     loading: false,
   })
   let preloadToken = 0
+  onCleanup(() => {
+    preloadToken++
+  })
 
   const match = props.matches.slice(index, index + 1)[0]!
   const route = match.route
@@ -238,6 +278,13 @@ function RenderMatchesView(props: RenderMatchesProps): FictNode {
     // Trigger preload on initial render and when location changes
     createEffect(() => {
       const location = readAccessor(router.location)
+      const isCurrentMatch = readAccessor(router.matches).some(
+        currentMatch =>
+          currentMatch.route === route &&
+          currentMatch.pathname === match.pathname &&
+          currentMatch.pattern === match.pattern,
+      )
+      if (!isCurrentMatch) return
       const preloadArgs = {
         params: match.params,
         location,
