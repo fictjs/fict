@@ -70,6 +70,171 @@ const HTML_HOST_SENSITIVE_CONTEXT_CHILDREN = new Map([
   ['map', new Set(['area'])],
 ])
 
+interface ParserSensitiveHostContext {
+  descendants: ReadonlySet<string>
+  barriers?: ReadonlySet<string>
+}
+
+// The tree-builder stops its backwards list-item scan at special elements
+// other than address/div/p. A nested list or section therefore contains its
+// own li/dt/dd tokens without closing an outer item.
+const HTML_LIST_ITEM_SCAN_BARRIERS = new Set([
+  'applet',
+  'article',
+  'aside',
+  'blockquote',
+  'button',
+  'caption',
+  'center',
+  'colgroup',
+  'details',
+  'dl',
+  'fieldset',
+  'figure',
+  'footer',
+  'form',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'header',
+  'hgroup',
+  'hr',
+  'main',
+  'marquee',
+  'menu',
+  'nav',
+  'object',
+  'ol',
+  'pre',
+  'search',
+  'section',
+  'select',
+  'table',
+  'tbody',
+  'td',
+  'tfoot',
+  'th',
+  'thead',
+  'tr',
+  'ul',
+])
+
+// These start tags consult parser state outside the custom-element subtree.
+// When one appears below <fict-host>, the browser can close an ancestor, eject
+// content from the host, or discard the component root even though the server
+// DOM allowed the programmatic nesting.
+const HTML_PARSER_SENSITIVE_HOST_CONTEXTS = new Map<string, ParserSensitiveHostContext>([
+  [
+    'p',
+    {
+      descendants: new Set([
+        'address',
+        'article',
+        'aside',
+        'blockquote',
+        'center',
+        'dd',
+        'details',
+        'dialog',
+        'dir',
+        'div',
+        'dl',
+        'dt',
+        'fieldset',
+        'figcaption',
+        'figure',
+        'footer',
+        'form',
+        'h1',
+        'h2',
+        'h3',
+        'h4',
+        'h5',
+        'h6',
+        'header',
+        'hgroup',
+        'hr',
+        'li',
+        'listing',
+        'main',
+        'menu',
+        'nav',
+        'ol',
+        'p',
+        'plaintext',
+        'pre',
+        'search',
+        'section',
+        'summary',
+        'table',
+        'ul',
+        'xmp',
+      ]),
+    },
+  ],
+  ['a', { descendants: new Set(['a']) }],
+  ['button', { descendants: new Set(['button']) }],
+  ['li', { descendants: new Set(['li']), barriers: HTML_LIST_ITEM_SCAN_BARRIERS }],
+  ['dt', { descendants: new Set(['dt', 'dd']), barriers: HTML_LIST_ITEM_SCAN_BARRIERS }],
+  ['dd', { descendants: new Set(['dt', 'dd']), barriers: HTML_LIST_ITEM_SCAN_BARRIERS }],
+  ['nobr', { descendants: new Set(['nobr']) }],
+  ['form', { descendants: new Set(['form']) }],
+  [
+    'caption',
+    {
+      descendants: new Set([
+        'caption',
+        'col',
+        'colgroup',
+        'tbody',
+        'td',
+        'tfoot',
+        'th',
+        'thead',
+        'tr',
+      ]),
+      barriers: new Set(['table']),
+    },
+  ],
+  [
+    'td',
+    {
+      descendants: new Set([
+        'caption',
+        'col',
+        'colgroup',
+        'tbody',
+        'td',
+        'tfoot',
+        'th',
+        'thead',
+        'tr',
+      ]),
+      barriers: new Set(['table']),
+    },
+  ],
+  [
+    'th',
+    {
+      descendants: new Set([
+        'caption',
+        'col',
+        'colgroup',
+        'tbody',
+        'td',
+        'tfoot',
+        'th',
+        'thead',
+        'tr',
+      ]),
+      barriers: new Set(['table']),
+    },
+  ],
+])
+
 const STREAM_BOUNDARY_START_PREFIX = 'fict:suspense-start:'
 const STREAM_BOUNDARY_END_PREFIX = 'fict:suspense-end:'
 const SCRIPT_SUPPORTING_ELEMENTS = ['script', 'template']
@@ -351,6 +516,7 @@ function assertSafeResumableHostContext(element: Element, serializedParent: Elem
     )
   }
 
+  assertSafeHostParserStateContext(element, parent)
   assertSafeHostSensitiveHtmlContext(element, contextTag)
 }
 
@@ -360,6 +526,54 @@ function isResumableFictHost(element: Element): boolean {
     element.hasAttribute('data-fict-host') &&
     !!element.getAttribute('data-fict-s')
   )
+}
+
+function assertSafeHostParserStateContext(host: Element, parent: Element): void {
+  let ancestor: Element | null = parent
+  while (ancestor) {
+    if (isHtmlElement(ancestor)) {
+      const contextTag = (ancestor.localName || ancestor.tagName).toLowerCase()
+      const rule = HTML_PARSER_SENSITIVE_HOST_CONTEXTS.get(contextTag)
+      if (rule) {
+        const sensitiveTag = findParserSensitiveDescendant(host, rule)
+        if (sensitiveTag) {
+          const scopeId = host.getAttribute('data-fict-s') ?? '<unknown>'
+          throw new Error(
+            `[fict/ssr] Cannot serialize resumable <fict-host> scope ${JSON.stringify(scopeId)} inside <${contextTag}> with descendant <${sensitiveTag}>. ` +
+              `The HTML parser applies <${sensitiveTag}> start-tag rules outside the custom-element boundary, so it will close or reparent the ancestor, eject content from the host, or discard the component root. ` +
+              `Move the component boundary outside <${contextTag}>, or make the component own that element. ` +
+              'Range-based scope anchors (range-v3) are required to preserve this boundary without an element wrapper.',
+          )
+        }
+      }
+    }
+    ancestor = ancestor.parentElement
+  }
+}
+
+function findParserSensitiveDescendant(
+  host: Element,
+  rule: ParserSensitiveHostContext,
+): string | null {
+  const pending = Array.from(host.children)
+  while (pending.length > 0) {
+    const element = pending.shift()!
+    if (!isHtmlElement(element)) continue
+
+    const tagName = (element.localName || element.tagName).toLowerCase()
+    if (rule.descendants.has(tagName)) return tagName
+    if (
+      tagName === 'template' ||
+      tagName === 'svg' ||
+      tagName === 'math' ||
+      HTML_TEXT_ONLY_ELEMENTS.has(tagName) ||
+      rule.barriers?.has(tagName)
+    ) {
+      continue
+    }
+    pending.unshift(...Array.from(element.children))
+  }
+  return null
 }
 
 function assertSafeHostSensitiveHtmlContext(host: Element, contextTag: string): void {

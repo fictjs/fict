@@ -340,6 +340,72 @@ describe('resumable host HTML parser context validation', () => {
     expect(html).toContain('<button>safe</button>')
   })
 
+  it.each([
+    { contextTag: 'p', sensitiveTag: 'div' },
+    { contextTag: 'button', sensitiveTag: 'button' },
+    { contextTag: 'a', sensitiveTag: 'a' },
+    { contextTag: 'li', sensitiveTag: 'li' },
+    { contextTag: 'dt', sensitiveTag: 'dd' },
+    { contextTag: 'dd', sensitiveTag: 'dt' },
+    { contextTag: 'nobr', sensitiveTag: 'nobr' },
+    { contextTag: 'form', sensitiveTag: 'form' },
+    { contextTag: 'caption', sensitiveTag: 'tr' },
+    { contextTag: 'td', sensitiveTag: 'td' },
+    { contextTag: 'th', sensitiveTag: 'tr' },
+  ])(
+    'rejects parser-state-sensitive <$sensitiveTag> output inside <$contextTag>',
+    ({ contextTag, sensitiveTag }) => {
+      const { document } = parseHTML('<!doctype html><html><body></body></html>')
+      const context = document.createElement(contextTag)
+      const host = createResumableHost(document, `${contextTag}-scope`)
+      const wrapper = document.createElement('span')
+      wrapper.appendChild(document.createElement(sensitiveTag))
+      host.replaceChildren(wrapper)
+      context.appendChild(host)
+
+      expect(() => serializeHtmlNode(context)).toThrowError(
+        new RegExp(
+          `resumable <fict-host>.*<${contextTag}>.*descendant <${sensitiveTag}>.*HTML parser.*range-based scope anchors`,
+          'i',
+        ),
+      )
+    },
+  )
+
+  it('rejects a real block component before returning a split paragraph host', () => {
+    function Block(): FictNode {
+      return { type: 'div', props: { children: 'block' } }
+    }
+
+    expect(() =>
+      renderToString(() => ({
+        type: 'p',
+        props: { children: { type: Block, props: {} } },
+      })),
+    ).toThrowError(/resumable <fict-host>.*<p>.*descendant <div>/i)
+  })
+
+  it.each([
+    { contextTag: 'li', barrierTag: 'ul', sensitiveTag: 'li' },
+    { contextTag: 'li', barrierTag: 'section', sensitiveTag: 'li' },
+    { contextTag: 'dt', barrierTag: 'dl', sensitiveTag: 'dd' },
+    { contextTag: 'dt', barrierTag: 'section', sensitiveTag: 'dd' },
+    { contextTag: 'td', barrierTag: 'table', sensitiveTag: 'td' },
+  ])(
+    'allows <$sensitiveTag> below a nested <$barrierTag> parser scope in <$contextTag>',
+    ({ contextTag, barrierTag, sensitiveTag }) => {
+      const { document } = parseHTML('<!doctype html><html><body></body></html>')
+      const context = document.createElement(contextTag)
+      const host = createResumableHost(document, `${contextTag}-nested-scope`)
+      const barrier = document.createElement(barrierTag)
+      barrier.appendChild(document.createElement(sensitiveTag))
+      host.replaceChildren(barrier)
+      context.appendChild(host)
+
+      expect(() => serializeHtmlNode(context)).not.toThrow()
+    },
+  )
+
   it('rejects an internal SVG host even below an HTML integration point', () => {
     const { document } = parseHTML('<!doctype html><html><body></body></html>')
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
