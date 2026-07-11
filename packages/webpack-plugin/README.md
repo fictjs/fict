@@ -21,6 +21,14 @@ module.exports = {
 }
 ```
 
+## Resumability
+
+The Webpack integration currently supports compiler transforms and reactive metadata, but it does
+not yet emit split handler chunks, assign public resumable module identities, or generate a
+resumability manifest. The loader therefore rejects `resumable: true` and user-provided
+`publicModuleId` values instead of emitting source-machine `file://` QRLs that cannot be loaded from
+a Webpack deployment. Use `@fictjs/vite-plugin` for resumable builds.
+
 If another Babel transform is needed, place its loader to the left of the Fict loader so it runs
 after Fict compilation. Do not also configure `@fictjs/babel-preset` in that Babel loader.
 This is also the required handoff for decorators: Fict accepts and preserves current standard

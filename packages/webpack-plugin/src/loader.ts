@@ -23,10 +23,17 @@ export type FictWebpackLoaderOptions = Omit<
   | 'integrationDiagnostics'
   | 'moduleMetadata'
   | 'onModuleMetadataDependency'
+  | 'publicModuleId'
+  | 'resumable'
   | 'resolveModuleMetadata'
   | 'sourcemap'
   | 'validateIntegrationMetadata'
->
+> & {
+  /** Webpack resumability is not supported until the integration owns chunks and a manifest. */
+  resumable?: false | undefined
+  /** Public module identities are integration-owned and unavailable in the Webpack loader. */
+  publicModuleId?: never
+}
 
 interface FictLoaderContext {
   async(): (
@@ -37,7 +44,7 @@ interface FictLoaderContext {
   addDependency(file: string): void
   addMissingDependency(file: string): void
   cacheable(flag?: boolean): void
-  getOptions(): FictWebpackLoaderOptions
+  getOptions(): FictPresetOptions
   mode?: string
   resource: string
   resourcePath: string
@@ -104,12 +111,39 @@ function resolveThroughExistingAncestor(filename: string): string {
   }
 }
 
+function unsupportedResumabilityError(options: FictPresetOptions): Error | null {
+  if (options.resumable === true) {
+    return new Error(
+      '[fict] @fictjs/webpack-plugin does not support `resumable: true`: the Webpack ' +
+        'integration does not emit split handler chunks, assign public resumable module ' +
+        'identities, or generate a resumability manifest. Remove `resumable: true` or use ' +
+        '@fictjs/vite-plugin for resumable builds.',
+    )
+  }
+  if (options.publicModuleId !== undefined) {
+    return new Error(
+      '[fict] `publicModuleId` is integration-owned and cannot enable Webpack resumability: ' +
+        '@fictjs/webpack-plugin does not emit split handler chunks, assign public resumable ' +
+        'module identities, or generate a resumability manifest. Remove `publicModuleId` or ' +
+        'use @fictjs/vite-plugin for resumable builds.',
+    )
+  }
+  return null
+}
+
 export default function fictWebpackLoader(
   this: FictLoaderContext,
   source: string,
   inputSourceMap?: string | object,
 ): void {
   const callback = this.async()
+  const options = this.getOptions()
+  const resumabilityError = unsupportedResumabilityError(options)
+  if (resumabilityError) {
+    callback(resumabilityError)
+    return
+  }
+
   const binding = getLoaderBinding(this)
   if (!binding) {
     callback(
@@ -136,7 +170,6 @@ export default function fictWebpackLoader(
   binding.state.metadataSourcesByIdentifier.set(moduleIdentifier, new Set())
   binding.state.metadataRequestMappingsByIdentifier.set(moduleIdentifier, new Map())
 
-  const options = this.getOptions()
   const webpackResource = normalizeWebpackResource(this.resource)
   const compilerFilename = normalizeFileName(this.resourcePath)
   // The compiler deliberately strips URL-like suffixes from filenames. Give each loader
