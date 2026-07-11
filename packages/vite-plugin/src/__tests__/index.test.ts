@@ -44,6 +44,38 @@ function getTestPlugin(options?: Parameters<typeof fict>[0]): TestPlugin {
   return fict(options) as TestPlugin
 }
 
+function handlerVirtualId(
+  sourceModule: string,
+  exportName = '__fict_e0',
+  root = mockBuildConfig.root,
+): string {
+  const handlerId = handlerIdForTest(sourceModule, exportName, root)
+  return `\0fict-handler:${handlerId}`
+}
+
+function handlerQrl(
+  sourceModule: string,
+  exportName = '__fict_e0',
+  root = mockBuildConfig.root,
+): string {
+  const handlerId = handlerIdForTest(sourceModule, exportName, root)
+  return `virtual:fict-handler:${handlerId}#default`
+}
+
+function handlerSourceIdentityForTest(sourceModule: string, root: string): string {
+  const normalizedRoot = path.normalize(path.resolve(root))
+  const normalizedSource = path.normalize(
+    path.isAbsolute(sourceModule) ? path.resolve(sourceModule) : path.resolve(root, sourceModule),
+  )
+  return path.relative(normalizedRoot, normalizedSource).split(path.sep).join('/') || '.'
+}
+
+function handlerIdForTest(sourceModule: string, exportName: string, root: string): string {
+  const sourceIdentity = handlerSourceIdentityForTest(sourceModule, root)
+  const hash = createHash('sha256').update(sourceIdentity).digest('hex').slice(0, 32)
+  return `h${hash}$$${exportName}`
+}
+
 function waitForWatchEnd(watcher: Rollup.RollupWatcher, timeoutMs = 10_000): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const onEvent = (event: Rollup.RollupWatcherEvent) => {
@@ -1121,7 +1153,7 @@ describe('fict vite-plugin', () => {
       const fresh = await within(environment.transformRequest('/src/App.tsx'), 'fresh transform')
       expect(fresh?.code).toContain('virtual:fict-handler:')
 
-      const virtualId = `\0fict-handler:${appPath}$$__fict_e0`
+      const virtualId = handlerVirtualId(appPath, '__fict_e0', root)
       const loadHandler = async (): Promise<string> => {
         const loaded = await environment.transformRequest(virtualId)
         return loaded?.code ?? ''
@@ -1242,7 +1274,7 @@ describe('fict vite-plugin', () => {
     const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-vite-detached-context-')))
     const srcDir = path.join(root, 'src')
     const appPath = path.join(srcDir, 'App.tsx')
-    const virtualId = `\0fict-handler:${appPath}$$__fict_e0`
+    const virtualId = handlerVirtualId(appPath, '__fict_e0', root)
     const deferred = () => {
       let resolve!: () => void
       const promise = new Promise<void>(done => {
@@ -1452,7 +1484,7 @@ describe('fict vite-plugin', () => {
       const direct = await environment.pluginContainer.transform(source('new-handler'), appPath)
       expect(direct.code).toContain('virtual:fict-handler:')
 
-      const virtualId = `\0fict-handler:${childPath}$$__fict_e0`
+      const virtualId = handlerVirtualId(childPath, '__fict_e0', root)
       const handler = await environment.pluginContainer.load(virtualId)
       const handlerCode =
         typeof handler === 'string'
@@ -4962,7 +4994,7 @@ function Counter() {
       // Now test loading a virtual handler module
       const load = plugin.load as any
       expect(typeof load).toBe('function')
-      const content = load('\0fict-handler:/project/src/Counter.tsx$$__fict_e0') as string | null
+      const content = load(handlerVirtualId('/project/src/Counter.tsx')) as string | null
       expect(content).not.toBeNull()
       expect(content).toContain('export default')
       expect(content).toContain('__fictUseLexicalScope')
@@ -4979,7 +5011,7 @@ function Counter() {
         `,
         sourceModule,
       )
-      const content = result.load(`\0fict-handler:${sourceModule}$$__fict_e0`)
+      const content = result.load(handlerVirtualId(sourceModule))
 
       expect(content).not.toBeNull()
       const ast = parse(content!, { sourceType: 'module' })
@@ -5024,9 +5056,7 @@ function Counter() {
 
       const load = plugin.load as any
       expect(typeof load).toBe('function')
-      const content = load('\0fict-handler:/project/src/FictCounter.tsx$$__fict_e0') as
-        | string
-        | null
+      const content = load(handlerVirtualId('/project/src/FictCounter.tsx')) as string | null
       expect(content).not.toBeNull()
       expect(content).toContain("from 'fict/internal'")
       expect(content).not.toContain('@fictjs/runtime/internal')
@@ -5058,7 +5088,7 @@ function Counter() {
       await transform.call(mockContext, compiledCode, '/project/src/StringHelperMention.tsx')
 
       const load = plugin.load as any
-      const content = load('\0fict-handler:/project/src/StringHelperMention.tsx$$__fict_e0') as
+      const content = load(handlerVirtualId('/project/src/StringHelperMention.tsx')) as
         | string
         | null
 
@@ -5093,9 +5123,7 @@ function Counter() {
       await transform.call(mockContext, compiledCode, '/project/src/ShadowedHelper.tsx')
 
       const load = plugin.load as any
-      const content = load('\0fict-handler:/project/src/ShadowedHelper.tsx$$__fict_e0') as
-        | string
-        | null
+      const content = load(handlerVirtualId('/project/src/ShadowedHelper.tsx')) as string | null
 
       expect(content).not.toBeNull()
       expect(content).not.toContain("from '@fictjs/runtime/internal';")
@@ -5142,7 +5170,7 @@ function Counter() {
       await transform.call(mockContext, compiledCode, '/project/src/ScopedHelperShadows.tsx')
 
       const load = plugin.load as any
-      const content = load('\0fict-handler:/project/src/ScopedHelperShadows.tsx$$__fict_e0') as
+      const content = load(handlerVirtualId('/project/src/ScopedHelperShadows.tsx')) as
         | string
         | null
 
@@ -5184,7 +5212,7 @@ function Counter() {
       await transform.call(mockContext, compiledCode, '/project/src/AliasedScopedHelper.tsx')
 
       const load = plugin.load as any
-      const content = load('\0fict-handler:/project/src/AliasedScopedHelper.tsx$$__fict_e0') as
+      const content = load(handlerVirtualId('/project/src/AliasedScopedHelper.tsx')) as
         | string
         | null
 
@@ -5222,9 +5250,7 @@ function Counter() {
       await transform.call(mockContext, compiledCode, '/project/src/AliasedHelper.tsx')
 
       const load = plugin.load as any
-      const content = load('\0fict-handler:/project/src/AliasedHelper.tsx$$__fict_e0') as
-        | string
-        | null
+      const content = load(handlerVirtualId('/project/src/AliasedHelper.tsx')) as string | null
 
       expect(content).not.toBeNull()
       expect(content).toContain(
@@ -5268,7 +5294,7 @@ function Counter() {
       await transform.call(mockContext, compiledCode, '/project/src/ScopedDeps.tsx')
 
       const load = plugin.load as any
-      const content = load('\0fict-handler:/project/src/ScopedDeps.tsx$$__fict_e0') as string | null
+      const content = load(handlerVirtualId('/project/src/ScopedDeps.tsx')) as string | null
 
       expect(content).not.toBeNull()
       expect(content).toMatch(/__fict_dep_[a-f0-9]{8}_config as config/)
@@ -5284,8 +5310,9 @@ function Counter() {
       }
 
       const sourcePath = '/project/src/DepConflict.tsx'
+      const sourceIdentity = handlerSourceIdentityForTest(sourcePath, mockBuildConfig.root)
       const collidingExport = `__fict_dep_${createHash('sha256')
-        .update(`${sourcePath}:config`)
+        .update(`${sourceIdentity}:config`)
         .digest('hex')
         .slice(0, 8)}_config`
       const compiledCode = `
@@ -5310,9 +5337,7 @@ export const __fict_e0 = () => config.step;
       }
 
       const load = plugin.load as any
-      const content = load('\0fict-handler:/project/src/DepConflict.tsx$$__fict_e0') as
-        | string
-        | null
+      const content = load(handlerVirtualId(sourcePath)) as string | null
 
       expect(content).not.toBeNull()
       expect(content).toContain(`${collidingExport}_1 as config`)
@@ -5346,9 +5371,7 @@ export const __fict_e0 = () => {
       await transform.call(mockContext, compiledCode, '/project/src/ShadowOnlyDeps.tsx')
 
       const load = plugin.load as any
-      const content = load('\0fict-handler:/project/src/ShadowOnlyDeps.tsx$$__fict_e0') as
-        | string
-        | null
+      const content = load(handlerVirtualId('/project/src/ShadowOnlyDeps.tsx')) as string | null
 
       expect(content).not.toBeNull()
       expect(content).not.toContain('__fict_dep_config as config')
@@ -5382,7 +5405,7 @@ function Counter() {
       await transform.call(mockContext, compiledCode, '/project/src/TypedDeps.tsx')
 
       const load = plugin.load as any
-      const content = load('\0fict-handler:/project/src/TypedDeps.tsx$$__fict_e0') as string | null
+      const content = load(handlerVirtualId('/project/src/TypedDeps.tsx')) as string | null
 
       expect(content).not.toBeNull()
       expect(content).toMatch(/__fict_dep_[a-f0-9]{8}_fmt as fmt/)
@@ -5419,14 +5442,15 @@ function Counter() {
 
       const load = plugin.load as any
       expect(typeof load).toBe('function')
-      const beforeReset = load('\0fict-handler:/project/src/Counter.tsx$$__fict_e0') as string
+      const counterHandlerId = handlerVirtualId('/project/src/Counter.tsx')
+      const beforeReset = load(counterHandlerId) as string
       expect(beforeReset).toContain('export default')
 
       const buildStart = plugin.buildStart as (() => void) | undefined
       expect(typeof buildStart).toBe('function')
       buildStart?.()
 
-      const afterReset = load('\0fict-handler:/project/src/Counter.tsx$$__fict_e0')
+      const afterReset = load(counterHandlerId)
       expect(afterReset).toBeNull()
     })
 
@@ -5463,7 +5487,8 @@ function Counter() {
 
       const loadA = pluginA.load as any
       expect(typeof loadA).toBe('function')
-      const before = loadA('\0fict-handler:/project/src/Counter.tsx$$__fict_e0') as string | null
+      const counterHandlerId = handlerVirtualId('/project/src/Counter.tsx')
+      const before = loadA(counterHandlerId) as string | null
       expect(before).not.toBeNull()
       expect(before).toContain('export default')
 
@@ -5471,7 +5496,7 @@ function Counter() {
       expect(typeof buildStartB).toBe('function')
       buildStartB?.()
 
-      const after = loadA('\0fict-handler:/project/src/Counter.tsx$$__fict_e0') as string | null
+      const after = loadA(counterHandlerId) as string | null
       expect(after).not.toBeNull()
       expect(after).toContain('export default')
     })
@@ -5521,12 +5546,9 @@ function Counter() {
       expect(typeof clientLoad).toBe('function')
       expect(typeof ssrLoad).toBe('function')
 
-      const beforeClientReset = clientLoad('\0fict-handler:/project/src/Counter.tsx$$__fict_e0') as
-        | string
-        | null
-      const beforeSsrReset = ssrLoad('\0fict-handler:/project/src/Counter.tsx$$__fict_e0') as
-        | string
-        | null
+      const counterHandlerId = handlerVirtualId('/project/src/Counter.tsx')
+      const beforeClientReset = clientLoad(counterHandlerId) as string | null
+      const beforeSsrReset = ssrLoad(counterHandlerId) as string | null
       expect(beforeClientReset).not.toBeNull()
       expect(beforeSsrReset).not.toBeNull()
 
@@ -5534,10 +5556,8 @@ function Counter() {
       expect(typeof ssrBuildStart).toBe('function')
       ssrBuildStart?.()
 
-      const afterSsrResetClientLoad = clientLoad(
-        '\0fict-handler:/project/src/Counter.tsx$$__fict_e0',
-      ) as string | null
-      const afterSsrResetSsrLoad = ssrLoad('\0fict-handler:/project/src/Counter.tsx$$__fict_e0')
+      const afterSsrResetClientLoad = clientLoad(counterHandlerId) as string | null
+      const afterSsrResetSsrLoad = ssrLoad(counterHandlerId)
 
       expect(afterSsrResetClientLoad).not.toBeNull()
       expect(afterSsrResetClientLoad).toContain('export default')
@@ -5581,10 +5601,9 @@ function Counter() {
       expect(typeof clientLoad).toBe('function')
       expect(typeof ssrLoad).toBe('function')
 
-      const beforeSsrBuildStartClient = clientLoad(
-        '\0fict-handler:/project/src/Counter.tsx$$__fict_e0',
-      ) as string | null
-      const beforeSsrBuildStartSsr = ssrLoad('\0fict-handler:/project/src/Counter.tsx$$__fict_e0')
+      const counterHandlerId = handlerVirtualId('/project/src/Counter.tsx')
+      const beforeSsrBuildStartClient = clientLoad(counterHandlerId) as string | null
+      const beforeSsrBuildStartSsr = ssrLoad(counterHandlerId)
 
       expect(beforeSsrBuildStartClient).not.toBeNull()
       expect(beforeSsrBuildStartClient).toContain('export default')
@@ -5594,10 +5613,8 @@ function Counter() {
       expect(typeof ssrBuildStart).toBe('function')
       ssrBuildStart?.()
 
-      const afterSsrBuildStartClient = clientLoad(
-        '\0fict-handler:/project/src/Counter.tsx$$__fict_e0',
-      ) as string | null
-      const afterSsrBuildStartSsr = ssrLoad('\0fict-handler:/project/src/Counter.tsx$$__fict_e0')
+      const afterSsrBuildStartClient = clientLoad(counterHandlerId) as string | null
+      const afterSsrBuildStartSsr = ssrLoad(counterHandlerId)
 
       expect(afterSsrBuildStartClient).not.toBeNull()
       expect(afterSsrBuildStartClient).toContain('export default')
@@ -5653,7 +5670,7 @@ function Counter() {
       // Check that the virtual module is generated correctly
       const load = plugin.load as any
       if (typeof load === 'function') {
-        const content = load('\0fict-handler:/project/src/Counter.tsx$$__fict_e0')
+        const content = load(handlerVirtualId('/project/src/Counter.tsx'))
         if (content) {
           // Should be a standalone module with:
           // 1. Its own imports
@@ -5707,7 +5724,7 @@ function Counter() {
       const result = await splitHandlerExports(source, sourceModule)
 
       expect(result.code).not.toMatch(/\b(?:const|let|var)\s+__fict_e0\b/)
-      expect(result.code).toContain(`virtual:fict-handler:${sourceModule}$$__fict_e0#default`)
+      expect(result.code).toContain(handlerQrl(sourceModule))
       for (const exportName of testCase.keptExports) {
         expect(result.code).toMatch(new RegExp(`\\b${exportName}\\s*=\\s*["']${exportName}["']`))
       }
@@ -5715,7 +5732,7 @@ function Counter() {
         expect(result.code).toContain(comment)
       }
 
-      const handlerModule = result.load(`\0fict-handler:${sourceModule}$$__fict_e0`)
+      const handlerModule = result.load(handlerVirtualId(sourceModule))
       expect(handlerModule).toContain('export default')
       expect(handlerModule).toMatch(/["']handler["']/)
     })
@@ -5738,10 +5755,10 @@ function Counter() {
       expect(result.code).not.toMatch(/\b(?:const|let|var)\s+__fict_e[01]\b/)
       expect(result.code).toMatch(/export const\s+\/\* keep-sibling \*\/\s*keep\s*=\s*["']kept["']/)
       expect(result.code).toContain('declaration-comment')
-      expect(result.code).toContain(`virtual:fict-handler:${sourceModule}$$__fict_e0#default`)
-      expect(result.code).toContain(`virtual:fict-handler:${sourceModule}$$__fict_e1#default`)
-      expect(result.load(`\0fict-handler:${sourceModule}$$__fict_e0`)).toMatch(/["']first["']/)
-      expect(result.load(`\0fict-handler:${sourceModule}$$__fict_e1`)).toMatch(/["']second["']/)
+      expect(result.code).toContain(handlerQrl(sourceModule))
+      expect(result.code).toContain(handlerQrl(sourceModule, '__fict_e1'))
+      expect(result.load(handlerVirtualId(sourceModule))).toMatch(/["']first["']/)
+      expect(result.load(handlerVirtualId(sourceModule, '__fict_e1'))).toMatch(/["']second["']/)
 
       expect(result.map).not.toBeNull()
       const generated = findGeneratedPosition(result.code, 'keep =')
@@ -5806,7 +5823,7 @@ function Counter() {
       // Check that the virtual module imports the hoisted helper dependency
       const load = plugin.load as any
       if (typeof load === 'function') {
-        const content = load('\0fict-handler:/project/src/Counter.tsx$$__fict_e0')
+        const content = load(handlerVirtualId('/project/src/Counter.tsx'))
         if (content) {
           // Should include the handler
           expect(content).toContain('export default')
@@ -5861,12 +5878,12 @@ function Counter() {
 
         expect(code).toContain('export const __fict_e0')
         expect(code).toContain("__fictQrl(import.meta.url, '__fict_e0')")
-        expect(code).not.toContain('virtual:fict-handler:/project/src/MutableLocal.tsx$$__fict_e0')
+        expect(code).not.toContain(handlerQrl('/project/src/MutableLocal.tsx'))
         expect(code).not.toContain('__fict_dep_clicks')
       }
 
       const load = plugin.load as any
-      expect(load('\0fict-handler:/project/src/MutableLocal.tsx$$__fict_e0')).toBeNull()
+      expect(load(handlerVirtualId('/project/src/MutableLocal.tsx'))).toBeNull()
     })
 
     it('still splits handlers that mutate properties on module-local objects', async () => {
@@ -5906,14 +5923,12 @@ function Counter() {
         const code = result.code as string
 
         expect(code).not.toContain('export const __fict_e0')
-        expect(code).toContain('virtual:fict-handler:/project/src/MutableObject.tsx$$__fict_e0')
+        expect(code).toContain(handlerQrl('/project/src/MutableObject.tsx'))
         expect(code).toMatch(/export \{ metrics as __fict_dep_[a-f0-9]{8}_metrics \}/)
       }
 
       const load = plugin.load as any
-      const content = load('\0fict-handler:/project/src/MutableObject.tsx$$__fict_e0') as
-        | string
-        | null
+      const content = load(handlerVirtualId('/project/src/MutableObject.tsx')) as string | null
       expect(content).not.toBeNull()
       expect(content).toMatch(/__fict_dep_[a-f0-9]{8}_metrics as metrics/)
       expect(content).toContain('metrics.clicks++')
@@ -5954,11 +5969,11 @@ function Counter() {
 
         expect(code).toContain('export const __fict_e0')
         expect(code).toContain("__fictQrl(import.meta.url, '__fict_e0')")
-        expect(code).not.toContain('virtual:fict-handler:/project/src/ImportMeta.tsx$$__fict_e0')
+        expect(code).not.toContain(handlerQrl('/project/src/ImportMeta.tsx'))
       }
 
       const load = plugin.load as any
-      expect(load('\0fict-handler:/project/src/ImportMeta.tsx$$__fict_e0')).toBeNull()
+      expect(load(handlerVirtualId('/project/src/ImportMeta.tsx'))).toBeNull()
     })
 
     it('keeps handlers with relative dynamic imports in the source module', async () => {
@@ -5996,13 +6011,11 @@ function Counter() {
 
         expect(code).toContain('export const __fict_e0')
         expect(code).toContain("__fictQrl(import.meta.url, '__fict_e0')")
-        expect(code).not.toContain(
-          'virtual:fict-handler:/project/src/RelativeImport.tsx$$__fict_e0',
-        )
+        expect(code).not.toContain(handlerQrl('/project/src/RelativeImport.tsx'))
       }
 
       const load = plugin.load as any
-      expect(load('\0fict-handler:/project/src/RelativeImport.tsx$$__fict_e0')).toBeNull()
+      expect(load(handlerVirtualId('/project/src/RelativeImport.tsx'))).toBeNull()
     })
 
     it('handler with direct function reference works in virtual module', async () => {
@@ -6046,7 +6059,7 @@ function Button() {
       // Check virtual module has the dependency
       const load = plugin.load as any
       if (typeof load === 'function') {
-        const content = load('\0fict-handler:/project/src/DirectRef.tsx$$__fict_e0')
+        const content = load(handlerVirtualId('/project/src/DirectRef.tsx'))
         if (content) {
           // Handler should reference the hoisted function
           expect(content).toContain('__fict_fn_handleClick_0')

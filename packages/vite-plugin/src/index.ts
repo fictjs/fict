@@ -1720,7 +1720,11 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           if (cached) {
             if (shouldSplit && cached.extractedHandlers?.length) {
               for (const handler of cached.extractedHandlers) {
-                const handlerId = createHandlerId(handler.sourceModule, handler.exportName)
+                const handlerId = createHandlerId(
+                  handler.sourceModule,
+                  handler.exportName,
+                  config?.root,
+                )
                 state.extractedHandlers.set(handlerId, handler)
                 if (config?.command === 'build' && !config?.build?.ssr) {
                   this.emitFile({
@@ -1804,6 +1808,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               filename,
               state.extractedHandlers,
               finalMap,
+              config?.root,
             )
           } catch (error) {
             this.warn(buildPluginMessage('extractAndRewriteHandlers failed', filename, error))
@@ -1823,7 +1828,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             // This ensures the virtual modules are included in the build
             if (config?.command === 'build' && !config?.build?.ssr) {
               for (const handlerName of splitResult.handlers) {
-                const handlerId = createHandlerId(filename, handlerName)
+                const handlerId = createHandlerId(filename, handlerName, config?.root)
                 const virtualModuleId = `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}`
                 this.emitFile({
                   type: 'chunk',
@@ -1853,7 +1858,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           if (shouldSplit && splitResult?.handlers.length) {
             cachedTransform.extractedHandlers = splitResult.handlers
               .map(handlerName =>
-                state.extractedHandlers.get(createHandlerId(filename, handlerName)),
+                state.extractedHandlers.get(createHandlerId(filename, handlerName, config?.root)),
               )
               .filter((handler): handler is ExtractedHandler => !!handler)
           }
@@ -3742,10 +3747,33 @@ async function createTypeScriptProject(
 
 /**
  * Generate handler ID from source module and export name.
- * Uses $$ as separator to avoid conflicts with URL # fragments.
+ * Public handler identities must be reproducible across checkout locations and
+ * safe to embed in QRL URLs. Keep the absolute source path only in the private
+ * handler record, where Rollup needs it to resolve dependency imports.
  */
-function createHandlerId(sourceModule: string, exportName: string): string {
-  return `${sourceModule}$$${exportName}`
+function createHandlerSourceIdentity(sourceModule: string, rootDir?: string): string {
+  if (!rootDir) {
+    return `external:${hashString(sourceModule.split(path.sep).join('/'))}`
+  }
+
+  const normalizeRealPath = (fileName: string): string => {
+    const normalized = path.normalize(path.resolve(fileName))
+    try {
+      return path.normalize(realpathSync(normalized))
+    } catch {
+      return normalized
+    }
+  }
+  const root = normalizeRealPath(rootDir)
+  const source = normalizeRealPath(
+    path.isAbsolute(sourceModule) ? sourceModule : path.resolve(root, sourceModule),
+  )
+  return path.relative(root, source).split(path.sep).join('/') || '.'
+}
+
+function createHandlerId(sourceModule: string, exportName: string, rootDir?: string): string {
+  const sourceIdentity = createHandlerSourceIdentity(sourceModule, rootDir)
+  return `h${hashString(sourceIdentity).slice(0, 32)}$$${exportName}`
 }
 
 function detectRuntimeImportFamilyFromCode(body: readonly unknown[]): 'fict' | 'runtime' {
@@ -4287,8 +4315,10 @@ function createHandlerDependencyExportName(
   sourceModule: string,
   localName: string,
   usedExportNames: Set<string>,
+  rootDir?: string,
 ): string {
-  const hash = hashString(`${sourceModule}:${localName}`).slice(0, 8)
+  const sourceIdentity = createHandlerSourceIdentity(sourceModule, rootDir)
+  const hash = hashString(`${sourceIdentity}:${localName}`).slice(0, 8)
   const base = `${HANDLER_DEP_PREFIX}${hash}_${localName}`
   let candidate = base
   let suffix = 1
@@ -4312,6 +4342,7 @@ function extractAndRewriteHandlers(
   sourceModule: string,
   handlerRegistry: Map<string, ExtractedHandler>,
   inputSourceMap: TransformResult['map'] = null,
+  rootDir?: string,
 ): { code: string; handlers: string[]; map: TransformResult['map'] } | null {
   let ast: ReturnType<typeof parse>
 
@@ -4485,6 +4516,7 @@ function extractAndRewriteHandlers(
                 sourceModule,
                 localName,
                 usedExportNames,
+                rootDir,
               )
               dependencyExportNames.set(localName, exportName)
             }
@@ -4492,7 +4524,7 @@ function extractAndRewriteHandlers(
           })
 
           // Register the handler with its full code
-          const handlerId = createHandlerId(sourceModule, name)
+          const handlerId = createHandlerId(sourceModule, name, rootDir)
           handlerRegistry.set(handlerId, {
             sourceModule,
             exportName: name,
@@ -4555,14 +4587,19 @@ function extractAndRewriteHandlers(
         const localDeps = localDepNames.map(localName => {
           let exportName = dependencyExportNames.get(localName)
           if (!exportName) {
-            exportName = createHandlerDependencyExportName(sourceModule, localName, usedExportNames)
+            exportName = createHandlerDependencyExportName(
+              sourceModule,
+              localName,
+              usedExportNames,
+              rootDir,
+            )
             dependencyExportNames.set(localName, exportName)
           }
           return { localName, exportName }
         })
 
         // Register the handler with its full code
-        const handlerId = createHandlerId(sourceModule, name)
+        const handlerId = createHandlerId(sourceModule, name, rootDir)
         handlerRegistry.set(handlerId, {
           sourceModule,
           exportName: name,
@@ -4618,7 +4655,7 @@ function extractAndRewriteHandlers(
       if (!handlerNames.includes(handlerName)) return
 
       // Replace with the virtual module URL
-      const handlerId = createHandlerId(sourceModule, handlerName)
+      const handlerId = createHandlerId(sourceModule, handlerName, rootDir)
       const virtualUrl = `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}#default`
       path.replaceWith(t.stringLiteral(virtualUrl))
     },
