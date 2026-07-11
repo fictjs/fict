@@ -129,6 +129,29 @@ describe('@fictjs/ssr stream runtime template boundaries', () => {
     expect(transport.content.querySelector('template[data-fict-suspense]')).toBeNull()
   })
 
+  it('upgrades an existing inline runtime when an observer runtime loads later', () => {
+    const window = parseHTML(`
+      <main>
+        <!--fict:suspense-start:s1-->
+        <span data-pending>Pending</span>
+        <!--fict:suspense-end:s1-->
+      </main>
+      <template data-fict-suspense="s1">
+        <strong data-resolved>Resolved</strong>
+      </template>
+    `) as unknown as StreamRuntimeWindow
+    const context = { document: window.document, window }
+
+    runInNewContext(createStreamRuntimeCode({ observerMode: false }), context)
+    const inlineRuntime = window.__FICT_STREAM
+    runInNewContext(createStreamRuntimeCode({ observerMode: true }), context)
+    window.document.dispatchEvent(new window.Event('DOMContentLoaded'))
+
+    expect(window.__FICT_STREAM).toBe(inlineRuntime)
+    expect(window.document.querySelector('[data-pending]')).toBeNull()
+    expect(window.document.querySelector('[data-resolved]')?.textContent).toBe('Resolved')
+  })
+
   it('matches patch ids as attribute values instead of selector source', () => {
     const id = 's1"][data-fict-suspense="other'
     const window = parseHTML(

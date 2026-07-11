@@ -17,8 +17,7 @@ export function createStreamRuntimeCode(options: StreamRuntimeCodeOptions = {}):
   const observerMode = options.observerMode ?? true
   return (
     '(function(){' +
-    'if(window.__FICT_STREAM)return;' +
-    'var cache=new Map();' +
+    'var runtime=window.__FICT_STREAM;' +
     'function walk(root,visit){' +
     'var stack=[root];while(stack.length){' +
     'var node=stack.pop();if(visit(node)===false)return false;' +
@@ -26,6 +25,8 @@ export function createStreamRuntimeCode(options: StreamRuntimeCodeOptions = {}):
     'for(var child=container.lastChild;child;child=child.previousSibling)stack.push(child);' +
     '}return true;' +
     '}' +
+    'if(!runtime||typeof runtime.apply!=="function"){' +
+    'var cache=new Map();' +
     'function findTemplate(id){' +
     'var tpl=null;walk(document,function(n){' +
     'if(n.nodeType===1&&n.localName==="template"&&n.content&&n.getAttribute("data-fict-suspense")===id){tpl=n;return false;}' +
@@ -54,9 +55,11 @@ export function createStreamRuntimeCode(options: StreamRuntimeCodeOptions = {}):
     'parent.insertBefore(content,b.end);' +
     'tpl.parentNode&&tpl.parentNode.removeChild(tpl);' +
     '}' +
-    'window.__FICT_STREAM={apply:apply};' +
+    'runtime={apply:apply};window.__FICT_STREAM=runtime;' +
+    '}' +
     (observerMode
-      ? 'function scan(root){var ids=[];walk(root,function(n){if(n.nodeType===1&&n.localName==="template"&&n.content&&n.hasAttribute("data-fict-suspense")){var id=n.getAttribute("data-fict-suspense");if(id)ids.push(id);}});for(var i=0;i<ids.length;i++)apply(ids[i]);}' +
+      ? 'if(runtime.observerInstalled)return;runtime.observerInstalled=true;' +
+        'function scan(root){var ids=[];walk(root,function(n){if(n.nodeType===1&&n.localName==="template"&&n.content&&n.hasAttribute("data-fict-suspense")){var id=n.getAttribute("data-fict-suspense");if(id)ids.push(id);}});for(var i=0;i<ids.length;i++)runtime.apply(ids[i]);}' +
         'if(typeof MutationObserver==="function"){new MutationObserver(function(muts){for(var i=0;i<muts.length;i++){for(var j=0;j<muts[i].addedNodes.length;j++){var n=muts[i].addedNodes[j];if(n.nodeType===1)scan(n);}}}).observe(document.documentElement||document,{childList:true,subtree:true});}' +
         'if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",function(){scan(document);},{once:true});}else{scan(document);}'
       : '') +
