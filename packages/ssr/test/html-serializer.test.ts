@@ -301,6 +301,153 @@ describe('resumable host HTML parser context validation', () => {
   })
 })
 
+describe('host-sensitive HTML direct-child validation', () => {
+  const conditionalCases = [
+    { contextTag: 'details', sensitiveTag: 'summary' },
+    { contextTag: 'fieldset', sensitiveTag: 'legend' },
+    { contextTag: 'audio', sensitiveTag: 'source' },
+    { contextTag: 'audio', sensitiveTag: 'track' },
+    { contextTag: 'video', sensitiveTag: 'source' },
+    { contextTag: 'video', sensitiveTag: 'track' },
+    { contextTag: 'ruby', sensitiveTag: 'rt' },
+    { contextTag: 'ruby', sensitiveTag: 'rp' },
+    { contextTag: 'figure', sensitiveTag: 'figcaption' },
+    { contextTag: 'map', sensitiveTag: 'area' },
+  ] as const
+
+  const safeFlowCases = [
+    { contextTag: 'details', rootTag: 'p' },
+    { contextTag: 'fieldset', rootTag: 'div' },
+    { contextTag: 'audio', rootTag: 'p' },
+    { contextTag: 'video', rootTag: 'p' },
+    { contextTag: 'ruby', rootTag: 'span' },
+    { contextTag: 'figure', rootTag: 'img' },
+    { contextTag: 'map', rootTag: 'span' },
+  ] as const
+
+  function renderComponentInContext(contextTag: string, output: FictNode): string {
+    function Content(): FictNode {
+      return output
+    }
+
+    return renderToString(() => ({
+      type: contextTag,
+      props: { children: { type: Content, props: {} } },
+    }))
+  }
+
+  function createSensitiveElement(document: Document, tagName: string): Element {
+    const element = document.createElement(tagName)
+    if (!['area', 'img', 'source', 'track'].includes(tagName)) {
+      element.textContent = 'sensitive content'
+    }
+    return element
+  }
+
+  it.each(['source', 'span'])(
+    'rejects every resumable component boundary directly inside <picture>, including <%s> roots',
+    rootTag => {
+      expect(() =>
+        renderComponentInContext('picture', {
+          type: rootTag,
+          props: rootTag === 'source' ? {} : { children: 'content' },
+        }),
+      ).toThrowError(
+        /resumable <fict-host>.*<picture>.*<source>.*<img>.*make .* own <picture>.*range-based scope anchors \(range-v3\)/i,
+      )
+    },
+  )
+
+  it.each(conditionalCases)(
+    'rejects a resumable component exposing <$sensitiveTag> directly to <$contextTag>',
+    ({ contextTag, sensitiveTag }) => {
+      expect(() =>
+        renderComponentInContext(contextTag, {
+          type: sensitiveTag,
+          props: ['area', 'source', 'track'].includes(sensitiveTag) ? {} : { children: 'content' },
+        }),
+      ).toThrowError(
+        new RegExp(
+          `resumable <fict-host>.*<${contextTag}>.*<${sensitiveTag}>.*make .* own <${contextTag}>.*range-based scope anchors \\(range-v3\\)`,
+          'i',
+        ),
+      )
+    },
+  )
+
+  it.each(conditionalCases)(
+    'looks through consecutive internal hosts for <$contextTag> / <$sensitiveTag>',
+    ({ contextTag, sensitiveTag }) => {
+      const { document } = parseHTML('<!doctype html><html><body></body></html>')
+      const context = document.createElement(contextTag)
+      const outerHost = createResumableHost(document, 'outer-scope')
+      const innerHost = createResumableHost(document, 'inner-scope')
+      innerHost.replaceChildren(createSensitiveElement(document, sensitiveTag))
+      outerHost.replaceChildren(innerHost)
+      context.appendChild(outerHost)
+
+      expect(() => serializeHtmlNode(context)).toThrowError(
+        new RegExp(`<${contextTag}>.*<${sensitiveTag}>.*range-v3`, 'i'),
+      )
+    },
+  )
+
+  it.each(safeFlowCases)(
+    'allows an ordinary <$rootTag> component directly inside <$contextTag>',
+    ({ contextTag, rootTag }) => {
+      const html = renderComponentInContext(contextTag, {
+        type: rootTag,
+        props: rootTag === 'img' ? {} : { children: 'safe flow content' },
+      })
+
+      expect(html).toContain(`<${contextTag}><fict-host`)
+      expect(html).toContain(`<${rootTag}`)
+    },
+  )
+
+  it.each(conditionalCases)(
+    'does not inspect <$sensitiveTag> below a non-transparent element in <$contextTag>',
+    ({ contextTag, sensitiveTag }) => {
+      const { document } = parseHTML('<!doctype html><html><body></body></html>')
+      const context = document.createElement(contextTag)
+      const outerHost = createResumableHost(document, 'outer-scope')
+      const wrapper = document.createElement('div')
+      const innerHost = createResumableHost(document, 'inner-scope')
+      innerHost.replaceChildren(createSensitiveElement(document, sensitiveTag))
+      wrapper.appendChild(innerHost)
+      outerHost.replaceChildren(wrapper)
+      context.appendChild(outerHost)
+
+      expect(() => serializeHtmlNode(context)).not.toThrow()
+    },
+  )
+
+  it.each([{ contextTag: 'picture', sensitiveTag: 'source' }, ...conditionalCases])(
+    'does not reserve an unmarked user <fict-host> in <$contextTag> around <$sensitiveTag>',
+    ({ contextTag, sensitiveTag }) => {
+      const { document } = parseHTML('<!doctype html><html><body></body></html>')
+      const context = document.createElement(contextTag)
+      const userHost = document.createElement('fict-host')
+      userHost.replaceChildren(createSensitiveElement(document, sensitiveTag))
+      context.appendChild(userHost)
+
+      expect(serializeHtmlNode(context)).toContain('<fict-host>')
+    },
+  )
+
+  it('stops transparent traversal at an unmarked user <fict-host>', () => {
+    const { document } = parseHTML('<!doctype html><html><body></body></html>')
+    const details = document.createElement('details')
+    const internalHost = createResumableHost(document, 'internal-scope')
+    const userHost = document.createElement('fict-host')
+    userHost.replaceChildren(document.createElement('summary'))
+    internalHost.replaceChildren(userHost)
+    details.appendChild(internalHost)
+
+    expect(() => serializeHtmlNode(details)).not.toThrow()
+  })
+})
+
 describe('HTML void element child validation', () => {
   it.each([
     'area',

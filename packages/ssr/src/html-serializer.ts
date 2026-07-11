@@ -56,6 +56,18 @@ const HTML_UNSAFE_RESUMABLE_HOST_PARENTS = new Set([
   ...HTML_TEXT_ONLY_ELEMENTS,
   ...HTML_DOCUMENT_STRUCTURE_ELEMENTS,
 ])
+// This list only covers confirmed native HTML algorithms that require direct
+// children. Generic CSS selectors, Shadow DOM slotting, and DOM child APIs
+// cannot be made transparent with a denylist and remain range-v3 concerns.
+const HTML_HOST_SENSITIVE_CONTEXT_CHILDREN = new Map([
+  ['details', new Set(['summary'])],
+  ['fieldset', new Set(['legend'])],
+  ['audio', new Set(['source', 'track'])],
+  ['video', new Set(['source', 'track'])],
+  ['ruby', new Set(['rp', 'rt'])],
+  ['figure', new Set(['figcaption'])],
+  ['map', new Set(['area'])],
+])
 
 const STREAM_BOUNDARY_START_PREFIX = 'fict:suspense-start:'
 const STREAM_BOUNDARY_END_PREFIX = 'fict:suspense-end:'
@@ -301,14 +313,16 @@ function assertSafeResumableHostContext(element: Element, serializedParent: Elem
   if (!parent || !isHtmlElement(parent)) return
 
   const contextTag = (parent.localName || parent.tagName).toLowerCase()
-  if (!HTML_UNSAFE_RESUMABLE_HOST_PARENTS.has(contextTag)) return
+  if (HTML_UNSAFE_RESUMABLE_HOST_PARENTS.has(contextTag)) {
+    const scopeId = element.getAttribute('data-fict-s') ?? '<unknown>'
+    throw new Error(
+      `[fict/ssr] Cannot serialize resumable <fict-host> scope ${JSON.stringify(scopeId)} inside <${contextTag}>. ` +
+        `The HTML parser will not preserve that host at this location, so its scope would target different DOM after parsing. ` +
+        getResumableHostRewriteSuggestion(contextTag),
+    )
+  }
 
-  const scopeId = element.getAttribute('data-fict-s') ?? '<unknown>'
-  throw new Error(
-    `[fict/ssr] Cannot serialize resumable <fict-host> scope ${JSON.stringify(scopeId)} inside <${contextTag}>. ` +
-      `The HTML parser will not preserve that host at this location, so its scope would target different DOM after parsing. ` +
-      getResumableHostRewriteSuggestion(contextTag),
-  )
+  assertSafeHostSensitiveHtmlContext(element, contextTag)
 }
 
 function isResumableFictHost(element: Element): boolean {
@@ -317,6 +331,72 @@ function isResumableFictHost(element: Element): boolean {
     element.hasAttribute('data-fict-host') &&
     !!element.getAttribute('data-fict-s')
   )
+}
+
+function assertSafeHostSensitiveHtmlContext(host: Element, contextTag: string): void {
+  let sensitiveDescription: string
+  if (contextTag === 'picture') {
+    sensitiveDescription = 'the native <source> and <img> structure'
+  } else {
+    const sensitiveTags = HTML_HOST_SENSITIVE_CONTEXT_CHILDREN.get(contextTag)
+    if (!sensitiveTags) return
+
+    const sensitiveTag = findTransparentDirectChildTag(host, sensitiveTags)
+    if (!sensitiveTag) return
+    sensitiveDescription = `a transparent direct <${sensitiveTag}> child`
+  }
+
+  const scopeId = host.getAttribute('data-fict-s') ?? '<unknown>'
+  throw new Error(
+    `[fict/ssr] Cannot serialize resumable <fict-host> scope ${JSON.stringify(scopeId)} as a component boundary inside <${contextTag}> around ${sensitiveDescription}. ` +
+      `${getHostSensitiveContextRisk(contextTag)} CSS display: contents removes only the host's box; it does not make the host transparent to these DOM rules. ` +
+      `Move the component boundary outside <${contextTag}> and make the component own <${contextTag}>, so its sensitive content remains native direct children. ` +
+      'Range-based scope anchors (range-v3) are required to keep a resumable boundary at this position without an element wrapper.',
+  )
+}
+
+function findTransparentDirectChildTag(
+  host: Element,
+  sensitiveTags: ReadonlySet<string>,
+): string | null {
+  for (const child of Array.from(host.children)) {
+    if (!isHtmlElement(child)) continue
+
+    // Only an uninterrupted chain of Fict's own scope hosts is transparent in
+    // the future range protocol. Ordinary elements and unmarked user-created
+    // <fict-host> elements remain real structural barriers.
+    if (isResumableFictHost(child)) {
+      const nestedTag = findTransparentDirectChildTag(child, sensitiveTags)
+      if (nestedTag) return nestedTag
+      continue
+    }
+
+    const childTag = (child.localName || child.tagName).toLowerCase()
+    if (sensitiveTags.has(childTag)) return childTag
+  }
+  return null
+}
+
+function getHostSensitiveContextRisk(contextTag: string): string {
+  switch (contextTag) {
+    case 'picture':
+      return 'Browsers select picture candidates from its direct <source>/<img> structure, so a wrapper can silently select the fallback image.'
+    case 'details':
+      return 'Only a direct <summary> child provides the native disclosure control, so wrapping it prevents activation from toggling <details>.'
+    case 'fieldset':
+      return 'A direct <legend> supplies the fieldset name and its first-legend disabled-state exemption, both of which a wrapper removes.'
+    case 'audio':
+    case 'video':
+      return `Browsers discover <source> and <track> from direct <${contextTag}> children, so wrapped media resources and text tracks are ignored.`
+    case 'ruby':
+      return 'Ruby annotation layout depends on direct <rt>/<rp> structure, and wrappers cause annotations to render as ordinary inline content in some browsers.'
+    case 'figure':
+      return 'A direct <figcaption> provides the accessible name of <figure>, which is lost through a wrapper.'
+    case 'map':
+      return 'Browser image-map and areas-collection behavior diverges when <area> is hidden behind a wrapper.'
+    default:
+      return 'This HTML context assigns semantics through native direct-child relationships that an element wrapper changes.'
+  }
 }
 
 type ResumableHostForeignNamespace = { kind: 'SVG' | 'MathML' } | { kind: 'other'; uri: string }
