@@ -87,8 +87,7 @@ function normalizeImportUrl(url: string): string {
 interface PreservedControlState {
   value?: string
   checked?: boolean
-  selectedIndex?: number
-  selectedValues?: string[]
+  selectState?: PreservedSelectState
   html?: string
   selection?: PreservedEditableSelection
   textSelection?: PreservedTextSelection
@@ -103,6 +102,17 @@ interface PreservedTextSelection {
   start: number
   end: number
   direction: 'forward' | 'backward' | 'none'
+}
+
+interface PreservedSelectOption {
+  node: HTMLOptionElement
+  index: number
+  value: string
+  valueOccurrence: number
+}
+
+interface PreservedSelectState {
+  selectedOptions: PreservedSelectOption[]
 }
 
 interface PreservedSelectionPoint {
@@ -210,6 +220,21 @@ function restoreEditableSelection(
   }
 }
 
+function captureSelectState(select: HTMLSelectElement): PreservedSelectState {
+  const valueOccurrences = new Map<string, number>()
+  const selectedOptions: PreservedSelectOption[] = []
+
+  for (const [index, option] of Array.from(select.options).entries()) {
+    const valueOccurrence = valueOccurrences.get(option.value) ?? 0
+    valueOccurrences.set(option.value, valueOccurrence + 1)
+    if (option.selected) {
+      selectedOptions.push({ node: option, index, value: option.value, valueOccurrence })
+    }
+  }
+
+  return { selectedOptions }
+}
+
 function captureControlState(node: Element, event: Event): PreservedControlState | null {
   if (event.type !== 'input' && event.type !== 'change') return null
 
@@ -237,16 +262,7 @@ function captureControlState(node: Element, event: Event): PreservedControlState
 
   if (tagName === 'select') {
     const select = node as HTMLSelectElement
-    return select.multiple
-      ? {
-          selectedValues: Array.from(select.options)
-            .filter(option => option.selected)
-            .map(option => option.value),
-        }
-      : {
-          value: select.value,
-          selectedIndex: select.selectedIndex,
-        }
+    return { selectState: captureSelectState(select) }
   }
 
   if (isContentEditableElement(node)) {
@@ -329,6 +345,70 @@ function restoreTextSelection(
   }
 }
 
+function resolvePreservedSelectOption(
+  preserved: PreservedSelectOption,
+  currentOptions: HTMLOptionElement[],
+  currentOptionIndices: Map<HTMLOptionElement, number>,
+  optionsByValue: Map<string, HTMLOptionElement[]>,
+  claimedOptions: Set<HTMLOptionElement>,
+): HTMLOptionElement | undefined {
+  if (currentOptionIndices.has(preserved.node) && !claimedOptions.has(preserved.node)) {
+    return preserved.node
+  }
+
+  const matchingValues = optionsByValue.get(preserved.value) ?? []
+  const occurrenceMatch = matchingValues[preserved.valueOccurrence]
+  if (occurrenceMatch && !claimedOptions.has(occurrenceMatch)) {
+    return occurrenceMatch
+  }
+
+  const indexMatch = currentOptions[preserved.index]
+  if (indexMatch && indexMatch.value === preserved.value && !claimedOptions.has(indexMatch)) {
+    return indexMatch
+  }
+
+  return matchingValues.find(option => !claimedOptions.has(option))
+}
+
+function restoreSelectState(select: HTMLSelectElement, state: PreservedSelectState): void {
+  const currentOptions = Array.from(select.options)
+  const currentOptionIndices = new Map<HTMLOptionElement, number>()
+  const optionsByValue = new Map<string, HTMLOptionElement[]>()
+  for (const [index, option] of currentOptions.entries()) {
+    currentOptionIndices.set(option, index)
+    const matchingValues = optionsByValue.get(option.value)
+    if (matchingValues) {
+      matchingValues.push(option)
+    } else {
+      optionsByValue.set(option.value, [option])
+    }
+  }
+
+  const claimedOptions = new Set<HTMLOptionElement>()
+  for (const preserved of state.selectedOptions) {
+    const option = resolvePreservedSelectOption(
+      preserved,
+      currentOptions,
+      currentOptionIndices,
+      optionsByValue,
+      claimedOptions,
+    )
+    if (option) claimedOptions.add(option)
+  }
+
+  if (select.multiple) {
+    for (const option of currentOptions) {
+      option.selected = claimedOptions.has(option)
+    }
+    return
+  }
+
+  const firstSelectedOption = claimedOptions.values().next().value
+  select.selectedIndex = firstSelectedOption
+    ? (currentOptionIndices.get(firstSelectedOption) ?? -1)
+    : -1
+}
+
 function restoreControlState(node: Element, state: PreservedControlState | null): void {
   if (!state) return
 
@@ -357,20 +437,7 @@ function restoreControlState(node: Element, state: PreservedControlState | null)
 
   if (tagName === 'select') {
     const select = node as HTMLSelectElement
-    if (Array.isArray(state.selectedValues) && select.multiple) {
-      const selected = new Set(state.selectedValues)
-      for (const option of Array.from(select.options)) {
-        option.selected = selected.has(option.value)
-      }
-      return
-    }
-
-    if (typeof state.selectedIndex === 'number') {
-      select.selectedIndex = state.selectedIndex
-    }
-    if (typeof state.value === 'string') {
-      select.value = state.value
-    }
+    if (state.selectState) restoreSelectState(select, state.selectState)
     return
   }
 

@@ -4731,6 +4731,338 @@ describe('resumable loader snapshot validation', () => {
     delete (globalThis as { __fictCapturedInputSelection?: unknown }).__fictCapturedInputSelection
   })
 
+  it('preserves the exact duplicate-value option in a single select', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    ;(
+      globalThis as {
+        __fictCapturedSingleSelect?: { selectedIndex: number; selectedIndices: number[] }
+      }
+    ).__fictCapturedSingleSelect = undefined
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    host.setAttribute(
+      'data-fict-h',
+      'data:text/javascript,export default null#__fict_r_single_select',
+    )
+
+    __fictRegisterResume('__fict_r_single_select', (_scopeId, node) => {
+      const select = node instanceof Element ? node.querySelector('select') : null
+      if (select instanceof HTMLSelectElement) select.selectedIndex = 2
+    })
+
+    const select = doc.createElement('select')
+    select.innerHTML =
+      '<option value="duplicate">First</option><option value="duplicate">Second</option><option value="other">Other</option>'
+    select.setAttribute(
+      'on:input',
+      'data:text/javascript,export function capture(scopeId,event){const select=event.target;globalThis.__fictCapturedSingleSelect={selectedIndex:select.selectedIndex,selectedIndices:Array.from(select.options,(option,index)=>option.selected?index:-1).filter(index=>index!==-1)}}#capture',
+    )
+    host.appendChild(select)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['input'], prefetch: false })
+
+    select.selectedIndex = 1
+    select.dispatchEvent(new Event('input', { bubbles: true }))
+    await waitForPendingHandlers()
+
+    expect(
+      (
+        globalThis as {
+          __fictCapturedSingleSelect?: { selectedIndex: number; selectedIndices: number[] }
+        }
+      ).__fictCapturedSingleSelect,
+    ).toEqual({ selectedIndex: 1, selectedIndices: [1] })
+    expect(select.selectedIndex).toBe(1)
+    expect(Array.from(select.options, option => option.selected)).toEqual([false, true, false])
+
+    delete (globalThis as { __fictCapturedSingleSelect?: unknown }).__fictCapturedSingleSelect
+  })
+
+  it('preserves a single select with no selection when an empty-value option exists', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    ;(
+      globalThis as {
+        __fictCapturedEmptySelect?: { selectedIndex: number; selectedIndices: number[] }
+      }
+    ).__fictCapturedEmptySelect = undefined
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    host.setAttribute(
+      'data-fict-h',
+      'data:text/javascript,export default null#__fict_r_empty_select',
+    )
+
+    __fictRegisterResume('__fict_r_empty_select', (_scopeId, node) => {
+      const select = node instanceof Element ? node.querySelector('select') : null
+      if (select instanceof HTMLSelectElement) select.selectedIndex = 1
+    })
+
+    const select = doc.createElement('select')
+    select.innerHTML = '<option value="">Empty</option><option value="other">Other</option>'
+    select.setAttribute(
+      'on:input',
+      'data:text/javascript,export function capture(scopeId,event){const select=event.target;globalThis.__fictCapturedEmptySelect={selectedIndex:select.selectedIndex,selectedIndices:Array.from(select.options,(option,index)=>option.selected?index:-1).filter(index=>index!==-1)}}#capture',
+    )
+    host.appendChild(select)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['input'], prefetch: false })
+
+    select.selectedIndex = -1
+    select.dispatchEvent(new Event('input', { bubbles: true }))
+    await waitForPendingHandlers()
+
+    expect(
+      (
+        globalThis as {
+          __fictCapturedEmptySelect?: { selectedIndex: number; selectedIndices: number[] }
+        }
+      ).__fictCapturedEmptySelect,
+    ).toEqual({ selectedIndex: -1, selectedIndices: [] })
+    expect(select.selectedIndex).toBe(-1)
+    expect(Array.from(select.options, option => option.selected)).toEqual([false, false])
+
+    delete (globalThis as { __fictCapturedEmptySelect?: unknown }).__fictCapturedEmptySelect
+  })
+
+  it('preserves a moved select option by identity when hydration changes its value', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    ;(
+      globalThis as {
+        __fictCapturedMovedSelect?: {
+          selectedIndex: number
+          value: string
+          text: string | null
+        }
+      }
+    ).__fictCapturedMovedSelect = undefined
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    host.setAttribute(
+      'data-fict-h',
+      'data:text/javascript,export default null#__fict_r_moved_select',
+    )
+
+    __fictRegisterResume('__fict_r_moved_select', (_scopeId, node) => {
+      const select = node instanceof Element ? node.querySelector('select') : null
+      if (!(select instanceof HTMLSelectElement)) return
+      const selectedOption = select.options[1]
+      selectedOption.value = 'hydrated-value'
+      select.insertBefore(selectedOption, select.options[0])
+      select.selectedIndex = 2
+    })
+
+    const select = doc.createElement('select')
+    select.innerHTML =
+      '<option value="first">First</option><option value="original">Chosen</option><option value="last">Last</option>'
+    select.setAttribute(
+      'on:input',
+      'data:text/javascript,export function capture(scopeId,event){const select=event.target;globalThis.__fictCapturedMovedSelect={selectedIndex:select.selectedIndex,value:select.value,text:select.selectedOptions[0]?.textContent??null}}#capture',
+    )
+    host.appendChild(select)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['input'], prefetch: false })
+
+    select.selectedIndex = 1
+    select.dispatchEvent(new Event('input', { bubbles: true }))
+    await waitForPendingHandlers()
+
+    expect(
+      (
+        globalThis as {
+          __fictCapturedMovedSelect?: {
+            selectedIndex: number
+            value: string
+            text: string | null
+          }
+        }
+      ).__fictCapturedMovedSelect,
+    ).toEqual({ selectedIndex: 0, value: 'hydrated-value', text: 'Chosen' })
+    expect(select.selectedOptions[0]?.textContent).toBe('Chosen')
+
+    delete (globalThis as { __fictCapturedMovedSelect?: unknown }).__fictCapturedMovedSelect
+  })
+
+  it('preserves the first selected option when hydration changes a multiple select to single', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    ;(
+      globalThis as {
+        __fictCapturedModeSwitchSelect?: {
+          multiple: boolean
+          selectedIndex: number
+          selectedIndices: number[]
+        }
+      }
+    ).__fictCapturedModeSwitchSelect = undefined
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    host.setAttribute(
+      'data-fict-h',
+      'data:text/javascript,export default null#__fict_r_mode_switch_select',
+    )
+
+    __fictRegisterResume('__fict_r_mode_switch_select', (_scopeId, node) => {
+      const select = node instanceof Element ? node.querySelector('select') : null
+      if (!(select instanceof HTMLSelectElement)) return
+      select.multiple = false
+      select.selectedIndex = 0
+    })
+
+    const select = doc.createElement('select')
+    select.multiple = true
+    select.innerHTML =
+      '<option value="first">First</option><option value="second">Second</option><option value="third">Third</option>'
+    select.setAttribute(
+      'on:input',
+      'data:text/javascript,export function capture(scopeId,event){const select=event.target;globalThis.__fictCapturedModeSwitchSelect={multiple:select.multiple,selectedIndex:select.selectedIndex,selectedIndices:Array.from(select.options,(option,index)=>option.selected?index:-1).filter(index=>index!==-1)}}#capture',
+    )
+    host.appendChild(select)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['input'], prefetch: false })
+
+    select.options[1].selected = true
+    select.options[2].selected = true
+    select.dispatchEvent(new Event('input', { bubbles: true }))
+    await waitForPendingHandlers()
+
+    expect(
+      (
+        globalThis as {
+          __fictCapturedModeSwitchSelect?: {
+            multiple: boolean
+            selectedIndex: number
+            selectedIndices: number[]
+          }
+        }
+      ).__fictCapturedModeSwitchSelect,
+    ).toEqual({ multiple: false, selectedIndex: 1, selectedIndices: [1] })
+    expect(select.multiple).toBe(false)
+    expect(select.selectedIndex).toBe(1)
+
+    delete (globalThis as { __fictCapturedModeSwitchSelect?: unknown })
+      .__fictCapturedModeSwitchSelect
+  })
+
+  it('restores duplicate selections after foreign-document options are replaced', async () => {
+    const iframe = document.createElement('iframe')
+    document.body.appendChild(iframe)
+    const doc = iframe.contentDocument
+    const view = iframe.contentWindow
+    expect(doc).not.toBeNull()
+    expect(view).not.toBeNull()
+
+    try {
+      const script = doc!.createElement('script')
+      script.id = '__FICT_SNAPSHOT__'
+      script.type = 'application/json'
+      script.textContent = JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      })
+      doc!.body.appendChild(script)
+      ;(
+        globalThis as {
+          __fictCapturedForeignSelect?: {
+            selectedIndices: number[]
+            selectedDisabled: boolean[]
+          }
+        }
+      ).__fictCapturedForeignSelect = undefined
+
+      const host = doc!.createElement('div')
+      host.setAttribute('data-fict-s', 's1')
+      host.setAttribute(
+        'data-fict-h',
+        'data:text/javascript,export default null#__fict_r_foreign_select',
+      )
+
+      __fictRegisterResume('__fict_r_foreign_select', (_scopeId, node) => {
+        const select =
+          node && typeof (node as Element).querySelector === 'function'
+            ? (node as Element).querySelector('select')
+            : null
+        if (!select) return
+        select.innerHTML =
+          '<option value="other">Other replacement</option><option value="duplicate">First replacement</option><option value="duplicate" disabled>Second replacement</option>'
+        ;(select as HTMLSelectElement).options[0].selected = true
+      })
+
+      const select = doc!.createElement('select')
+      expect(select instanceof HTMLSelectElement).toBe(false)
+      select.multiple = true
+      select.innerHTML =
+        '<option value="duplicate">First</option><option value="duplicate">Second</option><option value="other">Other</option>'
+      select.setAttribute(
+        'on:input',
+        'data:text/javascript,export function capture(scopeId,event){const select=event.target;const selected=Array.from(select.options).map((option,index)=>({option,index})).filter(entry=>entry.option.selected);globalThis.__fictCapturedForeignSelect={selectedIndices:selected.map(entry=>entry.index),selectedDisabled:selected.map(entry=>entry.option.disabled)}}#capture',
+      )
+      host.appendChild(select)
+      doc!.body.appendChild(host)
+
+      installResumableLoader({ document: doc!, events: ['input'], prefetch: false })
+
+      select.options[1].selected = true
+      select.dispatchEvent(new view!.Event('input', { bubbles: true }))
+      await waitForPendingHandlers()
+
+      expect(
+        (
+          globalThis as {
+            __fictCapturedForeignSelect?: {
+              selectedIndices: number[]
+              selectedDisabled: boolean[]
+            }
+          }
+        ).__fictCapturedForeignSelect,
+      ).toEqual({ selectedIndices: [2], selectedDisabled: [true] })
+      expect(Array.from(select.options, option => option.selected)).toEqual([false, false, true])
+    } finally {
+      iframe.remove()
+      delete (globalThis as { __fictCapturedForeignSelect?: unknown }).__fictCapturedForeignSelect
+    }
+  })
+
   it('preserves a foreign-document textarea edit for a bubbling change handler', async () => {
     const iframe = document.createElement('iframe')
     document.body.appendChild(iframe)
