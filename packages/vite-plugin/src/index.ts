@@ -1083,14 +1083,24 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       publicModuleIds.set(lookupKey, publicModuleId)
       publicModuleSourcesById.set(publicModuleId, lookupKey)
       publicModulePortability.set(lookupKey, publicIdentity.portable)
+    } else if (config?.command === 'serve' && config.root && compilerOptions.resumable === true) {
+      publicModuleId = createDevPublicModuleId(
+        transformOptions?.publicIdentityId ?? normalizedFilename,
+        config.root,
+        {
+          base: config.base,
+          origin: config.server.origin,
+          preserveSymlinks: config.resolve.preserveSymlinks === true,
+        },
+      )
     }
     const fictOptions: FictCompilerOptions = {
       ...compilerOptions,
       dev: compilerOptions.dev ?? isDev,
       sourcemap: compilerOptions.sourcemap ?? true,
       filename: normalizedFilename,
-      // Production artifacts must never serialize the physical build-machine path.
-      // Dev keeps file:// identities so Vite can serve modules directly without a manifest.
+      // Build identities resolve through the manifest. Dev identities are directly serviceable
+      // Vite URLs, so SSR output never needs to expose a source-machine file:// URL.
       ...(publicModuleId ? { publicModuleId } : {}),
       moduleMetadata: transformOptions?.moduleMetadata ?? state.moduleMetadata,
       resolveModuleMetadata: (source, importer) =>
@@ -1539,6 +1549,19 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     enforce: 'pre',
 
     configResolved(resolvedConfig) {
+      if (resolvedConfig.command === 'serve' && compilerOptions.resumable === true) {
+        const effectiveRoot =
+          resolvedConfig.resolve.preserveSymlinks === true
+            ? resolvedConfig.root
+            : normalizeIdentityPath(resolvedConfig.root)
+        if (effectiveRoot.includes('?') || effectiveRoot.includes('#')) {
+          throw new Error(
+            `[fict] Vite cannot transform project roots containing a literal "?" or "#" ` +
+              `in resumable dev mode: ${JSON.stringify(effectiveRoot)}. Rename the project ` +
+              'directory or disable resumable output.',
+          )
+        }
+      }
       config = resolvedConfig
       transformFilter = createTransformFilter(config.root)
       if (resolvedConfig.build.watch) {
@@ -2491,6 +2514,74 @@ function normalizeModuleIdentityPath(filename: string, preserveSymlinks: boolean
   // Vite intentionally treats symlink requests as separate modules when this option is on.
   // Preserve that logical identity; otherwise follow Vite's default physical-module semantics.
   return preserveSymlinks ? normalized : normalizeIdentityPath(normalized)
+}
+
+function encodeViteModulePath(filename: string): string {
+  return encodeURI(filename.split(path.sep).join('/')).replace(/#/g, '%23').replace(/\?/g, '%3F')
+}
+
+/**
+ * Produce the browser URL that Vite serves for a transformed module in dev.
+ * Root-relative logical requests stay logical when preserveSymlinks is enabled;
+ * default resolution follows the physical module identity used by Vite.
+ */
+interface DevPublicModuleIdOptions {
+  base?: string | undefined
+  origin?: string | undefined
+  preserveSymlinks?: boolean | undefined
+}
+
+function createDevPublicModuleId(
+  id: string,
+  rootDir: string,
+  options: DevPublicModuleIdOptions = {},
+): string {
+  const { filename, suffix } = splitModuleId(id, { root: rootDir })
+  const logicalRoot = path.normalize(path.resolve(rootDir))
+  const logicalFilename = normalizeFileName(filename, rootDir)
+
+  let identityRoot = logicalRoot
+  let identityFilename = logicalFilename
+  if (options.preserveSymlinks !== true) {
+    identityRoot = normalizeIdentityPath(logicalRoot)
+    identityFilename = normalizeIdentityPath(logicalFilename)
+  } else if (!isPathAtOrInsideDirectory(logicalRoot, logicalFilename)) {
+    // Vite can expose a physical id for a logically symlinked project root (for example,
+    // /private/var versus /var on macOS). Normalize that root spelling without resolving a
+    // logical module symlink that Vite intentionally preserved.
+    const physicalRoot = normalizeIdentityPath(logicalRoot)
+    if (physicalRoot !== logicalRoot && isPathAtOrInsideDirectory(physicalRoot, logicalFilename)) {
+      identityRoot = physicalRoot
+    }
+  }
+  if (isPathAtOrInsideDirectory(identityRoot, identityFilename)) {
+    const relative = portableRelativePath(identityRoot, identityFilename)
+    assertServableViteDevPath(relative, identityFilename)
+    const modulePath = `/${encodeViteModulePath(relative === '.' ? '' : relative)}${suffix}`
+    return prependViteDevUrl(modulePath, options)
+  }
+
+  assertServableViteDevPath(identityFilename, identityFilename)
+  const absolute = encodeViteModulePath(identityFilename)
+  const fsPath = absolute.startsWith('/') ? absolute : `/${absolute}`
+  return prependViteDevUrl(`/@fs${fsPath}${suffix}`, options)
+}
+
+function prependViteDevUrl(modulePath: string, options: DevPublicModuleIdOptions): string {
+  const encodedBase = options.base || '/'
+  const basePrefix = encodedBase === '/' ? '' : `/${encodedBase.replace(/^\/+|\/+$/g, '')}`
+  const basedPath = `${basePrefix}${modulePath}`
+  const origin = options.origin?.replace(/\/+$/, '')
+  return origin ? `${origin}${basedPath}` : basedPath
+}
+
+function assertServableViteDevPath(publicPath: string, filename: string): void {
+  if (!publicPath.includes('?') && !publicPath.includes('#')) return
+  throw new Error(
+    `[fict] Cannot create a resumable Vite dev URL for ${JSON.stringify(filename)}: ` +
+      'Vite cannot serve source paths containing a literal "?" or "#". Rename the path ' +
+      'or disable resumable output.',
+  )
 }
 
 function isPathAtOrInsideDirectory(directory: string, filename: string): boolean {
@@ -3895,6 +3986,7 @@ export const __fictVitePluginInternals = {
   computePackageMetadataCacheFingerprint,
   buildFictPackageMappingResult,
   applyFictPackageMappings,
+  createDevPublicModuleId,
   createPublicModuleId: (
     filename: string,
     root: string,
