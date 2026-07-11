@@ -27,26 +27,26 @@
     "keyed-list-dom": {
       "optimized_ms": 3.64,
       "unoptimized_ms": 3.19,
-      "optimized_bytes": 2229,
-      "unoptimized_bytes": 2229
+      "optimized_bytes": 3224,
+      "unoptimized_bytes": 3224
     },
     "props-destructure-rest": {
       "optimized_ms": 3.97,
       "unoptimized_ms": 3.04,
-      "optimized_bytes": 1989,
-      "unoptimized_bytes": 1989
+      "optimized_bytes": 2354,
+      "unoptimized_bytes": 2354
     },
     "cross-module-metadata": {
       "optimized_ms": 1.13,
       "unoptimized_ms": 0.97,
-      "optimized_bytes": 890,
-      "unoptimized_bytes": 890
+      "optimized_bytes": 1124,
+      "unoptimized_bytes": 1124
     },
     "resumable-handler": {
       "optimized_ms": 1.84,
       "unoptimized_ms": 1.72,
-      "optimized_bytes": 2339,
-      "unoptimized_bytes": 2339
+      "optimized_bytes": 2674,
+      "unoptimized_bytes": 2674
     }
   }
 }
