@@ -1317,7 +1317,7 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
     ).toThrow(/syntax is reserved|disallowAmbiguousJSLike|angle-bracket/i)
   })
 
-  it('removes an obsolete default JSX pragma import after Fict consumes JSX', () => {
+  it('removes an obsolete JSX pragma binding without dropping module evaluation', () => {
     const result = transformSync(
       `
         import React from 'react'
@@ -1334,6 +1334,7 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
     )
 
     expect(result?.code).toContain('template("<div></div>")')
+    expect(result?.code).toMatch(/import ["']react["']/)
     expect(result?.code).not.toContain("from 'react'")
     expect(result?.code).not.toContain('from "react"')
   })

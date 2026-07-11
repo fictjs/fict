@@ -787,16 +787,14 @@ function removeObsoleteJsxPragmaImportsPlugin(options: TypeScriptOptions): Plugi
           path.scope.crawl()
           for (const statementPath of path.get('body')) {
             if (!statementPath.isImportDeclaration()) continue
-            let removed = false
+            // Removing the last specifier intentionally leaves a side-effect-only import.
             for (const specifierPath of statementPath.get('specifiers')) {
               const localName = specifierPath.node.local.name
               if (!pragmaBindings.has(localName)) continue
               const binding = path.scope.getBinding(localName)
               if (!binding || binding.referenced) continue
               specifierPath.remove()
-              removed = true
             }
-            if (removed && statementPath.node.specifiers.length === 0) statementPath.remove()
           }
         },
       },
