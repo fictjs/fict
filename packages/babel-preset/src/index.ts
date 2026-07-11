@@ -705,7 +705,47 @@ function createDynamicImportExtensionRewrite(
   )
 }
 
-function rewriteTypeScriptImportsPlugin(): PluginObj {
+interface TypeScriptImportEqualsRewriteState {
+  sources: WeakSet<BabelCore.types.StringLiteral>
+  // TypeScript/Fict lowering can clone the literal. Its exact source span is
+  // clone-stable and cannot alias a handwritten require in the same file.
+  sourceLocations: Set<string>
+}
+
+function sourceLocationKey(source: BabelCore.types.StringLiteral): string | null {
+  const location = source.loc
+  if (!location) return null
+  return `${location.start.line}:${location.start.column}-${location.end.line}:${location.end.column}`
+}
+
+function isTrackedImportEqualsSource(
+  state: TypeScriptImportEqualsRewriteState,
+  source: BabelCore.types.StringLiteral,
+): boolean {
+  if (state.sources.has(source)) return true
+  const location = sourceLocationKey(source)
+  return location !== null && state.sourceLocations.has(location)
+}
+
+function trackTypeScriptImportEqualsSources(state: TypeScriptImportEqualsRewriteState): PluginObj {
+  return {
+    name: 'fict-track-typescript-import-equals-sources',
+    visitor: {
+      TSImportEqualsDeclaration(importPath) {
+        const reference = importPath.node.moduleReference
+        if (t.isTSExternalModuleReference(reference)) {
+          state.sources.add(reference.expression)
+          const location = sourceLocationKey(reference.expression)
+          if (location) state.sourceLocations.add(location)
+        }
+      },
+    },
+  }
+}
+
+function rewriteTypeScriptImportsPlugin(
+  importEqualsState: TypeScriptImportEqualsRewriteState | null,
+): PluginObj {
   return {
     name: 'fict-rewrite-typescript-imports',
     visitor: {
@@ -730,8 +770,17 @@ function rewriteTypeScriptImportsPlugin(): PluginObj {
               }
             },
             CallExpression(callPath) {
-              if (!t.isImport(callPath.node.callee)) return
               const source = callPath.node.arguments[0]
+              if (
+                importEqualsState &&
+                t.isIdentifier(callPath.node.callee, { name: 'require' }) &&
+                t.isStringLiteral(source) &&
+                isTrackedImportEqualsSource(importEqualsState, source)
+              ) {
+                source.value = rewriteTypeScriptExtension(source.value)
+                return
+              }
+              if (!t.isImport(callPath.node.callee)) return
               if (t.isStringLiteral(source)) {
                 source.value = rewriteTypeScriptExtension(source.value)
               } else if (source && t.isExpression(source)) {
@@ -1079,7 +1128,16 @@ function createIsolatedFictPrepass(
       const ctsModuleSyntax: CtsModuleSyntaxState | null = compileAsCommonJS
         ? { importEquals: [], hasExportAssignment: false }
         : null
+      const importEqualsRewriteState: TypeScriptImportEqualsRewriteState | null =
+        typeScriptTransformOptions &&
+        typescriptOptions.rewriteImportExtensions === true &&
+        !ctsModuleSyntax
+          ? { sources: new WeakSet(), sourceLocations: new Set() }
+          : null
       if (ctsModuleSyntax) plugins.push(lowerCtsModuleSyntaxForFict(ctsModuleSyntax))
+      if (importEqualsRewriteState) {
+        plugins.push(trackTypeScriptImportEqualsSources(importEqualsRewriteState))
+      }
       if (typeScriptTransformOptions) {
         if (getFileDataStore(this.file).get('@babel/plugin-transform-modules-*') === 'commonjs') {
           plugins.push(commonJsMarkerPlugin)
@@ -1111,7 +1169,7 @@ function createIsolatedFictPrepass(
         plugins.push(removeObsoleteJsxPragmaImportsPlugin(typescriptOptions))
       }
       if (typeScriptTransformOptions && typescriptOptions.rewriteImportExtensions) {
-        plugins.push(rewriteTypeScriptImportsPlugin)
+        plugins.push(rewriteTypeScriptImportsPlugin(importEqualsRewriteState))
       }
       if (compileAsCommonJS) {
         plugins.push([transformModulesCommonJS, { allowTopLevelThis: true }])

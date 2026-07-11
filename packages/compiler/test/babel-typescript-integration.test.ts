@@ -1322,6 +1322,58 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
     expect(result?.code).not.toContain('./dependency.cts')
   })
 
+  it('rewrites only relative TypeScript import-equals requires', () => {
+    const source = `
+      import jsDependency = require('./dependency.ts')
+      import mjsDependency = require('../dependency.mts')
+      import cjsDependency = require('./dependency.cts')
+      import bareDependency = require('package/subpath.cts')
+      import absoluteDependency = require('/absolute/path.cts')
+      const manualRequire = require('./dependency.cts')
+      export = {
+        jsDependency,
+        mjsDependency,
+        cjsDependency,
+        bareDependency,
+        absoluteDependency,
+        manualRequire,
+      }
+    `
+    const compile = (rewriteImportExtensions: boolean) =>
+      transformSync(source, {
+        filename: 'entry.ts',
+        configFile: false,
+        babelrc: false,
+        plugins: ['@babel/plugin-transform-modules-commonjs'],
+        presets: [
+          [
+            fictPreset,
+            {
+              dev: false,
+              strictGuarantee: false,
+              typescriptOptions: { rewriteImportExtensions },
+            },
+          ],
+        ],
+      })?.code ?? ''
+
+    const enabled = compile(true)
+    expect(enabled).toMatch(/require\(["']\.\/dependency\.js["']\)/)
+    expect(enabled).toMatch(/require\(["']\.\.\/dependency\.mjs["']\)/)
+    expect(enabled).toMatch(/require\(["']\.\/dependency\.cjs["']\)/)
+    expect(enabled).toMatch(/require\(["']package\/subpath\.cts["']\)/)
+    expect(enabled).toMatch(/require\(["']\/absolute\/path\.cts["']\)/)
+    expect(enabled).toMatch(/require\(["']\.\/dependency\.cts["']\)/)
+
+    const disabled = compile(false)
+    expect(disabled).toMatch(/require\(["']\.\/dependency\.ts["']\)/)
+    expect(disabled).toMatch(/require\(["']\.\.\/dependency\.mts["']\)/)
+    expect(disabled).toMatch(/require\(["']\.\/dependency\.cts["']\)/)
+    expect(disabled).not.toContain('./dependency.js')
+    expect(disabled).not.toContain('../dependency.mjs')
+    expect(disabled).not.toContain('./dependency.cjs')
+  })
+
   it('rewrites only relative dynamic import expressions', () => {
     const unwrapDynamicImports: PluginObj = {
       name: 'unwrap-dynamic-imports-for-extension-test',
