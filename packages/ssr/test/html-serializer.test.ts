@@ -236,7 +236,7 @@ describe('resumable host HTML parser context validation', () => {
     expect(html).toContain('<button>safe</button>')
   })
 
-  it('does not treat a namespaced SVG host as an unsafe HTML parser host', () => {
+  it('rejects an internal SVG host even below an HTML integration point', () => {
     const { document } = parseHTML('<!doctype html><html><body></body></html>')
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
     const title = document.createElementNS('http://www.w3.org/2000/svg', 'title')
@@ -247,7 +247,9 @@ describe('resumable host HTML parser context validation', () => {
     title.appendChild(host)
     svg.appendChild(title)
 
-    expect(serializeHtmlNode(svg)).toContain('<title><fict-host')
+    expect(() => serializeHtmlNode(svg)).toThrowError(
+      /resumable <fict-host>.*SVG.*range-based scope anchors/i,
+    )
   })
 
   it('does not reserve the fict-host tag name without internal scope markers', () => {
@@ -365,5 +367,92 @@ describe('HTML void element child validation', () => {
     input.appendChild(child)
 
     expect(serializeHtmlNode(input)).toBe('<input><value>safe</value></input>')
+  })
+})
+
+describe('foreign-namespace resumable host validation', () => {
+  it('rejects a resumable SVG component wrapper that suppresses rendered graphics', () => {
+    const legacyDocument = parseHTML(
+      '<!doctype html><html><body><svg><fict-host><circle cx="10" cy="10" r="5"></circle></fict-host></svg></body></html>',
+    ).document
+    const legacyCircle = legacyDocument.querySelector('circle')
+
+    expect(legacyCircle?.namespaceURI).toBe('http://www.w3.org/2000/svg')
+    expect(legacyCircle?.parentElement?.localName).toBe('fict-host')
+
+    function Graphic(): FictNode {
+      return { type: 'circle', props: { cx: 10, cy: 10, r: 5 } }
+    }
+
+    expect(() =>
+      renderToString(() => ({
+        type: 'svg',
+        props: {
+          viewBox: '0 0 20 20',
+          children: { type: Graphic, props: {} },
+        },
+      })),
+    ).toThrowError(/resumable <fict-host>.*SVG.*range-based scope anchors/i)
+  })
+
+  it('rejects a resumable MathML wrapper that changes fixed-arity fraction children', () => {
+    const legacyDocument = parseHTML(
+      '<!doctype html><html><body><math><mfrac><fict-host><mi>numerator</mi><mi>denominator</mi></fict-host></mfrac></math></body></html>',
+    ).document
+    const legacyFraction = legacyDocument.querySelector('mfrac')
+
+    expect(Array.from(legacyFraction?.children ?? [], child => child.localName)).toEqual([
+      'fict-host',
+    ])
+    expect(
+      Array.from(legacyFraction?.querySelectorAll('mi') ?? [], child => child.textContent),
+    ).toEqual(['numerator', 'denominator'])
+
+    function FractionParts(): FictNode {
+      return [
+        { type: 'mi', props: { children: 'numerator' } },
+        { type: 'mi', props: { children: 'denominator' } },
+      ]
+    }
+
+    expect(() =>
+      renderToString(() => ({
+        type: 'math',
+        props: {
+          children: {
+            type: 'mfrac',
+            props: { children: { type: FractionParts, props: {} } },
+          },
+        },
+      })),
+    ).toThrowError(/resumable <fict-host>.*MathML.*range-based scope anchors/i)
+  })
+
+  it('allows an HTML resumable component inside SVG foreignObject', () => {
+    function HtmlIsland(): FictNode {
+      return { type: 'div', props: { children: 'HTML island' } }
+    }
+
+    const html = renderToString(() => ({
+      type: 'svg',
+      props: {
+        children: {
+          type: 'foreignObject',
+          props: { children: { type: HtmlIsland, props: {} } },
+        },
+      },
+    }))
+
+    expect(html).toContain('<foreignObject><fict-host')
+    expect(html).toContain('<div>HTML island</div>')
+  })
+
+  it('does not reserve a namespaced fict-host without internal scope markers', () => {
+    const { document } = parseHTML('<!doctype html><html><body></body></html>')
+    const host = document.createElementNS('http://www.w3.org/2000/svg', 'fict-host')
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+    host.appendChild(circle)
+
+    expect(serializeHtmlNode(host)).toBe('<fict-host><circle></circle></fict-host>')
   })
 })

@@ -136,17 +136,17 @@ describe('@fictjs/ssr streaming patcher', () => {
       rootTag: 'svg',
       childTag: 'circle',
       fallbackTag: 'rect',
-      namespace: 'http://www.w3.org/2000/svg',
+      namespaceName: 'SVG',
     },
     {
       rootTag: 'math',
       childTag: 'mi',
       fallbackTag: 'mtext',
-      namespace: 'http://www.w3.org/1998/Math/MathML',
+      namespaceName: 'MathML',
     },
   ])(
-    'preserves the $rootTag namespace when applying a streamed patch',
-    async ({ rootTag, childTag, fallbackTag, namespace }) => {
+    'rejects a resumable streaming boundary inside $rootTag foreign content',
+    async ({ rootTag, childTag, fallbackTag, namespaceName }) => {
       const token = createSuspenseToken()
       let ready = false
 
@@ -172,48 +172,82 @@ describe('@fictjs/ssr streaming patcher', () => {
 
       const stream = renderToStream(() => ({ type: App, props: {} }), { mode: 'shell' })
       const readAll = readReadableStream(stream)
+      const rejected = expect(readAll).rejects.toThrow(
+        new RegExp(`resumable <fict-host>.*${namespaceName}.*range-based scope anchors`, 'i'),
+      )
       await Promise.resolve()
       ready = true
       token.resolve()
 
-      const output = await readAll
-      const win = parseHTML(output) as Window & typeof globalThis
-      const document = win.document as Document
-      const template = document.querySelector(
-        'template[data-fict-suspense]',
-      ) as HTMLTemplateElement | null
-      expect(template).not.toBeNull()
-      const patchNamespace = rootTag === 'svg' ? 'svg' : 'mathml'
-      expect(template!.getAttribute('data-fict-patch-namespace')).toBe(patchNamespace)
-      expect(template!.content.firstElementChild?.localName).toBe(rootTag)
-
-      applyStreamPatch(
-        document,
-        win as unknown as Window,
-        template!.getAttribute('data-fict-suspense')!,
-      )
-
-      const child = document.querySelector(`[data-stream-child]`)
-      expect(child?.localName).toBe(childTag)
-      if (rootTag === 'svg') {
-        expect(child?.namespaceURI).toBe(namespace)
-      }
+      await rejected
     },
   )
 
-  it.each(['foreignObject', 'title', 'desc'])(
-    'does not force streamed children of SVG <%s> into the SVG namespace',
+  it('keeps streamed components inside SVG <foreignObject> in the HTML namespace', async () => {
+    const token = createSuspenseToken()
+    let ready = false
+
+    function AsyncChild(): FictNode {
+      if (!ready) throw token.token
+      return { type: 'div', props: { 'data-stream-child': '', children: 'resolved' } }
+    }
+
+    function App(): FictNode {
+      return {
+        type: 'svg',
+        props: {
+          children: {
+            type: 'foreignObject',
+            props: {
+              children: {
+                type: Suspense,
+                props: {
+                  fallback: { type: 'span', props: { children: 'pending' } },
+                  children: { type: AsyncChild, props: {} },
+                },
+              },
+            },
+          },
+        },
+      }
+    }
+
+    const stream = renderToStream(() => ({ type: App, props: {} }), { mode: 'shell' })
+    const readAll = readReadableStream(stream)
+    await Promise.resolve()
+    ready = true
+    token.resolve()
+
+    const output = await readAll
+    const win = parseHTML(output) as Window & typeof globalThis
+    const document = win.document as Document
+    const template = document.querySelector(
+      'template[data-fict-suspense]',
+    ) as HTMLTemplateElement | null
+    expect(template).not.toBeNull()
+    expect(template!.hasAttribute('data-fict-patch-namespace')).toBe(false)
+
+    applyStreamPatch(
+      document,
+      win as unknown as Window,
+      template!.getAttribute('data-fict-suspense')!,
+    )
+    expect(document.querySelector('[data-stream-child]')?.namespaceURI).toBe(
+      'http://www.w3.org/1999/xhtml',
+    )
+  })
+
+  it.each(['title', 'desc'])(
+    'rejects a foreign resumable host below SVG <%s>',
     async integrationTag => {
       const token = createSuspenseToken()
-      let ready = false
 
       function AsyncChild(): FictNode {
-        if (!ready) throw token.token
-        return { type: 'div', props: { 'data-stream-child': '', children: 'resolved' } }
+        throw token.token
       }
 
-      function App(): FictNode {
-        return {
+      const stream = renderToStream(
+        () => ({
           type: 'svg',
           props: {
             children: {
@@ -222,30 +256,21 @@ describe('@fictjs/ssr streaming patcher', () => {
                 children: {
                   type: Suspense,
                   props: {
-                    fallback: { type: 'span', props: { children: 'pending' } },
+                    fallback: 'pending',
                     children: { type: AsyncChild, props: {} },
                   },
                 },
               },
             },
           },
-        }
-      }
+        }),
+        { mode: 'shell' },
+      )
 
-      const stream = renderToStream(() => ({ type: App, props: {} }), { mode: 'shell' })
-      const readAll = readReadableStream(stream)
-      await Promise.resolve()
-      ready = true
+      await expect(readReadableStream(stream)).rejects.toThrow(
+        /resumable <fict-host>.*SVG.*range-based scope anchors/i,
+      )
       token.resolve()
-
-      const output = await readAll
-      const win = parseHTML(output) as Window & typeof globalThis
-      const document = win.document as Document
-      const template = document.querySelector(
-        'template[data-fict-suspense]',
-      ) as HTMLTemplateElement | null
-      expect(template).not.toBeNull()
-      expect(template!.hasAttribute('data-fict-patch-namespace')).toBe(false)
     },
   )
 })

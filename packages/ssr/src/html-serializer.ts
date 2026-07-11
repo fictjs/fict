@@ -1,6 +1,8 @@
 import { assertValidDOMAttributeName, assertValidDOMElementName } from '@fictjs/runtime/internal'
 
 const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml'
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg'
+const MATHML_NAMESPACE = 'http://www.w3.org/1998/Math/MathML'
 
 const HTML_VOID_ELEMENTS = new Set([
   'area',
@@ -275,6 +277,26 @@ function getStreamingBoundaryRewriteSuggestion(contextTag: string, invalidConten
 function assertSafeResumableHostContext(element: Element, serializedParent: Element | null): void {
   if (!isResumableFictHost(element)) return
 
+  const foreignNamespace = getResumableHostForeignNamespace(element, serializedParent)
+  if (foreignNamespace) {
+    const scopeId = element.getAttribute('data-fict-s') ?? '<unknown>'
+    const namespaceDescription =
+      foreignNamespace.kind === 'other'
+        ? `foreign namespace ${JSON.stringify(foreignNamespace.uri)}`
+        : `the ${foreignNamespace.kind} namespace`
+    const semanticRisk =
+      foreignNamespace.kind === 'SVG'
+        ? 'A custom element wrapper is not structurally transparent in SVG and can suppress the graphics it contains after HTML parsing.'
+        : foreignNamespace.kind === 'MathML'
+          ? 'A custom element wrapper is not structurally transparent in MathML and can replace the intended operands of fixed-arity layout elements after HTML parsing.'
+          : 'A custom element wrapper is not guaranteed to be structurally transparent in foreign content after HTML parsing.'
+    throw new Error(
+      `[fict/ssr] Cannot serialize resumable <fict-host> scope ${JSON.stringify(scopeId)} in ${namespaceDescription}. ` +
+        `${semanticRisk} Range-based scope anchors (range-v3) are required for resumable components in foreign content; ` +
+        'move the component boundary outside the foreign-content subtree until that protocol is available.',
+    )
+  }
+
   const parent = serializedParent ?? element.parentElement
   if (!parent || !isHtmlElement(parent)) return
 
@@ -291,11 +313,46 @@ function assertSafeResumableHostContext(element: Element, serializedParent: Elem
 
 function isResumableFictHost(element: Element): boolean {
   return (
-    isHtmlElement(element) &&
     (element.localName || element.tagName).toLowerCase() === 'fict-host' &&
     element.hasAttribute('data-fict-host') &&
     !!element.getAttribute('data-fict-s')
   )
+}
+
+type ResumableHostForeignNamespace = { kind: 'SVG' | 'MathML' } | { kind: 'other'; uri: string }
+
+function getResumableHostForeignNamespace(
+  element: Element,
+  serializedParent: Element | null,
+): ResumableHostForeignNamespace | null {
+  const directNamespace = classifyForeignNamespace(element.namespaceURI)
+  if (directNamespace) return directNamespace
+
+  // linkedom currently reports MathML elements as XHTML. Recover the browser
+  // parser context from ancestry so a MathML host cannot evade validation.
+  // SVG <foreignObject> is an intentional HTML island, so an HTML host below
+  // it remains valid unless a nested <svg> or <math> establishes a new context.
+  let ancestor = serializedParent ?? element.parentElement
+  while (ancestor) {
+    const localName = (ancestor.localName || ancestor.tagName).toLowerCase()
+    if (localName === 'foreignobject' && ancestor.namespaceURI === SVG_NAMESPACE) return null
+
+    const ancestorNamespace = classifyForeignNamespace(ancestor.namespaceURI)
+    if (ancestorNamespace) return ancestorNamespace
+    if (localName === 'svg') return { kind: 'SVG' }
+    if (localName === 'math') return { kind: 'MathML' }
+    ancestor = ancestor.parentElement
+  }
+  return null
+}
+
+function classifyForeignNamespace(
+  namespaceURI: string | null,
+): ResumableHostForeignNamespace | null {
+  if (namespaceURI === null || namespaceURI === HTML_NAMESPACE) return null
+  if (namespaceURI === SVG_NAMESPACE) return { kind: 'SVG' }
+  if (namespaceURI === MATHML_NAMESPACE) return { kind: 'MathML' }
+  return { kind: 'other', uri: namespaceURI }
 }
 
 function getResumableHostRewriteSuggestion(contextTag: string): string {
