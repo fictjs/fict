@@ -7,16 +7,16 @@
   },
   "samples": {
     "counter-basic": {
-      "helpers": 5,
+      "helpers": 7,
       "regions": 1,
-      "sizeBytes": 1387,
-      "gzipBytes": 543
+      "sizeBytes": 1856,
+      "gzipBytes": 681
     },
     "optional-chain": {
-      "helpers": 3,
+      "helpers": 5,
       "regions": 0,
-      "sizeBytes": 733,
-      "gzipBytes": 372
+      "sizeBytes": 965,
+      "gzipBytes": 462
     },
     "no-jsx": {
       "helpers": 4,
@@ -25,28 +25,28 @@
       "gzipBytes": 238
     },
     "keyed-list-dom": {
-      "helpers": 5,
+      "helpers": 7,
       "regions": 0,
-      "sizeBytes": 2229,
-      "gzipBytes": 767
+      "sizeBytes": 3224,
+      "gzipBytes": 999
     },
     "props-destructure-rest": {
-      "helpers": 6,
+      "helpers": 8,
       "regions": 0,
-      "sizeBytes": 1989,
-      "gzipBytes": 800
+      "sizeBytes": 2354,
+      "gzipBytes": 913
     },
     "cross-module-hook-metadata": {
-      "helpers": 3,
+      "helpers": 5,
       "regions": 0,
-      "sizeBytes": 618,
-      "gzipBytes": 320
+      "sizeBytes": 850,
+      "gzipBytes": 413
     },
     "resumable-handler": {
-      "helpers": 17,
+      "helpers": 19,
       "regions": 0,
-      "sizeBytes": 2375,
-      "gzipBytes": 866
+      "sizeBytes": 2722,
+      "gzipBytes": 961
     }
   }
 }
