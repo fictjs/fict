@@ -1,11 +1,12 @@
 import { describe, it, expect, vi } from 'vitest'
-import { untrack } from '@fictjs/runtime'
+import { untrack, type FictNode } from '@fictjs/runtime'
 import { render, screen, act } from '@fictjs/testing-library'
 import { $state } from 'fict'
 
 import {
   Router,
   MemoryRouter,
+  Routes,
   Route,
   createBrowserHistory,
   createMemoryHistory,
@@ -20,6 +21,7 @@ import {
   Navigate,
   Redirect,
   type History,
+  type RouteDefinition,
 } from '../src'
 import { RouterProvider } from '../src/router-provider'
 import { readAccessor } from '../src/context'
@@ -213,6 +215,42 @@ function ReactiveFormFixture() {
     >
       <input name="query" value="fict" />
     </Form>
+  )
+}
+
+let relativeFormScenario: {
+  method: 'get' | 'post'
+  initialRelative: 'route' | 'path' | undefined
+} = {
+  method: 'get',
+  initialRelative: 'path',
+}
+let updateRelativeFormAction: (
+  action: string,
+  relative: 'route' | 'path' | undefined,
+) => void = () => {}
+
+function RelativeFormParent(props: { children?: FictNode }) {
+  let action = $state('draft')
+  let relative = $state<'route' | 'path' | undefined>(relativeFormScenario.initialRelative)
+
+  updateRelativeFormAction = (nextAction, nextRelative) => {
+    action = nextAction
+    relative = nextRelative
+  }
+
+  return (
+    <div>
+      <Form
+        action={action}
+        method={relativeFormScenario.method}
+        relative={relative}
+        data-testid="relative-form"
+      >
+        <input name="query" value="fict" />
+      </Form>
+      {props.children}
+    </div>
   )
 }
 
@@ -1149,6 +1187,99 @@ describe('Router integration (MemoryRouter)', () => {
     expect(firstReactiveFormSubmit).not.toHaveBeenCalled()
     expect(secondReactiveFormSubmit).toHaveBeenCalledTimes(1)
     history.destroy?.()
+  })
+
+  it.each([
+    { method: 'get' as const, relative: 'route' as const, label: 'route-relative GET' },
+    { method: 'get' as const, relative: 'path' as const, label: 'path-relative GET' },
+    { method: 'post' as const, relative: undefined, label: 'default route-relative POST' },
+    { method: 'post' as const, relative: 'path' as const, label: 'path-relative POST' },
+  ])('resolves nested Form actions for $label', async ({ method, relative }) => {
+    const initialPath = '/app/projects/42/edit/details'
+    const routeBase = '/projects/42'
+    const pathBase = '/projects/42/edit/details'
+    const initialRelative = relative === 'path' ? 'route' : 'path'
+    const initialResolvedBase = initialRelative === 'path' ? pathBase : routeBase
+    const resolvedBase = relative === 'path' ? pathBase : routeBase
+    const history = createMemoryHistory({ initialEntries: [initialPath] })
+    const routes: RouteDefinition[] = [
+      {
+        path: '/projects/:id',
+        component: RelativeFormParent,
+        children: [{ path: 'edit/details', element: <span data-testid="nested-child" /> }],
+      },
+    ]
+    const fetchMock =
+      method === 'post'
+        ? vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+            new Response(JSON.stringify({ ok: true }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            }),
+          )
+        : undefined
+
+    relativeFormScenario = { method, initialRelative }
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={routes} base="/app">
+          <Routes routes={routes} />
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('relative-form') as HTMLFormElement
+      expect(form.getAttribute('action')).toBe(`/app${initialResolvedBase}/draft`)
+
+      await act(async () => {
+        updateRelativeFormAction('save#done', relative)
+      })
+      await vi.waitFor(() =>
+        expect(form.getAttribute('action')).toBe(`/app${resolvedBase}/save#done`),
+      )
+
+      form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+      if (method === 'get') {
+        await vi.waitFor(() => expect(history.location.pathname).toBe(`/app${resolvedBase}/save`))
+        expect(history.location.search).toBe('?query=fict')
+        expect(history.location.hash).toBe('#done')
+      } else {
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+        expect(fetchMock?.mock.calls[0]?.[0]).toBe(`/app${resolvedBase}/save#done`)
+        expect(fetchMock?.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' })
+        expect(history.location.pathname).toBe(initialPath)
+      }
+    } finally {
+      fetchMock?.mockRestore()
+      history.destroy?.()
+    }
+  })
+
+  it.each([
+    { action: 'save', expectedPath: '/form/save', label: 'relative action' },
+    { action: undefined, expectedPath: '/form', label: 'omitted action' },
+  ])('falls back to the current pathname for a Form $label without RouteContext', async case_ => {
+    const history = createMemoryHistory({ initialEntries: ['/form'] })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <Form action={case_.action} data-testid="provider-form">
+            <input name="query" value="fict" />
+          </Form>
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('provider-form') as HTMLFormElement
+      expect(form.getAttribute('action')).toBe(case_.expectedPath)
+
+      form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      await vi.waitFor(() => expect(history.location.pathname).toBe(case_.expectedPath))
+      expect(history.location.search).toBe('?query=fict')
+    } finally {
+      history.destroy?.()
+    }
   })
 
   it('reruns Navigate only for current reactive navigation props', async () => {

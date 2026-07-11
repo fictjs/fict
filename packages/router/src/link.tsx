@@ -5,20 +5,29 @@
  * Integrates with Fict's reactive system for active state tracking.
  */
 
-import { createEffect, untrack, type FictNode, type JSX, type StyleProp } from '@fictjs/runtime'
+import {
+  createEffect,
+  hasContext,
+  untrack,
+  type FictNode,
+  type JSX,
+  type StyleProp,
+} from '@fictjs/runtime'
 import { createSignal, reactive } from '@fictjs/runtime/advanced'
 import { __fictPropsRest, spread } from '@fictjs/runtime/internal'
 
 import {
   useRouter,
+  useRoute,
   useIsActive,
   useHref,
   usePendingLocation,
   readAccessor,
+  RouteContext,
   type MaybeAccessor,
 } from './context'
 import type { To, NavigateOptions } from './types'
-import { parseURL, stripBasePath } from './utils'
+import { parseURL, prependBasePath, stripBasePath } from './utils'
 
 // CSS Properties type for styles
 type CSSProperties = NonNullable<StyleProp>
@@ -506,6 +515,33 @@ const FORM_DOM_PROP_EXCLUSIONS = [
   'onSubmit',
 ]
 
+interface ResolvedFormAction {
+  pathname: string
+  search: string
+  hash: string
+  href: string
+}
+
+function splitFormAction(action: string): Omit<ResolvedFormAction, 'href'> {
+  let pathname = action
+  let hash = ''
+  let search = ''
+
+  const hashIndex = pathname.indexOf('#')
+  if (hashIndex >= 0) {
+    hash = pathname.slice(hashIndex)
+    pathname = pathname.slice(0, hashIndex)
+  }
+
+  const searchIndex = pathname.indexOf('?')
+  if (searchIndex >= 0) {
+    search = pathname.slice(searchIndex)
+    pathname = pathname.slice(0, searchIndex)
+  }
+
+  return { pathname, search, hash }
+}
+
 /**
  * Form component for action submissions
  *
@@ -519,6 +555,32 @@ const FORM_DOM_PROP_EXCLUSIONS = [
  */
 export function Form(props: FormProps): FictNode {
   const router = useRouter()
+  const route = useRoute()
+  const hasRouteContext = hasContext(RouteContext)
+
+  const resolveAction = (): ResolvedFormAction => {
+    const rawAction = props.action ?? '.'
+    const externalHref = getExternalHref(rawAction)
+    const action = splitFormAction(rawAction)
+
+    if (externalHref !== null) {
+      return { ...action, href: externalHref }
+    }
+
+    const resolver =
+      (props.relative ?? 'route') === 'path' || !hasRouteContext
+        ? readAccessor(router.resolvePath as MaybeAccessor<(to: To) => string>)
+        : readAccessor(route.resolvePath as MaybeAccessor<(to: To) => string>)
+    const pathname = resolver(action.pathname || '.')
+    const base = readAccessor(router.base)
+
+    return {
+      pathname,
+      search: action.search,
+      hash: action.hash,
+      href: prependBasePath(pathname, base) + action.search + action.hash,
+    }
+  }
 
   const handleSubmit = (event: SubmitEvent) => {
     untrack(() => props.onSubmit?.(event))
@@ -536,15 +598,13 @@ export function Form(props: FormProps): FictNode {
     event.preventDefault()
 
     const snapshot = untrack(() => ({
-      action: props.action,
+      action: resolveAction(),
       method: props.method,
       navigate: props.navigate,
       replace: props.replace,
     }))
     const formData = new FormData(form)
     const method = snapshot.method?.toUpperCase() || 'GET'
-
-    const actionUrl = snapshot.action || untrack(() => readAccessor(router.location).pathname)
 
     if (method === 'GET') {
       // For GET, navigate with search params
@@ -558,15 +618,16 @@ export function Form(props: FormProps): FictNode {
       untrack(() =>
         router.navigate(
           {
-            pathname: actionUrl,
+            pathname: snapshot.action.pathname,
             search: '?' + searchParams.toString(),
+            hash: snapshot.action.hash,
           },
           { replace: snapshot.replace },
         ),
       )
     } else {
       // For POST/PUT/PATCH/DELETE, submit via fetch
-      void submitFormAction(form, actionUrl, method, formData, {
+      void submitFormAction(form, snapshot.action.href, method, formData, {
         navigate: snapshot.navigate !== false,
         replace: snapshot.replace ?? false,
         router,
@@ -656,7 +717,7 @@ export function Form(props: FormProps): FictNode {
   const children = reactive(() => props.children)
   const formRef = createSpreadRef<HTMLFormElement>(() => ({
     ...formProps,
-    action: props.action,
+    action: resolveAction().href,
     method: htmlMethod(),
     onSubmit: handleSubmit,
   }))

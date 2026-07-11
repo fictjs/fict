@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 vi.mock('@fictjs/runtime', () => ({
   createMemo: <T,>(fn: () => T) => fn,
   Fragment: ({ children }: any) => children,
+  hasContext: () => false,
 }))
 
 // Mock context module with all needed exports
@@ -28,6 +29,7 @@ vi.mock('../src/context', () => {
   const resolvePathMock = (to: any) => (typeof to === 'string' ? to : to.pathname || '/')
 
   return {
+    RouteContext: {},
     useRouter: () => ({
       location: mockLocation,
       params: () => ({}),
@@ -36,6 +38,12 @@ vi.mock('../src/context', () => {
       isRouting: () => false,
       pendingLocation: () => null,
       base: () => '',
+      resolvePath: wrapAccessor(resolvePathMock),
+    }),
+    useRoute: () => ({
+      match: () => undefined,
+      data: () => undefined,
+      outlet: () => null,
       resolvePath: wrapAccessor(resolvePathMock),
     }),
     useIsActive: (to: any, options?: { end?: boolean }) => () => {
