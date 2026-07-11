@@ -89,10 +89,113 @@ interface PreservedControlState {
   checked?: boolean
   selectedIndex?: number
   selectedValues?: string[]
+  html?: string
+  selection?: PreservedEditableSelection
+}
+
+interface PreservedSelectionPoint {
+  path: number[]
+  offset: number
+}
+
+interface PreservedEditableSelection {
+  anchor: PreservedSelectionPoint
+  focus: PreservedSelectionPoint
 }
 
 function getControlTagName(node: Element): string {
   return (node.localName || node.tagName || '').toLowerCase()
+}
+
+function isContentEditableElement(node: Element): boolean {
+  const reflected = (node as HTMLElement).isContentEditable
+  if (typeof reflected === 'boolean') return reflected
+
+  for (let current: Element | null = node; current; current = current.parentElement) {
+    const value = current.getAttribute('contenteditable')
+    if (value === null) continue
+
+    const normalized = value.toLowerCase()
+    if (normalized === 'false') return false
+    if (normalized === '' || normalized === 'true' || normalized === 'plaintext-only') return true
+  }
+
+  return false
+}
+
+function getSelectionPoint(
+  root: Element,
+  node: Node | null,
+  offset: number,
+): PreservedSelectionPoint | null {
+  if (!node || (node !== root && !root.contains(node))) return null
+
+  const path: number[] = []
+  let current: Node = node
+  while (current !== root) {
+    const parent = current.parentNode
+    if (!parent) return null
+    const index = Array.from(parent.childNodes).indexOf(current as ChildNode)
+    if (index < 0) return null
+    path.push(index)
+    current = parent
+  }
+
+  path.reverse()
+  return { path, offset }
+}
+
+function captureEditableSelection(root: Element): PreservedEditableSelection | undefined {
+  const selection = root.ownerDocument.getSelection?.()
+  if (!selection) return undefined
+
+  const anchor = getSelectionPoint(root, selection.anchorNode, selection.anchorOffset)
+  const focus = getSelectionPoint(root, selection.focusNode, selection.focusOffset)
+  return anchor && focus ? { anchor, focus } : undefined
+}
+
+function resolveSelectionPoint(root: Element, point: PreservedSelectionPoint): Node | null {
+  let current: Node = root
+  for (const index of point.path) {
+    const child = current.childNodes[index]
+    if (!child) return null
+    current = child
+  }
+  return current
+}
+
+function clampSelectionOffset(node: Node, offset: number): number {
+  const maximum = node.nodeValue === null ? node.childNodes.length : node.nodeValue.length
+  return Math.max(0, Math.min(offset, maximum))
+}
+
+function restoreEditableSelection(
+  root: Element,
+  state: PreservedEditableSelection | undefined,
+): void {
+  if (!state) return
+
+  const anchorNode = resolveSelectionPoint(root, state.anchor)
+  const focusNode = resolveSelectionPoint(root, state.focus)
+  const selection = root.ownerDocument.getSelection?.()
+  if (!anchorNode || !focusNode || !selection) return
+
+  const anchorOffset = clampSelectionOffset(anchorNode, state.anchor.offset)
+  const focusOffset = clampSelectionOffset(focusNode, state.focus.offset)
+  try {
+    if (typeof selection.setBaseAndExtent === 'function') {
+      selection.setBaseAndExtent(anchorNode, anchorOffset, focusNode, focusOffset)
+      return
+    }
+
+    const range = root.ownerDocument.createRange()
+    range.setStart(anchorNode, anchorOffset)
+    range.setEnd(focusNode, focusOffset)
+    selection.removeAllRanges()
+    selection.addRange(range)
+  } catch {
+    // Selection restoration is best effort when the browser normalizes edited markup.
+  }
 }
 
 function captureControlState(node: Element, event: Event): PreservedControlState | null {
@@ -125,6 +228,11 @@ function captureControlState(node: Element, event: Event): PreservedControlState
           value: select.value,
           selectedIndex: select.selectedIndex,
         }
+  }
+
+  if (isContentEditableElement(node)) {
+    const selection = captureEditableSelection(node)
+    return selection ? { html: node.innerHTML, selection } : { html: node.innerHTML }
   }
 
   return null
@@ -169,6 +277,14 @@ function restoreControlState(node: Element, state: PreservedControlState | null)
     if (typeof state.value === 'string') {
       select.value = state.value
     }
+    return
+  }
+
+  if (typeof state.html === 'string' && isContentEditableElement(node)) {
+    if (node.innerHTML !== state.html) {
+      node.innerHTML = state.html
+    }
+    restoreEditableSelection(node, state.selection)
   }
 }
 

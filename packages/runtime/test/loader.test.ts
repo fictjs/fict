@@ -4486,6 +4486,93 @@ describe('resumable loader snapshot validation', () => {
     delete (globalThis as { __fictCapturedInputValue?: string | null }).__fictCapturedInputValue
   })
 
+  it('preserves contenteditable markup and selection across first-event hydration', async () => {
+    const iframe = document.createElement('iframe')
+    document.body.appendChild(iframe)
+    const doc = iframe.contentDocument
+    const view = iframe.contentWindow
+    expect(doc).not.toBeNull()
+    expect(view).not.toBeNull()
+
+    try {
+      const script = doc!.createElement('script')
+      script.id = '__FICT_SNAPSHOT__'
+      script.type = 'application/json'
+      script.textContent = JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      })
+      doc!.body.appendChild(script)
+
+      const host = doc!.createElement('div')
+      host.setAttribute('data-fict-s', 's1')
+      host.setAttribute(
+        'data-fict-h',
+        'data:text/javascript,export default null#__fict_r_contenteditable',
+      )
+
+      __fictRegisterResume('__fict_r_contenteditable', (_scopeId, node) => {
+        const editable =
+          node && typeof (node as Element).querySelector === 'function'
+            ? (node as Element).querySelector('[contenteditable]')
+            : null
+        if (editable) editable.innerHTML = '<span>server</span>'
+      })
+
+      const editable = doc!.createElement('div')
+      editable.setAttribute('contenteditable', 'true')
+      editable.setAttribute(
+        'on:input',
+        'data:text/javascript,export function capture(scopeId,event){const selection=event.currentTarget.ownerDocument.getSelection();globalThis.__fictCapturedEditableState={html:event.currentTarget.innerHTML,anchorText:selection?.anchorNode?.nodeValue??null,anchorOffset:selection?.anchorOffset??-1,focusText:selection?.focusNode?.nodeValue??null,focusOffset:selection?.focusOffset??-1}}#capture',
+      )
+      editable.innerHTML = '<span>server</span>'
+      host.appendChild(editable)
+      doc!.body.appendChild(host)
+
+      installResumableLoader({ document: doc!, events: ['input'], prefetch: false })
+
+      editable.innerHTML = '<span>user edit</span>'
+      const editedText = editable.firstElementChild?.firstChild
+      const selection = doc!.getSelection()
+      expect(editedText).not.toBeNull()
+      expect(selection).not.toBeNull()
+      selection!.setBaseAndExtent(editedText!, 7, editedText!, 2)
+
+      editable.dispatchEvent(new view!.Event('input', { bubbles: true, cancelable: true }))
+      await waitForPendingHandlers()
+
+      expect(
+        (
+          globalThis as {
+            __fictCapturedEditableState?: {
+              html: string
+              anchorText: string | null
+              anchorOffset: number
+              focusText: string | null
+              focusOffset: number
+            }
+          }
+        ).__fictCapturedEditableState,
+      ).toEqual({
+        html: '<span>user edit</span>',
+        anchorText: 'user edit',
+        anchorOffset: 7,
+        focusText: 'user edit',
+        focusOffset: 2,
+      })
+      expect(editable.innerHTML).toBe('<span>user edit</span>')
+      expect(selection?.anchorNode?.nodeValue).toBe('user edit')
+      expect(selection?.anchorOffset).toBe(7)
+      expect(selection?.focusNode?.nodeValue).toBe('user edit')
+      expect(selection?.focusOffset).toBe(2)
+    } finally {
+      iframe.remove()
+      delete (globalThis as { __fictCapturedEditableState?: unknown }).__fictCapturedEditableState
+    }
+  })
+
   it('preserves foreign-document input values across first-event hydration', async () => {
     const iframe = document.createElement('iframe')
     document.body.appendChild(iframe)
