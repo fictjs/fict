@@ -696,6 +696,7 @@ interface LoaderInstallation {
   hydratedScopes: Map<string, ResumedScopeLease>
   pendingScopeResumes: Map<string, ResumedScopeLease & { promise: Promise<boolean> }>
   pendingScopeHandlers: Map<string, Promise<void>>
+  latestControlStates: WeakMap<Element, PreservedControlState>
   prefetchedUrls: Set<string>
   processedSnapshots: Set<HTMLScriptElement>
   emittedIssueKeys: Set<string>
@@ -843,6 +844,7 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
     hydratedScopes: new Map(),
     pendingScopeResumes: new Map(),
     pendingScopeHandlers: new Map(),
+    latestControlStates: new WeakMap(),
     prefetchedUrls: new Set(),
     processedSnapshots: new Set(),
     emittedIssueKeys: new Set(),
@@ -1957,6 +1959,28 @@ function enqueueScopeHandler<T>(
   return result
 }
 
+function captureLatestEventControlState(
+  installation: LoaderInstallation,
+  event: Event,
+  eventPath: readonly EventTarget[],
+): PreservedControl | null {
+  const preservedControl = captureEventControlState(event, installation.document, eventPath)
+  if (preservedControl) {
+    installation.latestControlStates.set(preservedControl.node, preservedControl.state)
+  }
+  return preservedControl
+}
+
+function restoreLatestEventControlState(
+  installation: LoaderInstallation,
+  preservedControl: PreservedControl | null,
+): void {
+  if (!preservedControl || !isLoaderInstallationActive(installation)) return
+  const state =
+    installation.latestControlStates.get(preservedControl.node) ?? preservedControl.state
+  restoreControlState(preservedControl.node, state)
+}
+
 async function runScopeHandler(
   installation: LoaderInstallation,
   scopeId: string,
@@ -1979,7 +2003,7 @@ async function runScopeHandler(
     }
 
     if (resumeResult.hydratedDuringEvent) {
-      restoreControlState(preservedControl?.node ?? node, preservedControl?.state ?? null)
+      restoreLatestEventControlState(installation, preservedControl)
     }
 
     const resolvedUrl = resolveModuleUrl(url)
@@ -1994,6 +2018,7 @@ async function runScopeHandler(
       if (imported === INACTIVE_INSTALLATION) return false
       mod = imported as Record<string, unknown>
     } catch (error) {
+      restoreLatestEventControlState(installation, preservedControl)
       emitSnapshotIssue(installation, {
         code: 'handler_import_failed',
         message: `[fict/loader] Failed to import handler module ${resolvedUrl}: ${formatImportError(error)}`,
@@ -2011,6 +2036,7 @@ async function runScopeHandler(
 
     const handler = mod[exportName]
     if (typeof handler !== 'function') {
+      restoreLatestEventControlState(installation, preservedControl)
       emitSnapshotIssue(installation, {
         code: 'handler_missing',
         message: `[fict/loader] Resumable handler export ${exportName} was not found in ${resolvedUrl}.`,
@@ -2028,6 +2054,7 @@ async function runScopeHandler(
     const currentTargetDescriptor = Object.getOwnPropertyDescriptor(event, 'currentTarget')
     const targetDescriptor = Object.getOwnPropertyDescriptor(event, 'target')
     const handlerTarget = retargetEventTarget(originalEventTarget, node, installation.document)
+    restoreLatestEventControlState(installation, preservedControl)
     let handlerFailed = false
     let handlerError: unknown
     let handlerInactive = false
@@ -2131,6 +2158,7 @@ async function handleResumableEventAsync(
   const path =
     typeof event.composedPath === 'function' ? event.composedPath() : buildEventPath(event)
   const originalEventTarget = path[0] ?? event.target
+  const preservedControl = captureLatestEventControlState(installation, event, path)
 
   for (const node of path) {
     if (!isLoaderInstallationActive(installation)) return
@@ -2183,7 +2211,6 @@ async function handleResumableEventAsync(
       mayPreventDefault: flags.includes('pd'),
     })
 
-    const preservedControl = captureEventControlState(event, installation.document, path)
     const resumePromise = resumeScopeForEvent(installation, scopeId, host, event, scopeContext)
     const shouldStop = await enqueueScopeHandler(installation, scopeId, () =>
       runScopeHandler(

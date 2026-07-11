@@ -5063,6 +5063,244 @@ describe('resumable loader snapshot validation', () => {
     }
   })
 
+  it('restores the latest queued edit after a cold handler import mutates the control', async () => {
+    const tempDirectory = await mkdtemp(path.join(process.cwd(), '.fict-loader-control-import-'))
+    const handlerModulePath = path.join(tempDirectory, 'delayed-handler.mjs')
+    const handlerModuleUrl = pathToFileURL(handlerModulePath).href
+    let releaseImport: (() => void) | undefined
+    const importRelease = new Promise<void>(resolve => {
+      releaseImport = resolve
+    })
+    let markImportStarted: (() => void) | undefined
+    const importStarted = new Promise<void>(resolve => {
+      markImportStarted = resolve
+    })
+
+    try {
+      await writeFile(
+        handlerModulePath,
+        [
+          'globalThis.__fictDelayedControlImportStarted()',
+          'await globalThis.__fictDelayedControlImportRelease',
+          "globalThis.__fictImportTimingControl.value = 'module-side-effect'",
+          'export function capture(scopeId,event){globalThis.__fictImportTimingCaptured.push(event.target?.value??null)}',
+        ].join('\n'),
+      )
+
+      const doc = createDocumentWithSnapshots(
+        JSON.stringify({
+          v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+          scopes: {
+            s1: { id: 's1', slots: [] },
+          },
+        }),
+      )
+      const host = doc.createElement('div')
+      host.setAttribute('data-fict-s', 's1')
+      host.setAttribute(
+        'data-fict-h',
+        'data:text/javascript,export default null#__fict_r_delayed_control_import',
+      )
+      __fictRegisterResume('__fict_r_delayed_control_import', (_scopeId, node) => {
+        const input = node instanceof Element ? node.querySelector('input') : null
+        if (input instanceof HTMLInputElement) input.value = 'hydrated'
+      })
+
+      const input = doc.createElement('input')
+      input.setAttribute('on:input', `${handlerModuleUrl}#capture`)
+      host.appendChild(input)
+      doc.body.appendChild(host)
+      ;(
+        globalThis as {
+          __fictDelayedControlImportStarted?: () => void
+          __fictDelayedControlImportRelease?: Promise<void>
+          __fictImportTimingControl?: HTMLInputElement
+          __fictImportTimingCaptured?: (string | null)[]
+        }
+      ).__fictDelayedControlImportStarted = () => markImportStarted?.()
+      ;(
+        globalThis as {
+          __fictDelayedControlImportRelease?: Promise<void>
+        }
+      ).__fictDelayedControlImportRelease = importRelease
+      ;(
+        globalThis as {
+          __fictImportTimingControl?: HTMLInputElement
+        }
+      ).__fictImportTimingControl = input
+      ;(
+        globalThis as {
+          __fictImportTimingCaptured?: (string | null)[]
+        }
+      ).__fictImportTimingCaptured = []
+
+      installResumableLoader({ document: doc, events: ['input'], prefetch: false })
+
+      input.value = 'first-edit'
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      await importStarted
+
+      input.value = 'latest-edit'
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      releaseImport()
+      await waitForPendingHandlers()
+
+      expect(
+        (globalThis as { __fictImportTimingCaptured?: (string | null)[] })
+          .__fictImportTimingCaptured,
+      ).toEqual(['latest-edit', 'latest-edit'])
+      expect(input.value).toBe('latest-edit')
+    } finally {
+      releaseImport?.()
+      cleanupEventListeners()
+      delete (globalThis as { __fictDelayedControlImportStarted?: unknown })
+        .__fictDelayedControlImportStarted
+      delete (globalThis as { __fictDelayedControlImportRelease?: unknown })
+        .__fictDelayedControlImportRelease
+      delete (globalThis as { __fictImportTimingControl?: unknown }).__fictImportTimingControl
+      delete (globalThis as { __fictImportTimingCaptured?: unknown }).__fictImportTimingCaptured
+      await rm(tempDirectory, { recursive: true, force: true })
+    }
+  })
+
+  it('restores the latest edit when a handler module mutates the control and throws', async () => {
+    const tempDirectory = await mkdtemp(path.join(process.cwd(), '.fict-loader-control-throw-'))
+    const handlerModulePath = path.join(tempDirectory, 'throwing-handler.mjs')
+    const handlerModuleUrl = pathToFileURL(handlerModulePath).href
+    const issues: SnapshotIssue[] = []
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    try {
+      await writeFile(
+        handlerModulePath,
+        [
+          "globalThis.__fictThrowingImportControl.value = 'module-side-effect'",
+          "throw new Error('handler import boom')",
+          'export function capture() {}',
+        ].join('\n'),
+      )
+
+      const doc = createDocumentWithSnapshots(
+        JSON.stringify({
+          v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+          scopes: {
+            s1: { id: 's1', slots: [] },
+          },
+        }),
+      )
+      const host = doc.createElement('div')
+      host.setAttribute('data-fict-s', 's1')
+      host.setAttribute(
+        'data-fict-h',
+        'data:text/javascript,export default null#__fict_r_throwing_control_import',
+      )
+      __fictRegisterResume('__fict_r_throwing_control_import', (_scopeId, node) => {
+        const input = node instanceof Element ? node.querySelector('input') : null
+        if (input instanceof HTMLInputElement) input.value = 'hydrated'
+      })
+
+      const input = doc.createElement('input')
+      input.setAttribute('on:input', `${handlerModuleUrl}#capture`)
+      host.appendChild(input)
+      doc.body.appendChild(host)
+      ;(
+        globalThis as {
+          __fictThrowingImportControl?: HTMLInputElement
+        }
+      ).__fictThrowingImportControl = input
+
+      installResumableLoader({
+        document: doc,
+        events: ['input'],
+        prefetch: false,
+        onSnapshotIssue: issue => issues.push(issue),
+      })
+
+      input.value = 'user-edit'
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      await waitForPendingHandlers()
+
+      expect(input.value).toBe('user-edit')
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          code: 'handler_import_failed',
+          scopeId: 's1',
+          qrl: `${handlerModuleUrl}#capture`,
+          eventType: 'input',
+        }),
+      )
+    } finally {
+      cleanupEventListeners()
+      warnSpy.mockRestore()
+      delete (globalThis as { __fictThrowingImportControl?: unknown }).__fictThrowingImportControl
+      await rm(tempDirectory, { recursive: true, force: true })
+    }
+  })
+
+  it('restores the edit when a cold handler module has no requested export', async () => {
+    const tempDirectory = await mkdtemp(path.join(process.cwd(), '.fict-loader-control-missing-'))
+    const handlerModulePath = path.join(tempDirectory, 'missing-handler.mjs')
+    const handlerModuleUrl = pathToFileURL(handlerModulePath).href
+    const issues: SnapshotIssue[] = []
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    try {
+      await writeFile(
+        handlerModulePath,
+        [
+          "globalThis.__fictMissingImportControl.value = 'module-side-effect'",
+          'export const present = true',
+        ].join('\n'),
+      )
+
+      const doc = createDocumentWithSnapshots(
+        JSON.stringify({
+          v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+          scopes: {
+            s1: { id: 's1', slots: [] },
+          },
+        }),
+      )
+      const host = doc.createElement('div')
+      host.setAttribute('data-fict-s', 's1')
+      const input = doc.createElement('input')
+      input.setAttribute('on:input', `${handlerModuleUrl}#missing`)
+      host.appendChild(input)
+      doc.body.appendChild(host)
+      ;(
+        globalThis as {
+          __fictMissingImportControl?: HTMLInputElement
+        }
+      ).__fictMissingImportControl = input
+
+      installResumableLoader({
+        document: doc,
+        events: ['input'],
+        prefetch: false,
+        onSnapshotIssue: issue => issues.push(issue),
+      })
+
+      input.value = 'user-edit'
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      await waitForPendingHandlers()
+
+      expect(input.value).toBe('user-edit')
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          code: 'handler_missing',
+          scopeId: 's1',
+          qrl: `${handlerModuleUrl}#missing`,
+          eventType: 'input',
+        }),
+      )
+    } finally {
+      cleanupEventListeners()
+      warnSpy.mockRestore()
+      delete (globalThis as { __fictMissingImportControl?: unknown }).__fictMissingImportControl
+      await rm(tempDirectory, { recursive: true, force: true })
+    }
+  })
+
   it('preserves a foreign-document textarea edit for a bubbling change handler', async () => {
     const iframe = document.createElement('iframe')
     document.body.appendChild(iframe)
