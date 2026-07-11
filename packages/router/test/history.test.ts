@@ -56,6 +56,211 @@ describe('browser-backed history lifecycle', () => {
   })
 })
 
+describe('createHashHistory POP blocking', () => {
+  beforeEach(() => {
+    window.history.replaceState({ usr: null, key: 'hash-root', idx: 0 }, '', '/#/')
+  })
+
+  function waitForHashChange(navigate: () => void): Promise<void> {
+    return new Promise(resolve => {
+      window.addEventListener('hashchange', () => resolve(), { once: true })
+      navigate()
+    })
+  }
+
+  it('continues an asynchronously approved POP exactly once without adding entries', async () => {
+    window.history.replaceState({ usr: null, key: 'hash-from', idx: 12 }, '', '/#/hash/from')
+    const history = createHashHistory()
+    history.push('/hash/to')
+
+    expect(window.history.state.idx).toBe(13)
+
+    const listener = vi.fn()
+    history.listen(listener)
+    const blocker = vi.fn(({ proceed }) => {
+      setTimeout(() => proceed?.(), 0)
+    })
+    history.block(blocker)
+    const historyLength = window.history.length
+
+    history.back()
+
+    await vi.waitFor(() => expect(history.location.pathname).toBe('/hash/from'))
+    expect(window.location.hash).toBe('#/hash/from')
+    expect(blocker).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenCalledWith({
+      action: 'POP',
+      location: expect.objectContaining({ pathname: '/hash/from' }),
+    })
+    expect(window.history.length).toBe(historyLength)
+
+    history.destroy?.()
+  })
+
+  it('reruns blockers on retry and remains usable after a rejected POP', async () => {
+    window.history.replaceState({ usr: null, key: 'hash-a', idx: 20 }, '', '/#/hash/a')
+    const history = createHashHistory()
+    history.push('/hash/b')
+
+    const listener = vi.fn()
+    history.listen(listener)
+    let attempts = 0
+    const blocker = vi.fn(({ retry, proceed }) => {
+      attempts++
+      if (attempts === 1) setTimeout(retry, 0)
+      if (attempts === 3 || attempts === 4) setTimeout(() => proceed?.(), 0)
+    })
+    history.block(blocker)
+    const historyLength = window.history.length
+
+    history.back()
+
+    await vi.waitFor(() => expect(blocker).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(window.location.hash).toBe('#/hash/b'))
+    expect(history.location.pathname).toBe('/hash/b')
+    expect(listener).not.toHaveBeenCalled()
+
+    history.back()
+    await vi.waitFor(() => expect(history.location.pathname).toBe('/hash/a'))
+    expect(blocker).toHaveBeenCalledTimes(3)
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    history.forward()
+    await vi.waitFor(() => expect(history.location.pathname).toBe('/hash/b'))
+    expect(blocker).toHaveBeenCalledTimes(4)
+    expect(listener).toHaveBeenCalledTimes(2)
+    expect(window.history.length).toBe(historyLength)
+
+    history.destroy?.()
+  })
+
+  it('restores and approves a directly assigned hash without creating a recovery entry', async () => {
+    window.history.replaceState(
+      { usr: null, key: 'hash-direct-from', idx: 30 },
+      '',
+      '/#/hash/direct-from',
+    )
+    const history = createHashHistory()
+    const listener = vi.fn()
+    history.listen(listener)
+    const blocker = vi.fn(({ proceed }) => {
+      setTimeout(() => proceed?.(), 0)
+    })
+    history.block(blocker)
+    const historyLength = window.history.length
+
+    window.location.hash = '#/hash/direct-to'
+
+    await vi.waitFor(() => expect(history.location.pathname).toBe('/hash/direct-to'))
+    expect(window.location.hash).toBe('#/hash/direct-to')
+    expect(window.history.state.idx).toBe(31)
+    expect(blocker).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(window.history.length).toBe(historyLength + 1)
+
+    history.destroy?.()
+  })
+
+  it('stamps pre-existing unindexed entries in both POP directions', async () => {
+    window.history.replaceState(null, '', '/#/hash/legacy-a')
+    await waitForHashChange(() => {
+      window.location.hash = '#/hash/legacy-b'
+    })
+    await waitForHashChange(() => {
+      window.location.hash = '#/hash/legacy-c'
+    })
+    await waitForHashChange(() => window.history.back())
+
+    const history = createHashHistory()
+    expect(history.location.pathname).toBe('/hash/legacy-b')
+    expect(window.history.state.idx).toBe(0)
+
+    const listener = vi.fn()
+    history.listen(listener)
+    let attempts = 0
+    const blocker = vi.fn(({ retry, proceed }) => {
+      attempts++
+      if (attempts === 1) setTimeout(retry, 0)
+      if (attempts > 1) setTimeout(() => proceed?.(), 0)
+    })
+    history.block(blocker)
+    const historyLength = window.history.length
+
+    // The forward entry predates this history instance. The explicit delta
+    // identifies it as index + 1, and retry must run the blocker again.
+    history.forward()
+    await vi.waitFor(() => expect(history.location.pathname).toBe('/hash/legacy-c'))
+    expect(window.history.state.idx).toBe(1)
+    expect(blocker).toHaveBeenCalledTimes(2)
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    history.back()
+    await vi.waitFor(() => expect(history.location.pathname).toBe('/hash/legacy-b'))
+    expect(blocker).toHaveBeenCalledTimes(3)
+    expect(listener).toHaveBeenCalledTimes(2)
+
+    // The explicit back delta makes the older unindexed entry recoverable.
+    history.back()
+    await vi.waitFor(() => expect(history.location.pathname).toBe('/hash/legacy-a'))
+    expect(window.history.state.idx).toBe(-1)
+    expect(blocker).toHaveBeenCalledTimes(4)
+    expect(listener).toHaveBeenCalledTimes(3)
+    expect(window.history.length).toBe(historyLength)
+
+    history.destroy?.()
+  })
+
+  it('fails open when a middle-stack hash write has no trustworthy direction', async () => {
+    window.history.replaceState(null, '', '/#/hash/middle-a')
+    await waitForHashChange(() => {
+      window.location.hash = '#/hash/middle-b'
+    })
+    await waitForHashChange(() => {
+      window.location.hash = '#/hash/middle-c'
+    })
+    await waitForHashChange(() => window.history.back())
+
+    const history = createHashHistory()
+    expect(history.location.pathname).toBe('/hash/middle-b')
+
+    const listener = vi.fn()
+    history.listen(listener)
+    const blocker = vi.fn(({ proceed }) => {
+      setTimeout(() => proceed?.(), 0)
+    })
+    history.block(blocker)
+    const historyLength = window.history.length
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    // This truncates C and appends D, leaving history.length unchanged. Since
+    // legacy events cannot distinguish it from an unindexed traversal, the
+    // history must not guess a restoration delta and get stuck at the new URL.
+    window.location.hash = '#/hash/middle-d'
+    await vi.waitFor(() => expect(history.location.pathname).toBe('/hash/middle-d'))
+    expect(window.location.hash).toBe('#/hash/middle-d')
+    expect(window.history.state.idx).toBe(0)
+    expect(blocker).not.toHaveBeenCalled()
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(window.history.length).toBe(historyLength)
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('Cannot safely block an unindexed hash navigation'),
+    )
+
+    // The new anchor makes a later explicit traversal blockable again.
+    history.back()
+    await vi.waitFor(() => expect(history.location.pathname).toBe('/hash/middle-b'))
+    expect(window.location.hash).toBe('#/hash/middle-b')
+    expect(window.history.state.idx).toBe(-1)
+    expect(blocker).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenCalledTimes(2)
+    expect(window.history.length).toBe(historyLength)
+
+    warn.mockRestore()
+    history.destroy?.()
+  })
+})
+
 describe('createMemoryHistory', () => {
   it('should initialize with default entry', () => {
     const history = createMemoryHistory()

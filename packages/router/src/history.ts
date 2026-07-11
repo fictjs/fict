@@ -379,7 +379,38 @@ export function createHashHistory(options: { hashType?: 'slash' | 'noslash' } = 
 
   let action: HistoryAction = 'POP'
   let location = readHashLocation()
-  let index = 0
+  const initialIndex = window.history.state?.idx
+  let index = typeof initialIndex === 'number' ? initialIndex : 0
+
+  interface BlockedPopTransition {
+    fromIndex: number
+    toIndex: number
+    location: Location
+    restored: boolean
+    retryRequested: 'retry' | 'proceed' | null
+    cancelled: boolean
+  }
+
+  let blockedPop: BlockedPopTransition | null = null
+  let restoringPop: BlockedPopTransition | null = null
+  let forcedPopIndex: number | null = null
+  let observedHistoryLength = window.history.length
+  let pendingPopDelta: number | null = null
+  const hashGenerationStateKey = '__fict_hash_history_generation__'
+  let hashGeneration = createKey()
+  let acceptForeignIndexes = true
+  const navigation = (
+    window as Window & {
+      navigation?: { currentEntry?: { index?: number } | null }
+    }
+  ).navigation
+
+  function readNavigationIndex(): number | null {
+    const navigationIndex = navigation?.currentEntry?.index
+    return typeof navigationIndex === 'number' ? navigationIndex : null
+  }
+
+  let observedNavigationIndex = readNavigationIndex()
 
   function readHashLocation(): Location {
     let hash = window.location.hash.slice(1) // Remove the #
@@ -410,36 +441,191 @@ export function createHashHistory(options: { hashType?: 'slash' | 'noslash' } = 
     return '#' + url
   }
 
+  function createHashHistoryState(location: Location, index: number) {
+    return {
+      ...createHistoryState(location, index),
+      [hashGenerationStateKey]: hashGeneration,
+    }
+  }
+
+  function readHashIndex(nextLocation: Location): number | null {
+    const requestedDelta = pendingPopDelta
+    pendingPopDelta = null
+    const nextHistoryLength = window.history.length
+    const addedEntry = nextHistoryLength > observedHistoryLength
+    observedHistoryLength = nextHistoryLength
+    const nextNavigationIndex = readNavigationIndex()
+    const navigationDelta =
+      nextNavigationIndex !== null && observedNavigationIndex !== null
+        ? nextNavigationIndex - observedNavigationIndex
+        : null
+    observedNavigationIndex = nextNavigationIndex
+
+    const state = window.history.state
+    const stateIndex = state?.idx
+    const stateGeneration = state?.[hashGenerationStateKey]
+    if (
+      typeof stateIndex === 'number' &&
+      (stateGeneration === hashGeneration || acceptForeignIndexes)
+    ) {
+      if (stateGeneration !== hashGeneration) {
+        window.history.replaceState(
+          createHashHistoryState(nextLocation, stateIndex),
+          '',
+          window.location.href,
+        )
+      }
+      return stateIndex
+    }
+
+    // Entries created before this history instance and hashes assigned outside
+    // it have no index. A go/back/forward call gives us the exact direction;
+    // otherwise a longer history means a directly assigned hash was appended.
+    // A direct hash write from the middle of the stack can truncate forward
+    // entries without changing history.length. That is indistinguishable from
+    // an unindexed traversal in the legacy History API, so do not guess a
+    // direction when neither signal is available.
+    const indexDelta =
+      navigationDelta !== null && navigationDelta !== 0
+        ? navigationDelta
+        : addedEntry
+          ? 1
+          : requestedDelta
+    if (indexDelta === null) return null
+
+    const nextIndex = index + indexDelta
+    const historyState = createHashHistoryState(nextLocation, nextIndex)
+    window.history.replaceState(historyState, '', window.location.href)
+    return nextIndex
+  }
+
+  function anchorUnresolvedHash(nextLocation: Location) {
+    hashGeneration = createKey()
+    acceptForeignIndexes = false
+    index = 0
+    const historyState = createHashHistoryState(nextLocation, index)
+    window.history.replaceState(historyState, '', window.location.href)
+  }
+
+  function cancelBlockedPop() {
+    if (blockedPop) blockedPop.cancelled = true
+    if (restoringPop) restoringPop.cancelled = true
+    blockedPop = null
+    restoringPop = null
+    forcedPopIndex = null
+  }
+
+  function retryBlockedPop(transition: BlockedPopTransition) {
+    if (transition.cancelled || blockedPop !== transition) return
+
+    const delta = transition.toIndex - transition.fromIndex
+    blockedPop = null
+    if (transition.retryRequested === 'proceed') forcedPopIndex = transition.toIndex
+
+    if (delta === 0) {
+      forcedPopIndex = null
+      action = 'POP'
+      location = transition.location
+      notifyListeners()
+      return
+    }
+
+    window.history.go(delta)
+  }
+
   function handleHashChange() {
     const nextLocation = readHashLocation()
     const nextAction: HistoryAction = 'POP'
+    const nextIndex = readHashIndex(nextLocation)
+
+    // Without a trustworthy direction there is no safe delta that can restore
+    // the accepted entry. Fail open and re-anchor the current entry instead of
+    // running a blocker that could leave the URL and logical location split.
+    if (nextIndex === null) {
+      cancelBlockedPop()
+      if (blockers.size > 0) {
+        console.warn(
+          '[fict-router] Cannot safely block an unindexed hash navigation without a known ' +
+            'traversal direction. The navigation was accepted to keep the URL and router state aligned.',
+        )
+      }
+      anchorUnresolvedHash(nextLocation)
+      action = nextAction
+      location = nextLocation
+      notifyListeners()
+      return
+    }
+
+    // Returning to the last accepted entry is an internal restoration. Do not
+    // notify listeners or ask blockers about it again.
+    if (restoringPop && nextIndex === restoringPop.fromIndex) {
+      const transition = restoringPop
+      restoringPop = null
+      transition.restored = true
+
+      if (transition.retryRequested !== null) {
+        retryBlockedPop(transition)
+      }
+      return
+    }
+
+    // An approved POP is allowed through exactly once after restoration.
+    if (forcedPopIndex !== null && nextIndex === forcedPopIndex) {
+      forcedPopIndex = null
+      action = nextAction
+      location = nextLocation
+      index = nextIndex
+      notifyListeners()
+      return
+    }
 
     // Check blockers
     if (blockers.size > 0) {
-      let blocked = false
-      const retry = () => {
-        window.location.hash = createHashHref(nextLocation)
+      cancelBlockedPop()
+
+      const transition: BlockedPopTransition = {
+        fromIndex: index,
+        toIndex: nextIndex,
+        location: nextLocation,
+        restored: nextIndex === index,
+        retryRequested: null,
+        cancelled: false,
       }
+      blockedPop = transition
+
+      let resumed = false
+      const resume = (mode: 'retry' | 'proceed') => {
+        if (resumed || transition.cancelled) return
+        resumed = true
+        transition.retryRequested = mode
+        if (transition.restored) retryBlockedPop(transition)
+      }
+      const retry = () => resume('retry')
+      const proceed = () => resume('proceed')
 
       for (const blocker of blockers) {
         blocker({
           action: nextAction,
           location: nextLocation,
           retry,
+          proceed,
         })
-        blocked = true
         break
       }
 
-      if (blocked) {
-        // Restore the previous hash
-        window.location.hash = createHashHref(location)
-        return
+      if (nextIndex !== index) {
+        restoringPop = transition
+        window.history.go(index - nextIndex)
+      } else if (transition.retryRequested !== null) {
+        retryBlockedPop(transition)
       }
+      return
     }
 
+    cancelBlockedPop()
     action = nextAction
     location = nextLocation
+    index = nextIndex
 
     notifyListeners()
   }
@@ -483,12 +669,15 @@ export function createHashHistory(options: { hashType?: 'slash' | 'noslash' } = 
       return
     }
 
+    cancelBlockedPop()
     action = nextAction
     location = nextLocation
     index++
 
-    const historyState = createHistoryState(location, index)
+    const historyState = createHashHistoryState(location, index)
     window.history.pushState(historyState, '', createHashHref(location))
+    observedHistoryLength = window.history.length
+    observedNavigationIndex = readNavigationIndex()
 
     notifyListeners()
   }
@@ -524,18 +713,28 @@ export function createHashHistory(options: { hashType?: 'slash' | 'noslash' } = 
       return
     }
 
+    cancelBlockedPop()
     action = nextAction
     location = nextLocation
 
-    const historyState = createHistoryState(location, index)
+    const historyState = createHashHistoryState(location, index)
     window.history.replaceState(historyState, '', createHashHref(location))
+    observedHistoryLength = window.history.length
+    observedNavigationIndex = readNavigationIndex()
 
     notifyListeners()
   }
 
   function go(delta: number) {
+    pendingPopDelta = delta
     window.history.go(delta)
   }
+
+  // Mark the current entry as this instance's anchor. Existing numeric indexes
+  // remain usable until an ambiguous external hash navigation starts a fresh
+  // generation.
+  const initialHistoryState = createHashHistoryState(location, index)
+  window.history.replaceState(initialHistoryState, '', window.location.href)
 
   return {
     get action() {
