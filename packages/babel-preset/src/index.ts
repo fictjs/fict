@@ -1145,16 +1145,112 @@ interface ImplicitGraphPrepassOptions {
   sessionId?: string
 }
 
+type BabelParserPlugin = NonNullable<BabelCore.ParserOptions['plugins']>[number]
+
+interface BabelParseError extends Error {
+  reasonCode?: string
+}
+
+const AUTO_DECORATOR_RECOVERY = Symbol('fict.autoDecoratorRecovery')
+
+interface DecoratorRecoveryState {
+  previousErrorRecovery: boolean | undefined
+}
+
+interface DecoratorRecoveryParserOptions extends BabelCore.ParserOptions {
+  [AUTO_DECORATOR_RECOVERY]?: DecoratorRecoveryState
+}
+
+interface BabelFileWithParserErrors extends BabelCore.types.File {
+  errors?: BabelParseError[]
+}
+
+function parserPluginName(plugin: BabelParserPlugin): string {
+  return Array.isArray(plugin) ? plugin[0] : plugin
+}
+
+function hasDecoratorParserProfile(plugins: readonly BabelParserPlugin[]): boolean {
+  return plugins.some(plugin => {
+    const name = parserPluginName(plugin)
+    return name === 'decorators' || name === 'decorators-legacy'
+  })
+}
+
+function isUnsupportedParameterDecorator(error: unknown): error is BabelParseError {
+  return (
+    error instanceof Error &&
+    (error as BabelParseError).reasonCode === 'UnsupportedParameterDecorator'
+  )
+}
+
+/** Parse current decorators while preserving legacy parameter syntax for a downstream transform. */
+function decoratorSyntaxRecoveryPlugin(): PluginObj {
+  return {
+    name: 'fict-decorator-syntax-recovery',
+    visitor: {},
+    manipulateOptions(_options, rawParserOptions) {
+      const parserOptions = rawParserOptions as DecoratorRecoveryParserOptions
+      const inheritedPlugins = parserOptions.plugins ?? []
+      if (hasDecoratorParserProfile(inheritedPlugins)) return
+
+      parserOptions.plugins = [
+        ...inheritedPlugins,
+        ['decorators', { allowCallParenthesized: false }],
+        'decoratorAutoAccessors',
+      ]
+      Object.defineProperty(parserOptions, AUTO_DECORATOR_RECOVERY, {
+        configurable: true,
+        value: { previousErrorRecovery: parserOptions.errorRecovery },
+      })
+      parserOptions.errorRecovery = true
+    },
+    pre(file) {
+      const parserOptions = file.opts.parserOpts as DecoratorRecoveryParserOptions | undefined
+      const recoveryState = parserOptions?.[AUTO_DECORATOR_RECOVERY]
+      if (!parserOptions || !recoveryState) return
+
+      try {
+        const ast = file.ast as BabelFileWithParserErrors
+        const parserErrors = ast.errors ?? []
+        const unrelatedParserError = parserErrors.find(
+          error => !isUnsupportedParameterDecorator(error),
+        )
+        if (unrelatedParserError) throw unrelatedParserError
+        if (parserErrors.length > 0) ast.errors = []
+      } finally {
+        if (recoveryState.previousErrorRecovery === undefined) {
+          delete parserOptions.errorRecovery
+        } else {
+          parserOptions.errorRecovery = recoveryState.previousErrorRecovery
+        }
+      }
+    },
+  }
+}
+
 function inheritedParserPluginsFromFile(
   file: BabelCore.BabelFile,
 ): NonNullable<NonNullable<TransformOptions['parserOpts']>['plugins']> {
   const plugins = file.opts.parserOpts?.plugins ?? []
+  const hasAutomaticDecoratorProfile = Boolean(
+    (file.opts.parserOpts as DecoratorRecoveryParserOptions | undefined)?.[AUTO_DECORATOR_RECOVERY],
+  )
   return plugins.filter(plugin => {
     const name = Array.isArray(plugin) ? plugin[0] : plugin
     // Let the nested preset choose TS/TSX from the dependency filename. All
     // other syntax capabilities came from the caller's Babel pipeline and are
     // required to parse the dependency under the same language contract.
-    return name !== 'typescript' && name !== 'jsx'
+    if (name === 'typescript' || name === 'jsx') return false
+    // The default decorator profile belongs to this file only. Dependencies
+    // must independently decide whether they contain standard decorators or
+    // legacy parameter decorators.
+    if (
+      hasAutomaticDecoratorProfile &&
+      (name === 'decorators' || name === 'decoratorAutoAccessors')
+    ) {
+      return false
+    }
+    return true
   })
 }
 
@@ -1456,6 +1552,7 @@ export default function fictPreset(
 
   const plugins: TransformOptions['plugins'] = []
   const overrides: TransformOptions['overrides'] = []
+  plugins.push(decoratorSyntaxRecoveryPlugin())
   // The outer pass only enables parsing. Runtime TypeScript and Fict transforms run in
   // an isolated prepass before any sibling plugin can consume macros or JSX.
   if (typescript) {

@@ -32,6 +32,11 @@ All compiler options are forwarded through this preset.
 Fict and TypeScript lowering run in an isolated prepass, so sibling CommonJS or JSX transforms
 receive the compiled Fict AST instead of consuming macros or JSX first. Plugins and presets
 explicitly configured alongside this preset continue to participate in the outer Babel pipeline.
+The preset parses and preserves decorators but does not lower them. With no explicit parser profile,
+it accepts the current 2023-11 grammar (including auto-accessors and decorators on either side of
+`export`) plus a narrow compatibility exception for legacy parameter decorators. Other parser errors
+are still reported. An explicit decorator parser/transform plugin remains fully authoritative, and
+the syntax bridge does not claim Babel's parser override hook, so another plugin may provide one.
 
 ```js
 // babel.config.js

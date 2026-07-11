@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 
 import { transformAsync, type PluginItem } from '@babel/core'
 import _generate from '@babel/generator'
-import { parse, parseExpression } from '@babel/parser'
+import { parse, parseExpression, type ParserPlugin } from '@babel/parser'
 import transformTypeScript from '@babel/plugin-transform-typescript'
 import _traverse from '@babel/traverse'
 import type { NodePath, Scope } from '@babel/traverse'
@@ -36,7 +36,14 @@ const traverse = (
 const generate = (
   typeof _generate === 'function' ? _generate : (_generate as { default: typeof _generate }).default
 ) as typeof _generate
-const TYPESCRIPT_PARSER_PLUGINS = ['decorators-legacy', 'jsx', 'typescript'] as const
+// Babel's parser exposes the current standard decorator grammar as `decorators`;
+// semantic version selection belongs to the downstream decorator transform.
+const STANDARD_DECORATOR_PARSER_PLUGINS: ParserPlugin[] = ['decorators', 'decoratorAutoAccessors']
+const LEGACY_DECORATOR_PARSER_PLUGINS: ParserPlugin[] = [
+  'decorators-legacy',
+  'decoratorAutoAccessors',
+]
+const MODULE_ANALYSIS_PARSER_PLUGINS: ParserPlugin[] = ['jsx', 'typescript']
 
 const PACKAGE_METADATA_WATCH_GLOBS = [
   '!**/node_modules/**/package.json',
@@ -2025,6 +2032,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         this.error({
           message: `[fict] Transform failed for ${id}: ${message}`,
           id,
+          cause: error,
         })
 
         return null
@@ -3590,6 +3598,37 @@ function lowerCtsModuleSyntax(): PluginItem {
   }
 }
 
+function isBabelParseError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: unknown }).code === 'BABEL_PARSE_ERROR'
+  )
+}
+
+function isUnsupportedParameterDecorator(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { reasonCode?: unknown }).reasonCode === 'UnsupportedParameterDecorator'
+  )
+}
+
+function parseModuleWithDecoratorFallback(code: string): ReturnType<typeof parse> {
+  try {
+    return parse(code, {
+      sourceType: 'module',
+      plugins: [...STANDARD_DECORATOR_PARSER_PLUGINS, ...MODULE_ANALYSIS_PARSER_PLUGINS],
+    })
+  } catch (error) {
+    if (!isUnsupportedParameterDecorator(error)) throw error
+    return parse(code, {
+      sourceType: 'module',
+      plugins: [...LEGACY_DECORATOR_PARSER_PLUGINS, ...MODULE_ANALYSIS_PARSER_PLUGINS],
+    })
+  }
+}
+
 async function compileFictCompilerStage(
   code: string,
   filename: string,
@@ -3619,23 +3658,27 @@ async function compileFictCompilerStage(
   if (isTypeScript && tsImportElision === 'preserve-side-effect') {
     plugins.push(preserveTypeScriptImportSideEffects())
   }
-  const result = await transformAsync(code, {
-    filename,
-    configFile: false,
-    babelrc: false,
-    ...(isTypeScript || isCommonJS
-      ? {
-          parserOpts: {
-            ...(isTypeScript ? { plugins: ['decorators-legacy'] } : {}),
-            ...(isCommonJS ? { allowReturnOutsideFunction: true } : {}),
-          },
-        }
-      : {}),
-    ...(isTypeScript ? { generatorOpts: { decoratorsBeforeExport: true } } : {}),
-    sourceMaps: fictOptions.sourcemap,
-    sourceFileName: filename,
-    plugins,
-  })
+  const transformWithDecoratorProfile = (decoratorPlugins: readonly ParserPlugin[]) =>
+    transformAsync(code, {
+      filename,
+      configFile: false,
+      babelrc: false,
+      parserOpts: {
+        plugins: [...decoratorPlugins],
+        ...(isCommonJS ? { allowReturnOutsideFunction: true } : {}),
+      },
+      ...(isTypeScript ? { generatorOpts: { decoratorsBeforeExport: true } } : {}),
+      sourceMaps: fictOptions.sourcemap,
+      sourceFileName: filename,
+      plugins,
+    })
+  let result: Awaited<ReturnType<typeof transformAsync>>
+  try {
+    result = await transformWithDecoratorProfile(STANDARD_DECORATOR_PARSER_PLUGINS)
+  } catch (error) {
+    if (!isBabelParseError(error) || !isUnsupportedParameterDecorator(error)) throw error
+    result = await transformWithDecoratorProfile(LEGACY_DECORATOR_PARSER_PLUGINS)
+  }
   if (!result?.code) {
     throw new Error(`[fict] Compiler returned no output for ${filename}.`)
   }
@@ -3648,10 +3691,7 @@ async function compileFictCompilerStage(
 function collectStaticModuleSources(code: string): string[] {
   let ast: ReturnType<typeof parse>
   try {
-    ast = parse(code, {
-      sourceType: 'module',
-      plugins: [...TYPESCRIPT_PARSER_PLUGINS],
-    })
+    ast = parseModuleWithDecoratorFallback(code)
   } catch {
     return []
   }
@@ -4852,10 +4892,7 @@ function extractAndRewriteHandlers(
   let ast: ReturnType<typeof parse>
 
   try {
-    ast = parse(code, {
-      sourceType: 'module',
-      plugins: [...TYPESCRIPT_PARSER_PLUGINS],
-    })
+    ast = parseModuleWithDecoratorFallback(code)
   } catch (error) {
     throw Object.assign(
       new Error(

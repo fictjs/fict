@@ -23,6 +23,9 @@ module.exports = {
 
 If another Babel transform is needed, place its loader to the left of the Fict loader so it runs
 after Fict compilation. Do not also configure `@fictjs/babel-preset` in that Babel loader.
+This is also the required handoff for decorators: Fict accepts and preserves current standard
+decorators and legacy parameter decorators, while the downstream Babel or TypeScript loader owns
+their runtime lowering.
 
 Local reactive metadata and importer dependency fingerprints are persisted in Webpack module build
 information, so watch rebuilds and filesystem-cache restores keep unchanged importers correct.

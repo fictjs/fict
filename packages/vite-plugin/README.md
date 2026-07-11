@@ -63,6 +63,12 @@ The Vite plugin owns an isolated Babel pass and does not load project `.babelrc`
 `babel.config.*` files. Use `@fictjs/babel-preset` in an explicit Babel pipeline when other Babel
 plugins must compose with Fict compilation.
 
+Decorator syntax is parsed and preserved, not lowered: the plugin accepts the current standard
+2023-11 grammar (including auto-accessors and decorators on either side of `export`) and falls back
+to the legacy grammar for parameter decorators. Vite's TypeScript stage or another downstream
+transform must own decorator runtime lowering; JavaScript decorators therefore need an explicit
+downstream decorator transform when the surrounding Vite pipeline does not provide one.
+
 ## Library Publishing
 
 Use `library: true` when building a third-party Fict hook library with Vite library mode:
