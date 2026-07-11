@@ -5451,6 +5451,44 @@ describe('fict vite-plugin', () => {
       }
     }
 
+    it('keeps extracted handlers isolated for URL variants of one module', async () => {
+      const plugin = fict({
+        cache: false,
+        functionSplitting: true,
+        sourcemap: false,
+        useTypeScriptProject: false,
+      }) as any
+      plugin.configResolved?.(mockBuildConfig as any)
+      const context = {
+        emitFile: vi.fn(),
+        error: vi.fn(),
+        warn: vi.fn(),
+      }
+      const sourceModule = '/project/src/VariantHandler.ts'
+      const source = (label: string) => `
+        import { __fictQrl } from 'fict/internal'
+        export const __fict_e0 = () => ${JSON.stringify(label)}
+        export const handlerUrl = __fictQrl(import.meta.url, '__fict_e0')
+      `
+      const firstId = `${sourceModule}#first`
+      const secondId = `${sourceModule}#second`
+
+      const first = await plugin.transform.call(context, source('first'), firstId)
+      const second = await plugin.transform.call(context, source('second'), secondId)
+
+      expect(context.error).not.toHaveBeenCalled()
+      expect(context.warn).not.toHaveBeenCalled()
+      expect(first.code).toContain(handlerQrl(firstId))
+      expect(second.code).toContain(handlerQrl(secondId))
+      expect(handlerQrl(firstId)).not.toBe(handlerQrl(secondId))
+      expect(plugin.load(handlerVirtualId(firstId))).toContain('"first"')
+      expect(plugin.load(handlerVirtualId(secondId))).toContain('"second"')
+      expect(context.emitFile.mock.calls.map(([asset]) => asset.id)).toEqual([
+        handlerQrl(firstId).slice(0, -'#default'.length),
+        handlerQrl(secondId).slice(0, -'#default'.length),
+      ])
+    })
+
     it('rewrites QRLs to virtual modules when functionSplitting is enabled', async () => {
       const plugin = fict({ functionSplitting: true }) as any
 

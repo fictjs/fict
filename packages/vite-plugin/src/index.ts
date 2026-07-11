@@ -1928,7 +1928,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           try {
             splitResult = extractAndRewriteHandlers(
               finalCode,
-              filename,
+              id,
               state.extractedHandlers,
               finalMap,
               config?.root,
@@ -1954,7 +1954,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             if (config?.command === 'build' && !config?.build?.ssr) {
               for (const handlerName of splitResult.handlers) {
                 const handlerId = createHandlerId(
-                  filename,
+                  id,
                   handlerName,
                   config?.root,
                   packageBoundaryCache,
@@ -1991,7 +1991,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               .map(handlerName =>
                 state.extractedHandlers.get(
                   createHandlerId(
-                    filename,
+                    id,
                     handlerName,
                     config?.root,
                     packageBoundaryCache,
