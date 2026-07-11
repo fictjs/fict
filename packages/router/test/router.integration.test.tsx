@@ -2157,7 +2157,8 @@ describe('Router integration (MemoryRouter)', () => {
       let observedRequest: Request | undefined
       let observedParams: Readonly<Record<string, string | undefined>> | undefined
       let observedFormData: FormData | undefined
-      const actionName = `tracked-form-${actionKind === 'Action object' ? 'object' : 'url'}`
+      const actionName = `tracked form/${actionKind === 'Action object' ? 'object' : 'url'}?draft#✓%`
+      const actionUrl = `/_action/${encodeURIComponent(actionName)}`
       const save = action<string>((formData, { params, request }) => {
         observedFormData = formData
         observedParams = params
@@ -2186,7 +2187,7 @@ describe('Router integration (MemoryRouter)', () => {
           results.push((event as CustomEvent<{ data: unknown }>).detail.data)
         })
 
-        expect(form.getAttribute('action')).toBe(`/_action/${actionName}`)
+        expect(form.getAttribute('action')).toBe(actionUrl)
         expect(form.getAttribute('method')).toBe('post')
 
         form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
@@ -2195,9 +2196,7 @@ describe('Router integration (MemoryRouter)', () => {
         expect(observedFormData?.get('value')).toBe('fict')
         expect(observedParams).toEqual({ id: '42' })
         expect(observedRequest?.method).toBe('POST')
-        expect(new URL(observedRequest?.url ?? 'http://localhost').pathname).toBe(
-          `/_action/${actionName}`,
-        )
+        expect(new URL(observedRequest?.url ?? 'http://localhost').pathname).toBe(actionUrl)
         expect(trackedFormCurrentSubmission()).toMatchObject({
           formData: observedFormData,
           state: 'submitting',

@@ -768,6 +768,14 @@ describe('action', () => {
     expect(typeof createUser.submit).toBe('function')
   })
 
+  it('encodes action names as a single URL path segment', () => {
+    const actionName = 'save draft/文档?mode#final%'
+    const saveDraft = action(async () => undefined, actionName)
+
+    expect(saveDraft.name).toBe(actionName)
+    expect(saveDraft.url).toBe('/_action/save%20draft%2F%E6%96%87%E6%A1%A3%3Fmode%23final%25')
+  })
+
   it('should submit action', async () => {
     const createUser = action(async (formData: FormData) => {
       return { id: '123', name: formData.get('name') as string }

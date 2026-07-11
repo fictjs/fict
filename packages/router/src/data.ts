@@ -360,7 +360,7 @@ let submissionCounter = 0
  */
 export function action<T>(fn: ActionFunction<T>, name?: string): Action<T> {
   const actionName = name || `action-${++submissionCounter}`
-  const actionUrl = `/_action/${actionName}`
+  const actionUrl = `/_action/${encodeURIComponent(actionName)}`
 
   const createdAction: Action<T> = {
     url: actionUrl,
