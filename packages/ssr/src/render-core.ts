@@ -10,6 +10,7 @@ import {
   __fictRunWithSSRSession,
   __fictSerializeSSRState,
   __fictSerializeSSRStateForScopes,
+  __fictSetSSRScopeIdentifierPrefix,
   __fictSetSSRStreamHooks,
   assertValidDOMAttributeName,
   assertValidDOMElementName,
@@ -24,10 +25,11 @@ import { createStreamRuntimeCode } from './stream-runtime'
 const DEFAULT_HTML = '<!doctype html><html><head></head><body></body></html>'
 const SVG_HTML_INTEGRATION_POINTS = new Set(['foreignobject', 'title', 'desc'])
 const MATHML_TEXT_INTEGRATION_POINTS = new Set(['mi', 'mo', 'mn', 'ms', 'mtext'])
-const STREAM_IDENTIFIER_PREFIX_PATTERN = /^[A-Za-z0-9_.:-]+$/
+const IDENTIFIER_PREFIX_PATTERN = /^[A-Za-z0-9_.:-]+$/
 let streamTailMarkerId = 0
+let scopeIdentifierSequence = 0
 let streamIdentifierSequence = 0
-const streamIdentifierSeed = createStreamIdentifierSeed()
+const ssrIdentifierSeed = createIdentifierSeed()
 
 type StreamPatchNamespace = 'svg' | 'mathml' | null
 
@@ -115,6 +117,17 @@ export interface RenderToStringOptions {
    * Nonce applied to generated <script> tags for CSP compatibility.
    */
   scriptNonce?: string
+  /**
+   * Stable namespace for resumable scope identifiers in `data-fict-s` and
+   * snapshot payloads. Set this when independently cached or separately rendered
+   * outputs can share a document, and keep it unique within that document.
+   * This does not change streaming Suspense patch identifiers.
+   *
+   * Values must contain 1-128 ASCII letters, digits, `_`, `.`, `:`, or `-`, and
+   * must not contain `--`. When omitted, each render gets an automatic edge-safe
+   * namespace.
+   */
+  scopeIdentifierPrefix?: string
 }
 
 export interface RenderToStreamOptions extends RenderToStringOptions {
@@ -222,12 +235,15 @@ function renderToDocumentInSession(
   view: () => FictNode,
   options: RenderToStringOptions,
 ): RenderToDocumentResult {
+  validateScopeIdentifierPrefix(options.scopeIdentifierPrefix)
+  const scopeIdentifierPrefix = resolveScopeIdentifierPrefix(options.scopeIdentifierPrefix)
   const includeSnapshot = options.includeSnapshot !== false
 
   // Always enable SSR mode during server rendering.
   // This ensures SSR-specific code paths (list rendering, etc.) work correctly
   // regardless of whether state snapshots are included.
   __fictEnableSSR()
+  __fictSetSSRScopeIdentifierPrefix(scopeIdentifierPrefix)
 
   let dom: SSRDom
   let restoreGlobals = () => {}
@@ -316,6 +332,7 @@ export function renderToStream(
   view: () => FictNode,
   options: RenderToStreamOptions = {},
 ): ReadableStream<Uint8Array> {
+  validateScopeIdentifierPrefix(options.scopeIdentifierPrefix)
   validateStreamIdentifierPrefix(options.streamIdentifierPrefix)
   const encoder = new TextEncoder()
   let controller: ReadableStreamDefaultController<Uint8Array> | null = null
@@ -617,8 +634,10 @@ function startStreamingRenderInSession(
   let removeAbortListener = () => {}
   let canFinalize = false
 
+  validateScopeIdentifierPrefix(options.scopeIdentifierPrefix)
   validateStreamIdentifierPrefix(options.streamIdentifierPrefix)
   const mode = options.mode ?? 'shell'
+  const scopeIdentifierPrefix = resolveScopeIdentifierPrefix(options.scopeIdentifierPrefix)
   const streamIdentifierPrefix =
     mode === 'shell' ? resolveStreamIdentifierPrefix(options.streamIdentifierPrefix) : null
   const includeSnapshot = options.includeSnapshot !== false
@@ -929,6 +948,7 @@ function startStreamingRenderInSession(
 
   try {
     __fictEnableSSR()
+    __fictSetSSRScopeIdentifierPrefix(scopeIdentifierPrefix)
     __fictSetSSRStreamHooks(hooks)
 
     dom = resolveDom(resolvedOptions)
@@ -1056,25 +1076,39 @@ function resolveStreamPatchMode(options: RenderToStreamOptions): 'inline' | 'obs
 function resolveStreamIdentifierPrefix(configured: string | undefined): string {
   if (configured !== undefined) return configured
 
-  return `f${streamIdentifierSeed}.${(++streamIdentifierSequence).toString(36)}`
+  return `f${ssrIdentifierSeed}.${(++streamIdentifierSequence).toString(36)}`
 }
 
 function validateStreamIdentifierPrefix(configured: unknown): void {
+  validateIdentifierPrefix('streamIdentifierPrefix', configured)
+}
+
+function resolveScopeIdentifierPrefix(configured: string | undefined): string {
+  if (configured !== undefined) return configured
+
+  return `r${ssrIdentifierSeed}.${(++scopeIdentifierSequence).toString(36)}`
+}
+
+function validateScopeIdentifierPrefix(configured: unknown): void {
+  validateIdentifierPrefix('scopeIdentifierPrefix', configured)
+}
+
+function validateIdentifierPrefix(option: string, configured: unknown): void {
   if (configured === undefined) return
   if (
     typeof configured !== 'string' ||
     configured.length === 0 ||
     configured.length > 128 ||
-    !STREAM_IDENTIFIER_PREFIX_PATTERN.test(configured) ||
+    !IDENTIFIER_PREFIX_PATTERN.test(configured) ||
     configured.includes('--')
   ) {
     throw new TypeError(
-      '[fict/ssr] streamIdentifierPrefix must contain 1-128 ASCII letters, digits, "_", ".", ":", or "-", and must not contain "--".',
+      `[fict/ssr] ${option} must contain 1-128 ASCII letters, digits, "_", ".", ":", or "-", and must not contain "--".`,
     )
   }
 }
 
-function createStreamIdentifierSeed(): string {
+function createIdentifierSeed(): string {
   try {
     const uuid = globalThis.crypto?.randomUUID?.()
     const normalized = uuid?.replace(/[^A-Za-z0-9]/g, '')

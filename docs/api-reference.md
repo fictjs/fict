@@ -1876,6 +1876,11 @@ import { renderToString } from '@fictjs/ssr'
 function renderToString(view: () => FictNode, options?: RenderToStringOptions): string
 ```
 
+`scopeIdentifierPrefix` supplies a stable namespace for resumable
+`data-fict-s` and snapshot scope IDs. Every render gets an automatic unique
+namespace when it is omitted. Explicit prefixes must be unique among outputs
+combined into one document and do not affect streaming Suspense patch IDs.
+
 ### renderToStream
 
 Shell-first streaming (Web Streams):
@@ -1894,6 +1899,8 @@ Key options:
 - `mode: 'shell' | 'all'` — shell-first streaming vs all-ready
 - `snapshotTarget: 'head' | 'body' | 'container'`
 - `scriptNonce` — nonce for generated scripts
+- `scopeIdentifierPrefix` — stable resumable scope namespace shared by all SSR
+  render entry points; it must be unique within a composed document
 - `streamRuntime: 'inline' | 'external'` — external mode expects `streamRuntimeSrc`
   to serve the published `@fictjs/ssr/fict-stream-runtime.js` asset
 - `streamIdentifierPrefix` — stable Suspense patch namespace for cached or

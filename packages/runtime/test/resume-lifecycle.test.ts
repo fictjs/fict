@@ -18,6 +18,7 @@ import {
   __fictMergeSSRState,
   __fictQrl,
   __fictRegisterScope,
+  __fictSetSSRScopeIdentifierPrefix,
   __fictSetComponentMeta,
   __fictSerializeSSRState,
   __fictSerializeSSRStateForScopes,
@@ -46,6 +47,22 @@ describe('SSR lifecycle state cleanup', () => {
       v: 2,
       scopes: { s1: { id: 's1', slots: [] } },
     })
+  })
+
+  it('namespaces SSR scope ids and clears the namespace with the session', () => {
+    __fictEnableSSR()
+    __fictSetSSRScopeIdentifierPrefix('account_shell')
+
+    const host = document.createElement('div')
+    const id = __fictRegisterScope({ slots: [], cursor: 0 }, host)
+
+    expect(id).toBe('account_shell:s1')
+    expect(host.getAttribute('data-fict-s')).toBe('account_shell:s1')
+    expect(__fictSerializeSSRState().scopes).toHaveProperty('account_shell:s1')
+
+    __fictDisableSSR()
+    __fictEnableSSR()
+    expect(__fictRegisterScope({ slots: [], cursor: 0 }, document.createElement('div'))).toBe('s1')
   })
 
   it('clears registry, snapshot state, and resumed scopes when SSR is disabled', () => {

@@ -244,6 +244,10 @@ export function __fictIsSSR(): boolean {
   return getSSRSession().ssrEnabled
 }
 
+export function __fictSetSSRScopeIdentifierPrefix(prefix: string): void {
+  getSSRSession().scopeIdentifierPrefix = prefix
+}
+
 export function __fictEnterHydration(): void {
   hydrationDepth++
 }
@@ -267,7 +271,8 @@ export function __fictRegisterScope(
   const session = getSSRSession()
   const scopeRegistry = getScopeRegistry()
   const boundaryScopes = getBoundaryScopes()
-  const id = `s${++session.scopeCounter}`
+  const localId = `s${++session.scopeCounter}`
+  const id = session.scopeIdentifierPrefix ? `${session.scopeIdentifierPrefix}:${localId}` : localId
   ctx.scopeId = id
   if (type !== undefined) {
     ctx.scopeType = type

@@ -53,6 +53,7 @@ export {
   __fictEnableSSR,
   __fictDisableSSR,
   __fictIsSSR,
+  __fictSetSSRScopeIdentifierPrefix,
   __fictEnableResumable,
   __fictDisableResumable,
   __fictIsResumable,

@@ -156,8 +156,8 @@ During server-side rendering, component state is serialized into JSON and inject
   {
     "v": 2,
     "scopes": {
-      "s1": {
-        "id": "s1",
+      "account_scope:s1": {
+        "id": "account_scope:s1",
         "slots": [
           [0, "sig", 10],      // Index 0: signal, value 10
           [1, "store", {...}], // Index 1: store
@@ -198,13 +198,30 @@ Each resumable component instance has a unique scope ID:
 
 ```html
 <fict-host
-  data-fict-s="s1"                                    <!-- scope ID -->
+  data-fict-s="account_scope:s1"                      <!-- scope ID -->
   data-fict-h="/assets/index.js#__fict_r0"            <!-- resume handler -->
   data-fict-t="Counter@file:///src/App.tsx"           <!-- Component Type -->
 >
   ...
 </fict-host>
 ```
+
+Every SSR render receives an automatic unique namespace for these host and
+snapshot scope IDs. For deterministic cached output, or when fragments from
+multiple services can share a document, pass a stable `scopeIdentifierPrefix`
+that is unique within the final document:
+
+```typescript
+renderToString(() => <App />, {
+  scopeIdentifierPrefix: 'account_scope',
+})
+```
+
+This option is shared by string, document, Web Stream, pipeable, async-string,
+and partial render entry points. It does not affect Suspense patch IDs; use
+`streamIdentifierPrefix` for those. Reusing a scope prefix in one document can
+make loader state ambiguous. Prefixes accept 1-128 ASCII letters, digits, `_`,
+`.`, `:`, or `-`, but may not contain `--`.
 
 ### 4. Automatic Handler Extraction
 

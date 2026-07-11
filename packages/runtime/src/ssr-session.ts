@@ -1,6 +1,7 @@
 export interface FictSSRSession {
   ssrEnabled: boolean
   scopeCounter: number
+  scopeIdentifierPrefix: string
   scopeRegistry: Map<string, unknown>
   boundaryScopes: Map<string, Set<string>>
   snapshotState: unknown | null
@@ -26,6 +27,7 @@ export function __fictCreateSSRSession(): FictSSRSession {
   return {
     ssrEnabled: false,
     scopeCounter: 0,
+    scopeIdentifierPrefix: '',
     scopeRegistry: new Map(),
     boundaryScopes: new Map(),
     snapshotState: null,
@@ -122,6 +124,7 @@ export function __fictIsSSRSessionActive(): boolean {
 
 export function __fictResetSSRSession(session: FictSSRSession): void {
   session.scopeCounter = 0
+  session.scopeIdentifierPrefix = ''
   session.scopeRegistry = new Map()
   session.boundaryScopes = new Map()
   session.snapshotState = null

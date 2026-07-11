@@ -2444,6 +2444,75 @@ describe('Full E2E Integration', () => {
     }
   })
 
+  it('isolates resumable scopes when independent SSR fragments share one loader', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function Counter({ label, initial }: { label: string; initial: number }) {
+        let count = $state(initial)
+        return <button data-island={label} onClick$={() => count++}>{count}</button>
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    const renderIsland = async (
+      Counter: (props: { label: string; initial: number }) => FictNode,
+      label: string,
+      initial: number,
+    ): Promise<string> => {
+      const stream = renderToStream(() => ({ type: Counter, props: { label, initial } }), {
+        mode: 'shell',
+        fullDocument: false,
+      })
+      const reader = stream.getReader()
+      let html = ''
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        if (value) html += decoder.decode(value, { stream: true })
+      }
+      return html + decoder.decode()
+    }
+
+    try {
+      const mod = (await import(compiled.url)) as {
+        Counter: (props: { label: string; initial: number }) => FictNode
+      }
+      const firstHtml = await renderIsland(mod.Counter, 'first', 1)
+      const secondHtml = await renderIsland(mod.Counter, 'second', 10)
+      const env = setupClientEnvironment(firstHtml + secondHtml)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'], prefetch: false })
+
+      const firstButton = env.document.querySelector('[data-island="first"]') as HTMLElement
+      const secondButton = env.document.querySelector('[data-island="second"]') as HTMLElement
+      const firstScope = firstButton.closest('[data-fict-s]')?.getAttribute('data-fict-s')
+      const secondScope = secondButton.closest('[data-fict-s]')?.getAttribute('data-fict-s')
+
+      expect(firstScope).toBeTruthy()
+      expect(secondScope).toBeTruthy()
+      expect(firstButton.textContent).toBe('1')
+      expect(secondButton.textContent).toBe('10')
+
+      dispatchClick(firstButton, env.window)
+      await tick(3)
+      expect(firstButton.textContent).toBe('2')
+      expect(secondButton.textContent).toBe('10')
+
+      dispatchClick(secondButton, env.window)
+      await tick(3)
+      expect(firstButton.textContent).toBe('2')
+      expect(secondButton.textContent).toBe('11')
+      expect(firstScope).not.toBe(secondScope)
+    } finally {
+      await cleanup()
+      compiled.cleanup()
+    }
+  })
+
   it('streams incremental snapshots and resumes after boundary patch', async () => {
     const source = `
       import { $state } from 'fict'

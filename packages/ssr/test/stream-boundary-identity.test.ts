@@ -137,7 +137,7 @@ describe('@fictjs/ssr stream boundary identity', () => {
     expect(rendered.rootHtml).toContain('fict:suspense-start:account_shell:s1')
     expect(rendered.patchHtml).toContain('data-fict-suspense="account_shell:s1"')
     expect(rendered.outputHtml).toContain('__FICT_STREAM.apply("account_shell:s1")')
-    expect(scopeIds).toContain('s1')
+    expect(scopeIds.some(id => id.endsWith(':s1'))).toBe(true)
     expect(scopeIds).not.toContain('account_shell:s1')
   })
 
