@@ -482,8 +482,9 @@ async function submitActionInStore<T>(
   params: Params,
   activeSubmissions: SubmissionStore,
   execute: SubmissionExecutor<T>,
+  submissionKey?: string,
 ): Promise<T> {
-  const key = `submission-${++submissionCounter}`
+  const key = submissionKey ?? `submission-${++submissionCounter}`
 
   // Create submission object
   const submission: Submission<T> = {
@@ -500,7 +501,14 @@ async function submitActionInStore<T>(
       // The retried submission records its own idle/error state. Since retry is
       // intentionally a void API, consume the returned rejection after that
       // state update instead of leaking an unhandled promise.
-      void submitActionInStore(action, formData, params, activeSubmissions, execute).catch(() => {})
+      void submitActionInStore(
+        action,
+        formData,
+        params,
+        activeSubmissions,
+        execute,
+        submissionKey,
+      ).catch(() => {})
     },
   }
   submissionActionUrls.set(submission as Submission<unknown>, action.url)
@@ -570,6 +578,7 @@ export function submitActionFromForm<T>(
   formData: FormData,
   params: Params,
   request: { url: string; method: string },
+  submissionKey?: string,
 ): Promise<T> {
   const registeredHandler = actionHandlers.get(action as Action<unknown>) as
     | ActionFunction<T>
@@ -585,7 +594,14 @@ export function submitActionFromForm<T>(
         )
     : (submittedFormData, submittedParams) => action.submit(submittedFormData, submittedParams)
 
-  return submitActionInStore(action, formData, params, resolveSubmissionStore(), execute)
+  return submitActionInStore(
+    action,
+    formData,
+    params,
+    resolveSubmissionStore(),
+    execute,
+    submissionKey,
+  )
 }
 
 // ============================================================================

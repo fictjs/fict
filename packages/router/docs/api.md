@@ -336,16 +336,20 @@ import { Form } from '@fictjs/router'
 
 **Props:**
 
-| Prop                 | Type                                              | Default   | Description                    |
-| -------------------- | ------------------------------------------------- | --------- | ------------------------------ |
-| `action`             | `string`                                          | -         | Form action URL                |
-| `method`             | `'get' \| 'post' \| 'put' \| 'patch' \| 'delete'` | `'get'`   | HTTP method                    |
-| `replace`            | `boolean`                                         | `false`   | Replace history on GET         |
-| `relative`           | `'route' \| 'path'`                               | `'route'` | Action URL resolution          |
-| `navigate`           | `boolean`                                         | `true`    | Navigate to action URL         |
-| `preventScrollReset` | `boolean`                                         | `false`   | Keep scroll position           |
-| `fetcherKey`         | `string`                                          | -         | Key for independent submission |
-| `onSubmit`           | `(event) => void`                                 | -         | Submit handler                 |
+| Prop                 | Type                                              | Default   | Description               |
+| -------------------- | ------------------------------------------------- | --------- | ------------------------- |
+| `action`             | `string \| Action<unknown>`                       | -         | Form action URL or action |
+| `method`             | `'get' \| 'post' \| 'put' \| 'patch' \| 'delete'` | varies    | HTTP method               |
+| `replace`            | `boolean`                                         | `false`   | Replace history on GET    |
+| `relative`           | `'route' \| 'path'`                               | `'route'` | Action URL resolution     |
+| `navigate`           | `boolean`                                         | `true`    | Navigate to action URL    |
+| `preventScrollReset` | `boolean`                                         | `false`   | Keep scroll position      |
+| `fetcherKey`         | `string`                                          | -         | Stable submission key     |
+| `onSubmit`           | `(event) => void`                                 | -         | Submit handler            |
+
+Registered actions default to `post`; ordinary URL forms default to `get`. Non-GET submissions
+are observable through `useSubmission(actionOrUrl)`. A `fetcherKey` replaces an older in-flight
+submission with the same key, so stale completions cannot redirect or emit form result events.
 
 ---
 

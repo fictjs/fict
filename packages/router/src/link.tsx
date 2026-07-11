@@ -543,6 +543,24 @@ type FormSubmitter = HTMLButtonElement | HTMLInputElement
 type HandledFormMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 const HANDLED_FORM_METHODS = new Set<HandledFormMethod>(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
+const latestFetcherSubmissions = new Map<string, symbol>()
+
+function createSubmissionLease(key: string | undefined) {
+  if (key === undefined) {
+    return { isCurrent: () => true, release: () => {} }
+  }
+
+  const token = Symbol(key)
+  latestFetcherSubmissions.set(key, token)
+  return {
+    isCurrent: () => latestFetcherSubmissions.get(key) === token,
+    release: () => {
+      if (latestFetcherSubmissions.get(key) === token) {
+        latestFetcherSubmissions.delete(key)
+      }
+    },
+  }
+}
 
 function getAssociatedFormSubmitter(
   candidate: HTMLElement | null | undefined,
@@ -712,6 +730,7 @@ export function Form(props: FormProps): FictNode {
         replace: props.replace,
         scroll: props.preventScrollReset === true ? false : undefined,
         params: { ...readAccessor(router.params) },
+        fetcherKey: props.fetcherKey,
       }
     })
 
@@ -747,11 +766,13 @@ export function Form(props: FormProps): FictNode {
         ),
       )
     } else {
+      const submissionLease = createSubmissionLease(snapshot.fetcherKey)
       const options = {
         navigate: snapshot.navigate !== false,
         replace: snapshot.replace ?? false,
         scroll: snapshot.scroll,
         router,
+        submissionLease,
       }
 
       const submission = snapshot.action.registeredAction
@@ -762,9 +783,18 @@ export function Form(props: FormProps): FictNode {
             snapshot.method,
             formData,
             snapshot.params,
+            snapshot.fetcherKey,
             options,
           )
-        : submitFormAction(form, snapshot.action.href, snapshot.method, formData, options)
+        : submitFormAction(
+            form,
+            snapshot.action.href,
+            snapshot.method,
+            formData,
+            snapshot.params,
+            snapshot.fetcherKey,
+            options,
+          )
 
       void submission.catch(() => {
         // The submission helpers already report failures through `formerror`
@@ -782,15 +812,24 @@ export function Form(props: FormProps): FictNode {
     method: string,
     formData: FormData,
     params: Params,
+    submissionKey: string | undefined,
     options: {
       navigate: boolean
       replace: boolean
       scroll: boolean | undefined
       router: typeof router
+      submissionLease: ReturnType<typeof createSubmissionLease>
     },
   ) {
     try {
-      const data = await submitActionFromForm(registeredAction, formData, params, { url, method })
+      const data = await submitActionFromForm(
+        registeredAction,
+        formData,
+        params,
+        { url, method },
+        submissionKey,
+      )
+      if (!options.submissionLease.isCurrent()) return { data, response: null }
       const response = data instanceof Response ? data : null
       const redirectUrl =
         response?.headers.get('X-Redirect') || response?.headers.get('Location') || undefined
@@ -810,15 +849,19 @@ export function Form(props: FormProps): FictNode {
 
       return { data, response }
     } catch (error) {
-      formElement.dispatchEvent(
-        new CustomEvent('formerror', {
-          bubbles: true,
-          detail: { error },
-        }),
-      )
+      if (options.submissionLease.isCurrent()) {
+        formElement.dispatchEvent(
+          new CustomEvent('formerror', {
+            bubbles: true,
+            detail: { error },
+          }),
+        )
 
-      console.error('[fict-router] Form submission failed:', error)
+        console.error('[fict-router] Form submission failed:', error)
+      }
       throw error
+    } finally {
+      options.submissionLease.release()
     }
   }
 
@@ -830,36 +873,57 @@ export function Form(props: FormProps): FictNode {
     url: string,
     method: string,
     formData: FormData,
+    params: Params,
+    submissionKey: string | undefined,
     options: {
       navigate: boolean
       replace: boolean
       scroll: boolean | undefined
       router: typeof router
+      submissionLease: ReturnType<typeof createSubmissionLease>
     },
   ) {
+    let response: Response | null = null
+    const requestAction: Action<unknown> = {
+      url,
+      submit: async submittedFormData => {
+        response = await fetch(url, {
+          method,
+          body: submittedFormData,
+          headers: {
+            // Let the browser set Content-Type for FormData (includes boundary)
+            Accept: 'application/json',
+          },
+        })
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
+
+        const contentType = response.headers.get('Content-Type')
+        return contentType?.includes('application/json') ? response.json() : null
+      },
+    }
+
     try {
-      const response = await fetch(url, {
-        method,
-        body: formData,
-        headers: {
-          // Let the browser set Content-Type for FormData (includes boundary)
-          Accept: 'application/json',
-        },
-      })
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      const data = await submitActionFromForm(
+        requestAction,
+        formData,
+        params,
+        { url, method },
+        submissionKey,
+      )
+      const completedResponse = response as Response | null
+      if (!completedResponse) {
+        throw new Error('[fict-router] Form request completed without a response')
       }
-
-      // Try to parse JSON response
-      const contentType = response.headers.get('Content-Type')
-      let data: unknown = null
-      if (contentType?.includes('application/json')) {
-        data = await response.json()
+      if (!options.submissionLease.isCurrent()) {
+        return { data, response: completedResponse }
       }
 
       // If navigate is enabled and response includes a redirect location
-      const redirectUrl = response.headers.get('X-Redirect') || response.headers.get('Location')
+      const redirectUrl =
+        completedResponse.headers.get('X-Redirect') || completedResponse.headers.get('Location')
       if (options.navigate && redirectUrl) {
         options.router.navigate(redirectUrl, {
           replace: options.replace,
@@ -871,22 +935,26 @@ export function Form(props: FormProps): FictNode {
       formElement.dispatchEvent(
         new CustomEvent('formsubmit', {
           bubbles: true,
-          detail: { data, response },
+          detail: { data, response: completedResponse },
         }),
       )
 
-      return { data, response }
+      return { data, response: completedResponse }
     } catch (error) {
-      // Emit error event on the actual form element
-      formElement.dispatchEvent(
-        new CustomEvent('formerror', {
-          bubbles: true,
-          detail: { error },
-        }),
-      )
+      if (options.submissionLease.isCurrent()) {
+        // Emit error event on the actual form element
+        formElement.dispatchEvent(
+          new CustomEvent('formerror', {
+            bubbles: true,
+            detail: { error },
+          }),
+        )
 
-      console.error('[fict-router] Form submission failed:', error)
+        console.error('[fict-router] Form submission failed:', error)
+      }
       throw error
+    } finally {
+      options.submissionLease.release()
     }
   }
 

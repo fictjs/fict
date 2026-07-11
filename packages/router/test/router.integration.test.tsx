@@ -54,6 +54,27 @@ function TrackedActionFormFixture() {
   )
 }
 
+let trackedUrlCurrentSubmission!: () => Submission<unknown> | undefined
+
+function TrackedUrlFormFixture() {
+  trackedUrlCurrentSubmission = useSubmission('/submit')
+  return (
+    <>
+      <Form action="/submit" method="post" fetcherKey="profile-save" data-testid="tracked-url-form">
+        <input name="value" value="fict" />
+      </Form>
+      <Form
+        action="/submit"
+        method="post"
+        fetcherKey="profile-save"
+        data-testid="tracked-url-form-peer"
+      >
+        <input name="value" value="latest" />
+      </Form>
+    </>
+  )
+}
+
 function NavigateButton({ to }: { to: string }) {
   const navigate = useNavigate()
   const target = untrack(() => to)
@@ -2197,6 +2218,90 @@ describe('Router integration (MemoryRouter)', () => {
       }
     },
   )
+
+  it('tracks URL Form fetches under their stable fetcher key', async () => {
+    cleanupDataUtilities()
+    const settleFetches: Array<(response: Response) => void> = []
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      () =>
+        new Promise<Response>(resolve => {
+          settleFetches.push(resolve)
+        }),
+    )
+
+    try {
+      render(() => (
+        <MemoryRouter initialEntries={['/form']}>
+          <Route path="/form" element={<TrackedUrlFormFixture />} />
+        </MemoryRouter>
+      ))
+
+      const form = screen.getByTestId('tracked-url-form') as HTMLFormElement
+      const peerForm = screen.getByTestId('tracked-url-form-peer') as HTMLFormElement
+      const results: unknown[] = []
+      const recordResult = (event: Event) => {
+        results.push((event as CustomEvent<{ data: unknown }>).detail.data)
+      }
+      form.addEventListener('formsubmit', recordResult)
+      peerForm.addEventListener('formsubmit', recordResult)
+
+      form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(trackedUrlCurrentSubmission()).toMatchObject({
+        key: 'profile-save',
+        state: 'submitting',
+      })
+      expect(trackedUrlCurrentSubmission()?.formData.get('value')).toBe('fict')
+
+      peerForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(trackedUrlCurrentSubmission()).toMatchObject({
+        key: 'profile-save',
+        state: 'submitting',
+      })
+      expect(trackedUrlCurrentSubmission()?.formData.get('value')).toBe('latest')
+
+      await act(async () => {
+        settleFetches[0]?.(
+          new Response(JSON.stringify({ saved: 'stale' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        )
+        await Promise.resolve()
+      })
+
+      expect(trackedUrlCurrentSubmission()).toMatchObject({
+        key: 'profile-save',
+        state: 'submitting',
+      })
+      expect(results).toEqual([])
+
+      await act(async () => {
+        settleFetches[1]?.(
+          new Response(JSON.stringify({ saved: 'latest' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        )
+        await Promise.resolve()
+      })
+
+      await vi.waitFor(() =>
+        expect(trackedUrlCurrentSubmission()).toMatchObject({
+          key: 'profile-save',
+          state: 'idle',
+          result: { saved: 'latest' },
+        }),
+      )
+      expect(results).toEqual([{ saved: 'latest' }])
+    } finally {
+      fetchMock.mockRestore()
+      cleanupDataUtilities()
+    }
+  })
 
   it('keeps Link navigation, disabled state, handlers, and intent preloads reactive', async () => {
     firstReactiveLinkClick.mockClear()
