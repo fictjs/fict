@@ -110,6 +110,7 @@ const TS_FILENAME_RE = /\.ts(?:[?#].*)?$/i
 const TSX_FILENAME_RE = /\.tsx(?:[?#].*)?$/i
 const MTS_FILENAME_RE = /\.mts(?:[?#].*)?$/i
 const CTS_FILENAME_RE = /\.cts(?:[?#].*)?$/i
+const CJS_FILENAME_RE = /\.cjs(?:[?#].*)?$/i
 const LOCAL_MODULE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs']
 const LOCAL_MODULE_EXTENSION_SET = new Set(LOCAL_MODULE_EXTENSIONS)
 const NODE_BUILTIN_SOURCES = new Set(
@@ -1505,6 +1506,14 @@ export default function fictPreset(
       )
     }
   }
+
+  // CommonJS source is executed inside Node's module wrapper, where a top-level
+  // return is legal. Babel parses before any preset visitor runs, so enable the
+  // corresponding parser capability from the filename-based configuration.
+  overrides.push({
+    test: CJS_FILENAME_RE,
+    parserOpts: { allowReturnOutsideFunction: true },
+  })
 
   // Add JSX syntax plugin
   plugins.push([syntaxJsx, {}])

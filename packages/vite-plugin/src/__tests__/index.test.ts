@@ -2067,6 +2067,41 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it('builds CommonJS application modules with a legal top-level return', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-cjs-top-level-return-'))
+    const entry = path.join(root, 'entry.cjs')
+
+    try {
+      await writeFile(
+        entry,
+        `
+          if (globalThis.__fictSkipCommonJsEntry) return
+          module.exports.App = () => 42
+        `,
+      )
+
+      const result = await build({
+        root,
+        logLevel: 'silent',
+        plugins: [fict({ cache: false, useTypeScriptProject: false, functionSplitting: false })],
+        build: {
+          write: false,
+          lib: { entry, formats: ['es'], fileName: () => 'entry.js' },
+        },
+      })
+      const outputs = Array.isArray(result) ? result : [result]
+      const code = outputs
+        .flatMap(output => ('output' in output ? output.output : []))
+        .filter(output => output.type === 'chunk')
+        .map(output => output.code)
+        .join('\n')
+
+      expect(code).toContain('42')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('lowers CTS import-equals and export assignments to executable Vite output', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-cts-commonjs-'))
     const entry = path.join(root, 'entry.cts')

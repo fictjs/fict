@@ -3594,6 +3594,7 @@ async function compileFictCompilerStage(
   const isTypeScript = TYPESCRIPT_EXTENSIONS.some(extension => filename.endsWith(extension))
   const isTSX = filename.endsWith('.tsx')
   const isExplicitModuleTypeScript = filename.endsWith('.mts') || filename.endsWith('.cts')
+  const isCommonJS = filename.endsWith('.cjs')
   const plugins: PluginItem[] = []
   if (filename.endsWith('.cts')) plugins.push(lowerCtsModuleSyntax())
   if (isTypeScript) {
@@ -3617,12 +3618,15 @@ async function compileFictCompilerStage(
     filename,
     configFile: false,
     babelrc: false,
-    ...(isTypeScript
+    ...(isTypeScript || isCommonJS
       ? {
-          parserOpts: { plugins: ['decorators-legacy'] },
-          generatorOpts: { decoratorsBeforeExport: true },
+          parserOpts: {
+            ...(isTypeScript ? { plugins: ['decorators-legacy'] } : {}),
+            ...(isCommonJS ? { allowReturnOutsideFunction: true } : {}),
+          },
         }
       : {}),
+    ...(isTypeScript ? { generatorOpts: { decoratorsBeforeExport: true } } : {}),
     sourceMaps: fictOptions.sourcemap,
     sourceFileName: filename,
     plugins,

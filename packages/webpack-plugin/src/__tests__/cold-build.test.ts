@@ -4,6 +4,26 @@ import path from 'node:path'
 import { createFixture, createWebpackConfiguration, runApp, runCompiler } from './fixture'
 
 describe('@fictjs/webpack-plugin cold metadata graph', () => {
+  it('compiles CommonJS entries with a legal top-level return', async () => {
+    const root = await createFixture({
+      'entry.cjs': `
+        if (globalThis.__fictSkipCommonJsEntry) return
+        module.exports.App = () => 42
+      `,
+    })
+
+    try {
+      const configuration = createWebpackConfiguration(root)
+      configuration.entry = './entry.cjs'
+      configuration.resolve = { ...configuration.resolve, extensions: ['.cjs', '.js'] }
+
+      await runCompiler(configuration)
+      expect(runApp(root)).toBe(42)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('rebuilds an importer after its hook metadata becomes available', async () => {
     const root = await createFixture({
       'entry.ts': `

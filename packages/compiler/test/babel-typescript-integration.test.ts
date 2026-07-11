@@ -513,6 +513,33 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
     }
   })
 
+  it('preserves legal top-level returns in CommonJS modules', () => {
+    const result = transformSync(
+      `
+        if (globalThis.skip) return
+        module.exports = 42
+      `,
+      {
+        filename: 'entry.cjs',
+        configFile: false,
+        babelrc: false,
+        sourceType: 'unambiguous',
+        presets: [[fictPreset, { dev: false, strictGuarantee: false }]],
+      },
+    )
+    const code = result?.code ?? ''
+    const evaluate = (skip: boolean): unknown => {
+      const module = { exports: null as unknown }
+      const execute = new Function('module', 'globalThis', code)
+      execute(module, { skip })
+      return module.exports
+    }
+
+    expect(code).toContain('return;')
+    expect(evaluate(false)).toBe(42)
+    expect(evaluate(true)).toBeNull()
+  })
+
   it('resolves local hash-suffixed hook imports through the current source graph', () => {
     const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-graph-fragment-'))
     const hookPath = path.join(baseDir, 'use-count.ts')
