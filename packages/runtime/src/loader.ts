@@ -1,5 +1,5 @@
 import { DelegatedEvents } from './constants'
-import { isElementLike } from './dom-guards'
+import { isElementLike, isNodeLike } from './dom-guards'
 import type { HookContext } from './hooks'
 import {
   FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
@@ -91,6 +91,18 @@ interface PreservedControlState {
   selectedValues?: string[]
   html?: string
   selection?: PreservedEditableSelection
+  textSelection?: PreservedTextSelection
+}
+
+interface PreservedControl {
+  node: Element
+  state: PreservedControlState
+}
+
+interface PreservedTextSelection {
+  start: number
+  end: number
+  direction: 'forward' | 'backward' | 'none'
 }
 
 interface PreservedSelectionPoint {
@@ -209,11 +221,18 @@ function captureControlState(node: Element, event: Event): PreservedControlState
     if (input.type === 'checkbox' || input.type === 'radio') {
       return { checked: input.checked }
     }
-    return { value: input.value }
+    const state: PreservedControlState = { value: input.value }
+    const textSelection = captureTextSelection(input)
+    if (textSelection) state.textSelection = textSelection
+    return state
   }
 
   if (tagName === 'textarea') {
-    return { value: (node as HTMLTextAreaElement).value }
+    const textarea = node as HTMLTextAreaElement
+    const state: PreservedControlState = { value: textarea.value }
+    const textSelection = captureTextSelection(textarea)
+    if (textSelection) state.textSelection = textSelection
+    return state
   }
 
   if (tagName === 'select') {
@@ -238,6 +257,78 @@ function captureControlState(node: Element, event: Event): PreservedControlState
   return null
 }
 
+function captureEventControlState(
+  event: Event,
+  ownerDocument: Document,
+  eventPath: readonly EventTarget[],
+): PreservedControl | null {
+  const target =
+    eventPath.find(candidate => isElementLike(candidate, ownerDocument)) ?? event.target
+  if (!isElementLike(target, ownerDocument)) return null
+  const state = captureControlState(target, event)
+  return state ? { node: target, state } : null
+}
+
+function getEventShadowHost(root: Node): Element | null {
+  if (root.nodeType !== 11 || !('host' in root) || !('mode' in root)) return null
+  const shadowRoot = root as ShadowRoot
+  return shadowRoot.mode === 'open' || shadowRoot.mode === 'closed' ? shadowRoot.host : null
+}
+
+function isShadowIncludingInclusiveAncestor(ancestor: Node, node: Node): boolean {
+  let current: Node | null = node
+  const visited = new Set<Node>()
+  while (current && !visited.has(current)) {
+    if (current === ancestor) return true
+    visited.add(current)
+    current =
+      (current.parentNode as Node | null) ?? getEventShadowHost(current.getRootNode()) ?? null
+  }
+  return false
+}
+
+function retargetEventTarget(
+  originalTarget: EventTarget | null,
+  currentTarget: Element,
+  ownerDocument: Document,
+): EventTarget | null {
+  if (!isNodeLike(originalTarget, ownerDocument)) return originalTarget
+
+  let target: Node = originalTarget
+  while (true) {
+    const root = target.getRootNode()
+    const shadowHost = getEventShadowHost(root)
+    if (!shadowHost || isShadowIncludingInclusiveAncestor(root, currentTarget)) return target
+    target = shadowHost
+  }
+}
+
+function captureTextSelection(
+  node: HTMLInputElement | HTMLTextAreaElement,
+): PreservedTextSelection | undefined {
+  try {
+    const start = node.selectionStart
+    const end = node.selectionEnd
+    if (start === null || end === null) return undefined
+    return { start, end, direction: node.selectionDirection ?? 'none' }
+  } catch {
+    // Some input types do not expose the text selection APIs.
+    return undefined
+  }
+}
+
+function restoreTextSelection(
+  node: HTMLInputElement | HTMLTextAreaElement,
+  selection: PreservedTextSelection | undefined,
+): void {
+  if (!selection) return
+  try {
+    node.setSelectionRange(selection.start, selection.end, selection.direction)
+  } catch {
+    // Selection restoration is best effort for controls without text selection APIs.
+  }
+}
+
 function restoreControlState(node: Element, state: PreservedControlState | null): void {
   if (!state) return
 
@@ -251,13 +342,16 @@ function restoreControlState(node: Element, state: PreservedControlState | null)
     if (typeof state.value === 'string' && input.type !== 'file') {
       input.value = state.value
     }
+    restoreTextSelection(input, state.textSelection)
     return
   }
 
   if (tagName === 'textarea') {
+    const textarea = node as HTMLTextAreaElement
     if (typeof state.value === 'string') {
-      ;(node as HTMLTextAreaElement).value = state.value
+      textarea.value = state.value
     }
+    restoreTextSelection(textarea, state.textSelection)
     return
   }
 
@@ -1801,11 +1895,12 @@ async function runScopeHandler(
   scopeId: string,
   node: Element,
   event: Event,
+  originalEventTarget: EventTarget | null,
   qrl: string,
   url: string,
   exportName: string,
   resumePromise: ReturnType<typeof resumeScopeForEvent>,
-  preservedControlState: PreservedControlState | null,
+  preservedControl: PreservedControl | null,
   preemptiveDefault: PreemptiveDefaultControl,
 ): Promise<boolean> {
   try {
@@ -1817,7 +1912,7 @@ async function runScopeHandler(
     }
 
     if (resumeResult.hydratedDuringEvent) {
-      restoreControlState(node, preservedControlState)
+      restoreControlState(preservedControl?.node ?? node, preservedControl?.state ?? null)
     }
 
     const resolvedUrl = resolveModuleUrl(url)
@@ -1863,23 +1958,80 @@ async function runScopeHandler(
     }
 
     const currentTargetDescriptor = Object.getOwnPropertyDescriptor(event, 'currentTarget')
+    const targetDescriptor = Object.getOwnPropertyDescriptor(event, 'target')
+    const handlerTarget = retargetEventTarget(originalEventTarget, node, installation.document)
     let handlerFailed = false
-    Object.defineProperty(event, 'currentTarget', {
-      configurable: true,
-      get() {
-        return node
-      },
-    })
+    let handlerError: unknown
+    let handlerInactive = false
+    let currentTargetOverridden = false
+    let targetOverridden = false
     try {
+      if (event.currentTarget !== node) {
+        Object.defineProperty(event, 'currentTarget', {
+          configurable: true,
+          get() {
+            return node
+          },
+        })
+        currentTargetOverridden = true
+      }
+      if (event.target !== handlerTarget) {
+        Object.defineProperty(event, 'target', {
+          configurable: true,
+          get() {
+            return handlerTarget
+          },
+        })
+        targetOverridden = true
+      }
       const handled = await waitForActiveInstallation(
         installation,
         (handler as (scopeId: string, ev: Event, el: Element) => unknown)(scopeId, event, node),
       )
-      if (handled === INACTIVE_INSTALLATION) return false
+      handlerInactive = handled === INACTIVE_INSTALLATION
     } catch (error) {
+      handlerFailed = true
+      handlerError = error
+    } finally {
+      if (targetOverridden) {
+        try {
+          if (targetDescriptor) {
+            Object.defineProperty(event, 'target', targetDescriptor)
+          } else if (!Reflect.deleteProperty(event, 'target')) {
+            if (!handlerFailed) {
+              handlerFailed = true
+              handlerError = new TypeError('Unable to restore event.target')
+            }
+          }
+        } catch (error) {
+          if (!handlerFailed) {
+            handlerFailed = true
+            handlerError = error
+          }
+        }
+      }
+      if (currentTargetOverridden) {
+        try {
+          if (currentTargetDescriptor) {
+            Object.defineProperty(event, 'currentTarget', currentTargetDescriptor)
+          } else if (!Reflect.deleteProperty(event, 'currentTarget')) {
+            if (!handlerFailed) {
+              handlerFailed = true
+              handlerError = new TypeError('Unable to restore event.currentTarget')
+            }
+          }
+        } catch (error) {
+          if (!handlerFailed) {
+            handlerFailed = true
+            handlerError = error
+          }
+        }
+      }
+    }
+    if (handlerFailed) {
       emitSnapshotIssue(installation, {
         code: 'handler_failed',
-        message: `[fict/loader] Resumable handler ${exportName} failed for scope ${scopeId}: ${formatImportError(error)}`,
+        message: `[fict/loader] Resumable handler ${exportName} failed for scope ${scopeId}: ${formatImportError(handlerError)}`,
         source: 'event',
         expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
         scopeId,
@@ -1887,19 +2039,11 @@ async function runScopeHandler(
         url: resolvedUrl,
         exportName,
         eventType: event.type,
-        error,
+        error: handlerError,
       })
-      handlerFailed = true
-    } finally {
-      if (currentTargetDescriptor) {
-        Object.defineProperty(event, 'currentTarget', currentTargetDescriptor)
-      } else {
-        Reflect.deleteProperty(event, 'currentTarget')
-      }
-    }
-    if (handlerFailed) {
       return false
     }
+    if (handlerInactive) return false
 
     return event.cancelBubble
   } finally {
@@ -1918,6 +2062,7 @@ async function handleResumableEventAsync(
   if (!isLoaderInstallationActive(installation)) return
   const path =
     typeof event.composedPath === 'function' ? event.composedPath() : buildEventPath(event)
+  const originalEventTarget = path[0] ?? event.target
 
   for (const node of path) {
     if (!isLoaderInstallationActive(installation)) return
@@ -1970,7 +2115,7 @@ async function handleResumableEventAsync(
       mayPreventDefault: flags.includes('pd'),
     })
 
-    const preservedControlState = captureControlState(node, event)
+    const preservedControl = captureEventControlState(event, installation.document, path)
     const resumePromise = resumeScopeForEvent(installation, scopeId, host, event, scopeContext)
     const shouldStop = await enqueueScopeHandler(installation, scopeId, () =>
       runScopeHandler(
@@ -1978,11 +2123,12 @@ async function handleResumableEventAsync(
         scopeId,
         node,
         event,
+        originalEventTarget,
         qrl,
         url,
         exportName,
         resumePromise,
-        preservedControlState,
+        preservedControl,
         preemptiveDefault,
       ),
     )

@@ -3940,6 +3940,71 @@ describe('resumable loader snapshot validation', () => {
     warnSpy.mockRestore()
   })
 
+  it('rolls back event overrides when a non-configurable target blocks shadow retargeting', async () => {
+    const issues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    ;(globalThis as { __fictBlockedRetargetCalls?: number }).__fictBlockedRetargetCalls = 0
+
+    const scope = doc.createElement('div')
+    scope.setAttribute('data-fict-s', 's1')
+    const button = doc.createElement('button')
+    button.setAttribute(
+      'on:click',
+      'data:text/javascript,export function capture(){globalThis.__fictBlockedRetargetCalls++}#capture',
+    )
+    scope.appendChild(button)
+
+    const shadowHost = doc.createElement('section')
+    shadowHost.attachShadow({ mode: 'open' }).appendChild(scope)
+    doc.body.appendChild(shadowHost)
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    installResumableLoader({
+      document: doc,
+      events: ['click'],
+      prefetch: false,
+      onSnapshotIssue: issue => issues.push(issue),
+    })
+
+    const event = new Event('click', { bubbles: true, cancelable: true, composed: true })
+    Object.defineProperty(event, 'target', {
+      configurable: false,
+      value: shadowHost,
+    })
+    button.dispatchEvent(event)
+    await waitForPendingHandlers()
+
+    expect((globalThis as { __fictBlockedRetargetCalls?: number }).__fictBlockedRetargetCalls).toBe(
+      0,
+    )
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        code: 'handler_failed',
+        scopeId: 's1',
+        exportName: 'capture',
+      }),
+    )
+    expect(Object.prototype.hasOwnProperty.call(event, 'currentTarget')).toBe(false)
+    expect(event.currentTarget).toBeNull()
+    expect(Object.getOwnPropertyDescriptor(event, 'target')).toEqual({
+      configurable: false,
+      enumerable: false,
+      value: shadowHost,
+      writable: false,
+    })
+
+    warnSpy.mockRestore()
+    delete (globalThis as { __fictBlockedRetargetCalls?: number }).__fictBlockedRetargetCalls
+  })
+
   it('deduplicates concurrent resumes while preserving every handler event', async () => {
     const doc = createDocumentWithSnapshots(
       JSON.stringify({
@@ -4484,6 +4549,199 @@ describe('resumable loader snapshot validation', () => {
     ).toBe('growth')
 
     delete (globalThis as { __fictCapturedInputValue?: string | null }).__fictCapturedInputValue
+  })
+
+  it('preserves an input edit and backward selection across first-event hydration', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    ;(
+      globalThis as {
+        __fictCapturedInputSelection?: {
+          value: string | null
+          selectionStart: number | null
+          selectionEnd: number | null
+          selectionDirection: string | null
+        }
+      }
+    ).__fictCapturedInputSelection = undefined
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    host.setAttribute(
+      'data-fict-h',
+      'data:text/javascript,export default null#__fict_r_input_selection',
+    )
+
+    __fictRegisterResume('__fict_r_input_selection', (_scopeId, node) => {
+      const input = node instanceof Element ? node.querySelector('input') : null
+      if (input instanceof HTMLInputElement) {
+        input.value = 'server'
+        input.setSelectionRange(0, 0, 'none')
+      }
+    })
+
+    const input = doc.createElement('input')
+    input.value = 'abcd'
+    input.setAttribute(
+      'on:input',
+      'data:text/javascript,export function capture(scopeId,event){globalThis.__fictCapturedInputSelection={value:event.target?.value??null,selectionStart:event.target?.selectionStart??null,selectionEnd:event.target?.selectionEnd??null,selectionDirection:event.target?.selectionDirection??null}}#capture',
+    )
+    host.appendChild(input)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['input'], prefetch: false })
+
+    input.value = 'abXcd'
+    input.setSelectionRange(2, 3, 'backward')
+    input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }))
+    await waitForPendingHandlers()
+
+    expect(
+      (
+        globalThis as {
+          __fictCapturedInputSelection?: {
+            value: string | null
+            selectionStart: number | null
+            selectionEnd: number | null
+            selectionDirection: string | null
+          }
+        }
+      ).__fictCapturedInputSelection,
+    ).toEqual({
+      value: 'abXcd',
+      selectionStart: 2,
+      selectionEnd: 3,
+      selectionDirection: 'backward',
+    })
+    expect(input.value).toBe('abXcd')
+    expect(input.selectionStart).toBe(2)
+    expect(input.selectionEnd).toBe(3)
+    expect(input.selectionDirection).toBe('backward')
+
+    delete (globalThis as { __fictCapturedInputSelection?: unknown }).__fictCapturedInputSelection
+  })
+
+  it('preserves a foreign-document textarea edit for a bubbling change handler', async () => {
+    const iframe = document.createElement('iframe')
+    document.body.appendChild(iframe)
+    const doc = iframe.contentDocument
+    const view = iframe.contentWindow
+    expect(doc).not.toBeNull()
+    expect(view).not.toBeNull()
+
+    try {
+      const script = doc!.createElement('script')
+      script.id = '__FICT_SNAPSHOT__'
+      script.type = 'application/json'
+      script.textContent = JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+          s2: { id: 's2', slots: [] },
+        },
+      })
+      doc!.body.appendChild(script)
+      ;(
+        globalThis as {
+          __fictCapturedBubbledTextarea?: {
+            value: string | null
+            selectionStart: number | null
+            selectionEnd: number | null
+            selectionDirection: string | null
+            currentTargetTag: string | null
+          }
+        }
+      ).__fictCapturedBubbledTextarea = undefined
+      ;(
+        globalThis as { __fictCapturedOuterTextareaTarget?: string | null }
+      ).__fictCapturedOuterTextareaTarget = undefined
+
+      const host = doc!.createElement('div')
+      host.setAttribute('data-fict-s', 's1')
+      host.setAttribute(
+        'data-fict-h',
+        'data:text/javascript,export default null#__fict_r_bubbled_textarea',
+      )
+      host.setAttribute(
+        'on:change',
+        'data:text/javascript,export function capture(scopeId,event){globalThis.__fictCapturedBubbledTextarea={value:event.target?.value??null,selectionStart:event.target?.selectionStart??null,selectionEnd:event.target?.selectionEnd??null,selectionDirection:event.target?.selectionDirection??null,currentTargetTag:event.currentTarget?.localName??null}}#capture',
+      )
+
+      __fictRegisterResume('__fict_r_bubbled_textarea', (_scopeId, node) => {
+        const textarea =
+          node && typeof (node as Element).querySelector === 'function'
+            ? (node as Element).querySelector('textarea')
+            : null
+        if (textarea) {
+          ;(textarea as HTMLTextAreaElement).value = 'server'
+          ;(textarea as HTMLTextAreaElement).setSelectionRange(0, 0, 'none')
+        }
+      })
+
+      const textarea = doc!.createElement('textarea')
+      expect(textarea instanceof HTMLTextAreaElement).toBe(false)
+      textarea.value = 'leftright'
+      host.appendChild(textarea)
+      const shadowBoundary = doc!.createElement('section')
+      shadowBoundary.setAttribute('data-fict-s', 's2')
+      shadowBoundary.setAttribute(
+        'on:change',
+        'data:text/javascript,export function capture(scopeId,event){globalThis.__fictCapturedOuterTextareaTarget=event.target?.localName??null}#capture',
+      )
+      const shadowRoot = shadowBoundary.attachShadow({ mode: 'open' })
+      shadowRoot.appendChild(host)
+      doc!.body.appendChild(shadowBoundary)
+
+      installResumableLoader({ document: doc!, events: ['change'], prefetch: false })
+
+      textarea.value = 'leftXright'
+      textarea.setSelectionRange(4, 5, 'backward')
+      textarea.dispatchEvent(
+        new view!.Event('change', { bubbles: true, cancelable: true, composed: true }),
+      )
+      await waitForPendingHandlers()
+
+      expect(
+        (
+          globalThis as {
+            __fictCapturedBubbledTextarea?: {
+              value: string | null
+              selectionStart: number | null
+              selectionEnd: number | null
+              selectionDirection: string | null
+              currentTargetTag: string | null
+            }
+          }
+        ).__fictCapturedBubbledTextarea,
+      ).toEqual({
+        value: 'leftXright',
+        selectionStart: 4,
+        selectionEnd: 5,
+        selectionDirection: 'backward',
+        currentTargetTag: 'div',
+      })
+      expect(textarea.value).toBe('leftXright')
+      expect(textarea.selectionStart).toBe(4)
+      expect(textarea.selectionEnd).toBe(5)
+      expect(textarea.selectionDirection).toBe('backward')
+      expect(
+        (globalThis as { __fictCapturedOuterTextareaTarget?: string | null })
+          .__fictCapturedOuterTextareaTarget,
+      ).toBe('section')
+    } finally {
+      iframe.remove()
+      delete (globalThis as { __fictCapturedBubbledTextarea?: unknown })
+        .__fictCapturedBubbledTextarea
+      delete (globalThis as { __fictCapturedOuterTextareaTarget?: unknown })
+        .__fictCapturedOuterTextareaTarget
+    }
   })
 
   it('preserves contenteditable markup and selection across first-event hydration', async () => {
