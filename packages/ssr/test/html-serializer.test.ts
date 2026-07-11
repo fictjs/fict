@@ -76,7 +76,25 @@ describe('SSR HTML serializer DOM name validation', () => {
       childNodes: [],
     } as unknown as Element
 
-    expect(serializeHtmlNode(element)).toBe('<fict:item />')
+    expect(serializeHtmlNode(element)).toBe('<fict:item></fict:item>')
+  })
+
+  it('keeps empty namespaced nodes from swallowing later HTML siblings', () => {
+    const { document } = parseHTML('<!doctype html><html><body></body></html>')
+    const container = document.createElement('div')
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+    const sibling = document.createElement('span')
+    sibling.textContent = 'after'
+    container.append(circle, sibling)
+
+    const html = serializeHtmlNode(container)
+    const reparsed = parseHTML(`<!doctype html><html><body>${html}</body></html>`).document
+    const reparsedContainer = reparsed.body.firstElementChild!
+
+    expect(html).toContain('<circle></circle><span>after</span>')
+    expect(reparsedContainer.childNodes).toHaveLength(2)
+    expect(reparsedContainer.lastElementChild?.localName).toBe('span')
+    expect(reparsedContainer.lastElementChild?.parentElement).toBe(reparsedContainer)
   })
 })
 

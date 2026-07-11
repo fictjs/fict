@@ -114,10 +114,6 @@ function serializeElement(element: Element): string {
     return `${html}>`
   }
 
-  if (!isHtml && element.childNodes.length === 0) {
-    return `${html} />`
-  }
-
   html += '>'
   const childSource =
     isHtml && tagName.toLowerCase() === 'template' && 'content' in element
