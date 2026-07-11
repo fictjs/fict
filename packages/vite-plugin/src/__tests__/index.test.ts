@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
+import { resolvePackageModuleMetadata } from '@fictjs/compiler'
 import { build, createServer, resolveConfig, type Rollup, type TransformResult } from 'vite'
 import { describe, it, expect, vi } from 'vitest'
 
@@ -3299,6 +3300,132 @@ describe('fict vite-plugin', () => {
     } finally {
       await rm(root, { recursive: true, force: true })
     }
+  })
+
+  it('preserves existing subpath metadata when publishing only a root entry', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-library-merge-root-'))
+    const packageDir = path.join(root, 'node_modules', 'fict-hook-lib')
+    const importer = path.join(root, 'src', 'consumer.ts')
+    const pkg: Record<string, unknown> = {
+      name: 'fict-hook-lib',
+      fict: {
+        metadataVersion: 1,
+        exports: {
+          '.': './meta/stale-root.json',
+          './legacy': './meta/legacy.json',
+        },
+      },
+    }
+
+    try {
+      expect(
+        __fictVitePluginInternals.applyFictPackageMappings(
+          pkg,
+          new Map([['.', './dist/index.fict.meta.json']]),
+        ),
+      ).toBe(true)
+      expect(pkg.fict).toEqual({
+        metadataVersion: 1,
+        metadata: './dist/index.fict.meta.json',
+        exports: { './legacy': './meta/legacy.json' },
+      })
+
+      await mkdir(path.join(packageDir, 'dist'), { recursive: true })
+      await mkdir(path.join(packageDir, 'meta'), { recursive: true })
+      await mkdir(path.dirname(importer), { recursive: true })
+      await writeFile(path.join(packageDir, 'package.json'), JSON.stringify(pkg))
+      await writeFile(
+        path.join(packageDir, 'dist', 'index.fict.meta.json'),
+        JSON.stringify({ exports: {}, hooks: { useRoot: { directAccessor: 'signal' } } }),
+      )
+      await writeFile(
+        path.join(packageDir, 'meta', 'legacy.json'),
+        JSON.stringify({ exports: {}, hooks: { useLegacy: { directAccessor: 'signal' } } }),
+      )
+
+      expect(
+        resolvePackageModuleMetadata('fict-hook-lib', importer, { moduleMetadata: new Map() }),
+      ).toMatchObject({ hooks: { useRoot: { directAccessor: 'signal' } } })
+      expect(
+        resolvePackageModuleMetadata('fict-hook-lib/legacy', importer, {
+          moduleMetadata: new Map(),
+        }),
+      ).toMatchObject({ hooks: { useLegacy: { directAccessor: 'signal' } } })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves existing root metadata when publishing only a subpath entry', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-library-merge-subpath-'))
+    const packageDir = path.join(root, 'node_modules', 'fict-hook-lib')
+    const importer = path.join(root, 'src', 'consumer.ts')
+    const pkg: Record<string, unknown> = {
+      name: 'fict-hook-lib',
+      fict: {
+        metadataVersion: 1,
+        metadata: './meta/root.json',
+      },
+    }
+
+    try {
+      expect(
+        __fictVitePluginInternals.applyFictPackageMappings(
+          pkg,
+          new Map([['./hooks', './dist/hooks.fict.meta.json']]),
+        ),
+      ).toBe(true)
+      expect(pkg.fict).toEqual({
+        metadataVersion: 1,
+        metadata: './meta/root.json',
+        exports: { './hooks': './dist/hooks.fict.meta.json' },
+      })
+
+      await mkdir(path.join(packageDir, 'dist'), { recursive: true })
+      await mkdir(path.join(packageDir, 'meta'), { recursive: true })
+      await mkdir(path.dirname(importer), { recursive: true })
+      await writeFile(path.join(packageDir, 'package.json'), JSON.stringify(pkg))
+      await writeFile(
+        path.join(packageDir, 'meta', 'root.json'),
+        JSON.stringify({ exports: {}, hooks: { useRoot: { directAccessor: 'signal' } } }),
+      )
+      await writeFile(
+        path.join(packageDir, 'dist', 'hooks.fict.meta.json'),
+        JSON.stringify({ exports: {}, hooks: { useHooks: { directAccessor: 'signal' } } }),
+      )
+
+      expect(
+        resolvePackageModuleMetadata('fict-hook-lib', importer, { moduleMetadata: new Map() }),
+      ).toMatchObject({ hooks: { useRoot: { directAccessor: 'signal' } } })
+      expect(
+        resolvePackageModuleMetadata('fict-hook-lib/hooks', importer, {
+          moduleMetadata: new Map(),
+        }),
+      ).toMatchObject({ hooks: { useHooks: { directAccessor: 'signal' } } })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('migrates legacy root metadata when publishing only a subpath entry', () => {
+    const pkg: Record<string, unknown> = {
+      fictMetadata: './meta/root.json',
+      fict: { metadataVersion: 1 },
+    }
+
+    expect(
+      __fictVitePluginInternals.applyFictPackageMappings(
+        pkg,
+        new Map([['./hooks', './dist/hooks.fict.meta.json']]),
+      ),
+    ).toBe(true)
+    expect(pkg).toEqual({
+      fict: {
+        metadataVersion: 1,
+        metadata: './meta/root.json',
+        exports: { './hooks': './dist/hooks.fict.meta.json' },
+      },
+    })
   })
 
   it('publishes every package subpath that targets the same entry chunk', async () => {

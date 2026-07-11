@@ -2499,15 +2499,33 @@ function applyFictPackageMappings(
     pkg.fict && typeof pkg.fict === 'object' && !Array.isArray(pkg.fict)
       ? { ...(pkg.fict as Record<string, unknown>) }
       : {}
+  if (typeof existingFict.metadata !== 'string' && typeof pkg.fictMetadata === 'string') {
+    existingFict.metadata = pkg.fictMetadata
+  }
+  const existingExports =
+    existingFict.exports &&
+    typeof existingFict.exports === 'object' &&
+    !Array.isArray(existingFict.exports)
+      ? { ...(existingFict.exports as Record<string, unknown>) }
+      : {}
+  const sortedExports = (exports: Record<string, unknown>): Record<string, unknown> =>
+    Object.fromEntries(Object.entries(exports).sort(([a], [b]) => a.localeCompare(b)))
 
   if (mappings.size === 1 && mappings.has('.')) {
     existingFict.metadata = mappings.get('.')
-    delete existingFict.exports
+    // `fict.exports['.']` takes precedence over `fict.metadata` in consumers.
+    // Remove only that stale root mapping while preserving independently built subpaths.
+    delete existingExports['.']
+    if (Object.keys(existingExports).length > 0) {
+      existingFict.exports = sortedExports(existingExports)
+    } else {
+      delete existingFict.exports
+    }
   } else {
-    existingFict.exports = Object.fromEntries(
-      Array.from(mappings.entries()).sort(([a], [b]) => a.localeCompare(b)),
-    )
-    delete existingFict.metadata
+    for (const [subpath, metadataPath] of mappings) {
+      existingExports[subpath] = metadataPath
+    }
+    existingFict.exports = sortedExports(existingExports)
   }
 
   pkg.fict = existingFict
@@ -3258,6 +3276,7 @@ function computePackageMetadataCacheFingerprint(
 export const __fictVitePluginInternals = {
   computePackageMetadataCacheFingerprint,
   buildFictPackageMappingResult,
+  applyFictPackageMappings,
 }
 
 function hashString(value: string): string {
