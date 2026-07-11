@@ -2977,6 +2977,87 @@ describe('Router integration (MemoryRouter)', () => {
     }
   })
 
+  it('isolates identical fetcher keys across independent RouterProviders', async () => {
+    cleanupDataUtilities()
+    const settleFetches: Array<(response: Response) => void> = []
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      () =>
+        new Promise<Response>(resolve => {
+          settleFetches.push(resolve)
+        }),
+    )
+    const firstHistory = createMemoryHistory({ initialEntries: ['/first'] })
+    const secondHistory = createMemoryHistory({ initialEntries: ['/second'] })
+
+    try {
+      render(() => (
+        <div>
+          <RouterProvider history={firstHistory} routes={[]}>
+            <Form
+              action="/first-submit"
+              method="post"
+              navigate={false}
+              fetcherKey="shared-key"
+              data-testid="first-provider-form"
+            />
+          </RouterProvider>
+          <RouterProvider history={secondHistory} routes={[]}>
+            <Form
+              action="/second-submit"
+              method="post"
+              navigate={false}
+              fetcherKey="shared-key"
+              data-testid="second-provider-form"
+            />
+          </RouterProvider>
+        </div>
+      ))
+
+      const firstForm = screen.getByTestId('first-provider-form') as HTMLFormElement
+      const secondForm = screen.getByTestId('second-provider-form') as HTMLFormElement
+      const firstResults: unknown[] = []
+      const secondResults: unknown[] = []
+      firstForm.addEventListener('formsubmit', event => {
+        firstResults.push((event as CustomEvent<{ data: unknown }>).detail.data)
+      })
+      secondForm.addEventListener('formsubmit', event => {
+        secondResults.push((event as CustomEvent<{ data: unknown }>).detail.data)
+      })
+
+      firstForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      secondForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+
+      await act(async () => {
+        settleFetches[0]?.(
+          new Response(JSON.stringify({ provider: 'first' }), {
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        )
+        await Promise.resolve()
+      })
+      await vi.waitFor(() => expect(firstResults).toEqual([{ provider: 'first' }]))
+      expect(secondResults).toEqual([])
+
+      await act(async () => {
+        settleFetches[1]?.(
+          new Response(JSON.stringify({ provider: 'second' }), {
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        )
+        await Promise.resolve()
+      })
+      await vi.waitFor(() => expect(secondResults).toEqual([{ provider: 'second' }]))
+      expect(firstHistory.location.pathname).toBe('/first')
+      expect(secondHistory.location.pathname).toBe('/second')
+    } finally {
+      firstHistory.destroy?.()
+      secondHistory.destroy?.()
+      fetchMock.mockRestore()
+      cleanupDataUtilities()
+    }
+  })
+
   it('reports the current navigate=false GET fetch failure through formerror', async () => {
     cleanupDataUtilities()
     const rejection = new Error('GET search failed')

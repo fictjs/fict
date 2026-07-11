@@ -28,7 +28,7 @@ import {
 } from './context'
 import { getRegisteredAction, submitActionFromForm } from './data'
 import { stripBaseIfPresent } from './router-internals'
-import type { Action, Params, To, NavigateOptions } from './types'
+import type { Action, Params, RouterContextValue, To, NavigateOptions } from './types'
 import { getExternalHref, parseURL, prependBasePath, stripBasePath } from './utils'
 
 // CSS Properties type for styles
@@ -535,20 +535,26 @@ type FormSubmitter = HTMLButtonElement | HTMLInputElement
 type HandledFormMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 const HANDLED_FORM_METHODS = new Set<HandledFormMethod>(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
-const latestFetcherSubmissions = new Map<string, symbol>()
+const latestFetcherSubmissions = new WeakMap<RouterContextValue, Map<string, symbol>>()
 
-function createSubmissionLease(key: string | undefined) {
+function createSubmissionLease(router: RouterContextValue, key: string | undefined) {
   if (key === undefined) {
     return { isCurrent: () => true, release: () => {} }
   }
 
+  let routerSubmissions = latestFetcherSubmissions.get(router)
+  if (!routerSubmissions) {
+    routerSubmissions = new Map()
+    latestFetcherSubmissions.set(router, routerSubmissions)
+  }
   const token = Symbol(key)
-  latestFetcherSubmissions.set(key, token)
+  routerSubmissions.set(key, token)
   return {
-    isCurrent: () => latestFetcherSubmissions.get(key) === token,
+    isCurrent: () => routerSubmissions.get(key) === token,
     release: () => {
-      if (latestFetcherSubmissions.get(key) === token) {
-        latestFetcherSubmissions.delete(key)
+      if (routerSubmissions.get(key) === token) {
+        routerSubmissions.delete(key)
+        if (routerSubmissions.size === 0) latestFetcherSubmissions.delete(router)
       }
     },
   }
@@ -855,7 +861,7 @@ export function Form(props: FormProps): FictNode {
     requestUrl: string,
     submissionUrl: string,
   ) {
-    const submissionLease = createSubmissionLease(submissionKey)
+    const submissionLease = createSubmissionLease(router, submissionKey)
     const options = { navigate, replace, scroll, router, submissionLease }
     const submission = action.registeredAction
       ? submitRegisteredFormAction(
