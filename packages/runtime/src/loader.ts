@@ -1043,18 +1043,18 @@ function activateSnapshotFallback(installation: LoaderInstallation): void {
   cleanupLoaderInstallation(installation)
   if (!fallback) return
 
-  let result: void | Promise<void>
+  let pending: Promise<void>
   try {
-    result = fallback(issue)
+    const result = fallback(issue)
+    if (!isPromiseLikeValue(result)) return
+    pending = Promise.resolve(result)
+      .catch(error => reportSnapshotFallbackFailure(installation, issue, error))
+      .then(() => undefined)
   } catch (error) {
     reportSnapshotFallbackFailure(installation, issue, error)
     return
   }
 
-  if (!isPromiseLikeValue(result)) return
-  const pending = Promise.resolve(result)
-    .catch(error => reportSnapshotFallbackFailure(installation, issue, error))
-    .then(() => undefined)
   pendingHandlers.add(pending)
   void pending.finally(() => pendingHandlers.delete(pending))
 }

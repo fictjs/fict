@@ -553,6 +553,67 @@ describe('resumable loader snapshot validation', () => {
     )
   })
 
+  it('reports client-render fallbacks whose then accessor throws', () => {
+    const issues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots('{invalid-json')
+    const error = new Error('fallback then getter boom')
+    const result = Object.defineProperty({}, 'then', {
+      get() {
+        throw error
+      },
+    }) as Promise<void>
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    expect(() =>
+      installResumableLoader({
+        document: doc,
+        events: [],
+        prefetch: false,
+        onSnapshotIssue: issue => issues.push(issue),
+        onSnapshotRejected: () => result,
+      }),
+    ).not.toThrow()
+
+    expect(issues).toContainEqual(
+      expect.objectContaining({ code: 'snapshot_fallback_failed', error }),
+    )
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[fict/loader] Client-render fallback failed: fallback then getter boom',
+    )
+    errorSpy.mockRestore()
+  })
+
+  it.each(['constructor', 'catch'] as const)(
+    'reports client-render fallbacks whose Promise %s accessor throws',
+    accessor => {
+      const issues: SnapshotIssue[] = []
+      const doc = createDocumentWithSnapshots('{invalid-json')
+      const error = new Error(`fallback ${accessor} getter boom`)
+      const result = Promise.resolve()
+      Object.defineProperty(result, accessor, {
+        get() {
+          throw error
+        },
+      })
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      expect(() =>
+        installResumableLoader({
+          document: doc,
+          events: [],
+          prefetch: false,
+          onSnapshotIssue: issue => issues.push(issue),
+          onSnapshotRejected: () => result,
+        }),
+      ).not.toThrow()
+
+      expect(issues).toContainEqual(
+        expect.objectContaining({ code: 'snapshot_fallback_failed', error }),
+      )
+      errorSpy.mockRestore()
+    },
+  )
+
   it('migrates older snapshot schema versions when a migration is provided', () => {
     const doc = createDocumentWithSnapshots(
       JSON.stringify({
