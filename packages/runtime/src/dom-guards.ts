@@ -4,7 +4,9 @@ function getViewFromDocument(ownerDocument?: Document | null): (Window & typeof 
 
 function getOwnerDocument(value: unknown): Document | undefined {
   if (!value || typeof value !== 'object') return undefined
-  return (value as { ownerDocument?: Document | undefined }).ownerDocument
+  const ownerDocument = (value as { ownerDocument?: Document | null }).ownerDocument
+  if (ownerDocument) return ownerDocument
+  return (value as { nodeType?: unknown }).nodeType === 9 ? (value as Document) : undefined
 }
 
 type DomConstructor<T> = abstract new (...args: never[]) => T
@@ -20,11 +22,26 @@ function hasCtor<T>(
   return typeof fromGlobal === 'function' ? (fromGlobal as unknown as DomConstructor<T>) : undefined
 }
 
+function matchesDomConstructor<T>(
+  value: object,
+  ownerDocument: Document | undefined,
+  name: string,
+): boolean | undefined {
+  const valueDocument = getOwnerDocument(value)
+  const valueCtor = hasCtor<T>(valueDocument, name)
+  if (valueCtor && value instanceof valueCtor) return true
+
+  const ownerCtor =
+    ownerDocument && ownerDocument !== valueDocument ? hasCtor<T>(ownerDocument, name) : undefined
+  if (ownerCtor && value instanceof ownerCtor) return true
+
+  return valueCtor || ownerCtor ? false : undefined
+}
+
 export function isNodeLike(value: unknown, ownerDocument?: Document): value is Node {
   if (!value || typeof value !== 'object') return false
-  const doc = ownerDocument ?? getOwnerDocument(value)
-  const NodeCtor = hasCtor<Node>(doc, 'Node')
-  if (NodeCtor) return value instanceof NodeCtor
+  const matchesCtor = matchesDomConstructor<Node>(value, ownerDocument, 'Node')
+  if (matchesCtor !== undefined) return matchesCtor
   return (
     typeof (value as { nodeType?: unknown }).nodeType === 'number' &&
     typeof (value as { nodeName?: unknown }).nodeName === 'string'
@@ -33,18 +50,16 @@ export function isNodeLike(value: unknown, ownerDocument?: Document): value is N
 
 export function isElementLike(value: unknown, ownerDocument?: Document): value is Element {
   if (!value || typeof value !== 'object') return false
-  const doc = ownerDocument ?? getOwnerDocument(value)
-  const ElementCtor = hasCtor<Element>(doc, 'Element')
-  if (ElementCtor) return value instanceof ElementCtor
+  const matchesCtor = matchesDomConstructor<Element>(value, ownerDocument, 'Element')
+  if (matchesCtor !== undefined) return matchesCtor
   return (value as { nodeType?: unknown }).nodeType === 1
 }
 
 export function isHTMLElementLike(value: unknown, ownerDocument?: Document): value is HTMLElement {
   if (!value || typeof value !== 'object') return false
-  const doc = ownerDocument ?? getOwnerDocument(value)
-  const HTMLElementCtor = hasCtor<HTMLElement>(doc, 'HTMLElement')
-  if (HTMLElementCtor) return value instanceof HTMLElementCtor
-  return isElementLike(value, doc) && 'style' in value
+  const matchesCtor = matchesDomConstructor<HTMLElement>(value, ownerDocument, 'HTMLElement')
+  if (matchesCtor !== undefined) return matchesCtor
+  return isElementLike(value, ownerDocument) && 'style' in value
 }
 
 export function isDocumentFragmentLike(
@@ -52,16 +67,18 @@ export function isDocumentFragmentLike(
   ownerDocument?: Document,
 ): value is DocumentFragment {
   if (!value || typeof value !== 'object') return false
-  const doc = ownerDocument ?? getOwnerDocument(value)
-  const FragmentCtor = hasCtor<DocumentFragment>(doc, 'DocumentFragment')
-  if (FragmentCtor) return value instanceof FragmentCtor
+  const matchesCtor = matchesDomConstructor<DocumentFragment>(
+    value,
+    ownerDocument,
+    'DocumentFragment',
+  )
+  if (matchesCtor !== undefined) return matchesCtor
   return (value as { nodeType?: unknown }).nodeType === 11
 }
 
 export function isCommentLike(value: unknown, ownerDocument?: Document): value is Comment {
   if (!value || typeof value !== 'object') return false
-  const doc = ownerDocument ?? getOwnerDocument(value)
-  const CommentCtor = hasCtor<Comment>(doc, 'Comment')
-  if (CommentCtor) return value instanceof CommentCtor
+  const matchesCtor = matchesDomConstructor<Comment>(value, ownerDocument, 'Comment')
+  if (matchesCtor !== undefined) return matchesCtor
   return (value as { nodeType?: unknown }).nodeType === 8
 }

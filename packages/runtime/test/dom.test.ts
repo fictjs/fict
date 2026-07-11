@@ -85,6 +85,51 @@ describe('DOM Module', () => {
       teardown()
     })
 
+    it('adopts iframe nodes and comments into a main-document render root', () => {
+      const iframe = document.createElement('iframe')
+      document.body.appendChild(iframe)
+      const foreignDocument = iframe.contentDocument!
+      const span = foreignDocument.createElement('span')
+      const marker = foreignDocument.createComment('foreign-marker')
+      span.textContent = 'foreign'
+
+      try {
+        const teardown = render(() => [span, marker], container)
+
+        expect(container.childNodes[0]).toBe(span)
+        expect(container.childNodes[1]).toBe(marker)
+        expect(span.ownerDocument).toBe(document)
+        expect(marker.ownerDocument).toBe(document)
+        expect(container.textContent).toBe('foreign')
+        teardown()
+      } finally {
+        iframe.remove()
+      }
+    })
+
+    it('adopts main-document nodes and comments into an iframe render root', () => {
+      const iframe = document.createElement('iframe')
+      document.body.appendChild(iframe)
+      const foreignDocument = iframe.contentDocument!
+      const foreignContainer = foreignDocument.createElement('div')
+      const span = document.createElement('span')
+      const marker = document.createComment('main-marker')
+      span.textContent = 'main'
+
+      try {
+        const teardown = render(() => [span, marker], foreignContainer as unknown as HTMLElement)
+
+        expect(foreignContainer.childNodes[0]).toBe(span)
+        expect(foreignContainer.childNodes[1]).toBe(marker)
+        expect(span.ownerDocument).toBe(foreignDocument)
+        expect(marker.ownerDocument).toBe(foreignDocument)
+        expect(foreignContainer.textContent).toBe('main')
+        teardown()
+      } finally {
+        iframe.remove()
+      }
+    })
+
     it('sets data-fict-fine-grained attribute', () => {
       const teardown = render(() => document.createElement('div'), container)
 
