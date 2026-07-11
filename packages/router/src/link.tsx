@@ -642,6 +642,24 @@ function splitFormAction(action: string): Pick<ResolvedFormAction, 'pathname' | 
   return { pathname, search, hash }
 }
 
+function removeNakedIndexParam(search: string): string {
+  const params = new URLSearchParams(search)
+  const indexValues = params.getAll('index')
+  if (!indexValues.some(value => value === '')) return search
+
+  params.delete('index')
+  for (const value of indexValues) {
+    if (value !== '') params.append('index', value)
+  }
+
+  const normalized = params.toString()
+  return normalized ? `?${normalized}` : ''
+}
+
+function prependNakedIndexParam(search: string): string {
+  return search ? `?index&${search.replace(/^\?/, '')}` : '?index'
+}
+
 /**
  * Form component for action submissions
  *
@@ -659,7 +677,9 @@ export function Form(props: FormProps): FictNode {
   const hasRouteContext = hasContext(RouteContext)
 
   const resolveAction = (actionOverride?: string): ResolvedFormAction => {
-    const actionValue = actionOverride ?? props.action ?? '.'
+    const configuredAction = props.action
+    const isActionOmitted = actionOverride === undefined && configuredAction === undefined
+    const actionValue = actionOverride ?? configuredAction ?? '.'
     const directAction =
       actionOverride === undefined && typeof actionValue !== 'string' ? actionValue : undefined
     const rawAction = typeof actionValue === 'string' ? actionValue : actionValue.url
@@ -681,6 +701,17 @@ export function Form(props: FormProps): FictNode {
         : readAccessor(route.resolvePath as MaybeAccessor<(to: To) => string>)
     const pathname = resolver(action.pathname || '.')
     const base = readAccessor(router.base)
+    let search = isActionOmitted
+      ? removeNakedIndexParam(readAccessor(router.location).search)
+      : action.search
+    const match = hasRouteContext ? readAccessor(route.match) : undefined
+    if (
+      typeof actionValue === 'string' &&
+      (actionValue === '' || actionValue === '.') &&
+      match?.route.index
+    ) {
+      search = prependNakedIndexParam(search)
+    }
     const registeredAction =
       directAction ??
       getRegisteredAction(action.pathname) ??
@@ -689,9 +720,9 @@ export function Form(props: FormProps): FictNode {
 
     return {
       pathname,
-      search: action.search,
+      search,
       hash: action.hash,
-      href: prependBasePath(pathname, base) + action.search + action.hash,
+      href: prependBasePath(pathname, base) + search + action.hash,
       isExternal: false,
       registeredAction,
     }

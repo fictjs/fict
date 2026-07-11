@@ -402,6 +402,45 @@ function RelativeFormParent(props: { children?: FictNode }) {
   )
 }
 
+let defaultOwnerAction!: Action<unknown>
+let defaultOwnerSubmissionUrl = ''
+let defaultOwnerSubmission!: () => Submission<unknown> | undefined
+
+function DefaultActionOwnerLayout(props: { children?: FictNode }) {
+  return (
+    <div>
+      <Form method="post" data-testid="parent-owner-form">
+        <input name="source" value="parent" />
+      </Form>
+      {props.children}
+    </div>
+  )
+}
+
+function DefaultActionOwnerIndex() {
+  defaultOwnerSubmission = useSubmission(defaultOwnerSubmissionUrl)
+
+  return (
+    <>
+      <Form method="post" navigate={false} fetcherKey="index-owner" data-testid="index-owner-form">
+        <input name="source" value="index" />
+      </Form>
+      <Form action="." method="post" data-testid="index-dot-form" />
+      <Form action="" method="post" data-testid="index-empty-form" />
+      <Form action="save?mode=quick" method="post" data-testid="index-explicit-form" />
+      <Form action={defaultOwnerAction} data-testid="index-action-object-form" />
+      <Form method="post" navigate={false} data-testid="index-submitter-form">
+        <button type="submit" formAction="." data-testid="index-dot-submitter">
+          submit
+        </button>
+      </Form>
+      <Form method="get" data-testid="index-get-form">
+        <input name="query" value="fict" />
+      </Form>
+    </>
+  )
+}
+
 function RelativeLinkParent(props: { children?: FictNode }) {
   return (
     <div>
@@ -3145,6 +3184,133 @@ describe('Router integration (MemoryRouter)', () => {
     }
   })
 
+  it('targets parent and index route owners for omitted Form actions', async () => {
+    cleanupDataUtilities()
+    const initialPath = '/app/projects/a%2Fb'
+    const initialSearch = '?index&tab=open&index=kept'
+    const parentOwnerUrl = `${initialPath}?tab=open&index=kept`
+    const indexOwnerUrl = `${initialPath}?index&tab=open&index=kept`
+    const history = createMemoryHistory({ initialEntries: [initialPath + initialSearch] })
+    const routes: RouteDefinition[] = [
+      {
+        path: '/projects/:id',
+        component: DefaultActionOwnerLayout,
+        children: [{ index: true, component: DefaultActionOwnerIndex }],
+      },
+    ]
+    const settleFetches: Array<(response: Response) => void> = []
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      () =>
+        new Promise<Response>(resolve => {
+          settleFetches.push(resolve)
+        }),
+    )
+
+    defaultOwnerAction = action(async () => undefined, 'default owner action')
+    defaultOwnerSubmissionUrl = indexOwnerUrl
+
+    const settleFetch = async (index: number, value: string, redirect?: string) => {
+      await act(async () => {
+        settleFetches[index]?.(
+          new Response(JSON.stringify({ saved: value }), {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              ...(redirect ? { 'X-Redirect': redirect } : {}),
+            },
+          }),
+        )
+        await Promise.resolve()
+      })
+    }
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={routes} base="/app">
+          <Routes routes={routes} />
+        </RouterProvider>
+      ))
+
+      const parentForm = screen.getByTestId('parent-owner-form') as HTMLFormElement
+      const indexForm = screen.getByTestId('index-owner-form') as HTMLFormElement
+      const submitterForm = screen.getByTestId('index-submitter-form') as HTMLFormElement
+      const dotSubmitter = screen.getByTestId('index-dot-submitter') as HTMLButtonElement
+      const getForm = screen.getByTestId('index-get-form') as HTMLFormElement
+
+      expect(parentForm.getAttribute('action')).toBe(parentOwnerUrl)
+      expect(indexForm.getAttribute('action')).toBe(indexOwnerUrl)
+      expect(screen.getByTestId('index-dot-form').getAttribute('action')).toBe(
+        `${initialPath}?index`,
+      )
+      expect(screen.getByTestId('index-empty-form').getAttribute('action')).toBe(
+        `${initialPath}?index`,
+      )
+      expect(screen.getByTestId('index-explicit-form').getAttribute('action')).toBe(
+        `${initialPath}/save?mode=quick`,
+      )
+      expect(screen.getByTestId('index-action-object-form').getAttribute('action')).toBe(
+        `/app${defaultOwnerAction.url}`,
+      )
+      expect(submitterForm.getAttribute('action')).toBe(indexOwnerUrl)
+      expect(getForm.getAttribute('action')).toBe(indexOwnerUrl)
+
+      indexForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(indexOwnerUrl)
+      expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' })
+      expect(defaultOwnerSubmission()).toMatchObject({
+        key: 'index-owner',
+        state: 'submitting',
+      })
+
+      await settleFetch(0, 'index', '/must-not-navigate')
+      await vi.waitFor(() =>
+        expect(defaultOwnerSubmission()).toMatchObject({
+          key: 'index-owner',
+          state: 'idle',
+          result: { saved: 'index' },
+        }),
+      )
+      expect(history.location.pathname + history.location.search).toBe(initialPath + initialSearch)
+
+      parentForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(fetchMock.mock.calls[1]?.[0]).toBe(parentOwnerUrl)
+      expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: 'POST' })
+      await settleFetch(1, 'parent')
+
+      submitterForm.dispatchEvent(
+        new SubmitEvent('submit', {
+          bubbles: true,
+          cancelable: true,
+          submitter: dotSubmitter,
+        }),
+      )
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+      expect(fetchMock.mock.calls[2]?.[0]).toBe(`${initialPath}?index`)
+      expect(fetchMock.mock.calls[2]?.[1]).toMatchObject({ method: 'POST' })
+      await settleFetch(2, 'submitter')
+
+      getForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      await vi.waitFor(() => expect(history.location.search).toBe('?query=fict'))
+      expect(history.location.pathname).toBe(initialPath)
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+      await vi.waitFor(() =>
+        expect(screen.getByTestId('parent-owner-form').getAttribute('action')).toBe(
+          `${initialPath}?query=fict`,
+        ),
+      )
+      expect(screen.getByTestId('index-owner-form').getAttribute('action')).toBe(
+        `${initialPath}?index&query=fict`,
+      )
+    } finally {
+      fetchMock.mockRestore()
+      history.destroy?.()
+      cleanupDataUtilities()
+    }
+  })
+
   it.each([
     { method: 'get' as const, relative: 'route' as const, label: 'route-relative GET' },
     { method: 'get' as const, relative: 'path' as const, label: 'path-relative GET' },
@@ -3213,10 +3379,20 @@ describe('Router integration (MemoryRouter)', () => {
   })
 
   it.each([
-    { action: 'save', expectedPath: '/form/save', label: 'relative action' },
-    { action: undefined, expectedPath: '/form', label: 'omitted action' },
+    {
+      action: 'save',
+      expectedAction: '/form/save',
+      expectedPath: '/form/save',
+      label: 'relative action',
+    },
+    {
+      action: undefined,
+      expectedAction: '/form?tab=open',
+      expectedPath: '/form',
+      label: 'omitted action',
+    },
   ])('falls back to the current pathname for a Form $label without RouteContext', async case_ => {
-    const history = createMemoryHistory({ initialEntries: ['/form'] })
+    const history = createMemoryHistory({ initialEntries: ['/form?tab=open'] })
 
     try {
       render(() => (
@@ -3228,7 +3404,7 @@ describe('Router integration (MemoryRouter)', () => {
       ))
 
       const form = screen.getByTestId('provider-form') as HTMLFormElement
-      expect(form.getAttribute('action')).toBe(case_.expectedPath)
+      expect(form.getAttribute('action')).toBe(case_.expectedAction)
 
       form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
       await vi.waitFor(() => expect(history.location.pathname).toBe(case_.expectedPath))
