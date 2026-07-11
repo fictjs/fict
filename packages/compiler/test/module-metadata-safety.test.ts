@@ -25,6 +25,30 @@ import {
 import type { ModuleReactiveMetadata } from '../src/types'
 
 describe('module metadata safety', () => {
+  it.each(['module#physical.ts', 'module?physical.ts'])(
+    'keeps metadata keyed by the existing physical filename %s',
+    fileName => {
+      const baseDir = path.join(process.cwd(), '__fict_metadata_physical_url_name__')
+      const filePath = path.join(baseDir, fileName)
+      const moduleMetadata = new Map<string, ModuleReactiveMetadata>()
+      const metadata: ModuleReactiveMetadata = { exports: { value: 'signal' } }
+
+      try {
+        mkdirSync(baseDir, { recursive: true })
+        writeFileSync(filePath, 'export const value = 1', 'utf8')
+        setModuleMetadata(filePath, metadata, {
+          emitModuleMetadata: false,
+          moduleMetadata,
+        })
+
+        expect(moduleMetadata.get(filePath)).toEqual(metadata)
+        expect(moduleMetadata.size).toBe(1)
+      } finally {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+    },
+  )
+
   it('invalidates one module without leaving its global metadata reusable', () => {
     clearModuleMetadata()
     const filename = path.resolve('__fict_metadata_single_invalidation__.ts')

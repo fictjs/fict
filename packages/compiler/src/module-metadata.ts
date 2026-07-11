@@ -127,7 +127,7 @@ function isVirtualFileName(fileName: string): boolean {
 }
 
 function normalizeFileName(fileName: string): string {
-  let normalized = stripUrlLikeSuffix(fileName)
+  let normalized = stripUrlLikeSuffix(fileName, true)
   if (normalized.startsWith('/@fs/')) {
     const fsPath = normalized.slice('/@fs/'.length)
     normalized = fsPath.startsWith('/') || isWindowsDrivePath(fsPath) ? fsPath : `/${fsPath}`
@@ -142,7 +142,17 @@ function normalizeFileName(fileName: string): string {
   return path.resolve(normalized)
 }
 
-function stripUrlLikeSuffix(value: string): string {
+function resolvePhysicalFileNameCandidate(candidate: string): string | null {
+  if (candidate.startsWith('file://')) {
+    // URL search/hash characters are suffixes; physical delimiters are encoded.
+    return null
+  }
+  const fileName = candidate.startsWith('/@fs/') ? candidate.slice('/@fs/'.length) : candidate
+  const normalized = path.resolve(fileName)
+  return pathIsFile(normalized) ? normalized : null
+}
+
+function stripUrlLikeSuffix(value: string, preserveExistingFile = false): string {
   let normalized = value
   const queryStart = normalized.indexOf('?')
   const fragmentStart = normalized.indexOf('#')
@@ -152,6 +162,18 @@ function stripUrlLikeSuffix(value: string): string {
       : fragmentStart === -1
         ? queryStart
         : Math.min(queryStart, fragmentStart)
+  if (preserveExistingFile && suffixStart !== -1) {
+    const candidateEnds = [value.length]
+    for (let index = value.length - 1; index >= 0; index--) {
+      if (value[index] === '?' || value[index] === '#') candidateEnds.push(index)
+    }
+    for (const end of candidateEnds) {
+      const candidate = value.slice(0, end)
+      if (candidate && resolvePhysicalFileNameCandidate(candidate)) {
+        return candidate
+      }
+    }
+  }
   if (suffixStart !== -1) {
     normalized = normalized.slice(0, suffixStart)
   }

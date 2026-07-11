@@ -3146,6 +3146,111 @@ describe('fict vite-plugin', () => {
     },
   )
 
+  it.each(['hook#physical.ts', 'hook?physical.ts'])(
+    'keeps Vite suffixes separate from the physical filename %s',
+    async hookName => {
+      const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-physical-url-name-'))
+
+      try {
+        const hookPath = path.join(root, hookName)
+        const appPath = path.join(root, 'app.ts')
+        const hookSource = `
+          import { createSignal } from '@fictjs/runtime/advanced'
+          export function useCount() {
+            const count = createSignal(2)
+            return count
+          }
+        `
+        const appSource = `
+          import { useCount } from ${JSON.stringify(`./${hookName}`)}
+          export function App() {
+            const count = useCount()
+            return count * 2
+          }
+        `
+        await writeFile(hookPath, hookSource)
+        await writeFile(appPath, appSource)
+
+        const plugin = getTestPlugin({
+          cache: false,
+          useTypeScriptProject: false,
+          functionSplitting: false,
+        })
+        plugin.configResolved?.({ ...mockBuildConfig, root })
+        const context = {
+          error: vi.fn(),
+          warn: vi.fn(),
+          emitFile: vi.fn(),
+          load: vi.fn(async () => null),
+        }
+
+        await plugin.transform?.call(context, hookSource, hookPath)
+        await expect(
+          plugin.transform?.call(context, 'resource replacement', `${hookPath}?raw`),
+        ).resolves.toBeNull()
+        await expect(
+          plugin.transform?.call(context, 'resource replacement', `${hookPath}?url`),
+        ).resolves.toBeNull()
+
+        const variantResult = await plugin.transform?.call(
+          context,
+          `export function useCount() { return 2 }`,
+          `${hookPath}?import`,
+        )
+        const appResult = (await plugin.transform?.call(context, appSource, appPath)) as {
+          code: string
+        }
+
+        expect(context.error).not.toHaveBeenCalled()
+        expect(variantResult).toMatchObject({ code: expect.stringContaining('return 2') })
+        expect(appResult.code).toMatch(/count\(\)\s*\*\s*2/)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it.each(['source#physical.ts', 'source?physical.ts'])(
+    'recognizes physical filename characters in /@fs/ IDs for %s',
+    async sourceName => {
+      const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-fs-url-name-'))
+
+      try {
+        const sourcePath = path.join(root, sourceName)
+        const source = `
+          import { $state } from 'fict'
+          export function useValue() {
+            const value = $state(1)
+            return value
+          }
+        `
+        await writeFile(sourcePath, source)
+
+        const plugin = getTestPlugin({
+          cache: false,
+          useTypeScriptProject: false,
+          functionSplitting: false,
+        })
+        plugin.configResolved?.({ ...mockBuildConfig, root })
+        const context = { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() }
+        const fsId = `/@fs/${sourcePath}`
+        const result = (await plugin.transform?.call(context, source, fsId)) as { code: string }
+        const passThrough = (await plugin.transform?.call(context, source, `${fsId}?import`)) as {
+          code: string
+        }
+
+        expect(context.error).not.toHaveBeenCalled()
+        expect(result.code).not.toContain('$state')
+        expect(passThrough.code).not.toContain('$state')
+        await expect(
+          plugin.transform?.call(context, 'resource replacement', `${fsId}?raw`),
+        ).resolves.toBeNull()
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+  )
+
   it('transforms fragment-suffixed imports in a Vite build', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-fragment-import-'))
 

@@ -60,6 +60,53 @@ async function buildFixture(
   }))
 }
 
+async function buildMacroFixture(root: string, entryName: string): Promise<BuildArtifact[]> {
+  const sourceDir = path.join(root, 'src')
+  const entry = path.join(sourceDir, entryName)
+  await mkdir(sourceDir, { recursive: true })
+  await writeFile(
+    entry,
+    `
+      import { $state } from 'fict'
+
+      export function Counter() {
+        let count = $state(0)
+        return <button onClick$={() => count++}>{count}</button>
+      }
+    `,
+  )
+
+  const result = await build({
+    root,
+    configFile: false,
+    logLevel: 'silent',
+    plugins: [
+      fict({
+        cache: false,
+        useTypeScriptProject: false,
+        functionSplitting: true,
+        resumable: true,
+      }),
+    ],
+    build: {
+      write: false,
+      lib: { entry, formats: ['es'], fileName: () => 'app.js' },
+      rollupOptions: {
+        external: id => id === 'fict' || id.startsWith('fict/'),
+        output: { chunkFileNames: 'chunks/[name].js' },
+      },
+    },
+  })
+  const outputs = (Array.isArray(result) ? result : [result]).flatMap(output =>
+    'output' in output ? output.output : [],
+  ) as Rollup.OutputFile[]
+
+  return outputs.map(output => ({
+    fileName: output.fileName,
+    source: output.type === 'chunk' ? output.code : String(output.source),
+  }))
+}
+
 describe('function splitting build identity', () => {
   it('keeps manually registered handler IDs opaque and loadable', () => {
     const sourceModule = String.raw`C:\private build\App #?.tsx`
@@ -145,6 +192,28 @@ describe('function splitting build identity', () => {
           .join('\n')
         expect(emittedChunks).not.toContain(root)
         expect(emittedChunks).not.toContain(entryName)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it.each(['Counter#physical.tsx', 'Counter?physical.tsx'])(
+    'compiles macros and splits handlers from the physical file %s',
+    async entryName => {
+      const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-handler-url-name-')))
+      try {
+        const artifacts = await buildMacroFixture(root, entryName)
+        const chunks = artifacts
+          .filter(artifact => artifact.fileName !== 'fict.manifest.json')
+          .map(artifact => artifact.source)
+          .join('\n')
+
+        expect(chunks).not.toContain('$state')
+        expect(chunks).toContain('virtual:fict-handler:')
+        expect(artifacts.some(artifact => artifact.fileName.includes('handler-__fict_e0'))).toBe(
+          true,
+        )
       } finally {
         await rm(root, { recursive: true, force: true })
       }

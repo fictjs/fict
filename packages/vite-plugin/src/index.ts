@@ -688,7 +688,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           typeof requestedId === 'string' &&
           (requestedId.startsWith(VIRTUAL_HANDLER_PREFIX) ||
             requestedId.startsWith(VIRTUAL_HANDLER_RESOLVE_PREFIX) ||
-            shouldCompileModule(stripQuery(requestedId)))
+            shouldCompileModule(stripQuery(requestedId, { root: config?.root })))
         if (kind === 'container' && !trusted && targetsFict) {
           throw new Error(
             '[fict] A direct dev transform cannot start while a pre-HMR request is ' +
@@ -853,13 +853,13 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     ) {
       return false
     }
-    const relativePath = path.relative(boundary.root, stripQuery(filename))
+    const relativePath = path.relative(boundary.root, stripQuery(filename, { root: config?.root }))
     const [outputDir] = relativePath.split(path.sep)
     return outputDir === 'dist' || outputDir === 'build'
   }
 
   const shouldCompileModule = (id: string): boolean =>
-    shouldTransform(id, transformFilter) && !isFrameworkBuildArtifact(id)
+    shouldTransform(id, transformFilter, config?.root) && !isFrameworkBuildArtifact(id)
 
   const isTypeScriptConfigDependency = (state: MetadataTransformState, file: string): boolean =>
     state.tsConfigDependencies.has(normalizeFileName(file, config?.root)) ||
@@ -886,7 +886,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       importers?: Iterable<unknown>
     }[],
   ): boolean => {
-    if (shouldTransform(file, transformFilter)) return true
+    if (shouldTransform(file, transformFilter, config?.root)) return true
     const queue: unknown[] = [...modules]
     const seen = new Set<object>()
     while (queue.length > 0) {
@@ -897,7 +897,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         id?: string | null
         importers?: Iterable<unknown>
       }
-      if (module.id && shouldCompileModule(stripQuery(module.id))) return true
+      if (module.id && shouldCompileModule(stripQuery(module.id, { root: config?.root }))) {
+        return true
+      }
       if (module.importers) queue.push(...module.importers)
     }
     return false
@@ -935,7 +937,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   ): ModuleReactiveMetadata | null | undefined => {
     const userResolved = compilerOptions.resolveModuleMetadata?.(source, importer)
     if (userResolved !== undefined) return userResolved
-    if (shouldSkipMetadataForModuleQuery(source)) return undefined
+    if (
+      shouldSkipMetadataForModuleQuery(source, {
+        root: config?.root,
+        importer,
+      })
+    ) {
+      return undefined
+    }
     if (!importer) return undefined
 
     const importerFile = normalizeFileName(importer, config?.root)
@@ -1050,14 +1059,22 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     source: string,
     importer: string,
   ): Promise<{ filename: string; loadOptions: MetadataLoadOptions } | null> => {
-    if (shouldSkipMetadataForModuleQuery(source)) return null
+    if (
+      shouldSkipMetadataForModuleQuery(source, {
+        root: config?.root,
+        importer,
+      })
+    ) {
+      return null
+    }
     if (context.resolve) {
       const resolved = await context.resolve(source, importer, { skipSelf: true })
       if (resolved && !resolved.external && !isInternalModuleId(resolved.id)) {
-        if (shouldSkipMetadataForModuleQuery(resolved.id)) return null
-        const resolvedFile = resolveExistingModuleFile(stripQuery(resolved.id))
+        const resolvedParts = splitModuleId(resolved.id, { root: config?.root })
+        if (shouldSkipMetadataForModuleSuffix(resolvedParts.suffix)) return null
+        const resolvedFile = resolveExistingModuleFile(resolvedParts.filename)
         if (resolvedFile) {
-          const canonicalId = stripQuery(resolved.id)
+          const canonicalId = resolvedParts.filename
           return {
             filename: normalizeFileName(resolvedFile, config?.root),
             loadOptions: canonicalId === resolved.id ? resolved : { ...resolved, id: canonicalId },
@@ -1612,8 +1629,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     },
 
     async transform(code: string, id: string): Promise<TransformResult | null> {
-      if (shouldSkipMetadataForModuleQuery(id)) return null
-      const filename = stripQuery(id)
+      const moduleId = splitModuleId(id, { root: config?.root })
+      if (shouldSkipMetadataForModuleSuffix(moduleId.suffix)) return null
+      const filename = moduleId.filename
 
       // Skip non-matching files
       if (!shouldCompileModule(filename)) {
@@ -1621,9 +1639,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       }
 
       const normalizedFilename = normalizeFileName(filename, config?.root)
-      const isPassThroughVariant = filename !== id
+      const isPassThroughVariant = moduleId.suffix !== ''
       const cacheIdentity = isPassThroughVariant
-        ? `${normalizedFilename}${id.slice(filename.length)}`
+        ? `${normalizedFilename}${moduleId.suffix}`
         : filename
       const metadataContext = this as MetadataResolveContext
       const state = getTransformInvocationState(metadataContext)
@@ -1927,7 +1945,11 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           : environments.some(environment =>
               isPackageMetadataDependency(getEnvironmentTransformState(environment), file),
             )
-      if (!tsConfigChanged && !packageMetadataChanged && !shouldTransform(file, transformFilter)) {
+      if (
+        !tsConfigChanged &&
+        !packageMetadataChanged &&
+        !shouldTransform(file, transformFilter, config?.root)
+      ) {
         return undefined
       }
 
@@ -2016,9 +2038,13 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
 /**
  * Check if a file should be transformed based on include/exclude patterns
  */
-function shouldTransform(id: string, filter: ReturnType<typeof createFilter>): boolean {
+function shouldTransform(
+  id: string,
+  filter: ReturnType<typeof createFilter>,
+  root?: string,
+): boolean {
   // Normalize path separators
-  const withoutQuery = stripQuery(id)
+  const withoutQuery = stripQuery(id, { root })
   if (isInternalModuleId(withoutQuery) || isTypeScriptDeclarationFile(withoutQuery)) {
     return false
   }
@@ -2082,13 +2108,88 @@ function isInternalModuleId(id: string): boolean {
   )
 }
 
-/** Remove URL query/fragment suffixes while preserving leading package-import `#` specifiers. */
-function stripQuery(id: string): string {
+interface SplitModuleIdOptions {
+  root?: string | undefined
+  importer?: string | undefined
+}
+
+interface SplitModuleIdResult {
+  filename: string
+  suffix: string
+}
+
+function resolvePhysicalModuleCandidate(
+  candidate: string,
+  options: SplitModuleIdOptions,
+): string | null {
+  const candidates: string[] = []
+
+  if (candidate.startsWith('/@fs/')) {
+    candidates.push(candidate.slice('/@fs/'.length))
+  } else if (candidate.startsWith('file://')) {
+    // URL search/hash delimiters are unambiguously suffixes. Physical `?` / `#`
+    // characters in a file URL are percent-encoded and therefore need no probing.
+    return null
+  } else if (path.isAbsolute(candidate)) {
+    candidates.push(candidate)
+    if (options.root && candidate.startsWith('/')) {
+      candidates.push(path.resolve(options.root, `.${candidate}`))
+    }
+  } else if (candidate.startsWith('.')) {
+    if (options.importer) {
+      const importer = normalizeFileName(options.importer, options.root)
+      candidates.push(path.resolve(path.dirname(importer), candidate))
+    } else if (options.root) {
+      candidates.push(path.resolve(options.root, candidate))
+    }
+  }
+
+  for (const file of candidates) {
+    if (existsSync(file)) return file
+  }
+  return null
+}
+
+function findSyntacticModuleSuffixStart(id: string): number {
   const queryStart = id.indexOf('?')
   const fragmentStart = id.indexOf('#', id.startsWith('#') ? 1 : 0)
-  if (queryStart === -1) return fragmentStart === -1 ? id : id.slice(0, fragmentStart)
-  if (fragmentStart === -1) return id.slice(0, queryStart)
-  return id.slice(0, Math.min(queryStart, fragmentStart))
+  if (queryStart === -1) return fragmentStart === -1 ? id.length : fragmentStart
+  if (fragmentStart === -1) return queryStart
+  return Math.min(queryStart, fragmentStart)
+}
+
+/**
+ * Split a module request without mistaking legal `?` / `#` filename characters for
+ * Vite URL suffixes. The longest existing filesystem prefix wins, so
+ * `/file?name.ts?raw` resolves to the physical `/file?name.ts` plus `?raw`.
+ */
+function splitModuleId(id: string, options: SplitModuleIdOptions = {}): SplitModuleIdResult {
+  const syntacticSuffixStart = findSyntacticModuleSuffixStart(id)
+  if (syntacticSuffixStart === id.length) return { filename: id, suffix: '' }
+
+  const candidateEnds = [id.length]
+  for (let index = id.length - 1; index >= 0; index--) {
+    const character = id[index]
+    if ((character === '?' || character === '#') && !(character === '#' && index === 0)) {
+      candidateEnds.push(index)
+    }
+  }
+
+  for (const end of candidateEnds) {
+    const filename = id.slice(0, end)
+    if (!filename || !resolvePhysicalModuleCandidate(filename, options)) continue
+    return { filename, suffix: id.slice(end) }
+  }
+
+  return {
+    filename: id.slice(0, syntacticSuffixStart),
+    suffix: id.slice(syntacticSuffixStart),
+  }
+}
+
+/** Remove a Vite URL query/fragment while preserving physical filename characters. */
+function stripQuery(id: string, options?: SplitModuleIdOptions): string {
+  return splitModuleId(id, options).filename
 }
 
 function normalizeCacheOptions(
@@ -2124,7 +2225,7 @@ function normalizeLibraryOptions(library: FictPluginOptions['library']): Normali
 }
 
 function normalizeFileName(id: string, root?: string): string {
-  let clean = stripQuery(id)
+  let clean = stripQuery(id, { root })
   if (clean.startsWith('/@fs/')) {
     clean = clean.slice('/@fs/'.length)
   }
@@ -2969,11 +3070,14 @@ function resolveAliasedPackageSource(source: string, aliases: AliasEntry[]): str
   return isBarePackageSource(source) ? source : null
 }
 
-function shouldSkipMetadataForModuleQuery(source: string): boolean {
-  const queryStart = source.indexOf('?')
-  if (queryStart === -1) return false
-  const fragmentStart = source.indexOf('#', queryStart + 1)
-  const query = source.slice(queryStart + 1, fragmentStart === -1 ? undefined : fragmentStart)
+function shouldSkipMetadataForModuleQuery(source: string, options?: SplitModuleIdOptions): boolean {
+  return shouldSkipMetadataForModuleSuffix(splitModuleId(source, options).suffix)
+}
+
+function shouldSkipMetadataForModuleSuffix(suffix: string): boolean {
+  if (!suffix.startsWith('?')) return false
+  const fragmentStart = suffix.indexOf('#', 1)
+  const query = suffix.slice(1, fragmentStart === -1 ? undefined : fragmentStart)
   if (!query) return false
 
   // Vite's import/cache-busting queries preserve the JavaScript module's exports.
@@ -3244,12 +3348,15 @@ function resolveLocalModuleSource(
   aliases: AliasEntry[],
 ): string | null {
   const importerFile = normalizeFileName(importer, root)
-  if (path.isAbsolute(source)) return resolveExistingModuleFile(source)
-  if (source.startsWith('.')) {
-    return resolveExistingModuleFile(path.resolve(path.dirname(importerFile), source))
+  const sourceParts = splitModuleId(source, { root, importer: importerFile })
+  if (shouldSkipMetadataForModuleSuffix(sourceParts.suffix)) return null
+  const sourceFile = sourceParts.filename
+  if (path.isAbsolute(sourceFile)) return resolveExistingModuleFile(sourceFile)
+  if (sourceFile.startsWith('.')) {
+    return resolveExistingModuleFile(path.resolve(path.dirname(importerFile), sourceFile))
   }
 
-  const aliased = applyAlias(source, aliases)
+  const aliased = applyAlias(sourceFile, aliases)
   if (!aliased) return null
   if (path.isAbsolute(aliased)) return resolveExistingModuleFile(aliased)
   if (aliased.startsWith('.')) {
