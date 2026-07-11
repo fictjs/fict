@@ -347,9 +347,11 @@ function createRouterState(
     if (action === 'POP' && isBrowser()) {
       const scrollRestoration = getScrollRestoration()
       scrollRestoration.handleNavigation(prevLocation, newLocation, 'POP')
-    } else if (programmaticNavigation?.scroll && isBrowser()) {
+    } else if (programmaticNavigation && isBrowser()) {
       const scrollRestoration = getScrollRestoration()
-      scrollRestoration.handleNavigation(prevLocation, newLocation, action)
+      scrollRestoration.handleNavigation(prevLocation, newLocation, action, {
+        preventScrollReset: !programmaticNavigation.scroll,
+      })
     }
 
     pendingProgrammaticNavigation = null

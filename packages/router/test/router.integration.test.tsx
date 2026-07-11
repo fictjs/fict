@@ -21,6 +21,7 @@ import {
   Form,
   Navigate,
   Redirect,
+  clearAllScrollPositions,
   type History,
   type NavigateOptions,
   type RouteDefinition,
@@ -1902,6 +1903,63 @@ describe('Router integration (MemoryRouter)', () => {
       expect(scrollToMock).toHaveBeenCalledTimes(1)
     } finally {
       requestAnimationFrameMock.mockRestore()
+      history.destroy?.()
+    }
+  })
+
+  it('restores the outgoing position after a scroll-disabled navigation and POP', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/from'] })
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    clearAllScrollPositions()
+
+    let currentScrollX = 12
+    let currentScrollY = 345
+    const scrollXMock = vi.spyOn(window, 'scrollX', 'get').mockImplementation(() => currentScrollX)
+    const scrollYMock = vi.spyOn(window, 'scrollY', 'get').mockImplementation(() => currentScrollY)
+    const requestAnimationFrameMock = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation(callback => {
+        callback(0)
+        return 1
+      })
+    const scrollToMock = vi.mocked(window.scrollTo)
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <ObjectNavigateButton
+            testId="no-scroll-navigation"
+            to="/to"
+            options={{ scroll: false }}
+          />
+        </RouterProvider>
+      ))
+
+      scrollToMock.mockClear()
+      await act(async () => {
+        screen.getByTestId('no-scroll-navigation').click()
+      })
+      expect(history.location.pathname).toBe('/to')
+      expect(scrollToMock).not.toHaveBeenCalled()
+
+      currentScrollX = 67
+      currentScrollY = 890
+      await act(async () => {
+        history.back()
+      })
+
+      expect(history.location.pathname).toBe('/from')
+      expect(scrollToMock).toHaveBeenCalledTimes(1)
+      expect(scrollToMock).toHaveBeenLastCalledWith({
+        left: 12,
+        top: 345,
+        behavior: 'auto',
+      })
+    } finally {
+      clearAllScrollPositions()
+      requestAnimationFrameMock.mockRestore()
+      scrollYMock.mockRestore()
+      scrollXMock.mockRestore()
       history.destroy?.()
     }
   })

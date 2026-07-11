@@ -164,6 +164,7 @@ export function createScrollRestoration(options: ScrollRestorationOptions = {}) 
     from: Location | null,
     to: Location,
     action: 'PUSH' | 'REPLACE' | 'POP',
+    navigationOptions: { preventScrollReset?: boolean } = {},
   ): void {
     if (!config.enabled || !isBrowser()) return
 
@@ -187,7 +188,11 @@ export function createScrollRestoration(options: ScrollRestorationOptions = {}) 
           scrollToTop(config.behavior)
         }
       }
-    } else if ((action === 'PUSH' || action === 'REPLACE') && config.scrollToTopOnPush) {
+    } else if (
+      (action === 'PUSH' || action === 'REPLACE') &&
+      config.scrollToTopOnPush &&
+      !navigationOptions.preventScrollReset
+    ) {
       // New navigation - handle hash or scroll to top
       requestAnimationFrame(() => {
         if (to.hash) {

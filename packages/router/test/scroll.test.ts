@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   saveScrollPosition,
+  getSavedScrollPosition,
   clearScrollPosition,
   clearAllScrollPositions,
   createScrollRestoration,
@@ -139,6 +140,43 @@ describe('createScrollRestoration', () => {
       // Both should not throw, but disabled one should do nothing
       expect(() => enabledManager.handleNavigation(null, location, 'PUSH')).not.toThrow()
       expect(() => disabledManager.handleNavigation(null, location, 'PUSH')).not.toThrow()
+    })
+
+    it('saves the outgoing position without resetting a prevented PUSH', () => {
+      const scrollXMock = vi.spyOn(window, 'scrollX', 'get').mockReturnValue(18)
+      const scrollYMock = vi.spyOn(window, 'scrollY', 'get').mockReturnValue(240)
+      const requestAnimationFrameMock = vi.spyOn(window, 'requestAnimationFrame')
+      const manager = createScrollRestoration()
+      const from = { pathname: '/from', search: '', hash: '', state: null, key: 'from-key' }
+      const to = { pathname: '/to', search: '', hash: '', state: null, key: 'to-key' }
+
+      try {
+        requestAnimationFrameMock.mockClear()
+        manager.handleNavigation(from, to, 'PUSH', { preventScrollReset: true })
+
+        expect(getSavedScrollPosition('from-key')).toEqual({ x: 18, y: 240 })
+        expect(requestAnimationFrameMock).not.toHaveBeenCalled()
+      } finally {
+        requestAnimationFrameMock.mockRestore()
+        scrollYMock.mockRestore()
+        scrollXMock.mockRestore()
+      }
+    })
+
+    it('does not save a prevented PUSH when restoration is disabled', () => {
+      const scrollXMock = vi.spyOn(window, 'scrollX', 'get').mockReturnValue(18)
+      const scrollYMock = vi.spyOn(window, 'scrollY', 'get').mockReturnValue(240)
+      const manager = createScrollRestoration({ enabled: false })
+      const from = { pathname: '/from', search: '', hash: '', state: null, key: 'from-key' }
+      const to = { pathname: '/to', search: '', hash: '', state: null, key: 'to-key' }
+
+      try {
+        manager.handleNavigation(from, to, 'PUSH', { preventScrollReset: true })
+        expect(getSavedScrollPosition('from-key')).toBeUndefined()
+      } finally {
+        scrollYMock.mockRestore()
+        scrollXMock.mockRestore()
+      }
     })
   })
 
