@@ -1322,6 +1322,65 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
     expect(result?.code).not.toContain('./dependency.cts')
   })
 
+  it('rewrites only relative dynamic import expressions', () => {
+    const unwrapDynamicImports: PluginObj = {
+      name: 'unwrap-dynamic-imports-for-extension-test',
+      visitor: {
+        CallExpression(callPath) {
+          if (!t.isImport(callPath.node.callee)) return
+          const source = callPath.node.arguments[0]
+          if (source && t.isExpression(source)) callPath.replaceWith(source)
+        },
+        ImportExpression(importPath) {
+          importPath.replaceWith(importPath.node.source)
+        },
+      },
+    }
+    const result = transformSync(
+      `
+        globalThis.rewrittenSpecifiers = [
+          './relative.ts',
+          '../relative.mts',
+          'https://cdn.example/remote.ts',
+          'package/subpath.ts',
+          '@scope/package/subpath.cts',
+          '/absolute/path.ts',
+          'C:/absolute/path.ts',
+          'C:\\\\absolute\\\\path.ts',
+        ].map(specifier => import(specifier))
+      `,
+      {
+        filename: 'dynamic-imports.ts',
+        configFile: false,
+        babelrc: false,
+        plugins: [unwrapDynamicImports],
+        presets: [
+          [
+            fictPreset,
+            {
+              dev: false,
+              strictGuarantee: false,
+              typescriptOptions: { rewriteImportExtensions: true },
+            },
+          ],
+        ],
+      },
+    )
+    const sandbox: { rewrittenSpecifiers?: string[] } = {}
+    new Function('globalThis', result?.code ?? '')(sandbox)
+
+    expect(sandbox.rewrittenSpecifiers).toEqual([
+      './relative.js',
+      '../relative.mjs',
+      'https://cdn.example/remote.ts',
+      'package/subpath.ts',
+      '@scope/package/subpath.cts',
+      '/absolute/path.ts',
+      'C:/absolute/path.ts',
+      'C:\\absolute\\path.ts',
+    ])
+  })
+
   it('honors disallowAmbiguousJSXLike in all-extensions mode', () => {
     expect(() =>
       transformSync(`export const value = <number>input`, {

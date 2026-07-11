@@ -701,7 +701,7 @@ function createDynamicImportExtensionRewrite(
       t.binaryExpression('+', expression, t.stringLiteral('')),
       t.identifier('replace'),
     ),
-    [t.regExpLiteral('([\\\\/].*\\.[mc]?)tsx?$'), t.stringLiteral('$1js')],
+    [t.regExpLiteral('^(\\.\\.?\\/.*\\.[mc]?)tsx?$'), t.stringLiteral('$1js')],
   )
 }
 
