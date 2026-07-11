@@ -1999,6 +1999,7 @@ async function runScopeHandler(
     const resumeResult = await waitForActiveInstallation(installation, resumePromise)
     if (resumeResult === INACTIVE_INSTALLATION) return false
     if (!resumeResult.canRunHandler) {
+      restoreLatestEventControlState(installation, preservedControl)
       return false
     }
 

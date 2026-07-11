@@ -4249,6 +4249,190 @@ describe('resumable loader snapshot validation', () => {
     delete (globalThis as { __fictRetryHandlerCalls?: number }).__fictRetryHandlerCalls
   })
 
+  it('restores the latest queued edit when a resume module mutates the control and throws', async () => {
+    const tempDirectory = await mkdtemp(path.join(process.cwd(), '.fict-loader-resume-import-'))
+    const resumeModulePath = path.join(tempDirectory, 'throwing-resume.mjs')
+    const resumeModuleUrl = pathToFileURL(resumeModulePath).href
+    const issues: SnapshotIssue[] = []
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let releaseImport: (() => void) | undefined
+    const importRelease = new Promise<void>(resolve => {
+      releaseImport = resolve
+    })
+    let markImportStarted: (() => void) | undefined
+    const importStarted = new Promise<void>(resolve => {
+      markImportStarted = resolve
+    })
+
+    try {
+      await writeFile(
+        resumeModulePath,
+        [
+          'globalThis.__fictFailingResumeImportStarted()',
+          'await globalThis.__fictFailingResumeImportRelease',
+          "globalThis.__fictFailingResumeImportControl.value = 'resume-import-side-effect'",
+          "throw new Error('resume import boom')",
+          'export function resume() {}',
+        ].join('\n'),
+      )
+
+      const doc = createDocumentWithSnapshots(
+        JSON.stringify({
+          v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+          scopes: {
+            s1: { id: 's1', slots: [] },
+          },
+        }),
+      )
+      const host = doc.createElement('div')
+      host.setAttribute('data-fict-s', 's1')
+      host.setAttribute('data-fict-h', `${resumeModuleUrl}#resume`)
+      const input = doc.createElement('input')
+      input.setAttribute(
+        'on:input',
+        'data:text/javascript,export function handle(){globalThis.__fictFailingResumeImportHandlerCalls++}#handle',
+      )
+      host.appendChild(input)
+      doc.body.appendChild(host)
+      ;(
+        globalThis as {
+          __fictFailingResumeImportStarted?: () => void
+          __fictFailingResumeImportRelease?: Promise<void>
+          __fictFailingResumeImportControl?: HTMLInputElement
+          __fictFailingResumeImportHandlerCalls?: number
+        }
+      ).__fictFailingResumeImportStarted = () => markImportStarted?.()
+      ;(
+        globalThis as {
+          __fictFailingResumeImportRelease?: Promise<void>
+        }
+      ).__fictFailingResumeImportRelease = importRelease
+      ;(
+        globalThis as {
+          __fictFailingResumeImportControl?: HTMLInputElement
+        }
+      ).__fictFailingResumeImportControl = input
+      ;(
+        globalThis as {
+          __fictFailingResumeImportHandlerCalls?: number
+        }
+      ).__fictFailingResumeImportHandlerCalls = 0
+
+      installResumableLoader({
+        document: doc,
+        events: ['input'],
+        prefetch: false,
+        onSnapshotIssue: issue => issues.push(issue),
+      })
+
+      input.value = 'first-edit'
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      await importStarted
+
+      input.value = 'latest-edit'
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      releaseImport()
+      await waitForPendingHandlers()
+
+      expect(input.value).toBe('latest-edit')
+      expect(
+        (globalThis as { __fictFailingResumeImportHandlerCalls?: number })
+          .__fictFailingResumeImportHandlerCalls,
+      ).toBe(0)
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          code: 'resume_import_failed',
+          scopeId: 's1',
+          qrl: `${resumeModuleUrl}#resume`,
+          eventType: 'input',
+        }),
+      )
+    } finally {
+      releaseImport?.()
+      cleanupEventListeners()
+      warnSpy.mockRestore()
+      delete (globalThis as { __fictFailingResumeImportStarted?: unknown })
+        .__fictFailingResumeImportStarted
+      delete (globalThis as { __fictFailingResumeImportRelease?: unknown })
+        .__fictFailingResumeImportRelease
+      delete (globalThis as { __fictFailingResumeImportControl?: unknown })
+        .__fictFailingResumeImportControl
+      delete (globalThis as { __fictFailingResumeImportHandlerCalls?: unknown })
+        .__fictFailingResumeImportHandlerCalls
+      await rm(tempDirectory, { recursive: true, force: true })
+    }
+  })
+
+  it('restores the edit when a registered resume function mutates the control and throws', async () => {
+    const issues: SnapshotIssue[] = []
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    ;(
+      globalThis as {
+        __fictFailingResumeHandlerCalls?: number
+      }
+    ).__fictFailingResumeHandlerCalls = 0
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    host.setAttribute(
+      'data-fict-h',
+      'data:text/javascript,export default null#__fict_mutating_throwing_resume',
+    )
+    __fictRegisterResume('__fict_mutating_throwing_resume', (_scopeId, node) => {
+      const input = node instanceof Element ? node.querySelector('input') : null
+      if (input instanceof HTMLInputElement) input.value = 'resume-function-side-effect'
+      throw new Error('resume function boom')
+    })
+
+    const input = doc.createElement('input')
+    input.setAttribute(
+      'on:input',
+      'data:text/javascript,export function handle(){globalThis.__fictFailingResumeHandlerCalls++}#handle',
+    )
+    host.appendChild(input)
+    doc.body.appendChild(host)
+
+    try {
+      installResumableLoader({
+        document: doc,
+        events: ['input'],
+        prefetch: false,
+        onSnapshotIssue: issue => issues.push(issue),
+      })
+
+      input.value = 'user-edit'
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      await waitForPendingHandlers()
+
+      expect(input.value).toBe('user-edit')
+      expect(
+        (globalThis as { __fictFailingResumeHandlerCalls?: number })
+          .__fictFailingResumeHandlerCalls,
+      ).toBe(0)
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          code: 'resume_failed',
+          scopeId: 's1',
+          exportName: '__fict_mutating_throwing_resume',
+          eventType: 'input',
+        }),
+      )
+    } finally {
+      warnSpy.mockRestore()
+      delete (globalThis as { __fictFailingResumeHandlerCalls?: unknown })
+        .__fictFailingResumeHandlerCalls
+    }
+  })
+
   it('reports resume import and resume function failures', async () => {
     const issues: SnapshotIssue[] = []
     const doc = createDocumentWithSnapshots(
