@@ -141,25 +141,25 @@ export {
 export function spread(
   node: Element,
   props: Record<string, unknown> | (() => Record<string, unknown>) = {},
-  isSVG = false,
+  namespace: boolean | 'mathml' = false,
   skipChildren = false,
   exclude: readonly string[] = [],
 ): Record<string, unknown> {
   __fictRegisterCreateElement(__fictCreateElement)
-  return __fictSpread(node, props, isSVG, skipChildren, exclude)
+  return __fictSpread(node, props, namespace, skipChildren, exclude)
 }
 
 export function assign(
   node: Element,
   props: Record<string, unknown>,
-  isSVG = false,
+  namespace: boolean | 'mathml' = false,
   skipChildren = false,
   prevProps: Record<string, unknown> = {},
   skipRef = false,
   excludedProps?: ReadonlySet<string>,
 ): void {
   __fictRegisterCreateElement(__fictCreateElement)
-  __fictAssign(node, props, isSVG, skipChildren, prevProps, skipRef, excludedProps)
+  __fictAssign(node, props, namespace, skipChildren, prevProps, skipRef, excludedProps)
 }
 
 export { resolvePath, getSlotEnd } from './node-ops'
@@ -189,7 +189,15 @@ export {
 // DOM Creation (Compiler-generated code)
 // ============================================================================
 
-export { createElement, createElementInNamespace, template, render, hydrateComponent } from './dom'
+export {
+  createElement,
+  createElementInNamespace,
+  createElementInParentNamespace,
+  __fictElementNamespaceMatches,
+  template,
+  render,
+  hydrateComponent,
+} from './dom'
 export type { HydrateComponentOptions } from './dom'
 export type { HydrationIssue, HydrationIssueCode, HydrationIssueHandler } from './hydration'
 export { createRenderEffect } from './effect'

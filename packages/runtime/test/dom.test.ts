@@ -20,7 +20,7 @@ import {
   template,
   toNodeArray,
 } from '../src/internal'
-import { registerErrorHandler } from '../src/lifecycle'
+import { registerErrorHandler, registerSuspenseHandler } from '../src/lifecycle'
 import {
   isCommentLike,
   isDocumentFragmentLike,
@@ -485,6 +485,211 @@ describe('DOM Module', () => {
       warnSpy.mockRestore()
     })
 
+    it('replaces one mismatched scope host without consuming its following siblings', () => {
+      container.innerHTML =
+        '<fict-host data-fict-host data-fict-s="sOther" data-fict-t="Other@test" data-fict-h="/other.js#resume"><button>server</button></fict-host><p>tail</p>'
+      const otherHost = container.firstElementChild!
+      const tail = container.lastChild
+      const parking = document.createElement('aside')
+      document.body.appendChild(parking)
+      const issues: HydrationIssue[] = []
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      function Grandchild() {
+        return template('<div>one</div><span>two</span>')()
+      }
+      __fictSetComponentMeta(Grandchild, { id: 'Grandchild@test' })
+
+      function Child() {
+        return { type: Grandchild, props: {}, key: undefined }
+      }
+      __fictSetComponentMeta(Child, { id: 'Child@test' })
+
+      try {
+        const teardown = hydrateComponent(
+          () => {
+            createElement({ type: Child, props: {}, key: undefined })
+            template('<p>tail</p>')()
+          },
+          container,
+          {
+            onHydrationIssue: issue => {
+              issues.push(issue)
+              if (issue.code === 'scope_type_mismatch' && issue.node) {
+                parking.appendChild(issue.node)
+              }
+            },
+          },
+        )
+
+        expect(parking.firstChild).toBe(otherHost)
+        expect(Array.from(container.children, child => child.tagName)).toEqual(['DIV', 'SPAN', 'P'])
+        expect(container.lastChild).toBe(tail)
+        expect(issues).toHaveLength(1)
+        expect(issues[0]).toEqual(
+          expect.objectContaining({
+            code: 'scope_type_mismatch',
+            node: otherHost,
+          }),
+        )
+
+        teardown()
+      } finally {
+        parking.remove()
+        warnSpy.mockRestore()
+      }
+    })
+
+    it('repairs a mismatched scope host when the component returns a prebuilt DOM node', () => {
+      container.innerHTML =
+        '<fict-host data-fict-host data-fict-s="sOther" data-fict-t="Other@test" data-fict-h="/other.js#resume"><button>server</button></fict-host><p>tail</p>'
+      const otherHost = container.firstElementChild!
+      const tail = container.lastChild
+      const clientButton = document.createElement('button')
+      clientButton.textContent = 'client'
+      const issues: HydrationIssue[] = []
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      function Child() {
+        return clientButton
+      }
+      __fictSetComponentMeta(Child, { id: 'Child@test' })
+
+      try {
+        const teardown = hydrateComponent(
+          () => {
+            createElement({ type: Child, props: {}, key: undefined })
+            template('<p>tail</p>')()
+          },
+          container,
+          { onHydrationIssue: issue => issues.push(issue) },
+        )
+
+        expect(otherHost.isConnected).toBe(false)
+        expect(container.firstChild).toBe(clientButton)
+        expect(container.lastChild).toBe(tail)
+        expect(container.childNodes).toHaveLength(2)
+        expect(issues).toHaveLength(1)
+
+        teardown()
+      } finally {
+        warnSpy.mockRestore()
+      }
+    })
+
+    it('repairs a mismatched scope host around a client-rendered VNode subtree', () => {
+      container.innerHTML =
+        '<fict-host data-fict-host data-fict-s="sOther" data-fict-t="Other@test" data-fict-h="/other.js#resume"><button>server</button></fict-host><p>tail</p>'
+      const otherHost = container.firstElementChild!
+      const tail = container.lastChild
+      const issues: HydrationIssue[] = []
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      function Child() {
+        return {
+          type: 'button',
+          props: { children: 'client' },
+          key: undefined,
+        }
+      }
+      __fictSetComponentMeta(Child, { id: 'Child@test' })
+
+      try {
+        const teardown = hydrateComponent(
+          () => {
+            createElement({ type: Child, props: {}, key: undefined })
+            template('<p>tail</p>')()
+          },
+          container,
+          { onHydrationIssue: issue => issues.push(issue) },
+        )
+
+        expect(otherHost.isConnected).toBe(false)
+        expect(container.firstElementChild?.tagName).toBe('BUTTON')
+        expect(container.firstElementChild?.textContent).toBe('client')
+        expect(container.lastChild).toBe(tail)
+        expect(container.childNodes).toHaveLength(2)
+        expect(issues).toHaveLength(1)
+
+        teardown()
+      } finally {
+        warnSpy.mockRestore()
+      }
+    })
+
+    it('removes only a mismatched scope host when the component returns an empty fragment', () => {
+      container.innerHTML =
+        '<fict-host data-fict-host data-fict-s="sOther" data-fict-t="Other@test" data-fict-h="/other.js#resume"><button>server</button></fict-host><p>tail</p>'
+      const otherHost = container.firstElementChild!
+      const tail = container.lastChild
+      const issues: HydrationIssue[] = []
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      function Child() {
+        return document.createDocumentFragment()
+      }
+      __fictSetComponentMeta(Child, { id: 'Child@test' })
+
+      try {
+        const teardown = hydrateComponent(
+          () => {
+            createElement({ type: Child, props: {}, key: undefined })
+            template('<p>tail</p>')()
+          },
+          container,
+          { onHydrationIssue: issue => issues.push(issue) },
+        )
+
+        expect(otherHost.isConnected).toBe(false)
+        expect(container.childNodes).toHaveLength(1)
+        expect(container.firstChild).toBe(tail)
+        expect(issues).toHaveLength(1)
+
+        teardown()
+      } finally {
+        warnSpy.mockRestore()
+      }
+    })
+
+    it('does not leak a mismatched scope repair into siblings when the component suspends', () => {
+      container.innerHTML =
+        '<fict-host data-fict-host data-fict-s="sOther" data-fict-t="Other@test" data-fict-h="/other.js#resume"><button>server</button></fict-host><p>tail</p>'
+      const otherHost = container.firstElementChild!
+      const tail = container.lastChild
+      const token = Promise.resolve()
+      const handled = vi.fn(() => true)
+      const issues: HydrationIssue[] = []
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      function Child(): never {
+        throw token
+      }
+      __fictSetComponentMeta(Child, { id: 'Child@test' })
+
+      try {
+        const teardown = hydrateComponent(
+          () => {
+            registerSuspenseHandler(handled)
+            createElement({ type: Child, props: {}, key: undefined })
+            template('<p>tail</p>')()
+          },
+          container,
+          { onHydrationIssue: issue => issues.push(issue) },
+        )
+
+        expect(handled).toHaveBeenCalledOnce()
+        expect(handled).toHaveBeenCalledWith(token)
+        expect(container.firstChild).toBe(otherHost)
+        expect(container.lastChild).toBe(tail)
+        expect(container.childNodes).toHaveLength(2)
+        expect(issues).toHaveLength(1)
+
+        teardown()
+      } finally {
+        warnSpy.mockRestore()
+      }
+    })
+
     it('does not skip a same-identity scope without an independent resume entry', () => {
       container.innerHTML =
         '<fict-host data-fict-host data-fict-s="sChild" data-fict-t="Child@test"><button>server</button></fict-host>'
@@ -608,6 +813,46 @@ describe('DOM Module', () => {
 
       teardown()
       warnSpy.mockRestore()
+    })
+
+    it('repairs text at its original range when the issue handler moves the server node', () => {
+      container.innerHTML = 'server<p>tail</p>'
+      const serverText = container.firstChild!
+      const tail = container.lastChild
+      const parking = document.createElement('aside')
+      document.body.appendChild(parking)
+      const issues: HydrationIssue[] = []
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      try {
+        const teardown = hydrateComponent(
+          () => {
+            createElement('client')
+            template('<p>tail</p>')()
+          },
+          container,
+          {
+            onHydrationIssue: issue => {
+              issues.push(issue)
+              if (issue.code === 'text_mismatch' && issue.node) {
+                parking.appendChild(issue.node)
+              }
+            },
+          },
+        )
+
+        expect(parking.firstChild).toBe(serverText)
+        expect(serverText.textContent).toBe('server')
+        expect(container.firstChild?.nodeType).toBe(Node.TEXT_NODE)
+        expect(container.firstChild?.textContent).toBe('client')
+        expect(container.lastChild).toBe(tail)
+        expect(issues).toHaveLength(1)
+
+        teardown()
+      } finally {
+        parking.remove()
+        warnSpy.mockRestore()
+      }
     })
 
     it('warns about hydration mismatches in dev without an issue handler', () => {
@@ -847,6 +1092,119 @@ describe('DOM Module', () => {
 
       teardown()
       warnSpy.mockRestore()
+    })
+
+    it('repairs a mismatched node after the issue handler inserts a sibling before it', () => {
+      container.innerHTML = '<span>server</span>'
+      const serverNode = container.firstChild
+      const inserted = document.createElement('b')
+      inserted.textContent = 'diagnostic'
+      const issues: HydrationIssue[] = []
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const teardown = hydrateComponent(
+        () => {
+          const factory = template('<div>client</div>')
+          factory()
+        },
+        container,
+        {
+          onHydrationIssue: issue => {
+            issues.push(issue)
+            if (issue.code === 'node_type_mismatch' && issue.node?.parentNode) {
+              issue.node.parentNode.insertBefore(inserted, issue.node)
+            }
+          },
+        },
+      )
+
+      const mismatch = issues.find(issue => issue.code === 'node_type_mismatch')
+      expect(mismatch?.node).toBe(serverNode)
+      expect(mismatch?.node?.isConnected).toBe(false)
+      expect(container.firstChild?.textContent).toBe('client')
+      expect(container.childNodes).toHaveLength(1)
+      expect(inserted.isConnected).toBe(false)
+
+      teardown()
+      warnSpy.mockRestore()
+    })
+
+    it('locates a repaired multi-root mismatch in the container document realm', () => {
+      const iframe = document.createElement('iframe')
+      document.body.appendChild(iframe)
+      const foreignDocument = iframe.contentDocument!
+      const foreignWindow = iframe.contentWindow!
+      const foreignContainer = foreignDocument.createElement('div')
+      foreignDocument.body.appendChild(foreignContainer)
+      foreignContainer.innerHTML = '<i>before</i><div>match</div><span>server</span>'
+      const serverNode = foreignContainer.lastChild!
+      const issues: HydrationIssue[] = []
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      try {
+        const teardown = hydrateComponent(
+          () => {
+            template('<i>before</i>')()
+            template('<div>match</div><p>client</p>')()
+          },
+          foreignContainer as unknown as HTMLElement,
+          { onHydrationIssue: issue => issues.push(issue) },
+        )
+
+        const mismatch = issues.find(issue => issue.code === 'node_type_mismatch')
+        expect(mismatch?.node).toBe(serverNode)
+        expect(mismatch?.node).toBeInstanceOf(foreignWindow.Node)
+        expect(foreignContainer.lastChild?.nodeName).toBe('P')
+        expect(foreignContainer.lastChild?.ownerDocument).toBe(foreignDocument)
+        expect(foreignContainer.textContent).toBe('beforematchclient')
+
+        teardown()
+      } finally {
+        iframe.remove()
+        warnSpy.mockRestore()
+      }
+    })
+
+    it('repairs the original hydration range when an issue handler moves the server node', () => {
+      container.innerHTML = '<span>server</span><p>tail</p>'
+      const serverNode = container.firstChild!
+      const tail = container.lastChild
+      const parking = document.createElement('aside')
+      document.body.appendChild(parking)
+      const issues: HydrationIssue[] = []
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      try {
+        const teardown = hydrateComponent(
+          () => {
+            const client = template('<div>client</div>')
+            const tailTemplate = template('<p>tail</p>')
+            client()
+            tailTemplate()
+          },
+          container,
+          {
+            onHydrationIssue: issue => {
+              issues.push(issue)
+              if (issue.code === 'node_type_mismatch' && issue.node) {
+                parking.appendChild(issue.node)
+              }
+            },
+          },
+        )
+
+        expect(parking.firstChild).toBe(serverNode)
+        expect(container.childNodes).toHaveLength(2)
+        expect(container.firstChild?.nodeName).toBe('DIV')
+        expect(container.firstChild?.textContent).toBe('client')
+        expect(container.lastChild).toBe(tail)
+        expect(issues.find(issue => issue.code === 'node_type_mismatch')?.node).toBe(serverNode)
+
+        teardown()
+      } finally {
+        parking.remove()
+        warnSpy.mockRestore()
+      }
     })
 
     it('reports missing nodes during hydration', () => {

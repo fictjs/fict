@@ -5,7 +5,7 @@
  * They provide low-level primitives for DOM node manipulation without rebuilding.
  */
 
-import { createElement, createElementInNamespace } from './dom'
+import { createElement, createElementInNamespace, createElementInParentNamespace } from './dom'
 import { isNodeLike } from './dom-guards'
 import { createRenderEffect } from './effect'
 import { isHydratingActive, withHydrationRange } from './hydration'
@@ -16,6 +16,8 @@ import {
   getCurrentRoot,
   popRoot,
   pushRoot,
+  resolveParentOwnerDocument,
+  resolveParentRenderNamespace,
   type RootContext,
 } from './lifecycle'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
@@ -25,7 +27,15 @@ import { batch } from './scheduler'
 import { createSignal, effectScope, flush, setActiveSub, type Signal } from './signal'
 import type { FictNode } from './types'
 
-type ListNamespaceContext = 'svg' | 'mathml' | null | undefined
+type ListNamespaceContext =
+  | 'html'
+  | 'svg'
+  | 'mathml'
+  | 'mathmlTextIntegration'
+  | 'mathmlAnnotationXml'
+  | 'parent'
+  | null
+  | undefined
 type ListKey = string | number
 type InternalListKey = ListKey | DuplicateListKey
 
@@ -389,6 +399,7 @@ function createKeyedBlock<T>(
   needsIndex = true,
   hostRoot?: RootContext,
   namespace?: ListNamespaceContext,
+  namespaceParent?: Node | null,
 ): KeyedBlock<T> {
   // Use versioned signal for all item types; avoid diffing proxy overhead for objects
   const itemSig = createVersionedSignalAccessor(item)
@@ -401,6 +412,17 @@ function createKeyedBlock<T>(
         return index
       } as Signal<number>)
   const root = createRootContext(hostRoot)
+  if (namespaceParent) {
+    root.ownerDocument = resolveParentOwnerDocument(
+      namespaceParent,
+      root.ownerDocument ?? namespaceParent.ownerDocument ?? document,
+    )
+  }
+  if (namespace === 'parent') {
+    root.renderNamespace = resolveParentRenderNamespace(namespaceParent, root.renderNamespace)
+  } else if (namespace) {
+    root.renderNamespace = namespace
+  }
   const nodeOwnerDocument = root.ownerDocument ?? hostRoot?.ownerDocument ?? document
   const prevRoot = pushRoot(root)
   // maintaining proper cleanup chain. The scope will be disposed when
@@ -425,9 +447,11 @@ function createKeyedBlock<T>(
         nodes = toNodeArray(rendered, nodeOwnerDocument)
       } else {
         const element =
-          namespace === 'svg' || namespace === 'mathml'
-            ? createElementInNamespace(rendered as unknown as FictNode, namespace)
-            : createElement(rendered as unknown as FictNode)
+          namespace === 'parent' && namespaceParent
+            ? createElementInParentNamespace(rendered as unknown as FictNode, namespaceParent)
+            : namespace && namespace !== 'parent'
+              ? createElementInNamespace(rendered as unknown as FictNode, namespace)
+              : createElement(rendered as unknown as FictNode)
         nodes = toNodeArray(element, nodeOwnerDocument)
       }
     })
@@ -437,6 +461,22 @@ function createKeyedBlock<T>(
     if (scopeDispose) {
       root.cleanups.push(scopeDispose)
     }
+  } catch (error) {
+    try {
+      destroyRoot(root)
+    } catch (cleanupError) {
+      if (typeof console !== 'undefined' && typeof console.error === 'function') {
+        console.error('[fict] Failed to roll back a keyed list block.', cleanupError)
+      }
+    }
+    try {
+      removeNodes(nodes)
+    } catch (cleanupError) {
+      if (typeof console !== 'undefined' && typeof console.error === 'function') {
+        console.error('[fict] Failed to remove a rejected keyed list block.', cleanupError)
+      }
+    }
+    throw error
   } finally {
     setActiveSub(prevSub)
     popRoot(prevRoot)
@@ -732,6 +772,7 @@ function createFineGrainedKeyedList<T>(
                 needsIndex,
                 hostRoot,
                 namespace,
+                parent,
               )
               createdBlocks.push(block)
               newBlocks.set(identityKey, block)
@@ -876,6 +917,7 @@ function createFineGrainedKeyedList<T>(
             needsIndex,
             hostRoot,
             namespace,
+            parent,
           )
           createdBlocks.push(block)
         }

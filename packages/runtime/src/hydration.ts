@@ -3,6 +3,7 @@ interface HydrationContext {
   boundary: Node | null
   owner: Document
   parent: ParentNode & Node
+  pendingRepair?: HydrationRepairPlan | undefined
   onIssue?: HydrationIssueHandler | undefined
   strictHydration?: boolean | undefined
 }
@@ -35,9 +36,17 @@ const isDev =
     : typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'
 
 const hydrationStack: HydrationContext[] = []
+let hydrationClaimSuppressionDepth = 0
 const HYDRATED_FRAGMENT_NODES = Symbol.for('fict:hydration-fragment-nodes')
 
 type HydratedFragment = DocumentFragment & { [HYDRATED_FRAGMENT_NODES]?: Node[] }
+
+interface HydrationRepairPlan {
+  parent: ParentNode & Node
+  nodes: Node[]
+  anchor: Node | null
+  offset: number
+}
 
 export function withHydration<T>(
   root: ParentNode & Node,
@@ -104,10 +113,17 @@ export function withHydrationRange<T>(
 
 export function claimNodes(templateRoot: Node, fallback: () => Node): Node {
   const ctx = hydrationStack[hydrationStack.length - 1]
-  if (!ctx) {
+  if (!ctx || hydrationClaimSuppressionDepth > 0) {
     return fallback()
   }
+  if (ctx.pendingRepair) {
+    const repair = ctx.pendingRepair
+    const fallbackNode = fallback()
+    ctx.pendingRepair = undefined
+    return mountFallback(ctx, fallbackNode, repair)
+  }
   if (!ctx.cursor) {
+    const repair = captureHydrationRepairPlan(ctx, null, 0)
     emitHydrationIssue(ctx, {
       code: 'node_missing',
       message: '[fict/hydration] Missing DOM node while claiming hydrated template output.',
@@ -115,7 +131,7 @@ export function claimNodes(templateRoot: Node, fallback: () => Node): Node {
       actual: null,
       node: null,
     })
-    return mountFallback(ctx, fallback(), null, 0)
+    return mountFallback(ctx, fallback(), repair)
   }
 
   const count = templateRoot.nodeType === 11 ? templateRoot.childNodes.length : 1
@@ -126,6 +142,7 @@ export function claimNodes(templateRoot: Node, fallback: () => Node): Node {
   for (let i = 0; i < count; i++) {
     const expected = templateRoot.nodeType === 11 ? templateRoot.childNodes.item(i) : templateRoot
     if (!cursor || cursor === ctx.boundary) {
+      const repair = captureHydrationRepairPlan(ctx, claimed[0] ?? null, claimed.length)
       emitHydrationIssue(ctx, {
         code: 'node_missing',
         message: '[fict/hydration] Hydrated DOM ended before the expected template output.',
@@ -133,9 +150,10 @@ export function claimNodes(templateRoot: Node, fallback: () => Node): Node {
         actual: null,
         node: null,
       })
-      return mountFallback(ctx, fallback(), claimed[0] ?? null, claimed.length)
+      return mountFallback(ctx, fallback(), repair)
     }
     if (expected && !isCompatibleNode(expected, cursor)) {
+      const repair = captureHydrationRepairPlan(ctx, claimed[0] ?? cursor, count)
       emitHydrationIssue(ctx, {
         code: 'node_type_mismatch',
         message: '[fict/hydration] Hydrated DOM node does not match the expected template node.',
@@ -143,7 +161,7 @@ export function claimNodes(templateRoot: Node, fallback: () => Node): Node {
         actual: describeNode(cursor),
         node: cursor,
       })
-      return mountFallback(ctx, fallback(), claimed[0] ?? cursor, count)
+      return mountFallback(ctx, fallback(), repair)
     }
     claimed.push(cursor)
     cursor = cursor.nextSibling
@@ -160,10 +178,17 @@ export function claimNodes(templateRoot: Node, fallback: () => Node): Node {
 
 export function claimText(value: string, fallback: () => Text): Text {
   const ctx = hydrationStack[hydrationStack.length - 1]
-  if (!ctx) {
+  if (!ctx || hydrationClaimSuppressionDepth > 0) {
     return fallback()
   }
+  if (ctx.pendingRepair) {
+    const repair = ctx.pendingRepair
+    const fallbackNode = fallback()
+    ctx.pendingRepair = undefined
+    return mountFallback(ctx, fallbackNode, repair) as Text
+  }
   if (!ctx.cursor || ctx.cursor === ctx.boundary) {
+    const repair = captureHydrationRepairPlan(ctx, null, 0)
     emitHydrationIssue(ctx, {
       code: 'node_missing',
       message: '[fict/hydration] Missing text node while hydrating.',
@@ -171,9 +196,10 @@ export function claimText(value: string, fallback: () => Text): Text {
       actual: null,
       node: null,
     })
-    return mountFallback(ctx, fallback(), null, 0) as Text
+    return mountFallback(ctx, fallback(), repair) as Text
   }
   if (ctx.cursor.nodeType !== 3) {
+    const repair = captureHydrationRepairPlan(ctx, ctx.cursor, 1)
     emitHydrationIssue(ctx, {
       code: 'node_type_mismatch',
       message: '[fict/hydration] Hydrated DOM node is not a text node.',
@@ -181,12 +207,12 @@ export function claimText(value: string, fallback: () => Text): Text {
       actual: describeNode(ctx.cursor),
       node: ctx.cursor,
     })
-    return mountFallback(ctx, fallback(), ctx.cursor, 1) as Text
+    return mountFallback(ctx, fallback(), repair) as Text
   }
 
   const text = ctx.cursor as Text
-  ctx.cursor = text.nextSibling
   if (text.data !== value) {
+    const repair = captureHydrationRepairPlan(ctx, text, 1)
     emitHydrationIssue(ctx, {
       code: 'text_mismatch',
       message: '[fict/hydration] Hydrated text content does not match client output.',
@@ -194,8 +220,14 @@ export function claimText(value: string, fallback: () => Text): Text {
       actual: text.data,
       node: text,
     })
+    if (text.parentNode !== repair.parent || text.nextSibling !== repair.anchor) {
+      return mountFallback(ctx, ctx.owner.createTextNode(value), repair) as Text
+    }
     text.data = value
+    ctx.cursor = repair.anchor
+    return text
   }
+  ctx.cursor = text.nextSibling
   return text
 }
 
@@ -211,6 +243,12 @@ export function claimText(value: string, fallback: () => Text): Text {
  */
 export function claimResumableScopeHost(expectedType: string): Element | null {
   const ctx = hydrationStack[hydrationStack.length - 1]
+  if (hydrationClaimSuppressionDepth > 0) {
+    return null
+  }
+  if (ctx?.pendingRepair) {
+    return null
+  }
   const cursor = ctx?.cursor
   if (!ctx || !cursor || cursor === ctx.boundary || cursor.nodeType !== 1) {
     return null
@@ -228,6 +266,7 @@ export function claimResumableScopeHost(expectedType: string): Element | null {
 
   const actualType = host.getAttribute('data-fict-t')
   if (actualType !== expectedType) {
+    const repair = captureHydrationRepairPlan(ctx, host, 1)
     emitHydrationIssue(ctx, {
       code: 'scope_type_mismatch',
       message:
@@ -236,6 +275,7 @@ export function claimResumableScopeHost(expectedType: string): Element | null {
       actual: actualType ?? '<missing>',
       node: host,
     })
+    ctx.pendingRepair = repair
     return null
   }
 
@@ -244,11 +284,74 @@ export function claimResumableScopeHost(expectedType: string): Element | null {
 }
 
 export function isHydratingActive(): boolean {
-  return hydrationStack.length > 0
+  return hydrationStack.length > 0 && hydrationClaimSuppressionDepth === 0
+}
+
+/** @internal Complete a scope-mismatch repair at the component invocation boundary. */
+export function getPendingHydrationRepairToken(): object | null {
+  return hydrationStack[hydrationStack.length - 1]?.pendingRepair ?? null
+}
+
+/** @internal Build a mismatched component subtree without claiming nodes from its server host. */
+export function suppressHydrationClaimsForPendingRepair(token: object | null): () => void {
+  const ctx = hydrationStack[hydrationStack.length - 1]
+  if (!ctx || !token || ctx.pendingRepair !== token) return () => {}
+
+  hydrationClaimSuppressionDepth += 1
+  let restored = false
+  return () => {
+    if (restored) return
+    restored = true
+    hydrationClaimSuppressionDepth = Math.max(0, hydrationClaimSuppressionDepth - 1)
+  }
+}
+
+/** @internal */
+export function finalizePendingHydrationRepair(token: object | null, fallbackNode: Node): Node {
+  const ctx = hydrationStack[hydrationStack.length - 1]
+  if (!ctx || !token || ctx.pendingRepair !== token) return fallbackNode
+
+  const repair = ctx.pendingRepair
+  ctx.pendingRepair = undefined
+  return mountFallback(ctx, fallbackNode, repair)
+}
+
+/** @internal Preserve the server range while a mismatched component is suspended. */
+export function abandonPendingHydrationRepair(token: object | null): void {
+  const ctx = hydrationStack[hydrationStack.length - 1]
+  if (!ctx || !token || ctx.pendingRepair !== token) return
+
+  const repair = ctx.pendingRepair
+  ctx.pendingRepair = undefined
+  if (repair.anchor?.parentNode === repair.parent) {
+    ctx.cursor = repair.anchor
+    return
+  }
+  for (let index = repair.nodes.length - 1; index >= 0; index -= 1) {
+    const node = repair.nodes[index]!
+    if (node.parentNode === repair.parent) {
+      ctx.cursor = node.nextSibling
+      return
+    }
+  }
+  ctx.cursor = repair.parent.childNodes.item(
+    Math.min(repair.offset, repair.parent.childNodes.length),
+  )
 }
 
 function removeExtraHydrationNodes(ctx: HydrationContext): void {
+  if (ctx.pendingRepair) {
+    const repair = ctx.pendingRepair
+    ctx.pendingRepair = undefined
+    removeRepairNodes(repair)
+    ctx.cursor =
+      repair.anchor?.parentNode === repair.parent
+        ? repair.anchor
+        : repair.parent.childNodes.item(Math.min(repair.offset, repair.parent.childNodes.length))
+  }
   if (!ctx.cursor || ctx.cursor === ctx.boundary) return
+
+  const repair = captureHydrationRepairPlan(ctx, ctx.cursor, Number.POSITIVE_INFINITY)
 
   emitHydrationIssue(ctx, {
     code: 'node_extra',
@@ -257,47 +360,75 @@ function removeExtraHydrationNodes(ctx: HydrationContext): void {
     node: ctx.cursor,
   })
 
-  let cursor: Node | null = ctx.cursor
-  while (cursor && cursor !== ctx.boundary) {
-    const next: Node | null = cursor.nextSibling
-    cursor.parentNode?.removeChild(cursor)
-    cursor = next
-  }
+  removeRepairNodes(repair)
   ctx.cursor = ctx.boundary
 }
 
 function mountFallback(
   ctx: HydrationContext,
   fallbackNode: Node,
-  replaceStart: Node | null,
-  removeCount: number,
+  repair: HydrationRepairPlan,
 ): Node {
   const fallbackFragmentNodes =
     fallbackNode.nodeType === 11 ? Array.from(fallbackNode.childNodes) : null
-  const parent =
-    ((replaceStart?.parentNode ?? ctx.boundary?.parentNode ?? ctx.parent) as
-      | (ParentNode & Node)
-      | null) ?? null
-  if (!parent) {
-    return fallbackNode
-  }
 
-  let cursor = replaceStart
-  let removed = 0
-  while (cursor && cursor !== ctx.boundary && removed < removeCount) {
-    const next = cursor.nextSibling
-    parent.removeChild(cursor)
-    cursor = next
-    removed += 1
-  }
+  removeRepairNodes(repair)
 
-  const anchor = replaceStart ? cursor : ctx.boundary
-  parent.insertBefore(fallbackNode, anchor)
+  const anchor =
+    repair.anchor?.parentNode === repair.parent
+      ? repair.anchor
+      : repair.parent.childNodes.item(Math.min(repair.offset, repair.parent.childNodes.length))
+  repair.parent.insertBefore(fallbackNode, anchor)
   ctx.cursor = anchor
   if (fallbackFragmentNodes) {
     return createHydratedFragment(ctx.owner, fallbackFragmentNodes)
   }
   return fallbackNode
+}
+
+function removeRepairNodes(repair: HydrationRepairPlan): void {
+  for (const node of repair.nodes) {
+    if (node.parentNode === repair.parent) {
+      repair.parent.removeChild(node)
+    }
+  }
+}
+
+function captureHydrationRepairPlan(
+  ctx: HydrationContext,
+  replaceStart: Node | null,
+  removeCount: number,
+): HydrationRepairPlan {
+  const parent =
+    ((replaceStart?.parentNode ?? ctx.boundary?.parentNode ?? ctx.parent) as
+      | (ParentNode & Node)
+      | null) ?? ctx.parent
+  const offset = replaceStart
+    ? childOffset(parent, replaceStart)
+    : ctx.boundary?.parentNode === parent
+      ? childOffset(parent, ctx.boundary)
+      : parent.childNodes.length
+  const nodes: Node[] = []
+  let cursor = replaceStart
+  while (cursor && cursor !== ctx.boundary && nodes.length < removeCount) {
+    nodes.push(cursor)
+    cursor = cursor.nextSibling
+  }
+  return {
+    parent,
+    nodes,
+    anchor: replaceStart ? cursor : ctx.boundary,
+    offset: offset < 0 ? parent.childNodes.length : offset,
+  }
+}
+
+function childOffset(parent: ParentNode, node: Node): number {
+  let offset = 0
+  for (let cursor = parent.firstChild; cursor; cursor = cursor.nextSibling) {
+    if (cursor === node) return offset
+    offset += 1
+  }
+  return -1
 }
 
 function createHydratedFragment(owner: Document, nodes: Node[]): DocumentFragment {

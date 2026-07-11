@@ -44,7 +44,11 @@ import {
   claimNodes,
   claimResumableScopeHost,
   claimText,
+  abandonPendingHydrationRepair,
+  finalizePendingHydrationRepair,
+  getPendingHydrationRepairToken,
   isHydratingActive,
+  suppressHydrationClaimsForPendingRepair,
   withHydration,
   type HydrationIssueHandler,
 } from './hydration'
@@ -60,6 +64,9 @@ import {
   getCurrentRoot,
   onMount,
   onCleanup,
+  resolveParentOwnerDocument,
+  resolveParentRenderNamespace,
+  type RenderNamespaceContext,
 } from './lifecycle'
 import { toNodeArray } from './node-ops'
 import { createPropsProxy, unwrapProps } from './props'
@@ -75,7 +82,8 @@ import {
 import { untrack } from './scheduler'
 import type { DOMElement, FictNode, FictVNode } from './types'
 
-type NamespaceContext = 'svg' | 'mathml' | null
+type NamespaceContext = RenderNamespaceContext
+type ElementNamespaceContext = 'html' | 'svg' | 'mathml'
 
 export interface HydrateComponentOptions {
   onHydrationIssue?: HydrationIssueHandler | undefined
@@ -83,7 +91,96 @@ export interface HydrateComponentOptions {
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
+const HTML_NS = 'http://www.w3.org/1999/xhtml'
 const MATHML_NS = 'http://www.w3.org/1998/Math/MathML'
+const SVG_HTML_INTEGRATION_POINTS = new Set(['foreignobject', 'title', 'desc'])
+const MATHML_TEXT_INTEGRATION_POINTS = new Set(['mi', 'mo', 'mn', 'ms', 'mtext'])
+const MATHML_TEXT_INTEGRATION_EXCEPTIONS = new Set(['mglyph', 'malignmark'])
+const FOREIGN_CONTENT_HTML_BREAKOUT_TAGS = new Set([
+  'b',
+  'big',
+  'blockquote',
+  'body',
+  'br',
+  'center',
+  'code',
+  'dd',
+  'div',
+  'dl',
+  'dt',
+  'em',
+  'embed',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'head',
+  'hr',
+  'i',
+  'img',
+  'li',
+  'listing',
+  'menu',
+  'meta',
+  'nobr',
+  'ol',
+  'p',
+  'pre',
+  'ruby',
+  's',
+  'small',
+  'span',
+  'strong',
+  'strike',
+  'sub',
+  'sup',
+  'table',
+  'tt',
+  'u',
+  'ul',
+  'var',
+])
+const SVG_TAG_NAME_ADJUSTMENTS: Readonly<Record<string, string>> = {
+  altglyph: 'altGlyph',
+  altglyphdef: 'altGlyphDef',
+  altglyphitem: 'altGlyphItem',
+  animatecolor: 'animateColor',
+  animatemotion: 'animateMotion',
+  animatetransform: 'animateTransform',
+  clippath: 'clipPath',
+  feblend: 'feBlend',
+  fecolormatrix: 'feColorMatrix',
+  fecomponenttransfer: 'feComponentTransfer',
+  fecomposite: 'feComposite',
+  feconvolvematrix: 'feConvolveMatrix',
+  fediffuselighting: 'feDiffuseLighting',
+  fedisplacementmap: 'feDisplacementMap',
+  fedistantlight: 'feDistantLight',
+  fedropshadow: 'feDropShadow',
+  feflood: 'feFlood',
+  fefunca: 'feFuncA',
+  fefuncb: 'feFuncB',
+  fefuncg: 'feFuncG',
+  fefuncr: 'feFuncR',
+  fegaussianblur: 'feGaussianBlur',
+  feimage: 'feImage',
+  femerge: 'feMerge',
+  femergenode: 'feMergeNode',
+  femorphology: 'feMorphology',
+  feoffset: 'feOffset',
+  fepointlight: 'fePointLight',
+  fespecularlighting: 'feSpecularLighting',
+  fespotlight: 'feSpotLight',
+  fetile: 'feTile',
+  feturbulence: 'feTurbulence',
+  foreignobject: 'foreignObject',
+  glyphref: 'glyphRef',
+  lineargradient: 'linearGradient',
+  radialgradient: 'radialGradient',
+  textpath: 'textPath',
+}
 const isDev =
   typeof __DEV__ !== 'undefined'
     ? __DEV__
@@ -293,22 +390,144 @@ export function hydrateComponent(
  * - Reactive values (functions returning any of the above)
  */
 export function createElement(node: FictNode): DOMElement {
-  return createElementWithContext(node, null, resolveOwnerDocument())
+  return createElementWithContext(
+    node,
+    getCurrentRoot()?.renderNamespace ?? null,
+    resolveOwnerDocument(),
+  )
 }
 
 export function createElementInNamespace(node: FictNode, namespace: NamespaceContext): DOMElement {
   return createElementWithContext(node, namespace, resolveOwnerDocument())
 }
 
+export function createElementInParentNamespace(node: FictNode, parent: Node): DOMElement {
+  const ownerDocument = resolveParentOwnerDocument(parent, resolveOwnerDocument())
+  const namespace = resolveParentRenderNamespace(parent, getCurrentRoot()?.renderNamespace ?? null)
+  return createElementWithContext(node, namespace, ownerDocument)
+}
+
+/** @internal Compiler/runtime namespace guard for polymorphic component roots. */
+export function __fictElementNamespaceMatches(
+  tagName: string,
+  expectedNamespace: ElementNamespaceContext,
+): boolean {
+  const namespace = getCurrentRoot()?.renderNamespace ?? null
+  // A root with no inherited DOM context keeps the compiler's standalone
+  // intrinsic semantics. Explicit HTML/foreign contexts must be compared.
+  return namespace === null || resolveNamespace(tagName, namespace) === expectedNamespace
+}
+
 registerCreateElement(createElement)
 
-function resolveNamespace(tagName: string, namespace: NamespaceContext): NamespaceContext {
-  if (tagName === 'svg') return 'svg'
-  if (tagName === 'math') return 'mathml'
+function resolveNamespace(tagName: string, namespace: NamespaceContext): ElementNamespaceContext {
+  const semanticTagName = tagName.toLowerCase()
+  if (namespace === null || namespace === 'html') {
+    if (semanticTagName === 'svg') return 'svg'
+    if (semanticTagName === 'math') return 'mathml'
+  }
+  if (namespace === 'mathmlTextIntegration') {
+    if (semanticTagName === 'svg') return 'svg'
+    if (semanticTagName === 'math') return 'mathml'
+    return MATHML_TEXT_INTEGRATION_EXCEPTIONS.has(semanticTagName) ? 'mathml' : 'html'
+  }
+  if (namespace === 'mathmlAnnotationXml') {
+    return semanticTagName === 'svg' ? 'svg' : 'mathml'
+  }
+  if (namespace === 'html') return 'html'
   if (namespace === 'mathml') return 'mathml'
   if (namespace === 'svg') return 'svg'
-  if (isDev && SVGElements.has(tagName)) return 'svg'
+  const adjustedSvgTagName = SVG_TAG_NAME_ADJUSTMENTS[semanticTagName] ?? semanticTagName
+  if (isDev && SVGElements.has(adjustedSvgTagName)) return 'svg'
+  return 'html'
+}
+
+function resolveChildNamespace(
+  namespace: ElementNamespaceContext,
+  element: Element,
+): NamespaceContext {
+  const semanticTagName = element.localName.toLowerCase()
+  if (namespace === 'svg' && SVG_HTML_INTEGRATION_POINTS.has(semanticTagName)) {
+    return 'html'
+  }
+  if (namespace === 'mathml') {
+    if (MATHML_TEXT_INTEGRATION_POINTS.has(semanticTagName)) {
+      return 'mathmlTextIntegration'
+    }
+    if (semanticTagName === 'annotation-xml') {
+      const encoding = element.getAttribute('encoding')?.toLowerCase()
+      if (encoding === 'text/html' || encoding === 'application/xhtml+xml') {
+        return 'html'
+      }
+      return 'mathmlAnnotationXml'
+    }
+  }
+  return namespace
+}
+
+function getDirectElementRoots(node: Node): Element[] {
+  const roots = node.nodeType === 11 ? Array.from(node.childNodes) : [node]
+  return roots.filter((root): root is Element => root.nodeType === 1)
+}
+
+function getElementNamespaceContext(element: Element): ElementNamespaceContext | null {
+  if (element.namespaceURI === SVG_NS) return 'svg'
+  if (element.namespaceURI === MATHML_NS) return 'mathml'
+  if (element.namespaceURI === null || element.namespaceURI === HTML_NS) return 'html'
   return null
+}
+
+function describeElementNamespace(
+  namespace: ElementNamespaceContext | null,
+  element?: Element,
+): string {
+  if (namespace === 'svg') return 'the SVG namespace'
+  if (namespace === 'mathml') return 'the MathML namespace'
+  if (namespace === 'html') return 'the HTML namespace'
+  return `foreign namespace ${JSON.stringify(element?.namespaceURI ?? '<unknown>')}`
+}
+
+function resolveBrowserParsedRootNamespace(
+  root: Element,
+  physicalHostChildNamespace: NamespaceContext,
+): { namespace: ElementNamespaceContext; leavesHost: boolean } {
+  const tagName = root.localName.toLowerCase()
+  const isForeignContext =
+    physicalHostChildNamespace === 'svg' || physicalHostChildNamespace === 'mathml'
+  const breaksOut =
+    isForeignContext &&
+    (FOREIGN_CONTENT_HTML_BREAKOUT_TAGS.has(tagName) ||
+      (tagName === 'font' &&
+        (root.hasAttribute('color') || root.hasAttribute('face') || root.hasAttribute('size'))))
+  if (breaksOut) return { namespace: 'html', leavesHost: true }
+  return {
+    namespace: resolveNamespace(tagName, physicalHostChildNamespace),
+    leavesHost: false,
+  }
+}
+
+function assertResumableHostPreservesRootNamespaces(
+  content: Node,
+  physicalHostChildNamespace: NamespaceContext,
+  componentType: string,
+): void {
+  for (const root of getDirectElementRoots(content)) {
+    const actualNamespace = getElementNamespaceContext(root)
+    const reparsed = resolveBrowserParsedRootNamespace(root, physicalHostChildNamespace)
+    if (!reparsed.leavesHost && actualNamespace === reparsed.namespace) continue
+
+    const parserEffect = reparsed.leavesHost
+      ? `the HTML parser would exit foreign content, recreate it in ${describeElementNamespace(reparsed.namespace)}, and move it outside the host`
+      : `the physical host would make an HTML parser recreate it in ${describeElementNamespace(reparsed.namespace)}`
+
+    throw new Error(
+      `[fict] Cannot create resumable <fict-host> for component ${JSON.stringify(componentType)} around direct <${root.localName}>. ` +
+        `The logical component call-site creates that root in ${describeElementNamespace(actualNamespace, root)}, ` +
+        `but ${parserEffect}. ` +
+        'An element wrapper cannot preserve transparent component namespace semantics here. ' +
+        'Range-based scope anchors (range-v3) are required for this resumable boundary.',
+    )
+  }
 }
 
 function resolveOwnerDocument(ownerDocument?: Document): Document {
@@ -398,12 +617,15 @@ function createElementWithContext(
   // Function component
   if (typeof vnode.type === 'function') {
     const componentMeta = __fictGetComponentMeta(vnode.type)
+    let hydrationRepairToken: object | null = null
     if (isHydratingActive() && componentMeta?.id) {
       const scopeHost = claimResumableScopeHost(componentMeta.id)
       if (scopeHost) {
         return scopeHost as DOMElement
       }
+      hydrationRepairToken = getPendingHydrationRepairToken()
     }
+    const restoreHydrationClaims = suppressHydrationClaimsForPendingRepair(hydrationRepairToken)
 
     const rawProps = unwrapProps(vnode.props ?? {}) as Record<string, unknown>
     const baseProps =
@@ -432,7 +654,15 @@ function createElementWithContext(
     }
 
     try {
-      const rendered = vnode.type(props)
+      const renderRoot = getCurrentRoot()
+      const previousRenderNamespace = renderRoot?.renderNamespace
+      if (renderRoot) renderRoot.renderNamespace = namespace
+      let rendered: FictNode
+      try {
+        rendered = vnode.type(props)
+      } finally {
+        if (renderRoot) renderRoot.renderNamespace = previousRenderNamespace
+      }
       let mountElements: HTMLElement[] | undefined
 
       if (hook && componentId !== undefined) {
@@ -447,15 +677,24 @@ function createElementWithContext(
         onCleanup(() => hook.componentUnmount?.(componentId))
       }
       if (__fictIsResumable() && !__fictIsHydrating()) {
+        // Components are logically transparent: create their roots in the
+        // original call-site namespace, not as children of the physical host.
         const content = createElementWithContext(rendered as FictNode, namespace, ownerDocument)
+        const hostNamespace = resolveNamespace('fict-host', namespace)
         const host =
-          namespace === 'svg'
+          hostNamespace === 'svg'
             ? ownerDocument.createElementNS(SVG_NS, 'fict-host')
-            : namespace === 'mathml'
+            : hostNamespace === 'mathml'
               ? ownerDocument.createElementNS(MATHML_NS, 'fict-host')
               : ownerDocument.createElement('fict-host')
+        const physicalHostChildNamespace = resolveChildNamespace(hostNamespace, host)
+        assertResumableHostPreservesRootNamespaces(
+          content,
+          physicalHostChildNamespace,
+          componentType,
+        )
         host.setAttribute('data-fict-host', '')
-        if (namespace === null && (host as HTMLElement).style) {
+        if (hostNamespace === 'html' && (host as HTMLElement).style) {
           ;(host as HTMLElement).style.display = 'contents'
         }
         const meta = componentMeta
@@ -480,13 +719,17 @@ function createElementWithContext(
         mountElements = collectComponentMountElements(componentRoot)
         annotateComponentElements(mountElements, componentId, componentName)
       }
-      return componentRoot
+      restoreHydrationClaims()
+      return finalizePendingHydrationRepair(hydrationRepairToken, componentRoot) as DOMElement
     } catch (err) {
+      restoreHydrationClaims()
+      abandonPendingHydrationRepair(hydrationRepairToken)
       if (handleSuspend(err as any)) {
         return ownerDocument.createComment('fict:suspend')
       }
       throw err
     } finally {
+      restoreHydrationClaims()
       __fictPopContext()
     }
   }
@@ -504,12 +747,19 @@ function createElementWithContext(
   const resolvedNamespace = resolveNamespace(tagName, namespace)
   const namespaceURI =
     resolvedNamespace === 'svg' ? SVG_NS : resolvedNamespace === 'mathml' ? MATHML_NS : null
-  assertValidDOMElementName(tagName, resolvedNamespace !== null, namespaceURI ?? undefined)
+  const semanticTagName = tagName.toLowerCase()
+  const domTagName =
+    resolvedNamespace === 'svg'
+      ? (SVG_TAG_NAME_ADJUSTMENTS[semanticTagName] ?? semanticTagName)
+      : resolvedNamespace === 'mathml'
+        ? semanticTagName
+        : tagName
+  assertValidDOMElementName(domTagName, namespaceURI !== null, namespaceURI ?? undefined)
   const el =
     namespaceURI !== null
-      ? ownerDocument.createElementNS(namespaceURI, tagName)
-      : ownerDocument.createElement(tagName)
-  applyProps(el, vnode.props ?? {}, resolvedNamespace === 'svg')
+      ? ownerDocument.createElementNS(namespaceURI, domTagName)
+      : ownerDocument.createElement(domTagName)
+  applyProps(el, vnode.props ?? {}, resolvedNamespace)
   const childParent =
     namespaceURI === null && el.localName === 'template' && 'content' in el
       ? (el as HTMLTemplateElement).content
@@ -517,7 +767,7 @@ function createElementWithContext(
   appendChildren(
     childParent,
     vnode.props?.children as FictNode | FictNode[] | undefined,
-    tagName === 'foreignObject' ? null : resolvedNamespace,
+    resolveChildNamespace(resolvedNamespace, el),
     ownerDocument,
   )
   return el as DOMElement
@@ -766,12 +1016,18 @@ function applyRef(el: Element, value: unknown): void {
  * Apply props to an HTML element, setting up reactive bindings as needed.
  * Uses comprehensive property constants for correct attribute/property handling.
  */
-function applyProps(el: Element, props: Record<string, unknown>, isSVG = false): void {
+function applyProps(
+  el: Element,
+  props: Record<string, unknown>,
+  namespace: ElementNamespaceContext,
+): void {
   props = unwrapProps(props)
   const tagName = el.tagName
+  const isSVG = namespace === 'svg'
+  const isHTML = namespace === 'html'
 
   // Check if this is a custom element
-  const isCE = tagName.includes('-') || 'is' in props
+  const isCE = isHTML && (tagName.includes('-') || 'is' in props)
 
   for (const [rawKey, value] of Object.entries(props)) {
     let key = rawKey
@@ -901,15 +1157,15 @@ function applyProps(el: Element, props: Record<string, unknown>, isSVG = false):
     }
 
     // Check for property alias (element-specific mappings)
-    const propAlias = !isSVG && isDev ? getPropAlias(key, tagName) : undefined
-    const isProperty = !isSVG
+    const propAlias = isHTML && isDev ? getPropAlias(key, tagName) : undefined
+    const isProperty = isHTML
       ? isDev
         ? Properties.has(key)
         : key in (el as unknown as Record<string, unknown>)
       : false
 
     // Handle properties and element-specific attributes
-    if (propAlias || isProperty || (isCE && !isSVG)) {
+    if (propAlias || isProperty || isCE) {
       const propName = propAlias || key
       // Custom elements use toPropertyName conversion
       if (isCE && !isProperty && !propAlias) {

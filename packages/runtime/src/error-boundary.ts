@@ -83,6 +83,9 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
     }
 
     const root = createRootContext(parentRoot)
+    // Delayed fallbacks must use the boundary call-site namespace, not the
+    // host root's namespace after component invocation has returned.
+    root.renderNamespace = boundaryRoot.renderNamespace
     const prev = pushRoot(root)
     let nodes: Node[] = []
     let streamBoundaryPushed = false

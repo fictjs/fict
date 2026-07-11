@@ -38,6 +38,8 @@ import {
   popRoot,
   queueDeferredRefAssignment,
   registerRootCleanup,
+  resolveParentOwnerDocument,
+  resolveParentRenderNamespace,
   withRootContext,
   type RootContext,
 } from './lifecycle'
@@ -71,6 +73,25 @@ const PROP_GETTER_REGISTRY_KEY = Symbol.for('fict:prop-getter-registry')
 const DELEGATED_DATA_ONLY_MARKER = '__fictDataOnly'
 const DELEGATED_DATA_PLAIN_MARKER = '__fictDataOnlyPlain'
 
+function configureRootForDOMParent(
+  root: RootContext,
+  parent: Node | null | undefined,
+  fallbackOwner: Document,
+): void {
+  root.ownerDocument = resolveParentOwnerDocument(parent, root.ownerDocument ?? fallbackOwner)
+  root.renderNamespace = resolveParentRenderNamespace(parent, root.renderNamespace)
+}
+
+function rollbackRootAfterFailure(root: RootContext): void {
+  try {
+    destroyRoot(root)
+  } catch (cleanupError) {
+    if (typeof console !== 'undefined' && typeof console.error === 'function') {
+      console.error('[fict] Failed to roll back a rejected DOM render.', cleanupError)
+    }
+  }
+}
+
 type EventHandlerTuple = [EventListenerOrEventListenerObject, unknown, string?]
 
 type NonReactiveRegistryHost = typeof globalThis & {
@@ -100,7 +121,7 @@ interface AssignedRefState {
 interface SpreadLayer {
   props: Record<string, unknown>
   excludedProps?: ReadonlySet<string> | undefined
-  isSVG: boolean
+  namespace: boolean | 'mathml'
   skipChildren: boolean
 }
 
@@ -1098,8 +1119,19 @@ export function insert(
   let dispose: Cleanup
   try {
     dispose = createRenderEffect(() => {
-      const value = getValue()
       const parentNode = marker.parentNode as (ParentNode & Node) | null
+      const root = createRootContext(hostRoot)
+      configureRootForDOMParent(root, parentNode ?? parent, markerOwnerDocument)
+      const evaluationRoot = pushRoot(root)
+      let value: FictNode
+      try {
+        value = getValue()
+      } catch (error) {
+        rollbackRootAfterFailure(root)
+        throw error
+      } finally {
+        popRoot(evaluationRoot)
+      }
       const isPrimitive =
         value == null ||
         value === false ||
@@ -1108,6 +1140,7 @@ export function insert(
         typeof value === 'boolean'
 
       if (isPrimitive) {
+        destroyRoot(root)
         if (currentRoot) clearCurrentNodes()
         if (!parentNode) {
           clearCurrentNodes()
@@ -1121,7 +1154,6 @@ export function insert(
 
       clearCurrentNodes()
 
-      const root = createRootContext(hostRoot)
       const prev = pushRoot(root)
       let nodes: Node[] = []
       let committed = false
@@ -1138,7 +1170,7 @@ export function insert(
         }
       }
       try {
-        const ownerDocument = parentNode?.ownerDocument ?? markerOwnerDocument
+        const ownerDocument = root.ownerDocument ?? markerOwnerDocument
         const createValue = () => {
           if (isNodeLike(value, ownerDocument)) {
             return value
@@ -1295,17 +1327,23 @@ export function insertBetween(
   let dispose: Cleanup
   try {
     dispose = createRenderEffect(() => {
+      const parentNode = start.parentNode as (ParentNode & Node) | null
+      const root = createRootContext(hostRoot)
+      configureRootForDOMParent(root, parentNode, markerOwnerDocument)
+      const evaluationRoot = pushRoot(root)
       let value: FictNode
       try {
         value = getValue()
       } catch (error) {
+        rollbackRootAfterFailure(root)
         if (initialHydrating) {
           currentNodes = collectBetween()
           initialHydrating = false
         }
         throw error
+      } finally {
+        popRoot(evaluationRoot)
       }
-      const parentNode = start.parentNode as (ParentNode & Node) | null
       const isPrimitive =
         value == null ||
         value === false ||
@@ -1314,6 +1352,7 @@ export function insertBetween(
         typeof value === 'boolean'
 
       if (isPrimitive) {
+        destroyRoot(root)
         if (initialHydrating && isHydratingActive() && parentNode) {
           const existing = collectBetween()
           if (existing.length > 0) {
@@ -1336,7 +1375,6 @@ export function insertBetween(
 
       clearCurrentNodes()
 
-      const root = createRootContext(hostRoot)
       const prev = pushRoot(root)
       let nodes: Node[]
       let ownedNodes: Node[] = []
@@ -1492,6 +1530,11 @@ export function createChildBinding(
       if (disposed) return
       activeRelease?.()
       const root = createRootContext(hostRoot)
+      configureRootForDOMParent(
+        root,
+        (marker.parentNode as (ParentNode & Node) | null) ?? parent,
+        marker.ownerDocument ?? parent.ownerDocument ?? document,
+      )
       const prev = pushRoot(root)
       let nodes: Node[] = []
       let committed = false
@@ -2212,6 +2255,9 @@ function bindAssignedChildren(
   let dispose: Cleanup
   try {
     dispose = createRenderEffect(() => {
+      const root = createRootContext(hostRoot)
+      configureRootForDOMParent(root, node, node.ownerDocument ?? document)
+      const evaluationRoot = pushRoot(root)
       let value: FictNode
       try {
         value = getValue()
@@ -2220,7 +2266,10 @@ function bindAssignedChildren(
           currentNodes = collectCurrentChildren()
           initialHydrating = false
         }
+        rollbackRootAfterFailure(root)
         throw error
+      } finally {
+        popRoot(evaluationRoot)
       }
       const isPrimitive =
         value == null ||
@@ -2230,6 +2279,7 @@ function bindAssignedChildren(
         typeof value === 'boolean'
 
       if (isPrimitive) {
+        destroyRoot(root)
         const textValue = value == null || typeof value === 'boolean' ? '' : String(value)
         const shouldInsert = value != null && typeof value !== 'boolean'
         setTextNode(textValue, shouldInsert)
@@ -2238,7 +2288,6 @@ function bindAssignedChildren(
 
       clearCurrentNodes()
 
-      const root = createRootContext(hostRoot)
       const prev = pushRoot(root)
       let nodes: Node[]
       let ownedNodes: Node[] = []
@@ -2257,7 +2306,7 @@ function bindAssignedChildren(
         }
       }
       try {
-        const ownerDocument = node.ownerDocument ?? hostRoot?.ownerDocument ?? document
+        const ownerDocument = root.ownerDocument ?? document
         const createValue = () => {
           if (isNodeLike(value, ownerDocument)) {
             return value
@@ -2484,13 +2533,14 @@ function clearSpreadStateIfEmpty(node: Element, state: SpreadState): void {
 
 function mergeSpreadLayers(state: SpreadState): {
   props: Record<string, unknown>
-  isSVG: boolean
+  namespace: boolean | 'mathml'
 } {
   const merged: Record<string, unknown> = {}
-  let isSVG = false
+  let namespace: boolean | 'mathml' = false
 
   for (const layer of state.layers) {
-    if (layer.isSVG) isSVG = true
+    if (layer.namespace === true) namespace = true
+    else if (layer.namespace === 'mathml' && namespace === false) namespace = 'mathml'
     for (const prop of Object.keys(layer.props)) {
       if (layer.excludedProps?.has(prop)) continue
       if (prop === 'children' && layer.skipChildren) continue
@@ -2498,12 +2548,12 @@ function mergeSpreadLayers(state: SpreadState): {
     }
   }
 
-  return { props: merged, isSVG }
+  return { props: merged, namespace }
 }
 
 function applySpreadLayers(node: Element, state: SpreadState): void {
-  const { props, isSVG } = mergeSpreadLayers(state)
-  assign(node, props, isSVG, false, state.prevProps, true)
+  const { props, namespace } = mergeSpreadLayers(state)
+  assign(node, props, namespace, false, state.prevProps, true)
 }
 
 // ============================================================================
@@ -2529,7 +2579,7 @@ function applySpreadLayers(node: Element, state: SpreadState): void {
 export function spread(
   node: Element,
   props: Record<string, unknown> | (() => Record<string, unknown>) = {},
-  isSVG = false,
+  namespace: boolean | 'mathml' = false,
   skipChildren = false,
   exclude: readonly string[] = [],
 ): Record<string, unknown> {
@@ -2538,7 +2588,7 @@ export function spread(
   const layer: SpreadLayer = {
     props: {},
     excludedProps,
-    isSVG,
+    namespace,
     skipChildren,
   }
   spreadState.layers.push(layer)
@@ -2588,7 +2638,7 @@ export function spread(
 export function assign(
   node: Element,
   props: Record<string, unknown>,
-  isSVG = false,
+  namespace: boolean | 'mathml' = false,
   skipChildren = false,
   prevProps: Record<string, unknown> = {},
   skipRef = false,
@@ -2608,7 +2658,7 @@ export function assign(
         }
         continue
       }
-      prevProps[prop] = assignProp(node, prop, null, prevProps[prop], isSVG, skipRef, props)
+      prevProps[prop] = assignProp(node, prop, null, prevProps[prop], namespace, skipRef, props)
     }
   }
 
@@ -2623,7 +2673,7 @@ export function assign(
       }
       continue
     }
-    prevProps[prop] = assignProp(node, prop, value, prevProps[prop], isSVG, skipRef, props)
+    prevProps[prop] = assignProp(node, prop, value, prevProps[prop], namespace, skipRef, props)
   }
 }
 
@@ -2635,10 +2685,12 @@ function assignProp(
   prop: string,
   value: unknown,
   prev: unknown,
-  isSVG: boolean,
+  namespace: boolean | 'mathml',
   skipRef: boolean,
   props: Record<string, unknown>,
 ): unknown {
+  const isSVG = namespace === true
+  const isForeign = isSVG || namespace === 'mathml'
   // Style handling
   if (prop === 'style') {
     applyStyle(node as Element & { style: CSSStyleDeclaration }, value, prev)
@@ -2776,10 +2828,10 @@ function assignProp(
   }
 
   // Check if custom element
-  const isCE = node.nodeName.includes('-') || 'is' in props
+  const isCE = !isForeign && (node.nodeName.includes('-') || 'is' in props)
 
-  // Property handling (for non-SVG elements)
-  if (!isSVG) {
+  // Property handling is only valid in the HTML namespace.
+  if (!isForeign) {
     const propAlias = isDev ? getPropAlias(prop, node.tagName) : undefined
     const isProperty = isDev
       ? Properties.has(prop)
@@ -2933,6 +2985,7 @@ export function createConditional(
     }
 
     const root = createRootContext(hostRoot)
+    configureRootForDOMParent(root, parent, markerOwnerDocument)
     if (deferRefs) {
       deferRootRefAssignments(root)
     }
@@ -2967,7 +3020,7 @@ export function createConditional(
       const el = untrack(() => createElementFn(output))
       return {
         root,
-        nodes: toNodeArray(el, parent.ownerDocument ?? markerOwnerDocument),
+        nodes: toNodeArray(el, root.ownerDocument ?? markerOwnerDocument),
         handled: false,
       }
     } catch (err) {
@@ -3061,6 +3114,7 @@ export function createConditional(
       }
 
       const root = createRootContext(hostRoot)
+      configureRootForDOMParent(root, parent, markerOwnerDocument)
       const prev = pushRoot(root)
       let committed = false
       try {
@@ -3239,7 +3293,11 @@ export function createPortal(
 
       // Create new content
       const root = createRootContext(parentRoot)
-      root.ownerDocument = container.ownerDocument ?? parentRoot?.ownerDocument ?? document
+      configureRootForDOMParent(
+        root,
+        (marker.parentNode as (ParentNode & Node) | null) ?? container,
+        marker.ownerDocument ?? container.ownerDocument ?? parentRoot?.ownerDocument ?? document,
+      )
       const prev = pushRoot(root)
       let nodes: Node[] = []
       let committed = false
@@ -3259,7 +3317,7 @@ export function createPortal(
         const output = render()
         if (output != null && output !== false) {
           const el = untrack(() => createElementFn(output))
-          nodes = toNodeArray(el, markerOwnerDocument)
+          nodes = toNodeArray(el, root.ownerDocument ?? markerOwnerDocument)
           if (marker.parentNode) {
             nodes = insertNodesBefore(marker.parentNode as ParentNode & Node, nodes, marker)
           }

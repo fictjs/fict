@@ -96,6 +96,9 @@ export function Suspense(props: SuspenseProps): FictNode {
     }
 
     const root = createRootContext(parentRoot)
+    // The boundary may replay after its caller's temporary render namespace
+    // has been restored. Keep the namespace captured at boundary creation.
+    root.renderNamespace = boundaryRoot.renderNamespace
     const prev = pushRoot(root)
     let nodes: Node[] = []
     let boundaryPushed = false

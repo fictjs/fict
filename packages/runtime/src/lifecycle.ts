@@ -11,9 +11,18 @@ const isDev =
 type LifecycleFn = () => void | Cleanup
 type MountPhase = 'pending' | 'flushing' | 'mounted'
 
+export type RenderNamespaceContext =
+  | 'html'
+  | 'svg'
+  | 'mathml'
+  | 'mathmlTextIntegration'
+  | 'mathmlAnnotationXml'
+  | null
+
 export interface RootContext {
   parent?: RootContext | undefined
   ownerDocument?: Document | undefined
+  renderNamespace?: RenderNamespaceContext | undefined
   onMountCallbacks?: LifecycleFn[]
   deferRefAssignments?: boolean | undefined
   deferredRefAssignments?: LifecycleFn[] | undefined
@@ -24,6 +33,44 @@ export interface RootContext {
   suspended?: boolean
   destroying?: boolean
   destroyed?: boolean
+}
+
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg'
+const MATHML_NAMESPACE = 'http://www.w3.org/1998/Math/MathML'
+const SVG_HTML_INTEGRATION_POINTS = new Set(['foreignobject', 'title', 'desc'])
+const MATHML_TEXT_INTEGRATION_POINTS = new Set(['mi', 'mo', 'mn', 'ms', 'mtext'])
+
+/** Prefer the eventual host document over an inert template contents document. */
+export function resolveParentOwnerDocument(
+  parent: Node | null | undefined,
+  fallback: Document,
+): Document {
+  const owner = parent?.nodeType === 9 ? (parent as Document) : parent?.ownerDocument
+  if (!owner) return fallback
+  return owner.defaultView == null && fallback.defaultView != null ? fallback : owner
+}
+
+/** Resolve the namespace inherited by children of an already-created DOM parent. */
+export function resolveParentRenderNamespace(
+  parent: Node | null | undefined,
+  fallback: RenderNamespaceContext = null,
+): RenderNamespaceContext {
+  if (!parent || parent.nodeType !== 1) return fallback
+  const element = parent as Element
+  const localName = element.localName.toLowerCase()
+  if (element.namespaceURI === SVG_NAMESPACE) {
+    return SVG_HTML_INTEGRATION_POINTS.has(localName) ? 'html' : 'svg'
+  }
+  if (element.namespaceURI === MATHML_NAMESPACE) {
+    if (MATHML_TEXT_INTEGRATION_POINTS.has(localName)) return 'mathmlTextIntegration'
+    if (localName === 'annotation-xml') {
+      const encoding = element.getAttribute('encoding')?.toLowerCase()
+      if (encoding === 'text/html' || encoding === 'application/xhtml+xml') return 'html'
+      return 'mathmlAnnotationXml'
+    }
+    return 'mathml'
+  }
+  return 'html'
 }
 
 export interface CreateRootOptions {
@@ -69,6 +116,7 @@ export function createRootContext(parent?: RootContext): RootContext {
   const root = {
     parent,
     ownerDocument: parent?.ownerDocument,
+    renderNamespace: parent?.renderNamespace,
     cleanups: [],
     destroyCallbacks: [],
     suspended: false,

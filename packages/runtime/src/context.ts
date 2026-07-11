@@ -53,6 +53,7 @@ import {
   getCurrentRoot,
   popRoot,
   pushRoot,
+  resolveParentOwnerDocument,
   type RootContext,
 } from './lifecycle'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
@@ -165,6 +166,7 @@ export function createContext<T>(defaultValue: T): Context<T> {
   // Create the Provider component
   context.Provider = function Provider(props: ProviderProps<T>): FictNode {
     const hostRoot = getCurrentRoot()
+    const callSiteRenderNamespace = hostRoot?.renderNamespace
 
     // Create DOM structure
     const markerOwnerDocument = hostRoot?.ownerDocument ?? document
@@ -199,6 +201,12 @@ export function createContext<T>(defaultValue: T): Context<T> {
       // Create a child root for this provider render. This establishes the
       // provider boundary; children will look up from here.
       const providerRoot = createRootContext(hostRoot)
+      providerRoot.renderNamespace = callSiteRenderNamespace
+      const markerParent = marker.parentNode
+      providerRoot.ownerDocument = resolveParentOwnerDocument(
+        markerParent,
+        providerRoot.ownerDocument ?? marker.ownerDocument ?? markerOwnerDocument,
+      )
       const contextMap = getContextMap(providerRoot)
       contextMap.set(id, value)
 
@@ -212,7 +220,7 @@ export function createContext<T>(defaultValue: T): Context<T> {
       }
       try {
         const output = createElement(children)
-        nodes = toNodeArray(output, markerOwnerDocument)
+        nodes = toNodeArray(output, providerRoot.ownerDocument ?? markerOwnerDocument)
         const parentNode = marker.parentNode as (ParentNode & Node) | null
         if (parentNode) {
           nodes = insertNodesBefore(parentNode, nodes, marker)
