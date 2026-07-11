@@ -15,9 +15,11 @@ import { isCanonicalArrayPropIndex } from './metadata-indices'
 import { MODULE_REACTIVE_METADATA_VERSION } from './types'
 import type { FictCompilerOptions, ModuleReactiveMetadata } from './types'
 
-const globalMetadata = new Map<string, ModuleReactiveMetadata>()
+type MetadataStore = Map<string, ModuleReactiveMetadata>
+
+const globalMetadata: MetadataStore = new Map()
 const lastWrittenMetadataPayload = new Map<string, string>()
-const diskLoadedMetadataKeys = new Set<string>()
+const diskLoadedMetadataKeysByStore = new WeakMap<MetadataStore, Set<string>>()
 const defaultResolutionCache = new Map<string, ModuleReactiveMetadata>()
 let resolutionCacheByOptions = new WeakMap<
   FictCompilerOptions,
@@ -79,7 +81,17 @@ function clearResolutionCaches(): void {
 
 const clearFsProbeCache = (): void => sharedFsProbeCache.clear()
 
-const canReuseStoredMetadata = (key: string): boolean => !diskLoadedMetadataKeys.has(key)
+function getDiskLoadedMetadataKeys(store: MetadataStore): Set<string> {
+  let keys = diskLoadedMetadataKeysByStore.get(store)
+  if (!keys) {
+    keys = new Set<string>()
+    diskLoadedMetadataKeysByStore.set(store, keys)
+  }
+  return keys
+}
+
+const canReuseStoredMetadata = (store: MetadataStore, key: string): boolean =>
+  !diskLoadedMetadataKeysByStore.get(store)?.has(key)
 
 function cacheFsProbeResult(cache: FsProbeCache, pathName: string, exists: boolean): void {
   // A missing manifest or sidecar can be created by another compiler process at
@@ -263,13 +275,14 @@ function readMetadataFromDisk(
       const parsed = parseModuleReactiveMetadata(raw)
       if (!parsed) continue
       store.set(normalized, parsed)
-      diskLoadedMetadataKeys.add(normalized)
+      getDiskLoadedMetadataKeys(store).add(normalized)
       return parsed
     } catch {
       // Ignore malformed/partial metadata files and try the next path.
     }
   }
-  if (diskLoadedMetadataKeys.has(normalized)) {
+  const diskLoadedMetadataKeys = diskLoadedMetadataKeysByStore.get(store)
+  if (diskLoadedMetadataKeys?.has(normalized)) {
     store.delete(normalized)
     diskLoadedMetadataKeys.delete(normalized)
   }
@@ -450,7 +463,7 @@ function readPackageMetadataFile(
     const parsed = parseModuleReactiveMetadata(readFileSync(realMetaPath, 'utf8'))
     if (!parsed) return undefined
     store.set(metaPath, parsed)
-    diskLoadedMetadataKeys.add(metaPath)
+    getDiskLoadedMetadataKeys(store).add(metaPath)
     return parsed
   } catch {
     return undefined
@@ -485,7 +498,7 @@ export function resolvePackageModuleMetadata(
 
   const store = getMetadataStore(options)
   const existing = store.get(normalizedMetaPath)
-  if (existing && canReuseStoredMetadata(normalizedMetaPath)) return existing
+  if (existing && canReuseStoredMetadata(store, normalizedMetaPath)) return existing
 
   return readPackageMetadataFile(normalizedMetaPath, packageDir, store, sharedFsProbeCache)
 }
@@ -587,7 +600,7 @@ export function resolveModuleMetadata(
   const shouldProbeFs = options?.emitModuleMetadata === true || !hasExternalMetadataStore
   const fsCache = shouldProbeFs ? sharedFsProbeCache : undefined
   const canUseStoreEntry = (key: string): boolean =>
-    hasExternalMetadataStore && !shouldProbeFs ? true : canReuseStoredMetadata(key)
+    hasExternalMetadataStore && !shouldProbeFs ? true : canReuseStoredMetadata(store, key)
   const canReadSourceDirectly =
     path.isAbsolute(source) || source.startsWith('/@fs/') || source.startsWith('file://')
 
@@ -665,7 +678,7 @@ export function setModuleMetadata(
   }
   const store = getMetadataStore(options)
   store.set(normalized, metadata)
-  diskLoadedMetadataKeys.delete(normalized)
+  diskLoadedMetadataKeysByStore.get(store)?.delete(normalized)
   clearResolutionCaches()
   const metaPath = getMetadataWritePath(normalized, writeMode, options)
   if (!metaPath) return
@@ -695,7 +708,8 @@ export function setModuleMetadata(
 export function clearModuleMetadata(options?: FictCompilerOptions): void {
   const store = getMetadataStore(options)
   store.clear()
-  diskLoadedMetadataKeys.clear()
+  diskLoadedMetadataKeysByStore.delete(store)
+  if (store !== globalMetadata) return
   lastWrittenMetadataPayload.clear()
   clearResolutionCaches()
   clearFsProbeCache()
@@ -709,13 +723,17 @@ export function invalidateModuleMetadata(fileName: string, options?: FictCompile
   const normalized = normalizeConcreteFileName(fileName)
   if (!normalized) return
   if (options?.validateIntegrationMetadata) {
-    options.moduleMetadata?.delete(normalized)
+    const store = options.moduleMetadata
+    store?.delete(normalized)
+    if (store) diskLoadedMetadataKeysByStore.get(store)?.delete(normalized)
     clearResolutionCaches()
     return
   }
   globalMetadata.delete(normalized)
-  options?.moduleMetadata?.delete(normalized)
-  diskLoadedMetadataKeys.delete(normalized)
+  diskLoadedMetadataKeysByStore.get(globalMetadata)?.delete(normalized)
+  const externalStore = options?.moduleMetadata
+  externalStore?.delete(normalized)
+  if (externalStore) diskLoadedMetadataKeysByStore.get(externalStore)?.delete(normalized)
   clearResolutionCaches()
   for (const metaPath of getMetadataReadPaths(normalized, options)) {
     lastWrittenMetadataPayload.delete(metaPath)

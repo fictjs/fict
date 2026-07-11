@@ -1005,6 +1005,64 @@ describe('module metadata safety', () => {
     }
   })
 
+  it('keeps global disk refresh markers when clearing an explicit metadata store', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_metadata_store_clear_isolation__')
+    const importer = path.join(baseDir, 'consumer.ts')
+    const depPath = path.join(baseDir, 'dep.ts')
+    const depMetaPath = `${depPath}.fict.meta.json`
+    const explicitStore = new Map<string, ModuleReactiveMetadata>([
+      [depPath, { exports: { value: 'store' } }],
+    ])
+    mkdirSync(baseDir, { recursive: true })
+
+    try {
+      writeFileSync(depMetaPath, JSON.stringify({ exports: { value: 'signal' } }), 'utf8')
+      expect(resolveModuleMetadata('./dep', importer, { emitModuleMetadata: false })).toEqual({
+        exports: { value: 'signal' },
+      })
+
+      writeFileSync(depMetaPath, JSON.stringify({ exports: { value: 'memo' } }), 'utf8')
+      clearModuleMetadata({ emitModuleMetadata: false, moduleMetadata: explicitStore })
+
+      expect(explicitStore.size).toBe(0)
+      expect(resolveModuleMetadata('./dep', importer, { emitModuleMetadata: false })).toEqual({
+        exports: { value: 'memo' },
+      })
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+      clearModuleMetadata()
+    }
+  })
+
+  it('does not let explicit-store disk markers invalidate global memory metadata', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_metadata_disk_marker_isolation__')
+    const importer = path.join(baseDir, 'consumer.ts')
+    const depPath = path.join(baseDir, 'dep.ts')
+    const depMetaPath = `${depPath}.fict.meta.json`
+    const explicitStore = new Map<string, ModuleReactiveMetadata>()
+    mkdirSync(baseDir, { recursive: true })
+
+    try {
+      writeFileSync(depMetaPath, JSON.stringify({ exports: { value: 'signal' } }), 'utf8')
+      setModuleMetadata(depPath, { exports: { value: 'memo' } }, { emitModuleMetadata: false })
+
+      expect(
+        resolveModuleMetadata('./dep', importer, {
+          emitModuleMetadata: true,
+          moduleMetadata: explicitStore,
+        }),
+      ).toEqual({ exports: { value: 'signal' } })
+      expect(resolveModuleMetadata('./dep', importer, { emitModuleMetadata: false })).toEqual({
+        exports: { value: 'memo' },
+      })
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+      clearModuleMetadata()
+    }
+  })
+
   it('does not resolve reactive metadata for query-suffixed import sources', () => {
     clearModuleMetadata()
     const baseDir = path.join(process.cwd(), '__fict_metadata_query_suffix__')
