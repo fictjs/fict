@@ -1009,6 +1009,43 @@ describe('submitAction', () => {
     expect(all()).toEqual([])
   })
 
+  it('keeps concurrent submissions for the same action independently visible', async () => {
+    const resolvers: Array<(value: string) => void> = []
+    const save = action<string>(
+      () =>
+        new Promise<string>(resolve => {
+          resolvers.push(resolve)
+        }),
+      'visibleConcurrentSubmissions',
+    )
+    const current = useSubmission(save)
+    const all = useSubmissions()
+
+    const firstPromise = submitAction(save, new FormData())
+    const first = current()!
+    const secondPromise = submitAction(save, new FormData())
+    const second = current()!
+
+    expect(current()).toBe(second)
+    expect(all()).toEqual([first, second])
+
+    resolvers[0]!('first')
+    await expect(firstPromise).resolves.toBe('first')
+    expect(first).toMatchObject({ state: 'idle', result: 'first' })
+    expect(second).toMatchObject({ state: 'submitting' })
+    expect(all()).toEqual([first, second])
+
+    first.clear()
+    expect(current()).toBe(second)
+    expect(all()).toEqual([second])
+
+    resolvers[1]!('second')
+    await expect(secondPromise).resolves.toBe('second')
+    second.clear()
+    expect(current()).toBeUndefined()
+    expect(all()).toEqual([])
+  })
+
   it('keeps the newer submission current when an older submission resolves last', async () => {
     const resolvers: Array<(value: string) => void> = []
     const save = action<string>(
@@ -1071,7 +1108,7 @@ describe('submitAction', () => {
     expect(current()).toMatchObject({ state: 'idle', result: 'newer' })
   })
 
-  it('only clears the submission that is still current for its action', async () => {
+  it('reveals the preceding submission when the latest concurrent one is cleared', async () => {
     const resolvers: Array<(value: string) => void> = []
     const save = action<string>(
       () =>
@@ -1081,17 +1118,20 @@ describe('submitAction', () => {
       'concurrentClear',
     )
     const current = useSubmission(save)
+    const all = useSubmissions()
 
     const firstPromise = submitAction(save, new FormData())
     const first = current()!
     const secondPromise = submitAction(save, new FormData())
     const second = current()!
 
-    first.clear()
-    expect(current()).toBe(second)
-
     second.clear()
+    expect(current()).toBe(first)
+    expect(all()).toEqual([first])
+
+    first.clear()
     expect(current()).toBeUndefined()
+    expect(all()).toEqual([])
 
     resolvers[1]!('newer')
     resolvers[0]!('older')

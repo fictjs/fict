@@ -392,6 +392,9 @@ export function getAction(url: string): ActionFunction<unknown> | undefined {
 type SubmissionMap = Map<string, Submission<unknown>>
 type SubmissionStore = Signal<SubmissionMap>
 
+/** Associate tracked submissions with their action without exposing an internal field publicly. */
+const submissionActionUrls = new WeakMap<Submission<unknown>, string>()
+
 /** Shared browser submissions. SSR requests use isolated stores below. */
 const sharedActiveSubmissions = createSignal<SubmissionMap>(new Map())
 
@@ -428,7 +431,13 @@ export function useSubmission<T>(actionOrUrl: Action<T> | string): () => Submiss
 
   return () => {
     const submissions = activeSubmissions()
-    return submissions.get(url) as Submission<T> | undefined
+    let latest: Submission<T> | undefined
+    for (const submission of submissions.values()) {
+      if (submissionActionUrls.get(submission) === url) {
+        latest = submission as Submission<T>
+      }
+    }
+    return latest
   }
 }
 
@@ -456,8 +465,8 @@ async function submitActionInStore<T>(
     state: 'submitting',
     clear: () => {
       const submissions = new Map(activeSubmissions())
-      if (submissions.get(action.url) !== submission) return
-      submissions.delete(action.url)
+      if (submissions.get(key) !== submission) return
+      submissions.delete(key)
       activeSubmissions(submissions)
     },
     retry: () => {
@@ -467,10 +476,11 @@ async function submitActionInStore<T>(
       void submitActionInStore(action, formData, params, activeSubmissions).catch(() => {})
     },
   }
+  submissionActionUrls.set(submission as Submission<unknown>, action.url)
 
   // Add to active submissions
   const submissions = new Map(activeSubmissions())
-  submissions.set(action.url, submission as Submission<unknown>)
+  submissions.set(key, submission as Submission<unknown>)
   activeSubmissions(submissions)
 
   try {
@@ -483,8 +493,8 @@ async function submitActionInStore<T>(
 
     // Update active submissions
     const updatedSubmissions = new Map(activeSubmissions())
-    if (updatedSubmissions.get(action.url) === submission) {
-      updatedSubmissions.set(action.url, submission as Submission<unknown>)
+    if (updatedSubmissions.get(key) === submission) {
+      updatedSubmissions.set(key, submission as Submission<unknown>)
       activeSubmissions(updatedSubmissions)
     }
 
@@ -496,8 +506,8 @@ async function submitActionInStore<T>(
 
     // Update active submissions
     const updatedSubmissions = new Map(activeSubmissions())
-    if (updatedSubmissions.get(action.url) === submission) {
-      updatedSubmissions.set(action.url, submission as Submission<unknown>)
+    if (updatedSubmissions.get(key) === submission) {
+      updatedSubmissions.set(key, submission as Submission<unknown>)
       activeSubmissions(updatedSubmissions)
     }
 
