@@ -65,6 +65,18 @@ export interface RPCClientOptions {
  */
 export type RPCHandler<T = unknown, R = unknown> = (payload: T) => R | Promise<R>
 
+function formatUnknownError(error: unknown): string {
+  try {
+    if (error instanceof Error && error.message) {
+      return error.message
+    }
+
+    return String(error) || 'Unknown RPC error'
+  } catch {
+    return 'Unknown RPC error'
+  }
+}
+
 // ============================================================================
 // Transports
 // ============================================================================
@@ -351,6 +363,7 @@ export class RPCClient {
   >()
   private messageId = 0
   private unsubscribe: (() => void) | null = null
+  private destroyed = false
 
   constructor(options: RPCClientOptions) {
     this.source = options.source
@@ -391,6 +404,8 @@ export class RPCClient {
    * Handle incoming messages
    */
   private handleMessage(message: RPCMessage): void {
+    if (this.destroyed) return
+
     // Handle responses to our requests
     if (message.isResponse && message.replyTo) {
       const pending = this.pendingRequests.get(message.replyTo)
@@ -411,13 +426,19 @@ export class RPCClient {
     if (message.id && !message.isResponse) {
       const handler = this.handlers.get(message.type)
       if (handler) {
-        Promise.resolve(handler(message.payload))
-          .then(result => {
-            this.sendResponse(message.id!, result)
+        Promise.resolve()
+          .then(() => {
+            if (this.destroyed) return undefined
+            return handler(message.payload)
           })
-          .catch(error => {
-            this.sendResponse(message.id!, undefined, error.message)
-          })
+          .then(
+            result => {
+              this.sendResponse(message.id!, result)
+            },
+            error => {
+              this.sendResponse(message.id!, undefined, formatUnknownError(error))
+            },
+          )
       }
     }
   }
@@ -426,6 +447,8 @@ export class RPCClient {
    * Send a response message
    */
   private sendResponse(replyTo: string, payload?: unknown, error?: string): void {
+    if (this.destroyed) return
+
     const message: RPCMessage = {
       source: this.source,
       type: 'response',
@@ -445,6 +468,8 @@ export class RPCClient {
    * Send a fire-and-forget message
    */
   send(type: string, payload?: unknown): void {
+    if (this.destroyed) return
+
     const message: RPCMessage = {
       source: this.source,
       type,
@@ -461,6 +486,10 @@ export class RPCClient {
    * Send a request and wait for a response
    */
   request<T = unknown>(type: string, payload?: unknown): Promise<T> {
+    if (this.destroyed) {
+      return Promise.reject(new Error('RPC client destroyed'))
+    }
+
     return new Promise((resolve, reject) => {
       const id = this.generateId()
 
@@ -493,6 +522,7 @@ export class RPCClient {
    * Register a handler for incoming requests
    */
   handle<T = unknown, R = unknown>(type: string, handler: RPCHandler<T, R>): () => void {
+    if (this.destroyed) return () => undefined
     this.handlers.set(type, handler as RPCHandler)
     return () => this.handlers.delete(type)
   }
@@ -501,6 +531,7 @@ export class RPCClient {
    * Subscribe to messages of a specific type
    */
   on(type: string, handler: (payload: unknown) => void): () => void {
+    if (this.destroyed) return () => undefined
     const wrappedHandler = (message: RPCMessage) => {
       if (message.type === type && !message.isResponse) {
         handler(message.payload)
@@ -513,6 +544,7 @@ export class RPCClient {
    * Subscribe to all messages
    */
   onAny(handler: (type: string, payload: unknown) => void): () => void {
+    if (this.destroyed) return () => undefined
     return this.transport.subscribe(message => {
       if (!message.isResponse) {
         handler(message.type, message.payload)
@@ -538,6 +570,9 @@ export class RPCClient {
    * Destroy the client and cleanup resources
    */
   destroy(): void {
+    if (this.destroyed) return
+    this.destroyed = true
+
     if (this.unsubscribe) {
       this.unsubscribe()
       this.unsubscribe = null

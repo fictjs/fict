@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { ChromeExtensionTransport, PostMessageTransport } from '../src/core/rpc'
+import {
+  ChromeExtensionTransport,
+  PostMessageTransport,
+  RPCClient,
+  type RPCMessage,
+  type RPCTransport,
+} from '../src/core/rpc'
+import { MessageSource } from '../src/core/types'
 
 type Listener<TArgs extends unknown[]> = (...args: TArgs) => void
 
@@ -32,6 +39,50 @@ function createPort(): chrome.runtime.Port {
       onDisconnect.emit()
     },
   } as unknown as chrome.runtime.Port
+}
+
+class TestTransport implements RPCTransport {
+  readonly name = 'test'
+  readonly sent: RPCMessage[] = []
+  sendAttemptsAfterDestroy = 0
+  destroyed = false
+  private handlers = new Set<(message: RPCMessage) => void>()
+
+  send(message: RPCMessage): void {
+    if (this.destroyed) {
+      this.sendAttemptsAfterDestroy++
+      return
+    }
+    this.sent.push(message)
+  }
+
+  subscribe(handler: (message: RPCMessage) => void): () => void {
+    this.handlers.add(handler)
+    return () => this.handlers.delete(handler)
+  }
+
+  isConnected(): boolean {
+    return !this.destroyed
+  }
+
+  destroy(): void {
+    this.destroyed = true
+    this.handlers.clear()
+  }
+
+  emit(message: RPCMessage): void {
+    for (const handler of this.handlers) handler(message)
+  }
+}
+
+function createRPCRequest(type: string, id: string, payload?: unknown): RPCMessage {
+  return {
+    source: MessageSource.Panel,
+    type,
+    id,
+    payload,
+    timestamp: Date.now(),
+  }
 }
 
 describe('ChromeExtensionTransport lifecycle', () => {
@@ -86,5 +137,102 @@ describe('ChromeExtensionTransport lifecycle', () => {
     expect(messages).toHaveLength(1)
     expect(messages[0]).toMatchObject({ type: 'trusted' })
     transport.destroy()
+  })
+})
+
+describe('RPCClient lifecycle', () => {
+  it('turns a synchronous handler throw into an error response', async () => {
+    const transport = new TestTransport()
+    const client = new RPCClient({ source: MessageSource.Hook, transport })
+    client.handle('explode', () => {
+      throw new Error('synchronous failure')
+    })
+
+    expect(() => transport.emit(createRPCRequest('explode', 'request-1'))).not.toThrow()
+
+    await vi.waitFor(() => {
+      expect(transport.sent).toHaveLength(1)
+    })
+    expect(transport.sent[0]).toMatchObject({
+      type: 'response',
+      replyTo: 'request-1',
+      isResponse: true,
+      error: 'synchronous failure',
+    })
+    client.destroy()
+  })
+
+  it.each([
+    ['null', null, 'null'],
+    ['undefined', undefined, 'undefined'],
+  ])('responds when a handler rejects with %s', async (_label, reason, expectedError) => {
+    const transport = new TestTransport()
+    const client = new RPCClient({ source: MessageSource.Hook, transport })
+    client.handle('reject', () => Promise.reject(reason))
+
+    transport.emit(createRPCRequest('reject', 'request-2'))
+
+    await vi.waitFor(() => {
+      expect(transport.sent).toHaveLength(1)
+    })
+    expect(transport.sent[0]).toMatchObject({
+      type: 'response',
+      replyTo: 'request-2',
+      isResponse: true,
+      error: expectedError,
+    })
+    client.destroy()
+  })
+
+  it('preserves successful response payloads', async () => {
+    const transport = new TestTransport()
+    const client = new RPCClient({ source: MessageSource.Hook, transport })
+    client.handle('echo', payload => ({ payload }))
+
+    transport.emit(createRPCRequest('echo', 'request-3', { value: 42 }))
+
+    await vi.waitFor(() => {
+      expect(transport.sent).toHaveLength(1)
+    })
+    expect(transport.sent[0]).toMatchObject({
+      type: 'response',
+      replyTo: 'request-3',
+      isResponse: true,
+      payload: { payload: { value: 42 } },
+    })
+    expect(transport.sent[0]?.error).toBeUndefined()
+    client.destroy()
+  })
+
+  it('does not send an in-flight response after being destroyed', async () => {
+    const transport = new TestTransport()
+    const client = new RPCClient({ source: MessageSource.Hook, transport })
+    let resolveHandler!: (value: string) => void
+    const handler = vi.fn(
+      () =>
+        new Promise<string>(resolve => {
+          resolveHandler = resolve
+        }),
+    )
+    client.handle('slow', handler)
+
+    transport.emit(createRPCRequest('slow', 'request-4'))
+    await vi.waitFor(() => {
+      expect(handler).toHaveBeenCalledOnce()
+    })
+
+    client.destroy()
+    resolveHandler('too late')
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    client.send('after-destroy')
+    await expect(client.request('after-destroy')).rejects.toThrow('RPC client destroyed')
+    const afterDestroy = vi.fn()
+    client.on('after-destroy', afterDestroy)
+    client.onAny(afterDestroy)
+    transport.emit(createRPCRequest('after-destroy', 'request-5'))
+    expect(transport.sent).toHaveLength(0)
+    expect(transport.sendAttemptsAfterDestroy).toBe(0)
+    expect(afterDestroy).not.toHaveBeenCalled()
   })
 })
