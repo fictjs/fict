@@ -31,6 +31,13 @@ import {
   type ModuleReactiveMetadata,
 } from '@fictjs/compiler'
 
+declare module '@babel/core' {
+  interface BabelFileMetadata {
+    fictModuleMetadataIncomplete?: boolean
+    fictModuleRequestMappings?: [source: string, rewrittenSource: string][]
+  }
+}
+
 export interface FictPresetOptions extends Omit<FictCompilerOptions, 'typescript'> {
   /**
    * Enable TypeScript support.

@@ -1483,7 +1483,7 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
     expect(result?.code).toMatch(/from ["']\.\/use-count\.js["']/)
     expect(result?.code).toMatch(/import\(["']\.\/lazy\.mjs["']\)/)
     expect(result?.code).toMatch(/count\(\)\s*\*\s*2/)
-    expect(result?.metadata.fictModuleRequestMappings).toEqual([
+    expect(result?.metadata?.fictModuleRequestMappings).toEqual([
       ['./use-count.ts', './use-count.js'],
     ])
   })
@@ -1513,7 +1513,7 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
 
     expect(result?.code).toMatch(/require\(["']\.\/dependency\.cjs["']\)/)
     expect(result?.code).not.toContain('./dependency.cts')
-    expect(result?.metadata.fictModuleRequestMappings).toEqual([
+    expect(result?.metadata?.fictModuleRequestMappings).toEqual([
       ['./dependency.cts', './dependency.cjs'],
     ])
   })
