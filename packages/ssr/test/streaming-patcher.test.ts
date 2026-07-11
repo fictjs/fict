@@ -237,13 +237,106 @@ describe('@fictjs/ssr streaming patcher', () => {
     )
   })
 
-  it.each(['title', 'desc'])(
-    'rejects a foreign resumable host below SVG <%s>',
-    async integrationTag => {
+  it.each([
+    { parentTag: 'mtext', encoding: undefined },
+    { parentTag: 'annotation-xml', encoding: 'APPLICATION/XHTML+XML' },
+  ])(
+    'keeps streamed components inside MathML $parentTag HTML integration content',
+    async ({ parentTag, encoding }) => {
       const token = createSuspenseToken()
+      let ready = false
 
       function AsyncChild(): FictNode {
-        throw token.token
+        if (!ready) throw token.token
+        return { type: 'span', props: { 'data-math-html-child': '', children: 'resolved' } }
+      }
+
+      const stream = renderToStream(
+        () => ({
+          type: 'math',
+          props: {
+            children: {
+              type: parentTag,
+              props: {
+                ...(encoding ? { encoding } : null),
+                children: {
+                  type: Suspense,
+                  props: {
+                    fallback: 'pending',
+                    children: { type: AsyncChild, props: {} },
+                  },
+                },
+              },
+            },
+          },
+        }),
+        { mode: 'shell' },
+      )
+
+      const readAll = readReadableStream(stream)
+      await Promise.resolve()
+      ready = true
+      token.resolve()
+      const output = await readAll
+      const win = parseHTML(output) as Window & typeof globalThis
+      const document = win.document as Document
+      const template = document.querySelector(
+        'template[data-fict-suspense]',
+      ) as HTMLTemplateElement | null
+      expect(template).not.toBeNull()
+      expect(template!.hasAttribute('data-fict-patch-namespace')).toBe(false)
+      applyStreamPatch(
+        document,
+        win as unknown as Window,
+        template!.getAttribute('data-fict-suspense')!,
+      )
+      expect(document.querySelector('[data-math-html-child]')?.namespaceURI).toBe(
+        'http://www.w3.org/1999/xhtml',
+      )
+    },
+  )
+
+  it('does not trim annotation-xml encoding when resolving streamed content', async () => {
+    const token = createSuspenseToken()
+
+    function AsyncChild(): FictNode {
+      throw token.token
+    }
+
+    const stream = renderToStream(
+      () => ({
+        type: 'math',
+        props: {
+          children: {
+            type: 'annotation-xml',
+            props: {
+              encoding: ' TEXT/HTML ',
+              children: {
+                type: Suspense,
+                props: { fallback: 'pending', children: { type: AsyncChild, props: {} } },
+              },
+            },
+          },
+        },
+      }),
+      { mode: 'shell' },
+    )
+
+    await expect(readReadableStream(stream)).rejects.toThrow(
+      /resumable <fict-host>.*MathML.*range-based scope anchors/i,
+    )
+    token.resolve()
+  })
+
+  it.each(['title', 'desc'])(
+    'keeps streamed components below SVG <%s> in the HTML namespace',
+    async integrationTag => {
+      const token = createSuspenseToken()
+      let ready = false
+
+      function AsyncChild(): FictNode {
+        if (!ready) throw token.token
+        return { type: 'div', props: { 'data-stream-child': '', children: 'resolved' } }
       }
 
       const stream = renderToStream(
@@ -267,10 +360,35 @@ describe('@fictjs/ssr streaming patcher', () => {
         { mode: 'shell' },
       )
 
-      await expect(readReadableStream(stream)).rejects.toThrow(
-        /resumable <fict-host>.*SVG.*range-based scope anchors/i,
-      )
+      const readAll = readReadableStream(stream)
+      await Promise.resolve()
+      ready = true
       token.resolve()
+
+      const output = await readAll
+      const win = parseHTML(output) as Window & typeof globalThis
+      const document = win.document as Document
+      const template = document.querySelector(
+        'template[data-fict-suspense]',
+      ) as HTMLTemplateElement | null
+      expect(template).not.toBeNull()
+      expect(template!.hasAttribute('data-fict-patch-namespace')).toBe(false)
+
+      applyStreamPatch(
+        document,
+        win as unknown as Window,
+        template!.getAttribute('data-fict-suspense')!,
+      )
+      // linkedom treats SVG <title> descendants as text when reparsing a full
+      // HTML stream. The emitted patch itself is still explicitly an HTML
+      // patch; <desc> additionally exercises DOM application end to end.
+      if (integrationTag === 'title') {
+        expect(output).toContain('data-stream-child')
+      } else {
+        expect(document.querySelector('[data-stream-child]')?.namespaceURI).toBe(
+          'http://www.w3.org/1999/xhtml',
+        )
+      }
     },
   )
 })

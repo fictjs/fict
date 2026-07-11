@@ -1192,13 +1192,20 @@ function resolveStreamPatchNamespace(parentElement: Element | null): StreamPatch
   // context from tag ancestry. Walking from the boundary outward also lets a
   // nested <svg>/<math> override an older HTML integration point.
   let element: Element | null = parentElement
+  let descendantLocalName: string | null = null
   while (element) {
     const localName = element.localName.toLowerCase()
     if (SVG_HTML_INTEGRATION_POINTS.has(localName)) return null
-    if (MATHML_TEXT_INTEGRATION_POINTS.has(localName)) return null
+    if (MATHML_TEXT_INTEGRATION_POINTS.has(localName)) {
+      if (descendantLocalName === 'mglyph' || descendantLocalName === 'malignmark') {
+        return 'mathml'
+      }
+      return null
+    }
     if (isHtmlAnnotationIntegrationPoint(element)) return null
     if (localName === 'svg') return 'svg'
     if (localName === 'math') return 'mathml'
+    descendantLocalName = localName
     element = element.parentElement
   }
   return null
@@ -1206,7 +1213,7 @@ function resolveStreamPatchNamespace(parentElement: Element | null): StreamPatch
 
 function isHtmlAnnotationIntegrationPoint(element: Element): boolean {
   if (element.localName.toLowerCase() !== 'annotation-xml') return false
-  const encoding = element.getAttribute('encoding')?.trim().toLowerCase()
+  const encoding = element.getAttribute('encoding')?.toLowerCase()
   return encoding === 'text/html' || encoding === 'application/xhtml+xml'
 }
 

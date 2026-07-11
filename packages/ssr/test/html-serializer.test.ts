@@ -7,6 +7,8 @@ import type { FictNode } from '@fictjs/runtime'
 import { serializeHtmlNode } from '../src/html-serializer'
 import { renderToString } from '../src/index'
 
+const MATH_NS = 'http://www.w3.org/1998/Math/MathML'
+
 function createResumableHost(document: Document, scopeId = 'scope-1'): Element {
   const host = document.createElement('fict-host')
   host.setAttribute('data-fict-host', '')
@@ -762,6 +764,127 @@ describe('foreign-namespace resumable host validation', () => {
 
     expect(html).toContain('<foreignObject><fict-host')
     expect(html).toContain('<div>HTML island</div>')
+  })
+
+  it.each(['title', 'desc'])('allows an HTML resumable component inside SVG %s', tagName => {
+    function HtmlIsland(): FictNode {
+      return { type: 'div', props: { children: 'HTML island' } }
+    }
+
+    const html = renderToString(() => ({
+      type: 'svg',
+      props: {
+        children: {
+          type: tagName,
+          props: { children: { type: HtmlIsland, props: {} } },
+        },
+      },
+    }))
+
+    expect(html).toContain(`<${tagName}><fict-host`)
+    expect(html).toContain('<div>HTML island</div>')
+  })
+
+  it.each(['mi', 'mo', 'mn', 'ms', 'mtext'])(
+    'allows an HTML resumable component inside MathML %s',
+    tagName => {
+      function HtmlIsland(): FictNode {
+        return { type: 'span', props: { children: 'HTML island' } }
+      }
+
+      const html = renderToString(() => ({
+        type: 'math',
+        props: {
+          children: {
+            type: tagName,
+            props: { children: { type: HtmlIsland, props: {} } },
+          },
+        },
+      }))
+
+      expect(html).toContain(`<${tagName}><fict-host`)
+      expect(html).toContain('<span>HTML island</span>')
+    },
+  )
+
+  it.each(['text/html', 'APPLICATION/XHTML+XML'])(
+    'allows an HTML resumable component inside exactly encoded annotation-xml (%s)',
+    encoding => {
+      function HtmlIsland(): FictNode {
+        return { type: 'span', props: { children: 'HTML island' } }
+      }
+
+      const html = renderToString(() => ({
+        type: 'math',
+        props: {
+          children: {
+            type: 'annotation-xml',
+            props: { encoding, children: { type: HtmlIsland, props: {} } },
+          },
+        },
+      }))
+
+      expect(html).toContain('<annotation-xml')
+      expect(html).toContain('<fict-host')
+    },
+  )
+
+  it.each(['application/xml', ' text/html '])(
+    'rejects a MathML resumable component inside non-HTML annotation-xml (%s)',
+    encoding => {
+      function MathChild(): FictNode {
+        return { type: 'mi', props: { children: 'x' } }
+      }
+
+      expect(() =>
+        renderToString(() => ({
+          type: 'math',
+          props: {
+            children: {
+              type: 'annotation-xml',
+              props: { encoding, children: { type: MathChild, props: {} } },
+            },
+          },
+        })),
+      ).toThrowError(/resumable <fict-host>.*MathML.*range-based scope anchors/i)
+    },
+  )
+
+  it('keeps mglyph as a MathML exception inside mtext', () => {
+    function MathChild(): FictNode {
+      return { type: 'mi', props: { children: 'x' } }
+    }
+
+    expect(() =>
+      renderToString(() => ({
+        type: 'math',
+        props: {
+          children: {
+            type: 'mtext',
+            props: {
+              children: {
+                type: 'mglyph',
+                props: { children: { type: MathChild, props: {} } },
+              },
+            },
+          },
+        },
+      })),
+    ).toThrowError(/resumable <fict-host>.*MathML.*range-based scope anchors/i)
+  })
+
+  it('rejects a manually assembled resumable host with a direct mglyph root inside mtext', () => {
+    const { document } = parseHTML('<!doctype html><html><body></body></html>')
+    const math = document.createElementNS(MATH_NS, 'math')
+    const mtext = document.createElementNS(MATH_NS, 'mtext')
+    const host = createResumableHost(document, 'mtext-direct-mglyph')
+    host.replaceChildren(document.createElementNS(MATH_NS, 'mglyph'))
+    mtext.appendChild(host)
+    math.appendChild(mtext)
+
+    expect(() => serializeHtmlNode(math)).toThrowError(
+      /resumable <fict-host>.*MathML.*range-based scope anchors/i,
+    )
   })
 
   it('does not reserve a namespaced fict-host without internal scope markers', () => {

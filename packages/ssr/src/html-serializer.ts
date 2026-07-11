@@ -3,6 +3,7 @@ import { assertValidDOMAttributeName, assertValidDOMElementName } from '@fictjs/
 const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml'
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg'
 const MATHML_NAMESPACE = 'http://www.w3.org/1998/Math/MathML'
+const MATHML_TEXT_INTEGRATION_EXCEPTIONS = new Set(['mglyph', 'malignmark'])
 
 const HTML_VOID_ELEMENTS = new Set([
   'area',
@@ -653,18 +654,56 @@ function getResumableHostForeignNamespace(
 
   // linkedom currently reports MathML elements as XHTML. Recover the browser
   // parser context from ancestry so a MathML host cannot evade validation.
-  // SVG <foreignObject> is an intentional HTML island, so an HTML host below
-  // it remains valid unless a nested <svg> or <math> establishes a new context.
+  // Foreign-content integration points are intentional HTML islands. An HTML
+  // host below one remains valid unless a nearer foreign element establishes a
+  // new context.
   let ancestor = serializedParent ?? element.parentElement
+  let descendantLocalName: string | null = null
   while (ancestor) {
     const localName = (ancestor.localName || ancestor.tagName).toLowerCase()
-    if (localName === 'foreignobject' && ancestor.namespaceURI === SVG_NAMESPACE) return null
+    if (localName === 'foreignobject' || localName === 'title' || localName === 'desc') {
+      return null
+    }
+    if (
+      localName === 'mi' ||
+      localName === 'mo' ||
+      localName === 'mn' ||
+      localName === 'ms' ||
+      localName === 'mtext'
+    ) {
+      if (
+        MATHML_TEXT_INTEGRATION_EXCEPTIONS.has(descendantLocalName ?? '') ||
+        findTransparentDirectRootTag(element, MATHML_TEXT_INTEGRATION_EXCEPTIONS)
+      ) {
+        return { kind: 'MathML' }
+      }
+      return null
+    }
+    if (localName === 'annotation-xml') {
+      const encoding = ancestor.getAttribute('encoding')?.toLowerCase()
+      if (encoding === 'text/html' || encoding === 'application/xhtml+xml') return null
+    }
 
     const ancestorNamespace = classifyForeignNamespace(ancestor.namespaceURI)
     if (ancestorNamespace) return ancestorNamespace
     if (localName === 'svg') return { kind: 'SVG' }
     if (localName === 'math') return { kind: 'MathML' }
+    descendantLocalName = localName
     ancestor = ancestor.parentElement
+  }
+  return null
+}
+
+function findTransparentDirectRootTag(host: Element, tagNames: ReadonlySet<string>): string | null {
+  for (const child of Array.from(host.children)) {
+    if (isResumableFictHost(child)) {
+      const nestedTag = findTransparentDirectRootTag(child, tagNames)
+      if (nestedTag) return nestedTag
+      continue
+    }
+
+    const childTag = (child.localName || child.tagName).toLowerCase()
+    if (tagNames.has(childTag)) return childTag
   }
   return null
 }
