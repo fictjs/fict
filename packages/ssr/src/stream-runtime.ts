@@ -33,9 +33,11 @@ export function createStreamRuntimeCode(options: StreamRuntimeCodeOptions = {}):
     "var tpl=document.querySelector('template[data-fict-suspense=\"' + id + '\"]');" +
     'if(!tpl)return;' +
     'var b=find(id);if(!b)return;' +
+    'var content=tpl.content;var ns=tpl.getAttribute("data-fict-patch-namespace");' +
+    'if(ns){var tag=ns==="svg"?"svg":ns==="mathml"?"math":null;var wrapper=content.firstElementChild;if(!tag||!wrapper||wrapper.localName!==tag)return;var fragment=document.createDocumentFragment();while(wrapper.firstChild)fragment.appendChild(wrapper.firstChild);content=fragment;}' +
     'var node=b.start.nextSibling;' +
     'while(node&&node!==b.end){var next=node.nextSibling;node.parentNode&&node.parentNode.removeChild(node);node=next;}' +
-    'b.end.parentNode&&b.end.parentNode.insertBefore(tpl.content,b.end);' +
+    'b.end.parentNode&&b.end.parentNode.insertBefore(content,b.end);' +
     'tpl.parentNode&&tpl.parentNode.removeChild(tpl);' +
     '}' +
     'window.__FICT_STREAM={apply:apply};' +

@@ -22,7 +22,11 @@ import { createPipeBridge, createQueuedTextStream, type StreamWriter } from './s
 import { createStreamRuntimeCode } from './stream-runtime'
 
 const DEFAULT_HTML = '<!doctype html><html><head></head><body></body></html>'
+const SVG_HTML_INTEGRATION_POINTS = new Set(['foreignobject', 'title', 'desc'])
+const MATHML_TEXT_INTEGRATION_POINTS = new Set(['mi', 'mo', 'mn', 'ms', 'mtext'])
 let streamTailMarkerId = 0
+
+type StreamPatchNamespace = 'svg' | 'mathml' | null
 
 export interface SSRDom {
   window: Window
@@ -851,8 +855,8 @@ function startStreamingRenderInSession(
         try {
           writeSnapshotForBoundary(id)
           if (dom) {
-            const html = serializeBetween(entry.start, entry.end)
-            enqueueWrite(buildPatchChunk(id, html, resolvedOptions))
+            const content = serializeBetween(entry.start, entry.end)
+            enqueueWrite(buildPatchChunk(id, content, resolvedOptions))
           }
         } catch (error) {
           reportErrorAndAbort(error)
@@ -1005,8 +1009,21 @@ function buildStreamRuntimeScript(options: RenderToStreamOptions): string {
   })}</script>`
 }
 
-function buildPatchChunk(id: string, html: string, options: RenderToStreamOptions): string {
-  const template = `<template data-fict-suspense="${escapeAttribute(id)}">${html}</template>`
+function buildPatchChunk(
+  id: string,
+  content: { html: string; namespace: StreamPatchNamespace },
+  options: RenderToStreamOptions,
+): string {
+  const namespaceAttribute = content.namespace
+    ? ` data-fict-patch-namespace="${content.namespace}"`
+    : ''
+  const html =
+    content.namespace === 'svg'
+      ? `<svg>${content.html}</svg>`
+      : content.namespace === 'mathml'
+        ? `<math>${content.html}</math>`
+        : content.html
+  const template = `<template data-fict-suspense="${escapeAttribute(id)}"${namespaceAttribute}>${html}</template>`
   if (resolveStreamPatchMode(options) === 'observer') {
     return template
   }
@@ -1018,15 +1035,45 @@ function resolveStreamPatchMode(options: RenderToStreamOptions): 'inline' | 'obs
   return options.streamRuntime === 'external' ? 'observer' : 'inline'
 }
 
-function serializeBetween(start: Comment, end: Comment): string {
-  const parentElement = start.parentElement
+function serializeBetween(
+  start: Comment,
+  end: Comment,
+): { html: string; namespace: StreamPatchNamespace } {
+  const parentElement =
+    start.parentElement ?? (start.parentNode?.nodeType === 1 ? (start.parentNode as Element) : null)
   const nodes: Node[] = []
   let node = start.nextSibling
   while (node && node !== end) {
     nodes.push(node)
     node = node.nextSibling
   }
-  return serializeHtmlNodes(nodes, parentElement)
+  const namespace = resolveStreamPatchNamespace(parentElement)
+  return { html: serializeHtmlNodes(nodes, parentElement), namespace }
+}
+
+function resolveStreamPatchNamespace(parentElement: Element | null): StreamPatchNamespace {
+  if (!parentElement) return null
+
+  // linkedom currently reports MathML elements as XHTML. Recover the parser
+  // context from tag ancestry. Walking from the boundary outward also lets a
+  // nested <svg>/<math> override an older HTML integration point.
+  let element: Element | null = parentElement
+  while (element) {
+    const localName = element.localName.toLowerCase()
+    if (SVG_HTML_INTEGRATION_POINTS.has(localName)) return null
+    if (MATHML_TEXT_INTEGRATION_POINTS.has(localName)) return null
+    if (isHtmlAnnotationIntegrationPoint(element)) return null
+    if (localName === 'svg') return 'svg'
+    if (localName === 'math') return 'mathml'
+    element = element.parentElement
+  }
+  return null
+}
+
+function isHtmlAnnotationIntegrationPoint(element: Element): boolean {
+  if (element.localName.toLowerCase() !== 'annotation-xml') return false
+  const encoding = element.getAttribute('encoding')?.trim().toLowerCase()
+  return encoding === 'text/html' || encoding === 'application/xhtml+xml'
 }
 
 function serializeStreamingDocument(
