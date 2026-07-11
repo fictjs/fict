@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { onMount } from '../src/index'
+
 import {
   UNVERSIONED_SNAPSHOT_MIGRATION_KEY,
   cleanupEventListeners,
@@ -14,6 +16,9 @@ import {
   __fictDisableResumable,
   __fictEnsureScope,
   __fictGetScopeProps,
+  __fictPopContext,
+  __fictPrepareContext,
+  __fictPushContext,
   __fictRegisterResume,
   __fictGetSSRScope,
   __fictMergeSSRState,
@@ -22,6 +27,8 @@ import {
   createEffect,
   createSignal,
   createStore,
+  hydrateComponent,
+  onDestroy,
   unwrapStore,
 } from '../src/internal'
 
@@ -48,6 +55,66 @@ function createDocumentWithSnapshots(
   }
 
   return doc
+}
+
+interface ResumedScopeLifecycleProbe {
+  effectRuns: number
+  effectCleanups: number
+  destroys: number
+  signal?: {
+    (): number
+    (value: number): void
+  }
+  store?: { value: number }
+}
+
+function hydrateResumedScopeProbe(
+  scopeId: string,
+  host: Element,
+  probe: ResumedScopeLifecycleProbe,
+  capturedSnapshot = __fictGetSSRScope(scopeId),
+  setupRoot?: () => void,
+): void {
+  if (!capturedSnapshot) throw new Error(`Missing test snapshot for ${scopeId}`)
+  const ctx = __fictEnsureScope(scopeId, host, capturedSnapshot)
+  const [signal, store] = __fictUseLexicalScope(scopeId, ['signal', 'store']) as [
+    ResumedScopeLifecycleProbe['signal'],
+    ResumedScopeLifecycleProbe['store'],
+  ]
+  probe.signal = signal
+  probe.store = store
+
+  __fictPrepareContext(ctx)
+  __fictPushContext()
+  try {
+    // Match compiler-generated resume code: its hydrateComponent return value
+    // is intentionally ignored, so runtime ownership must retain the teardown.
+    hydrateComponent(() => {
+      createEffect(() => {
+        signal!()
+        void store!.value
+        probe.effectRuns++
+        return () => {
+          probe.effectCleanups++
+        }
+      })
+      onDestroy(() => {
+        probe.destroys++
+      })
+      setupRoot?.()
+    }, host as HTMLElement)
+  } finally {
+    __fictPopContext()
+  }
+}
+
+function createLifecycleProbe(): ResumedScopeLifecycleProbe {
+  return { effectRuns: 0, effectCleanups: 0, destroys: 0 }
+}
+
+async function flushMutationObservers(): Promise<void> {
+  await Promise.resolve()
+  await new Promise(resolve => setTimeout(resolve, 0))
 }
 
 describe('resumable loader snapshot validation', () => {
@@ -2072,6 +2139,432 @@ describe('resumable loader snapshot validation', () => {
         __fictReadStreamedScope?: (scopeId: string) => void
       }
     ).__fictReadStreamedScope
+  })
+
+  describe('resumed scope teardown', () => {
+    const createLifecycleDocument = (...scopeIds: string[]): Document =>
+      createDocumentWithSnapshots(
+        JSON.stringify({
+          v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+          scopes: Object.fromEntries(
+            scopeIds.map(scopeId => [
+              scopeId,
+              {
+                id: scopeId,
+                slots: [
+                  [0, 'sig', 1],
+                  [1, 'store', { value: 1 }],
+                ],
+                vars: { signal: 0, store: 1 },
+              },
+            ]),
+          ),
+        }),
+      )
+
+    const appendLifecycleHost = (
+      doc: Document,
+      scopeId: string,
+      resumeName: string,
+      parent: Element = doc.body,
+    ): HTMLElement => {
+      const host = doc.createElement('div')
+      host.setAttribute('data-fict-s', scopeId)
+      host.setAttribute('data-fict-h', `data:text/javascript,export default null#${resumeName}`)
+      host.setAttribute(
+        'on:click',
+        'data:text/javascript,export default function handle(){}#default',
+      )
+      parent.appendChild(host)
+      return host
+    }
+
+    const resumeHost = async (host: HTMLElement): Promise<void> => {
+      host.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+      await waitForPendingHandlers()
+    }
+
+    it('releases a permanently removed scope root, effects, store subscriptions, and registry exactly once', async () => {
+      const doc = createLifecycleDocument('sRemoved')
+      const host = appendLifecycleHost(doc, 'sRemoved', '__fict_teardown_removed')
+      const probe = createLifecycleProbe()
+      __fictRegisterResume('__fict_teardown_removed', (scopeId, node) => {
+        hydrateResumedScopeProbe(scopeId as string, node as Element, probe)
+      })
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+      await resumeHost(host)
+      expect(probe.effectRuns).toBe(1)
+      probe.signal!(2)
+      probe.store!.value = 2
+      await vi.waitFor(() => expect(probe.effectRuns).toBeGreaterThan(1))
+      const runsBeforeRemoval = probe.effectRuns
+      const cleanupsBeforeRemoval = probe.effectCleanups
+
+      host.remove()
+      await vi.waitFor(() => expect(probe.destroys).toBe(1))
+
+      expect(probe.effectCleanups).toBe(cleanupsBeforeRemoval + 1)
+      expect(() => __fictUseLexicalScope('sRemoved', ['signal'])).toThrow('Missing resumed scope')
+      probe.signal!(3)
+      probe.store!.value = 3
+      expect(probe.effectRuns).toBe(runsBeforeRemoval)
+
+      cleanupEventListeners()
+      await flushMutationObservers()
+      expect(probe.destroys).toBe(1)
+      expect(probe.effectCleanups).toBe(cleanupsBeforeRemoval + 1)
+    })
+
+    it('keeps a synchronously reparented scope alive and disposes once when removal races cleanup', async () => {
+      const doc = createLifecycleDocument('sMoved')
+      const from = doc.createElement('section')
+      const to = doc.createElement('section')
+      doc.body.append(from, to)
+      const host = appendLifecycleHost(doc, 'sMoved', '__fict_teardown_moved', from)
+      const probe = createLifecycleProbe()
+      __fictRegisterResume('__fict_teardown_moved', (scopeId, node) => {
+        hydrateResumedScopeProbe(scopeId as string, node as Element, probe)
+      })
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+      await resumeHost(host)
+      to.appendChild(host)
+      await flushMutationObservers()
+
+      expect(probe.destroys).toBe(0)
+      const runsBeforeUpdate = probe.effectRuns
+      probe.store!.value = 2
+      await vi.waitFor(() => expect(probe.effectRuns).toBeGreaterThan(runsBeforeUpdate))
+      expect(__fictUseLexicalScope('sMoved', ['store'])[0]).toBe(probe.store)
+
+      host.remove()
+      cleanupEventListeners()
+      await flushMutationObservers()
+      expect(probe.destroys).toBe(1)
+    })
+
+    it('waits for other mutation observers to finish reparenting before teardown', async () => {
+      const doc = createLifecycleDocument('sObserverMoved')
+      const destination = doc.createElement('section')
+      doc.body.appendChild(destination)
+      const host = appendLifecycleHost(doc, 'sObserverMoved', '__fict_teardown_observer_moved')
+      const probe = createLifecycleProbe()
+      __fictRegisterResume('__fict_teardown_observer_moved', (scopeId, node) => {
+        hydrateResumedScopeProbe(scopeId as string, node as Element, probe)
+      })
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+      await resumeHost(host)
+
+      const Observer = doc.defaultView?.MutationObserver ?? MutationObserver
+      const mover = new Observer(mutations => {
+        if (
+          mutations.some(mutation => Array.from(mutation.removedNodes).some(node => node === host))
+        ) {
+          destination.appendChild(host)
+        }
+      })
+      mover.observe(doc.body, { childList: true, subtree: true })
+      host.remove()
+      await flushMutationObservers()
+
+      expect(destination.contains(host)).toBe(true)
+      expect(probe.destroys).toBe(0)
+      const runsBeforeUpdate = probe.effectRuns
+      probe.signal!(2)
+      await vi.waitFor(() => expect(probe.effectRuns).toBeGreaterThan(runsBeforeUpdate))
+
+      mover.disconnect()
+      cleanupEventListeners()
+      expect(probe.destroys).toBe(1)
+    })
+
+    it('resumes a replacement host with the same scope id before the removal observer drains', async () => {
+      const doc = createLifecycleDocument('sReplaced')
+      const oldProbe = createLifecycleProbe()
+      const newProbe = createLifecycleProbe()
+      const oldHost = appendLifecycleHost(doc, 'sReplaced', '__fict_teardown_replaced_old')
+      __fictRegisterResume('__fict_teardown_replaced_old', (scopeId, node) => {
+        hydrateResumedScopeProbe(scopeId as string, node as Element, oldProbe)
+      })
+      __fictRegisterResume('__fict_teardown_replaced_new', (scopeId, node) => {
+        hydrateResumedScopeProbe(scopeId as string, node as Element, newProbe)
+      })
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+      await resumeHost(oldHost)
+
+      oldHost.remove()
+      const newHost = appendLifecycleHost(doc, 'sReplaced', '__fict_teardown_replaced_new')
+      await resumeHost(newHost)
+
+      expect(oldProbe.destroys).toBe(1)
+      expect(newProbe.effectRuns).toBe(1)
+      expect(newProbe.destroys).toBe(0)
+      expect(__fictUseLexicalScope('sReplaced', ['store'])[0]).toBe(newProbe.store)
+
+      cleanupEventListeners()
+      expect(oldProbe.destroys).toBe(1)
+      expect(newProbe.destroys).toBe(1)
+    })
+
+    it('tracks the hydration root before onMount can reenter loader cleanup', async () => {
+      const doc = createLifecycleDocument('sReentrant')
+      const probe = createLifecycleProbe()
+      const host = appendLifecycleHost(doc, 'sReentrant', '__fict_teardown_reentrant')
+      __fictRegisterResume('__fict_teardown_reentrant', (scopeId, node) => {
+        hydrateResumedScopeProbe(
+          scopeId as string,
+          node as Element,
+          probe,
+          __fictGetSSRScope(scopeId as string),
+          () => onMount(() => cleanupEventListeners()),
+        )
+      })
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+      await resumeHost(host)
+
+      expect(probe.destroys).toBe(1)
+      expect(probe.effectCleanups).toBe(1)
+      expect(() => __fictUseLexicalScope('sReentrant', ['signal'])).toThrow('Missing resumed scope')
+      cleanupEventListeners()
+      expect(probe.destroys).toBe(1)
+    })
+
+    it('disposes nested parent and child scope roots once each', async () => {
+      const doc = createLifecycleDocument('sParent', 'sChild')
+      const parentProbe = createLifecycleProbe()
+      const childProbe = createLifecycleProbe()
+      const parentHost = appendLifecycleHost(doc, 'sParent', '__fict_teardown_parent')
+      __fictRegisterResume('__fict_teardown_parent', (scopeId, node) => {
+        hydrateResumedScopeProbe(scopeId as string, node as Element, parentProbe)
+      })
+      __fictRegisterResume('__fict_teardown_child', (scopeId, node) => {
+        hydrateResumedScopeProbe(scopeId as string, node as Element, childProbe)
+      })
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+      await resumeHost(parentHost)
+      const childHost = appendLifecycleHost(doc, 'sChild', '__fict_teardown_child', parentHost)
+      await resumeHost(childHost)
+      expect(parentProbe.effectRuns).toBe(1)
+      expect(childProbe.effectRuns).toBe(1)
+
+      parentHost.remove()
+      await vi.waitFor(() => {
+        expect(parentProbe.destroys).toBe(1)
+        expect(childProbe.destroys).toBe(1)
+      })
+
+      cleanupEventListeners()
+      await flushMutationObservers()
+      expect(parentProbe.destroys).toBe(1)
+      expect(childProbe.destroys).toBe(1)
+    })
+
+    it('keeps a child scope alive when it is moved out before its parent is removed', async () => {
+      const doc = createLifecycleDocument('sMoveParent', 'sMoveChild')
+      const parentProbe = createLifecycleProbe()
+      const childProbe = createLifecycleProbe()
+      const parentHost = appendLifecycleHost(doc, 'sMoveParent', '__fict_teardown_move_parent')
+      __fictRegisterResume('__fict_teardown_move_parent', (scopeId, node) => {
+        hydrateResumedScopeProbe(scopeId as string, node as Element, parentProbe)
+      })
+      __fictRegisterResume('__fict_teardown_move_child', (scopeId, node) => {
+        hydrateResumedScopeProbe(scopeId as string, node as Element, childProbe)
+      })
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+      await resumeHost(parentHost)
+      const childHost = appendLifecycleHost(
+        doc,
+        'sMoveChild',
+        '__fict_teardown_move_child',
+        parentHost,
+      )
+      await resumeHost(childHost)
+
+      doc.body.appendChild(childHost)
+      parentHost.remove()
+      await vi.waitFor(() => expect(parentProbe.destroys).toBe(1))
+
+      expect(childProbe.destroys).toBe(0)
+      const childRuns = childProbe.effectRuns
+      childProbe.signal!(2)
+      await vi.waitFor(() => expect(childProbe.effectRuns).toBeGreaterThan(childRuns))
+      expect(__fictUseLexicalScope('sMoveChild', ['signal'])[0]).toBe(childProbe.signal)
+
+      cleanupEventListeners()
+      expect(parentProbe.destroys).toBe(1)
+      expect(childProbe.destroys).toBe(1)
+    })
+
+    it.each(['host removal', 'loader cleanup'] as const)(
+      'reclaims a delayed resume root that settles after %s',
+      async action => {
+        const doc = createLifecycleDocument('sDelayed')
+        const host = appendLifecycleHost(doc, 'sDelayed', '__fict_teardown_delayed')
+        const probe = createLifecycleProbe()
+        let releaseResume!: () => void
+        const resumeGate = new Promise<void>(resolve => {
+          releaseResume = resolve
+        })
+        let resumeStarted = false
+        let resumeFinished = false
+        __fictRegisterResume('__fict_teardown_delayed', async (scopeId, node) => {
+          const capturedSnapshot = __fictGetSSRScope(scopeId as string)
+          resumeStarted = true
+          await resumeGate
+          hydrateResumedScopeProbe(scopeId as string, node as Element, probe, capturedSnapshot)
+          resumeFinished = true
+        })
+        installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+        host.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+        await vi.waitFor(() => expect(resumeStarted).toBe(true))
+        if (action === 'host removal') {
+          host.remove()
+          await flushMutationObservers()
+        } else {
+          cleanupEventListeners()
+        }
+
+        releaseResume()
+        await vi.waitFor(() => expect(resumeFinished).toBe(true))
+        await vi.waitFor(() => expect(probe.destroys).toBe(1))
+        expect(() => __fictUseLexicalScope('sDelayed', ['signal'])).toThrow('Missing resumed scope')
+
+        cleanupEventListeners()
+        await flushMutationObservers()
+        expect(probe.destroys).toBe(1)
+      },
+    )
+
+    it('does not let a delayed old resume dispose the replacement installation root', async () => {
+      const doc = createLifecycleDocument('sReinstalled')
+      const host = appendLifecycleHost(doc, 'sReinstalled', '__fict_teardown_old_install')
+      const oldProbe = createLifecycleProbe()
+      const newProbe = createLifecycleProbe()
+      let releaseOldResume!: () => void
+      const oldResumeGate = new Promise<void>(resolve => {
+        releaseOldResume = resolve
+      })
+      let oldResumeStarted = false
+      let oldResumeFinished = false
+      __fictRegisterResume('__fict_teardown_old_install', async (scopeId, node) => {
+        const capturedSnapshot = __fictGetSSRScope(scopeId as string)
+        oldResumeStarted = true
+        await oldResumeGate
+        hydrateResumedScopeProbe(scopeId as string, node as Element, oldProbe, capturedSnapshot)
+        oldResumeFinished = true
+      })
+      __fictRegisterResume('__fict_teardown_new_install', (scopeId, node) => {
+        hydrateResumedScopeProbe(scopeId as string, node as Element, newProbe)
+      })
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+      host.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+      await vi.waitFor(() => expect(oldResumeStarted).toBe(true))
+
+      host.setAttribute(
+        'data-fict-h',
+        'data:text/javascript,export default null#__fict_teardown_new_install',
+      )
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+      await resumeHost(host)
+      expect(newProbe.effectRuns).toBe(1)
+      expect(newProbe.destroys).toBe(0)
+
+      releaseOldResume()
+      await vi.waitFor(() => expect(oldResumeFinished).toBe(true))
+      await vi.waitFor(() => expect(oldProbe.destroys).toBe(1))
+
+      expect(newProbe.destroys).toBe(0)
+      expect(__fictUseLexicalScope('sReinstalled', ['signal'])[0]).toBe(newProbe.signal)
+      const newRuns = newProbe.effectRuns
+      newProbe.signal!(2)
+      await vi.waitFor(() => expect(newProbe.effectRuns).toBeGreaterThan(newRuns))
+
+      cleanupEventListeners()
+      expect(oldProbe.destroys).toBe(1)
+      expect(newProbe.destroys).toBe(1)
+    })
+
+    it('releases every scope even when one root teardown throws', async () => {
+      const doc = createLifecycleDocument('sThrowingCleanup', 'sHealthyCleanup')
+      const throwingProbe = createLifecycleProbe()
+      const healthyProbe = createLifecycleProbe()
+      const throwingHost = appendLifecycleHost(
+        doc,
+        'sThrowingCleanup',
+        '__fict_teardown_throwing_cleanup',
+      )
+      const healthyHost = appendLifecycleHost(
+        doc,
+        'sHealthyCleanup',
+        '__fict_teardown_healthy_cleanup',
+      )
+      __fictRegisterResume('__fict_teardown_throwing_cleanup', (scopeId, node) => {
+        hydrateResumedScopeProbe(
+          scopeId as string,
+          node as Element,
+          throwingProbe,
+          __fictGetSSRScope(scopeId as string),
+          () =>
+            onDestroy(() => {
+              throw new Error('scope teardown failed')
+            }),
+        )
+      })
+      __fictRegisterResume('__fict_teardown_healthy_cleanup', (scopeId, node) => {
+        hydrateResumedScopeProbe(scopeId as string, node as Element, healthyProbe)
+      })
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+      await resumeHost(throwingHost)
+      await resumeHost(healthyHost)
+
+      expect(() => cleanupEventListeners()).toThrow('scope teardown failed')
+
+      expect(throwingProbe.destroys).toBe(1)
+      expect(healthyProbe.destroys).toBe(1)
+      expect(() => __fictUseLexicalScope('sThrowingCleanup', ['signal'])).toThrow(
+        'Missing resumed scope',
+      )
+      expect(() => __fictUseLexicalScope('sHealthyCleanup', ['signal'])).toThrow(
+        'Missing resumed scope',
+      )
+      cleanupEventListeners()
+    })
+
+    it('isolates teardown for equal source scope ids in different documents', async () => {
+      const docA = createLifecycleDocument('sShared')
+      const docB = createLifecycleDocument('sShared')
+      const probeA = createLifecycleProbe()
+      const probeB = createLifecycleProbe()
+      const hostA = appendLifecycleHost(docA, 'sShared', '__fict_teardown_document_a')
+      const hostB = appendLifecycleHost(docB, 'sShared', '__fict_teardown_document_b')
+      __fictRegisterResume('__fict_teardown_document_a', (scopeId, node) => {
+        hydrateResumedScopeProbe(scopeId as string, node as Element, probeA)
+      })
+      __fictRegisterResume('__fict_teardown_document_b', (scopeId, node) => {
+        hydrateResumedScopeProbe(scopeId as string, node as Element, probeB)
+      })
+      installResumableLoader({ document: docA, events: ['click'], prefetch: false })
+      installResumableLoader({ document: docB, events: ['click'], prefetch: false })
+      await resumeHost(hostA)
+      await resumeHost(hostB)
+
+      hostA.remove()
+      await vi.waitFor(() => expect(probeA.destroys).toBe(1))
+
+      expect(probeB.destroys).toBe(0)
+      const runsBeforeUpdate = probeB.effectRuns
+      probeB.store!.value = 2
+      await vi.waitFor(() => expect(probeB.effectRuns).toBeGreaterThan(runsBeforeUpdate))
+
+      cleanupEventListeners()
+      expect(probeA.destroys).toBe(1)
+      expect(probeB.destroys).toBe(1)
+    })
   })
 
   it('keeps independent document loaders isolated until shared cleanup', async () => {

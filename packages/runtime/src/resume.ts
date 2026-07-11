@@ -81,6 +81,7 @@ const defaultSSRSession = __fictCreateSSRSession()
 type StoreSetter = (fn: (state: object) => void | object) => void
 
 interface ResumedScopeEntry {
+  id: string
   ctx: HookContext
   host: Element
   props?: Record<string, unknown>
@@ -92,9 +93,12 @@ interface ResumedScopeEntry {
   serverBaseline?: ScopeSnapshot
   /** Client ownership is sticky for the lifetime of a resumed scope. */
   clientOwned: boolean
+  /** Idempotent root teardown installed after successful client hydration. */
+  dispose?: () => void
 }
 
 const resumedScopes = new Map<string, ResumedScopeEntry>()
+const resumedScopeHosts = new WeakMap<Element, ResumedScopeEntry>()
 const componentMetaRegistry = new WeakMap<object, ComponentMeta>()
 const COMMITTED_SSR_STATE_ERROR = Symbol('fict:committed-ssr-state-error')
 
@@ -243,7 +247,7 @@ function validateSSRState(state: SSRState, operation: string): SSRState {
 
 function resetSSRTrackingState(session = getSSRSession()): void {
   __fictResetSSRSession(session)
-  resumedScopes.clear()
+  disposeResumedScopes(resumedScopes.keys())
 }
 
 export function __fictEnableSSR(): void {
@@ -264,13 +268,88 @@ export function __fictEnableResumable(): void {
 
 export function __fictDisableResumable(): void {
   resumableEnabled = false
-  resumedScopes.clear()
+  disposeResumedScopes(resumedScopes.keys())
 }
 
 export function __fictDeleteResumedScopes(scopeIds: Iterable<string>): void {
-  for (const scopeId of scopeIds) {
-    resumedScopes.delete(scopeId)
+  disposeResumedScopes(scopeIds)
+}
+
+export function __fictDeleteResumedScopeForHost(
+  host: Element,
+  expectedContext?: HookContext,
+): string | undefined {
+  const entry = resumedScopeHosts.get(host)
+  if (
+    !entry ||
+    resumedScopes.get(entry.id) !== entry ||
+    (expectedContext !== undefined && entry.ctx !== expectedContext)
+  ) {
+    return undefined
   }
+  disposeResumedScopeEntry(entry)
+  return entry.id
+}
+
+export function __fictRegisterResumedScopeTeardown(
+  host: Element,
+  teardown: () => void,
+): () => void {
+  const entry = resumedScopeHosts.get(host)
+  if (!entry || resumedScopes.get(entry.id) !== entry) return teardown
+  if (entry.dispose) {
+    // A scope may only own one hydration root. Dispose a redundant root
+    // immediately instead of losing its cleanup handle.
+    teardown()
+    return entry.dispose
+  }
+
+  let disposed = false
+  const dispose = () => {
+    if (disposed) return
+    disposed = true
+    detachResumedScopeEntry(entry)
+    teardown()
+  }
+  entry.dispose = dispose
+  return dispose
+}
+
+function disposeResumedScopes(scopeIds: Iterable<string>): void {
+  let firstError: unknown
+  let didThrow = false
+  for (const scopeId of Array.from(scopeIds)) {
+    const entry = resumedScopes.get(scopeId)
+    if (!entry) continue
+    try {
+      disposeResumedScopeEntry(entry)
+    } catch (error) {
+      if (!didThrow) {
+        firstError = error
+        didThrow = true
+      }
+    }
+  }
+  if (didThrow) throw firstError
+}
+
+function disposeResumedScopeEntry(entry: ResumedScopeEntry): void {
+  const dispose = entry.dispose
+  if (dispose) {
+    dispose()
+  } else {
+    detachResumedScopeEntry(entry)
+  }
+}
+
+function detachResumedScopeEntry(entry: ResumedScopeEntry): void {
+  if (resumedScopes.get(entry.id) === entry) {
+    resumedScopes.delete(entry.id)
+  }
+  if (resumedScopeHosts.get(entry.host) === entry) {
+    resumedScopeHosts.delete(entry.host)
+  }
+  delete entry.dispose
 }
 
 export function __fictIsResumable(): boolean {
@@ -387,7 +466,7 @@ export function __fictSerializeSSRStateForScopes(scopeIds: Iterable<string>): SS
 export function __fictSetSSRState(state: SSRState | null): void {
   if (!state) {
     setSnapshotState(null)
-    resumedScopes.clear()
+    disposeResumedScopes(resumedScopes.keys())
     return
   }
 
@@ -420,7 +499,20 @@ export function __fictEnsureScope(
   snapshot?: ScopeSnapshot,
 ): HookContext {
   const existing = resumedScopes.get(scopeId)
-  if (existing) return existing.ctx
+  if (existing) {
+    if (existing.host === host) return existing.ctx
+    if (existing.host.isConnected) {
+      throw new Error(`[fict] Cannot resume scope "${scopeId}" on multiple connected hosts.`)
+    }
+    disposeResumedScopeEntry(existing)
+  }
+
+  const occupiedHost = resumedScopeHosts.get(host)
+  if (occupiedHost && resumedScopes.get(occupiedHost.id) === occupiedHost) {
+    throw new Error(
+      `[fict] Cannot resume host for scope "${scopeId}": it already owns scope "${occupiedHost.id}".`,
+    )
+  }
 
   const refs = new Map<string, unknown>()
   const signalAccessors = new Map<number, unknown>()
@@ -432,6 +524,7 @@ export function __fictEnsureScope(
     ctx.scopeType = snapshot.t
   }
   const entry: ResumedScopeEntry = {
+    id: scopeId,
     ctx,
     host,
     signalAccessors,
@@ -448,6 +541,7 @@ export function __fictEnsureScope(
   }
   captureAcceptedStoreTopologies(entry)
   resumedScopes.set(scopeId, entry)
+  resumedScopeHosts.set(host, entry)
   return ctx
 }
 

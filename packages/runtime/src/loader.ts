@@ -1,8 +1,10 @@
 import { DelegatedEvents } from './constants'
 import { isElementLike } from './dom-guards'
+import type { HookContext } from './hooks'
 import {
   FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
   type SSRState,
+  __fictDeleteResumedScopeForHost,
   __fictDeleteResumedScopes,
   __fictDisableResumable,
   __fictEnableResumable,
@@ -13,6 +15,13 @@ import {
   __fictUseLexicalScope,
   serializeValue,
 } from './resume'
+
+const enqueueLoaderMicrotask: (callback: () => void) => void =
+  typeof globalThis.queueMicrotask === 'function'
+    ? globalThis.queueMicrotask.bind(globalThis)
+    : callback => {
+        void Promise.resolve().then(callback)
+      }
 
 // ============================================================================
 // Module Resolution
@@ -392,6 +401,11 @@ export interface SnapshotIssue {
 // State
 // ============================================================================
 
+interface ResumedScopeLease {
+  host: Element
+  context: HookContext
+}
+
 interface LoaderInstallation {
   id: number
   active: boolean
@@ -400,8 +414,9 @@ interface LoaderInstallation {
   snapshotScriptId: string
   state: SSRState
   scopeIds: Map<string, string>
-  hydratedScopes: Set<string>
-  pendingScopeResumes: Map<string, Promise<boolean>>
+  scopeContexts: Map<string, ResumedScopeLease>
+  hydratedScopes: Map<string, ResumedScopeLease>
+  pendingScopeResumes: Map<string, ResumedScopeLease & { promise: Promise<boolean> }>
   pendingScopeHandlers: Map<string, Promise<void>>
   prefetchedUrls: Set<string>
   processedSnapshots: Set<HTMLScriptElement>
@@ -504,12 +519,25 @@ export function getPendingLoaderWaiterCountForTests(): number {
  * Clean up all registered event listeners. Useful for testing.
  */
 export function cleanupEventListeners(): void {
-  for (const installation of loaderInstallations.values()) {
-    cleanupLoaderInstallation(installation, false)
+  let firstError: unknown
+  let didThrow = false
+  const attempt = (cleanup: () => void) => {
+    try {
+      cleanup()
+    } catch (error) {
+      if (!didThrow) {
+        firstError = error
+        didThrow = true
+      }
+    }
+  }
+  for (const installation of Array.from(loaderInstallations.values())) {
+    attempt(() => cleanupLoaderInstallation(installation, false))
   }
   loaderInstallations.clear()
-  __fictSetSSRState(null)
-  __fictDisableResumable()
+  attempt(() => __fictSetSSRState(null))
+  attempt(() => __fictDisableResumable())
+  if (didThrow) throw firstError
 }
 
 // ============================================================================
@@ -532,7 +560,8 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
     snapshotScriptId: scriptId,
     state: { v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION, scopes: {} },
     scopeIds: new Map(),
-    hydratedScopes: new Set(),
+    scopeContexts: new Map(),
+    hydratedScopes: new Map(),
     pendingScopeResumes: new Map(),
     pendingScopeHandlers: new Map(),
     prefetchedUrls: new Set(),
@@ -576,11 +605,30 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
 
   const SnapshotObserver = doc.defaultView?.MutationObserver ?? globalThis.MutationObserver
   if (typeof SnapshotObserver !== 'undefined') {
+    const removedElements = new Set<Element>()
+    let removalDrainScheduled = false
+    const scheduleRemovalDrain = () => {
+      if (removalDrainScheduled) return
+      removalDrainScheduled = true
+      enqueueLoaderMicrotask(() => {
+        removalDrainScheduled = false
+        if (!isLoaderInstallationActive(installation)) {
+          removedElements.clear()
+          return
+        }
+        const candidates = Array.from(removedElements)
+        removedElements.clear()
+        disposeDisconnectedResumedScopes(installation, candidates)
+      })
+    }
     installation.snapshotObserver = new SnapshotObserver(mutations => {
       if (!isLoaderInstallationActive(installation)) return
       for (const mutation of mutations) {
         if (isSnapshotScriptElement(installation, mutation.target, doc)) {
           parseSnapshotScript(installation, mutation.target)
+        }
+        for (const node of Array.from(mutation.removedNodes)) {
+          collectRemovedScopeHosts(node, doc, removedElements)
         }
         for (const node of Array.from(mutation.addedNodes)) {
           if (!isElementLike(node, doc)) {
@@ -607,6 +655,15 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
           }
         }
       }
+      // A scope host can lose its marker or be detached from an already removed
+      // ancestor before observer delivery. Check the small lease set once per
+      // batch instead of retaining every ordinary element in a removed subtree.
+      for (const lease of installation.scopeContexts.values()) {
+        if (!isConnectedToLoaderDocument(lease.host, doc)) {
+          removedElements.add(lease.host)
+        }
+      }
+      if (removedElements.size > 0) scheduleRemovalDrain()
     })
     installation.snapshotObserver.observe(doc.documentElement ?? doc, {
       childList: true,
@@ -636,31 +693,149 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
   installation.initialized = true
 }
 
+function collectRemovedScopeHosts(node: Node, doc: Document, removed: Set<Element>): void {
+  if (!isElementLike(node, doc)) return
+  if (node.hasAttribute('data-fict-s')) removed.add(node)
+  for (const descendant of Array.from(node.querySelectorAll('[data-fict-s]'))) {
+    removed.add(descendant)
+  }
+}
+
+function isConnectedToLoaderDocument(host: Element, doc: Document): boolean {
+  return host.ownerDocument === doc && host.isConnected
+}
+
+function disposeDisconnectedResumedScopes(
+  installation: LoaderInstallation,
+  candidates: Iterable<Element>,
+): void {
+  const disconnected = Array.from(candidates).filter(
+    host => !isConnectedToLoaderDocument(host, installation.document),
+  )
+  // Independent child hydration roots are not owned by the parent root. Tear
+  // down descendants first so parent cleanup cannot obscure their ownership.
+  disconnected.sort((left, right) => {
+    if (left.contains(right)) return 1
+    if (right.contains(left)) return -1
+    return 0
+  })
+
+  let firstError: unknown
+  let didThrow = false
+  for (const host of disconnected) {
+    const leasedScopeId = findScopeIdForHost(installation, host)
+    let disposedScopeId: string | undefined
+    try {
+      disposedScopeId = __fictDeleteResumedScopeForHost(host)
+    } catch (error) {
+      if (!didThrow) {
+        firstError = error
+        didThrow = true
+      }
+    } finally {
+      clearLoaderScopeLease(installation, disposedScopeId ?? leasedScopeId, host)
+    }
+  }
+  if (didThrow) throw firstError
+}
+
+function findScopeIdForHost(installation: LoaderInstallation, host: Element): string | undefined {
+  for (const [scopeId, lease] of installation.scopeContexts) {
+    if (lease.host === host) return scopeId
+  }
+  return undefined
+}
+
+function clearLoaderScopeLease(
+  installation: LoaderInstallation,
+  scopeId: string | undefined,
+  host: Element,
+): void {
+  if (scopeId === undefined) return
+  if (installation.scopeContexts.get(scopeId)?.host === host) {
+    installation.scopeContexts.delete(scopeId)
+  }
+  if (installation.hydratedScopes.get(scopeId)?.host === host) {
+    installation.hydratedScopes.delete(scopeId)
+  }
+  if (installation.pendingScopeResumes.get(scopeId)?.host === host) {
+    installation.pendingScopeResumes.delete(scopeId)
+  }
+}
+
+function disposeStaleResumeScope(
+  installation: LoaderInstallation,
+  host: Element,
+  expectedContext: HookContext,
+): void {
+  const replacement = loaderInstallations.get(installation.document)
+  let requireOriginalLease = false
+  if (replacement && replacement !== installation && isLoaderInstallationActive(replacement)) {
+    const sourceScopeId = host.getAttribute('data-fict-s')
+    const replacementScopeId = sourceScopeId
+      ? (replacement.scopeIds.get(sourceScopeId) ?? sourceScopeId)
+      : undefined
+    requireOriginalLease =
+      replacementScopeId !== undefined &&
+      replacement.scopeContexts.get(replacementScopeId)?.host === host
+  }
+
+  const leasedScopeId = findScopeIdForHost(installation, host)
+  let disposedScopeId: string | undefined
+  try {
+    disposedScopeId = __fictDeleteResumedScopeForHost(
+      host,
+      requireOriginalLease ? expectedContext : undefined,
+    )
+  } finally {
+    clearLoaderScopeLease(installation, disposedScopeId ?? leasedScopeId, host)
+  }
+}
+
 function cleanupLoaderInstallation(
   installation: LoaderInstallation,
   synchronizeState = true,
 ): void {
+  let firstError: unknown
+  let didThrow = false
+  const attempt = (cleanup: () => void) => {
+    try {
+      cleanup()
+    } catch (error) {
+      if (!didThrow) {
+        firstError = error
+        didThrow = true
+      }
+    }
+  }
+
   installation.active = false
-  for (const cancel of Array.from(installation.cancelWaiters)) cancel()
+  for (const cancel of Array.from(installation.cancelWaiters)) attempt(cancel)
   installation.cancelWaiters.clear()
-  installation.eventListenerCleanup?.()
-  installation.prefetchCleanup?.()
-  installation.snapshotObserver?.disconnect()
+  if (installation.eventListenerCleanup) attempt(installation.eventListenerCleanup)
+  if (installation.prefetchCleanup) attempt(installation.prefetchCleanup)
+  if (installation.snapshotObserver) {
+    attempt(() => installation.snapshotObserver?.disconnect())
+  }
   installation.eventListenerCleanup = null
   installation.prefetchCleanup = null
   installation.snapshotObserver = null
   installation.initialized = false
   installation.pendingScopeResumes.clear()
   installation.pendingScopeHandlers.clear()
+  installation.scopeContexts.clear()
   installation.hydratedScopes.clear()
-  __fictDeleteResumedScopes(Object.keys(installation.state.scopes))
-  loaderInstallations.delete(installation.document)
+  attempt(() => __fictDeleteResumedScopes(Object.keys(installation.state.scopes)))
+  if (loaderInstallations.get(installation.document) === installation) {
+    loaderInstallations.delete(installation.document)
+  }
   if (synchronizeState) {
-    synchronizeSnapshotState()
+    attempt(() => synchronizeSnapshotState())
   }
   if (loaderInstallations.size === 0) {
-    __fictDisableResumable()
+    attempt(() => __fictDisableResumable())
   }
+  if (didThrow) throw firstError
 }
 
 function resolveLoaderDocument(doc: Document | undefined): Document {
@@ -1323,11 +1498,13 @@ async function resumeScopeForEvent(
   scopeId: string,
   host: Element,
   event: Event,
+  expectedContext: HookContext,
 ): Promise<{ canRunHandler: boolean; hydratedDuringEvent: boolean }> {
   if (!isLoaderInstallationActive(installation)) {
     return { canRunHandler: false, hydratedDuringEvent: false }
   }
-  if (installation.hydratedScopes.has(scopeId)) {
+  const hydratedLease = installation.hydratedScopes.get(scopeId)
+  if (hydratedLease?.host === host && hydratedLease.context === expectedContext) {
     return { canRunHandler: true, hydratedDuringEvent: false }
   }
 
@@ -1336,15 +1513,28 @@ async function resumeScopeForEvent(
     return { canRunHandler: true, hydratedDuringEvent: false }
   }
 
-  let resumePromise = installation.pendingScopeResumes.get(scopeId)
+  const pendingResume = installation.pendingScopeResumes.get(scopeId)
+  let resumePromise =
+    pendingResume?.host === host && pendingResume.context === expectedContext
+      ? pendingResume.promise
+      : undefined
   if (!resumePromise) {
-    const resumeOperation = resumeScope(installation, scopeId, host, event, resumeQrl)
-    resumePromise = resumeOperation.finally(() => {
-      if (installation.pendingScopeResumes.get(scopeId) === resumePromise) {
+    const resumeOperation = resumeScope(
+      installation,
+      scopeId,
+      host,
+      event,
+      resumeQrl,
+      expectedContext,
+    )
+    const pendingPromise = resumeOperation.finally(() => {
+      if (installation.pendingScopeResumes.get(scopeId)?.promise === pendingPromise) {
         installation.pendingScopeResumes.delete(scopeId)
       }
     })
-    installation.pendingScopeResumes.set(scopeId, resumePromise)
+    resumePromise = pendingPromise
+    const pending = { host, context: expectedContext, promise: pendingPromise }
+    installation.pendingScopeResumes.set(scopeId, pending)
   }
 
   const resumed = await waitForActiveInstallation(installation, resumePromise)
@@ -1360,6 +1550,7 @@ async function resumeScope(
   host: Element,
   event: Event,
   resumeQrl: string,
+  expectedContext: HookContext,
 ): Promise<boolean> {
   if (!isLoaderInstallationActive(installation)) return false
   const { url: resumeUrl, exportName: resumeExport } = parseQrl(resumeQrl)
@@ -1378,6 +1569,10 @@ async function resumeScope(
       import(/* @vite-ignore */ normalizedResumeImportUrl),
     )
     if (imported === INACTIVE_INSTALLATION) return false
+    if (!isConnectedToLoaderDocument(host, installation.document)) {
+      disposeStaleResumeScope(installation, host, expectedContext)
+      return false
+    }
   } catch (error) {
     emitSnapshotIssue(installation, {
       code: 'resume_import_failed',
@@ -1415,10 +1610,16 @@ async function resumeScope(
   }
 
   try {
-    const resumed = await waitForActiveInstallation(
-      installation,
-      (resumeFn as (scopeId: string, host: Element) => unknown)(scopeId, host),
-    )
+    const resumeResult = (resumeFn as (scopeId: string, host: Element) => unknown)(scopeId, host)
+    const guardedResume = Promise.resolve(resumeResult).finally(() => {
+      if (
+        !isLoaderInstallationActive(installation) ||
+        !isConnectedToLoaderDocument(host, installation.document)
+      ) {
+        disposeStaleResumeScope(installation, host, expectedContext)
+      }
+    })
+    const resumed = await waitForActiveInstallation(installation, guardedResume)
     if (resumed === INACTIVE_INSTALLATION) return false
   } catch (error) {
     emitSnapshotIssue(installation, {
@@ -1436,7 +1637,11 @@ async function resumeScope(
     return false
   }
 
-  installation.hydratedScopes.add(scopeId)
+  if (!isConnectedToLoaderDocument(host, installation.document)) {
+    disposeStaleResumeScope(installation, host, expectedContext)
+    return false
+  }
+  installation.hydratedScopes.set(scopeId, { host, context: expectedContext })
   return true
 }
 
@@ -1607,8 +1812,9 @@ async function handleResumableEventAsync(
       if (installation.snapshotFallbackStarted) return
       continue
     }
+    let scopeContext: HookContext
     try {
-      __fictEnsureScope(scopeId, host, snapshot)
+      scopeContext = __fictEnsureScope(scopeId, host, snapshot)
     } catch (error) {
       emitSnapshotIssue(installation, {
         code: 'snapshot_invalid_shape',
@@ -1621,6 +1827,11 @@ async function handleResumableEventAsync(
       })
       return
     }
+    const previousScopeContext = installation.scopeContexts.get(scopeId)
+    if (previousScopeContext?.host !== host || previousScopeContext.context !== scopeContext) {
+      installation.hydratedScopes.delete(scopeId)
+      installation.scopeContexts.set(scopeId, { host, context: scopeContext })
+    }
 
     const { url, exportName, flags } = parseQrl(qrl)
 
@@ -1629,7 +1840,7 @@ async function handleResumableEventAsync(
     })
 
     const preservedControlState = captureControlState(node, event)
-    const resumePromise = resumeScopeForEvent(installation, scopeId, host, event)
+    const resumePromise = resumeScopeForEvent(installation, scopeId, host, event, scopeContext)
     const shouldStop = await enqueueScopeHandler(installation, scopeId, () =>
       runScopeHandler(
         installation,

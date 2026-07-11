@@ -70,6 +70,7 @@ import {
   __fictEnterHydration,
   __fictExitHydration,
   __fictGetComponentMeta,
+  __fictRegisterResumedScopeTeardown,
 } from './resume'
 import { untrack } from './scheduler'
 import type { DOMElement, FictNode, FictVNode } from './types'
@@ -236,6 +237,7 @@ export function hydrateComponent(
   const prev = pushRoot(root)
   let completed = false
   let hydrationEntered = false
+  let teardown = () => destroyRoot(root)
 
   try {
     try {
@@ -261,17 +263,14 @@ export function hydrateComponent(
     }
 
     container.setAttribute('data-fict-fine-grained', '1')
+    teardown = __fictRegisterResumedScopeTeardown(container, teardown)
     flushOnMount(root)
-
-    const teardown = () => {
-      destroyRoot(root)
-    }
 
     completed = true
     return teardown
   } finally {
     if (!completed) {
-      destroyRoot(root)
+      teardown()
     }
   }
 }
