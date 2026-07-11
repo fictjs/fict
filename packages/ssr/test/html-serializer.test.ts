@@ -19,6 +19,55 @@ function createResumableHost(document: Document, scopeId = 'scope-1'): Element {
 }
 
 describe('SSR HTML serializer DOM name validation', () => {
+  it('rejects HTML plaintext before it can consume following markup', () => {
+    const { document } = parseHTML('<!doctype html><html><body></body></html>')
+    const container = document.createElement('div')
+    const plaintext = document.createElement('plaintext')
+    plaintext.textContent = 'before <b>literal</b>'
+    const trailing = document.createElement('span')
+    trailing.id = 'after-plaintext'
+    trailing.textContent = 'after'
+    container.append(plaintext, trailing)
+
+    expect(() => serializeHtmlNode(container)).toThrowError(
+      /Cannot serialize HTML <plaintext>.*no closing tag.*snapshot script.*<pre>.*text\/plain/i,
+    )
+  })
+
+  it('rejects plaintext in fragment output even when snapshots are disabled', () => {
+    expect(() =>
+      renderToString(
+        () => ({
+          type: 'div',
+          props: {
+            children: [
+              { type: 'plaintext', props: { children: 'terminal-looking text' } },
+              { type: 'span', props: { id: 'after-plaintext', children: 'after' } },
+            ],
+          },
+        }),
+        { includeSnapshot: false },
+      ),
+    ).toThrowError(/Cannot serialize HTML <plaintext>/)
+  })
+
+  it('rejects plaintext before a full-document snapshot can be swallowed', () => {
+    function Content(): FictNode {
+      return {
+        type: 'div',
+        props: {
+          children: { type: 'plaintext', props: { children: 'unsafe tail' } },
+        },
+      }
+    }
+
+    expect(() =>
+      renderToString(() => ({ type: Content, props: {} }), {
+        fullDocument: true,
+      }),
+    ).toThrowError(/Cannot serialize HTML <plaintext>.*snapshot script/i)
+  })
+
   it('rejects an invalid element accepted by a permissive server DOM', () => {
     const { document } = parseHTML('<!doctype html><html><body></body></html>')
     const name = 'div><script data-fict-xss="tag">'
@@ -158,7 +207,6 @@ describe('resumable host HTML parser context validation', () => {
     'xmp',
     'textarea',
     'title',
-    'plaintext',
     'head',
     'html',
     'frameset',

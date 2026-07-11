@@ -158,6 +158,11 @@ function serializeElement(element: Element, serializedParent: Element | null): s
   const isHtml = isHtmlElement(element)
   const normalizedTagName = tagName.toLowerCase()
   assertSafeResumableHostContext(element, serializedParent)
+  if (isHtml && normalizedTagName === 'plaintext') {
+    throw new Error(
+      '[fict/ssr] Cannot serialize HTML <plaintext>. The HTML syntax has no closing tag for this element, so a browser would consume every following tag, ancestor closing tag, and snapshot script as text. Use <pre> for preformatted HTML content or return a text/plain response instead.',
+    )
+  }
   assertValidDOMElementName(tagName, !isHtml, isHtml ? undefined : element.namespaceURI)
   let html = `<${tagName}`
 

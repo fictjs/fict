@@ -113,7 +113,9 @@ describe('streaming boundary HTML parser context validation', () => {
           children: createPendingBoundary('pending'),
         },
       }),
-      new RegExp(`streaming Suspense boundary.*<${tagName}>`, 'i'),
+      tagName === 'plaintext'
+        ? /Cannot serialize HTML <plaintext>.*no closing tag/i
+        : new RegExp(`streaming Suspense boundary.*<${tagName}>`, 'i'),
     )
   })
 
