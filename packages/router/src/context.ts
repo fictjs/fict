@@ -18,7 +18,7 @@ import type {
   To,
   BeforeLeaveHandler,
 } from './types'
-import { hasPathPrefix, stripBasePath, prependBasePath } from './utils'
+import { hasPathPrefix, parseURL, stripBasePath, prependBasePath } from './utils'
 
 // ============================================================================
 // Router Context
@@ -416,20 +416,9 @@ export function useIsActive(
   },
 ): () => boolean {
   const router = useRouter()
-  const route = useRoute()
-  const hasRouteContext = hasContext(RouteContext)
+  const href = useHref(to, options)
 
   return () => {
-    const target = typeof to === 'function' ? to() : to
-
-    // Resolve the target path relative to current location (handles relative paths)
-    const resolvePath = readAccessor(
-      options?.relative === 'route' && hasRouteContext
-        ? (route.resolvePath as MaybeAccessor<(to: To) => string>)
-        : (router.resolvePath as MaybeAccessor<(to: To) => string>),
-    )
-    const resolvedTargetPath = resolvePath(target)
-
     // Strip base from current location pathname for comparison
     const currentPath = readAccessor(router.location).pathname
     const base = readAccessor(router.base)
@@ -437,7 +426,7 @@ export function useIsActive(
       return false
     }
     let currentPathWithoutBase = stripBasePath(currentPath, base)
-    let targetPath = resolvedTargetPath
+    let targetPath = stripBasePath(parseURL(href()).pathname, base)
     if (!options?.caseSensitive) {
       currentPathWithoutBase = currentPathWithoutBase.toLowerCase()
       targetPath = targetPath.toLowerCase()

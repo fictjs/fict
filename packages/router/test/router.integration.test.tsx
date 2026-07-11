@@ -353,6 +353,41 @@ function RelativeLinkParent(props: { children?: FictNode }) {
   )
 }
 
+function RouteRelativeActiveParent(props: { children?: FictNode }) {
+  return (
+    <div>
+      <NavLink
+        to="edit/details?tab=string#section"
+        relative="route"
+        end
+        activeClassName="active"
+        data-testid="route-active-string"
+      >
+        string
+      </NavLink>
+      <NavLink
+        to={{ pathname: 'edit/details', search: '?tab=object', hash: '#section' }}
+        relative="route"
+        end
+        activeClassName="active"
+        data-testid="route-active-object"
+      >
+        object
+      </NavLink>
+      <NavLink
+        to="?tab=search-only"
+        relative="route"
+        end
+        activeClassName="active"
+        data-testid="route-active-search-only"
+      >
+        search
+      </NavLink>
+      {props.children}
+    </div>
+  )
+}
+
 let updateReactiveNavigate: () => void = () => {}
 function ReactiveNavigateFixture() {
   let to = $state('/navigate-one')
@@ -1024,6 +1059,129 @@ describe('Router integration (MemoryRouter)', () => {
 
     expect(screen.getByTestId('insensitive').className).toBe('active')
     expect(screen.getByTestId('sensitive').className).toBe('')
+  })
+
+  it('uses only the pathname for string and object NavLink active state', () => {
+    render(() => (
+      <MemoryRouter initialEntries={['/app/users?tab=current#current']} base="/app">
+        <Route
+          path="/users"
+          element={
+            <div>
+              <NavLink
+                to="/users?tab=string#section"
+                end
+                activeClassName="active"
+                data-testid="active-string-url"
+              >
+                string
+              </NavLink>
+              <NavLink
+                to={{ pathname: '/users', search: '?tab=object', hash: '#section' }}
+                end
+                activeClassName="active"
+                data-testid="active-object-url"
+              >
+                object
+              </NavLink>
+              <NavLink
+                to="?tab=search-only"
+                end
+                activeClassName="active"
+                data-testid="active-search-only"
+              >
+                search
+              </NavLink>
+              <NavLink to="#hash-only" end activeClassName="active" data-testid="active-hash-only">
+                hash
+              </NavLink>
+              <NavLink
+                to={{ search: '?tab=object-only' }}
+                end
+                activeClassName="active"
+                data-testid="active-object-search-only"
+              >
+                object search
+              </NavLink>
+              <NavLink
+                to={{ hash: '#object-only' }}
+                end
+                activeClassName="active"
+                data-testid="active-object-hash-only"
+              >
+                object hash
+              </NavLink>
+              <NavLink
+                to="/other?tab=string#section"
+                end
+                activeClassName="active"
+                data-testid="inactive-other-url"
+              >
+                other
+              </NavLink>
+            </div>
+          }
+        />
+      </MemoryRouter>
+    ))
+
+    for (const testId of [
+      'active-string-url',
+      'active-object-url',
+      'active-search-only',
+      'active-hash-only',
+      'active-object-search-only',
+      'active-object-hash-only',
+    ]) {
+      expect(screen.getByTestId(testId).className).toBe('active')
+    }
+    expect(screen.getByTestId('inactive-other-url').className).toBe('')
+    expect(screen.getByTestId('active-string-url').getAttribute('href')).toBe(
+      '/app/users?tab=string#section',
+    )
+    expect(screen.getByTestId('active-search-only').getAttribute('href')).toBe(
+      '/app/users?tab=search-only',
+    )
+    expect(screen.getByTestId('active-hash-only').getAttribute('href')).toBe('/app/users#hash-only')
+  })
+
+  it('keeps route-relative NavLink active resolution aligned with hrefs', () => {
+    const initialPath = '/app/projects/42/edit/details?current=1#current'
+    const history = createMemoryHistory({ initialEntries: [initialPath] })
+    const routes: RouteDefinition[] = [
+      {
+        path: '/projects/:id',
+        component: RouteRelativeActiveParent,
+        children: [{ path: 'edit/details', element: <span /> }],
+      },
+    ]
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={routes} base="/app">
+          <Routes routes={routes} />
+        </RouterProvider>
+      ))
+
+      for (const testId of [
+        'route-active-string',
+        'route-active-object',
+        'route-active-search-only',
+      ]) {
+        expect(screen.getByTestId(testId).className).toBe('active')
+      }
+      expect(screen.getByTestId('route-active-string').getAttribute('href')).toBe(
+        '/app/projects/42/edit/details?tab=string#section',
+      )
+      expect(screen.getByTestId('route-active-object').getAttribute('href')).toBe(
+        '/app/projects/42/edit/details?tab=object#section',
+      )
+      expect(screen.getByTestId('route-active-search-only').getAttribute('href')).toBe(
+        '/app/projects/42/edit/details?tab=search-only',
+      )
+    } finally {
+      history.destroy?.()
+    }
   })
 
   it('Link resolves relative paths from current route', async () => {
