@@ -4089,6 +4089,117 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it('treats a custom metadata resolver null as an authoritative miss', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-custom-meta-null-'))
+    const packageDir = path.join(root, 'node_modules', 'fict-hook-lib')
+    const metaPath = path.join(packageDir, 'dist', 'index.fict.meta.json')
+
+    try {
+      await mkdir(path.dirname(metaPath), { recursive: true })
+      await mkdir(path.join(root, 'src'), { recursive: true })
+      await writeFile(
+        path.join(packageDir, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          type: 'module',
+          exports: './dist/index.js',
+          fict: { metadata: './dist/index.fict.meta.json' },
+        }),
+      )
+      await writeFile(
+        path.join(packageDir, 'dist', 'index.js'),
+        'export const useCounter = () => 1',
+      )
+      await writeFile(
+        metaPath,
+        JSON.stringify({
+          exports: {},
+          hooks: { useCounter: { directAccessor: 'signal' } },
+        }),
+      )
+
+      const appPath = path.join(root, 'src', 'App.tsx')
+      const appSource = `
+        import { useCounter } from 'fict-hook-lib'
+        export function App() {
+          const count = useCounter()
+          return <div>{count * 2}</div>
+        }
+      `
+      await writeFile(appPath, appSource)
+      const resolver = vi.fn(() => null)
+      const plugin = getTestPlugin({
+        cache: false,
+        useTypeScriptProject: false,
+        functionSplitting: false,
+        resolveModuleMetadata: resolver,
+      })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+      const result = await plugin.transform?.call(
+        {
+          error(error: unknown): never {
+            throw error instanceof Error ? error : new Error(String(error))
+          },
+          warn: vi.fn(),
+          emitFile: vi.fn(),
+        },
+        appSource,
+        appPath,
+      )
+      const code = result && typeof result === 'object' && 'code' in result ? result.code : ''
+
+      expect(resolver).toHaveBeenCalledWith('fict-hook-lib', appPath)
+      expect(code).toMatch(/\bcount\s*\*\s*2/)
+      expect(code).not.toMatch(/\bcount\(\)\s*\*\s*2/)
+
+      const fallbackResolver = vi.fn(() => undefined)
+      const fallbackPlugin = getTestPlugin({
+        cache: false,
+        useTypeScriptProject: false,
+        functionSplitting: false,
+        resolveModuleMetadata: fallbackResolver,
+      })
+      fallbackPlugin.configResolved?.({ ...mockBuildConfig, root })
+      const fallbackResult = await fallbackPlugin.transform?.call(
+        {
+          error(error: unknown): never {
+            throw error instanceof Error ? error : new Error(String(error))
+          },
+          warn: vi.fn(),
+          emitFile: vi.fn(),
+        },
+        appSource,
+        appPath,
+      )
+      const fallbackCode =
+        fallbackResult && typeof fallbackResult === 'object' && 'code' in fallbackResult
+          ? fallbackResult.code
+          : ''
+      expect(fallbackResolver).toHaveBeenCalledWith('fict-hook-lib', appPath)
+      expect(fallbackCode).toMatch(/\bcount\(\)\s*\*\s*2/)
+
+      const dependencies: string[] = []
+      const fingerprint = __fictVitePluginInternals.computePackageMetadataCacheFingerprint(
+        appSource,
+        appPath,
+        {
+          emitModuleMetadata: false,
+          resolveModuleMetadata: () => null,
+        },
+        new Map(),
+        root,
+        [],
+        new Set(),
+        undefined,
+        file => dependencies.push(file),
+      )
+      expect(JSON.parse(fingerprint)).toEqual([['fict-hook-lib', null, 'custom-resolver']])
+      expect(dependencies).toEqual([])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('invalidates cached consumers when indirect local package metadata changes', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-package-meta-indirect-cache-'))
     const packageDir = path.join(root, 'node_modules', 'fict-hook-lib')

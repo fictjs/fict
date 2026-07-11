@@ -930,9 +930,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     state: MetadataTransformState,
     source: string,
     importer?: string,
-  ): ModuleReactiveMetadata | undefined => {
+  ): ModuleReactiveMetadata | null | undefined => {
     const userResolved = compilerOptions.resolveModuleMetadata?.(source, importer)
-    if (userResolved) return userResolved
+    if (userResolved !== undefined) return userResolved
     if (shouldSkipMetadataForModuleQuery(source)) return undefined
     if (!importer) return undefined
 
@@ -3221,8 +3221,12 @@ function computePackageMetadataCacheFingerprint(
   const entries: [string, string | null, string?][] = []
   for (const source of collectStaticModuleSources(code)) {
     const userMetadata = compilerOptions.resolveModuleMetadata?.(source, normalizedFilename)
-    if (userMetadata) {
-      entries.push([source, stableStringify(userMetadata), 'custom-resolver'])
+    if (userMetadata !== undefined) {
+      entries.push([
+        source,
+        userMetadata === null ? null : stableStringify(userMetadata),
+        'custom-resolver',
+      ])
       continue
     }
     const localFile =
