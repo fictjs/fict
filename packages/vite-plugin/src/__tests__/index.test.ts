@@ -526,7 +526,7 @@ describe('fict vite-plugin', () => {
         const plugin = getTestPlugin({
           cache: false,
           functionSplitting: false,
-          publicIdentityNamespace: namespace,
+          ...(namespace === undefined ? {} : { publicIdentityNamespace: namespace }),
           resumable: true,
           useTypeScriptProject: false,
         })
