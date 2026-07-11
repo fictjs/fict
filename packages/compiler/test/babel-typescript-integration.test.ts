@@ -1295,6 +1295,33 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
     expect(result?.code).toMatch(/count\(\)\s*\*\s*2/)
   })
 
+  it('rewrites relative CTS import-equals dependencies to CommonJS extensions', () => {
+    const result = transformSync(
+      `
+        import dependency = require('./dependency.cts')
+        export = dependency
+      `,
+      {
+        filename: 'entry.cts',
+        configFile: false,
+        babelrc: false,
+        presets: [
+          [
+            fictPreset,
+            {
+              dev: false,
+              strictGuarantee: false,
+              typescriptOptions: { rewriteImportExtensions: true },
+            },
+          ],
+        ],
+      },
+    )
+
+    expect(result?.code).toMatch(/require\(["']\.\/dependency\.cjs["']\)/)
+    expect(result?.code).not.toContain('./dependency.cts')
+  })
+
   it('honors disallowAmbiguousJSXLike in all-extensions mode', () => {
     expect(() =>
       transformSync(`export const value = <number>input`, {

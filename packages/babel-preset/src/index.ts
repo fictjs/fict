@@ -860,7 +860,10 @@ function lowerCtsModuleSyntaxForFict(state: CtsModuleSyntaxState): PluginObj {
   }
 }
 
-function restoreCtsModuleSyntaxAfterFict(state: CtsModuleSyntaxState): PluginObj {
+function restoreCtsModuleSyntaxAfterFict(
+  state: CtsModuleSyntaxState,
+  rewriteImportExtensions: boolean,
+): PluginObj {
   return {
     name: 'fict-restore-cts-commonjs-semantics',
     visitor: {
@@ -881,12 +884,14 @@ function restoreCtsModuleSyntaxAfterFict(state: CtsModuleSyntaxState): PluginObj
               }
               const key = `${statementPath.node.source.value}\0${specifier.local.name}`
               if (!pendingImports.delete(key)) continue
+              const source = t.cloneNode(statementPath.node.source)
+              if (rewriteImportExtensions) {
+                source.value = rewriteTypeScriptExtension(source.value)
+              }
               const declaration = t.variableDeclaration('const', [
                 t.variableDeclarator(
                   t.cloneNode(specifier.local),
-                  t.callExpression(t.identifier('require'), [
-                    t.cloneNode(statementPath.node.source),
-                  ]),
+                  t.callExpression(t.identifier('require'), [source]),
                 ),
               ])
               t.inheritsComments(declaration, statementPath.node)
@@ -1094,7 +1099,14 @@ function createIsolatedFictPrepass(
         )
       }
       plugins.push([createFictPlugin, effectiveCompilerOptions])
-      if (ctsModuleSyntax) plugins.push(restoreCtsModuleSyntaxAfterFict(ctsModuleSyntax))
+      if (ctsModuleSyntax) {
+        plugins.push(
+          restoreCtsModuleSyntaxAfterFict(
+            ctsModuleSyntax,
+            typescriptOptions.rewriteImportExtensions === true,
+          ),
+        )
+      }
       if (typeScriptTransformOptions && typescriptOptions.onlyRemoveTypeImports !== true) {
         plugins.push(removeObsoleteJsxPragmaImportsPlugin(typescriptOptions))
       }
