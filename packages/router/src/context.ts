@@ -19,7 +19,13 @@ import type {
   To,
   BeforeLeaveHandler,
 } from './types'
-import { hasPathPrefix, parseURL, stripBasePath, prependBasePath } from './utils'
+import {
+  getExternalHref,
+  hasPathPrefix,
+  parseURL,
+  stripBasePath,
+  prependBasePath,
+} from './utils'
 
 // ============================================================================
 // Router Context
@@ -347,6 +353,8 @@ export function useHref(
 
   return () => {
     const target = typeof to === 'function' ? to() : to
+    const externalHref = getExternalHref(target)
+    if (externalHref !== null) return externalHref
     const base = readAccessor(router.base)
 
     // Extract pathname, search, and hash from target
@@ -428,6 +436,9 @@ export function useIsActive(
   const href = useHref(to, options)
 
   return () => {
+    const targetHref = href()
+    if (getExternalHref(targetHref) !== null) return false
+
     // Strip base from current location pathname for comparison
     const currentPath = readAccessor(router.location).pathname
     const base = readAccessor(router.base)
@@ -435,7 +446,7 @@ export function useIsActive(
       return false
     }
     let currentPathWithoutBase = stripBasePath(currentPath, base)
-    let targetPath = stripBasePath(parseURL(href()).pathname, base)
+    let targetPath = stripBasePath(parseURL(targetHref).pathname, base)
     if (!options?.caseSensitive) {
       currentPathWithoutBase = currentPathWithoutBase.toLowerCase()
       targetPath = targetPath.toLowerCase()

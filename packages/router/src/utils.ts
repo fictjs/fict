@@ -16,6 +16,16 @@ import type {
   MatchFilter,
 } from './types'
 
+const ABSOLUTE_URL_PATTERN = /^(?:[a-z][a-z\d+.-]*:|\/\/)/i
+
+/** Return an absolute/protocol-relative target unchanged instead of routing it internally. */
+export function getExternalHref(to: To): string | null {
+  const pathname = typeof to === 'string' ? to : to.pathname || ''
+  if (!ABSOLUTE_URL_PATTERN.test(pathname)) return null
+  if (typeof to === 'string') return to
+  return `${pathname}${to.search || ''}${to.hash || ''}`
+}
+
 // ============================================================================
 // Path Normalization
 // ============================================================================

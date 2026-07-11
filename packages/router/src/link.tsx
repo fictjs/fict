@@ -29,7 +29,7 @@ import {
 import { getRegisteredAction, submitActionFromForm } from './data'
 import { stripBaseIfPresent } from './router-internals'
 import type { Action, Params, To, NavigateOptions } from './types'
-import { parseURL, prependBasePath, stripBasePath } from './utils'
+import { getExternalHref, parseURL, prependBasePath, stripBasePath } from './utils'
 
 // CSS Properties type for styles
 type CSSProperties = NonNullable<StyleProp>
@@ -62,15 +62,6 @@ const mergeStyles = (
     ...(isStyleObject(pending) ? pending : {}),
   }
   return Object.keys(style).length > 0 ? style : undefined
-}
-
-const ABSOLUTE_URL_PATTERN = /^(?:[a-z][a-z\d+.-]*:|\/\/)/i
-
-function getExternalHref(to: To): string | null {
-  const pathname = typeof to === 'string' ? to : to.pathname || ''
-  if (!ABSOLUTE_URL_PATTERN.test(pathname)) return null
-  if (typeof to === 'string') return to
-  return `${pathname}${to.search || ''}${to.hash || ''}`
 }
 
 function getResolvedNavigationTarget(to: To, href: string): To {

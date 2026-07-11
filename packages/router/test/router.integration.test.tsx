@@ -16,6 +16,7 @@ import {
   useBeforeLeave,
   usePendingLocation,
   useHref,
+  useIsActive,
   NavLink,
   Link,
   Form,
@@ -34,7 +35,7 @@ import {
   type To,
 } from '../src'
 import { RouterProvider } from '../src/router-provider'
-import { readAccessor } from '../src/context'
+import { readAccessor, type MaybeAccessor } from '../src/context'
 
 function LocationText() {
   const location = useLocation()
@@ -120,9 +121,16 @@ function PendingText() {
   return <span data-testid="pending">{pending()?.pathname ?? 'none'}</span>
 }
 
-function HrefText({ to }: { to: string }) {
+function HrefText({ to, testId = 'href' }: { to: To; testId?: string }) {
   const href = useHref(to)
-  return <span data-testid="href" data-href={readAccessor(href)} />
+  return <span data-testid={testId} data-href={readAccessor(href)} />
+}
+
+function ActiveText({ to, testId }: { to: To; testId: string }) {
+  const active = useIsActive(to, { end: true })
+  const value = () =>
+    readAccessor(readAccessor(active as MaybeAccessor<MaybeAccessor<boolean>>))
+  return <span data-testid={testId} data-active={String(value())} />
 }
 
 function Guarded({
@@ -2226,6 +2234,74 @@ describe('Router integration (MemoryRouter)', () => {
     expect(anchor.getAttribute('href')).toBe('https://example.com/docs')
     expect(routerPreventedDefault).toBe(false)
     expect(screen.getByTestId('path').textContent).toBe('/from')
+  })
+
+  it('returns external URLs unchanged from the public useHref hook', () => {
+    render(() => (
+      <MemoryRouter initialEntries={['/app/projects/42']} base="/app">
+        <Route
+          path="/projects/:id"
+          element={
+            <>
+              <HrefText
+                to="https://example.com/app/save?mode=string#done"
+                testId="external-hook-string"
+              />
+              <HrefText to="//cdn.example.com/app/save" testId="external-hook-protocol" />
+              <HrefText
+                to={{
+                  pathname: 'https://example.org/object',
+                  search: '?mode=object',
+                  hash: '#done',
+                }}
+                testId="external-hook-object"
+              />
+              <HrefText
+                to="mailto:dev@example.com?subject=fict"
+                testId="external-hook-scheme"
+              />
+            </>
+          }
+        />
+      </MemoryRouter>
+    ))
+
+    const href = (testId: string) => screen.getByTestId(testId).getAttribute('data-href')
+    expect(href('external-hook-string')).toBe(
+      'https://example.com/app/save?mode=string#done',
+    )
+    expect(href('external-hook-protocol')).toBe('//cdn.example.com/app/save')
+    expect(href('external-hook-object')).toBe(
+      'https://example.org/object?mode=object#done',
+    )
+    expect(href('external-hook-scheme')).toBe('mailto:dev@example.com?subject=fict')
+  })
+
+  it('never treats an external useIsActive target as an internal path', () => {
+    const history = createMemoryHistory({
+      initialEntries: ['/app/https://example.com/docs'],
+    })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]} base="/app">
+          <ActiveText to="https://example.com/docs" testId="external-active-string" />
+          <ActiveText
+            to={{ pathname: '//example.com/docs' }}
+            testId="external-active-protocol"
+          />
+        </RouterProvider>
+      ))
+
+      expect(screen.getByTestId('external-active-string').getAttribute('data-active')).toBe(
+        'false',
+      )
+      expect(screen.getByTestId('external-active-protocol').getAttribute('data-active')).toBe(
+        'false',
+      )
+    } finally {
+      history.destroy?.()
+    }
   })
 
   it('intercepts mixed-case _self targets for Link and NavLink', async () => {
