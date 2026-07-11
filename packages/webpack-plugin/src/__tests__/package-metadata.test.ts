@@ -119,7 +119,10 @@ function createRebuildObserver(): {
   return observation
 }
 
-function createLegacyCachePlugin(resource: string): { apply(compiler: Compiler): void } {
+function createLegacyCachePlugin(
+  resource: string,
+  version: 1 | 4,
+): { apply(compiler: Compiler): void } {
   let downgradeNextCompilation = true
   return {
     apply(compiler: Compiler): void {
@@ -134,13 +137,16 @@ function createLegacyCachePlugin(resource: string): { apply(compiler: Compiler):
           throw new Error(`No persisted Fict metadata found for ${resource}.`)
         }
         const legacy = stored as Record<string, unknown>
-        legacy.version = 1
-        legacy.filename = resource
-        legacy.dependencyFingerprint = '{"localDependencies":[],"packageMetadataDependencies":[]}'
-        delete legacy.identifier
-        delete legacy.incomplete
-        delete legacy.metadataDependencies
-        delete legacy.resource
+        legacy.version = version
+        delete legacy.metadataSources
+        if (version === 1) {
+          legacy.filename = resource
+          legacy.dependencyFingerprint = '{"localDependencies":[],"packageMetadataDependencies":[]}'
+          delete legacy.identifier
+          delete legacy.incomplete
+          delete legacy.metadataDependencies
+          delete legacy.resource
+        }
       })
     },
   }
@@ -339,48 +345,51 @@ describe('@fictjs/webpack-plugin package metadata', () => {
     }
   })
 
-  it('rebuilds a v1 filesystem-cache record that lacks metadata dependencies', async () => {
-    const root = await createFixture({
-      'entry.ts': entrySource,
-      'node_modules/hook-lib/index.js': 'exports.useCounter = () => 1',
-      'node_modules/hook-lib/package.json': packageJson('./hook.fict.meta.json'),
-      'node_modules/hook-lib/hook.fict.meta.json': hookMetadata(true),
-    })
-    const entryPath = path.join(root, 'entry.ts')
-    const cache = {
-      type: 'filesystem' as const,
-      cacheDirectory: path.join(root, '.webpack-cache'),
-    }
-    const rebuildObserver = createRebuildObserver()
-    const legacyCachePlugin = createLegacyCachePlugin(entryPath)
-    const baseOptions = {
-      cache,
-      plugins: [legacyCachePlugin, rebuildObserver.plugin],
-    }
-    const configuration = () => excludeHookPackage(createWebpackConfiguration(root, baseOptions))
+  it.each([1, 4] as const)(
+    'rebuilds a v%i filesystem-cache record missing current graph inputs',
+    async legacyVersion => {
+      const root = await createFixture({
+        'entry.ts': entrySource,
+        'node_modules/hook-lib/index.js': 'exports.useCounter = () => 1',
+        'node_modules/hook-lib/package.json': packageJson('./hook.fict.meta.json'),
+        'node_modules/hook-lib/hook.fict.meta.json': hookMetadata(true),
+      })
+      const entryPath = path.join(root, 'entry.ts')
+      const cache = {
+        type: 'filesystem' as const,
+        cacheDirectory: path.join(root, '.webpack-cache'),
+      }
+      const rebuildObserver = createRebuildObserver()
+      const legacyCachePlugin = createLegacyCachePlugin(entryPath, legacyVersion)
+      const baseOptions = {
+        cache,
+        plugins: [legacyCachePlugin, rebuildObserver.plugin],
+      }
+      const configuration = () => excludeHookPackage(createWebpackConfiguration(root, baseOptions))
 
-    try {
-      await backdateFixtureInputs([
-        entryPath,
-        path.join(root, 'node_modules', 'hook-lib', 'index.js'),
-        path.join(root, 'node_modules', 'hook-lib', 'package.json'),
-        path.join(root, 'node_modules', 'hook-lib', 'hook.fict.meta.json'),
-      ])
-      const firstStats = await runCompiler(configuration())
-      expect(await readBundle(root)).toMatch(/count\(\)\s*\*\s*2/)
-      expect(storedMetadata(firstStats, entryPath).version).toBe(1)
+      try {
+        await backdateFixtureInputs([
+          entryPath,
+          path.join(root, 'node_modules', 'hook-lib', 'index.js'),
+          path.join(root, 'node_modules', 'hook-lib', 'package.json'),
+          path.join(root, 'node_modules', 'hook-lib', 'hook.fict.meta.json'),
+        ])
+        const firstStats = await runCompiler(configuration())
+        expect(await readBundle(root)).toMatch(/count\(\)\s*\*\s*2/)
+        expect(storedMetadata(firstStats, entryPath).version).toBe(legacyVersion)
 
-      const migratedStats = await runCompiler(configuration())
-      expect(rebuildObserver.builtBeforeFict).not.toContain(entryPath)
-      expect(rebuildObserver.rebuiltByFict).toContain(entryPath)
-      expect(storedMetadata(migratedStats, entryPath).version).toBe(4)
+        const migratedStats = await runCompiler(configuration())
+        expect(rebuildObserver.builtBeforeFict).not.toContain(entryPath)
+        expect(rebuildObserver.rebuiltByFict).toContain(entryPath)
+        expect(storedMetadata(migratedStats, entryPath).version).toBe(5)
 
-      const recachedStats = await runCompiler(configuration())
-      expect(builtFixtureFiles(recachedStats, root)).toEqual([])
-      expect(rebuildObserver.rebuiltByFict).toEqual([])
-      expect(storedMetadata(recachedStats, entryPath).version).toBe(4)
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
-  })
+        const recachedStats = await runCompiler(configuration())
+        expect(builtFixtureFiles(recachedStats, root)).toEqual([])
+        expect(rebuildObserver.rebuiltByFict).toEqual([])
+        expect(storedMetadata(recachedStats, entryPath).version).toBe(5)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+  )
 })

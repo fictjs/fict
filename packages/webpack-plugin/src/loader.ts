@@ -107,6 +107,7 @@ export default function fictWebpackLoader(
     binding.state.moduleMetadata.set(moduleIdentifier, { exports: {} })
   }
   binding.state.metadataDependenciesByIdentifier.set(moduleIdentifier, new Set())
+  binding.state.metadataSourcesByIdentifier.set(moduleIdentifier, new Set())
 
   const options = this.getOptions()
   const webpackResource = normalizeWebpackResource(this.resource)
@@ -134,6 +135,7 @@ export default function fictWebpackLoader(
     moduleMetadata: compilerModuleMetadata,
     resolveModuleMetadata: (sourceRequest, importer) => {
       if (!importer) return undefined
+      binding.state.metadataSourcesByIdentifier.get(moduleIdentifier)!.add(sourceRequest)
       const packageResolutions = binding.state.packageResolutionsByIdentifier.get(moduleIdentifier)
       if (packageResolutions?.has(sourceRequest)) {
         const packageResolution = packageResolutions.get(sourceRequest)

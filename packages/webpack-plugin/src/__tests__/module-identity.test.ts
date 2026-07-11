@@ -33,7 +33,7 @@ function readStoredModules(stats: Stats, resource: string): StoredModuleMetadata
           }
         | undefined
       if (
-        stored?.version !== 4 ||
+        stored?.version !== 5 ||
         typeof stored.identifier !== 'string' ||
         typeof stored.metadataJson !== 'string' ||
         typeof stored.resource !== 'string'
@@ -53,6 +53,51 @@ function readStoredModules(stats: Stats, resource: string): StoredModuleMetadata
 }
 
 describe('@fictjs/webpack-plugin module identity', () => {
+  it('uses a CommonJS graph edge for lowered TypeScript import-equals metadata', async () => {
+    const root = await createFixture({
+      'entry.cts': `
+        import useCounter = require('./hook')
+
+        export function App() {
+          const count = useCounter()
+          return count * 2
+        }
+      `,
+      'hook.cts': `
+        import { $state } from 'fict'
+
+        function useCounter() {
+          const count = $state(2)
+          return count
+        }
+
+        export = useCounter
+      `,
+    })
+
+    try {
+      const configuration = createWebpackConfiguration(root)
+      configuration.entry = './entry.cts'
+      configuration.resolve = {
+        ...configuration.resolve,
+        extensions: ['.cts', '.ts', '.js'],
+      }
+
+      const stats = await runCompiler(configuration)
+      const entryModule = [...stats.compilation.modules].find(
+        candidate =>
+          (candidate as { resource?: unknown }).resource === path.join(root, 'entry.cts'),
+      ) as NormalModule | undefined
+      expect(
+        (entryModule?.buildInfo?.fictWebpackMetadata as { metadataSources?: unknown } | undefined)
+          ?.metadataSources,
+      ).toEqual(['./hook'])
+      expect(runApp(root)).toBe(4)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('keeps compiler metadata resolution scoped to static ESM dependencies', async () => {
     const root = await createFixture({
       'entry.ts': `

@@ -36,7 +36,7 @@ function readStoredMetadata(
     | undefined
   if (
     !module ||
-    stored?.version !== 4 ||
+    stored?.version !== 5 ||
     typeof stored?.identifier !== 'string' ||
     typeof stored.metadataJson !== 'string' ||
     typeof stored.resource !== 'string'

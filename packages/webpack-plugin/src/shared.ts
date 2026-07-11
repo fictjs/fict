@@ -9,13 +9,14 @@ export const FICT_WEBPACK_LOADER_CONTEXT = Symbol.for('@fictjs/webpack-plugin/lo
 const FICT_WEBPACK_BUILD_INFO_KEY = 'fictWebpackMetadata'
 
 interface StoredFictWebpackMetadata {
-  version: 4
+  version: 5
   identifier: string
   resource: string
   metadataJson: string
   incomplete: boolean
   dependencyFingerprint: string | null
   metadataDependencies: string[]
+  metadataSources: string[]
 }
 
 export interface RestoredFictWebpackMetadata {
@@ -25,6 +26,8 @@ export interface RestoredFictWebpackMetadata {
   incomplete: boolean
   dependencyFingerprint: string | null
   metadataDependencies: string[]
+  metadataSources: string[]
+  metadataSourcesComplete: boolean
 }
 
 export interface FictWebpackCompilationState {
@@ -36,6 +39,8 @@ export interface FictWebpackCompilationState {
   compiledDependencyFingerprints: Map<string, string | null>
   pendingDependencyFingerprints: Map<string, string>
   metadataDependenciesByIdentifier: Map<string, Set<string>>
+  metadataSourcesByIdentifier: Map<string, Set<string>>
+  staleMetadataSources: Set<string>
   metadataGraphPrepared: boolean
   packageResolutionsByIdentifier: Map<string, Map<string, FictWebpackPackageResolutionState>>
 }
@@ -55,6 +60,8 @@ export function createCompilationState(): FictWebpackCompilationState {
     compiledDependencyFingerprints: new Map(),
     pendingDependencyFingerprints: new Map(),
     metadataDependenciesByIdentifier: new Map(),
+    metadataSourcesByIdentifier: new Map(),
+    staleMetadataSources: new Set(),
     metadataGraphPrepared: false,
     packageResolutionsByIdentifier: new Map(),
   }
@@ -139,7 +146,7 @@ export function storeFictModuleMetadata(
     throw new Error(`[fict] Webpack did not expose buildInfo for ${identifier}.`)
   }
   const stored: StoredFictWebpackMetadata = {
-    version: 4,
+    version: 5,
     identifier,
     resource: getWebpackModuleResource(module),
     metadataJson: JSON.stringify(metadata),
@@ -148,6 +155,7 @@ export function storeFictModuleMetadata(
     metadataDependencies: [
       ...(state.metadataDependenciesByIdentifier.get(identifier) ?? []),
     ].sort(),
+    metadataSources: [...(state.metadataSourcesByIdentifier.get(identifier) ?? [])].sort(),
   }
   buildInfo[FICT_WEBPACK_BUILD_INFO_KEY] = stored
   state.compiledDependencyFingerprints.set(identifier, dependencyFingerprint)
@@ -170,16 +178,19 @@ export function restoreFictModuleMetadata(
     incomplete?: unknown
     dependencyFingerprint?: unknown
     metadataDependencies?: unknown
+    metadataSources?: unknown
   }
   const isLegacyV1 = candidate.version === 1
   const isLegacyV2 = candidate.version === 2
   const isLegacyV3 = candidate.version === 3
-  const isCurrent = candidate.version === 4
-  const isLegacy = isLegacyV1 || isLegacyV2 || isLegacyV3
+  const isLegacyV4 = candidate.version === 4
+  const isCurrent = candidate.version === 5
+  const isResourceKeyedLegacy = isLegacyV1 || isLegacyV2 || isLegacyV3
+  const isIdentityKeyed = isLegacyV4 || isCurrent
   if (
-    (!isLegacy && !isCurrent) ||
-    (isLegacy && typeof candidate.filename !== 'string') ||
-    (isCurrent &&
+    (!isResourceKeyedLegacy && !isIdentityKeyed) ||
+    (isResourceKeyedLegacy && typeof candidate.filename !== 'string') ||
+    (isIdentityKeyed &&
       (typeof candidate.identifier !== 'string' ||
         !candidate.identifier ||
         typeof candidate.resource !== 'string' ||
@@ -187,15 +198,19 @@ export function restoreFictModuleMetadata(
     typeof candidate.metadataJson !== 'string' ||
     (candidate.dependencyFingerprint !== null &&
       typeof candidate.dependencyFingerprint !== 'string') ||
-    ((isLegacyV3 || isCurrent) && typeof candidate.incomplete !== 'boolean') ||
-    ((isLegacyV2 || isLegacyV3 || isCurrent) && !Array.isArray(candidate.metadataDependencies)) ||
+    ((isLegacyV3 || isIdentityKeyed) && typeof candidate.incomplete !== 'boolean') ||
+    ((isLegacyV2 || isLegacyV3 || isIdentityKeyed) &&
+      !Array.isArray(candidate.metadataDependencies)) ||
     (candidate.metadataDependencies !== undefined &&
       (!Array.isArray(candidate.metadataDependencies) ||
-        candidate.metadataDependencies.some(dependency => typeof dependency !== 'string')))
+        candidate.metadataDependencies.some(dependency => typeof dependency !== 'string'))) ||
+    (isCurrent &&
+      (!Array.isArray(candidate.metadataSources) ||
+        candidate.metadataSources.some(source => typeof source !== 'string')))
   ) {
     throw new Error('[fict] Cached Webpack module metadata is malformed.')
   }
-  const storedDisplayIdentifier = isCurrent ? candidate.identifier : candidate.filename
+  const storedDisplayIdentifier = isIdentityKeyed ? candidate.identifier : candidate.filename
 
   let metadata: unknown
   try {
@@ -220,10 +235,10 @@ export function restoreFictModuleMetadata(
 
   const identifier = getWebpackModuleIdentifier(module)
   const resource = getWebpackModuleResource(module)
-  const storedIdentifier = isCurrent
+  const storedIdentifier = isIdentityKeyed
     ? candidate.identifier
     : normalizeFileName(candidate.filename as string)
-  const storedResource = isCurrent
+  const storedResource = isIdentityKeyed
     ? normalizeWebpackResource(candidate.resource as string)
     : normalizeFileName(candidate.filename as string)
   const identityChanged = identifier !== storedIdentifier || resource !== storedResource
@@ -232,13 +247,15 @@ export function restoreFictModuleMetadata(
     identifier,
     resource,
     metadata: metadata as ModuleReactiveMetadata,
-    // Versions before v4 were keyed only by a physical/resource filename. They cannot prove
-    // which loader chain produced the metadata, so force one rebuild during migration.
+    // Versions before v4 cannot prove loader identity; v4 cannot prove which compiler-requested
+    // static sources produced its graph. Force one rebuild for either cache migration.
     incomplete: !isCurrent || identityChanged || candidate.incomplete === true,
     dependencyFingerprint: isCurrent && !identityChanged ? candidate.dependencyFingerprint : null,
     metadataDependencies: [
       ...new Set((candidate.metadataDependencies ?? []).map(normalizeFileName)),
     ].sort(),
+    metadataSources: isCurrent ? [...new Set(candidate.metadataSources as string[])].sort() : [],
+    metadataSourcesComplete: isCurrent,
   }
 }
 

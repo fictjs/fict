@@ -74,6 +74,11 @@ interface MetadataGraphNode {
   dependencies: Set<string>
 }
 
+interface MetadataGraphConnection {
+  module: unknown
+  dependency: { category?: unknown; request: string; type?: unknown }
+}
+
 interface WebpackResourceResolveData {
   path?: unknown
   query?: unknown
@@ -763,30 +768,44 @@ async function buildMetadataGraph(
   }
 
   for (const node of graph.values()) {
+    const requestedSources = state.metadataSourcesByIdentifier.get(node.identifier) ?? new Set()
+    const connectionsByRequest = new Map<string, MetadataGraphConnection[]>()
     for (const connection of compilation.moduleGraph.getOutgoingConnections(node.module)) {
       const dependency = connection.dependency as {
         category?: unknown
         request?: unknown
         type?: unknown
       } | null
-      // The compiler consumes metadata only for static ESM import/export sources. Webpack also
-      // exposes CommonJS and import() connections here; including those can conflate two legal
-      // `resolve.byDependency` targets that share the same literal request. Every static harmony
-      // source has exactly one side-effect-evaluation dependency, so use that canonical edge and
-      // ignore its duplicate specifier connections as well as non-static dependency categories.
-      if (dependency?.type !== 'harmony side effect evaluation') continue
+      const request = dependency?.request
+      if (!dependency || typeof request !== 'string' || !requestedSources.has(request)) continue
+      if (
+        dependency.type !== 'harmony side effect evaluation' &&
+        dependency.type !== 'cjs require'
+      ) {
+        continue
+      }
+      const entries = connectionsByRequest.get(request) ?? []
+      entries.push({
+        module: connection.module,
+        dependency: {
+          category: dependency.category,
+          request,
+          type: dependency.type,
+        },
+      })
+      connectionsByRequest.set(request, entries)
+    }
 
-      const dependencyModule = connection.module
-      const request = dependency.request
-      if (!dependencyModule) {
-        if (typeof request !== 'string') continue
-        const key = createLocalResolutionKey(node.identifier, request)
-        if (state.resolvedLocalModules.has(key)) {
-          throw new Error(
-            `[fict] Webpack resolved "${request}" from "${node.identifier}" across both local and non-local metadata boundaries.`,
-          )
-        }
-        nonLocalResolutionKeys.add(key)
+    for (const request of [...requestedSources].sort()) {
+      const candidates = connectionsByRequest.get(request) ?? []
+      const harmonyCandidates = candidates.filter(
+        candidate => candidate.dependency.type === 'harmony side effect evaluation',
+      )
+      // The compiler asks only for static sources. Prefer Webpack's canonical Harmony edge when
+      // ESM and ordinary require() share a request; fall back to cjs require solely for
+      // TypeScript import-equals lowered by the official preset.
+      const selected = harmonyCandidates.length > 0 ? harmonyCandidates : candidates
+      if (selected.length === 0) {
         recordPackageResolution(
           state,
           node,
@@ -795,9 +814,27 @@ async function buildMetadataGraph(
         )
         continue
       }
-      const dependencyIdentifier = state.identifiersByModule.get(dependencyModule as NormalModule)
-      if (dependencyIdentifier && graph.has(dependencyIdentifier)) {
-        if (typeof request === 'string') {
+
+      for (const { module: dependencyModule, dependency } of selected) {
+        if (!dependencyModule) {
+          const key = createLocalResolutionKey(node.identifier, request)
+          if (state.resolvedLocalModules.has(key)) {
+            throw new Error(
+              `[fict] Webpack resolved "${request}" from "${node.identifier}" across both local and non-local metadata boundaries.`,
+            )
+          }
+          nonLocalResolutionKeys.add(key)
+          recordPackageResolution(
+            state,
+            node,
+            request,
+            request.includes('?') || request.includes('!') ? 'opaque' : 'unresolved',
+          )
+          continue
+        }
+
+        const dependencyIdentifier = state.identifiersByModule.get(dependencyModule as NormalModule)
+        if (dependencyIdentifier && graph.has(dependencyIdentifier)) {
           const key = createLocalResolutionKey(node.identifier, request)
           if (nonLocalResolutionKeys.has(key)) {
             throw new Error(
@@ -811,11 +848,10 @@ async function buildMetadataGraph(
             )
           }
           state.resolvedLocalModules.set(key, dependencyIdentifier)
+          node.dependencies.add(dependencyIdentifier)
+          continue
         }
-        node.dependencies.add(dependencyIdentifier)
-        continue
-      }
-      if (typeof request === 'string') {
+
         const key = createLocalResolutionKey(node.identifier, request)
         if (state.resolvedLocalModules.has(key)) {
           throw new Error(
@@ -917,6 +953,9 @@ function hydrateCachedModuleMetadata(
     else state.incompleteModuleMetadata.delete(identifier)
     state.compiledDependencyFingerprints.set(identifier, restored.dependencyFingerprint)
     state.metadataDependenciesByIdentifier.set(identifier, new Set(restored.metadataDependencies))
+    state.metadataSourcesByIdentifier.set(identifier, new Set(restored.metadataSources))
+    if (restored.metadataSourcesComplete) state.staleMetadataSources.delete(identifier)
+    else state.staleMetadataSources.add(identifier)
   }
 }
 
@@ -1001,6 +1040,17 @@ async function convergeMetadataGraph(
   state: FictWebpackCompilationState,
   maxMetadataPasses: number | undefined,
 ): Promise<void> {
+  // v1-v4 cache records predate the compiler-requested source list. Refresh those modules before
+  // constructing the graph so the migrated fingerprint is complete in this compilation rather
+  // than requiring a second migration build.
+  for (const identifier of [...state.staleMetadataSources].sort()) {
+    const module = state.modulesByIdentifier.get(identifier)
+    if (!module) continue
+    await rebuildModule(compilation, module)
+    const rebuildError = module.getErrors()?.[Symbol.iterator]().next().value
+    if (rebuildError) throw rebuildError
+    state.staleMetadataSources.delete(identifier)
+  }
   const graph = await buildMetadataGraph(compiler, compilation, state)
 
   for (const component of getStronglyConnectedComponents(graph)) {
