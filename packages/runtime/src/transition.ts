@@ -106,7 +106,15 @@ export function useTransition(): [() => boolean, (fn: () => void | PromiseLike<u
       throw thrown
     }
 
-    if (result && typeof (result as PromiseLike<unknown>).then === 'function') {
+    let isThenable: boolean
+    try {
+      isThenable = Boolean(result && typeof (result as PromiseLike<unknown>).then === 'function')
+    } catch (error) {
+      endPending()
+      throw error
+    }
+
+    if (isThenable) {
       void Promise.resolve(result)
         .catch(error => {
           if (typeof console !== 'undefined' && typeof console.error === 'function') {

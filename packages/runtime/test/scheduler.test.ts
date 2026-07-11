@@ -354,6 +354,42 @@ describe('Multi-Priority Scheduler', () => {
       expect(caught).toBe(undefined)
       expect(isPending()).toBe(false)
     })
+
+    it('clears pending when inspecting a transition thenable throws', () => {
+      const [isPending, start] = useTransition()
+      const error = new Error('broken then getter')
+      const result = Object.defineProperty({}, 'then', {
+        get() {
+          throw error
+        },
+      }) as PromiseLike<unknown>
+
+      expect(() => start(() => result)).toThrow(error)
+      expect(isPending()).toBe(false)
+    })
+
+    it('preserves pending work when an overlapping thenable getter throws', async () => {
+      const [isPending, start] = useTransition()
+      let resolveWork: (() => void) | undefined
+      const work = new Promise<void>(resolve => {
+        resolveWork = resolve
+      })
+      const error = new Error('overlapping broken then getter')
+      const result = Object.defineProperty({}, 'then', {
+        get() {
+          throw error
+        },
+      }) as PromiseLike<unknown>
+
+      start(() => work)
+      expect(() => start(() => result)).toThrow(error)
+      expect(isPending()).toBe(true)
+
+      resolveWork!()
+      await tick()
+      await tick()
+      expect(isPending()).toBe(false)
+    })
   })
 
   describe('useDeferredValue', () => {
