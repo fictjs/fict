@@ -1,3 +1,7 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import { pathToFileURL } from 'node:url'
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { onMount } from '../src/index'
@@ -4466,6 +4470,105 @@ describe('resumable loader snapshot validation', () => {
     delete (globalThis as { __fictResumeHits?: number }).__fictResumeHits
     delete (globalThis as { __fictHandlerHits?: number }).__fictHandlerHits
     delete (globalThis as { __FICT_MANIFEST__?: Record<string, string> }).__FICT_MANIFEST__
+  })
+
+  it('imports manifest-relative resume and handler modules from the installed document base', async () => {
+    const tempDirectory = await mkdtemp(path.join(process.cwd(), '.fict-loader-relative-manifest-'))
+    const resumeModulePath = path.join(tempDirectory, 'resume.mjs')
+    const handlerModulePath = path.join(tempDirectory, 'handler.mjs')
+    const resumeModuleUrl = pathToFileURL(resumeModulePath).href
+    const handlerModuleUrl = pathToFileURL(handlerModulePath).href
+    const documentUrl = pathToFileURL(path.join(tempDirectory, 'index.html')).href
+    const issues: SnapshotIssue[] = []
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    try {
+      await writeFile(
+        resumeModulePath,
+        'globalThis.__fictInstallDocumentRelativeResume(import.meta.url)\nexport const resume = null\n',
+      )
+      await writeFile(
+        handlerModulePath,
+        'export function handle(scopeId){globalThis.__fictDocumentRelativeHandler={moduleUrl:import.meta.url,scopeId}}\n',
+      )
+
+      let loadedResumeModuleUrl: string | undefined
+      ;(
+        globalThis as {
+          __fictInstallDocumentRelativeResume?: (moduleUrl: string) => void
+        }
+      ).__fictInstallDocumentRelativeResume = moduleUrl => {
+        loadedResumeModuleUrl = moduleUrl
+        __fictRegisterResume(`${moduleUrl}#resume`, (scopeId, host) => {
+          host.setAttribute('data-relative-resume-scope', scopeId)
+        })
+      }
+      ;(
+        globalThis as {
+          __FICT_MANIFEST__?: Record<string, string>
+        }
+      ).__FICT_MANIFEST__ = {
+        'virtual:fict-relative-resume': './resume.mjs',
+        'virtual:fict-relative-handler': './handler.mjs',
+      }
+
+      const doc = createDocumentWithSnapshots(
+        JSON.stringify({
+          v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+          scopes: {
+            sRelative: { id: 'sRelative', slots: [] },
+          },
+        }),
+      )
+      const base = doc.createElement('base')
+      base.href = documentUrl
+      doc.head.appendChild(base)
+      expect(doc.baseURI).toBe(documentUrl)
+
+      const host = doc.createElement('div')
+      host.setAttribute('data-fict-s', 'sRelative')
+      host.setAttribute('data-fict-h', 'virtual:fict-relative-resume#resume')
+      const button = doc.createElement('button')
+      button.setAttribute('on:click', 'virtual:fict-relative-handler#handle')
+      host.appendChild(button)
+      doc.body.appendChild(host)
+
+      installResumableLoader({
+        document: doc,
+        events: ['click'],
+        prefetch: false,
+        onSnapshotIssue: issue => issues.push(issue),
+      })
+
+      button.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+      await waitForPendingHandlers()
+
+      expect(issues).toEqual([])
+      expect(loadedResumeModuleUrl).toBe(resumeModuleUrl)
+      expect(host.getAttribute('data-relative-resume-scope')).toBe('sRelative')
+      expect(
+        (
+          globalThis as {
+            __fictDocumentRelativeHandler?: { moduleUrl: string; scopeId: string }
+          }
+        ).__fictDocumentRelativeHandler,
+      ).toEqual({ moduleUrl: handlerModuleUrl, scopeId: 'sRelative' })
+    } finally {
+      cleanupEventListeners()
+      warnSpy.mockRestore()
+      delete (
+        globalThis as {
+          __fictInstallDocumentRelativeResume?: (moduleUrl: string) => void
+        }
+      ).__fictInstallDocumentRelativeResume
+      delete (
+        globalThis as {
+          __fictDocumentRelativeHandler?: { moduleUrl: string; scopeId: string }
+        }
+      ).__fictDocumentRelativeHandler
+      delete (globalThis as { __FICT_MANIFEST__?: Record<string, string> }).__FICT_MANIFEST__
+      await rm(tempDirectory, { recursive: true, force: true })
+    }
   })
 
   it('retargets currentTarget to the interactive element for resumable handlers', async () => {

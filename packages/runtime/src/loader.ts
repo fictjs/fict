@@ -1782,11 +1782,11 @@ async function resumeScope(
   const resolvedResumeUrl = resolveModuleUrl(resumeUrl)
   const resolvedAbsoluteResumeUrl = resolveAbsoluteModuleUrl(
     resolvedResumeUrl,
-    host.ownerDocument ?? undefined,
+    installation.document,
   )
   const resolvedResumeQrl = `${resolvedResumeUrl}#${resumeExport}`
   const resolvedAbsoluteResumeQrl = `${resolvedAbsoluteResumeUrl}#${resumeExport}`
-  const normalizedResumeImportUrl = normalizeImportUrl(resolvedResumeUrl)
+  const normalizedResumeImportUrl = normalizeImportUrl(resolvedAbsoluteResumeUrl)
 
   try {
     const imported = await waitForActiveInstallation(
@@ -1916,7 +1916,8 @@ async function runScopeHandler(
     }
 
     const resolvedUrl = resolveModuleUrl(url)
-    const normalizedImportUrl = normalizeImportUrl(resolvedUrl)
+    const resolvedAbsoluteUrl = resolveAbsoluteModuleUrl(resolvedUrl, installation.document)
+    const normalizedImportUrl = normalizeImportUrl(resolvedAbsoluteUrl)
     let mod: Record<string, unknown>
     try {
       const imported = await waitForActiveInstallation(
