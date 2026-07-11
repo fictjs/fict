@@ -1537,6 +1537,69 @@ describe('Edge Cases and Error Handling', () => {
       compiled.cleanup()
     }
   })
+
+  it('materializes dynamic props once without invoking callback props before resume', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      let dynamicPropReads = 0
+      let callbackCalls = 0
+
+      function readStep(value: number) {
+        dynamicPropReads++
+        return value
+      }
+
+      export function getInvocationCounts() {
+        return { dynamicPropReads, callbackCalls }
+      }
+
+      export function Child(props: { step: number; callback: () => void }) {
+        let count = $state(0)
+        return <button data-testid="dynamic-prop" onClick$={() => count += props.step}>{count}</button>
+      }
+
+      export function App() {
+        let step = $state(2)
+        return <Child step={readStep(step)} callback={() => callbackCalls++} />
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as {
+        App: () => FictNode
+        getInvocationCounts: () => { dynamicPropReads: number; callbackCalls: number }
+      }
+      const html = renderToString(() => ({ type: mod.App, props: {} }))
+      const snapshot = parseSnapshot(html)
+      const scopes = snapshot?.scopes as
+        | Record<string, { props?: Record<string, unknown> }>
+        | undefined
+      const childScope = Object.values(scopes ?? {}).find(scope => scope.props?.step === 2)
+
+      expect(childScope?.props).toEqual({ step: 2 })
+      expect(mod.getInvocationCounts()).toEqual({ dynamicPropReads: 1, callbackCalls: 0 })
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+      installResumableLoader({ document: env.document, events: ['click'] })
+
+      const button = env.document.querySelector('[data-testid="dynamic-prop"]') as HTMLElement
+      expect(button.textContent).toBe('0')
+
+      dispatchClick(button, env.window)
+      await tick(3)
+
+      expect(button.textContent).toBe('2')
+      expect(mod.getInvocationCounts()).toEqual({ dynamicPropReads: 1, callbackCalls: 0 })
+    } finally {
+      await cleanup()
+      compiled.cleanup()
+    }
+  })
 })
 
 // ============================================================================

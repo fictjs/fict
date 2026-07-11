@@ -1,5 +1,6 @@
 import type { HookContext } from './hooks'
 import { registerRootCleanup } from './lifecycle'
+import { materializePropsForSnapshot, unwrapProps } from './props'
 import { createSignal, isSignal } from './signal'
 import {
   __fictCreateSSRSession,
@@ -537,9 +538,20 @@ function serializeScopeRecord(record: ScopeRecord): ScopeSnapshot {
     snapshot.t = record.type
   }
   if (record.props !== undefined) {
-    snapshot.props = serializeValue(record.props, seen, '$.props', {
-      omitFunctionProperties: true,
-    }) as Record<string, unknown>
+    const rawProps = unwrapProps(record.props)
+    const existingPath = seen.get(record.props) ?? seen.get(rawProps)
+    if (existingPath !== undefined) {
+      snapshot.props = { __t: 'ref', v: existingPath }
+    } else {
+      // The materialized object is a shallow snapshot view. Alias both forms of
+      // the live props object to its snapshot path so self/circular references
+      // still resolve to the restored outer props object.
+      seen.set(record.props, '$.props')
+      seen.set(rawProps, '$.props')
+      snapshot.props = serializeValue(materializePropsForSnapshot(rawProps), seen, '$.props', {
+        omitFunctionProperties: true,
+      }) as Record<string, unknown>
+    }
   }
   if (record.ctx.slotMap !== undefined) {
     snapshot.vars = record.ctx.slotMap

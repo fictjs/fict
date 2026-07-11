@@ -24,7 +24,9 @@ import {
   __fictSerializeSSRStateForScopes,
   __fictSetSSRState,
   __fictUseLexicalScope,
+  __fictProp,
   createSignal,
+  mergeProps,
   serializeValue,
 } from '../src/internal'
 
@@ -418,6 +420,76 @@ describe('SSR lifecycle state cleanup', () => {
     expect(Object.prototype.hasOwnProperty.call(restored.child, 'type')).toBe(false)
     expect(restored.child.props.date).toBeInstanceOf(Date)
     expect(restored.child.props.date.getTime()).toBe(0)
+  })
+
+  it('materializes marked prop getters once without invoking ordinary functions', () => {
+    __fictEnableSSR()
+    let propReads = 0
+    let callbackCalls = 0
+    const callback = () => {
+      callbackCalls++
+    }
+    const value = __fictProp(() => {
+      propReads++
+      return 42
+    })
+    const scopeContext: Parameters<typeof __fictRegisterScope>[0] = { slots: [], cursor: 0 }
+    const id = __fictRegisterScope(scopeContext, document.createElement('div'), 'Child', {
+      value,
+      alias: value,
+      callback,
+    })
+
+    const state = __fictSerializeSSRState()
+
+    expect(state.scopes[id]?.props).toEqual({ value: 42, alias: 42 })
+    expect(propReads).toBe(1)
+    expect(callbackCalls).toBe(0)
+  })
+
+  it('keeps outer props self-references when materializing prop getters', () => {
+    __fictEnableSSR()
+    const props: Record<string, unknown> = {
+      value: __fictProp(() => 42),
+    }
+    props.self = props
+    const scopeContext: Parameters<typeof __fictRegisterScope>[0] = { slots: [], cursor: 0 }
+    const id = __fictRegisterScope(scopeContext, document.createElement('div'), 'Child', props)
+
+    const state = JSON.parse(JSON.stringify(__fictSerializeSSRState())) as ReturnType<
+      typeof __fictSerializeSSRState
+    >
+    __fictEnsureScope(id, document.createElement('div'), state.scopes[id])
+
+    const restored = __fictGetScopeProps(id) as { value: number; self: unknown }
+    expect(restored.value).toBe(42)
+    expect(restored.self).toBe(restored)
+  })
+
+  it('evaluates each dynamic merge source once when snapshotting spread props', () => {
+    __fictEnableSSR()
+    let sourceReads = 0
+    let callbackCalls = 0
+    const props = mergeProps(
+      __fictProp(() => {
+        sourceReads++
+        return {
+          first: 1,
+          second: 2,
+          callback: () => {
+            callbackCalls++
+          },
+        }
+      }),
+    )
+    const scopeContext: Parameters<typeof __fictRegisterScope>[0] = { slots: [], cursor: 0 }
+    const id = __fictRegisterScope(scopeContext, document.createElement('div'), 'Child', props)
+
+    const state = __fictSerializeSSRState()
+
+    expect(state.scopes[id]?.props).toEqual({ first: 1, second: 2 })
+    expect(sourceReads).toBe(1)
+    expect(callbackCalls).toBe(0)
   })
 
   it('skips raw function hook slots during snapshot serialization', () => {

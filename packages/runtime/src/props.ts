@@ -9,6 +9,10 @@ const REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:reactive-fn-registry')
 const PROP_GETTER_REGISTRY_KEY = Symbol.for('fict:prop-getter-registry')
 const rawToProxy = new WeakMap<object, object>()
 const proxyToRaw = new WeakMap<object, object>()
+// Snapshotting through the merge proxy traps would resolve a dynamic spread once
+// per key. Retain its source layers so the snapshot materializer resolves each
+// compiler-generated source getter only once.
+const mergedPropsSources = new WeakMap<object, readonly unknown[]>()
 
 type NonReactiveRegistryHost = typeof globalThis & {
   [NON_REACTIVE_FN_REGISTRY_KEY]?: WeakSet<(...args: unknown[]) => unknown>
@@ -195,6 +199,95 @@ export function unwrapProps<T extends Record<string, unknown>>(props: T): T {
 }
 
 /**
+ * Capture the current serializable values of component props for an SSR snapshot.
+ *
+ * Compiler-generated prop getters are runtime values, not callback props. Resolve
+ * each marked getter exactly once while leaving every other function untouched so
+ * the snapshot codec can omit callbacks without invoking them.
+ *
+ * @internal
+ */
+export function materializePropsForSnapshot<T extends Record<string, unknown>>(props: T): T {
+  if (!props || typeof props !== 'object') {
+    return props
+  }
+
+  const raw = unwrapProps(props)
+  const snapshotProps = Object.create(Object.getPrototypeOf(raw)) as T
+  const layers: object[] = []
+  const resolvedGetters = new Map<() => unknown, unknown>()
+  collectSnapshotLayers(raw, layers, resolvedGetters)
+  const descriptors = layers.map(layer => {
+    const entries = new Map<string | symbol, PropertyDescriptor>()
+    for (const key of Reflect.ownKeys(layer)) {
+      const descriptor = Object.getOwnPropertyDescriptor(layer, key)
+      if (descriptor?.enumerable) {
+        entries.set(key, descriptor)
+      }
+    }
+    return entries
+  })
+  const keys = orderOwnKeys(
+    Array.from(new Set(descriptors.flatMap(entries => [...entries.keys()]))),
+  )
+
+  for (const key of keys) {
+    let layer: object | undefined
+    let descriptor: PropertyDescriptor | undefined
+    for (let index = descriptors.length - 1; index >= 0; index--) {
+      descriptor = descriptors[index]!.get(key)
+      if (descriptor) {
+        layer = layers[index]
+        break
+      }
+    }
+    if (!descriptor || !layer) continue
+
+    let value: unknown
+    if ('value' in descriptor) {
+      value = descriptor.value
+    } else {
+      value = Reflect.get(layer, key)
+    }
+
+    defineRestDataProperty(snapshotProps, key, resolveSnapshotGetter(value, resolvedGetters))
+  }
+
+  return snapshotProps
+}
+
+function resolveSnapshotGetter(
+  value: unknown,
+  resolvedGetters: Map<() => unknown, unknown>,
+): unknown {
+  if (!isPropGetter(value)) return value
+  if (resolvedGetters.has(value)) return resolvedGetters.get(value)
+  const resolved = value()
+  resolvedGetters.set(value, resolved)
+  return resolved
+}
+
+function collectSnapshotLayers(
+  source: unknown,
+  layers: object[],
+  resolvedGetters: Map<() => unknown, unknown>,
+): void {
+  const resolved = resolveSnapshotGetter(source, resolvedGetters)
+  if (resolved == null) return
+
+  const raw = unwrapProps(Object(resolved) as Record<string, unknown>)
+  const sources = mergedPropsSources.get(raw)
+  if (sources) {
+    for (const nestedSource of sources) {
+      collectSnapshotLayers(nestedSource, layers, resolvedGetters)
+    }
+    return
+  }
+
+  layers.push(raw)
+}
+
+/**
  * Create a rest-like props object while preserving prop getters.
  * Excludes the specified keys from the returned object.
  */
@@ -366,7 +459,7 @@ export function mergeProps<T extends Record<string, unknown>>(
     return undefined
   }
 
-  return new Proxy({} as Record<string, unknown>, {
+  const merged = new Proxy({} as Record<string, unknown>, {
     get(_, prop) {
       return readProp(prop)
     },
@@ -400,6 +493,8 @@ export function mergeProps<T extends Record<string, unknown>>(
       }
     },
   })
+  mergedPropsSources.set(merged, validSources)
+  return merged
 }
 
 export type PropGetter<T> = (() => T) & { __fictProp: true }
