@@ -1238,6 +1238,68 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
     expect(result?.code).not.toContain('consumed-before-fict')
   })
 
+  it.each([
+    {
+      original: 'pkg-plain',
+      rewritten: 'pkg-signal',
+    },
+    {
+      original: 'pkg-signal',
+      rewritten: 'pkg-plain',
+    },
+  ])(
+    'rejects a sibling module rewrite from $original to $rewritten after metadata resolution',
+    ({ original, rewritten }) => {
+      const rewriteImportSource: PluginObj = {
+        name: 'rewrite-import-source-probe',
+        visitor: {
+          ImportDeclaration(path) {
+            if (path.node.source.value === original) path.node.source.value = rewritten
+          },
+        },
+      }
+      const plainMetadata = { version: 1 as const, exports: {} }
+      const signalMetadata = {
+        version: 1 as const,
+        exports: {},
+        hooks: { useCount: { directAccessor: 'signal' as const } },
+      }
+
+      expect(() =>
+        transformSync(
+          `
+            import { useCount } from ${JSON.stringify(original)}
+            export function App() {
+              const count = useCount()
+              return count * 2
+            }
+          `,
+          {
+            filename: 'module-rewrite.ts',
+            configFile: false,
+            babelrc: false,
+            plugins: [rewriteImportSource],
+            presets: [
+              [
+                fictPreset,
+                {
+                  dev: false,
+                  strictGuarantee: false,
+                  resolveModuleMetadata: (source: string) =>
+                    source === 'pkg-signal' ? signalMetadata : plainMetadata,
+                },
+              ],
+            ],
+          },
+        ),
+      ).toThrow(
+        new RegExp(
+          `rewrote module request ${JSON.stringify(original)} to ${JSON.stringify(rewritten)}`,
+        ),
+      )
+    },
+  )
+
   it('preserves decorated TypeScript classes for a sibling decorator transform', () => {
     const legacyDecoratorTransform: PluginObj = {
       name: 'legacy-decorator-transform-probe',

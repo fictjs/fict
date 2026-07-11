@@ -122,6 +122,72 @@ const OPAQUE_MODULE_METADATA: ModuleReactiveMetadata = Object.freeze({
   version: 1,
   exports: Object.freeze({}),
 })
+const EXPECTED_MODULE_REQUEST = Symbol('fict-expected-module-request')
+
+type TrackedModuleRequest = BabelCore.types.StringLiteral & {
+  [EXPECTED_MODULE_REQUEST]?: string
+}
+
+function markModuleRequest(source: BabelCore.types.StringLiteral): void {
+  Object.defineProperty(source, EXPECTED_MODULE_REQUEST, {
+    configurable: true,
+    value: source.value,
+  })
+}
+
+function markCompiledModuleRequests(
+  programPath: BabelCore.NodePath<BabelCore.types.Program>,
+): void {
+  programPath.traverse({
+    ImportDeclaration(path) {
+      markModuleRequest(path.node.source)
+    },
+    ExportNamedDeclaration(path) {
+      if (path.node.source) markModuleRequest(path.node.source)
+    },
+    ExportAllDeclaration(path) {
+      markModuleRequest(path.node.source)
+    },
+  })
+}
+
+function validateCompiledModuleRequest(
+  source: BabelCore.types.StringLiteral,
+  buildError: (message: string) => Error,
+): void {
+  const expected = (source as TrackedModuleRequest)[EXPECTED_MODULE_REQUEST]
+  if (expected === undefined || source.value === expected) return
+  throw buildError(
+    `[fict] A sibling Babel plugin rewrote module request ${JSON.stringify(expected)} to ` +
+      `${JSON.stringify(source.value)} after Fict compiled its cross-module semantics. ` +
+      'Run semantic module rewrites in a separate Babel pass before @fictjs/babel-preset.',
+  )
+}
+
+function validateSiblingModuleRewritesPlugin(): PluginObj {
+  return {
+    name: 'fict-validate-sibling-module-rewrites',
+    visitor: {
+      ImportDeclaration(path) {
+        validateCompiledModuleRequest(path.node.source, message =>
+          path.buildCodeFrameError(message),
+        )
+      },
+      ExportNamedDeclaration(path) {
+        if (path.node.source) {
+          validateCompiledModuleRequest(path.node.source, message =>
+            path.buildCodeFrameError(message),
+          )
+        }
+      },
+      ExportAllDeclaration(path) {
+        validateCompiledModuleRequest(path.node.source, message =>
+          path.buildCodeFrameError(message),
+        )
+      },
+    },
+  }
+}
 
 interface ImplicitGraphMetadataEntry {
   sourceHash: string
@@ -1484,6 +1550,7 @@ function createIsolatedFictPrepass(
 
       file.path.replaceWith(inner.ast.program)
       if (inner.ast.comments !== undefined) file.ast.comments = inner.ast.comments
+      markCompiledModuleRequests(file.path)
       Object.assign(file.metadata, inner.metadata)
       if (requestMappings.size > 0) {
         Object.assign(file.metadata, {
@@ -1628,6 +1695,7 @@ export default function fictPreset(
       },
     }),
   )
+  plugins.push(validateSiblingModuleRewritesPlugin())
 
   return {
     plugins,
