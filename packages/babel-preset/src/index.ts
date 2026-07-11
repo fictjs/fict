@@ -811,6 +811,18 @@ interface TypeScriptImportEqualsRewriteState {
   sourceLocations: Set<string>
 }
 
+type ModuleRequestMappings = Map<string, string>
+
+function rewriteStaticModuleRequest(
+  source: BabelCore.types.StringLiteral,
+  requestMappings: ModuleRequestMappings,
+): void {
+  const original = source.value
+  const emitted = rewriteTypeScriptExtension(original)
+  source.value = emitted
+  if (emitted !== original) requestMappings.set(original, emitted)
+}
+
 function sourceLocationKey(source: BabelCore.types.StringLiteral): string | null {
   const location = source.loc
   if (!location) return null
@@ -844,6 +856,7 @@ function trackTypeScriptImportEqualsSources(state: TypeScriptImportEqualsRewrite
 
 function rewriteTypeScriptImportsPlugin(
   importEqualsState: TypeScriptImportEqualsRewriteState | null,
+  requestMappings: ModuleRequestMappings,
 ): PluginObj {
   return {
     name: 'fict-rewrite-typescript-imports',
@@ -852,20 +865,14 @@ function rewriteTypeScriptImportsPlugin(
         exit(path) {
           path.traverse({
             ImportDeclaration(importPath) {
-              importPath.node.source.value = rewriteTypeScriptExtension(
-                importPath.node.source.value,
-              )
+              rewriteStaticModuleRequest(importPath.node.source, requestMappings)
             },
             ExportAllDeclaration(exportPath) {
-              exportPath.node.source.value = rewriteTypeScriptExtension(
-                exportPath.node.source.value,
-              )
+              rewriteStaticModuleRequest(exportPath.node.source, requestMappings)
             },
             ExportNamedDeclaration(exportPath) {
               if (exportPath.node.source) {
-                exportPath.node.source.value = rewriteTypeScriptExtension(
-                  exportPath.node.source.value,
-                )
+                rewriteStaticModuleRequest(exportPath.node.source, requestMappings)
               }
             },
             CallExpression(callPath) {
@@ -876,7 +883,7 @@ function rewriteTypeScriptImportsPlugin(
                 t.isStringLiteral(source) &&
                 isTrackedImportEqualsSource(importEqualsState, source)
               ) {
-                source.value = rewriteTypeScriptExtension(source.value)
+                rewriteStaticModuleRequest(source, requestMappings)
                 return
               }
               if (!t.isImport(callPath.node.callee)) return
@@ -1011,6 +1018,7 @@ function lowerCtsModuleSyntaxForFict(state: CtsModuleSyntaxState): PluginObj {
 function restoreCtsModuleSyntaxAfterFict(
   state: CtsModuleSyntaxState,
   rewriteImportExtensions: boolean,
+  requestMappings: ModuleRequestMappings,
 ): PluginObj {
   return {
     name: 'fict-restore-cts-commonjs-semantics',
@@ -1034,7 +1042,7 @@ function restoreCtsModuleSyntaxAfterFict(
               if (!pendingImports.delete(key)) continue
               const source = t.cloneNode(statementPath.node.source)
               if (rewriteImportExtensions) {
-                source.value = rewriteTypeScriptExtension(source.value)
+                rewriteStaticModuleRequest(source, requestMappings)
               }
               const declaration = t.variableDeclaration('const', [
                 t.variableDeclarator(
@@ -1218,6 +1226,7 @@ function createIsolatedFictPrepass(
           }
         : compilerOptions
       const plugins: NonNullable<TransformOptions['plugins']> = []
+      const requestMappings: ModuleRequestMappings = new Map()
       const typeScriptTransformOptions = typescript
         ? resolveTypeScriptTransformOptions(file.opts.filename ?? undefined, typescriptOptions)
         : null
@@ -1261,6 +1270,7 @@ function createIsolatedFictPrepass(
           restoreCtsModuleSyntaxAfterFict(
             ctsModuleSyntax,
             typescriptOptions.rewriteImportExtensions === true,
+            requestMappings,
           ),
         )
       }
@@ -1268,7 +1278,7 @@ function createIsolatedFictPrepass(
         plugins.push(removeObsoleteJsxPragmaImportsPlugin(typescriptOptions))
       }
       if (typeScriptTransformOptions && typescriptOptions.rewriteImportExtensions) {
-        plugins.push(rewriteTypeScriptImportsPlugin(importEqualsRewriteState))
+        plugins.push(rewriteTypeScriptImportsPlugin(importEqualsRewriteState, requestMappings))
       }
       if (compileAsCommonJS) {
         plugins.push([transformModulesCommonJS, { allowTopLevelThis: true }])
@@ -1326,6 +1336,13 @@ function createIsolatedFictPrepass(
       file.path.replaceWith(inner.ast.program)
       if (inner.ast.comments !== undefined) file.ast.comments = inner.ast.comments
       Object.assign(file.metadata, inner.metadata)
+      if (requestMappings.size > 0) {
+        Object.assign(file.metadata, {
+          fictModuleRequestMappings: [...requestMappings].sort(([left], [right]) =>
+            left.localeCompare(right),
+          ),
+        })
+      }
       if (validateMetadata) {
         Object.assign(file.metadata, { fictModuleMetadataIncomplete: currentMetadataIncomplete })
       }

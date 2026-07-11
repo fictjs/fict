@@ -2287,7 +2287,7 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
         module => (module as { resource?: unknown }).resource === hookPath,
       ) as { buildInfo?: Record<string, unknown> } | undefined
       expect(hookModule?.buildInfo?.fictWebpackMetadata).toMatchObject({
-        version: 5,
+        version: 6,
         incomplete: true,
       })
 

@@ -33,7 +33,7 @@ function readStoredModules(stats: Stats, resource: string): StoredModuleMetadata
           }
         | undefined
       if (
-        stored?.version !== 5 ||
+        stored?.version !== 6 ||
         typeof stored.identifier !== 'string' ||
         typeof stored.metadataJson !== 'string' ||
         typeof stored.resource !== 'string'
@@ -50,6 +50,17 @@ function readStoredModules(stats: Stats, resource: string): StoredModuleMetadata
       }
     })
     .sort((left, right) => left.identifier.localeCompare(right.identifier))
+}
+
+function readStoredBuildMetadata(stats: Stats, resource: string): Record<string, unknown> {
+  const module = [...stats.compilation.modules].find(
+    candidate => (candidate as { resource?: unknown }).resource === resource,
+  ) as NormalModule | undefined
+  const stored = module?.buildInfo?.fictWebpackMetadata
+  if (!stored || typeof stored !== 'object') {
+    throw new Error(`No persisted Fict metadata found for ${resource}.`)
+  }
+  return stored as Record<string, unknown>
 }
 
 describe('@fictjs/webpack-plugin module identity', () => {
@@ -92,6 +103,107 @@ describe('@fictjs/webpack-plugin module identity', () => {
         (entryModule?.buildInfo?.fictWebpackMetadata as { metadataSources?: unknown } | undefined)
           ?.metadataSources,
       ).toEqual(['./hook'])
+      expect(runApp(root)).toBe(4)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('maps rewritten ESM TypeScript requests back to compiler metadata sources', async () => {
+    const root = await createFixture({
+      'entry.ts': `
+        import { useCounter } from './hook.ts'
+
+        export function App() {
+          const count = useCounter()
+          return count * 2
+        }
+      `,
+      'hook.ts': `
+        import { $state } from 'fict'
+
+        export function useCounter() {
+          const count = $state(2)
+          return count
+        }
+      `,
+    })
+
+    try {
+      const entryPath = path.join(root, 'entry.ts')
+      const hookPath = path.join(root, 'hook.ts')
+      await backdateFixtureInputs([entryPath, hookPath])
+      const configuration = () => {
+        const value = createWebpackConfiguration(root, {
+          cache: {
+            type: 'filesystem',
+            cacheDirectory: path.join(root, '.webpack-cache'),
+          },
+          loaderOptions: { typescriptOptions: { rewriteImportExtensions: true } },
+        })
+        value.resolve = {
+          ...value.resolve,
+          extensionAlias: { '.js': ['.ts', '.js'] },
+        }
+        return value
+      }
+
+      const stats = await runCompiler(configuration())
+      expect(readStoredBuildMetadata(stats, entryPath)).toMatchObject({
+        metadataSources: ['./hook.ts'],
+        metadataRequestMappings: [['./hook.ts', './hook.js']],
+      })
+      expect(runApp(root)).toBe(4)
+
+      const cachedStats = await runCompiler(configuration())
+      expect(builtFixtureFiles(cachedStats, root)).toEqual([])
+      expect(readStoredBuildMetadata(cachedStats, entryPath)).toMatchObject({
+        metadataRequestMappings: [['./hook.ts', './hook.js']],
+      })
+      expect(runApp(root)).toBe(4)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('maps rewritten CTS import-equals requests back to compiler metadata sources', async () => {
+    const root = await createFixture({
+      'entry.cts': `
+        import useCounter = require('./hook.cts')
+
+        export function App() {
+          const count = useCounter()
+          return count * 2
+        }
+      `,
+      'hook.cts': `
+        import { $state } from 'fict'
+
+        function useCounter() {
+          const count = $state(2)
+          return count
+        }
+
+        export = useCounter
+      `,
+    })
+
+    try {
+      const configuration = createWebpackConfiguration(root, {
+        loaderOptions: { typescriptOptions: { rewriteImportExtensions: true } },
+      })
+      configuration.entry = './entry.cts'
+      configuration.resolve = {
+        ...configuration.resolve,
+        extensionAlias: { '.cjs': ['.cts', '.cjs'] },
+        extensions: ['.cts', '.ts', '.js'],
+      }
+
+      const stats = await runCompiler(configuration)
+      expect(readStoredBuildMetadata(stats, path.join(root, 'entry.cts'))).toMatchObject({
+        metadataSources: ['./hook.cts'],
+        metadataRequestMappings: [['./hook.cts', './hook.cjs']],
+      })
       expect(runApp(root)).toBe(4)
     } finally {
       await rm(root, { recursive: true, force: true })

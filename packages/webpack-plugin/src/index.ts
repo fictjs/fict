@@ -769,6 +769,11 @@ async function buildMetadataGraph(
 
   for (const node of graph.values()) {
     const requestedSources = state.metadataSourcesByIdentifier.get(node.identifier) ?? new Set()
+    const requestMappings =
+      state.metadataRequestMappingsByIdentifier.get(node.identifier) ?? new Map()
+    const emittedRequests = new Set(
+      [...requestedSources].map(source => requestMappings.get(source) ?? source),
+    )
     const connectionsByRequest = new Map<string, MetadataGraphConnection[]>()
     for (const connection of compilation.moduleGraph.getOutgoingConnections(node.module)) {
       const dependency = connection.dependency as {
@@ -777,7 +782,7 @@ async function buildMetadataGraph(
         type?: unknown
       } | null
       const request = dependency?.request
-      if (!dependency || typeof request !== 'string' || !requestedSources.has(request)) continue
+      if (!dependency || typeof request !== 'string' || !emittedRequests.has(request)) continue
       if (
         dependency.type !== 'harmony side effect evaluation' &&
         dependency.type !== 'cjs require'
@@ -796,55 +801,57 @@ async function buildMetadataGraph(
       connectionsByRequest.set(request, entries)
     }
 
-    for (const request of [...requestedSources].sort()) {
-      const candidates = connectionsByRequest.get(request) ?? []
+    for (const sourceRequest of [...requestedSources].sort()) {
+      const emittedRequest = requestMappings.get(sourceRequest) ?? sourceRequest
+      const candidates = connectionsByRequest.get(emittedRequest) ?? []
       const harmonyCandidates = candidates.filter(
         candidate => candidate.dependency.type === 'harmony side effect evaluation',
       )
-      // The compiler asks only for static sources. Prefer Webpack's canonical Harmony edge when
-      // ESM and ordinary require() share a request; fall back to cjs require solely for
-      // TypeScript import-equals lowered by the official preset.
+      // Select Webpack's edge by the request emitted after TypeScript lowering, while preserving
+      // the compiler's original source request as the metadata-resolution key. Prefer the
+      // canonical Harmony edge when ESM and ordinary require() share a request; fall back to cjs
+      // require solely for TypeScript import-equals lowered by the official preset.
       const selected = harmonyCandidates.length > 0 ? harmonyCandidates : candidates
       if (selected.length === 0) {
         recordPackageResolution(
           state,
           node,
-          request,
-          request.includes('?') || request.includes('!') ? 'opaque' : 'unresolved',
+          sourceRequest,
+          sourceRequest.includes('?') || sourceRequest.includes('!') ? 'opaque' : 'unresolved',
         )
         continue
       }
 
       for (const { module: dependencyModule, dependency } of selected) {
         if (!dependencyModule) {
-          const key = createLocalResolutionKey(node.identifier, request)
+          const key = createLocalResolutionKey(node.identifier, sourceRequest)
           if (state.resolvedLocalModules.has(key)) {
             throw new Error(
-              `[fict] Webpack resolved "${request}" from "${node.identifier}" across both local and non-local metadata boundaries.`,
+              `[fict] Webpack resolved "${sourceRequest}" from "${node.identifier}" across both local and non-local metadata boundaries.`,
             )
           }
           nonLocalResolutionKeys.add(key)
           recordPackageResolution(
             state,
             node,
-            request,
-            request.includes('?') || request.includes('!') ? 'opaque' : 'unresolved',
+            sourceRequest,
+            sourceRequest.includes('?') || sourceRequest.includes('!') ? 'opaque' : 'unresolved',
           )
           continue
         }
 
         const dependencyIdentifier = state.identifiersByModule.get(dependencyModule as NormalModule)
         if (dependencyIdentifier && graph.has(dependencyIdentifier)) {
-          const key = createLocalResolutionKey(node.identifier, request)
+          const key = createLocalResolutionKey(node.identifier, sourceRequest)
           if (nonLocalResolutionKeys.has(key)) {
             throw new Error(
-              `[fict] Webpack resolved "${request}" from "${node.identifier}" across both local and non-local metadata boundaries.`,
+              `[fict] Webpack resolved "${sourceRequest}" from "${node.identifier}" across both local and non-local metadata boundaries.`,
             )
           }
           const previous = state.resolvedLocalModules.get(key)
           if (previous && previous !== dependencyIdentifier) {
             throw new Error(
-              `[fict] Webpack resolved "${request}" from "${node.identifier}" to multiple Fict modules.`,
+              `[fict] Webpack resolved "${sourceRequest}" from "${node.identifier}" to multiple Fict modules.`,
             )
           }
           state.resolvedLocalModules.set(key, dependencyIdentifier)
@@ -852,10 +859,10 @@ async function buildMetadataGraph(
           continue
         }
 
-        const key = createLocalResolutionKey(node.identifier, request)
+        const key = createLocalResolutionKey(node.identifier, sourceRequest)
         if (state.resolvedLocalModules.has(key)) {
           throw new Error(
-            `[fict] Webpack resolved "${request}" from "${node.identifier}" across both local and non-local metadata boundaries.`,
+            `[fict] Webpack resolved "${sourceRequest}" from "${node.identifier}" across both local and non-local metadata boundaries.`,
           )
         }
         nonLocalResolutionKeys.add(key)
@@ -865,11 +872,11 @@ async function buildMetadataGraph(
             compilation,
             compiler,
             node,
-            request,
+            emittedRequest,
             typeof dependencyType === 'string' ? dependencyType : '',
             dependencyModule,
           ).then(resolution => {
-            recordPackageResolution(state, node, request, resolution)
+            recordPackageResolution(state, node, sourceRequest, resolution)
           }),
         )
       }
@@ -954,8 +961,15 @@ function hydrateCachedModuleMetadata(
     state.compiledDependencyFingerprints.set(identifier, restored.dependencyFingerprint)
     state.metadataDependenciesByIdentifier.set(identifier, new Set(restored.metadataDependencies))
     state.metadataSourcesByIdentifier.set(identifier, new Set(restored.metadataSources))
-    if (restored.metadataSourcesComplete) state.staleMetadataSources.delete(identifier)
-    else state.staleMetadataSources.add(identifier)
+    state.metadataRequestMappingsByIdentifier.set(
+      identifier,
+      new Map(restored.metadataRequestMappings),
+    )
+    if (restored.metadataRequestMappingsComplete) {
+      state.staleMetadataRequestMappings.delete(identifier)
+    } else {
+      state.staleMetadataRequestMappings.add(identifier)
+    }
   }
 }
 
@@ -1040,16 +1054,16 @@ async function convergeMetadataGraph(
   state: FictWebpackCompilationState,
   maxMetadataPasses: number | undefined,
 ): Promise<void> {
-  // v1-v4 cache records predate the compiler-requested source list. Refresh those modules before
-  // constructing the graph so the migrated fingerprint is complete in this compilation rather
-  // than requiring a second migration build.
-  for (const identifier of [...state.staleMetadataSources].sort()) {
+  // v1-v5 cache records predate the original-to-emitted request mapping. Refresh those modules
+  // before constructing the graph so migration completes in this compilation rather than
+  // requiring a second build.
+  for (const identifier of [...state.staleMetadataRequestMappings].sort()) {
     const module = state.modulesByIdentifier.get(identifier)
     if (!module) continue
     await rebuildModule(compilation, module)
     const rebuildError = module.getErrors()?.[Symbol.iterator]().next().value
     if (rebuildError) throw rebuildError
-    state.staleMetadataSources.delete(identifier)
+    state.staleMetadataRequestMappings.delete(identifier)
   }
   const graph = await buildMetadataGraph(compiler, compilation, state)
 

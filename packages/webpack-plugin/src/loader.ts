@@ -45,6 +45,32 @@ interface FictLoaderContext {
   sourceMap: boolean
 }
 
+function readModuleRequestMappings(metadata: unknown): Map<string, string> {
+  if (!metadata || typeof metadata !== 'object') return new Map()
+  const value = (metadata as { fictModuleRequestMappings?: unknown }).fictModuleRequestMappings
+  if (value === undefined) return new Map()
+  if (
+    !Array.isArray(value) ||
+    value.some(
+      mapping =>
+        !Array.isArray(mapping) ||
+        mapping.length !== 2 ||
+        mapping.some(request => typeof request !== 'string'),
+    )
+  ) {
+    throw new Error('[fict] Babel returned malformed module request mappings.')
+  }
+  const mappings = new Map<string, string>()
+  for (const [source, emitted] of value as [string, string][]) {
+    const previous = mappings.get(source)
+    if (previous !== undefined && previous !== emitted) {
+      throw new Error(`[fict] Babel emitted conflicting request mappings for "${source}".`)
+    }
+    mappings.set(source, emitted)
+  }
+  return mappings
+}
+
 const require = createRequire(import.meta.url)
 const fictPresetPath = require.resolve('@fictjs/babel-preset')
 const fictPresetDirectory = path.dirname(fictPresetPath)
@@ -108,6 +134,7 @@ export default function fictWebpackLoader(
   }
   binding.state.metadataDependenciesByIdentifier.set(moduleIdentifier, new Set())
   binding.state.metadataSourcesByIdentifier.set(moduleIdentifier, new Set())
+  binding.state.metadataRequestMappingsByIdentifier.set(moduleIdentifier, new Map())
 
   const options = this.getOptions()
   const webpackResource = normalizeWebpackResource(this.resource)
@@ -206,6 +233,13 @@ export default function fictWebpackLoader(
       }
       binding.state.moduleMetadata.set(moduleIdentifier, metadata)
       try {
+        const emittedMappings = readModuleRequestMappings(result.metadata)
+        const requestMappings =
+          binding.state.metadataRequestMappingsByIdentifier.get(moduleIdentifier)!
+        for (const source of binding.state.metadataSourcesByIdentifier.get(moduleIdentifier) ??
+          []) {
+          requestMappings.set(source, emittedMappings.get(source) ?? source)
+        }
         storeFictModuleMetadata(
           binding.state,
           binding.module,

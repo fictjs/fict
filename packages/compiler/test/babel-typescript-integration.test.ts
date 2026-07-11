@@ -1413,6 +1413,9 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
     expect(result?.code).toMatch(/from ["']\.\/use-count\.js["']/)
     expect(result?.code).toMatch(/import\(["']\.\/lazy\.mjs["']\)/)
     expect(result?.code).toMatch(/count\(\)\s*\*\s*2/)
+    expect(result?.metadata.fictModuleRequestMappings).toEqual([
+      ['./use-count.ts', './use-count.js'],
+    ])
   })
 
   it('rewrites relative CTS import-equals dependencies to CommonJS extensions', () => {
@@ -1440,6 +1443,9 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
 
     expect(result?.code).toMatch(/require\(["']\.\/dependency\.cjs["']\)/)
     expect(result?.code).not.toContain('./dependency.cts')
+    expect(result?.metadata.fictModuleRequestMappings).toEqual([
+      ['./dependency.cts', './dependency.cjs'],
+    ])
   })
 
   it('rewrites only relative TypeScript import-equals requires', () => {

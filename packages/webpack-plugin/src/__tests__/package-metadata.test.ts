@@ -121,7 +121,7 @@ function createRebuildObserver(): {
 
 function createLegacyCachePlugin(
   resource: string,
-  version: 1 | 4,
+  version: 1 | 4 | 5,
 ): { apply(compiler: Compiler): void } {
   let downgradeNextCompilation = true
   return {
@@ -138,7 +138,8 @@ function createLegacyCachePlugin(
         }
         const legacy = stored as Record<string, unknown>
         legacy.version = version
-        delete legacy.metadataSources
+        delete legacy.metadataRequestMappings
+        if (version !== 5) delete legacy.metadataSources
         if (version === 1) {
           legacy.filename = resource
           legacy.dependencyFingerprint = '{"localDependencies":[],"packageMetadataDependencies":[]}'
@@ -345,7 +346,7 @@ describe('@fictjs/webpack-plugin package metadata', () => {
     }
   })
 
-  it.each([1, 4] as const)(
+  it.each([1, 4, 5] as const)(
     'rebuilds a v%i filesystem-cache record missing current graph inputs',
     async legacyVersion => {
       const root = await createFixture({
@@ -381,12 +382,12 @@ describe('@fictjs/webpack-plugin package metadata', () => {
         const migratedStats = await runCompiler(configuration())
         expect(rebuildObserver.builtBeforeFict).not.toContain(entryPath)
         expect(rebuildObserver.rebuiltByFict).toContain(entryPath)
-        expect(storedMetadata(migratedStats, entryPath).version).toBe(5)
+        expect(storedMetadata(migratedStats, entryPath).version).toBe(6)
 
         const recachedStats = await runCompiler(configuration())
         expect(builtFixtureFiles(recachedStats, root)).toEqual([])
         expect(rebuildObserver.rebuiltByFict).toEqual([])
-        expect(storedMetadata(recachedStats, entryPath).version).toBe(5)
+        expect(storedMetadata(recachedStats, entryPath).version).toBe(6)
       } finally {
         await rm(root, { recursive: true, force: true })
       }
