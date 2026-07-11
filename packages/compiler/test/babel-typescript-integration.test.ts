@@ -1671,6 +1671,111 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
     expect(result?.code).toContain('UI.Counter = Counter')
   })
 
+  it('compiles reactive components in nested and merged TypeScript namespaces', () => {
+    const result = transformSync(
+      `
+        import { $state } from 'fict'
+
+        export namespace UI {
+          export namespace Controls {
+            export function Counter() {
+              const count = $state(1)
+              return <button>{count}</button>
+            }
+          }
+        }
+
+        export namespace UI {
+          export const version = 1
+        }
+
+        export function App() {
+          return <UI.Controls.Counter />
+        }
+      `,
+      {
+        filename: 'typescript-nested-namespace-component.tsx',
+        configFile: false,
+        babelrc: false,
+        sourceMaps: true,
+        presets: [[fictPreset, { dev: false, strictGuarantee: true }]],
+      },
+    )
+
+    expect(result?.code).toContain('__fictUseSignal')
+    expect(result?.code).not.toContain('$state')
+    expect(result?.map).not.toBeNull()
+  })
+
+  it.each([
+    [
+      'an arbitrary initializer',
+      `(function (anything) {
+        const count = $state(1)
+        return <button>{count}</button>
+      })(N || fallback)`,
+    ],
+    [
+      'a source-level namespace initializer mimic',
+      `(function (anything) {
+        const count = $state(1)
+        return <button>{count}</button>
+      })(N || (N = {}))`,
+    ],
+    [
+      'an async function',
+      `(async function (anything) {
+        await Promise.resolve()
+        const count = $state(1)
+        return <button>{count}</button>
+      })(N || (N = {}))`,
+    ],
+    [
+      'a named function',
+      `(function named(anything) {
+        const count = $state(1)
+        return <button>{count}</button>
+      })(N || (N = {}))`,
+    ],
+    [
+      'a generator function',
+      `(function* (anything) {
+        const count = $state(1)
+        yield <button>{count}</button>
+      })(N || (N = {}))`,
+    ],
+    [
+      'extra call arguments',
+      `(function (anything) {
+        const count = $state(1)
+        return <button>{count}</button>
+      })(N || (N = {}), fallback)`,
+    ],
+  ])('does not treat a user IIFE with %s as a TypeScript namespace wrapper', (_label, iife) => {
+    expect(() =>
+      transformSync(
+        `
+          import { $state } from 'fict'
+
+          namespace N {
+            export const value = 1
+          }
+          const fallback = {}
+
+          export function App() {
+            return ${iife}
+          }
+        `,
+        {
+          filename: 'typescript-namespace-user-iife.tsx',
+          configFile: false,
+          babelrc: false,
+          presets: [[fictPreset, { dev: false, strictGuarantee: true }]],
+        },
+      ),
+    ).toThrow(/top level|nested function/)
+  })
+
   it('preserves top-level hook aliases exported through TypeScript namespaces', () => {
     const filename = path.resolve('typescript-namespace-hook-alias.tsx')
     const moduleMetadata = new Map()

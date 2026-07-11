@@ -647,7 +647,16 @@ function namespaceInitializerName(
   t: typeof BabelCore.types,
 ): string | null {
   if (!t.isLogicalExpression(argument) || argument.operator !== '||') return null
-  return t.isIdentifier(argument.left) ? argument.left.name : null
+  if (!t.isIdentifier(argument.left)) return null
+  const name = argument.left.name
+  return t.isAssignmentExpression(argument.right, { operator: '=' }) &&
+    t.isIdentifier(argument.right.left, { name })
+    ? name
+    : null
+}
+
+function isSyntheticNode(node: BabelCore.types.Node): boolean {
+  return node.loc == null && node.start == null && node.end == null
 }
 
 export function collectTypeScriptNamespaceWrapperFunctions(
@@ -661,7 +670,25 @@ export function collectTypeScriptNamespaceWrapperFunctions(
     FunctionExpression(functionPath) {
       const callPath = functionPath.parentPath
       if (!callPath.isCallExpression() || callPath.node.callee !== functionPath.node) return
+      if (
+        functionPath.node.id ||
+        functionPath.node.async ||
+        functionPath.node.generator ||
+        callPath.node.arguments.length !== 1
+      ) {
+        return
+      }
       if (functionPath.node.params.length !== 1 || !t.isIdentifier(functionPath.node.params[0])) {
+        return
+      }
+      // Babel's TypeScript transform synthesizes the wrapper shell without
+      // source locations. Source-authored IIFEs must retain their real nested
+      // function depth even when they deliberately mimic the emitted syntax.
+      if (
+        !isSyntheticNode(functionPath.node) ||
+        !isSyntheticNode(callPath.node) ||
+        !isSyntheticNode(functionPath.node.params[0])
+      ) {
         return
       }
       const argument = callPath.node.arguments[0]
