@@ -2988,6 +2988,76 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it.each(['?raw', '?url', '?worker'])('leaves current resource query %s to Vite', async suffix => {
+    const plugin = getTestPlugin({ useTypeScriptProject: false })
+    const result = await plugin.transform?.call(
+      { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() },
+      `
+        import { $state } from 'fict'
+        export function App() {
+          const value = $state(1)
+          return value
+        }
+      `,
+      `/project/src/source.ts${suffix}`,
+    )
+
+    expect(result).toBeNull()
+  })
+
+  it('does not let a resource-query transform replace canonical hook metadata', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-query-current-module-'))
+
+    try {
+      const hookPath = path.join(root, 'hook.ts')
+      const appPath = path.join(root, 'app.ts')
+      const hookSource = `
+        import { createSignal } from '@fictjs/runtime/advanced'
+        export function useCount() {
+          const count = createSignal(2)
+          return count
+        }
+      `
+      const appSource = `
+        import { useCount } from './hook'
+        export function App() {
+          const count = useCount()
+          return count * 2
+        }
+      `
+      await writeFile(hookPath, hookSource)
+      await writeFile(appPath, appSource)
+
+      const plugin = getTestPlugin({
+        cache: false,
+        useTypeScriptProject: false,
+        functionSplitting: false,
+      })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+      const context = {
+        error: vi.fn(),
+        warn: vi.fn(),
+        emitFile: vi.fn(),
+        load: vi.fn(async () => null),
+      }
+
+      await plugin.transform?.call(context, hookSource, hookPath)
+      const resourceResult = await plugin.transform?.call(
+        context,
+        `export function useCount() { return 2 }`,
+        `${hookPath}?raw`,
+      )
+      const appResult = (await plugin.transform?.call(context, appSource, appPath)) as {
+        code: string
+      }
+
+      expect(resourceResult).toBeNull()
+      expect(appResult.code).toMatch(/count\(\)\s*\*\s*2/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('transforms fragment-suffixed imports in a Vite build', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-fragment-import-'))
 

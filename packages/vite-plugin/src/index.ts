@@ -1603,6 +1603,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     },
 
     async transform(code: string, id: string): Promise<TransformResult | null> {
+      if (shouldSkipMetadataForModuleQuery(id)) return null
       const filename = stripQuery(id)
 
       // Skip non-matching files
