@@ -9,6 +9,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import { transformSync, types as t, type PluginObj } from '@babel/core'
 import * as runtimeAdvanced from '@fictjs/runtime/advanced'
@@ -99,6 +100,91 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
       })
 
       expect((appModule.App as () => number)()).toBe(4)
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    ['use-count#physical.ts', './use-count#physical.ts'],
+    ['use-count?physical.ts', './use-count?physical.ts'],
+    ['use-count#extensionless.ts', './use-count#extensionless'],
+    ['use-count?extensionless.ts', './use-count?extensionless'],
+  ])('prepares hook metadata from the physical module %s via %s', (hookName, specifier) => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-graph-url-name-'))
+    const hookPath = path.join(baseDir, hookName)
+    const appPath = path.join(baseDir, 'app.ts')
+    const hookSource = `
+        import { createSignal } from '@fictjs/runtime/advanced'
+        export function useCount() {
+          const count = createSignal(2)
+          return count
+        }
+      `
+    const appSource = `
+        import { useCount } from ${JSON.stringify(specifier)}
+        export function App() {
+          const count = useCount()
+          return count * 2
+        }
+      `
+
+    try {
+      writeFileSync(hookPath, hookSource)
+      writeFileSync(appPath, appSource)
+
+      const appOutput = compilePresetModule(appSource, appPath)
+      expect(appOutput).toMatch(/count\(\)\s*\*\s*2/)
+
+      const hookModule = evaluateCommonJs(compilePresetModule(hookSource, hookPath), source => {
+        if (source === '@fictjs/runtime/advanced') return runtimeAdvanced
+        throw new Error(`Unexpected hook dependency: ${source}`)
+      })
+      const appModule = evaluateCommonJs(appOutput, source => {
+        if (source === specifier) return hookModule
+        throw new Error(`Unexpected app dependency: ${source}`)
+      })
+
+      expect((appModule.App as () => number)()).toBe(4)
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    ['use-count#physical.ts', '%23physical.ts'],
+    ['use-count?physical.ts', '%3Fphysical.ts'],
+  ])('keeps file URL suffixes distinct from the encoded filename %s', (hookName, encodedName) => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-graph-file-url-'))
+    const hookPath = path.join(baseDir, hookName)
+    const appPath = path.join(baseDir, 'app.ts')
+    const hookUrl = pathToFileURL(hookPath).href
+    const hookSource = `
+      import { createSignal } from '@fictjs/runtime/advanced'
+      export function useCount() {
+        const count = createSignal(2)
+        return count
+      }
+    `
+    const appSource = (source: string) => `
+      import { useCount } from ${JSON.stringify(source)}
+      export function App() {
+        const count = useCount()
+        return count * 2
+      }
+    `
+
+    try {
+      writeFileSync(hookPath, hookSource)
+      writeFileSync(appPath, appSource(hookUrl))
+
+      const moduleOutput = compilePresetModule(appSource(hookUrl), appPath)
+      const resourceOutput = compilePresetModule(appSource(`${hookUrl}?raw`), appPath)
+
+      expect(hookUrl).toContain(encodedName)
+      expect(moduleOutput).toMatch(/count\(\)\s*\*\s*2/)
+      expect(resourceOutput).toMatch(/count\s*\*\s*2/)
+      expect(resourceOutput).not.toMatch(/count\(\)\s*\*\s*2/)
     } finally {
       rmSync(baseDir, { recursive: true, force: true })
     }
@@ -285,6 +371,40 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
       rmSync(baseDir, { recursive: true, force: true })
     }
   })
+
+  it.each(['use-count#physical.ts', 'use-count?physical.ts'])(
+    'keeps a resource suffix opaque after the physical module %s',
+    hookName => {
+      const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-graph-url-resource-'))
+      const hookPath = path.join(baseDir, hookName)
+      const appPath = path.join(baseDir, 'app.ts')
+      const hookSource = `
+        import { createSignal } from '@fictjs/runtime/advanced'
+        export function useCount() {
+          const count = createSignal(2)
+          return count
+        }
+      `
+      const appSource = `
+        import { useCount } from ${JSON.stringify(`./${hookName}?raw`)}
+        export function App() {
+          const value = useCount()
+          return value * 2
+        }
+      `
+
+      try {
+        writeFileSync(hookPath, hookSource)
+        writeFileSync(appPath, appSource)
+        const output = compilePresetModule(appSource, appPath)
+
+        expect(output).toMatch(/value\s*\*\s*2/)
+        expect(output).not.toMatch(/value\(\)\s*\*\s*2/)
+      } finally {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+    },
+  )
 
   it('keeps bare resource-query imports opaque even when package metadata exists', () => {
     const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-graph-package-resource-'))

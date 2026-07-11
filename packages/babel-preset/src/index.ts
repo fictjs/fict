@@ -105,7 +105,6 @@ const MTS_FILENAME_RE = /\.mts(?:[?#].*)?$/i
 const CTS_FILENAME_RE = /\.cts(?:[?#].*)?$/i
 const LOCAL_MODULE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs']
 const LOCAL_MODULE_EXTENSION_SET = new Set(LOCAL_MODULE_EXTENSIONS)
-const RESOURCE_IMPORT_RE = /\?/
 const NODE_BUILTIN_SOURCES = new Set(
   builtinModules.flatMap(source =>
     source.startsWith('node:') ? [source] : [source, `node:${source}`],
@@ -195,11 +194,125 @@ function createGraphOptionsFingerprint(
   )
 }
 
+interface SplitModuleRequestOptions {
+  importer?: string | undefined
+  allowPlainRelative?: boolean | undefined
+}
+
+interface SplitModuleRequestResult {
+  target: string
+  suffix: string
+}
+
+const isWindowsPath = (value: string): boolean =>
+  /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith('\\\\')
+
+function findSyntacticModuleSuffixStart(value: string): number {
+  const queryStart = value.indexOf('?')
+  const fragmentStart = value.indexOf('#', value.startsWith('#') ? 1 : 0)
+  if (queryStart === -1) return fragmentStart === -1 ? value.length : fragmentStart
+  if (fragmentStart === -1) return queryStart
+  return Math.min(queryStart, fragmentStart)
+}
+
+function resolveLocalTargetPath(
+  target: string,
+  importer: string | undefined,
+  allowPlainRelative: boolean,
+): string | null {
+  let rawTarget = target
+  if (rawTarget.startsWith('/@fs/')) rawTarget = rawTarget.slice('/@fs'.length)
+  if (rawTarget.startsWith('file://')) {
+    try {
+      rawTarget = fileURLToPath(rawTarget)
+    } catch {
+      return null
+    }
+  }
+  if (rawTarget.includes('://') && !isWindowsPath(rawTarget)) return null
+
+  if (!path.isAbsolute(rawTarget) && !isWindowsPath(rawTarget)) {
+    if (rawTarget.startsWith('.')) {
+      const baseDirectory = importer ? path.dirname(importer) : process.cwd()
+      return path.resolve(baseDirectory, rawTarget)
+    }
+    return allowPlainRelative ? path.resolve(rawTarget) : null
+  }
+  return path.resolve(rawTarget)
+}
+
+function localModuleCandidates(rawTarget: string): string[] {
+  const extension = path.extname(rawTarget).toLowerCase()
+  const candidates = [rawTarget]
+  if (!extension) {
+    for (const suffix of LOCAL_MODULE_EXTENSIONS) candidates.push(`${rawTarget}${suffix}`)
+    for (const suffix of LOCAL_MODULE_EXTENSIONS) {
+      candidates.push(path.join(rawTarget, `index${suffix}`))
+    }
+  } else if (extension === '.js' || extension === '.jsx') {
+    candidates.push(rawTarget.slice(0, -extension.length) + '.ts')
+    candidates.push(rawTarget.slice(0, -extension.length) + '.tsx')
+  } else if (extension === '.mjs') {
+    candidates.push(rawTarget.slice(0, -extension.length) + '.mts')
+  } else if (extension === '.cjs') {
+    candidates.push(rawTarget.slice(0, -extension.length) + '.cts')
+  }
+  return candidates
+}
+
+function resolveExistingPhysicalTarget(
+  target: string,
+  options: SplitModuleRequestOptions,
+): string | null {
+  if (target.startsWith('file://')) {
+    // URL query/hash delimiters are suffixes. Physical delimiters are encoded.
+    return null
+  }
+  const rawTarget = resolveLocalTargetPath(
+    target,
+    options.importer,
+    options.allowPlainRelative === true,
+  )
+  if (!rawTarget) return null
+  if (isFile(rawTarget)) return rawTarget
+
+  const extension = path.extname(rawTarget).toLowerCase()
+  if (extension && !LOCAL_MODULE_EXTENSION_SET.has(extension)) return null
+  return localModuleCandidates(rawTarget).slice(1).find(isFile) ?? null
+}
+
+function splitModuleRequest(
+  value: string,
+  options: SplitModuleRequestOptions = {},
+): SplitModuleRequestResult {
+  const syntacticSuffixStart = findSyntacticModuleSuffixStart(value)
+  if (syntacticSuffixStart === value.length) return { target: value, suffix: '' }
+
+  if (!value.startsWith('file://')) {
+    const candidateEnds = [value.length]
+    for (let index = value.length - 1; index >= 0; index--) {
+      const character = value[index]
+      if ((character === '?' || character === '#') && !(character === '#' && index === 0)) {
+        candidateEnds.push(index)
+      }
+    }
+    for (const end of candidateEnds) {
+      const target = value.slice(0, end)
+      if (target && resolveExistingPhysicalTarget(target, options)) {
+        return { target, suffix: value.slice(end) }
+      }
+    }
+  }
+
+  return {
+    target: value.slice(0, syntacticSuffixStart),
+    suffix: value.slice(syntacticSuffixStart),
+  }
+}
+
 function normalizeGraphFilename(filename: string | undefined): string | null {
   if (!filename || filename === '<unknown>' || filename.startsWith('\0')) return null
-  let normalized = filename
-  const suffixIndex = normalized.search(/[?#]/)
-  if (suffixIndex !== -1) normalized = normalized.slice(0, suffixIndex)
+  let normalized = splitModuleRequest(filename, { allowPlainRelative: true }).target
   if (normalized.startsWith('/@fs/')) {
     normalized = normalized.slice('/@fs'.length)
   }
@@ -232,56 +345,30 @@ function resolveLocalModuleSource(
   source: string,
   importer: string | undefined,
 ): LocalModuleResolution {
-  if (RESOURCE_IMPORT_RE.test(source)) return { kind: 'resource' }
-  const isWindowsPath = /^[a-zA-Z]:[\\/]/.test(source) || source.startsWith('\\\\')
+  const normalizedImporter = normalizeGraphFilename(importer)
+  const request = splitModuleRequest(source, {
+    importer: normalizedImporter ?? undefined,
+  })
+  if (request.suffix.startsWith('?')) return { kind: 'resource' }
+  const rawSource = request.target
+  const windowsPath = isWindowsPath(rawSource)
   const isLocal =
-    source.startsWith('.') ||
-    source.startsWith('/') ||
-    source.startsWith('/@fs/') ||
-    source.startsWith('file://') ||
-    isWindowsPath
+    rawSource.startsWith('.') ||
+    rawSource.startsWith('/') ||
+    rawSource.startsWith('/@fs/') ||
+    rawSource.startsWith('file://') ||
+    windowsPath
   if (!isLocal) return { kind: 'external' }
 
-  const normalizedImporter = normalizeGraphFilename(importer)
-  let rawTarget = source
-  const fragmentIndex = rawTarget.indexOf('#')
-  if (fragmentIndex !== -1) rawTarget = rawTarget.slice(0, fragmentIndex)
-  if (rawTarget.startsWith('/@fs/')) rawTarget = rawTarget.slice('/@fs'.length)
-  if (rawTarget.startsWith('file://')) {
-    try {
-      rawTarget = fileURLToPath(rawTarget)
-    } catch {
-      return { kind: 'missing' }
-    }
-  }
-  if (!path.isAbsolute(rawTarget) && !isWindowsPath) {
-    if (!normalizedImporter) return { kind: 'missing' }
-    rawTarget = path.resolve(path.dirname(normalizedImporter), rawTarget)
-  } else {
-    rawTarget = path.resolve(rawTarget)
-  }
+  const rawTarget = resolveLocalTargetPath(rawSource, normalizedImporter ?? undefined, false)
+  if (!rawTarget) return { kind: 'missing' }
 
   const extension = path.extname(rawTarget).toLowerCase()
   if (extension && !LOCAL_MODULE_EXTENSION_SET.has(extension)) {
     return { kind: 'missing' }
   }
 
-  const candidates: string[] = [rawTarget]
-  if (!LOCAL_MODULE_EXTENSION_SET.has(extension)) {
-    for (const suffix of LOCAL_MODULE_EXTENSIONS) candidates.push(`${rawTarget}${suffix}`)
-    for (const suffix of LOCAL_MODULE_EXTENSIONS) {
-      candidates.push(path.join(rawTarget, `index${suffix}`))
-    }
-  } else if (extension === '.js' || extension === '.jsx') {
-    candidates.push(rawTarget.slice(0, -extension.length) + '.ts')
-    candidates.push(rawTarget.slice(0, -extension.length) + '.tsx')
-  } else if (extension === '.mjs') {
-    candidates.push(rawTarget.slice(0, -extension.length) + '.mts')
-  } else if (extension === '.cjs') {
-    candidates.push(rawTarget.slice(0, -extension.length) + '.cts')
-  }
-
-  const filename = candidates.find(isFile)
+  const filename = localModuleCandidates(rawTarget).find(isFile)
   return filename
     ? { kind: 'file', filename: canonicalGraphFilename(filename) }
     : { kind: 'missing' }
@@ -329,9 +416,13 @@ const isHookName = (name: string | undefined): boolean => !!name && HOOK_NAME_RE
 const isNodeBuiltinSource = (source: string): boolean =>
   source.startsWith('node:') || NODE_BUILTIN_SOURCES.has(source)
 
-function requiresHookMetadata(source: string): boolean {
-  if (source.includes('?')) return false
-  return !FICT_RUNTIME_SOURCES.has(source.split('#', 1)[0]!)
+function requiresHookMetadata(source: string, importer?: string): boolean {
+  const normalizedImporter = normalizeGraphFilename(importer)
+  const request = splitModuleRequest(source, {
+    importer: normalizedImporter ?? undefined,
+  })
+  if (request.suffix.startsWith('?')) return false
+  return !FICT_RUNTIME_SOURCES.has(request.target)
 }
 
 function staticMemberName(
@@ -541,7 +632,12 @@ function createImplicitGraphValidationPlugin(options: {
           programPath.traverse({
             ImportDeclaration(importPath) {
               const source = importPath.node.source.value
-              if (!requiresHookMetadata(source) || options.resolve(source).resolved) return
+              if (
+                !requiresHookMetadata(source, options.fileName) ||
+                options.resolve(source).resolved
+              ) {
+                return
+              }
               for (const specifier of importPath.node.specifiers) {
                 if (t.isImportSpecifier(specifier) && specifier.importKind === 'type') continue
                 const binding = importPath.scope.getBinding(specifier.local.name)
@@ -604,7 +700,10 @@ function createImplicitGraphValidationPlugin(options: {
                 }
                 return isHookName(specifier.exported.name)
               })
-              if (!requiresHookMetadata(source.value) || options.resolve(source.value).resolved) {
+              if (
+                !requiresHookMetadata(source.value, options.fileName) ||
+                options.resolve(source.value).resolved
+              ) {
                 return
               }
               options.markIncomplete()
@@ -619,7 +718,7 @@ function createImplicitGraphValidationPlugin(options: {
               const source = exportPath.node.source.value
               if (
                 exportPath.node.exportKind !== 'type' &&
-                requiresHookMetadata(source) &&
+                requiresHookMetadata(source, options.fileName) &&
                 !options.resolve(source).resolved
               ) {
                 options.markIncomplete()
