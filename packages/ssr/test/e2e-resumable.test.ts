@@ -2516,6 +2516,7 @@ describe('Full E2E Integration', () => {
       const addedNodes = Array.from(fragment.childNodes)
       env.document.body.appendChild(fragment)
       notifyMutationObserver?.(addedNodes)
+      await tick(1)
 
       const template = env.document.querySelector('template[data-fict-suspense]')
       expect(template).not.toBeNull()
