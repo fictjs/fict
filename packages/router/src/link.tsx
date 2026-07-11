@@ -531,9 +531,10 @@ interface ResolvedFormAction {
   search: string
   hash: string
   href: string
+  isExternal: boolean
 }
 
-function splitFormAction(action: string): Omit<ResolvedFormAction, 'href'> {
+function splitFormAction(action: string): Omit<ResolvedFormAction, 'href' | 'isExternal'> {
   let pathname = action
   let hash = ''
   let search = ''
@@ -575,7 +576,7 @@ export function Form(props: FormProps): FictNode {
     const action = splitFormAction(rawAction)
 
     if (externalHref !== null) {
-      return { ...action, href: externalHref }
+      return { ...action, href: externalHref, isExternal: true }
     }
 
     const resolver =
@@ -590,6 +591,7 @@ export function Form(props: FormProps): FictNode {
       search: action.search,
       hash: action.hash,
       href: prependBasePath(pathname, base) + action.search + action.hash,
+      isExternal: false,
     }
   }
 
@@ -605,9 +607,6 @@ export function Form(props: FormProps): FictNode {
     const target = form.target
     if (target && target !== '_self') return
 
-    // Prevent default form submission
-    event.preventDefault()
-
     const snapshot = untrack(() => ({
       action: resolveAction(),
       method: props.method,
@@ -615,8 +614,15 @@ export function Form(props: FormProps): FictNode {
       replace: props.replace,
       scroll: props.preventScrollReset === true ? false : undefined,
     }))
-    const formData = new FormData(form)
     const method = snapshot.method?.toUpperCase() || 'GET'
+
+    // Let the browser preserve native external GET form semantics.
+    if (method === 'GET' && snapshot.action.isExternal) return
+
+    // Prevent default form submission for router navigation and fetch submissions.
+    event.preventDefault()
+
+    const formData = new FormData(form)
 
     if (method === 'GET') {
       // For GET, navigate with search params

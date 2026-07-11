@@ -242,6 +242,30 @@ function ReactiveFormScrollFixture() {
   )
 }
 
+const reactiveExternalFormSubmit = vi.fn()
+let updateReactiveExternalForm: (action: string) => void = () => {}
+
+function ReactiveExternalGetFormFixture() {
+  let action = $state('/internal-submit')
+  let method = $state<'get' | 'post'>('post')
+
+  updateReactiveExternalForm = nextAction => {
+    action = nextAction
+    method = 'get'
+  }
+
+  return (
+    <Form
+      action={action}
+      method={method}
+      onSubmit={reactiveExternalFormSubmit}
+      data-testid="reactive-external-form"
+    >
+      <input name="query" value="fict" />
+    </Form>
+  )
+}
+
 let relativeFormScenario: {
   method: 'get' | 'post'
   initialRelative: 'route' | 'path' | undefined
@@ -1372,6 +1396,102 @@ describe('Router integration (MemoryRouter)', () => {
     } finally {
       fetchMock.mockRestore()
       requestAnimationFrameMock.mockRestore()
+      history.destroy?.()
+    }
+  })
+
+  it('leaves current external GET actions to native form submission', async () => {
+    reactiveExternalFormSubmit.mockClear()
+    const history = createMemoryHistory({ initialEntries: ['/form'] })
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }))
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <ReactiveExternalGetFormFixture />
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('reactive-external-form') as HTMLFormElement
+
+      await act(async () => {
+        updateReactiveExternalForm('https://example.com/search?source=fict#results')
+      })
+      await vi.waitFor(() => {
+        expect(form.getAttribute('action')).toBe('https://example.com/search?source=fict#results')
+        expect(form.getAttribute('method')).toBe('get')
+      })
+
+      const absoluteSubmit = new SubmitEvent('submit', { bubbles: true, cancelable: true })
+      expect(form.dispatchEvent(absoluteSubmit)).toBe(true)
+      expect(absoluteSubmit.defaultPrevented).toBe(false)
+      expect(history.location.pathname).toBe('/form')
+
+      await act(async () => {
+        updateReactiveExternalForm('//example.org/search')
+      })
+      await vi.waitFor(() => expect(form.getAttribute('action')).toBe('//example.org/search'))
+
+      const protocolRelativeSubmit = new SubmitEvent('submit', {
+        bubbles: true,
+        cancelable: true,
+      })
+      expect(form.dispatchEvent(protocolRelativeSubmit)).toBe(true)
+      expect(protocolRelativeSubmit.defaultPrevented).toBe(false)
+      expect(history.location.pathname).toBe('/form')
+      expect(reactiveExternalFormSubmit).toHaveBeenCalledTimes(2)
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      fetchMock.mockRestore()
+      history.destroy?.()
+    }
+  })
+
+  it('allows onSubmit to cancel an external GET submission', () => {
+    const history = createMemoryHistory({ initialEntries: ['/form'] })
+    const onSubmit = vi.fn((event: SubmitEvent) => event.preventDefault())
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <Form
+            action="https://example.com/search"
+            method="get"
+            onSubmit={onSubmit}
+            data-testid="prevented-external-form"
+          />
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('prevented-external-form') as HTMLFormElement
+      const event = new SubmitEvent('submit', { bubbles: true, cancelable: true })
+      expect(form.dispatchEvent(event)).toBe(false)
+      expect(event.defaultPrevented).toBe(true)
+      expect(onSubmit).toHaveBeenCalledTimes(1)
+      expect(history.location.pathname).toBe('/form')
+    } finally {
+      history.destroy?.()
+    }
+  })
+
+  it('leaves targeted GET submissions to the browser', () => {
+    const history = createMemoryHistory({ initialEntries: ['/form'] })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <Form action="/search" method="get" target="_blank" data-testid="targeted-form" />
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('targeted-form') as HTMLFormElement
+      const event = new SubmitEvent('submit', { bubbles: true, cancelable: true })
+      expect(form.dispatchEvent(event)).toBe(true)
+      expect(event.defaultPrevented).toBe(false)
+      expect(history.location.pathname).toBe('/form')
+    } finally {
       history.destroy?.()
     }
   })
