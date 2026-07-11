@@ -2,8 +2,21 @@ import { describe, expect, it } from 'vitest'
 import { parseHTML } from 'linkedom'
 
 import { render } from '@fictjs/runtime'
+import type { FictNode } from '@fictjs/runtime'
 
 import { serializeHtmlNode } from '../src/html-serializer'
+import { renderToString } from '../src/index'
+
+function createResumableHost(document: Document, scopeId = 'scope-1'): Element {
+  const host = document.createElement('fict-host')
+  host.setAttribute('data-fict-host', '')
+  host.setAttribute('data-fict-s', scopeId)
+  host.setAttribute('data-fict-h', '/entry.js#resume')
+  const child = document.createElement('span')
+  child.textContent = 'content'
+  host.appendChild(child)
+  return host
+}
 
 describe('SSR HTML serializer DOM name validation', () => {
   it('rejects an invalid element accepted by a permissive server DOM', () => {
@@ -122,5 +135,166 @@ describe('direct runtime rendering with a permissive server DOM', () => {
       render(() => ({ type: 'div', props: { [name]: 'unsafe' } }), container),
     ).toThrowError(/Invalid attribute name/)
     expect(container.querySelector('[data-fict-xss="runtime-attribute"]')).toBeNull()
+  })
+})
+
+describe('resumable host HTML parser context validation', () => {
+  it.each([
+    'table',
+    'tbody',
+    'thead',
+    'tfoot',
+    'tr',
+    'colgroup',
+    'select',
+    'optgroup',
+    'option',
+    'iframe',
+    'noembed',
+    'noframes',
+    'noscript',
+    'script',
+    'style',
+    'xmp',
+    'textarea',
+    'title',
+    'plaintext',
+    'head',
+    'html',
+    'frameset',
+  ])('rejects a resumable host inside <%s>', contextTag => {
+    const { document } = parseHTML('<!doctype html><html><body></body></html>')
+    const context = document.createElement(contextTag)
+    context.appendChild(createResumableHost(document))
+
+    let thrown: unknown
+    try {
+      serializeHtmlNode(context)
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(Error)
+    expect((thrown as Error).message).toContain('Cannot serialize resumable <fict-host>')
+    expect((thrown as Error).message).toContain(`<${contextTag}>`)
+    expect((thrown as Error).message).toContain('HTML parser')
+    expect((thrown as Error).message).toContain('Move the component')
+  })
+
+  it('rejects a real resumable row component before returning corrupt table HTML', () => {
+    function Row(): FictNode {
+      return {
+        type: 'tr',
+        props: {
+          children: {
+            type: 'td',
+            props: { children: 'row' },
+          },
+        },
+      }
+    }
+
+    expect(() =>
+      renderToString(() => ({
+        type: 'table',
+        props: {
+          children: {
+            type: 'tbody',
+            props: { children: { type: Row, props: {} } },
+          },
+        },
+      })),
+    ).toThrowError(/resumable <fict-host>.*<tbody>/)
+  })
+
+  it('allows a resumable component inside a table cell', () => {
+    function CellContent(): FictNode {
+      return { type: 'button', props: { children: 'safe' } }
+    }
+
+    const html = renderToString(() => ({
+      type: 'table',
+      props: {
+        children: {
+          type: 'tbody',
+          props: {
+            children: {
+              type: 'tr',
+              props: {
+                children: {
+                  type: 'td',
+                  props: { children: { type: CellContent, props: {} } },
+                },
+              },
+            },
+          },
+        },
+      },
+    }))
+
+    expect(html).toContain('<td><fict-host')
+    expect(html).toContain('<button>safe</button>')
+  })
+
+  it('does not treat a namespaced SVG host as an unsafe HTML parser host', () => {
+    const { document } = parseHTML('<!doctype html><html><body></body></html>')
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    const title = document.createElementNS('http://www.w3.org/2000/svg', 'title')
+    const host = document.createElementNS('http://www.w3.org/2000/svg', 'fict-host')
+    host.setAttribute('data-fict-host', '')
+    host.setAttribute('data-fict-s', 'svg-scope')
+    host.appendChild(document.createTextNode('safe'))
+    title.appendChild(host)
+    svg.appendChild(title)
+
+    expect(serializeHtmlNode(svg)).toContain('<title><fict-host')
+  })
+
+  it('does not reserve the fict-host tag name without internal scope markers', () => {
+    const { document } = parseHTML('<!doctype html><html><body></body></html>')
+    const table = document.createElement('table')
+    const userElement = document.createElement('fict-host')
+    userElement.textContent = 'user-defined'
+    table.appendChild(userElement)
+
+    expect(serializeHtmlNode(table)).toBe('<table><fict-host>user-defined</fict-host></table>')
+  })
+
+  it('rejects a resumable scope inside template content', () => {
+    const { document } = parseHTML('<!doctype html><html><body></body></html>')
+    const template = document.createElement('template')
+    template.content.appendChild(createResumableHost(document, 'template-scope'))
+
+    expect(() => serializeHtmlNode(template)).toThrowError(/template.*resumable scope.*cloned/i)
+  })
+
+  it('rejects a resumable event QRL inside template content', () => {
+    const { document } = parseHTML('<!doctype html><html><body></body></html>')
+    const template = document.createElement('template')
+    const button = document.createElement('button')
+    button.setAttribute('on:click', '/entry.js#handler')
+    template.content.appendChild(button)
+
+    expect(() => serializeHtmlNode(template)).toThrowError(/template.*resumable event.*cloned/i)
+  })
+
+  it('finds resumable scopes inside nested template content', () => {
+    const { document } = parseHTML('<!doctype html><html><body></body></html>')
+    const outer = document.createElement('template')
+    const inner = document.createElement('template')
+    inner.content.appendChild(createResumableHost(document, 'nested-template-scope'))
+    outer.content.appendChild(inner)
+
+    expect(() => serializeHtmlNode(outer)).toThrowError(/template.*resumable scope.*cloned/i)
+  })
+
+  it('continues to serialize inert template content', () => {
+    const { document } = parseHTML('<!doctype html><html><body></body></html>')
+    const template = document.createElement('template')
+    const span = document.createElement('span')
+    span.textContent = 'static'
+    template.content.appendChild(span)
+
+    expect(serializeHtmlNode(template)).toBe('<template><span>static</span></template>')
   })
 })

@@ -41,13 +41,11 @@ afterEach(() => {
 })
 
 describe('@fictjs/ssr stream runtime template boundaries', () => {
-  it('patches a streamed suspense boundary nested in template content', async () => {
+  it('rejects a streamed resumable boundary nested in template content', async () => {
     const token = createSuspenseToken()
-    let ready = false
 
     function AsyncChild(): FictNode {
-      if (!ready) throw token.token
-      return { type: 'strong', props: { 'data-resolved': '', children: 'Resolved' } }
+      throw token.token
     }
 
     function App(): FictNode {
@@ -75,31 +73,9 @@ describe('@fictjs/ssr stream runtime template boundaries', () => {
       }
     }
 
-    const readAll = readReadableStream(
-      renderToStream(() => ({ type: App, props: {} }), { mode: 'shell' }),
-    )
-    await Promise.resolve()
-    ready = true
-    token.resolve()
-
-    const window = parseHTML(await readAll) as unknown as StreamRuntimeWindow
-    const document = window.document
-    const outer = document.querySelector('#outer') as HTMLTemplateElement
-    const inner = outer.content.querySelector('#inner') as HTMLTemplateElement
-    const patch = document.querySelector(
-      'template[data-fict-suspense]',
-    ) as HTMLTemplateElement | null
-
-    expect(patch).not.toBeNull()
-    expect(document.querySelector('[data-pending]')).toBeNull()
-    expect(inner.content.querySelector('[data-pending]')?.textContent).toBe('Pending')
-
-    installStreamRuntime(window)
-    window.__FICT_STREAM?.apply(patch!.getAttribute('data-fict-suspense')!)
-
-    expect(inner.content.querySelector('[data-pending]')).toBeNull()
-    expect(inner.content.querySelector('[data-resolved]')?.textContent).toBe('Resolved')
-    expect(document.querySelector('template[data-fict-suspense]')).toBeNull()
+    await expect(
+      readReadableStream(renderToStream(() => ({ type: App, props: {} }), { mode: 'shell' })),
+    ).rejects.toThrowError(/Cannot serialize <template> content containing a resumable scope/)
   })
 
   it('discovers pre-parsed patch templates in template content on DOMContentLoaded', () => {
