@@ -751,13 +751,12 @@ function startStreamingRenderInSession(
     })
   }
 
-  const writeSnapshotForBoundary = (): void => {
+  const writeSnapshotForBoundary = (start: Comment, end: Comment): void => {
     runInSession(() => {
-      // A boundary callback may mutate state owned by any ancestor scope. Compare
-      // every live scope before writing the patch so its snapshot matches the DOM
-      // that the client is about to reveal. Per-scope signatures keep unchanged
-      // ancestors from being emitted again for unrelated boundary resolutions.
-      const scopes = Array.from(__fictGetScopeRegistry().keys())
+      // Include scope hosts that become visible in this patch plus the owning
+      // ancestor scopes whose state may have changed while resolving it. Avoid
+      // publishing unrelated live sibling revisions without a matching DOM patch.
+      const scopes = collectPatchScopeIds(start, end)
       writeSnapshotForScopes(scopes)
     })
   }
@@ -907,8 +906,8 @@ function startStreamingRenderInSession(
       }
       if (mode === 'shell' && wroteShell) {
         try {
-          writeSnapshotForBoundary()
           if (dom) {
+            writeSnapshotForBoundary(entry.start, entry.end)
             const content = serializeBetween(entry.start, entry.end)
             enqueueWrite(buildPatchChunk(id, content, resolvedOptions))
           }
@@ -1152,6 +1151,38 @@ function serializeBetween(
   }
   const namespace = resolveStreamPatchNamespace(parentElement)
   return { html: serializeHtmlNodes(nodes, parentElement), namespace }
+}
+
+function collectPatchScopeIds(start: Comment, end: Comment): string[] {
+  const ids = new Set<string>()
+  const addScopeId = (element: Element) => {
+    const id = element.getAttribute('data-fict-s')
+    if (id) ids.add(id)
+  }
+  const addVisibleSubtree = (element: Element) => {
+    addScopeId(element)
+    for (const descendant of element.querySelectorAll('[data-fict-s]')) {
+      addScopeId(descendant)
+    }
+  }
+
+  const parentElement =
+    start.parentElement ?? (start.parentNode?.nodeType === 1 ? (start.parentNode as Element) : null)
+  let ancestor = parentElement
+  while (ancestor) {
+    addScopeId(ancestor)
+    ancestor = ancestor.parentElement
+  }
+
+  let node = start.nextSibling
+  while (node && node !== end) {
+    if (node.nodeType === 1) {
+      addVisibleSubtree(node as Element)
+    }
+    node = node.nextSibling
+  }
+
+  return Array.from(ids)
 }
 
 function resolveStreamPatchNamespace(parentElement: Element | null): StreamPatchNamespace {

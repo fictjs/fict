@@ -308,6 +308,161 @@ describe('@fictjs/ssr streaming', () => {
     )
   })
 
+  it('snapshots only visible nested fallback scopes before their owning patches', async () => {
+    const outer = createSuspenseToken()
+    const inner = createSuspenseToken()
+    const sibling = createSuspenseToken()
+    let outerReady = false
+    let innerReady = false
+    let siblingReady = false
+    let siblingCount!: ReturnType<typeof __fictUseSignal<number>>
+
+    function VisibleInnerFallback(): FictNode {
+      const ctx = __fictUseContext()
+      const count = __fictUseSignal(ctx, 10, { name: 'count' })
+      count(11)
+      return {
+        type: 'button',
+        props: { 'data-visible-inner-fallback': '', children: count },
+      }
+    }
+
+    ;(VisibleInnerFallback as { __fictMeta?: unknown }).__fictMeta = {
+      id: 'VisibleInnerFallback@nested-stream',
+      resume: 'visible-inner-fallback#resume',
+    }
+
+    function ResolvedInner(): FictNode {
+      const ctx = __fictUseContext()
+      const count = __fictUseSignal(ctx, 20, { name: 'count' })
+      return {
+        type: 'button',
+        props: { 'data-resolved-inner': '', children: count },
+      }
+    }
+
+    ;(ResolvedInner as { __fictMeta?: unknown }).__fictMeta = {
+      id: 'ResolvedInner@nested-stream',
+      resume: 'resolved-inner#resume',
+    }
+
+    function InnerContent(): FictNode {
+      if (!innerReady) throw inner.token
+      return { type: ResolvedInner, props: {} }
+    }
+
+    function OuterContent(): FictNode {
+      if (!outerReady) throw outer.token
+      return {
+        type: Suspense,
+        props: {
+          fallback: { type: VisibleInnerFallback, props: {} },
+          children: { type: InnerContent, props: {} },
+        },
+      }
+    }
+
+    function SiblingFallback(): FictNode {
+      const ctx = __fictUseContext()
+      siblingCount = __fictUseSignal(ctx, 1, { name: 'count' })
+      return {
+        type: 'button',
+        props: { 'data-sibling-fallback': '', children: siblingCount },
+      }
+    }
+
+    ;(SiblingFallback as { __fictMeta?: unknown }).__fictMeta = {
+      id: 'SiblingFallback@nested-stream',
+      resume: 'sibling-fallback#resume',
+    }
+
+    function SiblingContent(): FictNode {
+      if (!siblingReady) throw sibling.token
+      return { type: 'span', props: { 'data-sibling-done': '', children: 'Sibling done' } }
+    }
+
+    const stream = renderToStream(
+      () => [
+        {
+          type: Suspense,
+          props: {
+            fallback: { type: 'span', props: { children: 'Outer loading' } },
+            children: { type: OuterContent, props: {} },
+          },
+        },
+        {
+          type: Suspense,
+          props: {
+            fallback: { type: SiblingFallback, props: {} },
+            children: { type: SiblingContent, props: {} },
+          },
+        },
+      ],
+      { mode: 'shell' },
+    )
+    const readAll = readReadableStream(stream)
+
+    await Promise.resolve()
+    siblingCount(2)
+
+    outerReady = true
+    outer.resolve()
+    await new Promise<void>(resolve => setImmediate(resolve))
+
+    innerReady = true
+    inner.resolve()
+    await new Promise<void>(resolve => setImmediate(resolve))
+
+    siblingReady = true
+    sibling.resolve()
+    const html = await readAll
+    const streamedDocument = parseHTML(html).document
+    const patches = Array.from(
+      streamedDocument.querySelectorAll('template[data-fict-suspense]'),
+    ) as HTMLTemplateElement[]
+    const outerPatch = patches.find(patch =>
+      patch.content.querySelector('[data-visible-inner-fallback]'),
+    )
+    const innerPatch = patches.find(patch => patch.content.querySelector('[data-resolved-inner]'))
+
+    expect(outerPatch).toBeDefined()
+    expect(innerPatch).toBeDefined()
+    expect(outerPatch!.content.querySelector('[data-visible-inner-fallback]')?.textContent).toBe(
+      '11',
+    )
+    expect(innerPatch!.content.querySelector('[data-resolved-inner]')?.textContent).toBe('20')
+
+    type StreamedScope = { t?: string; slots: Array<[number, string, unknown]> }
+    const snapshotEntries = Array.from(
+      streamedDocument.querySelectorAll('script[data-fict-snapshot]'),
+    ).flatMap(script => {
+      const state = JSON.parse(script.textContent ?? '') as {
+        scopes: Record<string, StreamedScope>
+      }
+      return Object.entries(state.scopes).map(([id, scope]) => ({ id, scope, script }))
+    })
+    const entriesFor = (type: string) => snapshotEntries.filter(entry => entry.scope.t === type)
+    const slotValue = (entry: (typeof snapshotEntries)[number]) =>
+      entry.scope.slots.find(([index, kind]) => index === 0 && kind === 'sig')?.[2]
+    const visibleFallbackSnapshots = entriesFor('VisibleInnerFallback@nested-stream')
+    const resolvedInnerSnapshots = entriesFor('ResolvedInner@nested-stream')
+    const siblingFallbackSnapshots = entriesFor('SiblingFallback@nested-stream')
+    const orderedChunks = Array.from(
+      streamedDocument.querySelectorAll('script[data-fict-snapshot], template[data-fict-suspense]'),
+    )
+
+    expect(visibleFallbackSnapshots.map(slotValue)).toEqual([11])
+    expect(resolvedInnerSnapshots.map(slotValue)).toEqual([20])
+    expect(siblingFallbackSnapshots.map(slotValue)).toEqual([1])
+    expect(orderedChunks.indexOf(visibleFallbackSnapshots[0]!.script)).toBeLessThan(
+      orderedChunks.indexOf(outerPatch!),
+    )
+    expect(orderedChunks.indexOf(resolvedInnerSnapshots[0]!.script)).toBeLessThan(
+      orderedChunks.indexOf(innerPatch!),
+    )
+    expect(orderedChunks.indexOf(outerPatch!)).toBeLessThan(orderedChunks.indexOf(innerPatch!))
+  })
+
   it('inserts full-document stream chunks at the structural end of body', async () => {
     const token = createSuspenseToken()
     let ready = false
