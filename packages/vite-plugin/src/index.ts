@@ -56,11 +56,13 @@ interface BabelGeneratorOptionsWithInputSourceMap extends BabelGeneratorOptions 
 export interface FictPluginOptions extends FictCompilerOptions {
   /**
    * File patterns to include for transformation.
+   * Relative patterns are resolved from the Vite project root.
    * @default all supported JavaScript and TypeScript module extensions
    */
   include?: string[]
   /**
    * File patterns to exclude from transformation.
+   * Relative patterns are resolved from the Vite project root.
    * @default ['**\/node_modules\/**']
    */
   exclude?: string[]
@@ -446,7 +448,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   const libraryOptions = normalizeLibraryOptions(libraryOption)
   const includePatterns =
     include ?? (libraryOptions.enabled ? DEFAULT_LIBRARY_INCLUDE : DEFAULT_APP_INCLUDE)
-  const transformFilter = createFilter(includePatterns, exclude)
+  const createTransformFilter = (root?: string) =>
+    createFilter(includePatterns, exclude, root ? { resolve: root } : undefined)
+  let transformFilter = createTransformFilter()
 
   let config: ResolvedConfig | undefined
   let isDev = false
@@ -1527,6 +1531,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
 
     configResolved(resolvedConfig) {
       config = resolvedConfig
+      transformFilter = createTransformFilter(config.root)
       if (resolvedConfig.build.watch) {
         const chokidar = (resolvedConfig.build.watch.chokidar ??= {})
         const ignored = Array.isArray(chokidar.ignored)
@@ -2229,7 +2234,7 @@ function shouldTransform(
     return false
   }
 
-  const normalizedId = withoutQuery.replace(/\\/g, '/')
+  const normalizedId = normalizeFileName(withoutQuery, root).replace(/\\/g, '/')
 
   return filter(normalizedId)
 }
