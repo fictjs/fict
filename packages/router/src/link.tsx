@@ -130,13 +130,16 @@ function readLinkClick(
 ): LinkBehaviorSnapshot | undefined {
   untrack(() => props.onClick?.(event))
   if (event.defaultPrevented) return undefined
+
+  const anchor = event.currentTarget as HTMLAnchorElement
+  if (anchor.hasAttribute('download')) return undefined
   if (event.metaKey || event.altKey || event.ctrlKey || event.shiftKey) return undefined
   if (event.button !== 0) return undefined
 
   const snapshot = untrack(() => readLinkBehavior(props))
   if (snapshot.reloadDocument || snapshot.disabled || snapshot.externalHref) return undefined
 
-  const target = (event.currentTarget as HTMLAnchorElement).target
+  const target = anchor.target
   if (target && target !== '_self') return undefined
   return snapshot
 }

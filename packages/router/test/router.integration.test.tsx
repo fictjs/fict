@@ -151,6 +151,22 @@ function ReactiveLinkFixture() {
   )
 }
 
+let setReactiveDownload: (value: boolean | string | undefined) => void = () => {}
+
+function ReactiveDownloadLinkFixture() {
+  let download = $state<boolean | string | undefined>('report.pdf')
+
+  setReactiveDownload = value => {
+    download = value
+  }
+
+  return (
+    <Link to="/download-target" download={download} data-testid="reactive-download-link">
+      download
+    </Link>
+  )
+}
+
 const firstNavChild = () => <span data-testid="nav-child">first</span>
 const secondNavChild = () => <span data-testid="nav-child">second</span>
 let reactiveNavLinkControls: {
@@ -1486,6 +1502,107 @@ describe('Router integration (MemoryRouter)', () => {
     expect(anchor.getAttribute('href')).toBe('https://example.com/docs')
     expect(routerPreventedDefault).toBe(false)
     expect(screen.getByTestId('path').textContent).toBe('/from')
+  })
+
+  it('leaves Link and NavLink downloads to the browser after onClick', () => {
+    const linkClick = vi.fn()
+    const navLinkClick = vi.fn((event: MouseEvent) => event.preventDefault())
+    const history = createMemoryHistory({ initialEntries: ['/from'] })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <Link to="/link-download" download="" onClick={linkClick} data-testid="download-link">
+            link download
+          </Link>
+          <NavLink
+            to="/nav-download"
+            download="archive.zip"
+            onClick={navLinkClick}
+            data-testid="download-nav-link"
+          >
+            nav download
+          </NavLink>
+        </RouterProvider>
+      ))
+
+      const link = screen.getByTestId('download-link') as HTMLAnchorElement
+      const navLink = screen.getByTestId('download-nav-link') as HTMLAnchorElement
+      const observedDefaults: boolean[] = []
+      const observeClick = (event: MouseEvent) => {
+        if (event.target !== link && event.target !== navLink) return
+        observedDefaults.push(event.defaultPrevented)
+        event.preventDefault()
+      }
+      window.addEventListener('click', observeClick)
+
+      try {
+        link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }))
+        navLink.dispatchEvent(
+          new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }),
+        )
+      } finally {
+        window.removeEventListener('click', observeClick)
+      }
+
+      expect(link.hasAttribute('download')).toBe(true)
+      expect(link.getAttribute('download')).toBe('')
+      expect(navLink.getAttribute('download')).toBe('archive.zip')
+      expect(linkClick).toHaveBeenCalledTimes(1)
+      expect(navLinkClick).toHaveBeenCalledTimes(1)
+      expect(observedDefaults).toEqual([false, true])
+      expect(history.location.pathname).toBe('/from')
+    } finally {
+      history.destroy?.()
+    }
+  })
+
+  it('uses the current reactive download attribute when handling clicks', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/from'] })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <ReactiveDownloadLinkFixture />
+        </RouterProvider>
+      ))
+
+      const link = screen.getByTestId('reactive-download-link') as HTMLAnchorElement
+      const observedDefaults: boolean[] = []
+      const observeClick = (event: MouseEvent) => {
+        if (event.target !== link) return
+        observedDefaults.push(event.defaultPrevented)
+        if (!event.defaultPrevented) event.preventDefault()
+      }
+      window.addEventListener('click', observeClick)
+
+      try {
+        expect(link.getAttribute('download')).toBe('report.pdf')
+        link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }))
+        expect(history.location.pathname).toBe('/from')
+
+        await act(async () => {
+          setReactiveDownload(undefined)
+        })
+        expect(link.hasAttribute('download')).toBe(false)
+        link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }))
+        await vi.waitFor(() => expect(history.location.pathname).toBe('/download-target'))
+
+        await act(async () => {
+          history.replace('/from')
+          setReactiveDownload('')
+        })
+        expect(link.hasAttribute('download')).toBe(true)
+        expect(link.getAttribute('download')).toBe('')
+        link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }))
+        expect(history.location.pathname).toBe('/from')
+        expect(observedDefaults).toEqual([false, true, false])
+      } finally {
+        window.removeEventListener('click', observeClick)
+      }
+    } finally {
+      history.destroy?.()
+    }
   })
 
   it('contains rejected non-GET Form submissions after reporting them', async () => {
