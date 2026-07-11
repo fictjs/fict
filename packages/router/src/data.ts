@@ -326,6 +326,12 @@ export function revalidate(keys?: string | string[] | RegExp): void {
 /** Global action registry */
 const actionRegistry = new Map<string, ActionFunction<unknown>>()
 
+/** Registered action objects used by declarative Forms. */
+const registeredActions = new Map<string, Action<unknown>>()
+
+/** Preserve each action object's handler even when another action reuses its URL. */
+let actionHandlers = new WeakMap<Action<unknown>, ActionFunction<unknown>>()
+
 /** Submission counter for unique keys */
 let submissionCounter = 0
 
@@ -356,26 +362,40 @@ export function action<T>(fn: ActionFunction<T>, name?: string): Action<T> {
   const actionName = name || `action-${++submissionCounter}`
   const actionUrl = `/_action/${actionName}`
 
-  // Register the action
-  actionRegistry.set(actionUrl, fn as ActionFunction<unknown>)
-
-  return {
+  const createdAction: Action<T> = {
     url: actionUrl,
     name: actionName,
     submit: async (formData: FormData, params: Params = {}): Promise<T> => {
-      // Create a mock request with a base URL for Node.js/jsdom compatibility
-      const baseUrl =
-        typeof window !== 'undefined' && window.location
-          ? window.location.origin
-          : 'http://localhost'
-      const request = new Request(new URL(actionUrl, baseUrl).href, {
-        method: 'POST',
-        body: formData,
-      })
-
-      return fn(formData, { params, request }) as Promise<T>
+      return executeActionHandler(fn, formData, params, actionUrl, 'POST')
     },
   }
+
+  // Keep the public handler lookup while also retaining the Action object that
+  // declarative Forms need in order to share the submission state machine.
+  actionRegistry.set(actionUrl, fn as ActionFunction<unknown>)
+  registeredActions.set(actionUrl, createdAction as Action<unknown>)
+  actionHandlers.set(createdAction as Action<unknown>, fn as ActionFunction<unknown>)
+
+  return createdAction
+}
+
+async function executeActionHandler<T>(
+  handler: ActionFunction<T>,
+  formData: FormData,
+  params: Params,
+  url: string,
+  method: string,
+): Promise<T> {
+  // Resolve relative action URLs for Node.js/jsdom while retaining the actual
+  // form URL and method when a declarative Form invokes the action.
+  const baseUrl =
+    typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost'
+  const request = new Request(new URL(url, baseUrl).href, {
+    method,
+    body: formData,
+  })
+
+  return handler(formData, { params, request })
 }
 
 /**
@@ -385,12 +405,18 @@ export function getAction(url: string): ActionFunction<unknown> | undefined {
   return actionRegistry.get(url)
 }
 
+/** Get the Action object associated with a declarative action URL. */
+export function getRegisteredAction(url: string): Action<unknown> | undefined {
+  return registeredActions.get(url)
+}
+
 // ============================================================================
 // Submission Tracking
 // ============================================================================
 
 type SubmissionMap = Map<string, Submission<unknown>>
 type SubmissionStore = Signal<SubmissionMap>
+type SubmissionExecutor<T> = (formData: FormData, params: Params) => Promise<T>
 
 /** Associate tracked submissions with their action without exposing an internal field publicly. */
 const submissionActionUrls = new WeakMap<Submission<unknown>, string>()
@@ -455,6 +481,7 @@ async function submitActionInStore<T>(
   formData: FormData,
   params: Params,
   activeSubmissions: SubmissionStore,
+  execute: SubmissionExecutor<T>,
 ): Promise<T> {
   const key = `submission-${++submissionCounter}`
 
@@ -473,7 +500,7 @@ async function submitActionInStore<T>(
       // The retried submission records its own idle/error state. Since retry is
       // intentionally a void API, consume the returned rejection after that
       // state update instead of leaking an unhandled promise.
-      void submitActionInStore(action, formData, params, activeSubmissions).catch(() => {})
+      void submitActionInStore(action, formData, params, activeSubmissions, execute).catch(() => {})
     },
   }
   submissionActionUrls.set(submission as Submission<unknown>, action.url)
@@ -485,7 +512,7 @@ async function submitActionInStore<T>(
 
   try {
     // Execute the action
-    const result = await action.submit(formData, params)
+    const result = await execute(formData, params)
 
     // Update submission with result
     submission.result = result
@@ -525,7 +552,40 @@ export function submitAction<T>(
 ): Promise<T> {
   // Resolve once while the caller's SSR session is available. Every async
   // settle, clear, and retry continues to use this captured store.
-  return submitActionInStore(action, formData, params, resolveSubmissionStore())
+  return submitActionInStore(
+    action,
+    formData,
+    params,
+    resolveSubmissionStore(),
+    (submittedFormData, submittedParams) => action.submit(submittedFormData, submittedParams),
+  )
+}
+
+/**
+ * Submit an action from a declarative Form while preserving its actual request.
+ * This is intentionally internal to the router package rather than re-exported.
+ */
+export function submitActionFromForm<T>(
+  action: Action<T>,
+  formData: FormData,
+  params: Params,
+  request: { url: string; method: string },
+): Promise<T> {
+  const registeredHandler = actionHandlers.get(action as Action<unknown>) as
+    | ActionFunction<T>
+    | undefined
+  const execute: SubmissionExecutor<T> = registeredHandler
+    ? (submittedFormData, submittedParams) =>
+        executeActionHandler(
+          registeredHandler,
+          submittedFormData,
+          submittedParams,
+          request.url,
+          request.method,
+        )
+    : (submittedFormData, submittedParams) => action.submit(submittedFormData, submittedParams)
+
+  return submitActionInStore(action, formData, params, resolveSubmissionStore(), execute)
 }
 
 // ============================================================================
@@ -685,6 +745,8 @@ export function cleanupDataUtilities(): void {
   sharedQueryCache.clear()
   requestQueryCaches = new WeakMap()
   actionRegistry.clear()
+  registeredActions.clear()
+  actionHandlers = new WeakMap()
   sharedActiveSubmissions(new Map())
   requestActiveSubmissions = new WeakMap()
 }

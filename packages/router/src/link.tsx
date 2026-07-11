@@ -26,7 +26,8 @@ import {
   RouteContext,
   type MaybeAccessor,
 } from './context'
-import type { To, NavigateOptions } from './types'
+import { getRegisteredAction, submitActionFromForm } from './data'
+import type { Action, Params, To, NavigateOptions } from './types'
 import { parseURL, prependBasePath, stripBasePath } from './utils'
 
 // CSS Properties type for styles
@@ -499,8 +500,8 @@ export function NavLink(props: NavLinkProps): FictNode {
 // ============================================================================
 
 export interface FormProps extends Omit<JSX.IntrinsicElements['form'], 'action' | 'method'> {
-  /** Form action URL */
-  action?: string
+  /** Form action URL or registered action */
+  action?: string | Action<unknown>
   /** HTTP method */
   method?: 'get' | 'post' | 'put' | 'patch' | 'delete'
   /** Replace history entry */
@@ -535,6 +536,7 @@ interface ResolvedFormAction {
   hash: string
   href: string
   isExternal: boolean
+  registeredAction: Action<unknown> | undefined
 }
 
 type FormSubmitter = HTMLButtonElement | HTMLInputElement
@@ -602,7 +604,7 @@ function createFormData(form: HTMLFormElement, submitter: FormSubmitter | null):
   }
 }
 
-function splitFormAction(action: string): Omit<ResolvedFormAction, 'href' | 'isExternal'> {
+function splitFormAction(action: string): Pick<ResolvedFormAction, 'pathname' | 'search' | 'hash'> {
   let pathname = action
   let hash = ''
   let search = ''
@@ -639,12 +641,20 @@ export function Form(props: FormProps): FictNode {
   const hasRouteContext = hasContext(RouteContext)
 
   const resolveAction = (actionOverride?: string): ResolvedFormAction => {
-    const rawAction = actionOverride ?? props.action ?? '.'
+    const actionValue = actionOverride ?? props.action ?? '.'
+    const directAction =
+      actionOverride === undefined && typeof actionValue !== 'string' ? actionValue : undefined
+    const rawAction = typeof actionValue === 'string' ? actionValue : actionValue.url
     const externalHref = getExternalHref(rawAction)
     const action = splitFormAction(rawAction)
 
     if (externalHref !== null) {
-      return { ...action, href: externalHref, isExternal: true }
+      return {
+        ...action,
+        href: externalHref,
+        isExternal: true,
+        registeredAction: directAction,
+      }
     }
 
     const resolver =
@@ -653,6 +663,11 @@ export function Form(props: FormProps): FictNode {
         : readAccessor(route.resolvePath as MaybeAccessor<(to: To) => string>)
     const pathname = resolver(action.pathname || '.')
     const base = readAccessor(router.base)
+    const registeredAction =
+      directAction ??
+      getRegisteredAction(action.pathname) ??
+      getRegisteredAction(pathname) ??
+      getRegisteredAction(stripBasePath(pathname, base))
 
     return {
       pathname,
@@ -660,6 +675,7 @@ export function Form(props: FormProps): FictNode {
       hash: action.hash,
       href: prependBasePath(pathname, base) + action.search + action.hash,
       isExternal: false,
+      registeredAction,
     }
   }
 
@@ -681,17 +697,21 @@ export function Form(props: FormProps): FictNode {
     if (target && target.toLowerCase() !== '_self') return
 
     const snapshot = untrack(() => {
+      const action = resolveAction(getSubmitterOverride(submitter, 'formaction'))
       const method = getHandledFormMethod(
-        getSubmitterOverride(submitter, 'formmethod') ?? props.method,
+        getSubmitterOverride(submitter, 'formmethod') ??
+          props.method ??
+          (action.registeredAction ? 'post' : undefined),
       )
       if (!method) return null
 
       return {
-        action: resolveAction(getSubmitterOverride(submitter, 'formaction')),
+        action,
         method,
         navigate: props.navigate,
         replace: props.replace,
         scroll: props.preventScrollReset === true ? false : undefined,
+        params: { ...readAccessor(router.params) },
       }
     })
 
@@ -727,17 +747,78 @@ export function Form(props: FormProps): FictNode {
         ),
       )
     } else {
-      // For POST/PUT/PATCH/DELETE, submit via fetch
-      void submitFormAction(form, snapshot.action.href, snapshot.method, formData, {
+      const options = {
         navigate: snapshot.navigate !== false,
         replace: snapshot.replace ?? false,
         scroll: snapshot.scroll,
         router,
-      }).catch(() => {
-        // submitFormAction already reports the failure through `formerror`
-        // and console.error. Event listeners cannot observe its returned
-        // promise, so consume the rejection here to avoid an unhandled one.
+      }
+
+      const submission = snapshot.action.registeredAction
+        ? submitRegisteredFormAction(
+            form,
+            snapshot.action.registeredAction,
+            snapshot.action.href,
+            snapshot.method,
+            formData,
+            snapshot.params,
+            options,
+          )
+        : submitFormAction(form, snapshot.action.href, snapshot.method, formData, options)
+
+      void submission.catch(() => {
+        // The submission helpers already report failures through `formerror`
+        // and console.error. Event listeners cannot observe their returned
+        // promises, so consume the rejection here to avoid an unhandled one.
       })
+    }
+  }
+
+  /** Submit a registered client action through the shared submission tracker. */
+  async function submitRegisteredFormAction(
+    formElement: HTMLFormElement,
+    registeredAction: Action<unknown>,
+    url: string,
+    method: string,
+    formData: FormData,
+    params: Params,
+    options: {
+      navigate: boolean
+      replace: boolean
+      scroll: boolean | undefined
+      router: typeof router
+    },
+  ) {
+    try {
+      const data = await submitActionFromForm(registeredAction, formData, params, { url, method })
+      const response = data instanceof Response ? data : null
+      const redirectUrl =
+        response?.headers.get('X-Redirect') || response?.headers.get('Location') || undefined
+      if (options.navigate && redirectUrl) {
+        options.router.navigate(redirectUrl, {
+          replace: options.replace,
+          scroll: options.scroll,
+        })
+      }
+
+      formElement.dispatchEvent(
+        new CustomEvent('formsubmit', {
+          bubbles: true,
+          detail: { data, response },
+        }),
+      )
+
+      return { data, response }
+    } catch (error) {
+      formElement.dispatchEvent(
+        new CustomEvent('formerror', {
+          bubbles: true,
+          detail: { error },
+        }),
+      )
+
+      console.error('[fict-router] Form submission failed:', error)
+      throw error
     }
   }
 
@@ -817,7 +898,7 @@ export function Form(props: FormProps): FictNode {
   // Only use standard form methods (get, post) for the HTML attribute
   // Other methods (put, patch, delete) are handled via fetch in handleSubmit
   const htmlMethod = reactive(() => {
-    const method = props.method
+    const method = props.method ?? (resolveAction().registeredAction ? 'post' : undefined)
     return method && ['get', 'post'].includes(method) ? (method as 'get' | 'post') : undefined
   })
   const children = reactive(() => props.children)

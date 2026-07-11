@@ -19,6 +19,9 @@ import {
   NavLink,
   Link,
   Form,
+  action,
+  useSubmission,
+  cleanupDataUtilities,
   Navigate,
   Redirect,
   clearAllScrollPositions,
@@ -26,6 +29,8 @@ import {
   type Location,
   type NavigateOptions,
   type RouteDefinition,
+  type Action,
+  type Submission,
   type To,
 } from '../src'
 import { RouterProvider } from '../src/router-provider'
@@ -34,6 +39,19 @@ import { readAccessor } from '../src/context'
 function LocationText() {
   const location = useLocation()
   return <span data-testid="path">{location().pathname}</span>
+}
+
+let trackedFormAction!: Action<string>
+let trackedFormActionProp!: Action<string> | string
+let trackedFormCurrentSubmission!: () => Submission<string> | undefined
+
+function TrackedActionFormFixture() {
+  trackedFormCurrentSubmission = useSubmission(trackedFormAction)
+  return (
+    <Form action={trackedFormActionProp} data-testid="tracked-action-form">
+      <input name="value" value="fict" />
+    </Form>
+  )
 }
 
 function NavigateButton({ to }: { to: string }) {
@@ -2109,6 +2127,76 @@ describe('Router integration (MemoryRouter)', () => {
       fetchMock.mockRestore()
     }
   })
+
+  it.each(['Action object', 'registered URL'] as const)(
+    'runs a Form $label through the tracked action submission lifecycle',
+    async actionKind => {
+      cleanupDataUtilities()
+      let settle!: (value: string) => void
+      let observedRequest: Request | undefined
+      let observedParams: Readonly<Record<string, string | undefined>> | undefined
+      let observedFormData: FormData | undefined
+      const actionName = `tracked-form-${actionKind === 'Action object' ? 'object' : 'url'}`
+      const save = action<string>((formData, { params, request }) => {
+        observedFormData = formData
+        observedParams = params
+        observedRequest = request
+        return new Promise(resolve => {
+          settle = resolve
+        })
+      }, actionName)
+      const fetchMock = vi
+        .spyOn(globalThis, 'fetch')
+        .mockRejectedValue(new Error('registered actions must not use fetch'))
+
+      trackedFormAction = save
+      trackedFormActionProp = actionKind === 'Action object' ? save : save.url
+
+      try {
+        render(() => (
+          <MemoryRouter initialEntries={['/users/42']}>
+            <Route path="/users/:id" element={<TrackedActionFormFixture />} />
+          </MemoryRouter>
+        ))
+
+        const form = screen.getByTestId('tracked-action-form') as HTMLFormElement
+        const results: unknown[] = []
+        form.addEventListener('formsubmit', event => {
+          results.push((event as CustomEvent<{ data: unknown }>).detail.data)
+        })
+
+        expect(form.getAttribute('action')).toBe(`/_action/${actionName}`)
+        expect(form.getAttribute('method')).toBe('post')
+
+        form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+        expect(fetchMock).not.toHaveBeenCalled()
+        expect(observedFormData?.get('value')).toBe('fict')
+        expect(observedParams).toEqual({ id: '42' })
+        expect(observedRequest?.method).toBe('POST')
+        expect(new URL(observedRequest?.url ?? 'http://localhost').pathname).toBe(
+          `/_action/${actionName}`,
+        )
+        expect(trackedFormCurrentSubmission()).toMatchObject({
+          formData: observedFormData,
+          state: 'submitting',
+        })
+
+        await act(async () => {
+          settle('saved')
+          await Promise.resolve()
+        })
+
+        await vi.waitFor(() =>
+          expect(trackedFormCurrentSubmission()).toMatchObject({ state: 'idle', result: 'saved' }),
+        )
+        expect(results).toEqual(['saved'])
+      } finally {
+        fetchMock.mockRestore()
+        cleanupDataUtilities()
+      }
+    },
+  )
 
   it('keeps Link navigation, disabled state, handlers, and intent preloads reactive', async () => {
     firstReactiveLinkClick.mockClear()
