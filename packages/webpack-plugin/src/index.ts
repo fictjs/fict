@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { builtinModules, createRequire, findPackageJSON } from 'node:module'
 import path from 'node:path'
 
 import type { Compilation, Compiler, NormalModule } from 'webpack'
@@ -13,6 +14,8 @@ import {
   getPackageRuntimeTargets,
   isPackageResourcePathContained,
   isCanonicalPackageName,
+  isCanonicalPublicSubpath,
+  isUnresolvedPackageResolution,
   packageResourcePathsMatch,
   resolvePackageRuntimeTargetPath,
   type FictWebpackPackageResolutionState,
@@ -29,6 +32,41 @@ import {
 } from './shared'
 
 const PLUGIN_NAME = 'FictWebpackPlugin'
+const COMMONJS_EXTERNAL_TYPES = new Set([
+  'commonjs',
+  'commonjs2',
+  'commonjs-module',
+  'commonjs-static',
+  'node-commonjs',
+])
+const NODE_BUILTIN_MODULES = new Set(builtinModules.map(request => request.replace(/^node:/, '')))
+const OUTPUT_TEMPLATE_PATTERN = /\[[^\]]+\]/
+
+const NODE_COMMONJS_RESOLVE_OPTIONS = {
+  alias: [],
+  aliasFields: [],
+  conditionNames: ['node', 'require', 'node-addons'],
+  dependencyType: 'commonjs' as const,
+  descriptionFiles: ['package.json'],
+  enforceExtension: false,
+  exportsFields: ['exports'],
+  extensionAlias: {},
+  extensions: ['.js', '.json', '.node'],
+  fallback: [],
+  fullySpecified: false,
+  importsFields: ['imports'],
+  mainFields: ['main'],
+  mainFiles: ['index'],
+  modules: ['node_modules'],
+  plugins: [],
+  pnpApi: null,
+  preferAbsolute: false,
+  preferRelative: false,
+  restrictions: [],
+  roots: [],
+  symlinks: true,
+  tsconfig: false,
+}
 
 interface MetadataGraphNode {
   filename: string
@@ -39,8 +77,26 @@ interface MetadataGraphNode {
 interface WebpackResourceResolveData {
   path?: unknown
   query?: unknown
+  fragment?: unknown
   descriptionFilePath?: unknown
   descriptionFileData?: unknown
+}
+
+interface ExternalPackageDescriptor {
+  fingerprint: string
+  packageName?: string
+  runtimeRequest?: string
+}
+
+interface WebpackExternalModuleData {
+  externalType?: unknown
+  request?: unknown
+  userRequest?: unknown
+}
+
+interface ExternalPackageResolution {
+  resolveData: WebpackResourceResolveData
+  staticResolveOptions: ReturnType<typeof getStaticResolveOptions>
 }
 
 export interface FictWebpackPluginOptions {
@@ -65,6 +121,194 @@ function stableStringify(value: unknown): string {
       key => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`,
     )
     .join(',')}}`
+}
+
+function getCanonicalPackageName(request: string): string | undefined {
+  const segments = request.split('/')
+  const scoped = request.startsWith('@')
+  if ((scoped && segments.length < 2) || (!scoped && segments.length < 1)) return undefined
+  const packageName = scoped ? `${segments[0]}/${segments[1]}` : segments[0]!
+  if (!isCanonicalPackageName(packageName) || NODE_BUILTIN_MODULES.has(packageName))
+    return undefined
+  const subpath = segments.slice(scoped ? 2 : 1)
+  return subpath.length === 0 || isCanonicalPublicSubpath(`./${subpath.join('/')}`)
+    ? packageName
+    : undefined
+}
+
+function isStaticFlatCommonJsOutputFilename(filename: unknown): filename is string {
+  return (
+    typeof filename === 'string' &&
+    filename.endsWith('.cjs') &&
+    !filename.includes('\0') &&
+    !filename.includes('/') &&
+    !filename.includes('\\') &&
+    !filename.includes('?') &&
+    !filename.includes('#') &&
+    !OUTPUT_TEMPLATE_PATTERN.test(filename)
+  )
+}
+
+function resolveThroughExistingAncestor(filename: string): string | undefined {
+  let current = filename
+  const missingSegments: string[] = []
+  while (true) {
+    try {
+      return path.join(realpathSync(current), ...missingSegments)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') return undefined
+      const parent = path.dirname(current)
+      if (parent === current) return undefined
+      missingSegments.unshift(path.basename(current))
+      current = parent
+    }
+  }
+}
+
+function getExternalRuntimeDirectory(
+  compilation: Compilation,
+  compiler: Compiler,
+): string | undefined {
+  const platform = compiler.platform
+  if (
+    platform.node !== true ||
+    platform.web !== false ||
+    platform.browser !== false ||
+    platform.webworker !== false ||
+    platform.electron !== false ||
+    platform.nwjs !== false
+  ) {
+    return undefined
+  }
+  if (compilation.outputOptions.clean) return undefined
+  if (
+    compilation.outputOptions.module !== false ||
+    compilation.outputOptions.chunkFormat !== 'commonjs'
+  ) {
+    return undefined
+  }
+  const outputPath = compilation.outputOptions.path
+  if (!path.isAbsolute(outputPath)) return undefined
+  const runtimeDirectory = path.resolve(outputPath)
+  if (resolveThroughExistingAncestor(runtimeDirectory) !== runtimeDirectory) return undefined
+  if (!isStaticFlatCommonJsOutputFilename(compilation.outputOptions.filename)) {
+    return undefined
+  }
+  // Webpack confines ExternalModule instances to chunks that contain entry modules, so the
+  // non-entry chunk filename cannot change the directory of the generated require call.
+  for (const entry of compilation.entries.values()) {
+    if (
+      entry.options.filename !== undefined &&
+      !isStaticFlatCommonJsOutputFilename(entry.options.filename)
+    ) {
+      return undefined
+    }
+  }
+  return runtimeDirectory
+}
+
+function getExternalPackageDescriptor(
+  compiler: Compiler,
+  dependencyModule: object,
+): ExternalPackageDescriptor | undefined {
+  if (!(dependencyModule instanceof compiler.webpack.ExternalModule)) return undefined
+  const external = dependencyModule as WebpackExternalModuleData
+  const fingerprint = createHash('sha256')
+    .update(
+      stableStringify({
+        externalType: external.externalType,
+        request: external.request,
+        userRequest: external.userRequest,
+        version: 1,
+      }),
+    )
+    .digest('hex')
+  if (typeof external.externalType !== 'string' || typeof external.request !== 'string') {
+    return { fingerprint }
+  }
+  if (!COMMONJS_EXTERNAL_TYPES.has(external.externalType)) return { fingerprint }
+  const packageName = getCanonicalPackageName(external.request)
+  return packageName
+    ? { fingerprint, packageName, runtimeRequest: external.request }
+    : { fingerprint }
+}
+
+function resolveExternalPackageResource(
+  compilation: Compilation,
+  compiler: Compiler,
+  runtimeRequest: string,
+): Promise<ExternalPackageResolution | undefined> {
+  const runtimeDirectory = getExternalRuntimeDirectory(compilation, compiler)
+  if (!runtimeDirectory) return Promise.resolve(undefined)
+  let runtimeResource: string | undefined
+  let runtimePackageJsonPath: string | undefined
+  const runtimeProbe = path.join(runtimeDirectory, '__fict_external__.cjs')
+  try {
+    runtimeResource = realpathSync(createRequire(runtimeProbe).resolve(runtimeRequest))
+    const packageJsonPath = findPackageJSON(runtimeRequest, runtimeProbe)
+    if (packageJsonPath) runtimePackageJsonPath = realpathSync(packageJsonPath)
+  } catch {
+    // The clean resolver below still records the package lookup paths for watch mode.
+  }
+  const resolver = compiler.resolverFactory.get('normal', NODE_COMMONJS_RESOLVE_OPTIONS)
+  const fileDependencies = new Set<string>()
+  const contextDependencies = new Set<string>()
+  const missingDependencies = new Set<string>()
+  return new Promise(resolve => {
+    const finish = (result?: ExternalPackageResolution): void => {
+      for (const dependency of fileDependencies) compilation.fileDependencies.add(dependency)
+      for (const dependency of contextDependencies) {
+        compilation.contextDependencies.add(dependency)
+      }
+      for (const dependency of missingDependencies) {
+        compilation.missingDependencies.add(dependency)
+      }
+      resolve(result)
+    }
+    try {
+      resolver.resolve(
+        {},
+        runtimeDirectory,
+        runtimeRequest,
+        { contextDependencies, fileDependencies, missingDependencies },
+        (error, result, resolveData) => {
+          if (
+            error ||
+            !runtimeResource ||
+            !runtimePackageJsonPath ||
+            typeof result !== 'string' ||
+            !resolveData ||
+            (() => {
+              try {
+                const resolvedPath = (resolveData as WebpackResourceResolveData).path
+                const descriptionFilePath = (resolveData as WebpackResourceResolveData)
+                  .descriptionFilePath
+                return (
+                  typeof resolvedPath !== 'string' ||
+                  typeof descriptionFilePath !== 'string' ||
+                  realpathSync(result) !== runtimeResource ||
+                  realpathSync(resolvedPath) !== runtimeResource ||
+                  realpathSync(descriptionFilePath) !== runtimePackageJsonPath
+                )
+              } catch {
+                return true
+              }
+            })()
+          ) {
+            finish()
+            return
+          }
+          finish({
+            resolveData: resolveData as WebpackResourceResolveData,
+            staticResolveOptions: resolver.options as ReturnType<typeof getStaticResolveOptions>,
+          })
+        },
+      )
+    } catch {
+      finish()
+    }
+  })
 }
 
 interface StaticFileProof {
@@ -271,12 +515,33 @@ async function resolveWebpackPackageMetadata(
   dependencyType: string,
   dependencyModule: object,
 ): Promise<FictWebpackPackageResolutionState> {
-  if (request.includes('?') || request.includes('!')) return 'opaque'
-  const resolveData = (dependencyModule as { resourceResolveData?: unknown })
-    .resourceResolveData as WebpackResourceResolveData | undefined
-  if (!resolveData || typeof resolveData.path !== 'string') return 'unresolved'
+  const external = getExternalPackageDescriptor(compiler, dependencyModule)
+  if (!external && (request.includes('?') || request.includes('!'))) return 'opaque'
+  const unresolved = (): FictWebpackPackageResolutionState =>
+    external
+      ? { kind: 'unresolved', externalMappingFingerprint: external.fingerprint }
+      : 'unresolved'
+  let externalResolution: ExternalPackageResolution | undefined
+  let resolveData: WebpackResourceResolveData | undefined
+  if (external) {
+    if (!external.runtimeRequest || !external.packageName) return unresolved()
+    externalResolution = await resolveExternalPackageResource(
+      compilation,
+      compiler,
+      external.runtimeRequest,
+    )
+    resolveData = externalResolution?.resolveData
+  } else {
+    resolveData = (dependencyModule as { resourceResolveData?: unknown }).resourceResolveData as
+      | WebpackResourceResolveData
+      | undefined
+  }
+  if (!resolveData || typeof resolveData.path !== 'string') return unresolved()
   if (typeof resolveData.query === 'string' && resolveData.query.length > 0) {
-    return 'opaque'
+    return external ? unresolved() : 'opaque'
+  }
+  if (external && typeof resolveData.fragment === 'string' && resolveData.fragment.length > 0) {
+    return unresolved()
   }
   if (
     typeof resolveData.descriptionFilePath !== 'string' ||
@@ -284,19 +549,19 @@ async function resolveWebpackPackageMetadata(
     typeof resolveData.descriptionFileData !== 'object' ||
     Array.isArray(resolveData.descriptionFileData)
   ) {
-    return 'unresolved'
+    return unresolved()
   }
-  if (path.basename(resolveData.descriptionFilePath) !== 'package.json') return 'unresolved'
+  if (path.basename(resolveData.descriptionFilePath) !== 'package.json') return unresolved()
 
   const packageData = resolveData.descriptionFileData as Record<string, unknown>
   const metadataSubpaths = getPackageMetadataSubpaths(packageData)
   const packageName = packageData.name
-  if (typeof packageName !== 'string' || !isCanonicalPackageName(packageName)) return 'unresolved'
+  if (typeof packageName !== 'string' || !isCanonicalPackageName(packageName)) return unresolved()
 
   const actualPackageJsonPath = path.resolve(resolveData.descriptionFilePath)
   const actualResourcePath = path.resolve(resolveData.path)
   if (!isPackageResourcePathContained(actualPackageJsonPath, actualResourcePath)) {
-    return 'unresolved'
+    return unresolved()
   }
   if (metadataSubpaths.length === 0) {
     return {
@@ -305,15 +570,18 @@ async function resolveWebpackPackageMetadata(
       resourcePaths: [actualResourcePath],
       metadataKeyFingerprint: getPackageMetadataKeyFingerprint(packageData),
       runtimeMappingFingerprint: getPackageRuntimeMappingFingerprint(packageData),
+      ...(external ? { externalMappingFingerprint: external.fingerprint } : {}),
     }
   }
-  const staticResolveOptions = getStaticResolveOptions(compiler, node, dependencyType)
+  const staticResolveOptions =
+    externalResolution?.staticResolveOptions ??
+    getStaticResolveOptions(compiler, node, dependencyType)
   if (
     !hasDefaultExportsFields(staticResolveOptions.exportsFields) ||
     hasActiveAliasField(packageData, staticResolveOptions.aliasFields) ||
     hasActiveExtensionAlias(staticResolveOptions.extensionAlias)
   ) {
-    return 'unresolved'
+    return unresolved()
   }
   const hasRuntimeExports = Object.prototype.hasOwnProperty.call(packageData, 'exports')
   const legacyRootProof: StaticFileProof = hasRuntimeExports
@@ -339,7 +607,10 @@ async function resolveWebpackPackageMetadata(
     ...getPackageRuntimeSubpaths(packageData, actualPackageJsonPath, actualResourcePath),
     ...metadataSubpaths,
   ])
-  const exportResolveOptions = { ...staticResolveOptions, fullySpecified: false }
+  const exportResolveOptions = {
+    ...staticResolveOptions,
+    fullySpecified: external ? true : false,
+  }
   const nonInvertibleTargetProofs = (
     metadataSubpaths.length > 0 ? getPackageNonInvertibleRuntimeTargets(packageData) : []
   ).map(target => getStaticFileProof(actualPackageJsonPath, target, exportResolveOptions))
@@ -402,6 +673,7 @@ async function resolveWebpackPackageMetadata(
     resourcePaths: [actualResourcePath],
     metadataKeyFingerprint: getPackageMetadataKeyFingerprint(packageData),
     runtimeMappingFingerprint: getPackageRuntimeMappingFingerprint(packageData),
+    ...(external ? { externalMappingFingerprint: external.fingerprint } : {}),
   }
 }
 
@@ -423,13 +695,24 @@ function recordPackageResolution(
   }
   if (previous === resolution && typeof previous === 'string') return
   if (
+    previous &&
+    isUnresolvedPackageResolution(previous) &&
+    isUnresolvedPackageResolution(resolution) &&
+    previous.externalMappingFingerprint === resolution.externalMappingFingerprint
+  ) {
+    return
+  }
+  if (
     !previous ||
     typeof previous === 'string' ||
     typeof resolution === 'string' ||
+    isUnresolvedPackageResolution(previous) ||
+    isUnresolvedPackageResolution(resolution) ||
     previous.packageJsonPath !== resolution.packageJsonPath ||
     previous.publicSubpath !== resolution.publicSubpath ||
     previous.metadataKeyFingerprint !== resolution.metadataKeyFingerprint ||
-    previous.runtimeMappingFingerprint !== resolution.runtimeMappingFingerprint
+    previous.runtimeMappingFingerprint !== resolution.runtimeMappingFingerprint ||
+    previous.externalMappingFingerprint !== resolution.externalMappingFingerprint
   ) {
     throw new Error(
       `[fict] Webpack resolved "${request}" from "${node.filename}" to multiple package entries.`,

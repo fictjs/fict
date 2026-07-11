@@ -6,7 +6,7 @@ import { transformAsync, type TransformOptions } from '@babel/core'
 import type { FictPresetOptions } from '@fictjs/babel-preset'
 import { resolvePackageModuleMetadata } from '@fictjs/compiler'
 
-import { readPackageMetadataAtBoundary } from './package-metadata'
+import { isUnresolvedPackageResolution, readPackageMetadataAtBoundary } from './package-metadata'
 import {
   createLocalResolutionKey,
   getLoaderBinding,
@@ -125,6 +125,22 @@ export default function fictWebpackLoader(
     moduleMetadata: binding.state.moduleMetadata,
     resolveModuleMetadata: (sourceRequest, importer) => {
       if (!importer) return undefined
+      const packageResolutions = binding.state.packageResolutionsByFilename.get(filename)
+      if (packageResolutions?.has(sourceRequest)) {
+        const packageResolution = packageResolutions.get(sourceRequest)
+        if (packageResolution === 'opaque') return { exports: {} }
+        if (
+          !packageResolution ||
+          packageResolution === 'unresolved' ||
+          isUnresolvedPackageResolution(packageResolution)
+        ) {
+          return null
+        }
+        const result = readPackageMetadataAtBoundary(packageResolution, registerMetadataDependency)
+        if (result.kind === 'resolved') return result.metadata
+        if (result.kind === 'stale-boundary') throw new Error(result.message)
+        return result.kind === 'plain' ? { exports: {} } : null
+      }
       if (sourceRequest.includes('?') || sourceRequest.includes('!')) return { exports: {} }
       const dependency = binding.state.resolvedLocalModules.get(
         createLocalResolutionKey(importer, sourceRequest),
@@ -132,16 +148,6 @@ export default function fictWebpackLoader(
       if (dependency) {
         if (binding.state.incompleteModuleMetadata.has(dependency)) return null
         return binding.state.moduleMetadata.get(dependency) ?? null
-      }
-      const packageResolutions = binding.state.packageResolutionsByFilename.get(filename)
-      if (packageResolutions?.has(sourceRequest)) {
-        const packageResolution = packageResolutions.get(sourceRequest)
-        if (packageResolution === 'opaque') return { exports: {} }
-        if (!packageResolution || packageResolution === 'unresolved') return null
-        const result = readPackageMetadataAtBoundary(packageResolution, registerMetadataDependency)
-        if (result.kind === 'resolved') return result.metadata
-        if (result.kind === 'stale-boundary') throw new Error(result.message)
-        return result.kind === 'plain' ? { exports: {} } : null
       }
       return resolvePackageModuleMetadata(sourceRequest, importer, {
         emitModuleMetadata: false,

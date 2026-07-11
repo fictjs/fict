@@ -18,12 +18,25 @@ export interface FictWebpackPackageResolution {
   resourcePaths: string[]
   metadataKeyFingerprint: string
   runtimeMappingFingerprint: string
+  externalMappingFingerprint?: string
+}
+
+export interface FictWebpackUnresolvedPackageResolution {
+  kind: 'unresolved'
+  externalMappingFingerprint: string
 }
 
 export type FictWebpackPackageResolutionState =
   | FictWebpackPackageResolution
+  | FictWebpackUnresolvedPackageResolution
   | 'opaque'
   | 'unresolved'
+
+export function isUnresolvedPackageResolution(
+  resolution: FictWebpackPackageResolutionState,
+): resolution is FictWebpackUnresolvedPackageResolution {
+  return typeof resolution === 'object' && 'kind' in resolution && resolution.kind === 'unresolved'
+}
 
 export type PackageMetadataBoundaryResult =
   | { kind: 'plain' }

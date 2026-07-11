@@ -1027,6 +1027,843 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
     }
   })
 
+  it('uses metadata from the runtime package named by a CommonJS external', async () => {
+    const root = await createFixture({
+      'entry.ts': entrySource('public-hook'),
+      'node_modules/public-hook/index.js': 'exports.useCounter = () => 2',
+      'node_modules/public-hook/package.json': JSON.stringify({
+        name: 'public-hook',
+        version: '1.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'node_modules/public-hook/index.fict.meta.json': plainMetadata,
+      'node_modules/actual-hook/index.js': 'exports.useCounter = () => () => 2',
+      'node_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '1.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'node_modules/actual-hook/index.fict.meta.json': signalMetadata,
+    })
+
+    try {
+      await runCompiler(
+        excludeNodeModules(
+          createWebpackConfiguration(root, {
+            externals: { 'public-hook': 'commonjs actual-hook' },
+          }),
+        ),
+      )
+      expect(runApp(root)).toBe(4)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('uses plain metadata from the runtime package instead of reactive shadow metadata', async () => {
+    const root = await createFixture({
+      'entry.ts': entrySource('public-hook'),
+      'node_modules/public-hook/index.js': 'exports.useCounter = () => () => 9',
+      'node_modules/public-hook/package.json': JSON.stringify({
+        name: 'public-hook',
+        version: '1.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'node_modules/public-hook/index.fict.meta.json': signalMetadata,
+      'node_modules/actual-hook/index.js': 'exports.useCounter = () => 2',
+      'node_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '1.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'node_modules/actual-hook/index.fict.meta.json': plainMetadata,
+    })
+
+    try {
+      await runCompiler(
+        excludeNodeModules(
+          createWebpackConfiguration(root, {
+            externals: { 'public-hook': 'commonjs actual-hook' },
+          }),
+        ),
+      )
+      expect(runApp(root)).toBe(4)
+      expect(await readBundle(root)).not.toMatch(/count\(\)\s*\*\s*2/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('resolves a CommonJS external from the output location instead of an importer shadow', async () => {
+    const root = await createFixture({
+      'src/entry.ts': entrySource('public-hook'),
+      'src/node_modules/actual-hook/index.js': 'exports.useCounter = () => 2',
+      'src/node_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '1.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'src/node_modules/actual-hook/index.fict.meta.json': plainMetadata,
+      'node_modules/actual-hook/index.js': 'exports.useCounter = () => () => 2',
+      'node_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '1.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'node_modules/actual-hook/index.fict.meta.json': signalMetadata,
+    })
+    const configuration = excludeNodeModules(
+      createWebpackConfiguration(root, {
+        externals: { 'public-hook': 'commonjs actual-hook' },
+      }),
+    )
+    configuration.entry = './src/entry.ts'
+
+    try {
+      await runCompiler(configuration)
+      expect(runApp(root)).toBe(4)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not apply Webpack aliases to an external runtime package request', async () => {
+    const root = await createFixture({
+      'entry.ts': entrySource('public-hook'),
+      'node_modules/actual-hook/index.js': 'exports.useCounter = () => () => 2',
+      'node_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '1.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'node_modules/actual-hook/index.fict.meta.json': signalMetadata,
+      'node_modules/shadow-hook/index.js': 'exports.useCounter = () => 2',
+      'node_modules/shadow-hook/package.json': JSON.stringify({
+        name: 'shadow-hook',
+        version: '1.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'node_modules/shadow-hook/index.fict.meta.json': plainMetadata,
+    })
+
+    try {
+      await runCompiler(
+        excludeNodeModules(
+          createWebpackConfiguration(root, {
+            alias: { 'actual-hook': 'shadow-hook' },
+            externals: { 'public-hook': 'commonjs actual-hook' },
+          }),
+        ),
+      )
+      expect(runApp(root)).toBe(4)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('uses subpath metadata from a CommonJS external runtime request', async () => {
+    const root = await createFixture({
+      'entry.ts': entrySource('public-hook'),
+      'node_modules/actual-hook/hooks.js': 'exports.useCounter = () => () => 2',
+      'node_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '1.0.0',
+        exports: { './hooks': './hooks.js' },
+        fict: { exports: { './hooks': './hooks.fict.meta.json' } },
+      }),
+      'node_modules/actual-hook/hooks.fict.meta.json': signalMetadata,
+    })
+
+    try {
+      await runCompiler(
+        excludeNodeModules(
+          createWebpackConfiguration(root, {
+            externals: { 'public-hook': 'commonjs actual-hook/hooks' },
+          }),
+        ),
+      )
+      expect(runApp(root)).toBe(4)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not use metadata from a private package nested behind an external export', async () => {
+    const root = await createFixture({
+      'entry.ts': entrySource('public-hook'),
+      'node_modules/actual-hook/nested/index.js': 'exports.useCounter = () => 2',
+      'node_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '1.0.0',
+        exports: { '.': './nested/index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'node_modules/actual-hook/index.fict.meta.json': plainMetadata,
+      'node_modules/actual-hook/nested/package.json': JSON.stringify({
+        name: 'actual-hook-private',
+        version: '1.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'node_modules/actual-hook/nested/index.fict.meta.json': signalMetadata,
+    })
+
+    try {
+      await expect(
+        runCompiler(
+          excludeNodeModules(
+            createWebpackConfiguration(root, {
+              externals: { 'public-hook': 'commonjs actual-hook' },
+            }),
+          ),
+        ),
+      ).rejects.toThrow('FICT-H003')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['public-hook?raw', 'inline-loader!public-hook'])(
+    'ignores the lexical request %s when a CommonJS external names another package',
+    async publicRequest => {
+      const root = await createFixture({
+        'entry.ts': entrySource(publicRequest),
+        'node_modules/actual-hook/index.js': 'exports.useCounter = () => () => 2',
+        'node_modules/actual-hook/package.json': JSON.stringify({
+          name: 'actual-hook',
+          version: '1.0.0',
+          exports: { '.': './index.js' },
+          fict: { metadata: './index.fict.meta.json' },
+        }),
+        'node_modules/actual-hook/index.fict.meta.json': signalMetadata,
+      })
+
+      try {
+        await runCompiler(
+          excludeNodeModules(
+            createWebpackConfiguration(root, {
+              externals: { [publicRequest]: 'commonjs actual-hook' },
+            }),
+          ),
+        )
+        expect(runApp(root)).toBe(4)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it('does not let Webpack resolve.modules redirect an external runtime package', async () => {
+    const root = await createFixture({
+      'entry.ts': entrySource('public-hook'),
+      'custom_modules/actual-hook/index.js': 'exports.useCounter = () => () => 9',
+      'custom_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '1.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'custom_modules/actual-hook/index.fict.meta.json': signalMetadata,
+      'node_modules/actual-hook/index.js': 'exports.useCounter = () => 2',
+      'node_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '1.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'node_modules/actual-hook/index.fict.meta.json': plainMetadata,
+    })
+    const configuration = excludeNodeModules(
+      createWebpackConfiguration(root, {
+        externals: { 'public-hook': 'commonjs actual-hook' },
+      }),
+    )
+    configuration.resolve!.modules = [path.join(root, 'custom_modules'), 'node_modules']
+
+    try {
+      await runCompiler(configuration)
+      expect(runApp(root)).toBe(4)
+      expect(await readBundle(root)).not.toMatch(/count\(\)\s*\*\s*2/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('uses Node main resolution instead of custom Webpack mainFields for externals', async () => {
+    const root = await createFixture({
+      'entry.ts': entrySource('public-hook'),
+      'node_modules/actual-hook/main.js': 'exports.useCounter = () => 2',
+      'node_modules/actual-hook/custom.js': 'exports.useCounter = () => () => 9',
+      'node_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '1.0.0',
+        main: './main.js',
+        customMain: './custom.js',
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'node_modules/actual-hook/index.fict.meta.json': plainMetadata,
+    })
+    const configuration = excludeNodeModules(
+      createWebpackConfiguration(root, {
+        externals: { 'public-hook': 'commonjs actual-hook' },
+      }),
+    )
+    configuration.resolve!.mainFields = ['customMain', 'main']
+    const mainPath = path.join(root, 'node_modules', 'actual-hook', 'main.js')
+    const customPath = path.join(root, 'node_modules', 'actual-hook', 'custom.js')
+
+    try {
+      const stats = await runCompiler(configuration)
+      expect(runApp(root)).toBe(4)
+      expect(stats.compilation.fileDependencies).toContain(mainPath)
+      expect(stats.compilation.fileDependencies).not.toContain(customPath)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps an ESM external authoritative for a web host', async () => {
+    const root = await createFixture({
+      'entry.ts': entrySource('public-hook'),
+      'node_modules/actual-hook/index.mjs': 'export const useCounter = () => () => 2',
+      'node_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '1.0.0',
+        exports: { '.': './index.mjs' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'node_modules/actual-hook/index.fict.meta.json': signalMetadata,
+    })
+    const packagePath = path.join(root, 'node_modules', 'actual-hook', 'package.json')
+    let observedCompilation: Compilation | undefined
+    const observer = {
+      apply(compiler: Compiler): void {
+        compiler.hooks.thisCompilation.tap('FictWebExternalObserver', compilation => {
+          observedCompilation = compilation
+        })
+      },
+    }
+    const configuration = excludeNodeModules(
+      createWebpackConfiguration(root, {
+        externals: { 'public-hook': 'module actual-hook' },
+        plugins: [observer],
+      }),
+    )
+    configuration.experiments = { outputModule: true }
+    configuration.output!.library = { type: 'module' }
+    configuration.output!.module = true
+    configuration.target = 'web'
+
+    try {
+      await expect(runCompiler(configuration)).rejects.toThrow('FICT-H003')
+      const dependencies = [
+        ...(observedCompilation?.fileDependencies ?? []),
+        ...(observedCompilation?.missingDependencies ?? []),
+        ...(observedCompilation?.contextDependencies ?? []),
+      ]
+      expect(dependencies).not.toContain(packagePath)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['web', 'electron-main'] as const)(
+    'does not infer Node require semantics for a %s CommonJS external host',
+    async target => {
+      const root = await createFixture({
+        'entry.ts': entrySource('public-hook'),
+        'node_modules/actual-hook/index.js': 'exports.useCounter = () => () => 2',
+        'node_modules/actual-hook/package.json': JSON.stringify({
+          name: 'actual-hook',
+          version: '1.0.0',
+          exports: { '.': './index.js' },
+          fict: { metadata: './index.fict.meta.json' },
+        }),
+        'node_modules/actual-hook/index.fict.meta.json': signalMetadata,
+      })
+      const configuration = excludeNodeModules(
+        createWebpackConfiguration(root, {
+          externals: { 'public-hook': 'commonjs actual-hook' },
+        }),
+      )
+      configuration.target = target
+
+      try {
+        await expect(runCompiler(configuration)).rejects.toThrow('FICT-H003')
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it.each([
+    ['a nested output filename', { filename: 'chunks/bundle.cjs' }],
+    ['a templated output filename', { filename: '[name].cjs' }],
+    ['a non-CommonJS output filename', { filename: 'bundle.js' }],
+    ['an ESM chunk format', { chunkFormat: 'module' }],
+  ] as const)('fails closed for %s before using external metadata', async (_label, output) => {
+    const root = await createFixture({
+      'entry.ts': entrySource('public-hook'),
+      'node_modules/actual-hook/index.js': 'exports.useCounter = () => () => 2',
+      'node_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '1.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'node_modules/actual-hook/index.fict.meta.json': signalMetadata,
+      'dist/chunks/node_modules/actual-hook/index.js': 'exports.useCounter = () => 2',
+      'dist/chunks/node_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '2.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'dist/chunks/node_modules/actual-hook/index.fict.meta.json': plainMetadata,
+    })
+    const configuration = excludeNodeModules(
+      createWebpackConfiguration(root, {
+        externals: { 'public-hook': 'commonjs actual-hook' },
+      }),
+    )
+    Object.assign(configuration.output!, output)
+
+    try {
+      await expect(runCompiler(configuration)).rejects.toThrow('FICT-H003')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed for node-commonjs in an ESM output asset', async () => {
+    const root = await createFixture({
+      'entry.ts': entrySource('public-hook'),
+      'node_modules/actual-hook/index.js': 'exports.useCounter = () => () => 2',
+      'node_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '1.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'node_modules/actual-hook/index.fict.meta.json': signalMetadata,
+    })
+    const configuration = excludeNodeModules(
+      createWebpackConfiguration(root, {
+        externals: { 'public-hook': 'node-commonjs actual-hook' },
+      }),
+    )
+    configuration.experiments = { outputModule: true }
+    configuration.output!.module = true
+
+    try {
+      await expect(runCompiler(configuration)).rejects.toThrow('FICT-H003')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed when output.clean would delete the external package resolved at build time', async () => {
+    const root = await createFixture({
+      'entry.ts': entrySource('public-hook'),
+      'node_modules/actual-hook/index.js': 'exports.useCounter = () => 2',
+      'node_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '1.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'node_modules/actual-hook/index.fict.meta.json': plainMetadata,
+      'dist/node_modules/actual-hook/index.js': 'exports.useCounter = () => () => 9',
+      'dist/node_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '2.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'dist/node_modules/actual-hook/index.fict.meta.json': signalMetadata,
+    })
+    const configuration = excludeNodeModules(
+      createWebpackConfiguration(root, {
+        externals: { 'public-hook': 'commonjs actual-hook' },
+      }),
+    )
+    configuration.output!.clean = true
+
+    try {
+      await expect(runCompiler(configuration)).rejects.toThrow('FICT-H003')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed for a nested entry filename override', async () => {
+    const root = await createFixture({
+      'entry.ts': entrySource('public-hook'),
+      'node_modules/actual-hook/index.js': 'exports.useCounter = () => () => 2',
+      'node_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '1.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'node_modules/actual-hook/index.fict.meta.json': signalMetadata,
+    })
+    const configuration = excludeNodeModules(
+      createWebpackConfiguration(root, {
+        externals: { 'public-hook': 'commonjs actual-hook' },
+      }),
+    )
+    configuration.entry = {
+      main: { filename: 'chunks/bundle.cjs', import: './entry.ts' },
+    }
+
+    try {
+      await expect(runCompiler(configuration)).rejects.toThrow('FICT-H003')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed before probing through a symlinked output path', async () => {
+    const root = await createFixture({
+      'entry.ts': entrySource('public-hook'),
+      'logical/node_modules/actual-hook/index.js': 'exports.useCounter = () => () => 9',
+      'logical/node_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '1.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'logical/node_modules/actual-hook/index.fict.meta.json': signalMetadata,
+      'physical/node_modules/actual-hook/index.js': 'exports.useCounter = () => 2',
+      'physical/node_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '2.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'physical/node_modules/actual-hook/index.fict.meta.json': plainMetadata,
+      'physical/dist/.keep': '',
+    })
+    const logicalPackagePath = path.join(
+      root,
+      'logical',
+      'node_modules',
+      'actual-hook',
+      'package.json',
+    )
+    const physicalPackagePath = path.join(
+      root,
+      'physical',
+      'node_modules',
+      'actual-hook',
+      'package.json',
+    )
+    const outputPath = path.join(root, 'logical', 'dist-link')
+    await symlink(
+      path.join(root, 'physical', 'dist'),
+      outputPath,
+      process.platform === 'win32' ? 'junction' : 'dir',
+    )
+    let observedCompilation: Compilation | undefined
+    const observer = {
+      apply(compiler: Compiler): void {
+        compiler.hooks.thisCompilation.tap('FictSymlinkedOutputObserver', compilation => {
+          observedCompilation = compilation
+        })
+      },
+    }
+    const configuration = excludeNodeModules(
+      createWebpackConfiguration(root, {
+        externals: { 'public-hook': 'commonjs actual-hook' },
+        plugins: [observer],
+      }),
+    )
+    configuration.output!.path = outputPath
+
+    try {
+      await expect(runCompiler(configuration)).rejects.toThrow('FICT-H003')
+      const dependencies = [
+        ...(observedCompilation?.fileDependencies ?? []),
+        ...(observedCompilation?.missingDependencies ?? []),
+        ...(observedCompilation?.contextDependencies ?? []),
+      ]
+      expect(dependencies).not.toContain(logicalPackagePath)
+      expect(dependencies).not.toContain(physicalPackagePath)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed when an existing output-path ancestor is symlinked', async () => {
+    const root = await createFixture({
+      'entry.ts': entrySource('public-hook'),
+      'node_modules/actual-hook/index.js': 'exports.useCounter = () => () => 9',
+      'node_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '1.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'node_modules/actual-hook/index.fict.meta.json': signalMetadata,
+      'physical-parent/node_modules/actual-hook/index.js': 'exports.useCounter = () => 2',
+      'physical-parent/node_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '2.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'physical-parent/node_modules/actual-hook/index.fict.meta.json': plainMetadata,
+      'physical-parent/output-root/dist/.keep': '',
+    })
+    const logicalOutputRoot = path.join(root, 'logical-output')
+    await symlink(
+      path.join(root, 'physical-parent', 'output-root'),
+      logicalOutputRoot,
+      process.platform === 'win32' ? 'junction' : 'dir',
+    )
+    const configuration = excludeNodeModules(
+      createWebpackConfiguration(root, {
+        externals: { 'public-hook': 'commonjs actual-hook' },
+      }),
+    )
+    configuration.output!.path = path.join(logicalOutputRoot, 'dist')
+
+    try {
+      await expect(runCompiler(configuration)).rejects.toThrow('FICT-H003')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    ['global external', 'var actual-hook'],
+    ['array/property external', ['commonjs actual-hook', 'useCounter'] as string[]],
+    ['non-canonical module request', 'commonjs ../actual-hook'],
+    ['queried module request', 'commonjs actual-hook?raw'],
+    ['fragmented module request', 'commonjs actual-hook#fragment'],
+  ] as const)(
+    'keeps an unsupported %s authoritative and does not probe it',
+    async (_label, target) => {
+      const root = await createFixture({
+        'entry.ts': entrySource('public-hook'),
+        'node_modules/actual-hook/index.js': 'exports.useCounter = () => () => 2',
+        'node_modules/actual-hook/package.json': JSON.stringify({
+          name: 'actual-hook',
+          version: '1.0.0',
+          exports: { '.': './index.js' },
+          fict: { metadata: './index.fict.meta.json' },
+        }),
+        'node_modules/actual-hook/index.fict.meta.json': signalMetadata,
+      })
+      const packagePath = path.join(root, 'node_modules', 'actual-hook', 'package.json')
+      let observedCompilation: Compilation | undefined
+      const observer = {
+        apply(compiler: Compiler): void {
+          compiler.hooks.thisCompilation.tap('FictExternalProbeObserver', compilation => {
+            observedCompilation = compilation
+          })
+        },
+      }
+
+      try {
+        await expect(
+          runCompiler(
+            excludeNodeModules(
+              createWebpackConfiguration(root, {
+                externals: { 'public-hook': target },
+                plugins: [observer],
+              }),
+            ),
+          ),
+        ).rejects.toThrow('FICT-H003')
+        const dependencies = [
+          ...(observedCompilation?.fileDependencies ?? []),
+          ...(observedCompilation?.missingDependencies ?? []),
+          ...(observedCompilation?.contextDependencies ?? []),
+        ]
+        expect(dependencies).not.toContain(packagePath)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it('does not treat a Node builtin external as an installed package', async () => {
+    const root = await createFixture({
+      'entry.ts': entrySource('public-hook'),
+      'node_modules/fs/index.js': 'exports.useCounter = () => () => 2',
+      'node_modules/fs/package.json': JSON.stringify({
+        name: 'fs',
+        version: '1.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'node_modules/fs/index.fict.meta.json': signalMetadata,
+    })
+    const packagePath = path.join(root, 'node_modules', 'fs', 'package.json')
+    let observedCompilation: Compilation | undefined
+    const observer = {
+      apply(compiler: Compiler): void {
+        compiler.hooks.thisCompilation.tap('FictBuiltinExternalObserver', compilation => {
+          observedCompilation = compilation
+        })
+      },
+    }
+
+    try {
+      await expect(
+        runCompiler(
+          excludeNodeModules(
+            createWebpackConfiguration(root, {
+              externals: { 'public-hook': 'commonjs fs' },
+              plugins: [observer],
+            }),
+          ),
+        ),
+      ).rejects.toThrow('FICT-H003')
+      const dependencies = [
+        ...(observedCompilation?.fileDependencies ?? []),
+        ...(observedCompilation?.missingDependencies ?? []),
+        ...(observedCompilation?.contextDependencies ?? []),
+      ]
+      expect(dependencies).not.toContain(packagePath)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('watches metadata from the runtime package named by an external', async () => {
+    const root = await createFixture({
+      'entry.ts': entrySource('public-hook'),
+      'node_modules/actual-hook/index.js': 'exports.useCounter = () => () => 2',
+      'node_modules/actual-hook/package.json': JSON.stringify({
+        name: 'actual-hook',
+        version: '1.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'node_modules/actual-hook/index.fict.meta.json': signalMetadata,
+    })
+    const entryPath = path.join(root, 'entry.ts')
+    const packagePath = path.join(root, 'node_modules', 'actual-hook', 'package.json')
+    const sidecarPath = path.join(root, 'node_modules', 'actual-hook', 'index.fict.meta.json')
+    const compiler = webpack(
+      excludeNodeModules(
+        createWebpackConfiguration(root, {
+          externals: { 'public-hook': 'commonjs actual-hook' },
+        }),
+      ),
+    )
+    const builds = createBuildQueue()
+    const firstBuild = builds.next()
+    const watching = compiler.watch({ aggregateTimeout: 5 }, (error, stats) => {
+      builds.push(error, stats)
+    })!
+
+    try {
+      const firstStats = await firstBuild
+      expect(await readBundle(root)).toMatch(/count\(\)\s*\*\s*2/)
+      expect(firstStats.compilation.fileDependencies).toContain(packagePath)
+      expect(firstStats.compilation.fileDependencies).toContain(sidecarPath)
+
+      const plainBuild = builds.next()
+      await writeFile(sidecarPath, plainMetadata)
+      const plainStats = await plainBuild
+      const plainBundle = await readBundle(root)
+      expect(plainBundle).toMatch(/return count\s*\*\s*2/)
+      expect(plainBundle).not.toMatch(/count\(\)\s*\*\s*2/)
+      expect(builtFixtureFiles(plainStats, root)).toContain(entryPath)
+    } finally {
+      await closeWatching(watching, compiler)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('invalidates a cached importer when an external type or target changes', async () => {
+    const root = await createFixture({
+      'entry.ts': entrySource('public-hook'),
+      'node_modules/.keep': '',
+      'packages/shared-hook/index.js': 'exports.useCounter = () => () => 2',
+      'packages/shared-hook/package.json': JSON.stringify({
+        name: 'shared-hook',
+        version: '1.0.0',
+        exports: { '.': './index.js' },
+        fict: { metadata: './index.fict.meta.json' },
+      }),
+      'packages/shared-hook/index.fict.meta.json': signalMetadata,
+    })
+    const entryPath = path.join(root, 'entry.ts')
+    const realPackage = path.join(root, 'packages', 'shared-hook')
+    await Promise.all(
+      ['actual-a', 'actual-b'].map(name =>
+        symlink(
+          realPackage,
+          path.join(root, 'node_modules', name),
+          process.platform === 'win32' ? 'junction' : 'dir',
+        ),
+      ),
+    )
+    const cache = {
+      type: 'filesystem' as const,
+      cacheDirectory: path.join(root, '.webpack-cache'),
+    }
+    const configuration = (external: string): Configuration => {
+      const result = createWebpackConfiguration(root, {
+        cache,
+        externals: { 'public-hook': external },
+      })
+      const rule = result.module?.rules?.[0]
+      if (!rule || typeof rule !== 'object') throw new Error('Fixture loader rule is missing.')
+      rule.exclude = (resource: string) =>
+        resource.includes(`${path.sep}node_modules${path.sep}`) ||
+        resource === realPackage ||
+        resource.startsWith(`${realPackage}${path.sep}`)
+      return result
+    }
+    const fingerprint = (stats: Compilation): unknown => {
+      const entryModule = [...stats.modules].find(
+        module => (module as { resource?: unknown }).resource === entryPath,
+      ) as { buildInfo?: Record<string, unknown> } | undefined
+      return (
+        entryModule?.buildInfo?.fictWebpackMetadata as
+          | { dependencyFingerprint?: unknown }
+          | undefined
+      )?.dependencyFingerprint
+    }
+
+    try {
+      const firstStats = await runCompiler(configuration('commonjs actual-a'))
+      const firstFingerprint = fingerprint(firstStats.compilation)
+      expect(typeof firstFingerprint).toBe('string')
+
+      const cachedStats = await runCompiler(configuration('commonjs actual-a'))
+      expect(builtFixtureFiles(cachedStats, root)).toEqual([])
+
+      const typeStats = await runCompiler(configuration('commonjs2 actual-a'))
+      const typeFingerprint = fingerprint(typeStats.compilation)
+      expect(typeFingerprint).not.toBe(firstFingerprint)
+      expect(builtFixtureFiles(typeStats, root)).toContain(entryPath)
+
+      const targetStats = await runCompiler(configuration('commonjs actual-b'))
+      expect(fingerprint(targetStats.compilation)).not.toBe(typeFingerprint)
+      expect(builtFixtureFiles(targetStats, root)).toContain(entryPath)
+
+      const recachedStats = await runCompiler(configuration('commonjs actual-b'))
+      expect(builtFixtureFiles(recachedStats, root)).toEqual([])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('treats a package manifest without a valid name as unresolved', async () => {
     const root = await createFixture({
       'entry.ts': entrySource('bad-hook'),

@@ -35,6 +35,17 @@ package. Active package `aliasFields`, directory targets, and ambiguous public s
 closed when Fict metadata is declared. Active `extensionAlias`, non-default `exportsFields`, custom
 description manifests, and malformed export maps also fail closed because they cannot be proven as
 the documented package contract; publishing a canonical `package.json` `exports` map is recommended.
+Renamed externals can use package metadata only for an unambiguous plain Node target, a CommonJS
+module external (`commonjs*` / `node-commonjs`), and one canonical bare package request. The output
+must disable `output.module`, use the CommonJS chunk format, and have a static flat `.cjs` entry
+filename directly under `output.path`, including every entry filename override. `output.clean` must
+also be disabled.
+Resolution follows Node `require` semantics from that runtime directory; Webpack aliases, custom
+module directories, main fields, resolver plugins, and TypeScript path mappings do not redirect it.
+ESM/browser/host-provided externals, global or expression externals, request arrays or property
+access, output paths with a symlinked existing ancestor, dynamic, nested, or non-`.cjs` entry
+filenames, and non-canonical targets remain authoritatively unresolved. The plugin does not copy or
+manage an external package under `output.path`.
 Package metadata paths must currently be readable through Node's filesystem APIs. Yarn PnP zip
 archives and other virtual filesystems are not yet supported by this integration.
 Webpack library metadata publishing remains a separate capability.

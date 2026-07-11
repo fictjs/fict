@@ -33,7 +33,7 @@ export function createWebpackConfiguration(
   options: {
     alias?: Record<string, string>
     cache?: Configuration['cache']
-    externals?: Record<string, string>
+    externals?: Record<string, string | string[]>
     loaderOptions?: Record<string, unknown>
     plugins?: NonNullable<Configuration['plugins']>
     snapshot?: Configuration['snapshot']
