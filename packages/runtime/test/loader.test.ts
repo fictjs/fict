@@ -77,6 +77,58 @@ describe('resumable loader snapshot validation', () => {
     expect(scope?.slots[0]?.[2]).toBe(123)
   })
 
+  it('merges every legacy snapshot script when static fragments duplicate the script id', () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sFirst: { id: 'sFirst', slots: [[0, 'raw', 'first']] },
+        },
+      }),
+    )
+    const secondSnapshot = doc.createElement('script')
+    secondSnapshot.id = '__FICT_SNAPSHOT__'
+    secondSnapshot.type = 'application/json'
+    secondSnapshot.textContent = JSON.stringify({
+      v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+      scopes: {
+        sSecond: { id: 'sSecond', slots: [[0, 'raw', 'second']] },
+      },
+    })
+    doc.body.appendChild(secondSnapshot)
+
+    installResumableLoader({ document: doc, events: [], prefetch: false })
+
+    expect(__fictGetSSRScope('sFirst')?.slots[0]?.[2]).toBe('first')
+    expect(__fictGetSSRScope('sSecond')?.slots[0]?.[2]).toBe('second')
+  })
+
+  it('processes a primary snapshot only once when it also has the incremental marker', () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: 0,
+        scopes: {
+          sMigratedOnce: { id: 'sMigratedOnce', slots: [[0, 'raw', 'once']] },
+        },
+      }),
+    )
+    doc.getElementById('__FICT_SNAPSHOT__')?.setAttribute('data-fict-snapshot', '')
+    const migrate = vi.fn((snapshot: Record<string, unknown>) => ({
+      ...snapshot,
+      v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+    }))
+
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: false,
+      snapshotMigrations: { 0: migrate },
+    })
+
+    expect(migrate).toHaveBeenCalledTimes(1)
+    expect(__fictGetSSRScope('sMigratedOnce')?.slots[0]?.[2]).toBe('once')
+  })
+
   it('does not treat an absent initial snapshot as state or an eager error', async () => {
     const issues: SnapshotIssue[] = []
     const doc = createDocumentWithSnapshots()
@@ -838,6 +890,35 @@ describe('resumable loader snapshot validation', () => {
 
     await vi.waitFor(() => {
       expect(__fictGetSSRScope('sStreamed')?.slots[0]?.[2]).toBe('complete')
+    })
+  })
+
+  it('observes nested legacy snapshot scripts using the configured id', async () => {
+    const doc = createDocumentWithSnapshots()
+    const snapshotScriptId = 'fict:snapshot[static]'
+
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: false,
+      snapshotScriptId,
+    })
+
+    const fragment = doc.createElement('section')
+    const script = doc.createElement('script')
+    script.id = snapshotScriptId
+    script.type = 'application/json'
+    script.textContent = JSON.stringify({
+      v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+      scopes: {
+        sLateStatic: { id: 'sLateStatic', slots: [[0, 'raw', 'late-static']] },
+      },
+    })
+    fragment.appendChild(script)
+    doc.body.appendChild(fragment)
+
+    await vi.waitFor(() => {
+      expect(__fictGetSSRScope('sLateStatic')?.slots[0]?.[2]).toBe('late-static')
     })
   })
 

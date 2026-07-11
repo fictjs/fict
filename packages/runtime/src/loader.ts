@@ -395,6 +395,7 @@ interface LoaderInstallation {
   active: boolean
   cancelWaiters: Set<() => void>
   document: Document
+  snapshotScriptId: string
   state: SSRState
   scopeIds: Map<string, string>
   hydratedScopes: Set<string>
@@ -526,6 +527,7 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
     active: true,
     cancelWaiters: new Set(),
     document: doc,
+    snapshotScriptId: scriptId,
     state: { v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION, scopes: {} },
     scopeIds: new Map(),
     hydratedScopes: new Set(),
@@ -549,16 +551,19 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
   const snapshotEl = doc.getElementById(scriptId)
   if (snapshotEl?.textContent) {
     const state = parseSnapshotText(installation, snapshotEl.textContent, `#${scriptId}`)
-    if (state) {
-      applySnapshotState(installation, state, `#${scriptId}`, 'replace')
+    if (state && applySnapshotState(installation, state, `#${scriptId}`, 'replace')) {
+      if (snapshotEl.tagName === 'SCRIPT') {
+        installation.processedSnapshots.add(snapshotEl as HTMLScriptElement)
+      }
     }
   }
 
-  const snapshotScripts = doc.querySelectorAll(
-    'script[type="application/json"][data-fict-snapshot]',
-  )
+  const snapshotScripts = doc.querySelectorAll('script')
   for (const script of Array.from(snapshotScripts)) {
-    parseSnapshotScript(installation, script as HTMLScriptElement)
+    if (script === snapshotEl) continue
+    const snapshotScript = script as HTMLScriptElement
+    if (!isSnapshotScript(installation, snapshotScript)) continue
+    parseSnapshotScript(installation, snapshotScript)
     if (installation.snapshotRejection) break
   }
 
@@ -572,29 +577,30 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
     installation.snapshotObserver = new SnapshotObserver(mutations => {
       if (!isLoaderInstallationActive(installation)) return
       for (const mutation of mutations) {
-        if (isSnapshotScriptElement(mutation.target, doc)) {
+        if (isSnapshotScriptElement(installation, mutation.target, doc)) {
           parseSnapshotScript(installation, mutation.target)
         }
         for (const node of Array.from(mutation.addedNodes)) {
           if (!isElementLike(node, doc)) {
             const parent = node.parentElement
-            if (parent && isSnapshotScriptElement(parent, doc)) {
+            if (parent && isSnapshotScriptElement(installation, parent, doc)) {
               parseSnapshotScript(installation, parent)
             }
             continue
           }
           if (node.tagName === 'SCRIPT') {
             const script = node as HTMLScriptElement
-            if (isSnapshotScript(script)) {
+            if (isSnapshotScript(installation, script)) {
               parseSnapshotScript(installation, script)
             }
           }
-          const nested = node.querySelectorAll?.(
-            'script[type="application/json"][data-fict-snapshot]',
-          )
+          const nested = node.querySelectorAll?.('script')
           if (nested && nested.length) {
             for (const script of Array.from(nested)) {
-              parseSnapshotScript(installation, script as HTMLScriptElement)
+              const snapshotScript = script as HTMLScriptElement
+              if (isSnapshotScript(installation, snapshotScript)) {
+                parseSnapshotScript(installation, snapshotScript)
+              }
             }
           }
         }
@@ -663,15 +669,23 @@ function resolveLoaderDocument(doc: Document | undefined): Document {
   return window.document
 }
 
-function isSnapshotScript(script: HTMLScriptElement): boolean {
-  return script.type === 'application/json' && script.hasAttribute('data-fict-snapshot')
+function isSnapshotScript(installation: LoaderInstallation, script: HTMLScriptElement): boolean {
+  return (
+    script.type === 'application/json' &&
+    ((installation.snapshotScriptId !== '' && script.id === installation.snapshotScriptId) ||
+      script.hasAttribute('data-fict-snapshot'))
+  )
 }
 
-function isSnapshotScriptElement(node: Node, doc: Document): node is HTMLScriptElement {
+function isSnapshotScriptElement(
+  installation: LoaderInstallation,
+  node: Node,
+  doc: Document,
+): node is HTMLScriptElement {
   return (
     isElementLike(node, doc) &&
     node.tagName === 'SCRIPT' &&
-    isSnapshotScript(node as HTMLScriptElement)
+    isSnapshotScript(installation, node as HTMLScriptElement)
   )
 }
 

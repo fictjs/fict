@@ -2513,6 +2513,57 @@ describe('Full E2E Integration', () => {
     }
   })
 
+  it('discovers every static snapshot when string-rendered fragments share one loader', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function Counter({ label, initial }: { label: string; initial: number }) {
+        let count = $state(initial)
+        return <button data-island={label} onClick$={() => count++}>{count}</button>
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as {
+        Counter: (props: { label: string; initial: number }) => FictNode
+      }
+      const firstHtml = renderToString(() => ({
+        type: mod.Counter,
+        props: { label: 'first-static', initial: 1 },
+      }))
+      const secondHtml = renderToString(() => ({
+        type: mod.Counter,
+        props: { label: 'second-static', initial: 10 },
+      }))
+      const env = setupClientEnvironment(firstHtml + secondHtml)
+      cleanup = env.cleanup
+
+      expect(env.document.querySelectorAll('script[id="__FICT_SNAPSHOT__"]')).toHaveLength(2)
+      installResumableLoader({ document: env.document, events: ['click'], prefetch: false })
+
+      const firstButton = env.document.querySelector('[data-island="first-static"]') as HTMLElement
+      const secondButton = env.document.querySelector(
+        '[data-island="second-static"]',
+      ) as HTMLElement
+
+      dispatchClick(firstButton, env.window)
+      await tick(3)
+      expect(firstButton.textContent).toBe('2')
+      expect(secondButton.textContent).toBe('10')
+
+      dispatchClick(secondButton, env.window)
+      await tick(3)
+      expect(firstButton.textContent).toBe('2')
+      expect(secondButton.textContent).toBe('11')
+    } finally {
+      await cleanup()
+      compiled.cleanup()
+    }
+  })
+
   it('streams incremental snapshots and resumes after boundary patch', async () => {
     const source = `
       import { $state } from 'fict'
