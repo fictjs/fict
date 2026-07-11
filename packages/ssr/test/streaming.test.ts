@@ -226,6 +226,44 @@ describe('@fictjs/ssr streaming', () => {
     expect(html).toContain('Done')
   })
 
+  it('inserts full-document stream chunks at the structural end of body', async () => {
+    const token = createSuspenseToken()
+    let ready = false
+
+    function AsyncChild(): FictNode {
+      if (!ready) throw token.token
+      return { type: 'span', props: { children: 'StructuralDone' } }
+    }
+
+    const stream = renderToStream(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: { type: 'span', props: { children: 'StructuralLoading' } },
+          children: { type: AsyncChild, props: {} },
+        },
+      }),
+      {
+        mode: 'shell',
+        fullDocument: true,
+        html: `<!doctype html><html><head></head><body><script id="body-text">globalThis.__closingBody = "</body>"</script></body><!-- after </body> marker --></html>`,
+      },
+    )
+    const readAll = readReadableStream(stream)
+
+    await Promise.resolve()
+    ready = true
+    token.resolve()
+
+    const html = await readAll
+    const streamedDocument = parseHTML(html).document
+
+    expect(html).toContain('<!-- after </body> marker -->')
+    expect(streamedDocument.querySelector('#body-text')?.textContent).toContain('"</body>"')
+    expect(streamedDocument.querySelector('template[data-fict-suspense]')).not.toBeNull()
+    expect(streamedDocument.body?.textContent).toContain('StructuralDone')
+  })
+
   it('settles compiled insertBetween Suspense streams without remounting the boundary', async () => {
     const token = createSuspenseToken()
     let ready = false

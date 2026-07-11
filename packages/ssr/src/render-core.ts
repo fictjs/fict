@@ -22,6 +22,7 @@ import { createPipeBridge, createQueuedTextStream, type StreamWriter } from './s
 import { createStreamRuntimeCode } from './stream-runtime'
 
 const DEFAULT_HTML = '<!doctype html><html><head></head><body></body></html>'
+let streamTailMarkerId = 0
 
 export interface SSRDom {
   window: Window
@@ -914,12 +915,11 @@ function startStreamingRenderInSession(
     }
 
     // shell-first mode
-    const shellHtml = serializeOutput(dom.document, container, resolvedOptions)
     const streamRuntime = boundaryMap.size > 0 ? buildStreamRuntimeScript(resolvedOptions) : ''
     if (resolvedOptions.fullDocument) {
-      const split = splitDocumentHtml(shellHtml)
+      const split = serializeStreamingDocument(dom.document, container, resolvedOptions)
       if (!split) {
-        throw new Error('[fict/ssr] Failed to locate </body> for streaming output.')
+        throw new Error('[fict/ssr] Failed to locate the document body for streaming output.')
       }
       if (control.includeTailInShell) {
         enqueueWrite(split.head + streamRuntime)
@@ -930,6 +930,7 @@ function startStreamingRenderInSession(
         tailHtml = split.tail
       }
     } else {
+      const shellHtml = serializeOutput(dom.document, container, resolvedOptions)
       enqueueWrite(shellHtml + streamRuntime)
     }
     if (writeFailed) return { shellReady, allReady, abort }
@@ -1018,11 +1019,40 @@ function serializeBetween(start: Comment, end: Comment): string {
   return serializeHtmlNodes(nodes, parentElement)
 }
 
-function splitDocumentHtml(html: string): { head: string; tail: string } | null {
-  const lower = html.toLowerCase()
-  const idx = lower.lastIndexOf('</body>')
-  if (idx === -1) return null
-  return { head: html.slice(0, idx), tail: html.slice(idx) }
+function serializeStreamingDocument(
+  document: Document,
+  container: HTMLElement,
+  options: RenderToStringOptions,
+): { head: string; tail: string } | null {
+  const body = document.body
+  if (!body) return null
+
+  const marker = document.createComment('')
+  body.appendChild(marker)
+  const markerSeed = `fict:stream-tail:${++streamTailMarkerId}`
+  let markerText = markerSeed
+
+  try {
+    // A structural marker identifies the actual end of body without mistaking
+    // matching text inside raw-text elements or comments for a closing tag.
+    // If user HTML already contains the marker, doubling the marker guarantees
+    // a unique finite marker after logarithmically many retries.
+    while (true) {
+      marker.data = markerText
+      const html = serializeOutput(document, container, options)
+      const serializedMarker = `<!--${markerText}-->`
+      const idx = html.indexOf(serializedMarker)
+      if (idx !== -1 && html.indexOf(serializedMarker, idx + serializedMarker.length) === -1) {
+        return {
+          head: html.slice(0, idx),
+          tail: html.slice(idx + serializedMarker.length),
+        }
+      }
+      markerText += markerText
+    }
+  } finally {
+    marker.parentNode?.removeChild(marker)
+  }
 }
 
 function buildIncrementalSnapshotChunk(
