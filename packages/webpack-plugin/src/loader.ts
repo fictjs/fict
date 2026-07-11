@@ -95,34 +95,31 @@ export default function fictWebpackLoader(
   }
 
   this.cacheable(true)
-  let resourceIdentity: string
+  let moduleIdentifier: string
   try {
-    resourceIdentity = registerFictModule(
-      binding.state,
-      normalizeWebpackResource(this.resource),
-      binding.module,
-    )
+    moduleIdentifier = registerFictModule(binding.state, binding.module)
   } catch (error) {
     callback(error instanceof Error ? error : new Error(String(error)))
     return
   }
-  binding.state.incompleteModuleMetadata.delete(resourceIdentity)
-  if (!binding.state.moduleMetadata.has(resourceIdentity)) {
-    binding.state.moduleMetadata.set(resourceIdentity, { exports: {} })
+  binding.state.incompleteModuleMetadata.delete(moduleIdentifier)
+  if (!binding.state.moduleMetadata.has(moduleIdentifier)) {
+    binding.state.moduleMetadata.set(moduleIdentifier, { exports: {} })
   }
-  binding.state.metadataDependenciesByFilename.set(resourceIdentity, new Set())
+  binding.state.metadataDependenciesByIdentifier.set(moduleIdentifier, new Set())
 
   const options = this.getOptions()
+  const webpackResource = normalizeWebpackResource(this.resource)
   const compilerFilename = normalizeFileName(this.resourcePath)
   // The compiler deliberately strips URL-like suffixes from filenames. Give each loader
-  // invocation a private store, then hand its result back under Webpack's full resource identity.
-  // This prevents concurrent query variants from overwriting one physical-path entry.
+  // invocation a private store, then hand its result back under Webpack's module identifier.
+  // This prevents resource-query and loader-chain variants from sharing one physical-path entry.
   const compilerModuleMetadata = new Map<string, ModuleReactiveMetadata>()
   const registerMetadataDependency = (dependency: string): void => {
     const normalized = path.resolve(dependency)
     const dependencies = new Set([normalized, resolveThroughExistingAncestor(normalized)])
     for (const watched of dependencies) {
-      binding.state.metadataDependenciesByFilename.get(resourceIdentity)!.add(watched)
+      binding.state.metadataDependenciesByIdentifier.get(moduleIdentifier)!.add(watched)
       if (existsSync(watched)) this.addDependency(watched)
       else this.addMissingDependency(watched)
     }
@@ -137,7 +134,7 @@ export default function fictWebpackLoader(
     moduleMetadata: compilerModuleMetadata,
     resolveModuleMetadata: (sourceRequest, importer) => {
       if (!importer) return undefined
-      const packageResolutions = binding.state.packageResolutionsByFilename.get(resourceIdentity)
+      const packageResolutions = binding.state.packageResolutionsByIdentifier.get(moduleIdentifier)
       if (packageResolutions?.has(sourceRequest)) {
         const packageResolution = packageResolutions.get(sourceRequest)
         if (packageResolution === 'opaque') return { exports: {} }
@@ -155,7 +152,7 @@ export default function fictWebpackLoader(
       }
       if (sourceRequest.includes('!')) return { exports: {} }
       const dependency = binding.state.resolvedLocalModules.get(
-        createLocalResolutionKey(resourceIdentity, sourceRequest),
+        createLocalResolutionKey(moduleIdentifier, sourceRequest),
       )
       if (dependency) {
         if (binding.state.incompleteModuleMetadata.has(dependency)) return null
@@ -181,38 +178,37 @@ export default function fictWebpackLoader(
     },
     configFile: false,
     cwd: fictPresetDirectory,
-    filename: resourceIdentity,
+    filename: webpackResource,
     inputSourceMap: normalizeInputSourceMap(inputSourceMap),
     presets: [[fictPresetPath, compilerOptions]],
-    sourceFileName: resourceIdentity,
+    sourceFileName: webpackResource,
     sourceMaps: this.sourceMap,
   }).then(
     result => {
       if (!result?.code) {
-        callback(new Error(`[fict] Babel returned no output for ${resourceIdentity}.`))
+        callback(new Error(`[fict] Babel returned no output for ${moduleIdentifier}.`))
         return
       }
       if (
         (result.metadata as Record<string, unknown> | undefined)?.fictModuleMetadataIncomplete ===
         true
       ) {
-        binding.state.incompleteModuleMetadata.add(resourceIdentity)
+        binding.state.incompleteModuleMetadata.add(moduleIdentifier)
       } else {
-        binding.state.incompleteModuleMetadata.delete(resourceIdentity)
+        binding.state.incompleteModuleMetadata.delete(moduleIdentifier)
       }
       const metadata = compilerModuleMetadata.get(compilerFilename)
       if (!metadata) {
-        callback(new Error(`[fict] Compiler did not emit module metadata for ${resourceIdentity}.`))
+        callback(new Error(`[fict] Compiler did not emit module metadata for ${moduleIdentifier}.`))
         return
       }
-      binding.state.moduleMetadata.set(resourceIdentity, metadata)
+      binding.state.moduleMetadata.set(moduleIdentifier, metadata)
       try {
         storeFictModuleMetadata(
           binding.state,
           binding.module,
-          resourceIdentity,
           metadata,
-          binding.state.pendingDependencyFingerprints.get(resourceIdentity) ?? null,
+          binding.state.pendingDependencyFingerprints.get(moduleIdentifier) ?? null,
         )
       } catch (error) {
         callback(error instanceof Error ? error : new Error(String(error)))

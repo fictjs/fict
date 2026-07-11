@@ -69,7 +69,7 @@ const NODE_COMMONJS_RESOLVE_OPTIONS = {
 }
 
 interface MetadataGraphNode {
-  filename: string
+  identifier: string
   module: NormalModule
   dependencies: Set<string>
 }
@@ -649,7 +649,7 @@ async function resolveWebpackPackageMetadata(
     )
   ) {
     throw new Error(
-      `[fict] Webpack package metadata for "${request}" imported by "${node.filename}" ` +
+      `[fict] Webpack package metadata for "${request}" imported by "${node.identifier}" ` +
         'could not be matched to one public entry (non-invertible export pattern).',
     )
   }
@@ -686,7 +686,7 @@ async function resolveWebpackPackageMetadata(
   }
   if (matches.length > 1 || (matches.length === 0 && metadataSubpaths.length > 0)) {
     throw new Error(
-      `[fict] Webpack package metadata for "${request}" imported by "${node.filename}" ` +
+      `[fict] Webpack package metadata for "${request}" imported by "${node.identifier}" ` +
         `could not be matched to one public entry (${matches.join(', ') || 'none'}).`,
     )
   }
@@ -707,10 +707,10 @@ function recordPackageResolution(
   request: string,
   resolution: FictWebpackPackageResolutionState,
 ): void {
-  let resolutions = state.packageResolutionsByFilename.get(node.filename)
+  let resolutions = state.packageResolutionsByIdentifier.get(node.identifier)
   if (!resolutions) {
     resolutions = new Map()
-    state.packageResolutionsByFilename.set(node.filename, resolutions)
+    state.packageResolutionsByIdentifier.set(node.identifier, resolutions)
   }
   const previous = resolutions.get(request)
   if (!resolutions.has(request)) {
@@ -739,7 +739,7 @@ function recordPackageResolution(
     previous.externalMappingFingerprint !== resolution.externalMappingFingerprint
   ) {
     throw new Error(
-      `[fict] Webpack resolved "${request}" from "${node.filename}" to multiple package entries.`,
+      `[fict] Webpack resolved "${request}" from "${node.identifier}" to multiple package entries.`,
     )
   }
   previous.resourcePaths = [
@@ -754,12 +754,12 @@ async function buildMetadataGraph(
 ): Promise<Map<string, MetadataGraphNode>> {
   const graph = new Map<string, MetadataGraphNode>()
   state.resolvedLocalModules.clear()
-  state.packageResolutionsByFilename.clear()
+  state.packageResolutionsByIdentifier.clear()
   const packageResolutionTasks: Promise<void>[] = []
   const nonLocalResolutionKeys = new Set<string>()
 
-  for (const [filename, module] of state.modulesByFilename) {
-    graph.set(filename, { filename, module, dependencies: new Set() })
+  for (const [identifier, module] of state.modulesByIdentifier) {
+    graph.set(identifier, { identifier, module, dependencies: new Set() })
   }
 
   for (const node of graph.values()) {
@@ -768,10 +768,10 @@ async function buildMetadataGraph(
       const request = (connection.dependency as { request?: unknown } | null)?.request
       if (!dependencyModule) {
         if (typeof request !== 'string') continue
-        const key = createLocalResolutionKey(node.filename, request)
+        const key = createLocalResolutionKey(node.identifier, request)
         if (state.resolvedLocalModules.has(key)) {
           throw new Error(
-            `[fict] Webpack resolved "${request}" from "${node.filename}" across both local and non-local metadata boundaries.`,
+            `[fict] Webpack resolved "${request}" from "${node.identifier}" across both local and non-local metadata boundaries.`,
           )
         }
         nonLocalResolutionKeys.add(key)
@@ -783,31 +783,31 @@ async function buildMetadataGraph(
         )
         continue
       }
-      const dependencyFilename = state.filenamesByModule.get(dependencyModule as NormalModule)
-      if (dependencyFilename && graph.has(dependencyFilename)) {
+      const dependencyIdentifier = state.identifiersByModule.get(dependencyModule as NormalModule)
+      if (dependencyIdentifier && graph.has(dependencyIdentifier)) {
         if (typeof request === 'string') {
-          const key = createLocalResolutionKey(node.filename, request)
+          const key = createLocalResolutionKey(node.identifier, request)
           if (nonLocalResolutionKeys.has(key)) {
             throw new Error(
-              `[fict] Webpack resolved "${request}" from "${node.filename}" across both local and non-local metadata boundaries.`,
+              `[fict] Webpack resolved "${request}" from "${node.identifier}" across both local and non-local metadata boundaries.`,
             )
           }
           const previous = state.resolvedLocalModules.get(key)
-          if (previous && previous !== dependencyFilename) {
+          if (previous && previous !== dependencyIdentifier) {
             throw new Error(
-              `[fict] Webpack resolved "${request}" from "${node.filename}" to multiple Fict modules.`,
+              `[fict] Webpack resolved "${request}" from "${node.identifier}" to multiple Fict modules.`,
             )
           }
-          state.resolvedLocalModules.set(key, dependencyFilename)
+          state.resolvedLocalModules.set(key, dependencyIdentifier)
         }
-        node.dependencies.add(dependencyFilename)
+        node.dependencies.add(dependencyIdentifier)
         continue
       }
       if (typeof request === 'string') {
-        const key = createLocalResolutionKey(node.filename, request)
+        const key = createLocalResolutionKey(node.identifier, request)
         if (state.resolvedLocalModules.has(key)) {
           throw new Error(
-            `[fict] Webpack resolved "${request}" from "${node.filename}" across both local and non-local metadata boundaries.`,
+            `[fict] Webpack resolved "${request}" from "${node.identifier}" across both local and non-local metadata boundaries.`,
           )
         }
         nonLocalResolutionKeys.add(key)
@@ -842,36 +842,36 @@ function getStronglyConnectedComponents(graph: Map<string, MetadataGraphNode>): 
   const onStack = new Set<string>()
   const components: string[][] = []
 
-  const visit = (filename: string): void => {
+  const visit = (identifier: string): void => {
     const index = nextIndex++
-    indices.set(filename, index)
-    lowLinks.set(filename, index)
-    stack.push(filename)
-    onStack.add(filename)
+    indices.set(identifier, index)
+    lowLinks.set(identifier, index)
+    stack.push(identifier)
+    onStack.add(identifier)
 
-    for (const dependency of [...(graph.get(filename)?.dependencies ?? [])].sort()) {
+    for (const dependency of [...(graph.get(identifier)?.dependencies ?? [])].sort()) {
       if (!graph.has(dependency)) continue
       if (!indices.has(dependency)) {
         visit(dependency)
-        lowLinks.set(filename, Math.min(lowLinks.get(filename)!, lowLinks.get(dependency)!))
+        lowLinks.set(identifier, Math.min(lowLinks.get(identifier)!, lowLinks.get(dependency)!))
       } else if (onStack.has(dependency)) {
-        lowLinks.set(filename, Math.min(lowLinks.get(filename)!, indices.get(dependency)!))
+        lowLinks.set(identifier, Math.min(lowLinks.get(identifier)!, indices.get(dependency)!))
       }
     }
 
-    if (lowLinks.get(filename) !== indices.get(filename)) return
+    if (lowLinks.get(identifier) !== indices.get(identifier)) return
     const component: string[] = []
     while (stack.length > 0) {
       const member = stack.pop()!
       onStack.delete(member)
       component.push(member)
-      if (member === filename) break
+      if (member === identifier) break
     }
     components.push(component)
   }
 
-  for (const filename of [...graph.keys()].sort()) {
-    if (!indices.has(filename)) visit(filename)
+  for (const identifier of [...graph.keys()].sort()) {
+    if (!indices.has(identifier)) visit(identifier)
   }
   return components
 }
@@ -895,12 +895,17 @@ function hydrateCachedModuleMetadata(
   for (const module of compilation.modules) {
     const restored = restoreFictModuleMetadata(module as NormalModule)
     if (!restored) continue
-    const filename = registerFictModule(state, restored.filename, module as NormalModule)
-    state.moduleMetadata.set(filename, restored.metadata)
-    if (restored.incomplete) state.incompleteModuleMetadata.add(filename)
-    else state.incompleteModuleMetadata.delete(filename)
-    state.compiledDependencyFingerprints.set(filename, restored.dependencyFingerprint)
-    state.metadataDependenciesByFilename.set(filename, new Set(restored.metadataDependencies))
+    const identifier = registerFictModule(state, module as NormalModule)
+    if (identifier !== restored.identifier) {
+      throw new Error(
+        `[fict] Restored Webpack module identifier mismatch: expected "${identifier}", received "${restored.identifier}".`,
+      )
+    }
+    state.moduleMetadata.set(identifier, restored.metadata)
+    if (restored.incomplete) state.incompleteModuleMetadata.add(identifier)
+    else state.incompleteModuleMetadata.delete(identifier)
+    state.compiledDependencyFingerprints.set(identifier, restored.dependencyFingerprint)
+    state.metadataDependenciesByIdentifier.set(identifier, new Set(restored.metadataDependencies))
   }
 }
 
@@ -917,20 +922,20 @@ function dependencyFingerprint(
   node: MetadataGraphNode,
   state: FictWebpackCompilationState,
 ): string {
-  const localDependencies = [...node.dependencies].sort().map(filename => {
-    const metadata = state.moduleMetadata.get(filename)
+  const localDependencies = [...node.dependencies].sort().map(identifier => {
+    const metadata = state.moduleMetadata.get(identifier)
     if (!metadata) {
-      throw new Error(`[fict] Missing Webpack module metadata for ${filename}.`)
+      throw new Error(`[fict] Missing Webpack module metadata for ${identifier}.`)
     }
-    return [filename, metadata, state.incompleteModuleMetadata.has(filename)]
+    return [identifier, metadata, state.incompleteModuleMetadata.has(identifier)]
   })
   const packageMetadataDependencies = [
-    ...(state.metadataDependenciesByFilename.get(node.filename) ?? []),
+    ...(state.metadataDependenciesByIdentifier.get(node.identifier) ?? []),
   ]
     .sort()
     .map(filename => [filename, fileFingerprint(filename)])
   const packageResolutions = [
-    ...(state.packageResolutionsByFilename.get(node.filename)?.entries() ?? []),
+    ...(state.packageResolutionsByIdentifier.get(node.identifier)?.entries() ?? []),
   ].sort(([left], [right]) => left.localeCompare(right))
   return stableStringify({ localDependencies, packageMetadataDependencies, packageResolutions })
 }
@@ -941,28 +946,28 @@ async function rebuildModuleWithFingerprint(
   node: MetadataGraphNode,
 ): Promise<void> {
   const fingerprint = dependencyFingerprint(node, state)
-  state.pendingDependencyFingerprints.set(node.filename, fingerprint)
+  state.pendingDependencyFingerprints.set(node.identifier, fingerprint)
   try {
     await rebuildModule(compilation, node.module)
   } finally {
-    state.pendingDependencyFingerprints.delete(node.filename)
+    state.pendingDependencyFingerprints.delete(node.identifier)
   }
   const rebuildError = node.module.getErrors()?.[Symbol.iterator]().next().value
   if (rebuildError) throw rebuildError
-  const persistedFingerprint = state.compiledDependencyFingerprints.get(node.filename)
+  const persistedFingerprint = state.compiledDependencyFingerprints.get(node.identifier)
   const currentFingerprint = dependencyFingerprint(node, state)
   if (persistedFingerprint !== fingerprint && persistedFingerprint !== currentFingerprint) {
     throw new Error(
-      `[fict] Webpack did not persist the metadata fingerprint for ${node.filename} ` +
+      `[fict] Webpack did not persist the metadata fingerprint for ${node.identifier} ` +
         `(expected ${fingerprint}, received ${String(persistedFingerprint)}).`,
     )
   }
   if (persistedFingerprint !== currentFingerprint) {
-    const metadata = state.moduleMetadata.get(node.filename)
+    const metadata = state.moduleMetadata.get(node.identifier)
     if (!metadata) {
-      throw new Error(`[fict] Missing Webpack module metadata for ${node.filename}.`)
+      throw new Error(`[fict] Missing Webpack module metadata for ${node.identifier}.`)
     }
-    storeFictModuleMetadata(state, node.module, node.filename, metadata, currentFingerprint)
+    storeFictModuleMetadata(state, node.module, metadata, currentFingerprint)
   }
 }
 
@@ -971,10 +976,10 @@ function componentMetadataSnapshot(
   state: FictWebpackCompilationState,
 ): string {
   return stableStringify(
-    component.map(filename => [
-      filename,
-      state.moduleMetadata.get(filename),
-      state.incompleteModuleMetadata.has(filename),
+    component.map(identifier => [
+      identifier,
+      state.moduleMetadata.get(identifier),
+      state.incompleteModuleMetadata.has(identifier),
     ]),
   )
 }
@@ -994,22 +999,22 @@ async function convergeMetadataGraph(
       graph.get(sortedComponent[0]!)?.dependencies.has(sortedComponent[0]!) === true
 
     if (!hasCycle) {
-      const filename = sortedComponent[0]!
-      const node = graph.get(filename)!
+      const identifier = sortedComponent[0]!
+      const node = graph.get(identifier)!
       const fingerprint = dependencyFingerprint(node, state)
-      if (state.compiledDependencyFingerprints.get(filename) !== fingerprint) {
+      if (state.compiledDependencyFingerprints.get(identifier) !== fingerprint) {
         const hasPackageResolutions =
-          (state.packageResolutionsByFilename.get(filename)?.size ?? 0) > 0
+          (state.packageResolutionsByIdentifier.get(identifier)?.size ?? 0) > 0
         if (
           node.dependencies.size === 0 &&
           !hasPackageResolutions &&
           compilation.builtModules.has(node.module)
         ) {
-          const metadata = state.moduleMetadata.get(filename)
+          const metadata = state.moduleMetadata.get(identifier)
           if (!metadata) {
-            throw new Error(`[fict] Missing Webpack module metadata for ${filename}.`)
+            throw new Error(`[fict] Missing Webpack module metadata for ${identifier}.`)
           }
-          storeFictModuleMetadata(state, node.module, filename, metadata, fingerprint)
+          storeFictModuleMetadata(state, node.module, metadata, fingerprint)
         } else {
           await rebuildModuleWithFingerprint(compilation, state, node)
         }
@@ -1019,10 +1024,11 @@ async function convergeMetadataGraph(
 
     const passLimit = maxMetadataPasses ?? Math.max(8, sortedComponent.length * 4)
     const fingerprintsAreCurrent = (): boolean =>
-      sortedComponent.every(filename => {
-        const node = graph.get(filename)!
+      sortedComponent.every(identifier => {
+        const node = graph.get(identifier)!
         return (
-          state.compiledDependencyFingerprints.get(filename) === dependencyFingerprint(node, state)
+          state.compiledDependencyFingerprints.get(identifier) ===
+          dependencyFingerprint(node, state)
         )
       })
     if (fingerprintsAreCurrent()) continue
@@ -1030,8 +1036,8 @@ async function convergeMetadataGraph(
     let converged = false
     for (let pass = 0; pass < passLimit; pass++) {
       const before = componentMetadataSnapshot(sortedComponent, state)
-      for (const filename of sortedComponent) {
-        await rebuildModuleWithFingerprint(compilation, state, graph.get(filename)!)
+      for (const identifier of sortedComponent) {
+        await rebuildModuleWithFingerprint(compilation, state, graph.get(identifier)!)
       }
       const after = componentMetadataSnapshot(sortedComponent, state)
       if (after === before && fingerprintsAreCurrent()) {
@@ -1079,7 +1085,7 @@ export class FictWebpackPlugin {
         const state = this.#states.get(compilation)
         if (!state) return
         hydrateCachedModuleMetadata(compilation, state)
-        if (state.modulesByFilename.size === 0) return
+        if (state.modulesByIdentifier.size === 0) return
         await convergeMetadataGraph(compiler, compilation, state, this.#options.maxMetadataPasses)
       },
     )

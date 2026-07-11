@@ -6,6 +6,7 @@ import type { NormalModule, Stats } from 'webpack'
 
 import {
   createCompilationState,
+  registerFictModule,
   restoreFictModuleMetadata,
   storeFictModuleMetadata,
 } from '../shared'
@@ -21,19 +22,32 @@ import {
 function readStoredMetadata(
   stats: Stats,
   resource: string,
-): { filename: string; metadata: ModuleReactiveMetadata } {
+): {
+  identifier: string
+  metadata: ModuleReactiveMetadata
+  resource: string
+  webpackIdentifier: string
+} {
   const module = [...stats.compilation.modules].find(
     candidate => (candidate as { resource?: unknown }).resource === resource,
-  ) as { buildInfo?: Record<string, unknown> } | undefined
+  ) as NormalModule | undefined
   const stored = module?.buildInfo?.fictWebpackMetadata as
-    | { filename?: unknown; metadataJson?: unknown }
+    | { identifier?: unknown; metadataJson?: unknown; resource?: unknown; version?: unknown }
     | undefined
-  if (typeof stored?.filename !== 'string' || typeof stored.metadataJson !== 'string') {
+  if (
+    !module ||
+    stored?.version !== 4 ||
+    typeof stored?.identifier !== 'string' ||
+    typeof stored.metadataJson !== 'string' ||
+    typeof stored.resource !== 'string'
+  ) {
     throw new Error(`No persisted Fict metadata found for ${resource}.`)
   }
   return {
-    filename: stored.filename,
+    identifier: stored.identifier,
     metadata: JSON.parse(stored.metadataJson) as ModuleReactiveMetadata,
+    resource: stored.resource,
+    webpackIdentifier: module.identifier(),
   }
 }
 
@@ -121,8 +135,11 @@ describe('@fictjs/webpack-plugin resource-query metadata', () => {
       expect(runApp(root)).toBe(42)
       const rawMetadata = readStoredMetadata(stats, rawResource)
       const variantMetadata = readStoredMetadata(stats, variantResource)
-      expect(rawMetadata.filename).toBe(path.resolve(rawResource))
-      expect(variantMetadata.filename).toBe(path.resolve(variantResource))
+      expect(rawMetadata.identifier).toBe(rawMetadata.webpackIdentifier)
+      expect(variantMetadata.identifier).toBe(variantMetadata.webpackIdentifier)
+      expect(rawMetadata.identifier).not.toBe(variantMetadata.identifier)
+      expect(rawMetadata.resource).toBe(path.resolve(rawResource))
+      expect(variantMetadata.resource).toBe(path.resolve(variantResource))
       expect(rawMetadata.metadata.hooks?.useCounter?.directAccessor).toBeUndefined()
       expect(variantMetadata.metadata.hooks?.useCounter?.directAccessor).toBe('signal')
     } finally {
@@ -130,20 +147,33 @@ describe('@fictjs/webpack-plugin resource-query metadata', () => {
     }
   })
 
-  it('rehydrates cached metadata under the current full resource identity', () => {
+  it('rehydrates a legacy resource-keyed record under the current module identity', () => {
     const state = createCompilationState()
     const physicalFilename = path.resolve('/virtual/use-counter.ts')
     const resource = `${physicalFilename}?raw`
-    const module = { buildInfo: {}, resource } as unknown as NormalModule
+    const identifier = `fict-loader!${resource}`
+    const module = {
+      buildInfo: {},
+      identifier: () => identifier,
+      resource,
+    } as unknown as NormalModule
     const metadata: ModuleReactiveMetadata = {
       exports: {},
       hooks: { useCounter: { directAccessor: 'signal' } },
     }
 
-    storeFictModuleMetadata(state, module, physicalFilename, metadata, 'old-fingerprint')
+    registerFictModule(state, module)
+    storeFictModuleMetadata(state, module, metadata, 'old-fingerprint')
+    const stored = (module.buildInfo as unknown as Record<string, unknown>)
+      .fictWebpackMetadata as Record<string, unknown>
+    stored.version = 3
+    stored.filename = physicalFilename
+    delete stored.identifier
+    delete stored.resource
 
     expect(restoreFictModuleMetadata(module)).toMatchObject({
-      filename: path.resolve(resource),
+      identifier,
+      resource: path.resolve(resource),
       metadata,
       incomplete: true,
       dependencyFingerprint: null,

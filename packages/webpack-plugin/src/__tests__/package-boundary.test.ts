@@ -27,6 +27,7 @@ import {
 } from '../package-metadata'
 import {
   createCompilationState,
+  registerFictModule,
   restoreFictModuleMetadata,
   storeFictModuleMetadata,
 } from '../shared'
@@ -53,17 +54,24 @@ function readResolvedMetadata(
 describe('Webpack package metadata boundaries', () => {
   it('persists metadata completeness and distrusts previous cache records', () => {
     const state = createCompilationState()
-    const module = { buildInfo: {} } as unknown as NormalModule
     const filename = path.resolve('/virtual/incomplete-hook.ts')
+    const identifier = `fict-loader!${filename}`
+    const module = {
+      buildInfo: {},
+      identifier: () => identifier,
+      resource: filename,
+    } as unknown as NormalModule
     const metadata: ModuleReactiveMetadata = {
       exports: {},
       hooks: { useCounter: { directAccessor: 'signal' } },
     }
-    state.incompleteModuleMetadata.add(filename)
-    storeFictModuleMetadata(state, module, filename, metadata, 'fingerprint')
+    registerFictModule(state, module)
+    state.incompleteModuleMetadata.add(identifier)
+    storeFictModuleMetadata(state, module, metadata, 'fingerprint')
 
     expect(restoreFictModuleMetadata(module)).toMatchObject({
-      filename,
+      identifier,
+      resource: filename,
       metadata,
       incomplete: true,
       dependencyFingerprint: 'fingerprint',
@@ -72,6 +80,9 @@ describe('Webpack package metadata boundaries', () => {
     const stored = (module.buildInfo as unknown as Record<string, unknown>)
       .fictWebpackMetadata as Record<string, unknown>
     stored.version = 2
+    stored.filename = filename
+    delete stored.identifier
+    delete stored.resource
     delete stored.incomplete
     expect(restoreFictModuleMetadata(module)).toMatchObject({
       incomplete: true,

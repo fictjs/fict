@@ -135,9 +135,12 @@ function createLegacyCachePlugin(resource: string): { apply(compiler: Compiler):
         }
         const legacy = stored as Record<string, unknown>
         legacy.version = 1
+        legacy.filename = resource
         legacy.dependencyFingerprint = '{"localDependencies":[],"packageMetadataDependencies":[]}'
+        delete legacy.identifier
         delete legacy.incomplete
         delete legacy.metadataDependencies
+        delete legacy.resource
       })
     },
   }
@@ -370,12 +373,12 @@ describe('@fictjs/webpack-plugin package metadata', () => {
       const migratedStats = await runCompiler(configuration())
       expect(rebuildObserver.builtBeforeFict).not.toContain(entryPath)
       expect(rebuildObserver.rebuiltByFict).toContain(entryPath)
-      expect(storedMetadata(migratedStats, entryPath).version).toBe(3)
+      expect(storedMetadata(migratedStats, entryPath).version).toBe(4)
 
       const recachedStats = await runCompiler(configuration())
       expect(builtFixtureFiles(recachedStats, root)).toEqual([])
       expect(rebuildObserver.rebuiltByFict).toEqual([])
-      expect(storedMetadata(recachedStats, entryPath).version).toBe(3)
+      expect(storedMetadata(recachedStats, entryPath).version).toBe(4)
     } finally {
       await rm(root, { recursive: true, force: true })
     }

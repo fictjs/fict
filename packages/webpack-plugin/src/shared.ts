@@ -5,12 +5,13 @@ import type { NormalModule } from 'webpack'
 
 import type { FictWebpackPackageResolutionState } from './package-metadata'
 
-export const FICT_WEBPACK_LOADER_CONTEXT = Symbol.for('@fictjs/webpack-plugin/loader-context/v1')
+export const FICT_WEBPACK_LOADER_CONTEXT = Symbol.for('@fictjs/webpack-plugin/loader-context/v2')
 const FICT_WEBPACK_BUILD_INFO_KEY = 'fictWebpackMetadata'
 
 interface StoredFictWebpackMetadata {
-  version: 3
-  filename: string
+  version: 4
+  identifier: string
+  resource: string
   metadataJson: string
   incomplete: boolean
   dependencyFingerprint: string | null
@@ -18,7 +19,8 @@ interface StoredFictWebpackMetadata {
 }
 
 export interface RestoredFictWebpackMetadata {
-  filename: string
+  identifier: string
+  resource: string
   metadata: ModuleReactiveMetadata
   incomplete: boolean
   dependencyFingerprint: string | null
@@ -28,14 +30,14 @@ export interface RestoredFictWebpackMetadata {
 export interface FictWebpackCompilationState {
   moduleMetadata: Map<string, ModuleReactiveMetadata>
   incompleteModuleMetadata: Set<string>
-  modulesByFilename: Map<string, NormalModule>
-  filenamesByModule: Map<NormalModule, string>
+  modulesByIdentifier: Map<string, NormalModule>
+  identifiersByModule: Map<NormalModule, string>
   resolvedLocalModules: Map<string, string>
   compiledDependencyFingerprints: Map<string, string | null>
   pendingDependencyFingerprints: Map<string, string>
-  metadataDependenciesByFilename: Map<string, Set<string>>
+  metadataDependenciesByIdentifier: Map<string, Set<string>>
   metadataGraphPrepared: boolean
-  packageResolutionsByFilename: Map<string, Map<string, FictWebpackPackageResolutionState>>
+  packageResolutionsByIdentifier: Map<string, Map<string, FictWebpackPackageResolutionState>>
 }
 
 export interface FictWebpackLoaderBinding {
@@ -47,14 +49,14 @@ export function createCompilationState(): FictWebpackCompilationState {
   return {
     moduleMetadata: new Map(),
     incompleteModuleMetadata: new Set(),
-    modulesByFilename: new Map(),
-    filenamesByModule: new Map(),
+    modulesByIdentifier: new Map(),
+    identifiersByModule: new Map(),
     resolvedLocalModules: new Map(),
     compiledDependencyFingerprints: new Map(),
     pendingDependencyFingerprints: new Map(),
-    metadataDependenciesByFilename: new Map(),
+    metadataDependenciesByIdentifier: new Map(),
     metadataGraphPrepared: false,
-    packageResolutionsByFilename: new Map(),
+    packageResolutionsByIdentifier: new Map(),
   }
 }
 
@@ -66,25 +68,50 @@ export function normalizeWebpackResource(resource: string): string {
   return path.resolve(resource)
 }
 
-export function createLocalResolutionKey(importer: string, source: string): string {
-  return `${normalizeFileName(importer)}\0${source}`
+export function getWebpackModuleIdentifier(module: NormalModule): string {
+  // Keep Webpack's identifier verbatim: it already includes the loader request, resource,
+  // module type, and layer. Treating it as a filesystem path would corrupt loader separators
+  // and platform-specific absolute paths.
+  const identifier = module.identifier()
+  if (typeof identifier !== 'string' || !identifier) {
+    throw new Error('[fict] Webpack returned an empty module identifier.')
+  }
+  return identifier
+}
+
+function getWebpackModuleResource(module: NormalModule): string {
+  if (typeof module.resource !== 'string' || !module.resource) {
+    throw new Error(
+      `[fict] Webpack exposed no resource for module "${getWebpackModuleIdentifier(module)}".`,
+    )
+  }
+  return normalizeWebpackResource(module.resource)
+}
+
+export function createLocalResolutionKey(importerIdentifier: string, source: string): string {
+  return JSON.stringify([importerIdentifier, source])
 }
 
 export function registerFictModule(
   state: FictWebpackCompilationState,
-  filename: string,
   module: NormalModule,
 ): string {
-  const normalized = normalizeFileName(filename)
-  const existingModule = state.modulesByFilename.get(normalized)
-  if (existingModule && existingModule !== module) {
+  const identifier = getWebpackModuleIdentifier(module)
+  const registeredIdentifier = state.identifiersByModule.get(module)
+  if (registeredIdentifier && registeredIdentifier !== identifier) {
     throw new Error(
-      `[fict] Multiple Webpack modules for "${normalized}" cannot share one reactive metadata record.`,
+      `[fict] Webpack module identifier changed during compilation from "${registeredIdentifier}" to "${identifier}".`,
     )
   }
-  state.modulesByFilename.set(normalized, module)
-  state.filenamesByModule.set(module, normalized)
-  return normalized
+  const existingModule = state.modulesByIdentifier.get(identifier)
+  if (existingModule && existingModule !== module) {
+    throw new Error(
+      `[fict] Multiple Webpack modules returned the same identifier "${identifier}" and cannot share one reactive metadata record.`,
+    )
+  }
+  state.modulesByIdentifier.set(identifier, module)
+  state.identifiersByModule.set(module, identifier)
+  return identifier
 }
 
 function getBuildInfoRecord(module: NormalModule): Record<string, unknown> | undefined {
@@ -95,26 +122,35 @@ function getBuildInfoRecord(module: NormalModule): Record<string, unknown> | und
 export function storeFictModuleMetadata(
   state: FictWebpackCompilationState,
   module: NormalModule,
-  filename: string,
   metadata: ModuleReactiveMetadata,
   dependencyFingerprint: string | null,
 ): void {
+  const identifier = getWebpackModuleIdentifier(module)
+  if (
+    state.modulesByIdentifier.get(identifier) !== module ||
+    state.identifiersByModule.get(module) !== identifier
+  ) {
+    throw new Error(
+      `[fict] Webpack module "${identifier}" attempted to store reactive metadata without a matching registration.`,
+    )
+  }
   const buildInfo = getBuildInfoRecord(module)
   if (!buildInfo) {
-    throw new Error(`[fict] Webpack did not expose buildInfo for ${filename}.`)
+    throw new Error(`[fict] Webpack did not expose buildInfo for ${identifier}.`)
   }
   const stored: StoredFictWebpackMetadata = {
-    version: 3,
-    filename: normalizeFileName(filename),
+    version: 4,
+    identifier,
+    resource: getWebpackModuleResource(module),
     metadataJson: JSON.stringify(metadata),
-    incomplete: state.incompleteModuleMetadata.has(normalizeFileName(filename)),
+    incomplete: state.incompleteModuleMetadata.has(identifier),
     dependencyFingerprint,
     metadataDependencies: [
-      ...(state.metadataDependenciesByFilename.get(normalizeFileName(filename)) ?? []),
+      ...(state.metadataDependenciesByIdentifier.get(identifier) ?? []),
     ].sort(),
   }
   buildInfo[FICT_WEBPACK_BUILD_INFO_KEY] = stored
-  state.compiledDependencyFingerprints.set(stored.filename, dependencyFingerprint)
+  state.compiledDependencyFingerprints.set(identifier, dependencyFingerprint)
 }
 
 export function restoreFictModuleMetadata(
@@ -128,34 +164,46 @@ export function restoreFictModuleMetadata(
   const candidate = stored as {
     version?: unknown
     filename?: unknown
+    identifier?: unknown
+    resource?: unknown
     metadataJson?: unknown
     incomplete?: unknown
     dependencyFingerprint?: unknown
     metadataDependencies?: unknown
   }
-  const isLegacy = candidate.version === 1
-  const isPrevious = candidate.version === 2
-  const isCurrent = candidate.version === 3
+  const isLegacyV1 = candidate.version === 1
+  const isLegacyV2 = candidate.version === 2
+  const isLegacyV3 = candidate.version === 3
+  const isCurrent = candidate.version === 4
+  const isLegacy = isLegacyV1 || isLegacyV2 || isLegacyV3
   if (
-    (!isLegacy && !isPrevious && !isCurrent) ||
-    typeof candidate.filename !== 'string' ||
+    (!isLegacy && !isCurrent) ||
+    (isLegacy && typeof candidate.filename !== 'string') ||
+    (isCurrent &&
+      (typeof candidate.identifier !== 'string' ||
+        !candidate.identifier ||
+        typeof candidate.resource !== 'string' ||
+        !candidate.resource)) ||
     typeof candidate.metadataJson !== 'string' ||
     (candidate.dependencyFingerprint !== null &&
       typeof candidate.dependencyFingerprint !== 'string') ||
-    (isCurrent && typeof candidate.incomplete !== 'boolean') ||
-    ((isPrevious || isCurrent) && !Array.isArray(candidate.metadataDependencies)) ||
+    ((isLegacyV3 || isCurrent) && typeof candidate.incomplete !== 'boolean') ||
+    ((isLegacyV2 || isLegacyV3 || isCurrent) && !Array.isArray(candidate.metadataDependencies)) ||
     (candidate.metadataDependencies !== undefined &&
       (!Array.isArray(candidate.metadataDependencies) ||
         candidate.metadataDependencies.some(dependency => typeof dependency !== 'string')))
   ) {
     throw new Error('[fict] Cached Webpack module metadata is malformed.')
   }
+  const storedDisplayIdentifier = isCurrent ? candidate.identifier : candidate.filename
 
   let metadata: unknown
   try {
     metadata = JSON.parse(candidate.metadataJson)
   } catch {
-    throw new Error(`[fict] Cached Webpack module metadata for ${candidate.filename} is invalid.`)
+    throw new Error(
+      `[fict] Cached Webpack module metadata for ${String(storedDisplayIdentifier)} is invalid.`,
+    )
   }
   if (
     !metadata ||
@@ -165,27 +213,29 @@ export function restoreFictModuleMetadata(
     typeof (metadata as { exports?: unknown }).exports !== 'object' ||
     Array.isArray((metadata as { exports?: unknown }).exports)
   ) {
-    throw new Error(`[fict] Cached Webpack module metadata for ${candidate.filename} is invalid.`)
+    throw new Error(
+      `[fict] Cached Webpack module metadata for ${String(storedDisplayIdentifier)} is invalid.`,
+    )
   }
 
-  const storedFilename = normalizeFileName(candidate.filename)
-  const currentResource =
-    typeof module.resource === 'string' && module.resource
-      ? normalizeWebpackResource(module.resource)
-      : storedFilename
-  const resourceIdentityChanged = currentResource !== storedFilename
+  const identifier = getWebpackModuleIdentifier(module)
+  const resource = getWebpackModuleResource(module)
+  const storedIdentifier = isCurrent
+    ? candidate.identifier
+    : normalizeFileName(candidate.filename as string)
+  const storedResource = isCurrent
+    ? normalizeWebpackResource(candidate.resource as string)
+    : normalizeFileName(candidate.filename as string)
+  const identityChanged = identifier !== storedIdentifier || resource !== storedResource
 
   return {
-    // Webpack's resource (unlike resourcePath) includes the query and fragment. Prefer the
-    // module's current identity so caches written by older plugin releases cannot collapse
-    // distinct query variants back onto one physical filename.
-    filename: currentResource,
+    identifier,
+    resource,
     metadata: metadata as ModuleReactiveMetadata,
-    // Older records did not persist completeness. Preserve their bookkeeping metadata, but treat
-    // it as incomplete and force one rebuild rather than trusting an unknown graph state.
-    incomplete: resourceIdentityChanged || (isCurrent ? candidate.incomplete === true : true),
-    dependencyFingerprint:
-      isCurrent && !resourceIdentityChanged ? candidate.dependencyFingerprint : null,
+    // Versions before v4 were keyed only by a physical/resource filename. They cannot prove
+    // which loader chain produced the metadata, so force one rebuild during migration.
+    incomplete: !isCurrent || identityChanged || candidate.incomplete === true,
+    dependencyFingerprint: isCurrent && !identityChanged ? candidate.dependencyFingerprint : null,
     metadataDependencies: [
       ...new Set((candidate.metadataDependencies ?? []).map(normalizeFileName)),
     ].sort(),
