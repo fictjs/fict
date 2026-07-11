@@ -646,6 +646,61 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
     }
   })
 
+  it('preserves known hook metadata from an otherwise incomplete star barrel', () => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-partial-star-hook-'))
+    const hookPath = path.join(baseDir, 'hook.ts')
+    const barrelPath = path.join(baseDir, 'barrel.ts')
+    const appPath = path.join(baseDir, 'app.ts')
+    const hookSource = `
+      import { createSignal } from '@fictjs/runtime/advanced'
+      export function useCount() {
+        const count = createSignal(2)
+        return count
+      }
+    `
+    const barrelSource = `
+      export { useCount as counter } from './hook'
+      export * from 'ordinary-utility-package'
+    `
+    const appSource = `
+      import { counter } from './barrel'
+      export function App() {
+        const n = counter()
+        return n * 2
+      }
+    `
+
+    try {
+      writeFileSync(hookPath, hookSource)
+      writeFileSync(barrelPath, barrelSource)
+      writeFileSync(appPath, appSource)
+
+      const appOutput = compilePresetModule(appSource, appPath)
+      expect(appOutput).toMatch(/n\(\)\s*\*\s*2/)
+
+      const hookModule = evaluateCommonJs(compilePresetModule(hookSource, hookPath), source => {
+        if (source === '@fictjs/runtime/advanced') return runtimeAdvanced
+        throw new Error(`Unexpected hook dependency: ${source}`)
+      })
+      const barrelModule = evaluateCommonJs(
+        compilePresetModule(barrelSource, barrelPath),
+        source => {
+          if (source === './hook') return hookModule
+          if (source === 'ordinary-utility-package') return {}
+          throw new Error(`Unexpected barrel dependency: ${source}`)
+        },
+      )
+      const appModule = evaluateCommonJs(appOutput, source => {
+        if (source === './barrel') return barrelModule
+        throw new Error(`Unexpected app dependency: ${source}`)
+      })
+
+      expect((appModule.App as () => number)()).toBe(4)
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
   it('lets a consumer use ordinary names from an incomplete star barrel', () => {
     const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-babel-ordinary-star-'))
     const barrelPath = path.join(baseDir, 'barrel.ts')

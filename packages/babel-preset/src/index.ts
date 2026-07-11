@@ -1015,9 +1015,10 @@ function createIsolatedFictPrepass(
         const dependencyGraphKey = graphCacheKey(graphOptions.fingerprint, dependencyFilename)
         const cached = graphSession.metadata.get(dependencyGraphKey)
         if (cached?.sourceHash === dependencySourceHash) {
-          return cached.incomplete
-            ? { metadata: OPAQUE_MODULE_METADATA, resolved: false }
-            : { metadata: cached.metadata, resolved: true }
+          // Incomplete graph entries are partial, not empty. Their known
+          // reactive exports are safe to consume while `resolved: false`
+          // still prevents callers from publishing them as complete metadata.
+          return { metadata: cached.metadata, resolved: !cached.incomplete }
         }
         if (graphSession.compiling.has(dependencyGraphKey)) {
           return { metadata: OPAQUE_MODULE_METADATA, resolved: false }
@@ -1047,8 +1048,8 @@ function createIsolatedFictPrepass(
         })
 
         const prepared = graphSession.metadata.get(dependencyGraphKey)
-        return prepared?.sourceHash === dependencySourceHash && !prepared.incomplete
-          ? { metadata: prepared.metadata, resolved: true }
+        return prepared?.sourceHash === dependencySourceHash
+          ? { metadata: prepared.metadata, resolved: !prepared.incomplete }
           : { metadata: OPAQUE_MODULE_METADATA, resolved: false }
       }
       const effectiveCompilerOptions: FictCompilerOptions = validateMetadata
