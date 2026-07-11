@@ -19,13 +19,7 @@ import type {
   To,
   BeforeLeaveHandler,
 } from './types'
-import {
-  getExternalHref,
-  hasPathPrefix,
-  parseURL,
-  stripBasePath,
-  prependBasePath,
-} from './utils'
+import { getExternalHref, hasPathPrefix, parseURL, stripBasePath, prependBasePath } from './utils'
 
 // ============================================================================
 // Router Context

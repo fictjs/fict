@@ -383,9 +383,9 @@ describe('function splitting build identity', () => {
       expect(__fictVitePluginInternals.createPublicModuleId(aliasModule, aliasRoot)).toBe(
         __fictVitePluginInternals.createPublicModuleId(realModule, realRoot),
       )
-      expect(
-        __fictVitePluginInternals.createHandlerId(aliasModule, '__fict_e0', aliasRoot),
-      ).toBe(__fictVitePluginInternals.createHandlerId(realModule, '__fict_e0', realRoot))
+      expect(__fictVitePluginInternals.createHandlerId(aliasModule, '__fict_e0', aliasRoot)).toBe(
+        __fictVitePluginInternals.createHandlerId(realModule, '__fict_e0', realRoot),
+      )
     } finally {
       await Promise.all([
         rm(aliasParent, { recursive: true, force: true }),
