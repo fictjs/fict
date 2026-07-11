@@ -254,6 +254,39 @@ function RelativeFormParent(props: { children?: FictNode }) {
   )
 }
 
+function RelativeLinkParent(props: { children?: FictNode }) {
+  return (
+    <div>
+      <LocationText />
+      <Link to="save" relative="route" data-testid="route-relative-link">
+        route link
+      </Link>
+      <Link to="save" relative="path" data-testid="path-relative-link">
+        path link
+      </Link>
+      <NavLink
+        to="edit/details"
+        relative="route"
+        end
+        activeClassName="active"
+        data-testid="route-relative-nav-link"
+      >
+        route nav link
+      </NavLink>
+      <NavLink
+        to="edit/details"
+        relative="path"
+        end
+        activeClassName="active"
+        data-testid="path-relative-nav-link"
+      >
+        path nav link
+      </NavLink>
+      {props.children}
+    </div>
+  )
+}
+
 let updateReactiveNavigate: () => void = () => {}
 function ReactiveNavigateFixture() {
   let to = $state('/navigate-one')
@@ -952,6 +985,49 @@ describe('Router integration (MemoryRouter)', () => {
     })
 
     expect(screen.getByTestId('path').textContent).toBe('/users/123/settings')
+  })
+
+  it('keeps relative Link and NavLink href, active state, and navigation aligned', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/app/projects/42/edit/details'] })
+    const routes: RouteDefinition[] = [
+      {
+        path: '/projects/:id',
+        component: RelativeLinkParent,
+        children: [
+          { path: 'edit/details', element: <span data-testid="nested-link-child" /> },
+          { path: 'save', element: <span data-testid="route-save" /> },
+        ],
+      },
+    ]
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={routes} base="/app">
+          <Routes routes={routes} />
+        </RouterProvider>
+      ))
+
+      const routeLink = screen.getByTestId('route-relative-link') as HTMLAnchorElement
+      const pathLink = screen.getByTestId('path-relative-link') as HTMLAnchorElement
+      const routeNavLink = screen.getByTestId('route-relative-nav-link') as HTMLAnchorElement
+      const pathNavLink = screen.getByTestId('path-relative-nav-link') as HTMLAnchorElement
+
+      expect(routeLink.getAttribute('href')).toBe('/app/projects/42/save')
+      expect(pathLink.getAttribute('href')).toBe('/app/projects/42/edit/details/save')
+      expect(routeNavLink.getAttribute('href')).toBe('/app/projects/42/edit/details')
+      expect(pathNavLink.getAttribute('href')).toBe('/app/projects/42/edit/details/edit/details')
+      expect(routeNavLink.className).toBe('active')
+      expect(pathNavLink.className).toBe('')
+
+      await act(async () => {
+        routeLink.click()
+      })
+
+      expect(history.location.pathname).toBe('/app/projects/42/save')
+      expect(screen.getByTestId('path').textContent).toBe('/app/projects/42/save')
+    } finally {
+      history.destroy?.()
+    }
   })
 
   it('leaves absolute external links to the browser', () => {

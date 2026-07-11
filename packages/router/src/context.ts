@@ -5,7 +5,7 @@
  * routing state without prop drilling. Uses Fict's context API.
  */
 
-import { createContext, onCleanup, useContext } from '@fictjs/runtime'
+import { createContext, hasContext, onCleanup, useContext } from '@fictjs/runtime'
 
 import { wrapAccessor, wrapValue } from './accessor-utils'
 import type {
@@ -333,8 +333,13 @@ export function useMatch(path: string | (() => string)): () => RouteMatch | null
 /**
  * Get the href for a given path (useful for SSR)
  */
-export function useHref(to: To | (() => To)): () => string {
+export function useHref(
+  to: To | (() => To),
+  options?: { relative?: 'route' | 'path' | undefined },
+): () => string {
   const router = useRouter()
+  const route = useRoute()
+  const hasRouteContext = hasContext(RouteContext)
 
   return () => {
     const target = typeof to === 'function' ? to() : to
@@ -386,7 +391,11 @@ export function useHref(to: To | (() => To)): () => string {
 
       resolved = stripBasePath(currentPathname, base)
     } else {
-      const resolvePath = readAccessor(router.resolvePath as MaybeAccessor<(to: To) => string>)
+      const resolvePath = readAccessor(
+        options?.relative === 'route' && hasRouteContext
+          ? (route.resolvePath as MaybeAccessor<(to: To) => string>)
+          : (router.resolvePath as MaybeAccessor<(to: To) => string>),
+      )
       resolved = resolvePath(pathname)
     }
     // Prepend base to get the full href, then append search/hash
@@ -400,15 +409,25 @@ export function useHref(to: To | (() => To)): () => string {
  */
 export function useIsActive(
   to: To | (() => To),
-  options?: { end?: boolean | undefined; caseSensitive?: boolean | undefined },
+  options?: {
+    end?: boolean | undefined
+    caseSensitive?: boolean | undefined
+    relative?: 'route' | 'path' | undefined
+  },
 ): () => boolean {
   const router = useRouter()
+  const route = useRoute()
+  const hasRouteContext = hasContext(RouteContext)
 
   return () => {
     const target = typeof to === 'function' ? to() : to
 
     // Resolve the target path relative to current location (handles relative paths)
-    const resolvePath = readAccessor(router.resolvePath as MaybeAccessor<(to: To) => string>)
+    const resolvePath = readAccessor(
+      options?.relative === 'route' && hasRouteContext
+        ? (route.resolvePath as MaybeAccessor<(to: To) => string>)
+        : (router.resolvePath as MaybeAccessor<(to: To) => string>),
+    )
     const resolvedTargetPath = resolvePath(target)
 
     // Strip base from current location pathname for comparison

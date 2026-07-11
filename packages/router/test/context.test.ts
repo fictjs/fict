@@ -17,6 +17,7 @@ vi.mock('@fictjs/runtime', () => ({
       _getValue: () => currentValue,
     }
   },
+  hasContext: () => false,
   useContext: <T>(context: { _getValue: () => T }) => context._getValue(),
   onCleanup: (cleanup: () => void) => registeredCleanups.push(cleanup),
 }))

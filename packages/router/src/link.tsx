@@ -71,6 +71,17 @@ function getExternalHref(to: To): string | null {
   return `${pathname}${to.search || ''}${to.hash || ''}`
 }
 
+function getResolvedNavigationTarget(to: To, href: string): To {
+  if (typeof to === 'string') return href
+  const resolved = parseURL(href)
+  return {
+    ...to,
+    pathname: resolved.pathname,
+    search: resolved.search,
+    hash: resolved.hash,
+  }
+}
+
 interface LinkBehaviorSnapshot {
   to: To
   replace: boolean | undefined
@@ -239,7 +250,7 @@ export interface LinkProps extends Omit<JSX.IntrinsicElements['a'], 'href'> {
  */
 export function Link(props: LinkProps): FictNode {
   const router = useRouter()
-  const href = useHref(() => props.to)
+  const href = useHref(() => props.to, props)
   const getHrefValue = () => {
     const externalHref = getExternalHref(props.to)
     return externalHref ?? readAccessor(readAccessor(href as MaybeAccessor<MaybeAccessor<string>>))
@@ -254,9 +265,9 @@ export function Link(props: LinkProps): FictNode {
       replace: snapshot.replace,
       state: snapshot.state,
       scroll: snapshot.scroll,
-      relative: snapshot.relative,
     }
-    untrack(() => router.navigate(snapshot.to, options))
+    const target = getResolvedNavigationTarget(snapshot.to, getHrefValue())
+    untrack(() => router.navigate(target, options))
   }
 
   const domProps = __fictPropsRest(
@@ -362,7 +373,7 @@ export function NavLink(props: NavLinkProps): FictNode {
     getExternalHref(props.to)
       ? false
       : readAccessor(readAccessor(internalIsActive as MaybeAccessor<MaybeAccessor<boolean>>))
-  const href = useHref(() => props.to)
+  const href = useHref(() => props.to, props)
   const getHrefValue = () => {
     const externalHref = getExternalHref(props.to)
     return externalHref ?? readAccessor(readAccessor(href as MaybeAccessor<MaybeAccessor<string>>))
@@ -440,12 +451,12 @@ export function NavLink(props: NavLinkProps): FictNode {
     const snapshot = readLinkClick(props, event)
     if (!snapshot) return
     event.preventDefault()
+    const target = getResolvedNavigationTarget(snapshot.to, getHrefValue())
     untrack(() =>
-      router.navigate(snapshot.to, {
+      router.navigate(target, {
         replace: snapshot.replace,
         state: snapshot.state,
         scroll: snapshot.scroll,
-        relative: snapshot.relative,
       }),
     )
   }
