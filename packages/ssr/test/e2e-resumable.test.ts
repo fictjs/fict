@@ -935,6 +935,132 @@ describe('Multi-Component Interaction Scenarios', () => {
     }
   })
 
+  it('preserves resumed and dormant child scopes when their parent resumes later', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function Child(props: { id: string }) {
+        let childCount = $state(0)
+        return <button data-child={props.id} onClick$={() => childCount++}>{childCount}</button>
+      }
+
+      export function Parent() {
+        let parentCount = $state(0)
+        return (
+          <section>
+            <button data-parent onClick$={() => parentCount++}>{parentCount}</button>
+            <Child id="warm" />
+            <Child id="cold" />
+          </section>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { Parent: () => FictNode }
+      const html = renderToString(() => ({ type: mod.Parent, props: {} }))
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'], prefetch: false })
+
+      const childButton = env.document.querySelector('[data-child="warm"]') as HTMLElement
+      const coldChildButton = env.document.querySelector('[data-child="cold"]') as HTMLElement
+      const parentButton = env.document.querySelector('[data-parent]') as HTMLElement
+      const childHost = childButton.closest('fict-host[data-fict-s]') as HTMLElement
+      const coldChildHost = coldChildButton.closest('fict-host[data-fict-s]') as HTMLElement
+
+      dispatchClick(childButton, env.window)
+      await tick(3)
+      expect(childButton.textContent).toBe('1')
+
+      dispatchClick(parentButton, env.window)
+      await tick(3)
+
+      expect(parentButton.textContent).toBe('1')
+      expect(childHost.isConnected).toBe(true)
+      expect(childButton.isConnected).toBe(true)
+      expect(childButton.textContent).toBe('1')
+      expect(coldChildHost.isConnected).toBe(true)
+      expect(coldChildButton.isConnected).toBe(true)
+      expect(coldChildButton.textContent).toBe('0')
+      expect(env.document.querySelector('[data-child="warm"]')?.closest('fict-host')).toBe(
+        childHost,
+      )
+      expect(env.document.querySelector('[data-child="cold"]')?.closest('fict-host')).toBe(
+        coldChildHost,
+      )
+
+      dispatchClick(childButton, env.window)
+      await tick(3)
+      expect(childButton.textContent).toBe('2')
+
+      dispatchClick(coldChildButton, env.window)
+      await tick(3)
+      expect(coldChildButton.textContent).toBe('1')
+    } finally {
+      await cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('keeps a child scope intact when child and parent resume during one bubbling event', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function Child() {
+        let childCount = $state(0)
+        return <button data-child onClick$={() => childCount++}>{childCount}</button>
+      }
+
+      export function Parent() {
+        let parentCount = $state(0)
+        return (
+          <section data-parent onClick$={() => parentCount++}>
+            <output data-parent-count>{parentCount}</output>
+            <Child />
+          </section>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { Parent: () => FictNode }
+      const html = renderToString(() => ({ type: mod.Parent, props: {} }))
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'], prefetch: false })
+
+      const childButton = env.document.querySelector('[data-child]') as HTMLElement
+      const childHost = childButton.closest('fict-host[data-fict-s]') as HTMLElement
+      const parentCount = env.document.querySelector('[data-parent-count]') as HTMLElement
+
+      dispatchClick(childButton, env.window)
+      await tick(3)
+
+      expect(parentCount.textContent).toBe('1')
+      expect(childButton.textContent).toBe('1')
+      expect(childHost.isConnected).toBe(true)
+      expect(childButton.isConnected).toBe(true)
+      expect(env.document.querySelector('[data-child]')?.closest('fict-host')).toBe(childHost)
+
+      dispatchClick(childButton, env.window)
+      await tick(3)
+      expect(parentCount.textContent).toBe('2')
+      expect(childButton.textContent).toBe('2')
+    } finally {
+      await cleanup()
+      compiled.cleanup()
+    }
+  })
+
   it('sibling components in a list resume independently', async () => {
     const source = `
       import { $state } from 'fict'

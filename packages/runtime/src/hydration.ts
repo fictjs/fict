@@ -11,6 +11,7 @@ export type HydrationIssueCode =
   | 'node_missing'
   | 'node_extra'
   | 'node_type_mismatch'
+  | 'scope_type_mismatch'
   | 'text_mismatch'
 
 export interface HydrationIssue {
@@ -196,6 +197,50 @@ export function claimText(value: string, fallback: () => Text): Text {
     text.data = value
   }
   return text
+}
+
+/**
+ * Claim a nested resumable component host without hydrating its descendants.
+ *
+ * Parent scopes and child scopes resume independently. When a parent resumes,
+ * a child host in its hydration range therefore belongs to a different root
+ * and must remain opaque. Only internal hosts with a non-empty scope id, an
+ * independent resume entry, and an exact component identity match are
+ * claimable; a different identity is a hydration mismatch and falls back to
+ * the normal replacement path.
+ */
+export function claimResumableScopeHost(expectedType: string): Element | null {
+  const ctx = hydrationStack[hydrationStack.length - 1]
+  const cursor = ctx?.cursor
+  if (!ctx || !cursor || cursor === ctx.boundary || cursor.nodeType !== 1) {
+    return null
+  }
+
+  const host = cursor as Element
+  if (
+    host.localName.toLowerCase() !== 'fict-host' ||
+    !host.hasAttribute('data-fict-host') ||
+    !host.getAttribute('data-fict-s') ||
+    !host.getAttribute('data-fict-h')
+  ) {
+    return null
+  }
+
+  const actualType = host.getAttribute('data-fict-t')
+  if (actualType !== expectedType) {
+    emitHydrationIssue(ctx, {
+      code: 'scope_type_mismatch',
+      message:
+        '[fict/hydration] Resumable scope host does not match the expected component identity.',
+      expected: expectedType,
+      actual: actualType ?? '<missing>',
+      node: host,
+    })
+    return null
+  }
+
+  ctx.cursor = host.nextSibling
+  return host
 }
 
 export function isHydratingActive(): boolean {

@@ -42,6 +42,7 @@ import { assertValidDOMAttributeName, assertValidDOMElementName } from './dom-na
 import { __fictPushContext, __fictPopContext, __fictGetCurrentComponentId } from './hooks'
 import {
   claimNodes,
+  claimResumableScopeHost,
   claimText,
   isHydratingActive,
   withHydration,
@@ -397,11 +398,20 @@ function createElementWithContext(
 
   // Function component
   if (typeof vnode.type === 'function') {
+    const componentMeta = __fictGetComponentMeta(vnode.type)
+    if (isHydratingActive() && componentMeta?.id) {
+      const scopeHost = claimResumableScopeHost(componentMeta.id)
+      if (scopeHost) {
+        return scopeHost as DOMElement
+      }
+    }
+
     const rawProps = unwrapProps(vnode.props ?? {}) as Record<string, unknown>
     const baseProps =
       vnode.key === undefined ? rawProps : createKeyedComponentProps(rawProps, vnode.key)
 
     const props = createPropsProxy(baseProps)
+    const componentType = (componentMeta?.id ?? vnode.type.name) || 'Anonymous'
     // Create a fresh hook context for this component instance.
     // This preserves slot state across re-renders driven by __fictRender.
     const hook = isDev ? getDevtoolsHook() : undefined
@@ -449,8 +459,8 @@ function createElementWithContext(
         if (namespace === null && (host as HTMLElement).style) {
           ;(host as HTMLElement).style.display = 'contents'
         }
-        const meta = __fictGetComponentMeta(vnode.type)
-        const typeKey = (meta?.id ?? vnode.type.name) || 'Anonymous'
+        const meta = componentMeta
+        const typeKey = componentType
         __fictRegisterScope(ctx, host, typeKey, rawProps)
         if (meta?.resume) {
           host.setAttribute('data-fict-h', meta.resume)

@@ -12,6 +12,7 @@ import {
 } from '../src/index'
 import { createSignal, reactive } from '../src/advanced'
 import {
+  __fictSetComponentMeta,
   clearDelegatedEvents,
   hydrateComponent,
   resolvePath,
@@ -422,6 +423,95 @@ describe('DOM Module', () => {
   })
 
   describe('hydrateComponent', () => {
+    it('claims matching nested resumable component hosts as opaque boundaries', () => {
+      container.innerHTML =
+        '<fict-host data-fict-host data-fict-s="sChild" data-fict-t="Child@test" data-fict-h="/child.js#resume"><button>1</button></fict-host>'
+      const childHost = container.firstElementChild
+      let childRenders = 0
+
+      function Child() {
+        childRenders++
+        return template('<button>client</button>')()
+      }
+      __fictSetComponentMeta(Child, { id: 'Child@test' })
+
+      const teardown = hydrateComponent(
+        () => createElement({ type: Child, props: {}, key: undefined }),
+        container,
+      )
+
+      expect(container.firstElementChild).toBe(childHost)
+      expect(childHost?.isConnected).toBe(true)
+      expect(childHost?.textContent).toBe('1')
+      expect(childRenders).toBe(0)
+
+      teardown()
+    })
+
+    it('does not claim a nested resumable host with a different component identity', () => {
+      container.innerHTML =
+        '<fict-host data-fict-host data-fict-s="sOther" data-fict-t="Other@test" data-fict-h="/other.js#resume"><button>server</button></fict-host>'
+      const otherHost = container.firstElementChild
+      const issues: HydrationIssue[] = []
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      let childRenders = 0
+
+      function Child() {
+        childRenders++
+        return template('<button>client</button>')()
+      }
+      __fictSetComponentMeta(Child, { id: 'Child@test' })
+
+      const teardown = hydrateComponent(
+        () => createElement({ type: Child, props: {}, key: undefined }),
+        container,
+        { onHydrationIssue: issue => issues.push(issue) },
+      )
+
+      expect(otherHost?.isConnected).toBe(false)
+      expect(container.firstElementChild?.tagName).toBe('BUTTON')
+      expect(container.textContent).toBe('client')
+      expect(childRenders).toBe(1)
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          code: 'scope_type_mismatch',
+          expected: 'Child@test',
+          actual: 'Other@test',
+          node: otherHost,
+        }),
+      )
+
+      teardown()
+      warnSpy.mockRestore()
+    })
+
+    it('does not skip a same-identity scope without an independent resume entry', () => {
+      container.innerHTML =
+        '<fict-host data-fict-host data-fict-s="sChild" data-fict-t="Child@test"><button>server</button></fict-host>'
+      const childHost = container.firstElementChild
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      let childRenders = 0
+
+      function Child() {
+        childRenders++
+        return template('<button>client</button>')()
+      }
+      __fictSetComponentMeta(Child, { id: 'Child@test' })
+
+      const teardown = hydrateComponent(
+        () => createElement({ type: Child, props: {}, key: undefined }),
+        container,
+      )
+
+      expect(childHost?.isConnected).toBe(false)
+      expect(container.firstElementChild?.tagName).toBe('BUTTON')
+      expect(container.textContent).toBe('client')
+      expect(childRenders).toBe(1)
+
+      teardown()
+      warnSpy.mockRestore()
+    })
+
     it('runs compiled hydration functions and ignores their return value', () => {
       container.innerHTML = 'server'
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
