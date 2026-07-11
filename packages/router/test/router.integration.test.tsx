@@ -340,12 +340,23 @@ function RelativeLinkParent(props: { children?: FictNode }) {
   return (
     <div>
       <LocationText />
+      <Link to="save" data-testid="default-relative-link">
+        default link
+      </Link>
       <Link to="save" relative="route" data-testid="route-relative-link">
         route link
       </Link>
       <Link to="save" relative="path" data-testid="path-relative-link">
         path link
       </Link>
+      <NavLink
+        to="edit/details"
+        end
+        activeClassName="active"
+        data-testid="default-relative-nav-link"
+      >
+        default nav link
+      </NavLink>
       <NavLink
         to="edit/details"
         relative="route"
@@ -1450,24 +1461,64 @@ describe('Router integration (MemoryRouter)', () => {
         </RouterProvider>
       ))
 
+      const defaultLink = screen.getByTestId('default-relative-link') as HTMLAnchorElement
       const routeLink = screen.getByTestId('route-relative-link') as HTMLAnchorElement
       const pathLink = screen.getByTestId('path-relative-link') as HTMLAnchorElement
+      const defaultNavLink = screen.getByTestId('default-relative-nav-link') as HTMLAnchorElement
       const routeNavLink = screen.getByTestId('route-relative-nav-link') as HTMLAnchorElement
       const pathNavLink = screen.getByTestId('path-relative-nav-link') as HTMLAnchorElement
 
+      expect(defaultLink.getAttribute('href')).toBe('/app/projects/42/save')
       expect(routeLink.getAttribute('href')).toBe('/app/projects/42/save')
       expect(pathLink.getAttribute('href')).toBe('/app/projects/42/edit/details/save')
+      expect(defaultNavLink.getAttribute('href')).toBe('/app/projects/42/edit/details')
       expect(routeNavLink.getAttribute('href')).toBe('/app/projects/42/edit/details')
       expect(pathNavLink.getAttribute('href')).toBe('/app/projects/42/edit/details/edit/details')
+      expect(defaultNavLink.className).toBe('active')
       expect(routeNavLink.className).toBe('active')
       expect(pathNavLink.className).toBe('')
 
       await act(async () => {
-        routeLink.click()
+        defaultLink.click()
       })
 
       expect(history.location.pathname).toBe('/app/projects/42/save')
       expect(screen.getByTestId('path').textContent).toBe('/app/projects/42/save')
+    } finally {
+      history.destroy?.()
+    }
+  })
+
+  it('falls back to path-relative links without RouteContext', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/app/current/deep'] })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]} base="/app">
+          <Link to="next" data-testid="provider-default-link">
+            next
+          </Link>
+          <Link to="next" relative="path" data-testid="provider-path-link">
+            path next
+          </Link>
+          <NavLink to="." end activeClassName="active" data-testid="provider-default-nav-link">
+            current
+          </NavLink>
+        </RouterProvider>
+      ))
+
+      const defaultLink = screen.getByTestId('provider-default-link') as HTMLAnchorElement
+      const pathLink = screen.getByTestId('provider-path-link') as HTMLAnchorElement
+      const navLink = screen.getByTestId('provider-default-nav-link') as HTMLAnchorElement
+      expect(defaultLink.getAttribute('href')).toBe('/app/current/deep/next')
+      expect(pathLink.getAttribute('href')).toBe('/app/current/deep/next')
+      expect(navLink.getAttribute('href')).toBe('/app/current/deep')
+      expect(navLink.className).toBe('active')
+
+      await act(async () => {
+        defaultLink.click()
+      })
+      expect(history.location.pathname).toBe('/app/current/deep/next')
     } finally {
       history.destroy?.()
     }

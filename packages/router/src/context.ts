@@ -331,7 +331,10 @@ export function useMatch(path: string | (() => string)): () => RouteMatch | null
 // ============================================================================
 
 /**
- * Get the href for a given path (useful for SSR)
+ * Get the href for a given path (useful for SSR). Relative paths resolve from
+ * the current route by default, or from the current location when no route
+ * context is available. Pass `relative: 'path'` to select location-relative
+ * resolution explicitly.
  */
 export function useHref(
   to: To | (() => To),
@@ -392,7 +395,7 @@ export function useHref(
       resolved = stripBasePath(currentPathname, base)
     } else {
       const resolvePath = readAccessor(
-        options?.relative === 'route' && hasRouteContext
+        options?.relative !== 'path' && hasRouteContext
           ? (route.resolvePath as MaybeAccessor<(to: To) => string>)
           : (router.resolvePath as MaybeAccessor<(to: To) => string>),
       )

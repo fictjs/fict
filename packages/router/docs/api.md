@@ -649,6 +649,10 @@ function NavItem({ to }: { to: string }) {
 
 Get the full href for a path.
 
+Relative targets resolve against the current route by default. Pass
+`{ relative: 'path' }` to resolve against the current location instead. Outside
+of a route context, both modes fall back to the current location.
+
 ```tsx
 import { useHref } from '@fictjs/router'
 
