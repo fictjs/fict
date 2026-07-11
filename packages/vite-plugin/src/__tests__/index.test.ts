@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
+import { parse } from '@babel/parser'
 import { resolvePackageModuleMetadata } from '@fictjs/compiler'
 import { build, createServer, resolveConfig, type Rollup, type TransformResult } from 'vite'
 import { describe, it, expect, vi } from 'vitest'
@@ -4405,6 +4406,28 @@ function Counter() {
       expect(content).not.toBeNull()
       expect(content).toContain('export default')
       expect(content).toContain('__fictUseLexicalScope')
+    })
+
+    it.each([
+      ['an apostrophe', "/project/src/O'Brien.tsx"],
+      ['backslashes', String.raw`C:\project\Counter.tsx`],
+    ])('quotes source module paths containing %s', async (_label, sourceModule) => {
+      const result = await splitHandlerExports(
+        `
+          const config = { step: 1 };
+          export const __fict_e0 = () => config.step;
+        `,
+        sourceModule,
+      )
+      const content = result.load(`\0fict-handler:${sourceModule}$$__fict_e0`)
+
+      expect(content).not.toBeNull()
+      const ast = parse(content!, { sourceType: 'module' })
+      const dependencyImport = ast.program.body.find(
+        statement =>
+          statement.type === 'ImportDeclaration' && statement.source.value === sourceModule,
+      )
+      expect(dependencyImport).toBeDefined()
     })
 
     it('preserves fict/internal imports in extracted handler modules', async () => {

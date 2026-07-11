@@ -3764,7 +3764,7 @@ function normalizeRuntimeHelperUsage(usage: RuntimeHelperUsage): {
 function generateHandlerModule(handler: ExtractedHandler): string {
   // If no code was extracted (fallback case), use re-export
   if (!handler.code) {
-    return `export { ${handler.exportName} as default } from '${handler.sourceModule}';\n`
+    return `export { ${handler.exportName} as default } from ${JSON.stringify(handler.sourceModule)};\n`
   }
 
   // Group imports by source module
@@ -3795,7 +3795,9 @@ function generateHandlerModule(handler: ExtractedHandler): string {
   // These are re-exported by the source module with generated __fict_dep_ names
   if (handler.localDeps.length > 0) {
     const depImports = handler.localDeps.map(dep => `${dep.exportName} as ${dep.localName}`)
-    imports.push(`import { ${depImports.join(', ')} } from '${handler.sourceModule}';`)
+    imports.push(
+      `import { ${depImports.join(', ')} } from ${JSON.stringify(handler.sourceModule)};`,
+    )
   }
 
   // Generate the complete standalone module
