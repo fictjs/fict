@@ -4836,6 +4836,231 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('adapts reused component roots to each HTML, SVG, and MathML call site', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      function Box({ id }) {
+        return <div data-id={id}>box</div>
+      }
+      function Token({ id }) {
+        return <mi data-id={id}>x</mi>
+      }
+      function NestedToken({ id }) {
+        return <Token id={id} />
+      }
+      function ForeignRoot() {
+        return <foreignObject data-id="foreign-root"><div data-id="foreign-child" /></foreignObject>
+      }
+      function TitleRoot() {
+        return <title data-id="title-root"><circle data-id="title-child" /></title>
+      }
+
+      export function App() {
+        return (
+          <div>
+            <Box id="box-html" />
+            <Token id="token-html" />
+            <svg>
+              <g><Box id="box-svg" /></g>
+              <ForeignRoot />
+              <TitleRoot />
+            </svg>
+            <math>
+              <mrow>
+                <Token id="token-math" />
+                <NestedToken id="nested-token-math" />
+              </mrow>
+              <mtext><Token id="token-mtext-html" /></mtext>
+              <annotation-xml encoding="text/html">
+                <Token id="token-annotation-html" />
+              </annotation-xml>
+              <annotation-xml encoding="application/xml">
+                <Token id="token-annotation-math" />
+              </annotation-xml>
+            </math>
+          </div>
+        )
+      }
+
+      export function mount(el) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const output = transformCommonJS(source, { fineGrainedDom: true, dev: false })
+    expect(output).toContain('__fictElementNamespaceMatches')
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: true,
+      dev: false,
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    for (const id of ['box-html', 'token-html', 'token-mtext-html', 'token-annotation-html']) {
+      expect(container.querySelector(`[data-id="${id}"]`)?.namespaceURI, id).toBe(
+        'http://www.w3.org/1999/xhtml',
+      )
+    }
+    for (const id of ['box-svg', 'foreign-root', 'title-root']) {
+      expect(container.querySelector(`[data-id="${id}"]`)?.namespaceURI, id).toBe(
+        'http://www.w3.org/2000/svg',
+      )
+    }
+    expect(container.querySelector('[data-id="foreign-child"]')?.namespaceURI).toBe(
+      'http://www.w3.org/1999/xhtml',
+    )
+    expect(container.querySelector('[data-id="title-child"]')?.namespaceURI).toBe(
+      'http://www.w3.org/1999/xhtml',
+    )
+    for (const id of ['token-math', 'nested-token-math', 'token-annotation-math']) {
+      expect(container.querySelector(`[data-id="${id}"]`)?.namespaceURI, id).toBe(
+        'http://www.w3.org/1998/Math/MathML',
+      )
+    }
+
+    teardown()
+    container.remove()
+  })
+
+  it('emits auto-extracted component-root events in foreign namespace fallback', () => {
+    const source = `
+      import { render } from 'fict'
+
+      function Button() {
+        return (
+          <button
+            data-id="foreign-event-button"
+            onClick={() => console.log('clicked', 1)}
+          >
+            click
+          </button>
+        )
+      }
+
+      export function App() {
+        return <svg><g><Button /></g></svg>
+      }
+
+      export function mount(el) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const options = { fineGrainedDom: true, resumable: true } as const
+    const output = transformCommonJS(source, options)
+    expect(output).toContain('"attr:on:click"')
+    expect(output).toContain('__fictQrl')
+    expect(output).toContain('__fictElementNamespaceMatches')
+    expect(output).toMatch(/type: "button"[\s\S]*"attr:on:click"/)
+  })
+
+  it('preserves DOM-valued JSX locals while delaying render-only locals to their parent', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const api = []
+      export const closureReads = []
+
+      function EscapingLocal() {
+        const input = <input data-id="escaping-local-html" />
+        api.push({
+          isNode: input.nodeType === 1,
+          hasOwnerDocument: input.ownerDocument != null,
+          canFocus: typeof input.focus === 'function',
+        })
+        input.focus()
+        return input
+      }
+
+      function ForeignEscapingLocal() {
+        const node = <div data-id="escaping-local-svg" />
+        api.push({
+          isNode: node.nodeType === 1,
+          hasOwnerDocument: node.ownerDocument != null,
+          canFocus: typeof node.focus === 'function',
+        })
+        void node.ownerDocument
+        return node
+      }
+
+      function RenderOnlyLocal() {
+        const child = <div data-id="render-only-local" />
+        return <svg><g>{child}</g></svg>
+      }
+
+      function ClosureEscapingLocal() {
+        const node = <input data-id="closure-escaping-local" />
+        const focus = () => {
+          closureReads.push(node.nodeType)
+          node.focus()
+        }
+        focus()
+        return <div>{node}</div>
+      }
+
+      function ShadowedClosureLocal() {
+        const child = <div data-id="shadowed-render-only-local" />
+        const inspect = (child) => child.nodeType
+        inspect({ nodeType: 1 })
+        return <svg><g>{child}</g></svg>
+      }
+
+      export function App() {
+        return (
+          <div>
+            <EscapingLocal />
+            <svg><g><ForeignEscapingLocal /></g></svg>
+            <RenderOnlyLocal />
+            <ClosureEscapingLocal />
+            <ShadowedClosureLocal />
+          </div>
+        )
+      }
+
+      export function mount(el) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: Array<{ isNode: boolean; hasOwnerDocument: boolean; canFocus: boolean }>
+      closureReads: number[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    expect(mod.api).toEqual([
+      { isNode: true, hasOwnerDocument: true, canFocus: true },
+      { isNode: true, hasOwnerDocument: true, canFocus: true },
+    ])
+    expect(container.querySelector('[data-id="escaping-local-html"]')?.namespaceURI).toBe(
+      'http://www.w3.org/1999/xhtml',
+    )
+    expect(container.querySelector('[data-id="escaping-local-svg"]')?.namespaceURI).toBe(
+      'http://www.w3.org/2000/svg',
+    )
+    expect(container.querySelector('[data-id="render-only-local"]')?.namespaceURI).toBe(
+      'http://www.w3.org/2000/svg',
+    )
+    expect(container.querySelector('[data-id="shadowed-render-only-local"]')?.namespaceURI).toBe(
+      'http://www.w3.org/2000/svg',
+    )
+
+    expect(mod.closureReads).toEqual([1])
+
+    teardown()
+    container.remove()
+  })
+
   it.each([
     { name: 'fine-grained DOM', fineGrainedDom: true },
     { name: 'VNode fallback', fineGrainedDom: false },
@@ -5177,7 +5402,7 @@ describe('compiled templates DOM integration', () => {
               {show && <mi data-id="html-mi">html</mi>}
             </annotation-xml>
             <annotation-xml encoding=" APPLICATION/XHTML+XML ">
-              {show && <><mi data-id="fragment-mi">fragment</mi></>}
+              {show && <><mi data-id="padded-math-mi">fragment</mi></>}
             </annotation-xml>
             <annotation-xml encoding="application/xml">
               {show && <mi data-id="math-mi">math</mi>}
@@ -5193,8 +5418,8 @@ describe('compiled templates DOM integration', () => {
 
     const output = transformCommonJS(source, { fineGrainedDom: true })
     expect(output).not.toMatch(/"<mi data-id=\\"html-mi\\">html<\/mi>", void 0, void 0, true/)
-    expect(output).not.toMatch(
-      /"<mi data-id=\\"fragment-mi\\">fragment<\/mi>", void 0, void 0, true/,
+    expect(output).toMatch(
+      /"<mi data-id=\\"padded-math-mi\\">fragment<\/mi>", void 0, void 0, true/,
     )
     expect(output).toMatch(/"<mi data-id=\\"math-mi\\">math<\/mi>", void 0, void 0, true/)
 
@@ -5208,16 +5433,209 @@ describe('compiled templates DOM integration', () => {
     await flushUpdates()
 
     const htmlMi = container.querySelector('[data-id="html-mi"]') as Element
-    const fragmentMi = container.querySelector('[data-id="fragment-mi"]') as Element
+    const paddedMathMi = container.querySelector('[data-id="padded-math-mi"]') as Element
     const mathMi = container.querySelector('[data-id="math-mi"]') as Element
 
     expect(htmlMi.namespaceURI).toBe('http://www.w3.org/1999/xhtml')
-    expect(fragmentMi.namespaceURI).toBe('http://www.w3.org/1999/xhtml')
+    expect(paddedMathMi.namespaceURI).toBe('http://www.w3.org/1998/Math/MathML')
     expect(mathMi.namespaceURI).toBe('http://www.w3.org/1998/Math/MathML')
 
     teardown()
     container.remove()
   })
+
+  it.each(['safe', 'full'] as const)(
+    'sets parent namespace before annotation children with $optimizeLevel optimization',
+    async optimizeLevel => {
+      const source = `
+      import { $state, render } from 'fict'
+      import { createElement } from 'fict/internal'
+
+      function makeDom(id) {
+        return createElement({ type: 'mi', props: { 'data-id': id, children: id } })
+      }
+
+      export function App({ htmlEncoding, mathEncoding }) {
+        const show = $state(true)
+        const items = $state(['list'])
+        const beforeMath = { encoding: 'application/xml' }
+        const afterHtml = { encoding: 'application/xhtml+xml' }
+        const afterMath = { encoding: 'application/xml' }
+        return (
+          <math>
+            <annotation-xml {...beforeMath} encoding={htmlEncoding}>
+              <mi data-id="html-static-before">static</mi>
+              {makeDom('html-direct')}
+              {show ? makeDom('html-conditional') : null}
+              {items.map(item => makeDom('html-' + item))}
+            </annotation-xml>
+            <annotation-xml encoding={mathEncoding} {...afterHtml}>
+              <mi data-id="html-static-after">static</mi>
+              {makeDom('html-after-direct')}
+            </annotation-xml>
+            <annotation-xml encoding={htmlEncoding} {...afterMath}>
+              <mi data-id="math-static-after">static</mi>
+              {makeDom('math-direct')}
+              {show ? makeDom('math-conditional') : null}
+              {items.map(item => makeDom('math-' + item))}
+            </annotation-xml>
+          </math>
+        )
+      }
+
+      export function mount(el) {
+        return render(
+          () => <App htmlEncoding="TEXT/HTML" mathEncoding=" TEXT/HTML " />,
+          el,
+        )
+      }
+    `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+        fineGrainedDom: true,
+        optimizeLevel,
+      })
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const teardown = mod.mount(container)
+
+      await flushUpdates()
+
+      for (const id of [
+        'html-static-before',
+        'html-direct',
+        'html-conditional',
+        'html-list',
+        'html-static-after',
+        'html-after-direct',
+      ]) {
+        expect(container.querySelector(`[data-id="${id}"]`)?.namespaceURI, id).toBe(
+          'http://www.w3.org/1999/xhtml',
+        )
+      }
+      for (const id of ['math-static-after', 'math-direct', 'math-conditional', 'math-list']) {
+        expect(container.querySelector(`[data-id="${id}"]`)?.namespaceURI, id).toBe(
+          'http://www.w3.org/1998/Math/MathML',
+        )
+      }
+
+      teardown()
+      container.remove()
+    },
+  )
+
+  it.each([
+    { name: 'safe fine-grained', fineGrainedDom: true, optimizeLevel: 'safe' as const },
+    { name: 'full fine-grained', fineGrainedDom: true, optimizeLevel: 'full' as const },
+    { name: 'VNode fallback', fineGrainedDom: false, optimizeLevel: 'safe' as const },
+  ])(
+    'uses the last annotation-xml encoding source in $name mode',
+    async ({ fineGrainedDom, optimizeLevel }) => {
+      const source = `
+        import { render } from 'fict'
+
+        export const evaluations = []
+
+        function evaluateEncoding(value, label) {
+          evaluations.push(label)
+          return value
+        }
+
+        function App({ htmlEncoding, mathEncoding }) {
+          const htmlAttrs = { encoding: htmlEncoding }
+          const mathAttrs = { encoding: mathEncoding }
+          return (
+            <math>
+              <annotation-xml
+                data-case="dynamic-static"
+                encoding={evaluateEncoding(htmlEncoding, 'dynamic-static:first')}
+                EnCoDiNg="application/xml"
+              >
+                <mi data-id="dynamic-static" />
+              </annotation-xml>
+              <annotation-xml
+                data-case="static-dynamic"
+                encoding="application/xml"
+                ENCODING={evaluateEncoding(htmlEncoding, 'static-dynamic:last')}
+              >
+                <mi data-id="static-dynamic" />
+              </annotation-xml>
+              <annotation-xml
+                data-case="static-static"
+                encoding="text/html"
+                EnCoDiNg="application/xml"
+              >
+                <mi data-id="static-static" />
+              </annotation-xml>
+              <annotation-xml
+                data-case="dynamic-dynamic"
+                encoding={evaluateEncoding(mathEncoding, 'dynamic-dynamic:first')}
+                ENCODING={evaluateEncoding(htmlEncoding, 'dynamic-dynamic:last')}
+              >
+                <mi data-id="dynamic-dynamic" />
+              </annotation-xml>
+              <annotation-xml data-case="spread-last" encoding="application/xml" {...htmlAttrs}>
+                <mi data-id="spread-last" />
+              </annotation-xml>
+              <annotation-xml data-case="explicit-last" {...htmlAttrs} EnCoDiNg="application/xml">
+                <mi data-id="explicit-last" />
+              </annotation-xml>
+              <annotation-xml
+                data-case="dynamic-after-spread"
+                {...mathAttrs}
+                EnCoDiNg={htmlEncoding}
+              >
+                <mi data-id="dynamic-after-spread" />
+              </annotation-xml>
+            </math>
+          )
+        }
+
+        export function mount(el) {
+          evaluations.length = 0
+          return render(
+            () => <App htmlEncoding="text/html" mathEncoding="application/xml" />,
+            el,
+          )
+        }
+      `
+
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+        evaluations: string[]
+      }>(source, { fineGrainedDom, optimizeLevel })
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const teardown = mod.mount(container)
+      await flushUpdates()
+
+      const expected = {
+        'dynamic-static': ['application/xml', 'http://www.w3.org/1998/Math/MathML'],
+        'static-dynamic': ['text/html', 'http://www.w3.org/1999/xhtml'],
+        'static-static': ['application/xml', 'http://www.w3.org/1998/Math/MathML'],
+        'dynamic-dynamic': ['text/html', 'http://www.w3.org/1999/xhtml'],
+        'spread-last': ['text/html', 'http://www.w3.org/1999/xhtml'],
+        'explicit-last': ['application/xml', 'http://www.w3.org/1998/Math/MathML'],
+        'dynamic-after-spread': ['text/html', 'http://www.w3.org/1999/xhtml'],
+      } as const
+      for (const [id, [encoding, namespace]] of Object.entries(expected)) {
+        const child = container.querySelector(`[data-id="${id}"]`) as Element
+        expect(child.parentElement?.getAttribute('encoding'), `${id} encoding`).toBe(encoding)
+        expect(child.namespaceURI, `${id} namespace`).toBe(namespace)
+      }
+      expect([...mod.evaluations].sort()).toEqual(
+        [
+          'dynamic-static:first',
+          'static-dynamic:last',
+          'dynamic-dynamic:first',
+          'dynamic-dynamic:last',
+        ].sort(),
+      )
+
+      teardown()
+      container.remove()
+    },
+  )
 
   it('renders dynamic MathML text integration point children in the HTML namespace', async () => {
     const source = `
@@ -5395,6 +5813,93 @@ describe('compiled templates DOM integration', () => {
     expect(svgComponent.namespaceURI).toBe('http://www.w3.org/2000/svg')
     expect(foreignHtml.namespaceURI).toBe('http://www.w3.org/1999/xhtml')
     expect(mathDirect.namespaceURI).toBe('http://www.w3.org/1998/Math/MathML')
+
+    teardown()
+    container.remove()
+  })
+
+  it('keeps dynamic string tags and keyed lists in integration-point namespaces', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const Shape = 'circle'
+        const Token = 'mi'
+        const Glyph = 'mglyph'
+        const items = ['item']
+        return (
+          <div>
+            <Shape data-id="ordinary-html" />
+            <svg>
+              <title>
+                <Shape data-id="title-direct" />
+                <><Shape data-id="title-fragment" /></>
+              </title>
+              <desc>{true ? <Shape data-id="desc-conditional" /> : null}</desc>
+              <foreignObject>
+                {items.map(item => <Shape key={item} data-id="foreign-list" />)}
+              </foreignObject>
+              <g><Shape data-id="svg-direct" /></g>
+            </svg>
+            <math>
+              <annotation-xml encoding="text/html">
+                <Shape data-id="annotation-direct" />
+              </annotation-xml>
+              <mtext><Shape data-id="mtext-direct" /></mtext>
+              <mi>{items.map(item => <Shape key={item} data-id="mi-list" />)}</mi>
+              <mn><Glyph data-id="glyph-direct" /></mn>
+              <annotation-xml encoding="application/xml">
+                <Token data-id="math-direct">x</Token>
+              </annotation-xml>
+            </math>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const output = transformCommonJS(source, { fineGrainedDom: true })
+    expect(output).toMatch(/createElementInNamespace[\s\S]*"html"/)
+    expect(output).toMatch(/createElementInNamespace[\s\S]*"mathmlTextIntegration"/)
+    expect(output).toMatch(/createKeyedList[\s\S]*, true, "html"\)/)
+    expect(output).toMatch(/createKeyedList[\s\S]*, true, "mathmlTextIntegration"\)/)
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    for (const id of [
+      'title-direct',
+      'title-fragment',
+      'desc-conditional',
+      'foreign-list',
+      'annotation-direct',
+      'mtext-direct',
+      'mi-list',
+      'ordinary-html',
+    ]) {
+      expect(container.querySelector(`[data-id="${id}"]`)?.namespaceURI, id).toBe(
+        'http://www.w3.org/1999/xhtml',
+      )
+    }
+    expect(container.querySelector('[data-id="svg-direct"]')?.namespaceURI).toBe(
+      'http://www.w3.org/2000/svg',
+    )
+    expect(container.querySelector('[data-id="glyph-direct"]')?.namespaceURI).toBe(
+      'http://www.w3.org/1998/Math/MathML',
+    )
+    expect(container.querySelector('[data-id="math-direct"]')?.namespaceURI).toBe(
+      'http://www.w3.org/1998/Math/MathML',
+    )
+    expect(container.querySelector('annotation-xml')?.getAttribute('encoding')).toBe('text/html')
 
     teardown()
     container.remove()
@@ -8737,9 +9242,8 @@ describe('compiled templates DOM integration', () => {
           <div data-id="outer">
             <button data-id="click" onClick$={() => calls.push('click')}>click</button>
             <input data-id="input" onInput$={() => calls.push('input')} />
-            <button data-id="capture" onClickCapture$={() => calls.push('capture')}>capture</button>
+            <button data-id="named" on:click$={() => calls.push('named')}>named</button>
             <button data-id="plain" onClick={() => calls.push('plain')}>plain</button>
-            <div data-id="custom" onCustom$={() => calls.push('custom')} />
           </div>
         )
       }
@@ -8760,19 +9264,17 @@ describe('compiled templates DOM integration', () => {
 
     const click = container.querySelector('[data-id="click"]') as HTMLButtonElement
     const input = container.querySelector('[data-id="input"]') as HTMLInputElement
-    const capture = container.querySelector('[data-id="capture"]') as HTMLButtonElement
+    const named = container.querySelector('[data-id="named"]') as HTMLButtonElement
     const plain = container.querySelector('[data-id="plain"]') as HTMLButtonElement
-    const custom = container.querySelector('[data-id="custom"]') as HTMLDivElement
 
     click.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     input.dispatchEvent(new Event('input', { bubbles: true }))
-    capture.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    named.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     plain.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    custom.dispatchEvent(new Event('custom', { bubbles: true }))
     click.dispatchEvent(new Event('click$', { bubbles: true }))
     await flushUpdates()
 
-    expect(mod.calls).toEqual(['click', 'input', 'capture', 'plain', 'custom'])
+    expect(mod.calls).toEqual(['click', 'input', 'named', 'plain'])
 
     teardown()
     container.remove()
@@ -11665,8 +12167,8 @@ describe('compiled templates DOM integration', () => {
       lazyConditional: true,
     })
     expect(output).toContain('createConditional')
-    expect(output).toMatch(/createElement,\s*void 0,\s*__el_/)
-    expect(output).not.toMatch(/createElement,\s*undefined,\s*__el_/)
+    expect(output).toMatch(/"html"\),\s*void 0,\s*__el_/)
+    expect(output).not.toMatch(/"html"\),\s*undefined,\s*__el_/)
 
     const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
       fineGrainedDom: true,

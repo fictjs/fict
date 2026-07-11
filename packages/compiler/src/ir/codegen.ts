@@ -80,12 +80,17 @@ import {
   buildModuleReactiveMetadata,
 } from './codegen-module-metadata'
 import { createGeneratedIdentifier } from './codegen-name-allocation'
+import { createElementForNamespace } from './codegen-namespace-create-element'
 import {
   markSkipRegionOverride,
   normalizeDependencyKey,
   replaceIdentifiersWithOverrides,
   type RegionOverrideMap,
 } from './codegen-overrides'
+import {
+  createPolymorphicRootResult,
+  withDeferredJSXMaterialization,
+} from './codegen-polymorphic-root'
 import { computeReactiveAccessors } from './codegen-reactive-accessors'
 import { markCompilerReactiveGetter } from './codegen-reactive-getter'
 import {
@@ -99,6 +104,7 @@ import {
   isLikelyTextExpression,
 } from './codegen-reactivity'
 import { findContainingRegion, regionInfoToMetadata } from './codegen-region-utils'
+import { collectRenderOnlyJSXLocalNames } from './codegen-render-only-jsx'
 import { registerResumableComponent } from './codegen-resumable-component'
 import {
   emitResumableEventBinding,
@@ -108,10 +114,12 @@ import { runtimeIdentifier } from './codegen-runtime-helpers'
 import { collectRuntimeImports } from './codegen-runtime-imports'
 import {
   extractHIRStaticHtml,
+  normalizeAnnotationXmlAttributeName,
   parseForcedBindingName,
   resolveNamespaceContext,
   type NamespaceContext,
 } from './codegen-template-extraction'
+import { normalizeVNodeEventPropName } from './codegen-vnode-events'
 import {
   HIRError,
   type AssignmentExpression as HIRAssignmentExpression,
@@ -1383,6 +1391,12 @@ export interface CodegenContext {
   currentAssignmentName?: string | undefined
   /** Uppercase component binding currently being initialized through a wrapper call. */
   componentWrapperName?: string | undefined
+  /** Assignment whose initializer is currently being lowered. */
+  jsxAssignmentTargetName?: string | undefined
+  /** JSX locals whose uses are confined to render-value positions. */
+  renderOnlyJSXLocalNames?: Set<string> | undefined
+  /** Resumable QRLs already emitted by a polymorphic component root's optimized branch. */
+  polymorphicRootQrls?: WeakMap<Expression, Map<string, BabelCore.types.Expression>> | undefined
   /** Static JSX identifier component names used in this module, e.g. "App". */
   jsxComponentNames?: Set<string> | undefined
   /** Static JSX member component paths used in this module, e.g. "UI.Button". */
@@ -2900,10 +2914,13 @@ function lowerInstruction(
         markNonSerializableSignalIfFunctionValue(baseName, instr.value, ctx)
         ctx.currentAssignmentName = baseName
         const loweredValue = (() => {
+          const previousJSXTarget = ctx.jsxAssignmentTargetName
+          ctx.jsxAssignmentTargetName = baseName
           try {
             return lowerTrackedExpression(instr.value, ctx)
           } finally {
             ctx.currentAssignmentName = undefined
+            ctx.jsxAssignmentTargetName = previousJSXTarget
           }
         })()
         return applyLoc(
@@ -2918,10 +2935,13 @@ function lowerInstruction(
       markNonSerializableSignalIfFunctionValue(baseName, instr.value, ctx)
       ctx.currentAssignmentName = baseName
       const loweredValue = (() => {
+        const previousJSXTarget = ctx.jsxAssignmentTargetName
+        ctx.jsxAssignmentTargetName = baseName
         try {
           return lowerTrackedExpression(instr.value, ctx)
         } finally {
           ctx.currentAssignmentName = undefined
+          ctx.jsxAssignmentTargetName = previousJSXTarget
         }
       })()
       invalidateCachedGetter(ctx, baseName)
@@ -2931,10 +2951,13 @@ function lowerInstruction(
     }
     ctx.currentAssignmentName = baseName
     const loweredAssign = (() => {
+      const previousJSXTarget = ctx.jsxAssignmentTargetName
+      ctx.jsxAssignmentTargetName = baseName
       try {
         return lowerTrackedExpression(instr.value, ctx)
       } finally {
         ctx.currentAssignmentName = undefined
+        ctx.jsxAssignmentTargetName = previousJSXTarget
       }
     })()
     return applyLoc(
@@ -5438,6 +5461,7 @@ function lowerIntrinsicElementAsVNode(
 ): BabelCore.types.Expression {
   const { t } = ctx
   const props: (BabelCore.types.ObjectProperty | BabelCore.types.SpreadElement)[] = []
+  const discardedAttributeEvaluations: BabelCore.types.Expression[] = []
   let keyExpr: BabelCore.types.Expression | null = null
   const toPropKey = (name: string) =>
     /^[a-zA-Z_$][\w$]*$/.test(name) ? t.identifier(name) : t.stringLiteral(name)
@@ -5445,27 +5469,6 @@ function lowerIntrinsicElementAsVNode(
     name === '__proto__'
       ? t.objectProperty(t.stringLiteral(name), value, true)
       : t.objectProperty(toPropKey(name), value)
-  const isCamelCaseEventProp = (name: string) =>
-    name.startsWith('on') && name.length > 2 && name[2] === name[2]?.toUpperCase()
-  const isNamespacedEventProp = (name: string) =>
-    (name.startsWith('on:') && name.length > 'on:'.length) ||
-    (name.startsWith('oncapture:') && name.length > 'oncapture:'.length)
-  const normalizeEventPropName = (
-    name: string,
-  ): { name: string; isEvent: boolean; resumableExplicit: boolean } => {
-    if (name.endsWith('$')) {
-      const candidate = name.slice(0, -1)
-      if (isCamelCaseEventProp(candidate)) {
-        return { name: candidate, isEvent: true, resumableExplicit: true }
-      }
-      if (isNamespacedEventProp(candidate)) {
-        return { name: candidate, isEvent: false, resumableExplicit: true }
-      }
-      return { name, isEvent: false, resumableExplicit: false }
-    }
-    if (isCamelCaseEventProp(name)) return { name, isEvent: true, resumableExplicit: false }
-    return { name, isEvent: false, resumableExplicit: false }
-  }
   const lowerVNodeObjectKey = (
     key: Expression,
     computed: boolean | undefined,
@@ -5500,39 +5503,107 @@ function lowerIntrinsicElementAsVNode(
     )
   }
 
-  for (const attr of jsx.attributes) {
+  const intrinsicTagName = typeof jsx.tagName === 'string' ? jsx.tagName : ''
+  let lastExplicitAnnotationEncodingIndex = -1
+  if (intrinsicTagName.toLowerCase() === 'annotation-xml') {
+    for (let index = 0; index < jsx.attributes.length; index++) {
+      const attr = jsx.attributes[index]!
+      if (!attr.isSpread && attr.name.toLowerCase() === 'encoding') {
+        lastExplicitAnnotationEncodingIndex = index
+      }
+    }
+  }
+
+  for (let attrIndex = 0; attrIndex < jsx.attributes.length; attrIndex++) {
+    const attr = jsx.attributes[attrIndex]!
     if (attr.isSpread && attr.spreadExpr) {
       props.push(t.spreadElement(lowerDomExpression(attr.spreadExpr, ctx)))
       continue
     }
 
-    const name = attr.name
+    const name = normalizeAnnotationXmlAttributeName(intrinsicTagName, attr.name)
+    if (
+      name === 'encoding' &&
+      lastExplicitAnnotationEncodingIndex >= 0 &&
+      attrIndex !== lastExplicitAnnotationEncodingIndex
+    ) {
+      if (attr.value && attr.value.kind !== 'Literal') {
+        discardedAttributeEvaluations.push(lowerDomExpression(attr.value, ctx))
+      }
+      continue
+    }
     if (name === 'key') {
       keyExpr = attr.value ? lowerDomExpression(attr.value, ctx) : t.booleanLiteral(true)
       continue
     }
 
-    const eventProp = normalizeEventPropName(name)
+    const eventProp = normalizeVNodeEventPropName(name)
     const propName = eventProp.name
     const isEvent = eventProp.isEvent
-    if (
-      isEvent &&
-      attr.value &&
-      !eventProp.resumableExplicit &&
-      ctx.resumableEnabled &&
-      ctx.autoExtractEnabled !== false &&
-      shouldAutoExtract(attr.value, ctx)
-    ) {
-      const loc = attr.value.loc?.start
-      throw new HIRError(
-        `VNode fallback cannot auto-extract resumable event handler "${propName}". Enable fineGrainedDom or disable autoExtractHandlers for this output mode.`,
-        'BUILD_ERROR',
-        {
-          file: ctx.options?.filename ?? '<unknown>',
-          line: loc?.line,
-          variable: propName,
-        },
-      )
+    if (eventProp.resumableExplicit && eventProp.eventName) {
+      const modifiers = [
+        eventProp.capture ? 'capture' : null,
+        eventProp.passive ? 'passive' : null,
+        eventProp.once ? 'once' : null,
+      ].filter((value): value is string => value !== null)
+      if (modifiers.length > 0) {
+        const loc = attr.value?.loc?.start ?? attr.loc?.start
+        throw new HIRError(
+          `Resumable event handler on:${eventProp.eventName} does not support event options (${modifiers.join(', ')}). Remove the '$' suffix or the event modifier.`,
+          'BUILD_ERROR',
+          {
+            file: ctx.options?.filename ?? '<unknown>',
+            line: loc?.line,
+            variable: eventProp.eventName,
+          },
+        )
+      }
+      if (!DelegatedEvents.has(eventProp.eventName)) {
+        const loc = attr.value?.loc?.start ?? attr.loc?.start
+        throw new HIRError(
+          `Resumable event handler on:${eventProp.eventName} is not observed by the default loader. Remove the '$' suffix or configure the loader to listen for this event.`,
+          'BUILD_ERROR',
+          {
+            file: ctx.options?.filename ?? '<unknown>',
+            line: loc?.line,
+            variable: eventProp.eventName,
+          },
+        )
+      }
+    }
+    if (isEvent && attr.value && ctx.resumableEnabled) {
+      const eventName = eventProp.eventName!
+      const hasEventOptions = eventProp.capture || eventProp.passive || eventProp.once
+      const wantsResumable =
+        eventProp.resumableExplicit ||
+        (ctx.autoExtractEnabled !== false && shouldAutoExtract(attr.value, ctx))
+      if (wantsResumable && !hasEventOptions && DelegatedEvents.has(eventName)) {
+        const cachedQrl = ctx.polymorphicRootQrls?.get(attr.value)?.get(eventName)
+        if (cachedQrl) {
+          props.push(toPropObjectProperty(`attr:on:${eventName}`, t.cloneNode(cachedQrl, true)))
+          continue
+        }
+        let qrlExpr: BabelCore.types.Expression | null = null
+        const emitted = emitResumableEventBinding(
+          t.identifier('__fictVNodeTarget'),
+          eventName,
+          attr.value,
+          [],
+          ctx,
+          ctx.currentRegion ?? null,
+          createResumableEventBindingOps(),
+          {
+            explicit: eventProp.resumableExplicit,
+            onQrl: qrl => {
+              qrlExpr = qrl
+            },
+          },
+        )
+        if (emitted && qrlExpr) {
+          props.push(toPropObjectProperty(`attr:on:${eventName}`, qrlExpr))
+          continue
+        }
+      }
     }
     const prevWrapTracked = ctx.wrapTrackedExpressions
     if (isEvent) {
@@ -5577,17 +5648,10 @@ function lowerIntrinsicElementAsVNode(
   if (keyExpr) {
     vnodeProps.push(t.objectProperty(t.identifier('key'), keyExpr))
   }
-  return t.objectExpression(vnodeProps)
-}
-
-function withDeferredJSXMaterialization<T>(ctx: CodegenContext, fn: () => T): T {
-  const previous = ctx.deferJSXMaterialization
-  ctx.deferJSXMaterialization = true
-  try {
-    return fn()
-  } finally {
-    ctx.deferJSXMaterialization = previous
-  }
+  const vnode = t.objectExpression(vnodeProps)
+  return discardedAttributeEvaluations.length > 0
+    ? t.sequenceExpression([...discardedAttributeEvaluations, vnode])
+    : vnode
 }
 
 function lowerJSXElementAsVNode(
@@ -5634,14 +5698,21 @@ function lowerJSXElement(
   ctx: CodegenContext,
 ): BabelCore.types.Expression {
   const { t } = ctx
+  const assignmentTarget = ctx.jsxAssignmentTargetName
+    ? deSSAVarName(ctx.jsxAssignmentTargetName)
+    : null
+  const isRenderOnlyAssignedJSX =
+    assignmentTarget !== null && (ctx.renderOnlyJSXLocalNames?.has(assignmentTarget) ?? false)
 
   if (jsx.isComponent) {
     // Only source fragment syntax (`<>`) uses the built-in Fragment path.
     const isFragment = jsx.isFragmentSyntax === true
 
     if (isFragment) {
+      if (ctx.namespaceContext === 'parent' || isRenderOnlyAssignedJSX) {
+        return lowerJSXElementAsVNode(jsx, ctx)
+      }
       // Fragment - create VNode directly for runtime to handle
-      ctx.helpersUsed.add('createElement')
       ctx.helpersUsed.add('fragment')
       const children = jsx.children.map(c => lowerJSXChild(c, ctx))
 
@@ -5653,7 +5724,8 @@ function lowerJSXElement(
             ? t.arrayExpression(children)
             : t.nullLiteral()
 
-      return t.callExpression(t.identifier('createElement'), [
+      const createElementExpr = createElementForNamespace(ctx, ctx.namespaceContext)
+      return t.callExpression(createElementExpr, [
         t.objectExpression([
           t.objectProperty(t.identifier('type'), runtimeIdentifier(ctx, 'fragment')),
           t.objectProperty(
@@ -5713,7 +5785,14 @@ function lowerJSXElement(
   }
 
   const useFineGrainedDom = (ctx.options?.fineGrainedDom ?? true) && !ctx.noMemo
-  if (!useFineGrainedDom) {
+  if (!useFineGrainedDom || ctx.namespaceContext === 'parent') {
+    return lowerIntrinsicElementAsVNode(jsx, ctx)
+  }
+  if (
+    ctx.isComponentFn === true &&
+    (ctx.namespaceContext ?? null) === null &&
+    isRenderOnlyAssignedJSX
+  ) {
     return lowerIntrinsicElementAsVNode(jsx, ctx)
   }
 
@@ -6468,7 +6547,7 @@ function lowerIntrinsicElement(
 
   // Extract static HTML with bindings, passing namespace context
   // This allows proper namespace detection for elements inside SVG/MathML
-  const { html, bindings, isSVG, isMathML } = extractHIRStaticHtml(
+  const { html, bindings, isSVG, isMathML, elementNamespace } = extractHIRStaticHtml(
     jsx,
     ctx,
     {
@@ -6546,7 +6625,6 @@ function lowerIntrinsicElement(
         templateArgs.push(t.booleanLiteral(true))
       }
     }
-
     statements.push(
       t.variableDeclaration('const', [
         t.variableDeclarator(
@@ -6575,14 +6653,22 @@ function lowerIntrinsicElement(
   const tagName = typeof jsx.tagName === 'string' ? jsx.tagName : null
   const prevNamespace = ctx.namespaceContext
   const prevNamespaceExplicit = ctx.namespaceContextExplicit
+  const isPolymorphicComponentRoot =
+    ctx.isComponentFn === true &&
+    (prevNamespace ?? null) === null &&
+    tagName !== null &&
+    elementNamespace !== undefined
+  const polymorphicRootQrls = isPolymorphicComponentRoot
+    ? new WeakMap<Expression, Map<string, BabelCore.types.Expression>>()
+    : null
   if (tagName) {
-    const elementNamespace = resolveNamespaceContext(
+    const childNamespace = resolveNamespaceContext(
       tagName,
       ctx.namespaceContext ?? null,
       jsx.attributes,
       { allowStandaloneIntrinsic: ctx.namespaceContextExplicit !== true },
     )
-    ctx.namespaceContext = elementNamespace
+    ctx.namespaceContext = childNamespace
     ctx.namespaceContextExplicit = false
   }
 
@@ -6827,11 +6913,16 @@ function lowerIntrinsicElement(
         ctx,
         t.arrowFunctionExpression([], spreadValueExpr),
       )
-      const isSVGSpreadTarget = binding.namespace === 'svg'
+      const spreadNamespace =
+        binding.namespace === 'svg'
+          ? t.booleanLiteral(true)
+          : binding.namespace === 'mathml'
+            ? t.stringLiteral('mathml')
+            : t.booleanLiteral(false)
       const spreadArgs: BabelCore.types.Expression[] = [
         targetId,
         spreadGetter,
-        t.booleanLiteral(isSVGSpreadTarget),
+        spreadNamespace,
         t.booleanLiteral(hasAuthoredChildren),
       ]
       if (binding.exclude && binding.exclude.length > 0) {
@@ -6879,6 +6970,7 @@ function lowerIntrinsicElement(
       }
 
       if (binding.resumable && !hasEventOptions && loaderObservesResumableEvent) {
+        let qrlExpr: BabelCore.types.Expression | null = null
         const emitted = emitResumableEventBinding(
           targetId,
           eventName,
@@ -6887,8 +6979,31 @@ function lowerIntrinsicElement(
           ctx,
           containingRegion,
           createResumableEventBindingOps(),
-          { explicit: binding.resumableExplicit === true },
+          polymorphicRootQrls
+            ? {
+                explicit: binding.resumableExplicit === true,
+                onQrl: qrl => {
+                  qrlExpr = qrl
+                },
+              }
+            : { explicit: binding.resumableExplicit === true },
         )
+        if (emitted && qrlExpr && polymorphicRootQrls) {
+          let qrlsByEvent = polymorphicRootQrls.get(binding.expr)
+          if (!qrlsByEvent) {
+            qrlsByEvent = new Map()
+            polymorphicRootQrls.set(binding.expr, qrlsByEvent)
+          }
+          qrlsByEvent.set(eventName, qrlExpr)
+          statements.push(
+            t.expressionStatement(
+              t.callExpression(t.memberExpression(targetId, t.identifier('setAttribute')), [
+                t.stringLiteral(`on:${eventName}`),
+                t.cloneNode(qrlExpr, true),
+              ]),
+            ),
+          )
+        }
         if (emitted) continue
       }
 
@@ -7530,6 +7645,10 @@ function lowerIntrinsicElement(
           )
         }
       }
+    } else if (binding.type === 'eval' && binding.expr) {
+      statements.push(
+        t.expressionStatement(lowerDomExpression(binding.expr, ctx, containingRegion)),
+      )
     } else if (binding.type === 'key' && binding.expr) {
       if (!shouldSuppressListKeyBindingExpression(binding.expr, ctx)) {
         statements.push(
@@ -7603,6 +7722,9 @@ function lowerIntrinsicElement(
     } else if (binding.type === 'child' && binding.expr) {
       // Child binding (dynamic expression at placeholder)
       // Pass the binding's namespace to ensure correct SVG/MathML context
+      // A parent-derived namespace (notably dynamic annotation-xml encoding)
+      // depends on attributes having reached the real DOM element first.
+      if (binding.namespace === 'parent') flushFusedPatchGroups()
       emitHIRChildBinding(
         targetId,
         binding.expr,
@@ -7629,25 +7751,43 @@ function lowerIntrinsicElement(
 
   const body = t.blockStatement(statements)
 
+  let optimizedResult: BabelCore.types.Expression
+
   // Wrap in memo if region suggests memoization
   if (shouldMemo && containingRegion) {
     // __fictUseMemo returns a getter function - invoke it to get the actual DOM element
     const memoBody = t.arrowFunctionExpression([], body)
     if (ctx.inModule) {
-      return t.callExpression(t.callExpression(runtimeIdentifier(ctx, 'memo'), [memoBody]), [])
-    }
-    const memoArgs: BabelCore.types.Expression[] = [contextIdentifier(ctx), memoBody]
-    if (ctx.isComponentFn) {
-      const slot = reserveHookSlot(ctx)
-      if (slot >= 0) {
-        memoArgs.push(t.numericLiteral(slot))
+      optimizedResult = t.callExpression(
+        t.callExpression(runtimeIdentifier(ctx, 'memo'), [memoBody]),
+        [],
+      )
+    } else {
+      const memoArgs: BabelCore.types.Expression[] = [contextIdentifier(ctx), memoBody]
+      if (ctx.isComponentFn) {
+        const slot = reserveHookSlot(ctx)
+        if (slot >= 0) {
+          memoArgs.push(t.numericLiteral(slot))
+        }
       }
+      optimizedResult = t.callExpression(
+        t.callExpression(runtimeIdentifier(ctx, 'useMemo'), memoArgs),
+        [],
+      )
     }
-    return t.callExpression(t.callExpression(runtimeIdentifier(ctx, 'useMemo'), memoArgs), [])
+  } else {
+    // Wrap in IIFE
+    optimizedResult = t.callExpression(t.arrowFunctionExpression([], body), [])
   }
 
-  // Wrap in IIFE
-  return t.callExpression(t.arrowFunctionExpression([], body), [])
+  if (!isPolymorphicComponentRoot) return optimizedResult
+  return createPolymorphicRootResult(ctx, {
+    tagName,
+    elementNamespace,
+    optimizedResult,
+    qrls: polymorphicRootQrls,
+    createFallbackVNode: () => lowerIntrinsicElementAsVNode(jsx, ctx),
+  })
 }
 
 /**
@@ -7825,6 +7965,8 @@ function lowerInstructionWithScopes(
     const lowerInitializerExpression = (): BabelCore.types.Expression => {
       const prevObjectLiteralPath = ctx.objectLiteralPath
       const prevComponentWrapperName = ctx.componentWrapperName
+      const prevJSXAssignmentTargetName = ctx.jsxAssignmentTargetName
+      ctx.jsxAssignmentTargetName = targetBase
       if (instr.value.kind === 'ObjectExpression') {
         ctx.objectLiteralPath = [targetBase]
       }
@@ -7836,6 +7978,7 @@ function lowerInstructionWithScopes(
       } finally {
         ctx.objectLiteralPath = prevObjectLiteralPath
         ctx.componentWrapperName = prevComponentWrapperName
+        ctx.jsxAssignmentTargetName = prevJSXAssignmentTargetName
       }
     }
     if (instr.value.kind === 'CallExpression' || instr.value.kind === 'OptionalCallExpression') {
@@ -9731,6 +9874,8 @@ function lowerFunctionWithRegions(
   const prevHookFunctionMemberAliases = ctx.hookFunctionMemberAliases
   const prevInModule = ctx.inModule
   const prevDeferredJSX = ctx.deferJSXMaterialization
+  const prevJSXAssignmentTargetName = ctx.jsxAssignmentTargetName
+  const prevRenderOnlyJSXLocalNames = ctx.renderOnlyJSXLocalNames
   const prevContextLocalName = ctx.contextLocalName
   const prevLocalValueVars = ctx.localValueVars
   const prevMutablePropVars = ctx.mutablePropVars
@@ -9748,6 +9893,8 @@ function lowerFunctionWithRegions(
   ctx.contextLocalName = undefined
   ctx.inModule = false
   ctx.deferJSXMaterialization = false
+  ctx.jsxAssignmentTargetName = undefined
+  ctx.renderOnlyJSXLocalNames = undefined
   const prevShadowed = ctx.shadowedNames
   const functionShadowed = new Set(prevShadowed ?? [])
   shadowedParams.forEach(n => functionShadowed.add(n))
@@ -9859,6 +10006,8 @@ function lowerFunctionWithRegions(
     ctx.hookFunctionMemberAliases = prevHookFunctionMemberAliases
     ctx.inModule = prevInModule
     ctx.deferJSXMaterialization = prevDeferredJSX
+    ctx.jsxAssignmentTargetName = prevJSXAssignmentTargetName
+    ctx.renderOnlyJSXLocalNames = prevRenderOnlyJSXLocalNames
     ctx.contextLocalName = prevContextLocalName
     ctx.currentFnIsHook = prevHookFlag
     ctx.isComponentFn = prevIsComponent
@@ -10131,6 +10280,7 @@ function lowerFunctionWithRegions(
     (isComponentName(fn.name ? deSSAVarName(fn.name) : undefined) &&
       (hasJSX || functionUsesComponentContextPrimitives(fn)))
   ctx.isComponentFn = isComponent
+  ctx.renderOnlyJSXLocalNames = isComponent ? collectRenderOnlyJSXLocalNames(fn) : undefined
   // Non-component, non-hook functions should use non-hook-based primitives (createSignal, createMemo)
   // to avoid requiring hook context. Only component functions and hooks use hook-based APIs.
   if (!isComponent && !inferredHook) {

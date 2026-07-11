@@ -67,7 +67,7 @@ export function emitConditionalChild(
   }
 
   const bindingId = ops.genTemp(ctx, 'cond')
-  const createElementExpr = createElementForNamespace(ctx, ctx.namespaceContext)
+  const createElementExpr = createElementForNamespace(ctx, ctx.namespaceContext, startMarkerId)
   const args: BabelCore.types.Expression[] = [
     t.arrowFunctionExpression([], condition),
     t.arrowFunctionExpression([], consequent),

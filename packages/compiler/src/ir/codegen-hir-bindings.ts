@@ -194,7 +194,7 @@ export function emitHIRChildBinding(
     // Check if it's a JSX element
     if (expr.kind === 'JSXElement') {
       const childExpr = ops.lowerJSXElement(expr, ctx)
-      const createElementExpr = createElementForNamespace(ctx, namespace)
+      const createElementExpr = createElementForNamespace(ctx, namespace, markerId)
       ctx.helpersUsed.add('insertBetween')
       statements.push(
         t.expressionStatement(
@@ -211,7 +211,7 @@ export function emitHIRChildBinding(
 
     // Default: insert dynamic expression
     const valueExpr = ops.lowerDomExpression(expr, ctx, containingRegion)
-    const createElementExpr = createElementForNamespace(ctx, namespace)
+    const createElementExpr = createElementForNamespace(ctx, namespace, markerId)
     ctx.helpersUsed.add('insertBetween')
     statements.push(
       t.expressionStatement(

@@ -219,7 +219,10 @@ export function emitResumableEventBinding(
   ctx: CodegenContext,
   containingRegion: RegionInfo | null,
   ops: ResumableEventBindingOps,
-  options?: { explicit?: boolean },
+  options?: {
+    explicit?: boolean
+    onQrl?: (qrl: BabelCore.types.Expression) => void
+  },
 ): boolean {
   const { t } = ctx
   if (!ctx.resumableEnabled) {
@@ -821,6 +824,11 @@ export function emitResumableEventBinding(
     t.stringLiteral(handlerId.name),
     ...(handlerMayPreventDefault ? [t.stringLiteral('pd')] : []),
   ])
+
+  if (options?.onQrl) {
+    options.onQrl(qrlExpr)
+    return true
+  }
 
   statements.push(
     t.expressionStatement(

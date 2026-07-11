@@ -15,7 +15,7 @@ import {
 } from './hir'
 
 export interface HIRBinding {
-  type: 'attr' | 'child' | 'event' | 'key' | 'spread' | 'text' | 'textContent'
+  type: 'attr' | 'child' | 'event' | 'eval' | 'key' | 'spread' | 'text' | 'textContent'
   path: number[] // path to navigate from root to target node
   name?: string | undefined // for attributes/events
   expr?: Expression | undefined // the dynamic expression
@@ -37,10 +37,20 @@ export interface HIRTemplateExtractionResult {
   isSVG?: boolean | undefined
   /** Whether the root element is a MathML element (or child of MathML) */
   isMathML?: boolean | undefined
+  /** Namespace in which the extracted root element is parsed. */
+  elementNamespace?: ElementNamespaceContext | undefined
 }
 
-/** Namespace context type for template extraction */
-export type NamespaceContext = 'svg' | 'mathml' | 'mathmlTextIntegration' | null
+/** Namespace context type for template extraction and dynamic child creation. */
+export type NamespaceContext =
+  | 'html'
+  | 'svg'
+  | 'mathml'
+  | 'mathmlTextIntegration'
+  | 'mathmlAnnotationXml'
+  | 'parent'
+  | null
+type ElementNamespaceContext = 'html' | 'svg' | 'mathml'
 
 export interface TemplateExtractionOps {
   isLikelyTextExpression: (expr: Expression, ctx: CodegenContext) => boolean
@@ -116,7 +126,9 @@ export function parseForcedBindingName(name: string): ForcedBindingName | null {
   return null
 }
 
-function parseNamespacedEventName(name: string): { eventName: string; capture: boolean } | null {
+export function parseNamespacedEventName(
+  name: string,
+): { eventName: string; capture: boolean } | null {
   if (name.startsWith('oncapture:') && name.length > 'oncapture:'.length) {
     return { eventName: name.slice('oncapture:'.length), capture: true }
   }
@@ -126,11 +138,14 @@ function parseNamespacedEventName(name: string): { eventName: string; capture: b
   return null
 }
 
-function isCamelCaseEventName(name: string): boolean {
+export function isCamelCaseEventName(name: string): boolean {
   return name.startsWith('on') && name.length > 2 && /^[A-Z]$/.test(name[2] ?? '')
 }
 
-function normalizeEventAttributeName(name: string): { name: string; resumableExplicit: boolean } {
+export function normalizeEventAttributeName(name: string): {
+  name: string
+  resumableExplicit: boolean
+} {
   if (!name.endsWith('$')) return { name, resumableExplicit: false }
   const eventCandidate = name.slice(0, -1)
   if (parseNamespacedEventName(eventCandidate) || isCamelCaseEventName(eventCandidate)) {
@@ -167,7 +182,7 @@ function parseModifierSuffixes(
   return modifiers
 }
 
-function parseKnownEventNameWithModifiers(
+export function parseKnownEventNameWithModifiers(
   eventName: string,
 ): { eventName: string; capture: boolean; passive: boolean; once: boolean } | null {
   for (const knownEventName of EVENT_NAMES_WITH_MODIFIER_SUFFIX) {
@@ -183,25 +198,57 @@ function getStaticStringAttribute(
   attrs: readonly JSXElementAttribute[] | undefined,
   name: string,
 ): string | null {
-  if (!attrs) return null
   const expected = name.toLowerCase()
-  for (const attr of attrs) {
-    if (attr.isSpread || attr.name.toLowerCase() !== expected) continue
-    if (attr.value?.kind !== 'Literal' || typeof attr.value.value !== 'string') return null
-    return attr.value.value
+  let value: string | null = null
+  for (const attr of attrs ?? []) {
+    if (attr.isSpread) {
+      value = null
+      continue
+    }
+    if (attr.name.toLowerCase() !== expected) continue
+    value =
+      attr.value?.kind === 'Literal' && typeof attr.value.value === 'string'
+        ? attr.value.value
+        : null
   }
-  return null
+  return value
 }
 
 function isHtmlAnnotationXmlEncoding(value: string | null): boolean {
   if (!value) return false
-  const normalized = value.trim().toLowerCase()
+  const normalized = value.toLowerCase()
   return normalized === 'text/html' || normalized === 'application/xhtml+xml'
+}
+
+function hasRuntimeAnnotationXmlEncoding(
+  attrs: readonly JSXElementAttribute[] | undefined,
+): boolean {
+  let runtimeEncoding = false
+  for (const attr of attrs ?? []) {
+    if (attr.isSpread) {
+      runtimeEncoding = true
+      continue
+    }
+    if (normalizeNamespaceTagName(attr.name) !== 'encoding') continue
+    runtimeEncoding = !!attr.value && attr.value.kind !== 'Literal'
+  }
+  return runtimeEncoding
+}
+
+export function normalizeAnnotationXmlAttributeName(tagName: string, attrName: string): string {
+  return normalizeNamespaceTagName(tagName) === 'annotation-xml' &&
+    normalizeNamespaceTagName(attrName) === 'encoding'
+    ? 'encoding'
+    : attrName
+}
+
+export function normalizeNamespaceTagName(tagName: string): string {
+  return tagName.toLowerCase()
 }
 
 const MATHML_TEXT_INTEGRATION_POINTS = new Set(['mi', 'mo', 'mn', 'ms', 'mtext'])
 const MATHML_TEXT_INTEGRATION_EXCEPTIONS = new Set(['mglyph', 'malignmark'])
-const SVG_HTML_INTEGRATION_POINTS = new Set(['foreignObject', 'title', 'desc'])
+const SVG_HTML_INTEGRATION_POINTS = new Set(['foreignobject', 'title', 'desc'])
 const HTML_RAW_TEXT_CONTENT_ELEMENTS = new Set(['script', 'style', 'title'])
 // True RAWTEXT elements: the HTML parser does NOT decode entities inside them and
 // does not parse comment markers, so their content must be emitted verbatim (or
@@ -318,13 +365,62 @@ const STANDALONE_MATHML_INTRINSIC_ELEMENTS = new Set([
   'munderover',
   'semantics',
 ])
+const STANDALONE_SVG_INTRINSIC_TAGS = new Set(
+  Array.from(STANDALONE_SVG_INTRINSIC_ELEMENTS, normalizeNamespaceTagName),
+)
+const STANDALONE_MATHML_INTRINSIC_TAGS = new Set(
+  Array.from(STANDALONE_MATHML_INTRINSIC_ELEMENTS, normalizeNamespaceTagName),
+)
 
 /**
- * Resolve namespace context based on tag name and parent context.
+ * Resolve the namespace of an element based on its tag and parent context.
+ * The null context is reserved for a root whose namespace is not known yet;
+ * once an HTML element is entered, descendants use the explicit `html` context
+ * so runtime creation cannot fall back to standalone SVG heuristics.
+ */
+function resolveElementNamespaceContext(
+  tagName: string,
+  parentNamespace: NamespaceContext,
+  options?: NamespaceResolveOptions,
+): ElementNamespaceContext {
+  const semanticTagName = normalizeNamespaceTagName(tagName)
+  if (parentNamespace === null || parentNamespace === 'html') {
+    if (semanticTagName === 'svg') return 'svg'
+    if (semanticTagName === 'math') return 'mathml'
+  }
+  if (parentNamespace === 'mathmlTextIntegration') {
+    if (semanticTagName === 'svg') return 'svg'
+    if (semanticTagName === 'math') return 'mathml'
+    return MATHML_TEXT_INTEGRATION_EXCEPTIONS.has(semanticTagName) ? 'mathml' : 'html'
+  }
+  if (parentNamespace === 'mathmlAnnotationXml') {
+    return semanticTagName === 'svg' ? 'svg' : 'mathml'
+  }
+  if (parentNamespace === 'svg') return 'svg'
+  if (parentNamespace === 'mathml') return 'mathml'
+  if (parentNamespace === 'html') return 'html'
+  if (
+    options?.allowStandaloneIntrinsic === true &&
+    STANDALONE_SVG_INTRINSIC_TAGS.has(semanticTagName)
+  ) {
+    return 'svg'
+  }
+  if (
+    options?.allowStandaloneIntrinsic === true &&
+    (MATHML_TEXT_INTEGRATION_POINTS.has(semanticTagName) ||
+      STANDALONE_MATHML_INTRINSIC_TAGS.has(semanticTagName))
+  ) {
+    return 'mathml'
+  }
+  return 'html'
+}
+
+/**
+ * Resolve the context inherited by an element's children.
  * - 'svg' enters SVG namespace
  * - 'math' enters MathML namespace
- * - SVG HTML integration points exit to null (HTML namespace)
- * - 'annotation-xml' with an HTML encoding inside MathML exits to null
+ * - SVG HTML integration points enter an explicit HTML context
+ * - 'annotation-xml' with an HTML encoding inside MathML enters HTML
  * - MathML text integration point children exit to HTML except mglyph/malignmark
  * - Otherwise inherit from parent context
  */
@@ -334,44 +430,23 @@ export function resolveNamespaceContext(
   attrs?: readonly JSXElementAttribute[],
   options?: NamespaceResolveOptions,
 ): NamespaceContext {
-  if (tagName === 'svg') return 'svg'
-  if (tagName === 'math') return 'mathml'
+  const semanticTagName = normalizeNamespaceTagName(tagName)
+  const elementNamespace = resolveElementNamespaceContext(tagName, parentNamespace, options)
+  if (elementNamespace === 'svg' && SVG_HTML_INTEGRATION_POINTS.has(semanticTagName)) return 'html'
   if (
-    options?.allowStandaloneIntrinsic === true &&
-    parentNamespace === null &&
-    STANDALONE_SVG_INTRINSIC_ELEMENTS.has(tagName)
-  ) {
-    return 'svg'
-  }
-  if (
-    options?.allowStandaloneIntrinsic === true &&
-    parentNamespace === null &&
-    MATHML_TEXT_INTEGRATION_POINTS.has(tagName)
-  ) {
-    return 'mathmlTextIntegration'
-  }
-  if (
-    options?.allowStandaloneIntrinsic === true &&
-    parentNamespace === null &&
-    STANDALONE_MATHML_INTRINSIC_ELEMENTS.has(tagName)
-  ) {
-    return 'mathml'
-  }
-  if (parentNamespace === 'svg' && SVG_HTML_INTEGRATION_POINTS.has(tagName)) return null
-  if (parentNamespace === 'mathmlTextIntegration') {
-    return MATHML_TEXT_INTEGRATION_EXCEPTIONS.has(tagName) ? 'mathml' : null
-  }
-  if (
-    tagName === 'annotation-xml' &&
-    parentNamespace === 'mathml' &&
+    semanticTagName === 'annotation-xml' &&
+    elementNamespace === 'mathml' &&
     isHtmlAnnotationXmlEncoding(getStaticStringAttribute(attrs, 'encoding'))
   ) {
-    return null
+    return 'html'
   }
-  if (parentNamespace === 'mathml' && MATHML_TEXT_INTEGRATION_POINTS.has(tagName)) {
+  if (elementNamespace === 'mathml' && semanticTagName === 'annotation-xml') {
+    return 'mathmlAnnotationXml'
+  }
+  if (elementNamespace === 'mathml' && MATHML_TEXT_INTEGRATION_POINTS.has(semanticTagName)) {
     return 'mathmlTextIntegration'
   }
-  return parentNamespace
+  return elementNamespace
 }
 
 function isStaticValue(expr: Expression | null): expr is Expression & { kind: 'Literal' } {
@@ -383,13 +458,11 @@ function isStaticValue(expr: Expression | null): expr is Expression & { kind: 'L
 
 function shouldBindRawTextContent(
   tagName: string,
-  parentNamespace: NamespaceContext,
-  resolvedNamespace: NamespaceContext,
+  elementNamespace: ElementNamespaceContext,
 ): boolean {
   return (
-    parentNamespace === null &&
-    resolvedNamespace === null &&
-    HTML_RAW_TEXT_CONTENT_ELEMENTS.has(tagName)
+    elementNamespace === 'html' &&
+    HTML_RAW_TEXT_CONTENT_ELEMENTS.has(normalizeNamespaceTagName(tagName))
   )
 }
 
@@ -472,17 +545,19 @@ const PHRASING_HTML_TAGS = new Set([
 function shouldDeferChildForHtmlParser(
   parentTag: string,
   childTag: string,
-  namespace: NamespaceContext,
+  namespace: ElementNamespaceContext,
 ): boolean {
-  if (namespace !== null) return false
-  if (parentTag === 'p') {
-    return !PHRASING_HTML_TAGS.has(childTag)
+  if (namespace !== 'html') return false
+  const semanticParentTag = normalizeNamespaceTagName(parentTag)
+  const semanticChildTag = normalizeNamespaceTagName(childTag)
+  if (semanticParentTag === 'p') {
+    return !PHRASING_HTML_TAGS.has(semanticChildTag)
   }
-  if (parentTag === 'a') {
-    return childTag === 'a'
+  if (semanticParentTag === 'a') {
+    return semanticChildTag === 'a'
   }
-  if (parentTag === 'form') {
-    return childTag === 'form'
+  if (semanticParentTag === 'form') {
+    return semanticChildTag === 'form'
   }
   return false
 }
@@ -592,15 +667,38 @@ export function extractHIRStaticHtml(
   }
 
   const tagName = jsx.tagName as string
-  // Resolve namespace for this element
-  const resolvedNamespace = resolveNamespaceContext(tagName, namespace, jsx.attributes, {
+  const semanticTagName = normalizeNamespaceTagName(tagName)
+  const namespaceOptions = {
     allowStandaloneIntrinsic,
-  })
+  }
+  const elementNamespace = resolveElementNamespaceContext(tagName, namespace, namespaceOptions)
+  const childNamespace = resolveNamespaceContext(
+    tagName,
+    namespace,
+    jsx.attributes,
+    namespaceOptions,
+  )
+  const hasDynamicAnnotationEncoding =
+    elementNamespace === 'mathml' &&
+    semanticTagName === 'annotation-xml' &&
+    hasRuntimeAnnotationXmlEncoding(jsx.attributes)
+  const bindingNamespace: NamespaceContext = hasDynamicAnnotationEncoding
+    ? 'parent'
+    : childNamespace
   const isCustomElement =
-    resolvedNamespace === null &&
-    (isCustomElementTagName(tagName) || hasExplicitIsAttribute(jsx, resolvedNamespace))
+    elementNamespace === 'html' &&
+    (isCustomElementTagName(tagName) || hasExplicitIsAttribute(jsx, elementNamespace))
   let html = `<${tagName}`
   const bindings: HIRBinding[] = []
+  let lastExplicitAnnotationEncodingIndex = -1
+  if (elementNamespace === 'mathml' && semanticTagName === 'annotation-xml') {
+    for (let index = 0; index < jsx.attributes.length; index++) {
+      const attr = jsx.attributes[index]!
+      if (!attr.isSpread && normalizeNamespaceTagName(attr.name) === 'encoding') {
+        lastExplicitAnnotationEncodingIndex = index
+      }
+    }
+  }
   let hasExplicitTextareaValue = false
   const hasRenderableChildren = jsx.children.some(
     child => child.kind !== 'text' || child.value.length > 0,
@@ -618,7 +716,10 @@ export function extractHIRStaticHtml(
           const nextAttr = jsx.attributes[nextIndex]!
           if (nextAttr.isSpread) continue
 
-          let nextName = normalizeHIRAttrName(nextAttr.name, resolvedNamespace)
+          let nextName = normalizeAnnotationXmlAttributeName(
+            tagName,
+            normalizeHIRAttrName(nextAttr.name, elementNamespace),
+          )
           nextName = normalizeEventAttributeName(nextName).name
           if (nextName === 'key') continue
 
@@ -641,21 +742,33 @@ export function extractHIRStaticHtml(
           path: [...parentPath],
           expr: attr.spreadExpr,
           exclude: excluded.size > 0 ? Array.from(excluded) : undefined,
-          namespace: resolvedNamespace,
+          namespace: elementNamespace,
         })
       }
       continue
     }
 
-    const normalizedName = normalizeEventAttributeName(
-      normalizeHIRAttrName(attr.name, resolvedNamespace),
+    const normalizedAttrName = normalizeAnnotationXmlAttributeName(
+      tagName,
+      normalizeHIRAttrName(attr.name, elementNamespace),
     )
+    if (
+      normalizedAttrName === 'encoding' &&
+      lastExplicitAnnotationEncodingIndex >= 0 &&
+      attrIndex !== lastExplicitAnnotationEncodingIndex
+    ) {
+      if (attr.value && attr.value.kind !== 'Literal') {
+        bindings.push({ type: 'eval', path: [...parentPath], expr: attr.value })
+      }
+      continue
+    }
+    const normalizedName = normalizeEventAttributeName(normalizedAttrName)
     const name = normalizedName.name
     const isResumableEvent = normalizedName.resumableExplicit
     const forcedBinding = parseForcedBindingName(name)
     if (
-      tagName === 'textarea' &&
-      resolvedNamespace === null &&
+      semanticTagName === 'textarea' &&
+      elementNamespace === 'html' &&
       (name === 'value' || (forcedBinding?.prefix === 'prop' && forcedBinding.name === 'value'))
     ) {
       hasExplicitTextareaValue = true
@@ -794,7 +907,7 @@ export function extractHIRStaticHtml(
       continue
     }
 
-    if (resolvedNamespace === null && isDOMProperty(name) && isStaticValue(attr.value)) {
+    if (elementNamespace === 'html' && isDOMProperty(name) && isStaticValue(attr.value)) {
       bindings.push({
         type: 'attr',
         path: [...parentPath],
@@ -841,21 +954,20 @@ export function extractHIRStaticHtml(
   let childIndex = 0
   const children = jsx.children
   const textareaValueChild =
-    tagName === 'textarea' &&
-    resolvedNamespace === null &&
+    semanticTagName === 'textarea' &&
+    elementNamespace === 'html' &&
     !hasExplicitTextareaValue &&
     children.length === 1 &&
     children[0]?.kind === 'expression'
       ? children[0].value
       : null
   const rawTextContentChild =
-    shouldBindRawTextContent(tagName, namespace, resolvedNamespace) &&
+    shouldBindRawTextContent(tagName, elementNamespace) &&
     children.length === 1 &&
     children[0]?.kind === 'expression'
       ? children[0].value
       : null
-  const isTrueRawText =
-    namespace === null && resolvedNamespace === null && HTML_RAWTEXT_ELEMENTS.has(tagName)
+  const isTrueRawText = elementNamespace === 'html' && HTML_RAWTEXT_ELEMENTS.has(semanticTagName)
   // Raw text cannot carry comment slot markers and its entities are not decoded,
   // so a script/style element whose children mix static text with expressions
   // (e.g. CSS braces written as {'{'}) must bind its whole textContent to a
@@ -882,17 +994,17 @@ export function extractHIRStaticHtml(
       : null
   const isNonEmptyText = (node: JSXChild): boolean => node.kind === 'text' && node.value.length > 0
   const isImplicitTableRow = (node: JSXChild | undefined): boolean =>
-    tagName === 'table' &&
-    resolvedNamespace === null &&
+    semanticTagName === 'table' &&
+    elementNamespace === 'html' &&
     node?.kind === 'element' &&
     !node.value.isComponent &&
-    node.value.tagName === 'tr'
+    normalizeNamespaceTagName(String(node.value.tagName)) === 'tr'
   const isImplicitTableColumn = (node: JSXChild | undefined): boolean =>
-    tagName === 'table' &&
-    resolvedNamespace === null &&
+    semanticTagName === 'table' &&
+    elementNamespace === 'html' &&
     node?.kind === 'element' &&
     !node.value.isComponent &&
-    node.value.tagName === 'col'
+    normalizeNamespaceTagName(String(node.value.tagName)) === 'col'
   const hasAdjacentInline = (index: number): boolean => {
     const prev = children[index - 1]
     const next = children[index + 1]
@@ -923,7 +1035,7 @@ export function extractHIRStaticHtml(
       expr: rawTextContentChild,
     })
   } else if (childrenPropExpr && !hasAuthoredChildren) {
-    if (shouldBindRawTextContent(tagName, namespace, resolvedNamespace)) {
+    if (shouldBindRawTextContent(tagName, elementNamespace)) {
       bindings.push({
         type: 'textContent',
         path: [...parentPath],
@@ -935,7 +1047,7 @@ export function extractHIRStaticHtml(
         type: 'child',
         path: [...parentPath, childIndex],
         expr: childrenPropExpr,
-        namespace: resolvedNamespace,
+        namespace: bindingNamespace,
       })
       childIndex++
     }
@@ -968,17 +1080,28 @@ export function extractHIRStaticHtml(
         }
       } else if (child.kind === 'element') {
         previousStaticTextChild = false
+        if (hasDynamicAnnotationEncoding) {
+          html += '<!--fict:slot:start--><!--fict:slot:end-->'
+          bindings.push({
+            type: 'child',
+            path: [...parentPath, childIndex],
+            expr: child.value,
+            namespace: 'parent',
+          })
+          childIndex++
+          continue
+        }
         if (
           !child.value.isComponent &&
           typeof child.value.tagName === 'string' &&
-          shouldDeferChildForHtmlParser(tagName, child.value.tagName, resolvedNamespace)
+          shouldDeferChildForHtmlParser(tagName, child.value.tagName, elementNamespace)
         ) {
           html += '<!--fict:slot:start--><!--fict:slot:end-->'
           bindings.push({
             type: 'child',
             path: [...parentPath, childIndex],
             expr: child.value,
-            namespace: resolvedNamespace,
+            namespace: bindingNamespace,
           })
           childIndex++
           continue
@@ -995,7 +1118,7 @@ export function extractHIRStaticHtml(
               ctx,
               ops,
               [...tbodyPath, rowIndex],
-              resolvedNamespace,
+              childNamespace,
               false,
             )
             html += rowResult.html
@@ -1020,7 +1143,7 @@ export function extractHIRStaticHtml(
               ctx,
               ops,
               [...colgroupPath, columnIndex],
-              resolvedNamespace,
+              childNamespace,
               false,
             )
             html += columnResult.html
@@ -1040,7 +1163,7 @@ export function extractHIRStaticHtml(
           ctx,
           ops,
           childPath,
-          resolvedNamespace,
+          childNamespace,
           false,
         )
         html += childResult.html
@@ -1056,7 +1179,7 @@ export function extractHIRStaticHtml(
             path: [...parentPath, childIndex],
             expr: child.value,
             // Track namespace for dynamic text bindings
-            namespace: resolvedNamespace,
+            namespace: bindingNamespace,
           })
         } else {
           // Dynamic expression - insert placeholder comments
@@ -1066,7 +1189,7 @@ export function extractHIRStaticHtml(
             path: [...parentPath, childIndex],
             expr: child.value,
             // Track namespace for dynamic child bindings
-            namespace: resolvedNamespace,
+            namespace: bindingNamespace,
           })
           childIndex++
           continue
@@ -1076,7 +1199,7 @@ export function extractHIRStaticHtml(
     }
   }
 
-  if (!(resolvedNamespace === null && HTML_VOID_ELEMENTS.has(tagName))) {
+  if (!(elementNamespace === 'html' && HTML_VOID_ELEMENTS.has(semanticTagName))) {
     html += `</${tagName}>`
   }
 
@@ -1085,15 +1208,8 @@ export function extractHIRStaticHtml(
   // - We're in SVG/MathML context (from parent) but root tag isn't 'svg'/'math' itself
   // - In that case, the browser would parse the HTML as HTML elements without the namespace
   // Note: If root IS 'svg' or 'math', the tag itself creates the namespace, no wrapping needed
-  const needsSVG =
-    (namespace === 'svg' || (namespace === null && resolvedNamespace === 'svg')) &&
-    tagName !== 'svg'
-  const needsMathML =
-    (namespace === 'mathml' ||
-      (namespace === 'mathmlTextIntegration' && resolvedNamespace === 'mathml') ||
-      (namespace === null &&
-        (resolvedNamespace === 'mathml' || resolvedNamespace === 'mathmlTextIntegration'))) &&
-    tagName !== 'math'
+  const needsSVG = elementNamespace === 'svg' && semanticTagName !== 'svg'
+  const needsMathML = elementNamespace === 'mathml' && semanticTagName !== 'math'
 
   return {
     html,
@@ -1101,5 +1217,6 @@ export function extractHIRStaticHtml(
     nodeCount: 1,
     isSVG: needsSVG || undefined,
     isMathML: needsMathML || undefined,
+    elementNamespace,
   }
 }

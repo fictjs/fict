@@ -6365,6 +6365,8 @@ function instructionToStatement(
     const lowerAssignedValue = (forceAssigned = false, noRenderMemo = false) => {
       const prevObjectLiteralPath = ctx.objectLiteralPath
       const prevComponentWrapperName = ctx.componentWrapperName
+      const prevJSXAssignmentTargetName = ctx.jsxAssignmentTargetName
+      ctx.jsxAssignmentTargetName = baseName
       if (instr.value.kind === 'ObjectExpression') {
         ctx.objectLiteralPath = [baseName]
       }
@@ -6378,6 +6380,7 @@ function instructionToStatement(
       } finally {
         ctx.objectLiteralPath = prevObjectLiteralPath
         ctx.componentWrapperName = prevComponentWrapperName
+        ctx.jsxAssignmentTargetName = prevJSXAssignmentTargetName
       }
     }
     const needsAsyncContext = expressionNeedsAsyncContext(instr.value)
@@ -6835,10 +6838,7 @@ function instructionToStatement(
       ])
     }
     return t.variableDeclaration('let', [
-      t.variableDeclarator(
-        t.identifier(baseName),
-        lowerExpressionWithDeSSA(instr.value, ctx, true),
-      ),
+      t.variableDeclarator(t.identifier(baseName), lowerAssignedValue(true)),
     ])
   }
   if (instr.kind === 'Expression') {

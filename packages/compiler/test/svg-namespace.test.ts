@@ -75,8 +75,7 @@ describe('SVG/MathML Namespace Support ()', () => {
       expect(output).toMatch(/template\([^)]*circle[^)]*,\s*void 0,\s*true\)/)
       expect(wrapperVNode).toContain('type: "span"')
       expect(wrapperVNode).toContain('"data-id": "html"')
-      expect(wrapperVNode).toMatch(/\}\), createElement\);/)
-      expect(wrapperVNode).not.toContain('createElementInNamespace')
+      expect(wrapperVNode).toContain('createElementInNamespace(__node, "html")')
     })
 
     it('restores SVG namespace before later HTML dynamic siblings', () => {
@@ -167,9 +166,9 @@ describe('SVG/MathML Namespace Support ()', () => {
       expect(output).toContain('clip-rule=\\"evenodd\\"')
       expect(output).toContain('xlink:href=\\"#a\\"')
       expect(output).toContain('xlink:href=\\"#b\\"')
-      expect(output).not.toContain('strokeWidth')
-      expect(output).not.toContain('strokeLinecap')
-      expect(output).not.toContain('xlinkHref')
+      expect(output).toContain('strokeWidth: 2')
+      expect(output).toContain('strokeLinecap: "round"')
+      expect(output).toContain('xlinkHref: "#a"')
     })
 
     it('normalizes dynamic SVG JSX attribute aliases in bindings', () => {
@@ -190,8 +189,8 @@ describe('SVG/MathML Namespace Support ()', () => {
       expect(output).toContain('"stroke-width"')
       expect(output).toContain('"xlink:href"')
       expect(output).toContain('stroke-linecap=\\"round\\"')
-      expect(output).not.toContain('strokeWidth')
-      expect(output).not.toContain('xlinkHref')
+      expect(output).toContain('strokeWidth: __fictReactive')
+      expect(output).toContain('xlinkHref: __fictReactive')
     })
 
     it('passes SVG namespace to dynamic string intrinsic slots', () => {
@@ -232,21 +231,22 @@ describe('SVG/MathML Namespace Support ()', () => {
       expect(output).toMatch(/template\([^)]*<g[^)]*,\s*void 0,\s*true\)/)
     })
 
-    it('does not pass SVG namespace to dynamic tags inside foreignObject', () => {
+    it('passes an explicit HTML namespace to dynamic tags inside adjusted foreignObject', () => {
       const source = `
         export function App({ Tag }) {
           return (
             <svg>
-              <foreignObject>
+              <foreignobject>
                 <Tag data-id="html" />
-              </foreignObject>
+              </foreignobject>
             </svg>
           )
         }
       `
       const output = transform(source, { dev: false })
 
-      expect(output).not.toContain('createElementInNamespace')
+      expect(output).toContain('createElementInNamespace(__node, "html")')
+      expect(output).not.toContain('createElementInNamespace(__node, "svg")')
     })
 
     it('exits SVG namespace inside foreignObject', () => {
@@ -286,6 +286,20 @@ describe('SVG/MathML Namespace Support ()', () => {
       const output = transform(source)
 
       expect(output).toMatch(/template\([^)]*foreignObject[^)]*,\s*void 0,\s*true\)/)
+    })
+
+    it('does not switch a nested math tag out of the SVG namespace', () => {
+      const source = `
+        import { $state } from 'fict'
+        export function App() {
+          const show = $state(true)
+          return <svg><g>{show && <math data-id="svg-math"><mi /></math>}</g></svg>
+        }
+      `
+      const output = transform(source)
+
+      expect(output).toMatch(/template\([^)]*svg-math[^)]*,\s*void 0,\s*true\)/)
+      expect(output).not.toMatch(/template\([^)]*svg-math[^)]*,\s*void 0,\s*void 0,\s*true\)/)
     })
 
     it.each(['title', 'desc'])('exits SVG namespace inside %s integration point', parentTag => {
@@ -371,8 +385,7 @@ describe('SVG/MathML Namespace Support ()', () => {
       expect(output).toMatch(/template\([^)]*mi[^)]*,\s*void 0,\s*void 0,\s*true\)/)
       expect(wrapperVNode).toContain('type: "span"')
       expect(wrapperVNode).toContain('"data-id": "html-math"')
-      expect(wrapperVNode).toMatch(/\}\), createElement\);/)
-      expect(wrapperVNode).not.toContain('createElementInNamespace')
+      expect(wrapperVNode).toContain('createElementInNamespace(__node, "html")')
     })
 
     it('passes MathML namespace to dynamic string intrinsic slots', () => {
@@ -450,6 +463,41 @@ describe('SVG/MathML Namespace Support ()', () => {
       expect(output).toMatch(/template\([^)]*math-mi[^)]*,\s*void 0,\s*void 0,\s*true\)/)
     })
 
+    it('only switches direct svg children of non-HTML annotation-xml', () => {
+      const source = `
+        import { $state } from 'fict'
+        export function App() {
+          const show = $state(true)
+          return (
+            <math>
+              <annotation-XML encoding="application/xml">
+                {show && <svg data-id="annotation-svg"><circle /></svg>}
+                {show && <math data-id="annotation-math"><mi /></math>}
+              </annotation-XML>
+            </math>
+          )
+        }
+      `
+      const output = transform(source)
+
+      expect(output).toContain('createElementInNamespace(__node, "mathmlAnnotationXml")')
+      expect(output).toContain('annotation-svg')
+      expect(output).toContain('annotation-math')
+    })
+
+    it('does not switch a nested svg tag out of the MathML namespace', () => {
+      const source = `
+        import { $state } from 'fict'
+        export function App() {
+          const show = $state(true)
+          return <math><mrow>{show && <svg data-id="math-svg"><circle /></svg>}</mrow></math>
+        }
+      `
+      const output = transform(source)
+
+      expect(output).toMatch(/template\([^)]*math-svg[^)]*,\s*void 0,\s*void 0,\s*true\)/)
+    })
+
     it('keeps dynamic MathML annotation-xml elements in the MathML namespace', () => {
       const source = `
         import { $state } from 'fict'
@@ -492,17 +540,17 @@ describe('SVG/MathML Namespace Support ()', () => {
       },
     )
 
-    it('keeps MathML-only text integration point exceptions in MathML namespace', () => {
+    it('keeps adjusted MathML text integration point exceptions in MathML namespace', () => {
       const source = `
         import { $state } from 'fict'
         export function App() {
           const show = $state(true)
           return (
             <math>
-              <mtext>
-                {show && <mglyph data-id="glyph"></mglyph>}
-                {show && <malignmark data-id="align"></malignmark>}
-              </mtext>
+              <mText>
+                {show && <mGlyph data-id="glyph"></mGlyph>}
+                {show && <mAlignMark data-id="align"></mAlignMark>}
+              </mText>
             </math>
           )
         }

@@ -1,7 +1,7 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
 exports[`optimizer output baselines > hook + derived accessors 1`] = `
-"import { __fictUseSignal, __fictUseMemo, __fictUseContext, __fictUseEffect, template, resolvePath, getSlotEnd, createElement, insertBetween } from "fict/internal";
+"import { __fictUseSignal, __fictUseMemo, __fictUseContext, __fictUseEffect, template, resolvePath, getSlotEnd, createElementInNamespace, insertBetween, __fictElementNamespaceMatches, __fictReactive } from "fict/internal";
 export function useCounter() {
   const __fictCtx = __fictUseContext();
   const count = __fictUseSignal(__fictCtx, 0, {
@@ -27,22 +27,27 @@ export function View() {
   const count = _useCounter.count;
   const double = _useCounter.double;
   __fictUseEffect(__fictCtx, () => {}, 1000);
-  return __fictUseMemo(__fictCtx, () => {
+  return __fictElementNamespaceMatches("div", "html") ? __fictUseMemo(__fictCtx, () => {
     const __tmpl_1 = template("<div><!--fict:slot:start--><!--fict:slot:end--> / <!--fict:slot:start--><!--fict:slot:end--></div>");
     const __root_0 = __tmpl_1();
     const __el_2 = resolvePath(__root_0, [0]);
     const __el_3 = resolvePath(__root_0, [2]);
     const __end_4 = getSlotEnd(__el_2);
-    insertBetween(__el_2, __end_4, () => count(), createElement);
+    insertBetween(__el_2, __end_4, () => count(), __node => createElementInNamespace(__node, "html"));
     const __end_5 = getSlotEnd(__el_3);
-    insertBetween(__el_3, __end_5, () => double(), createElement);
+    insertBetween(__el_3, __end_5, () => double(), __node => createElementInNamespace(__node, "html"));
     return __root_0;
-  }, 1001)();
+  }, 1001)() : {
+    type: "div",
+    props: {
+      children: [__fictReactive(() => count()), " / ", __fictReactive(() => double())]
+    }
+  };
 }"
 `;
 
 exports[`optimizer output baselines > keyed list rendering 1`] = `
-"import { __fictUseSignal, __fictUseMemo, template, resolvePath, getSlotEnd, bindText, onDestroy, __fictUseContext } from "fict/internal";
+"import { __fictUseSignal, __fictUseMemo, template, resolvePath, getSlotEnd, bindText, onDestroy, __fictElementNamespaceMatches, __fictReactive, __fictUseContext } from "fict/internal";
 import { createKeyedList } from "fict/internal/list";
 function List() {
   const __fictCtx = __fictUseContext();
@@ -55,7 +60,7 @@ function List() {
   }], {
     name: "items"
   });
-  return __fictUseMemo(__fictCtx, () => {
+  return __fictElementNamespaceMatches("ul", "html") ? __fictUseMemo(__fictCtx, () => {
     const __tmpl_1 = template("<ul><!--fict:slot:start--><!--fict:slot:end--></ul>");
     const __root_0 = __tmpl_1();
     const __el_2 = resolvePath(__root_0, [0]);
@@ -66,42 +71,58 @@ function List() {
       const __el_6 = resolvePath(__root_5, [0]);
       bindText(__el_6, () => item().text);
       return __root_5;
-    })(), false, __el_2, __end_3, true);
+    })(), false, __el_2, __end_3, true, "html");
     __list_7?.flush?.();
     onDestroy(__list_7.dispose);
     return __root_0;
-  }, 1000)();
+  }, 1000)() : {
+    type: "ul",
+    props: {
+      children: __fictReactive(() => items().map(item => ({
+        type: "li",
+        props: {
+          children: item.text
+        },
+        key: item.id
+      })))
+    }
+  };
 }
 let __default_export_value_0 = List;
 export default __default_export_value_0;"
 `;
 
 exports[`optimizer output baselines > props destructuring + defaults 1`] = `
-"import { __fictUseMemo, template, resolvePath, getSlotEnd, createElement, insertBetween, __fictUseContext, prop } from "fict/internal";
+"import { __fictUseMemo, template, resolvePath, getSlotEnd, createElementInNamespace, insertBetween, __fictElementNamespaceMatches, __fictReactive, __fictUseContext, prop } from "fict/internal";
 function Card(__props) {
   __props.title;
   const title = prop(() => __props.title);
   const __propDefault_1 = __props.count === void 0 ? 0 : void 0;
   const count = prop(() => __props.count === void 0 ? __propDefault_1 : __props.count);
   const __fictCtx = __fictUseContext();
-  return __fictUseMemo(__fictCtx, () => {
+  return __fictElementNamespaceMatches("h1", "html") ? __fictUseMemo(__fictCtx, () => {
     const __tmpl_3 = template("<h1><!--fict:slot:start--><!--fict:slot:end--> <!--fict:slot:start--><!--fict:slot:end--></h1>");
     const __root_2 = __tmpl_3();
     const __el_4 = resolvePath(__root_2, [0]);
     const __el_5 = resolvePath(__root_2, [2]);
     const __end_6 = getSlotEnd(__el_4);
-    insertBetween(__el_4, __end_6, () => title(), createElement);
+    insertBetween(__el_4, __end_6, () => title(), __node => createElementInNamespace(__node, "html"));
     const __end_7 = getSlotEnd(__el_5);
-    insertBetween(__el_5, __end_7, () => count(), createElement);
+    insertBetween(__el_5, __end_7, () => count(), __node => createElementInNamespace(__node, "html"));
     return __root_2;
-  }, 1000)();
+  }, 1000)() : {
+    type: "h1",
+    props: {
+      children: [__fictReactive(() => title()), " ", __fictReactive(() => count())]
+    }
+  };
 }
 let __default_export_value_0 = Card;
 export default __default_export_value_0;"
 `;
 
 exports[`optimizer output baselines > region grouping across control flow 1`] = `
-"import { __fictUseSignal, __fictUseMemo, template, resolvePath, getSlotEnd, createElement, insertBetween, __fictUseContext } from "fict/internal";
+"import { __fictUseSignal, __fictUseMemo, template, resolvePath, getSlotEnd, createElementInNamespace, insertBetween, __fictElementNamespaceMatches, __fictReactive, __fictUseContext } from "fict/internal";
 function Summary() {
   const __fictCtx = __fictUseContext();
   const count = __fictUseSignal(__fictCtx, 0, {
@@ -124,17 +145,22 @@ function Summary() {
   }, 1000);
   const heading = () => __region_0().heading;
   const extra = () => __region_0().extra;
-  return __fictUseMemo(__fictCtx, () => {
+  return __fictElementNamespaceMatches("div", "html") ? __fictUseMemo(__fictCtx, () => {
     const __tmpl_1 = template("<div><!--fict:slot:start--><!--fict:slot:end--> <!--fict:slot:start--><!--fict:slot:end--></div>");
     const __root_0 = __tmpl_1();
     const __el_2 = resolvePath(__root_0, [0]);
     const __el_3 = resolvePath(__root_0, [2]);
     const __end_4 = getSlotEnd(__el_2);
-    insertBetween(__el_2, __end_4, () => heading(), createElement);
+    insertBetween(__el_2, __end_4, () => heading(), __node => createElementInNamespace(__node, "html"));
     const __end_5 = getSlotEnd(__el_3);
-    insertBetween(__el_3, __end_5, () => extra(), createElement);
+    insertBetween(__el_3, __end_5, () => extra(), __node => createElementInNamespace(__node, "html"));
     return __root_0;
-  }, 1001)();
+  }, 1001)() : {
+    type: "div",
+    props: {
+      children: [__fictReactive(() => heading()), " ", __fictReactive(() => extra())]
+    }
+  };
 }
 let __default_export_value_0 = Summary;
 export default __default_export_value_0;"

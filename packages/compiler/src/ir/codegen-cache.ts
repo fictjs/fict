@@ -137,7 +137,6 @@ export function getOrCreateHoistedTemplate(
       templateArgs.push(t.booleanLiteral(true))
     }
   }
-
   ctx.hoistedTemplateStatements.push(
     t.variableDeclaration('const', [
       t.variableDeclarator(

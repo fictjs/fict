@@ -433,7 +433,7 @@ describe('createFictPlugin (HIR)', () => {
 
       expect(output).toContain('function App(props)')
       expect(output).toContain('template("<div>')
-      expect(output).not.toContain('props: {')
+      expect(output).not.toContain('function App(props:')
       expect(output).not.toContain('name?: string')
     })
 

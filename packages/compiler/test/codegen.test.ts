@@ -836,7 +836,7 @@ describe('region metadata → DOM', () => {
     expect(code).toContain('"innerHTML"')
     expect(code).toContain('"__html" in')
     expect(code).not.toContain('setAttr')
-    expect(code).not.toContain('dangerouslySetInnerHTML')
+    expect(code).toContain('dangerouslySetInnerHTML: {')
   })
 
   it('updates reactive dangerouslySetInnerHTML through innerHTML effects', () => {
@@ -869,7 +869,7 @@ describe('region metadata → DOM', () => {
 
     expect(code).toContain('"__html" in')
     expect(code).toContain('"innerHTML"')
-    expect(code).not.toContain('dangerouslySetInnerHTML')
+    expect(code).toContain('dangerouslySetInnerHTML: {}')
   })
 
   it('keeps VNode fallback dangerouslySetInnerHTML object shape reactive at __html', () => {
@@ -2685,7 +2685,7 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(code).toContain('() => count()')
     expect(code).toContain('type: UI.Button')
     expect(code).not.toContain('createSignal(1')
-    expect(code).not.toContain('() => count, createElement')
+    expect(code).not.toMatch(/\(\) => count,\s/)
   })
 
   it('lowers assigned JSX member function expressions with component state semantics', () => {
@@ -2790,7 +2790,7 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).toContain('__fictUseSignal(__fictCtx, 1')
     expect(output).toContain('() => count()')
     expect(output).not.toContain('createSignal(1')
-    expect(output).not.toContain('() => count, createElement')
+    expect(output).not.toMatch(/\(\) => count,\s/)
   })
 
   it('lowers call-wrapped local components used by JSX with component state semantics', () => {
@@ -3049,7 +3049,7 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).toContain('() => count()')
     expect(output).toContain('type: App')
     expect(output).not.toContain('createSignal(1')
-    expect(output).not.toContain('() => count, createElement')
+    expect(output).not.toMatch(/\(\) => count,\s/)
   })
 
   it('lowers assigned identifier function components with component state semantics', () => {
@@ -3182,7 +3182,7 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).toContain('() => count()')
     expect(output).toContain('type: App')
     expect(output).not.toContain('createSignal(1')
-    expect(output).not.toContain('() => count, createElement')
+    expect(output).not.toMatch(/\(\) => count,\s/)
   })
 
   it('keeps renamed object-destructured component props reactive', () => {
@@ -4100,8 +4100,8 @@ describe('tracked reads/writes in HIR codegen', () => {
       }
     `)
 
-    expect(siblingOutput.match(/\(\) => count, createElement/g)).toHaveLength(1)
-    expect(siblingOutput.match(/\(\) => count\(\), createElement/g)?.length ?? 0).toBeGreaterThan(0)
+    expect(siblingOutput.match(/\(\) => count,\s/g)).toHaveLength(1)
+    expect(siblingOutput.match(/\(\) => count\(\),\s/g)?.length ?? 0).toBeGreaterThan(0)
 
     const branchOutput = transform(`
       import { $state } from 'fict'
@@ -4119,7 +4119,7 @@ describe('tracked reads/writes in HIR codegen', () => {
 
     expect(branchOutput).toContain('console.log(count);')
     expect(branchOutput).not.toContain('console.log(count())')
-    expect(branchOutput.match(/\(\) => count\(\), createElement/g)?.length ?? 0).toBeGreaterThan(0)
+    expect(branchOutput.match(/\(\) => count\(\),\s/g)?.length ?? 0).toBeGreaterThan(0)
 
     const switchOutput = transform(`
       import { $state } from 'fict'
@@ -4138,8 +4138,8 @@ describe('tracked reads/writes in HIR codegen', () => {
       }
     `)
 
-    expect(switchOutput.match(/\(\) => count, createElement/g)).toHaveLength(1)
-    expect(switchOutput.match(/\(\) => count\(\), createElement/g)?.length ?? 0).toBeGreaterThan(0)
+    expect(switchOutput.match(/\(\) => count,\s/g)).toHaveLength(1)
+    expect(switchOutput.match(/\(\) => count\(\),\s/g)?.length ?? 0).toBeGreaterThan(0)
 
     const loopOutput = transform(`
       import { $state } from 'fict'
@@ -4160,7 +4160,7 @@ describe('tracked reads/writes in HIR codegen', () => {
 
     expect(loopOutput).toContain('console.log(count);')
     expect(loopOutput).not.toContain('console.log(count())')
-    expect(loopOutput.match(/\(\) => count\(\), createElement/g)?.length ?? 0).toBeGreaterThan(0)
+    expect(loopOutput.match(/\(\) => count\(\),\s/g)?.length ?? 0).toBeGreaterThan(0)
 
     const catchOutput = transform(`
       import { $state } from 'fict'
@@ -4181,7 +4181,7 @@ describe('tracked reads/writes in HIR codegen', () => {
 
     expect(catchOutput).toContain('console.log(count);')
     expect(catchOutput).not.toContain('console.log(count())')
-    expect(catchOutput.match(/\(\) => count\(\), createElement/g)?.length ?? 0).toBeGreaterThan(0)
+    expect(catchOutput.match(/\(\) => count\(\),\s/g)?.length ?? 0).toBeGreaterThan(0)
 
     const destructuringOutput = transform(`
       import { $state } from 'fict'
@@ -4199,9 +4199,7 @@ describe('tracked reads/writes in HIR codegen', () => {
 
     expect(destructuringOutput).toContain('console.log(count);')
     expect(destructuringOutput).not.toContain('console.log(count())')
-    expect(
-      destructuringOutput.match(/\(\) => count\(\), createElement/g)?.length ?? 0,
-    ).toBeGreaterThan(0)
+    expect(destructuringOutput.match(/\(\) => count\(\),\s/g)?.length ?? 0).toBeGreaterThan(0)
   })
 
   it('keeps runtime creator imports visible after branch-local shadows', () => {
@@ -4218,8 +4216,8 @@ describe('tracked reads/writes in HIR codegen', () => {
       }
     `)
 
-    expect(directOutput.match(/\(\) => count\(\), createElement/g)?.length ?? 0).toBeGreaterThan(0)
-    expect(directOutput).not.toMatch(/\(\) => count, createElement/)
+    expect(directOutput.match(/\(\) => count\(\),\s/g)?.length ?? 0).toBeGreaterThan(0)
+    expect(directOutput).not.toMatch(/\(\) => count,\s/)
 
     const aliasOutput = transform(`
       import { createSignal as makeSignal } from '@fictjs/runtime'
@@ -4234,8 +4232,8 @@ describe('tracked reads/writes in HIR codegen', () => {
       }
     `)
 
-    expect(aliasOutput.match(/\(\) => count\(\), createElement/g)?.length ?? 0).toBeGreaterThan(0)
-    expect(aliasOutput).not.toMatch(/\(\) => count, createElement/)
+    expect(aliasOutput.match(/\(\) => count\(\),\s/g)?.length ?? 0).toBeGreaterThan(0)
+    expect(aliasOutput).not.toMatch(/\(\) => count,\s/)
 
     const memoOutput = transform(`
       import { createMemo } from '@fictjs/runtime'
@@ -4250,8 +4248,8 @@ describe('tracked reads/writes in HIR codegen', () => {
       }
     `)
 
-    expect(memoOutput.match(/\(\) => count\(\), createElement/g)?.length ?? 0).toBeGreaterThan(0)
-    expect(memoOutput).not.toMatch(/\(\) => count, createElement/)
+    expect(memoOutput.match(/\(\) => count\(\),\s/g)?.length ?? 0).toBeGreaterThan(0)
+    expect(memoOutput).not.toMatch(/\(\) => count,\s/)
 
     const namespaceOutput = transform(`
       import * as R from '@fictjs/runtime'
@@ -4266,10 +4264,8 @@ describe('tracked reads/writes in HIR codegen', () => {
       }
     `)
 
-    expect(namespaceOutput.match(/\(\) => count\(\), createElement/g)?.length ?? 0).toBeGreaterThan(
-      0,
-    )
-    expect(namespaceOutput).not.toMatch(/\(\) => count, createElement/)
+    expect(namespaceOutput.match(/\(\) => count\(\),\s/g)?.length ?? 0).toBeGreaterThan(0)
+    expect(namespaceOutput).not.toMatch(/\(\) => count,\s/)
 
     const defaultOutput = transform(`
       import R from '@fictjs/runtime'
@@ -4280,8 +4276,8 @@ describe('tracked reads/writes in HIR codegen', () => {
       }
     `)
 
-    expect(defaultOutput).toMatch(/\(\) => count, createElement/)
-    expect(defaultOutput).not.toMatch(/\(\) => count\(\), createElement/)
+    expect(defaultOutput).toMatch(/\(\) => count,\s/)
+    expect(defaultOutput).not.toMatch(/\(\) => count\(\),\s/)
 
     const trueShadowOutput = transform(`
       import { createSignal } from '@fictjs/runtime'
@@ -4293,8 +4289,8 @@ describe('tracked reads/writes in HIR codegen', () => {
       }
     `)
 
-    expect(trueShadowOutput).toMatch(/\(\) => count, createElement/)
-    expect(trueShadowOutput).not.toMatch(/\(\) => count\(\), createElement/)
+    expect(trueShadowOutput).toMatch(/\(\) => count,\s/)
+    expect(trueShadowOutput).not.toMatch(/\(\) => count\(\),\s/)
   })
 
   it('keeps sequence-wrapped memo creators as memo accessors', () => {
@@ -4580,7 +4576,7 @@ describe('event handler transformation', () => {
     expect(code).toMatch(/props/)
   })
 
-  it('normalizes explicit dollar event props in VNode fallback output', () => {
+  it('serializes supported explicit dollar event props in VNode fallback output', () => {
     const output = transform(
       `
         export function App() {
@@ -4588,9 +4584,7 @@ describe('event handler transformation', () => {
             <div>
               <button onClick$={() => undefined}>click</button>
               <input onInput$={() => undefined} />
-              <button onClickCapture$={() => undefined}>capture</button>
-              <div onCustom$={() => undefined} />
-              <div on:custom$={() => undefined} />
+              <button on:click$={() => undefined}>namespaced</button>
               <div data-mode$="static" />
             </div>
           )
@@ -4599,18 +4593,51 @@ describe('event handler transformation', () => {
       { fineGrainedDom: false, resumable: true },
     )
 
-    expect(output).toContain('onClick: (...__fictArgs) =>')
-    expect(output).toContain('onInput: (...__fictArgs) =>')
-    expect(output).toContain('onClickCapture: (...__fictArgs) =>')
-    expect(output).toContain('onCustom: (...__fictArgs) =>')
-    expect(output).toContain('"on:custom": (...__fictArgs) =>')
-    expect(output).toContain('(() => undefined)(...__fictArgs)')
+    expect(output).toContain('"attr:on:click": __fictQrl')
+    expect(output).toContain('"attr:on:input": __fictQrl')
+    expect(output).toContain('export const __fict_e0')
+    expect(output).toContain('export const __fict_e1')
+    expect(output).toContain('export const __fict_e2')
     expect(output).toContain('"data-mode$": "static"')
     expect(output).not.toContain('onClick$')
     expect(output).not.toContain('onInput$')
-    expect(output).not.toContain('onClickCapture$')
-    expect(output).not.toContain('onCustom$')
-    expect(output).not.toContain('on:custom$')
+    expect(output).not.toContain('on:click$')
+  })
+
+  it.each([
+    ['onClickCapture$', /does not support event options/i],
+    ['onClickPassive$', /does not support event options/i],
+    ['onClickOnce$', /does not support event options/i],
+    ['oncapture:click$', /does not support event options/i],
+    ['onSubmit$', /not observed by the default loader/i],
+    ['onCustom$', /not observed by the default loader/i],
+    ['on:custom$', /not observed by the default loader/i],
+  ])('rejects unsupported explicit VNode fallback event %s', (attrName, expected) => {
+    const ast = parseFile(`
+      function App() {
+        return <button ${attrName}={() => undefined}>click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { fineGrainedDom: false, resumable: true })).toThrow(
+      expected,
+    )
+  })
+
+  it('keeps ordinary custom VNode fallback events eager in resumable mode', () => {
+    const output = transform(
+      `
+        export function App() {
+          return <div onCustom={() => undefined} on:custom={() => undefined} />
+        }
+      `,
+      { fineGrainedDom: false, resumable: true },
+    )
+
+    expect(output).toContain('onCustom: (...__fictArgs) =>')
+    expect(output).toContain('"on:custom": (...__fictArgs) =>')
+    expect(output).not.toContain('"attr:on:custom"')
   })
 
   it('preserves captured identifiers in zero-arg handlers', () => {
@@ -4866,7 +4893,7 @@ describe('event handler transformation', () => {
     expect(code).toContain('createKeyedList')
     expect(code).toMatch(/=>\s*makeKey\(item\)/)
     expect(code).toMatch(/const key = __key/)
-    expect(code).not.toMatch(/const key = makeKey/)
+    expect(code).toMatch(/const key = makeKey\(item\)/)
   })
 
   it('preserves callback-local list aliases in specialized render callbacks', () => {
@@ -6616,7 +6643,7 @@ describe('resumable event handler transformation', () => {
     )
   })
 
-  it('rejects VNode fallback event handlers that would be auto-extracted', () => {
+  it('auto-extracts resumable event handlers in VNode fallback output', () => {
     const cases = [
       { name: 'external-call', handler: `() => fetch('/api')` },
       { name: 'async-handler', handler: `async () => { await import('./chunk') }` },
@@ -6630,24 +6657,17 @@ describe('resumable event handler transformation', () => {
       `)
       const hir = buildHIR(ast)
 
-      try {
-        lowerHIRWithRegions(hir, t, {
-          fineGrainedDom: false,
-          resumable: true,
-          filename: `${testCase.name}.tsx`,
-        })
-        throw new Error('expected lowerHIRWithRegions to throw')
-      } catch (error) {
-        expect(error).toBeInstanceOf(HIRError)
-        const hirError = error as HIRError
-        expect(hirError.code).toBe('BUILD_ERROR')
-        expect(hirError.message).toContain(
-          'VNode fallback cannot auto-extract resumable event handler "onClick"',
-        )
-        expect(hirError.context?.file).toBe(`${testCase.name}.tsx`)
-        expect(hirError.context?.line).toBeDefined()
-        expect(hirError.context?.variable).toBe('onClick')
-      }
+      const file = lowerHIRWithRegions(hir, t, {
+        fineGrainedDom: false,
+        resumable: true,
+        filename: `${testCase.name}.tsx`,
+      })
+      const { code } = generate(file)
+
+      expect(code).toContain('export const __fict_e0')
+      expect(code).toContain('"attr:on:click"')
+      expect(code).toContain('__fictQrl')
+      expect(code).not.toContain('VNode fallback cannot auto-extract')
     }
   })
 
@@ -6671,7 +6691,7 @@ describe('resumable event handler transformation', () => {
     expect(code).not.toContain('export const __fict_e')
   })
 
-  it('keeps explicit VNode fallback dollar event handlers eager in resumable mode', () => {
+  it('serializes explicit VNode fallback dollar event handlers as QRL attributes', () => {
     const ast = parseFile(`
       export function App() {
         return <button onClick$={() => fetch('/api')}>Click</button>
@@ -6684,11 +6704,29 @@ describe('resumable event handler transformation', () => {
     })
     const { code } = generate(file)
 
-    expect(code).toContain('onClick: (...__fictArgs) =>')
-    expect(code).toContain('(() => fetch("/api"))(...__fictArgs)')
+    expect(code).toContain('export const __fict_e0')
+    expect(code).toContain('"attr:on:click": __fictQrl')
     expect(code).not.toContain('onClick$')
     expect(code).not.toContain('setAttribute("on:click"')
-    expect(code).not.toContain('export const __fict_e')
+  })
+
+  it('reuses one explicit resumable handler across polymorphic optimized and VNode paths', () => {
+    const output = transform(
+      `
+        function Button() {
+          return <button onClick$={() => fetch('/api')}>Click</button>
+        }
+
+        export function App() {
+          return <div><Button /><svg><g><Button /></g></svg></div>
+        }
+      `,
+      { fineGrainedDom: true, resumable: true },
+    )
+
+    expect(output.match(/export const __fict_e\d+/g)).toHaveLength(1)
+    expect(output).toContain('setAttribute("on:click"')
+    expect(output).toContain('"attr:on:click": __fictQrl')
   })
 
   it('falls back to non-resumable handler for auto-extracted unsupported captures', () => {
@@ -8009,7 +8047,7 @@ describe('spread operator in JSX', () => {
     expect(code).toMatch(/setAttr\([^,]+,\s*"contentEditable",\s*on\(\)\)/)
     expect(code).toMatch(/setAttr\([^,]+,\s*"spellCheck",\s*on\(\)\)/)
     expect(code).toContain('setAttribute("data-forced", "")')
-    expect(code).not.toContain('bool:data-forced')
+    expect(code).toContain('"bool:data-forced"')
   })
 
   it('routes forced JSX binding prefixes through their target bindings', () => {
@@ -8035,9 +8073,9 @@ describe('spread operator in JSX', () => {
     expect(code).toMatch(/setAttr\([^,]+,\s*"title",\s*text\(\)\)/)
     expect(code).toMatch(/setProp\([^,]+,\s*"textContent",\s*text\(\)\)/)
     expect(code).toContain('setAttribute("hidden", "")')
-    expect(code).not.toContain('attr:title')
-    expect(code).not.toContain('bool:data-forced')
-    expect(code).not.toContain('prop:textContent')
+    expect(code).toContain('"attr:title"')
+    expect(code).toContain('"bool:data-forced"')
+    expect(code).toContain('"prop:textContent"')
   })
 
   it('escapes static JSX text in template HTML', () => {
