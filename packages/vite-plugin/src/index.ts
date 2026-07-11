@@ -2192,37 +2192,25 @@ function mergeMetadata(
   }
 }
 
-function hasMetadata(
-  metadata: ModuleReactiveMetadata,
-  seen = new Set<ModuleReactiveMetadata>(),
-): boolean {
-  if (seen.has(metadata)) return false
-  seen.add(metadata)
-  return (
-    Object.keys(metadata.exports).length > 0 ||
-    Object.keys(metadata.hooks ?? {}).length > 0 ||
-    Object.values(metadata.namespaces ?? {}).some(namespace => hasMetadata(namespace, seen))
-  )
-}
-
 function buildEntryChunkMetadata(
   chunk: BundleChunkLike,
   store: Map<string, ModuleReactiveMetadata>,
   root: string,
 ): ModuleReactiveMetadata | null {
+  const stored = getStoredModuleMetadata(store, chunk.facadeModuleId, root)
+  // A transformed module's empty metadata is authoritative: emitting it
+  // overwrites stale sidecars when a public hook becomes a plain export.
+  if (stored === undefined) return null
+
   const allowedExports = chunk.exports ? new Set(chunk.exports) : null
   const metadata: ModuleReactiveMetadata = {
     version: LIBRARY_METADATA_VERSION,
     exports: {},
   }
 
-  mergeMetadata(
-    metadata,
-    getStoredModuleMetadata(store, chunk.facadeModuleId, root),
-    allowedExports,
-  )
+  mergeMetadata(metadata, stored, allowedExports)
 
-  return hasMetadata(metadata) ? metadata : null
+  return metadata
 }
 
 function emitLibraryMetadataAssets(

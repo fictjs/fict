@@ -2796,6 +2796,90 @@ describe('fict vite-plugin', () => {
     }
   }, 20_000)
 
+  it('overwrites stale library metadata when a watched entry becomes plain', async () => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-vite-watch-library-meta-')))
+    const sourcePath = path.join(root, 'src', 'index.ts')
+    const outDir = path.join(root, 'dist')
+    const metadataPath = path.join(outDir, 'index.fict.meta.json')
+    let watcher: Rollup.RollupWatcher | undefined
+
+    try {
+      await mkdir(path.dirname(sourcePath), { recursive: true })
+      await writeFile(
+        path.join(root, 'package.json'),
+        JSON.stringify({
+          name: 'fict-watch-library',
+          type: 'module',
+          exports: './dist/index.js',
+        }),
+      )
+      await writeFile(
+        sourcePath,
+        `
+          import { $state } from 'fict'
+          export function useCounter() {
+            const count = $state(0)
+            return count
+          }
+        `,
+      )
+
+      watcher = (await build({
+        root,
+        logLevel: 'silent',
+        plugins: [
+          fict({
+            library: true,
+            cache: false,
+            useTypeScriptProject: false,
+            functionSplitting: false,
+          }),
+        ],
+        build: {
+          outDir,
+          emptyOutDir: false,
+          minify: false,
+          lib: { entry: sourcePath, formats: ['es'], fileName: () => 'index.js' },
+          rollupOptions: {
+            external: id => id === 'fict' || id.startsWith('fict/'),
+          },
+          watch: { buildDelay: 10 },
+        },
+      })) as Rollup.RollupWatcher
+
+      await waitForWatchEnd(watcher)
+      expect(JSON.parse(await readFile(metadataPath, 'utf8'))).toMatchObject({
+        version: 1,
+        hooks: { useCounter: { directAccessor: 'signal' } },
+      })
+      expect(JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).fict).toEqual({
+        metadata: './dist/index.fict.meta.json',
+      })
+
+      const rebuilt = waitForWatchEnd(watcher)
+      await writeFile(
+        sourcePath,
+        `
+          export function plainUtility() {
+            return 1
+          }
+        `,
+      )
+      await rebuilt
+
+      expect(JSON.parse(await readFile(metadataPath, 'utf8'))).toEqual({
+        version: 1,
+        exports: {},
+      })
+      expect(JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).fict).toEqual({
+        metadata: './dist/index.fict.meta.json',
+      })
+    } finally {
+      await watcher?.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 20_000)
+
   it('rebuilds with fresh import elision when tsconfig changes in build watch mode', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-watch-import-elision-'))
     const outDir = path.join(root, 'dist')
@@ -3248,6 +3332,98 @@ describe('fict vite-plugin', () => {
         exports: {},
         hooks: { useCounter: { directAccessor: 'signal' } },
       })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('emits authoritative empty metadata for transformed plain library entries', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-library-empty-meta-'))
+
+    try {
+      const sourcePath = path.join(root, 'src', 'index.ts')
+      const plugin = getTestPlugin({ library: true, useTypeScriptProject: false })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+      await plugin.transform?.call(
+        { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() },
+        `export function plainUtility() { return 1 }`,
+        sourcePath,
+      )
+
+      const emitFile = vi.fn(() => 'asset-id')
+      const warn = vi.fn()
+      plugin.generateBundle?.call(
+        { emitFile, warn },
+        {},
+        {
+          'index.js': {
+            type: 'chunk',
+            fileName: 'index.js',
+            isEntry: true,
+            facadeModuleId: sourcePath,
+            modules: { [sourcePath]: {} },
+            exports: ['plainUtility'],
+          },
+        },
+      )
+
+      const metadataCall = (
+        emitFile.mock.calls as unknown as [[{ fileName: string; source: string }]]
+      )
+        .map(([asset]) => asset)
+        .find(asset => asset.fileName === 'index.fict.meta.json')
+      expect(metadataCall).toBeDefined()
+      expect(JSON.parse(metadataCall!.source)).toEqual({ version: 1, exports: {} })
+      expect(warn).not.toHaveBeenCalledWith(
+        expect.stringContaining('did not produce Fict metadata'),
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('emits empty metadata when reactive exports are absent from an entry chunk', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-library-filtered-meta-'))
+
+    try {
+      const sourcePath = path.join(root, 'src', 'index.ts')
+      const plugin = getTestPlugin({ library: true, useTypeScriptProject: false })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+      await plugin.transform?.call(
+        { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() },
+        `
+          import { $state } from 'fict'
+          export function useCounter() {
+            const count = $state(0)
+            return count
+          }
+        `,
+        sourcePath,
+      )
+
+      const emitFile = vi.fn(() => 'asset-id')
+      plugin.generateBundle?.call(
+        { emitFile, warn: vi.fn() },
+        {},
+        {
+          'index.js': {
+            type: 'chunk',
+            fileName: 'index.js',
+            isEntry: true,
+            facadeModuleId: sourcePath,
+            modules: { [sourcePath]: {} },
+            exports: [],
+          },
+        },
+      )
+
+      const metadataCall = (
+        emitFile.mock.calls as unknown as [[{ fileName: string; source: string }]]
+      )
+        .map(([asset]) => asset)
+        .find(asset => asset.fileName === 'index.fict.meta.json')
+      expect(metadataCall).toBeDefined()
+      expect(JSON.parse(metadataCall!.source)).toEqual({ version: 1, exports: {} })
     } finally {
       await rm(root, { recursive: true, force: true })
     }
