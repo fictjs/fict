@@ -3,13 +3,16 @@ import path from 'node:path'
 import type { ModuleReactiveMetadata } from '@fictjs/compiler'
 import type { NormalModule } from 'webpack'
 
+import type { FictWebpackPackageResolutionState } from './package-metadata'
+
 export const FICT_WEBPACK_LOADER_CONTEXT = Symbol.for('@fictjs/webpack-plugin/loader-context/v1')
 const FICT_WEBPACK_BUILD_INFO_KEY = 'fictWebpackMetadata'
 
 interface StoredFictWebpackMetadata {
-  version: 2
+  version: 3
   filename: string
   metadataJson: string
+  incomplete: boolean
   dependencyFingerprint: string | null
   metadataDependencies: string[]
 }
@@ -17,18 +20,22 @@ interface StoredFictWebpackMetadata {
 export interface RestoredFictWebpackMetadata {
   filename: string
   metadata: ModuleReactiveMetadata
+  incomplete: boolean
   dependencyFingerprint: string | null
   metadataDependencies: string[]
 }
 
 export interface FictWebpackCompilationState {
   moduleMetadata: Map<string, ModuleReactiveMetadata>
+  incompleteModuleMetadata: Set<string>
   modulesByFilename: Map<string, NormalModule>
   filenamesByModule: Map<NormalModule, string>
   resolvedLocalModules: Map<string, string>
   compiledDependencyFingerprints: Map<string, string | null>
   pendingDependencyFingerprints: Map<string, string>
   metadataDependenciesByFilename: Map<string, Set<string>>
+  metadataGraphPrepared: boolean
+  packageResolutionsByFilename: Map<string, Map<string, FictWebpackPackageResolutionState>>
 }
 
 export interface FictWebpackLoaderBinding {
@@ -39,12 +46,15 @@ export interface FictWebpackLoaderBinding {
 export function createCompilationState(): FictWebpackCompilationState {
   return {
     moduleMetadata: new Map(),
+    incompleteModuleMetadata: new Set(),
     modulesByFilename: new Map(),
     filenamesByModule: new Map(),
     resolvedLocalModules: new Map(),
     compiledDependencyFingerprints: new Map(),
     pendingDependencyFingerprints: new Map(),
     metadataDependenciesByFilename: new Map(),
+    metadataGraphPrepared: false,
+    packageResolutionsByFilename: new Map(),
   }
 }
 
@@ -90,9 +100,10 @@ export function storeFictModuleMetadata(
     throw new Error(`[fict] Webpack did not expose buildInfo for ${filename}.`)
   }
   const stored: StoredFictWebpackMetadata = {
-    version: 2,
+    version: 3,
     filename: normalizeFileName(filename),
     metadataJson: JSON.stringify(metadata),
+    incomplete: state.incompleteModuleMetadata.has(normalizeFileName(filename)),
     dependencyFingerprint,
     metadataDependencies: [
       ...(state.metadataDependenciesByFilename.get(normalizeFileName(filename)) ?? []),
@@ -114,18 +125,21 @@ export function restoreFictModuleMetadata(
     version?: unknown
     filename?: unknown
     metadataJson?: unknown
+    incomplete?: unknown
     dependencyFingerprint?: unknown
     metadataDependencies?: unknown
   }
   const isLegacy = candidate.version === 1
-  const isCurrent = candidate.version === 2
+  const isPrevious = candidate.version === 2
+  const isCurrent = candidate.version === 3
   if (
-    (!isLegacy && !isCurrent) ||
+    (!isLegacy && !isPrevious && !isCurrent) ||
     typeof candidate.filename !== 'string' ||
     typeof candidate.metadataJson !== 'string' ||
     (candidate.dependencyFingerprint !== null &&
       typeof candidate.dependencyFingerprint !== 'string') ||
-    (isCurrent && !Array.isArray(candidate.metadataDependencies)) ||
+    (isCurrent && typeof candidate.incomplete !== 'boolean') ||
+    ((isPrevious || isCurrent) && !Array.isArray(candidate.metadataDependencies)) ||
     (candidate.metadataDependencies !== undefined &&
       (!Array.isArray(candidate.metadataDependencies) ||
         candidate.metadataDependencies.some(dependency => typeof dependency !== 'string')))
@@ -153,9 +167,10 @@ export function restoreFictModuleMetadata(
   return {
     filename: normalizeFileName(candidate.filename),
     metadata: metadata as ModuleReactiveMetadata,
-    // V1 did not require metadataDependencies. Preserve its module metadata so the graph can be
-    // reconstructed, but force one rebuild rather than silently treating unknown inputs as empty.
-    dependencyFingerprint: isLegacy ? null : candidate.dependencyFingerprint,
+    // Older records did not persist completeness. Preserve their bookkeeping metadata, but treat
+    // it as incomplete and force one rebuild rather than trusting an unknown graph state.
+    incomplete: isCurrent ? candidate.incomplete === true : true,
+    dependencyFingerprint: isCurrent ? candidate.dependencyFingerprint : null,
     metadataDependencies: [
       ...new Set((candidate.metadataDependencies ?? []).map(normalizeFileName)),
     ].sort(),

@@ -6,6 +6,7 @@ import { transformAsync, type TransformOptions } from '@babel/core'
 import type { FictPresetOptions } from '@fictjs/babel-preset'
 import { resolvePackageModuleMetadata } from '@fictjs/compiler'
 
+import { readPackageMetadataAtBoundary } from './package-metadata'
 import {
   createLocalResolutionKey,
   getLoaderBinding,
@@ -17,10 +18,12 @@ export type FictWebpackLoaderOptions = Omit<
   FictPresetOptions,
   | 'emitModuleMetadata'
   | 'filename'
+  | 'integrationDiagnostics'
   | 'moduleMetadata'
   | 'onModuleMetadataDependency'
   | 'resolveModuleMetadata'
   | 'sourcemap'
+  | 'validateIntegrationMetadata'
 >
 
 interface FictLoaderContext {
@@ -96,6 +99,7 @@ export default function fictWebpackLoader(
     callback(error instanceof Error ? error : new Error(String(error)))
     return
   }
+  binding.state.incompleteModuleMetadata.delete(filename)
   if (!binding.state.moduleMetadata.has(filename)) {
     binding.state.moduleMetadata.set(filename, { exports: {} })
   }
@@ -115,13 +119,30 @@ export default function fictWebpackLoader(
     ...options,
     dev: options.dev ?? this.mode !== 'production',
     emitModuleMetadata: false,
+    ...(binding.state.metadataGraphPrepared
+      ? { integrationDiagnostics: [], validateIntegrationMetadata: true }
+      : {}),
     moduleMetadata: binding.state.moduleMetadata,
     resolveModuleMetadata: (sourceRequest, importer) => {
       if (!importer) return undefined
+      if (sourceRequest.includes('?') || sourceRequest.includes('!')) return { exports: {} }
       const dependency = binding.state.resolvedLocalModules.get(
         createLocalResolutionKey(importer, sourceRequest),
       )
-      if (dependency) return binding.state.moduleMetadata.get(dependency)
+      if (dependency) {
+        if (binding.state.incompleteModuleMetadata.has(dependency)) return null
+        return binding.state.moduleMetadata.get(dependency) ?? null
+      }
+      const packageResolutions = binding.state.packageResolutionsByFilename.get(filename)
+      if (packageResolutions?.has(sourceRequest)) {
+        const packageResolution = packageResolutions.get(sourceRequest)
+        if (packageResolution === 'opaque') return { exports: {} }
+        if (!packageResolution || packageResolution === 'unresolved') return null
+        const result = readPackageMetadataAtBoundary(packageResolution, registerMetadataDependency)
+        if (result.kind === 'resolved') return result.metadata
+        if (result.kind === 'stale-boundary') throw new Error(result.message)
+        return result.kind === 'plain' ? { exports: {} } : null
+      }
       return resolvePackageModuleMetadata(sourceRequest, importer, {
         emitModuleMetadata: false,
         moduleMetadata: binding.state.moduleMetadata,
@@ -151,6 +172,14 @@ export default function fictWebpackLoader(
       if (!result?.code) {
         callback(new Error(`[fict] Babel returned no output for ${filename}.`))
         return
+      }
+      if (
+        (result.metadata as Record<string, unknown> | undefined)?.fictModuleMetadataIncomplete ===
+        true
+      ) {
+        binding.state.incompleteModuleMetadata.add(filename)
+      } else {
+        binding.state.incompleteModuleMetadata.delete(filename)
       }
       const metadata = binding.state.moduleMetadata.get(filename)
       if (!metadata) {

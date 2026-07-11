@@ -34,6 +34,7 @@ export function createWebpackConfiguration(
     alias?: Record<string, string>
     cache?: Configuration['cache']
     externals?: Record<string, string>
+    loaderOptions?: Record<string, unknown>
     plugins?: NonNullable<Configuration['plugins']>
     snapshot?: Configuration['snapshot']
   } = {},
@@ -55,7 +56,7 @@ export function createWebpackConfiguration(
         {
           include: root,
           test: /\.[cm]?[jt]sx?$/,
-          use: [{ loader: loaderPath, options: { dev: false } }],
+          use: [{ loader: loaderPath, options: { dev: false, ...options.loaderOptions } }],
         },
       ],
     },

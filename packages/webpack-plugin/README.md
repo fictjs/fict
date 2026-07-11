@@ -29,4 +29,12 @@ information, so watch rebuilds and filesystem-cache restores keep unchanged impo
 Bare package imports can consume published `fict.metadata` / `fict.exports` declarations; every
 consulted package manifest and metadata sidecar is registered as a Webpack dependency and included
 in the importer fingerprint. See [Third-party library metadata](../../docs/third-party-libraries.md).
+For legacy packages without `exports`, entry proof follows Webpack's effective `mainFields`,
+`mainFiles`, and `extensions` order and accepts only a uniquely matched file contained by the
+package. Active package `aliasFields`, directory targets, and ambiguous public spellings fail
+closed when Fict metadata is declared. Active `extensionAlias`, non-default `exportsFields`, custom
+description manifests, and malformed export maps also fail closed because they cannot be proven as
+the documented package contract; publishing a canonical `package.json` `exports` map is recommended.
+Package metadata paths must currently be readable through Node's filesystem APIs. Yarn PnP zip
+archives and other virtual filesystems are not yet supported by this integration.
 Webpack library metadata publishing remains a separate capability.

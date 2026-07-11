@@ -1,7 +1,7 @@
 import { readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import webpack, { type Compiler, type Stats } from 'webpack'
+import webpack, { type Compiler, type Configuration, type Stats } from 'webpack'
 
 import {
   builtFixtureFiles,
@@ -43,6 +43,18 @@ const packageJson = (metadata: string): string =>
     fict: { metadata },
   })
 
+function excludeHookPackage(
+  configuration: Configuration,
+  additionalRoots: readonly string[] = [],
+): Configuration {
+  const rule = configuration.module?.rules?.[0]
+  if (!rule || typeof rule !== 'object') throw new Error('Fixture loader rule is missing.')
+  rule.exclude = (resource: string) =>
+    resource.includes(`${path.sep}node_modules${path.sep}`) ||
+    additionalRoots.some(root => resource === root || resource.startsWith(`${root}${path.sep}`))
+  return configuration
+}
+
 const hookMetadata = (reactive: boolean): string =>
   JSON.stringify({
     version: 1,
@@ -52,6 +64,7 @@ const hookMetadata = (reactive: boolean): string =>
 
 interface StoredWebpackMetadata {
   version: number
+  incomplete: boolean
   dependencyFingerprint: string | null
   metadataDependencies: string[]
 }
@@ -120,6 +133,7 @@ function createLegacyCachePlugin(resource: string): { apply(compiler: Compiler):
         const legacy = stored as Record<string, unknown>
         legacy.version = 1
         legacy.dependencyFingerprint = '{"localDependencies":[],"packageMetadataDependencies":[]}'
+        delete legacy.incomplete
         delete legacy.metadataDependencies
       })
     },
@@ -144,9 +158,7 @@ describe('@fictjs/webpack-plugin package metadata', () => {
       'hook-lib',
       'reactive-again.fict.meta.json',
     )
-    const compiler = webpack(
-      createWebpackConfiguration(root, { externals: { 'hook-lib': 'commonjs hook-lib' } }),
-    )
+    const compiler = webpack(excludeHookPackage(createWebpackConfiguration(root)))
     const builds = createBuildQueue()
     const firstBuild = builds.next()
     const watching = compiler.watch({ aggregateTimeout: 5 }, (error, stats) => {
@@ -205,11 +217,12 @@ describe('@fictjs/webpack-plugin package metadata', () => {
     }
     const rebuildObserver = createRebuildObserver()
     const configuration = () =>
-      createWebpackConfiguration(root, {
-        cache,
-        externals: { 'hook-lib': 'commonjs hook-lib' },
-        plugins: [rebuildObserver.plugin],
-      })
+      excludeHookPackage(
+        createWebpackConfiguration(root, {
+          cache,
+          plugins: [rebuildObserver.plugin],
+        }),
+      )
 
     try {
       expect(Buffer.byteLength(plainMetadata)).toBe(Buffer.byteLength(signalMetadata))
@@ -268,10 +281,12 @@ describe('@fictjs/webpack-plugin package metadata', () => {
     await symlink(realPackage, packageLink, process.platform === 'win32' ? 'junction' : 'dir')
 
     const compiler = webpack(
-      createWebpackConfiguration(root, {
-        externals: { 'hook-lib': 'commonjs hook-lib' },
-        snapshot: { managedPaths: [path.join(root, 'node_modules')] },
-      }),
+      excludeHookPackage(
+        createWebpackConfiguration(root, {
+          snapshot: { managedPaths: [path.join(root, 'node_modules')] },
+        }),
+        [realPackage],
+      ),
     )
     const builds = createBuildQueue()
     const firstBuild = builds.next()
@@ -315,12 +330,20 @@ describe('@fictjs/webpack-plugin package metadata', () => {
     const legacyCachePlugin = createLegacyCachePlugin(entryPath)
     const baseOptions = {
       cache,
-      externals: { 'hook-lib': 'commonjs hook-lib' },
       plugins: [legacyCachePlugin, rebuildObserver.plugin],
     }
-    const configuration = () => createWebpackConfiguration(root, baseOptions)
+    const configuration = () => excludeHookPackage(createWebpackConfiguration(root, baseOptions))
 
     try {
+      const oldTimestamp = new Date(Date.now() - 10_000)
+      await Promise.all(
+        [
+          entryPath,
+          path.join(root, 'node_modules', 'hook-lib', 'index.js'),
+          path.join(root, 'node_modules', 'hook-lib', 'package.json'),
+          path.join(root, 'node_modules', 'hook-lib', 'hook.fict.meta.json'),
+        ].map(filename => utimes(filename, oldTimestamp, oldTimestamp)),
+      )
       const firstStats = await runCompiler(configuration())
       expect(await readBundle(root)).toMatch(/count\(\)\s*\*\s*2/)
       expect(storedMetadata(firstStats, entryPath).version).toBe(1)
@@ -328,12 +351,12 @@ describe('@fictjs/webpack-plugin package metadata', () => {
       const migratedStats = await runCompiler(configuration())
       expect(rebuildObserver.builtBeforeFict).not.toContain(entryPath)
       expect(rebuildObserver.rebuiltByFict).toContain(entryPath)
-      expect(storedMetadata(migratedStats, entryPath).version).toBe(2)
+      expect(storedMetadata(migratedStats, entryPath).version).toBe(3)
 
       const recachedStats = await runCompiler(configuration())
       expect(builtFixtureFiles(recachedStats, root)).toEqual([])
       expect(rebuildObserver.rebuiltByFict).toEqual([])
-      expect(storedMetadata(recachedStats, entryPath).version).toBe(2)
+      expect(storedMetadata(recachedStats, entryPath).version).toBe(3)
     } finally {
       await rm(root, { recursive: true, force: true })
     }
