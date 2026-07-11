@@ -2060,6 +2060,168 @@ describe('Router integration (MemoryRouter)', () => {
     }
   })
 
+  it('keeps submitter overrides when onSubmit removes the submitter', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/form'] })
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }))
+    const onSubmit = vi.fn((event: SubmitEvent) => {
+      event.submitter?.remove()
+    })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <Form
+            action="/fallback"
+            method="get"
+            onSubmit={onSubmit}
+            data-testid="removed-submitter-form"
+          >
+            <input name="query" value="fict" />
+            <button
+              type="submit"
+              name="intent"
+              value="save"
+              formAction="/save"
+              formMethod="post"
+              data-testid="removed-submitter"
+            >
+              Save
+            </button>
+          </Form>
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('removed-submitter-form') as HTMLFormElement
+      const submitter = screen.getByTestId('removed-submitter') as HTMLButtonElement
+      const event = new SubmitEvent('submit', {
+        bubbles: true,
+        cancelable: true,
+        submitter,
+      })
+      expect(form.dispatchEvent(event)).toBe(false)
+      expect(onSubmit).toHaveBeenCalledTimes(1)
+      expect(submitter.form).toBeNull()
+
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+      expect(fetchMock.mock.calls[0]?.[0]).toBe('/save')
+      expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' })
+      const body = fetchMock.mock.calls[0]?.[1]?.body as FormData
+      expect(body.get('query')).toBe('fict')
+      expect(body.has('intent')).toBe(false)
+      expect(history.location.pathname).toBe('/form')
+    } finally {
+      fetchMock.mockRestore()
+      history.destroy?.()
+    }
+  })
+
+  it('excludes a submitter changed to a non-submit button from FormData', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/form'] })
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }))
+    const onSubmit = vi.fn((event: SubmitEvent) => {
+      const submitter = event.submitter as HTMLButtonElement
+      submitter.type = 'button'
+    })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <Form
+            action="/fallback"
+            method="get"
+            onSubmit={onSubmit}
+            data-testid="retagged-submitter-form"
+          >
+            <input name="query" value="fict" />
+            <button
+              type="submit"
+              name="intent"
+              value="save"
+              formAction="/save"
+              formMethod="post"
+              data-testid="retagged-submitter"
+            >
+              Save
+            </button>
+          </Form>
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('retagged-submitter-form') as HTMLFormElement
+      const submitter = screen.getByTestId('retagged-submitter') as HTMLButtonElement
+      const event = new SubmitEvent('submit', {
+        bubbles: true,
+        cancelable: true,
+        submitter,
+      })
+      expect(form.dispatchEvent(event)).toBe(false)
+      expect(submitter.type).toBe('button')
+
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+      expect(fetchMock.mock.calls[0]?.[0]).toBe('/save')
+      expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' })
+      const body = fetchMock.mock.calls[0]?.[1]?.body as FormData
+      expect(body.get('query')).toBe('fict')
+      expect(body.has('intent')).toBe(false)
+      expect(history.location.pathname).toBe('/form')
+    } finally {
+      fetchMock.mockRestore()
+      history.destroy?.()
+    }
+  })
+
+  it('keeps a removed submitter formTarget native', () => {
+    const history = createMemoryHistory({ initialEntries: ['/form'] })
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }))
+    const onSubmit = vi.fn((event: SubmitEvent) => {
+      event.submitter?.remove()
+    })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <Form
+            action="/fallback"
+            method="post"
+            onSubmit={onSubmit}
+            data-testid="removed-target-form"
+          >
+            <button
+              type="submit"
+              formAction="/search"
+              formMethod="get"
+              formTarget="_blank"
+              data-testid="removed-target-submitter"
+            />
+          </Form>
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('removed-target-form') as HTMLFormElement
+      const submitter = screen.getByTestId('removed-target-submitter') as HTMLButtonElement
+      const event = new SubmitEvent('submit', {
+        bubbles: true,
+        cancelable: true,
+        submitter,
+      })
+      expect(form.dispatchEvent(event)).toBe(true)
+      expect(event.defaultPrevented).toBe(false)
+      expect(onSubmit).toHaveBeenCalledTimes(1)
+      expect(submitter.form).toBeNull()
+      expect(history.location.pathname).toBe('/form')
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      fetchMock.mockRestore()
+      history.destroy?.()
+    }
+  })
+
   it('leaves a submitter formTarget outside _self to the browser', () => {
     const history = createMemoryHistory({ initialEntries: ['/form'] })
     const fetchMock = vi

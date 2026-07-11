@@ -584,7 +584,12 @@ function createFormData(form: HTMLFormElement, submitter: FormSubmitter | null):
   } catch {
     // Older FormData implementations do not accept the submitter argument.
     const formData = new FormData(form)
-    if (submitter.disabled) return formData
+    // The submit event captures the submitter before user handlers run, but the
+    // entry list is built afterwards. A handler may remove or reassociate the
+    // submitter while its submission overrides still remain authoritative.
+    if (getAssociatedFormSubmitter(submitter, form) !== submitter || submitter.disabled) {
+      return formData
+    }
 
     if (submitter.tagName === 'INPUT' && submitter.type === 'image') {
       const prefix = submitter.name ? `${submitter.name}.` : ''
@@ -659,13 +664,16 @@ export function Form(props: FormProps): FictNode {
   }
 
   const handleSubmit = (event: SubmitEvent) => {
+    const form = event.currentTarget as HTMLFormElement
+    // Native submission captures the submitter before dispatching `submit`.
+    // Keep that identity even if the user handler removes or reassociates it;
+    // its current overrides are read after the handler returns.
+    const submitter = getAssociatedFormSubmitter(event.submitter, form)
     untrack(() => props.onSubmit?.(event))
 
     // Don't handle if prevented
     if (event.defaultPrevented) return
 
-    const form = event.currentTarget as HTMLFormElement
-    const submitter = getAssociatedFormSubmitter(event.submitter, form)
     const submitterTarget = getSubmitterOverride(submitter, 'formtarget')
     const target = submitterTarget ?? form.target
 
