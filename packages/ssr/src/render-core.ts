@@ -5,7 +5,6 @@ import {
   __fictEnableSSR,
   __fictCreateSSRSession,
   __fictGetScopeRegistry,
-  __fictGetScopesForBoundary,
   __fictRetainSSRSession,
   __fictRunWithSSRSession,
   __fictSerializeSSRState,
@@ -641,7 +640,7 @@ function startStreamingRenderInSession(
   const streamIdentifierPrefix =
     mode === 'shell' ? resolveStreamIdentifierPrefix(options.streamIdentifierPrefix) : null
   const includeSnapshot = options.includeSnapshot !== false
-  const sentScopes = new Set<string>()
+  const sentScopeSnapshots = new Map<string, string>()
 
   const boundaryMap = new Map<string, { start: Comment; end: Comment; pending: boolean }>()
   let boundaryId = 0
@@ -726,24 +725,39 @@ function startStreamingRenderInSession(
     runInSession(() => {
       if (!includeSnapshot || scopeIds.length === 0) return
       const registry = __fictGetScopeRegistry()
-      const pending = scopeIds.filter(id => registry.has(id) && !sentScopes.has(id))
+      const pending = Array.from(new Set(scopeIds)).filter(id => registry.has(id))
       if (pending.length === 0) return
       const snapshot = __fictSerializeSSRStateForScopes(pending)
-      const ids = Object.keys(snapshot.scopes)
+      const changedScopes = Object.create(null) as typeof snapshot.scopes
+      const changedSignatures = new Map<string, string>()
+      for (const [id, scope] of Object.entries(snapshot.scopes)) {
+        const signature = JSON.stringify(scope)
+        if (sentScopeSnapshots.get(id) === signature) continue
+        changedScopes[id] = scope
+        changedSignatures.set(id, signature)
+      }
+      const ids = Object.keys(changedScopes)
       if (ids.length === 0) return
-      const chunk = buildIncrementalSnapshotChunk(snapshot, resolvedOptions)
+      const chunk = buildIncrementalSnapshotChunk(
+        { ...snapshot, scopes: changedScopes },
+        resolvedOptions,
+      )
       if (chunk) {
         enqueueWrite(chunk)
       }
       for (const id of ids) {
-        sentScopes.add(id)
+        sentScopeSnapshots.set(id, changedSignatures.get(id)!)
       }
     })
   }
 
-  const writeSnapshotForBoundary = (boundary: string): void => {
+  const writeSnapshotForBoundary = (): void => {
     runInSession(() => {
-      const scopes = __fictGetScopesForBoundary(boundary)
+      // A boundary callback may mutate state owned by any ancestor scope. Compare
+      // every live scope before writing the patch so its snapshot matches the DOM
+      // that the client is about to reveal. Per-scope signatures keep unchanged
+      // ancestors from being emitted again for unrelated boundary resolutions.
+      const scopes = Array.from(__fictGetScopeRegistry().keys())
       writeSnapshotForScopes(scopes)
     })
   }
@@ -893,7 +907,7 @@ function startStreamingRenderInSession(
       }
       if (mode === 'shell' && wroteShell) {
         try {
-          writeSnapshotForBoundary(id)
+          writeSnapshotForBoundary()
           if (dom) {
             const content = serializeBetween(entry.start, entry.end)
             enqueueWrite(buildPatchChunk(id, content, resolvedOptions))

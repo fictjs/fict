@@ -227,6 +227,87 @@ describe('@fictjs/ssr streaming', () => {
     expect(html).toContain('Done')
   })
 
+  it('re-emits a parent scope snapshot when onResolve mutates its state', async () => {
+    const token = createSuspenseToken()
+    let ready = false
+    let count!: ReturnType<typeof __fictUseSignal<number>>
+
+    function AsyncChild(): FictNode {
+      if (!ready) throw token.token
+      return { type: 'span', props: { 'data-resolved-count': '', children: count } }
+    }
+
+    function App(): FictNode {
+      const ctx = __fictUseContext()
+      count = __fictUseSignal(ctx, 1, { name: 'count' })
+      return {
+        type: Suspense,
+        props: {
+          fallback: { type: 'div', props: { children: 'Loading parent snapshot' } },
+          onResolve() {
+            count(2)
+          },
+          children: { type: AsyncChild, props: {} },
+        },
+      }
+    }
+
+    ;(App as { __fictMeta?: unknown }).__fictMeta = {
+      id: 'App@stream-parent-snapshot',
+      resume: 'app#resume',
+    }
+
+    const stream = renderToStream(() => ({ type: App, props: {} }), { mode: 'shell' })
+    const reader = stream.getReader()
+    const shell = await reader.read()
+    expect(shell.done).toBe(false)
+
+    ready = true
+    token.resolve()
+
+    let html = shell.value ? decoder.decode(shell.value, { stream: true }) : ''
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      if (value) html += decoder.decode(value, { stream: true })
+    }
+    html += decoder.decode()
+
+    const streamedDocument = parseHTML(html).document
+    const patch = streamedDocument.querySelector(
+      'template[data-fict-suspense]',
+    ) as HTMLTemplateElement | null
+    expect(patch?.content.querySelector('[data-resolved-count]')?.textContent).toBe('2')
+
+    type StreamedScope = { t?: string; slots: Array<[number, string, unknown]> }
+    const appSnapshotEntries = Array.from(
+      streamedDocument.querySelectorAll('script[data-fict-snapshot]'),
+    ).flatMap(script => {
+      const state = JSON.parse(script.textContent ?? '') as {
+        scopes: Record<string, StreamedScope>
+      }
+      return Object.values(state.scopes)
+        .filter(scope => scope.t === 'App@stream-parent-snapshot')
+        .map(scope => ({ scope, script }))
+    })
+    const countSnapshots = appSnapshotEntries.map(
+      ({ scope }) => scope.slots.find(([index, type]) => index === 0 && type === 'sig')?.[2],
+    )
+
+    expect(countSnapshots).toEqual([1, 2])
+
+    const updatedSnapshot = appSnapshotEntries.find(
+      ({ scope }) => scope.slots.find(([index, type]) => index === 0 && type === 'sig')?.[2] === 2,
+    )
+    const orderedChunks = Array.from(
+      streamedDocument.querySelectorAll('script[data-fict-snapshot], template[data-fict-suspense]'),
+    )
+    expect(updatedSnapshot).toBeDefined()
+    expect(orderedChunks.indexOf(updatedSnapshot!.script)).toBeLessThan(
+      orderedChunks.indexOf(patch!),
+    )
+  })
+
   it('inserts full-document stream chunks at the structural end of body', async () => {
     const token = createSuspenseToken()
     let ready = false
