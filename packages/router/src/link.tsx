@@ -502,9 +502,9 @@ export interface FormProps extends Omit<JSX.IntrinsicElements['form'], 'action' 
   relative?: 'route' | 'path'
   /** Keep the current scroll position after navigation */
   preventScrollReset?: boolean
-  /** Navigate on submit */
+  /** Navigate for GET; for other methods, follow response redirects */
   navigate?: boolean
-  /** Fetch mode */
+  /** Stable key for tracked submissions (including GET when navigate is false) */
   fetcherKey?: string
   children?: FictNode
   onSubmit?: (event: SubmitEvent) => void
@@ -652,6 +652,17 @@ function prependNakedIndexParam(search: string): string {
   return search ? `?index&${search.replace(/^\?/, '')}` : '?index'
 }
 
+function serializeGetFormData(formData: FormData): string {
+  const searchParams = new URLSearchParams()
+  formData.forEach((value, key) => {
+    // application/x-www-form-urlencoded converts File entries to their
+    // filename while preserving their position and repeated keys.
+    searchParams.append(key, typeof value === 'string' ? value : value.name)
+  })
+  const search = searchParams.toString()
+  return search ? `?${search}` : ''
+}
+
 /**
  * Form component for action submissions
  *
@@ -763,8 +774,11 @@ export function Form(props: FormProps): FictNode {
     // Unsupported methods (including dialog and explicit empty values) stay native.
     if (!snapshot) return
 
-    // Let the browser preserve native external GET form semantics.
-    if (snapshot.method === 'GET' && snapshot.action.isExternal) return
+    // Navigating external GET forms stay native. A navigate=false GET is an
+    // explicit fetch submission and is handled below without changing history.
+    if (snapshot.method === 'GET' && snapshot.action.isExternal && snapshot.navigate !== false) {
+      return
+    }
 
     // Prevent default form submission for router navigation and fetch submissions.
     event.preventDefault()
@@ -772,62 +786,98 @@ export function Form(props: FormProps): FictNode {
     const formData = createFormData(form, submitter)
 
     if (snapshot.method === 'GET') {
-      // For GET, navigate with search params
-      const searchParams = new URLSearchParams()
-      formData.forEach((value, key) => {
-        // application/x-www-form-urlencoded converts File entries to their
-        // filename while preserving their position and repeated keys.
-        searchParams.append(key, typeof value === 'string' ? value : value.name)
-      })
-      const search = searchParams.toString()
-
-      untrack(() =>
-        router.navigate(
-          {
-            pathname: snapshot.action.pathname,
-            search: search ? '?' + search : '',
-            hash: snapshot.action.hash,
-          },
-          { replace: snapshot.replace, scroll: snapshot.scroll },
-        ),
-      )
-    } else {
-      const submissionLease = createSubmissionLease(snapshot.fetcherKey)
-      const options = {
-        navigate: snapshot.navigate !== false,
-        replace: snapshot.replace ?? false,
-        scroll: snapshot.scroll,
-        router,
-        submissionLease,
+      const search = serializeGetFormData(formData)
+      if (snapshot.navigate !== false) {
+        untrack(() =>
+          router.navigate(
+            {
+              pathname: snapshot.action.pathname,
+              search,
+              hash: snapshot.action.hash,
+            },
+            { replace: snapshot.replace, scroll: snapshot.scroll },
+          ),
+        )
+        return
       }
 
-      const submission = snapshot.action.registeredAction
-        ? submitRegisteredFormAction(
-            form,
-            snapshot.action.registeredAction,
-            snapshot.action.href,
-            snapshot.method,
-            formData,
-            snapshot.params,
-            snapshot.fetcherKey,
-            options,
-          )
-        : submitFormAction(
-            form,
-            snapshot.action.href,
-            snapshot.method,
-            formData,
-            snapshot.params,
-            snapshot.fetcherKey,
-            options,
-          )
-
-      void submission.catch(() => {
-        // The submission helpers already report failures through `formerror`
-        // and console.error. Event listeners cannot observe their returned
-        // promises, so consume the rejection here to avoid an unhandled one.
-      })
+      // Native GET submission replaces the action's query with the successful
+      // controls and does not send the fragment to the server. Keep the
+      // original action href as the submission identity for useSubmission().
+      const requestUrl = splitFormAction(snapshot.action.href).pathname + search
+      submitTrackedForm(
+        form,
+        snapshot.action,
+        snapshot.method,
+        formData,
+        snapshot.params,
+        snapshot.fetcherKey,
+        false,
+        snapshot.replace ?? false,
+        snapshot.scroll,
+        requestUrl,
+        snapshot.action.href,
+      )
+      return
     }
+
+    submitTrackedForm(
+      form,
+      snapshot.action,
+      snapshot.method,
+      formData,
+      snapshot.params,
+      snapshot.fetcherKey,
+      snapshot.navigate !== false,
+      snapshot.replace ?? false,
+      snapshot.scroll,
+      snapshot.action.href,
+      snapshot.action.href,
+    )
+  }
+
+  function submitTrackedForm(
+    formElement: HTMLFormElement,
+    action: ResolvedFormAction,
+    method: string,
+    formData: FormData,
+    params: Params,
+    submissionKey: string | undefined,
+    navigate: boolean,
+    replace: boolean,
+    scroll: boolean | undefined,
+    requestUrl: string,
+    submissionUrl: string,
+  ) {
+    const submissionLease = createSubmissionLease(submissionKey)
+    const options = { navigate, replace, scroll, router, submissionLease }
+    const submission = action.registeredAction
+      ? submitRegisteredFormAction(
+          formElement,
+          action.registeredAction,
+          requestUrl,
+          method,
+          formData,
+          params,
+          submissionKey,
+          options,
+        )
+      : submitFormAction(
+          formElement,
+          requestUrl,
+          method,
+          formData,
+          params,
+          submissionKey,
+          options,
+          submissionUrl,
+        )
+
+    void submission.catch(() => {
+      // The submission helpers already report failures through `formerror`
+      // and console.error. Event listeners cannot observe their returned
+      // promises, so consume the rejection here to avoid an unhandled one.
+    })
   }
 
   /** Submit a registered client action through the shared submission tracker. */
@@ -891,9 +941,7 @@ export function Form(props: FormProps): FictNode {
     }
   }
 
-  /**
-   * Submit form data via fetch for non-GET methods
-   */
+  /** Submit form data via fetch through the shared submission tracker. */
   async function submitFormAction(
     formElement: HTMLFormElement,
     url: string,
@@ -908,19 +956,23 @@ export function Form(props: FormProps): FictNode {
       router: typeof router
       submissionLease: ReturnType<typeof createSubmissionLease>
     },
+    submissionUrl = url,
   ) {
     let response: Response | null = null
     const requestAction: Action<unknown> = {
-      url,
+      url: submissionUrl,
       submit: async submittedFormData => {
-        response = await fetch(url, {
+        const requestInit: RequestInit = {
           method,
-          body: submittedFormData,
           headers: {
-            // Let the browser set Content-Type for FormData (includes boundary)
             Accept: 'application/json',
           },
-        })
+        }
+        if (method !== 'GET') {
+          // Let the browser set Content-Type for FormData (includes boundary).
+          requestInit.body = submittedFormData
+        }
+        response = await fetch(url, requestInit)
 
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`)

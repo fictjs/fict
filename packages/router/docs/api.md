@@ -342,14 +342,18 @@ import { Form } from '@fictjs/router'
 | `method`             | `'get' \| 'post' \| 'put' \| 'patch' \| 'delete'` | varies    | HTTP method               |
 | `replace`            | `boolean`                                         | `false`   | Replace history on GET    |
 | `relative`           | `'route' \| 'path'`                               | `'route'` | Action URL resolution     |
-| `navigate`           | `boolean`                                         | `true`    | Navigate to action URL    |
+| `navigate`           | `boolean`                                         | `true`    | GET navigation / redirects |
 | `preventScrollReset` | `boolean`                                         | `false`   | Keep scroll position      |
 | `fetcherKey`         | `string`                                          | -         | Stable submission key     |
 | `onSubmit`           | `(event) => void`                                 | -         | Submit handler            |
 
-Registered actions default to `post`; ordinary URL forms default to `get`. Non-GET submissions
-are observable through `useSubmission(actionOrUrl)`. A `fetcherKey` replaces an older in-flight
-submission with the same key, so stale completions cannot redirect or emit form result events.
+Registered actions default to `post`; ordinary URL forms default to `get`. Non-GET submissions and
+GET forms with `navigate={false}` are observable through `useSubmission(actionOrUrl)`. A
+`fetcherKey` replaces an older in-flight submission with the same key, so stale completions cannot
+redirect or emit form result events. For GET forms, `fetcherKey` is used only when
+`navigate={false}`; otherwise the form performs its normal client-side navigation. External GET
+forms remain native by default; with `navigate={false}`, they use `fetch` and are subject to the
+browser's normal CORS rules.
 
 ---
 

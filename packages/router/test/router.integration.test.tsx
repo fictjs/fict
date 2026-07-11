@@ -76,6 +76,55 @@ function TrackedUrlFormFixture() {
   )
 }
 
+let trackedGetCurrentSubmission!: () => Submission<unknown> | undefined
+
+function TrackedGetFormFixture() {
+  trackedGetCurrentSubmission = useSubmission('/search?source=discarded#results')
+  return (
+    <>
+      <Form
+        action="/search?source=discarded#results"
+        method="get"
+        navigate={false}
+        fetcherKey="search-results"
+        data-testid="tracked-get-form"
+      >
+        <input name="query" value="fict router" />
+        <input name="tag" value="compiler" />
+        <input name="tag" value="runtime" />
+      </Form>
+      <Form
+        action="/search?source=discarded#results"
+        method="get"
+        navigate={false}
+        fetcherKey="search-results"
+        data-testid="tracked-get-form-peer"
+      >
+        <input name="query" value="latest" />
+      </Form>
+    </>
+  )
+}
+
+let registeredGetAction!: Action<unknown>
+let registeredGetCurrentSubmission!: () => Submission<unknown> | undefined
+
+function RegisteredGetFormFixture() {
+  registeredGetCurrentSubmission = useSubmission(registeredGetAction)
+  return (
+    <Form
+      action={registeredGetAction}
+      method="get"
+      navigate={false}
+      fetcherKey="registered-search"
+      data-testid="registered-get-form"
+    >
+      <input name="query" value="first" />
+      <input name="query" value="second" />
+    </Form>
+  )
+}
+
 function NavigateButton({ to }: { to: string }) {
   const navigate = useNavigate()
   const target = untrack(() => to)
@@ -2712,6 +2761,346 @@ describe('Router integration (MemoryRouter)', () => {
       )
       expect(results).toEqual([{ saved: 'latest' }])
     } finally {
+      fetchMock.mockRestore()
+      cleanupDataUtilities()
+    }
+  })
+
+  it('runs navigate=false GET Forms through the tracked fetch lifecycle without changing history', async () => {
+    cleanupDataUtilities()
+    const NativeFormData = FormData
+    class FormDataWithFiles extends NativeFormData {
+      constructor(form?: HTMLFormElement, submitter?: HTMLElement | null) {
+        super(form, submitter)
+        if (form?.getAttribute('data-testid') === 'tracked-get-form') {
+          this.append('upload', new File(['report'], 'report one.txt'))
+          this.append('upload', new File([], ''))
+        }
+      }
+    }
+    vi.stubGlobal('FormData', FormDataWithFiles)
+
+    let settleFetch!: (response: Response) => void
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      () =>
+        new Promise<Response>(resolve => {
+          settleFetch = resolve
+        }),
+    )
+    const history = createMemoryHistory({ initialEntries: ['/form?keep=current#section'] })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <TrackedGetFormFixture />
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('tracked-get-form') as HTMLFormElement
+      const results: Array<{ data: unknown; response: Response }> = []
+      form.addEventListener('formsubmit', event => {
+        results.push((event as CustomEvent<{ data: unknown; response: Response }>).detail)
+      })
+
+      const submitEvent = new SubmitEvent('submit', { bubbles: true, cancelable: true })
+      expect(form.dispatchEvent(submitEvent)).toBe(false)
+      expect(submitEvent.defaultPrevented).toBe(true)
+
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(
+        '/search?query=fict+router&tag=compiler&tag=runtime&upload=report+one.txt&upload=',
+      )
+      expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'GET' })
+      expect(fetchMock.mock.calls[0]?.[1]).not.toHaveProperty('body')
+      expect(history.location).toMatchObject({
+        pathname: '/form',
+        search: '?keep=current',
+        hash: '#section',
+      })
+      expect(trackedGetCurrentSubmission()).toMatchObject({
+        key: 'search-results',
+        state: 'submitting',
+      })
+      expect(trackedGetCurrentSubmission()?.formData.getAll('tag')).toEqual(['compiler', 'runtime'])
+
+      const response = new Response(JSON.stringify({ matches: 2 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+      await act(async () => {
+        settleFetch(response)
+        await Promise.resolve()
+      })
+
+      await vi.waitFor(() =>
+        expect(trackedGetCurrentSubmission()).toMatchObject({
+          key: 'search-results',
+          state: 'idle',
+          result: { matches: 2 },
+        }),
+      )
+      expect(results).toEqual([{ data: { matches: 2 }, response }])
+      expect(history.location).toMatchObject({
+        pathname: '/form',
+        search: '?keep=current',
+        hash: '#section',
+      })
+    } finally {
+      history.destroy?.()
+      fetchMock.mockRestore()
+      vi.stubGlobal('FormData', NativeFormData)
+      cleanupDataUtilities()
+    }
+  })
+
+  it('suppresses stale navigate=false GET results and errors for the same fetcher key', async () => {
+    cleanupDataUtilities()
+    const settleFetches: Array<(response: Response) => void> = []
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      () =>
+        new Promise<Response>(resolve => {
+          settleFetches.push(resolve)
+        }),
+    )
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const history = createMemoryHistory({ initialEntries: ['/form'] })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <TrackedGetFormFixture />
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('tracked-get-form') as HTMLFormElement
+      const peerForm = screen.getByTestId('tracked-get-form-peer') as HTMLFormElement
+      const results: unknown[] = []
+      const errors: unknown[] = []
+      const recordResult = (event: Event) => {
+        results.push((event as CustomEvent<{ data: unknown }>).detail.data)
+      }
+      const recordError = (event: Event) => {
+        errors.push((event as CustomEvent<{ error: unknown }>).detail.error)
+      }
+      form.addEventListener('formsubmit', recordResult)
+      peerForm.addEventListener('formsubmit', recordResult)
+      form.addEventListener('formerror', recordError)
+      peerForm.addEventListener('formerror', recordError)
+
+      form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      peerForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(
+        '/search?query=fict+router&tag=compiler&tag=runtime',
+      )
+      expect(fetchMock.mock.calls[1]?.[0]).toBe('/search?query=latest')
+      expect(trackedGetCurrentSubmission()).toMatchObject({
+        key: 'search-results',
+        state: 'submitting',
+      })
+      expect(trackedGetCurrentSubmission()?.formData.get('query')).toBe('latest')
+
+      await act(async () => {
+        settleFetches[0]?.(
+          new Response('stale failure', { status: 503, statusText: 'Unavailable' }),
+        )
+        await Promise.resolve()
+      })
+
+      expect(trackedGetCurrentSubmission()).toMatchObject({ state: 'submitting' })
+      expect(results).toEqual([])
+      expect(errors).toEqual([])
+      expect(consoleError).not.toHaveBeenCalled()
+
+      await act(async () => {
+        settleFetches[1]?.(
+          new Response(JSON.stringify({ query: 'latest' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        )
+        await Promise.resolve()
+      })
+
+      await vi.waitFor(() =>
+        expect(trackedGetCurrentSubmission()).toMatchObject({
+          state: 'idle',
+          result: { query: 'latest' },
+        }),
+      )
+      expect(results).toEqual([{ query: 'latest' }])
+      expect(errors).toEqual([])
+      expect(history.location.pathname).toBe('/form')
+    } finally {
+      history.destroy?.()
+      consoleError.mockRestore()
+      fetchMock.mockRestore()
+      cleanupDataUtilities()
+    }
+  })
+
+  it('reports the current navigate=false GET fetch failure through formerror', async () => {
+    cleanupDataUtilities()
+    const rejection = new Error('GET search failed')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockRejectedValue(rejection)
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const history = createMemoryHistory({ initialEntries: ['/form'] })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <TrackedGetFormFixture />
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('tracked-get-form') as HTMLFormElement
+      const errors: unknown[] = []
+      form.addEventListener('formerror', event => {
+        errors.push((event as CustomEvent<{ error: unknown }>).detail.error)
+      })
+
+      form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      await vi.waitFor(() => expect(errors).toEqual([rejection]))
+
+      expect(trackedGetCurrentSubmission()).toMatchObject({
+        key: 'search-results',
+        state: 'idle',
+        error: rejection,
+      })
+      expect(consoleError).toHaveBeenCalledWith('[fict-router] Form submission failed:', rejection)
+      expect(history.location.pathname).toBe('/form')
+    } finally {
+      history.destroy?.()
+      consoleError.mockRestore()
+      fetchMock.mockRestore()
+      cleanupDataUtilities()
+    }
+  })
+
+  it('runs registered navigate=false GET actions with query FormData and no Request body', async () => {
+    cleanupDataUtilities()
+    let observedFormData: FormData | undefined
+    let observedRequest: Request | undefined
+    registeredGetAction = action((formData, { request }) => {
+      observedFormData = formData
+      observedRequest = request
+      return { query: formData.getAll('query') }
+    }, 'tracked GET action')
+
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValue(new Error('registered actions must not use fetch'))
+    const history = createMemoryHistory({ initialEntries: ['/form'] })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <RegisteredGetFormFixture />
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('registered-get-form') as HTMLFormElement
+      const results: unknown[] = []
+      form.addEventListener('formsubmit', event => {
+        results.push((event as CustomEvent<{ data: unknown }>).detail.data)
+      })
+      form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(observedFormData?.getAll('query')).toEqual(['first', 'second'])
+      expect(observedRequest?.method).toBe('GET')
+      expect(observedRequest?.body).toBeNull()
+      expect(new URL(observedRequest?.url ?? 'http://localhost').search).toBe(
+        '?query=first&query=second',
+      )
+      expect(history.location.pathname).toBe('/form')
+      await vi.waitFor(() =>
+        expect(registeredGetCurrentSubmission()).toMatchObject({
+          key: 'registered-search',
+          state: 'idle',
+          result: { query: ['first', 'second'] },
+        }),
+      )
+      expect(results).toEqual([{ query: ['first', 'second'] }])
+    } finally {
+      history.destroy?.()
+      fetchMock.mockRestore()
+      cleanupDataUtilities()
+    }
+  })
+
+  it('keeps GET navigation when fetcherKey is provided without navigate=false', async () => {
+    cleanupDataUtilities()
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValue(new Error('navigating GET forms must not fetch'))
+    const history = createMemoryHistory({ initialEntries: ['/form'] })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <Form action="/search" method="get" fetcherKey="unused" data-testid="get-navigation">
+            <input name="query" value="fict" />
+          </Form>
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('get-navigation') as HTMLFormElement
+      form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+      await vi.waitFor(() => expect(history.location.pathname).toBe('/search'))
+      expect(history.location.search).toBe('?query=fict')
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      history.destroy?.()
+      fetchMock.mockRestore()
+      cleanupDataUtilities()
+    }
+  })
+
+  it('fetches external GET actions with navigate=false without changing browser history', async () => {
+    cleanupDataUtilities()
+    const response = new Response(JSON.stringify({ matches: 1 }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(response)
+    const history = createMemoryHistory({ initialEntries: ['/form?keep=current'] })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <Form
+            action="https://api.example.com/search?source=discarded#results"
+            method="get"
+            navigate={false}
+            fetcherKey="external-search"
+            data-testid="external-get-fetcher"
+          >
+            <input name="query" value="fict router" />
+          </Form>
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('external-get-fetcher') as HTMLFormElement
+      const results: unknown[] = []
+      form.addEventListener('formsubmit', event => {
+        results.push((event as CustomEvent<{ data: unknown }>).detail.data)
+      })
+      const submitEvent = new SubmitEvent('submit', { bubbles: true, cancelable: true })
+      expect(form.dispatchEvent(submitEvent)).toBe(false)
+
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(
+        'https://api.example.com/search?query=fict+router',
+      )
+      expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'GET' })
+      expect(fetchMock.mock.calls[0]?.[1]).not.toHaveProperty('body')
+      await vi.waitFor(() => expect(results).toEqual([{ matches: 1 }]))
+      expect(history.location).toMatchObject({ pathname: '/form', search: '?keep=current' })
+    } finally {
+      history.destroy?.()
       fetchMock.mockRestore()
       cleanupDataUtilities()
     }

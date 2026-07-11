@@ -390,10 +390,11 @@ async function executeActionHandler<T>(
   // form URL and method when a declarative Form invokes the action.
   const baseUrl =
     typeof window !== 'undefined' && window.location ? window.location.origin : 'http://localhost'
-  const request = new Request(new URL(url, baseUrl).href, {
-    method,
-    body: formData,
-  })
+  const requestInit: RequestInit = { method }
+  if (method !== 'GET' && method !== 'HEAD') {
+    requestInit.body = formData
+  }
+  const request = new Request(new URL(url, baseUrl).href, requestInit)
 
   return handler(formData, { params, request })
 }
