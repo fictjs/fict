@@ -6,7 +6,7 @@
  */
 
 import { createEffect, batch } from '@fictjs/runtime'
-import { createSignal } from '@fictjs/runtime/advanced'
+import { createSignal, type Signal } from '@fictjs/runtime/advanced'
 import { __fictGetCurrentSSRSession, __fictIsSSRSessionActive } from '@fictjs/runtime/internal'
 
 import type {
@@ -389,14 +389,42 @@ export function getAction(url: string): ActionFunction<unknown> | undefined {
 // Submission Tracking
 // ============================================================================
 
-/** Active submissions */
-const activeSubmissions = createSignal<Map<string, Submission<unknown>>>(new Map())
+type SubmissionMap = Map<string, Submission<unknown>>
+type SubmissionStore = Signal<SubmissionMap>
+
+/** Shared browser submissions. SSR requests use isolated stores below. */
+const sharedActiveSubmissions = createSignal<SubmissionMap>(new Map())
+
+/** Request-local submission stores are released with their SSR sessions. */
+let requestActiveSubmissions = new WeakMap<SSRSession, SubmissionStore>()
+
+function createSubmissionStore(): SubmissionStore {
+  return createSignal<SubmissionMap>(new Map())
+}
+
+function resolveSubmissionStore(): SubmissionStore {
+  const session = __fictGetCurrentSSRSession()
+  if (!session) {
+    // Match query-cache isolation: if an SSR integration loses its async
+    // carrier, keep this invocation out of the process-wide browser store.
+    // Callers capture the temporary store for all of their later callbacks.
+    return __fictIsSSRSessionActive() ? createSubmissionStore() : sharedActiveSubmissions
+  }
+
+  let store = requestActiveSubmissions.get(session)
+  if (!store) {
+    store = createSubmissionStore()
+    requestActiveSubmissions.set(session, store)
+  }
+  return store
+}
 
 /**
  * Use submission state for an action
  */
 export function useSubmission<T>(actionOrUrl: Action<T> | string): () => Submission<T> | undefined {
   const url = typeof actionOrUrl === 'string' ? actionOrUrl : actionOrUrl.url
+  const activeSubmissions = resolveSubmissionStore()
 
   return () => {
     const submissions = activeSubmissions()
@@ -408,16 +436,16 @@ export function useSubmission<T>(actionOrUrl: Action<T> | string): () => Submiss
  * Use all active submissions
  */
 export function useSubmissions(): () => Submission<unknown>[] {
+  const activeSubmissions = resolveSubmissionStore()
   return () => Array.from(activeSubmissions().values())
 }
 
-/**
- * Submit an action and track the submission
- */
-export async function submitAction<T>(
+/** Submit using a submission store already captured by the public entry point. */
+async function submitActionInStore<T>(
   action: Action<T>,
   formData: FormData,
-  params: Params = {},
+  params: Params,
+  activeSubmissions: SubmissionStore,
 ): Promise<T> {
   const key = `submission-${++submissionCounter}`
 
@@ -436,7 +464,7 @@ export async function submitAction<T>(
       // The retried submission records its own idle/error state. Since retry is
       // intentionally a void API, consume the returned rejection after that
       // state update instead of leaking an unhandled promise.
-      void submitAction(action, formData, params).catch(() => {})
+      void submitActionInStore(action, formData, params, activeSubmissions).catch(() => {})
     },
   }
 
@@ -475,6 +503,19 @@ export async function submitAction<T>(
 
     throw error
   }
+}
+
+/**
+ * Submit an action and track the submission
+ */
+export function submitAction<T>(
+  action: Action<T>,
+  formData: FormData,
+  params: Params = {},
+): Promise<T> {
+  // Resolve once while the caller's SSR session is available. Every async
+  // settle, clear, and retry continues to use this captured store.
+  return submitActionInStore(action, formData, params, resolveSubmissionStore())
 }
 
 // ============================================================================
@@ -634,5 +675,6 @@ export function cleanupDataUtilities(): void {
   sharedQueryCache.clear()
   requestQueryCaches = new WeakMap()
   actionRegistry.clear()
-  activeSubmissions(new Map())
+  sharedActiveSubmissions(new Map())
+  requestActiveSubmissions = new WeakMap()
 }

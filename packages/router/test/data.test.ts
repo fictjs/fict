@@ -11,6 +11,7 @@ import {
   revalidate,
   action,
   useSubmission,
+  useSubmissions,
   submitAction,
   createResource,
   cleanupDataUtilities,
@@ -825,6 +826,187 @@ describe('submitAction', () => {
     const formData = new FormData()
 
     await expect(submitAction(failingAction, formData)).rejects.toThrow('Action failed')
+  })
+
+  it('isolates pending, settled, and cleared submissions between SSR sessions', async () => {
+    const settlers: Array<{
+      resolve: (value: string) => void
+      reject: (error: Error) => void
+    }> = []
+    const save = action<string>(
+      () =>
+        new Promise<string>((resolve, reject) => {
+          settlers.push({ resolve, reject })
+        }),
+      'isolatedSSRSubmission',
+    )
+    const aliceSession = __fictCreateSSRSession()
+    const bobSession = __fictCreateSSRSession()
+    const aliceCurrent = __fictRunWithSSRSession(aliceSession, () => useSubmission(save))
+    const aliceAll = __fictRunWithSSRSession(aliceSession, () => useSubmissions())
+    const bobCurrent = __fictRunWithSSRSession(bobSession, () => useSubmission(save))
+    const bobAll = __fictRunWithSSRSession(bobSession, () => useSubmissions())
+    let alicePromise: Promise<string> | undefined
+    let bobPromise: Promise<string> | undefined
+    let aliceSettled = false
+    let bobSettled = false
+
+    try {
+      alicePromise = __fictRunWithSSRSession(aliceSession, () => submitAction(save, new FormData()))
+      const alice = aliceCurrent()!
+
+      expect(alice).toMatchObject({ state: 'submitting' })
+      expect(aliceAll()).toEqual([alice])
+      expect(bobCurrent()).toBeUndefined()
+      expect(bobAll()).toEqual([])
+
+      aliceSettled = true
+      settlers[0]!.resolve('Alice')
+      await expect(alicePromise).resolves.toBe('Alice')
+
+      expect(alice).toMatchObject({ state: 'idle', result: 'Alice' })
+      expect(aliceCurrent()).toBe(alice)
+      expect(bobCurrent()).toBeUndefined()
+
+      bobPromise = __fictRunWithSSRSession(bobSession, () => submitAction(save, new FormData()))
+      const bob = bobCurrent()!
+
+      expect(bob).toMatchObject({ state: 'submitting' })
+      expect(bobAll()).toEqual([bob])
+      expect(aliceCurrent()).toBe(alice)
+      expect(aliceAll()).toEqual([alice])
+
+      alice.clear()
+      expect(aliceCurrent()).toBeUndefined()
+      expect(aliceAll()).toEqual([])
+      expect(bobCurrent()).toBe(bob)
+
+      bobSettled = true
+      settlers[1]!.resolve('Bob')
+      await expect(bobPromise).resolves.toBe('Bob')
+
+      expect(bob).toMatchObject({ state: 'idle', result: 'Bob' })
+      expect(bobCurrent()).toBe(bob)
+      expect(aliceCurrent()).toBeUndefined()
+    } finally {
+      if (!aliceSettled) settlers[0]?.resolve('Alice cleanup')
+      if (!bobSettled) settlers[1]?.resolve('Bob cleanup')
+      await Promise.allSettled([alicePromise, bobPromise].filter(Boolean) as Promise<string>[])
+    }
+  })
+
+  it('keeps an SSR retry in the submission store captured by its original request', async () => {
+    const settlers: Array<{
+      resolve: (value: string) => void
+      reject: (error: Error) => void
+    }> = []
+    const save = action<string>(
+      () =>
+        new Promise<string>((resolve, reject) => {
+          settlers.push({ resolve, reject })
+        }),
+      'isolatedSSRRetry',
+    )
+    const aliceSession = __fictCreateSSRSession()
+    const bobSession = __fictCreateSSRSession()
+    const aliceCurrent = __fictRunWithSSRSession(aliceSession, () => useSubmission(save))
+    const bobCurrent = __fictRunWithSSRSession(bobSession, () => useSubmission(save))
+    const originalPromise = __fictRunWithSSRSession(aliceSession, () =>
+      submitAction(save, new FormData()),
+    )
+    const original = aliceCurrent()!
+    let originalSettled = false
+    let retrySettled = false
+
+    try {
+      expect(bobCurrent()).toBeUndefined()
+
+      original.retry()
+      const retried = aliceCurrent()!
+
+      expect(retried.key).not.toBe(original.key)
+      expect(retried).toMatchObject({ state: 'submitting' })
+      expect(bobCurrent()).toBeUndefined()
+
+      retrySettled = true
+      settlers[1]!.resolve('retried')
+      await vi.waitFor(() => expect(retried).toMatchObject({ state: 'idle', result: 'retried' }))
+      expect(aliceCurrent()).toBe(retried)
+      expect(bobCurrent()).toBeUndefined()
+
+      originalSettled = true
+      settlers[0]!.resolve('original')
+      await expect(originalPromise).resolves.toBe('original')
+      expect(aliceCurrent()).toBe(retried)
+      expect(bobCurrent()).toBeUndefined()
+    } finally {
+      if (!originalSettled) settlers[0]?.resolve('original cleanup')
+      if (!retrySettled) settlers[1]?.resolve('retry cleanup')
+      await Promise.allSettled([originalPromise])
+      await new Promise(resolve => setTimeout(resolve, 0))
+    }
+  })
+
+  it('fails closed when an active SSR submission loses its async session carrier', async () => {
+    let resolveSubmission!: (value: string) => void
+    const save = action<string>(
+      () =>
+        new Promise<string>(resolve => {
+          resolveSubmission = resolve
+        }),
+      'isolatedSSRFallbackSubmission',
+    )
+    const browserCurrent = useSubmission(save)
+    let release!: () => void
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const serverRun = __fictRunWithSSRSession(__fictCreateSSRSession(), async () => {
+      await gate
+      expect(__fictGetCurrentSSRSession()).toBeNull()
+      return submitAction(save, new FormData())
+    })
+
+    release()
+    await vi.waitFor(() => expect(resolveSubmission).toBeTypeOf('function'))
+
+    try {
+      expect(browserCurrent()).toBeUndefined()
+    } finally {
+      resolveSubmission('server')
+      await expect(serverRun).resolves.toBe('server')
+    }
+
+    expect(browserCurrent()).toBeUndefined()
+  })
+
+  it('preserves the shared browser submission store behavior', async () => {
+    let resolveSubmission!: (value: string) => void
+    const save = action<string>(
+      () =>
+        new Promise<string>(resolve => {
+          resolveSubmission = resolve
+        }),
+      'sharedBrowserSubmission',
+    )
+    const current = useSubmission(save)
+    const all = useSubmissions()
+    const promise = submitAction(save, new FormData())
+    const submission = current()!
+
+    expect(submission).toMatchObject({ state: 'submitting' })
+    expect(all()).toEqual([submission])
+
+    resolveSubmission('saved')
+    await expect(promise).resolves.toBe('saved')
+
+    expect(current()).toBe(submission)
+    expect(submission).toMatchObject({ state: 'idle', result: 'saved' })
+    expect(all()).toEqual([submission])
+
+    submission.clear()
+    expect(current()).toBeUndefined()
+    expect(all()).toEqual([])
   })
 
   it('keeps the newer submission current when an older submission resolves last', async () => {
