@@ -4468,6 +4468,76 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it('rejects root metadata fallback outside the package directory', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-library-outside-fallback-'))
+
+    try {
+      const sourcePath = path.join(root, 'src', 'index.ts')
+      const outDir = path.join(root, '..', `${path.basename(root)}-output`)
+      const packageJsonPath = path.join(root, 'package.json')
+      await writeFile(
+        packageJsonPath,
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          type: 'module',
+        }),
+      )
+
+      const plugin = getTestPlugin({ library: true, useTypeScriptProject: false })
+      plugin.configResolved?.({
+        ...mockBuildConfig,
+        root,
+        build: { ...mockBuildConfig.build, outDir },
+      })
+
+      await plugin.transform?.call(
+        { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() },
+        `
+          import { $state } from 'fict'
+          /** @fictReturn { directAccessor: "signal" } */
+          export function useCounter() {
+            const count = $state(0)
+            return count
+          }
+        `,
+        sourcePath,
+      )
+
+      plugin.generateBundle?.call(
+        { emitFile: vi.fn(() => 'asset-id'), warn: vi.fn() },
+        {},
+        {
+          'index.js': {
+            type: 'chunk',
+            fileName: 'index.js',
+            isEntry: true,
+            facadeModuleId: sourcePath,
+            modules: { [sourcePath]: {} },
+            exports: ['useCounter'],
+          },
+        },
+      )
+
+      await expect(
+        plugin.writeBundle?.call(
+          {
+            warn: vi.fn(),
+            error: (message: string) => {
+              throw new Error(message)
+            },
+          },
+          {},
+          {},
+        ),
+      ).rejects.toThrow('automatic root fallback')
+
+      const pkg = JSON.parse(await readFile(packageJsonPath, 'utf8'))
+      expect(pkg).not.toHaveProperty('fict')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('treats a custom metadata resolver null as an authoritative miss', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-custom-meta-null-'))
     const packageDir = path.join(root, 'node_modules', 'fict-hook-lib')

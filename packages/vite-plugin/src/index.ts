@@ -225,6 +225,7 @@ interface LibraryMetadataAsset {
 interface FictPackageMappingResult {
   mappings: Map<string, string>
   unmappedAssets: LibraryMetadataAsset[]
+  rootFallbackOutsidePackage: boolean
 }
 
 interface PackageBoundary {
@@ -2304,6 +2305,16 @@ function toPackageJsonRelativePath(packageDir: string, absoluteFilePath: string)
   return relative.startsWith('.') ? relative : `./${relative}`
 }
 
+function isPathInsideDirectory(directory: string, absoluteFilePath: string): boolean {
+  const relative = path.relative(directory, absoluteFilePath)
+  return (
+    relative.length > 0 &&
+    !path.isAbsolute(relative) &&
+    relative !== '..' &&
+    !relative.startsWith(`..${path.sep}`)
+  )
+}
+
 function normalizePackageJsonTarget(
   value: string,
   allowRelativeWithoutPrefix = false,
@@ -2495,17 +2506,24 @@ function buildFictPackageMappingResult(
   if (packageTargets.length === 0 && mappings.size === 0 && assetList.length === 1) {
     const asset = assetList[0]
     if (asset) {
-      mappings.set(
-        '.',
-        toPackageJsonRelativePath(packageDir, path.resolve(outDir, asset.metadataFileName)),
-      )
-      return { mappings, unmappedAssets: [] }
+      const chunkPath = path.resolve(outDir, asset.chunkFileName)
+      const metadataPath = path.resolve(outDir, asset.metadataFileName)
+      if (
+        isPathInsideDirectory(packageDir, chunkPath) &&
+        isPathInsideDirectory(packageDir, metadataPath)
+      ) {
+        mappings.set('.', toPackageJsonRelativePath(packageDir, metadataPath))
+        return { mappings, unmappedAssets: [], rootFallbackOutsidePackage: false }
+      }
+
+      return { mappings, unmappedAssets, rootFallbackOutsidePackage: true }
     }
   }
 
   const mappedMetadataPaths = new Set(mappings.values())
   return {
     mappings,
+    rootFallbackOutsidePackage: false,
     unmappedAssets: unmappedAssets.filter(asset => {
       const metadataPackagePath = toPackageJsonRelativePath(
         packageDir,
@@ -2580,16 +2598,17 @@ async function writeLibraryPackageJson(
   const packageJsonPath = resolvePackageJsonPath(options.root, options.packageJson)
   const raw = await fs.readFile(packageJsonPath, 'utf8')
   const pkg = JSON.parse(raw) as Record<string, unknown>
-  const { mappings, unmappedAssets } = buildFictPackageMappingResult(
+  const { mappings, unmappedAssets, rootFallbackOutsidePackage } = buildFictPackageMappingResult(
     assets.values(),
     pkg,
     path.dirname(packageJsonPath),
     options.outDir,
   )
   if (mappings.size === 0) {
-    const message =
-      '[fict] Library metadata was emitted, but no package.json exports/module/main target matched the generated entry chunks. ' +
-      'Add package.json#exports, module, or main entries that point at the built library entry files, or set library.packageJson to false and declare metadata yourself.'
+    const message = rootFallbackOutsidePackage
+      ? '[fict] Library metadata cannot use the automatic root fallback because the generated entry or metadata file is outside the package.json directory. Move build.outDir inside the package, add a publishable package entry, or set library.packageJson to false and declare metadata yourself.'
+      : '[fict] Library metadata was emitted, but no package.json exports/module/main target matched the generated entry chunks. ' +
+        'Add package.json#exports, module, or main entries that point at the built library entry files, or set library.packageJson to false and declare metadata yourself.'
     if (options.onError) options.onError(message)
     throw new Error(message)
   }
