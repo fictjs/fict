@@ -60,21 +60,22 @@ async function buildFixture(
   }))
 }
 
-async function buildMacroFixture(root: string, entryName: string): Promise<BuildArtifact[]> {
+async function buildMacroFixture(
+  root: string,
+  entryName: string,
+  source = `
+    import { $state } from 'fict'
+
+    export function Counter() {
+      let count = $state(0)
+      return <button onClick$={() => count++}>{count}</button>
+    }
+  `,
+): Promise<BuildArtifact[]> {
   const sourceDir = path.join(root, 'src')
   const entry = path.join(sourceDir, entryName)
   await mkdir(sourceDir, { recursive: true })
-  await writeFile(
-    entry,
-    `
-      import { $state } from 'fict'
-
-      export function Counter() {
-        let count = $state(0)
-        return <button onClick$={() => count++}>{count}</button>
-      }
-    `,
-  )
+  await writeFile(entry, source)
 
   const result = await build({
     root,
@@ -219,4 +220,50 @@ describe('function splitting build identity', () => {
       }
     },
   )
+
+  it('preserves prevent-default QRL flags when splitting a production handler', async () => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-handler-flags-')))
+    try {
+      const artifacts = await buildMacroFixture(
+        root,
+        'Counter.tsx',
+        `
+          import { $state } from 'fict'
+
+          export function Counter() {
+            let count = $state(0)
+            return (
+              <button onClick$={(event) => {
+                event.preventDefault()
+                count++
+              }}>
+                {count}
+              </button>
+            )
+          }
+        `,
+      )
+      const app = artifacts.find(artifact => artifact.fileName === 'app.js')?.source ?? ''
+      const manifest = JSON.parse(
+        artifacts.find(artifact => artifact.fileName === 'fict.manifest.json')!.source,
+      ) as Record<string, string>
+      const handlerEntries = Object.entries(manifest).filter(([key]) =>
+        key.startsWith('virtual:fict-handler:'),
+      )
+      const handlerChunk = artifacts.find(artifact =>
+        artifact.fileName.includes('handler-__fict_e0'),
+      )
+
+      expect(handlerEntries).toHaveLength(1)
+      expect(handlerChunk).toBeDefined()
+      expect(handlerEntries[0]?.[1]).toContain(handlerChunk!.fileName)
+      expect(app).toContain(JSON.stringify(handlerEntries[0]?.[0]))
+      expect(app).toMatch(
+        /[\w$]+\(\s*["']virtual:fict-handler:h[a-f0-9]{32}\$\$__fict_e0["']\s*,\s*["']default["']\s*,\s*["']pd["']\s*\)/,
+      )
+      expect(app).not.toMatch(/["']__fict_e0["']/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 })

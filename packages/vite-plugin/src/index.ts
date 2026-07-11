@@ -4751,9 +4751,12 @@ function extractAndRewriteHandlers(
     },
 
     CallExpression(path) {
-      // Rewrite __fictQrl(import.meta.url, "__fict_e0") -> "virtual:..."
+      // Rewrite __fictQrl(import.meta.url, "__fict_e0") -> "virtual:...#default".
+      // Flagged QRLs retain the helper call so its metadata suffix is preserved:
+      // __fictQrl(import.meta.url, "__fict_e0", "pd")
+      //   -> __fictQrl("virtual:...", "default", "pd")
       if (!t.isIdentifier(path.node.callee, { name: '__fictQrl' })) return
-      if (path.node.arguments.length !== 2) return
+      if (path.node.arguments.length < 2) return
 
       const secondArg = path.node.arguments[1]
       if (!t.isStringLiteral(secondArg)) return
@@ -4763,8 +4766,17 @@ function extractAndRewriteHandlers(
 
       // Replace with the virtual module URL
       const handlerId = createHandlerId(sourceModule, handlerName, rootDir)
-      const virtualUrl = `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}#default`
-      path.replaceWith(t.stringLiteral(virtualUrl))
+      const virtualModuleId = `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}`
+      if (path.node.arguments.length === 2) {
+        path.replaceWith(t.stringLiteral(`${virtualModuleId}#default`))
+        return
+      }
+
+      path.node.arguments = [
+        t.stringLiteral(virtualModuleId),
+        t.stringLiteral('default'),
+        ...path.node.arguments.slice(2),
+      ]
     },
   })
 
