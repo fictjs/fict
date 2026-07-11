@@ -390,6 +390,53 @@ describe('Multi-Priority Scheduler', () => {
       await tick()
       expect(isPending()).toBe(false)
     })
+
+    it.each(['constructor', 'catch'] as const)(
+      'clears pending when a transition Promise %s accessor throws',
+      accessor => {
+        const [isPending, start] = useTransition()
+        const error = new Error(`transition ${accessor} getter boom`)
+        const result = Promise.resolve()
+        Object.defineProperty(result, accessor, {
+          get() {
+            throw error
+          },
+        })
+
+        expect(() => start(() => result)).toThrow(error)
+        expect(isPending()).toBe(false)
+      },
+    )
+
+    it('ends poisoned transition assimilation only once alongside pending work', async () => {
+      const [isPending, start] = useTransition()
+      let resolveWork: (() => void) | undefined
+      const work = new Promise<void>(resolve => {
+        resolveWork = resolve
+      })
+      const error = new Error('transition finally boom')
+      const result = Promise.resolve()
+      Object.defineProperty(result, 'catch', {
+        value() {
+          return {
+            finally(callback: () => void) {
+              callback()
+              callback()
+              throw error
+            },
+          }
+        },
+      })
+
+      start(() => work)
+      expect(() => start(() => result)).toThrow(error)
+      expect(isPending()).toBe(true)
+
+      resolveWork!()
+      await tick()
+      await tick()
+      expect(isPending()).toBe(false)
+    })
   })
 
   describe('useDeferredValue', () => {

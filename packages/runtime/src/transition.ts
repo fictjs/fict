@@ -88,6 +88,12 @@ export function useTransition(): [() => boolean, (fn: () => void | PromiseLike<u
 
   const start = (fn: () => void | PromiseLike<unknown>) => {
     beginPending()
+    let pendingEnded = false
+    const finishPending = () => {
+      if (pendingEnded) return
+      pendingEnded = true
+      endPending()
+    }
     let result: void | PromiseLike<unknown> | undefined
     let thrown: unknown
     let didThrow = false
@@ -102,7 +108,7 @@ export function useTransition(): [() => boolean, (fn: () => void | PromiseLike<u
     })
 
     if (didThrow) {
-      endPending()
+      finishPending()
       throw thrown
     }
 
@@ -110,28 +116,33 @@ export function useTransition(): [() => boolean, (fn: () => void | PromiseLike<u
     try {
       isThenable = Boolean(result && typeof (result as PromiseLike<unknown>).then === 'function')
     } catch (error) {
-      endPending()
+      finishPending()
       throw error
     }
 
     if (isThenable) {
-      void Promise.resolve(result)
-        .catch(error => {
-          if (typeof console !== 'undefined' && typeof console.error === 'function') {
-            console.error('[fict/transition] Async transition failed.', error)
-          }
-        })
-        .finally(() => {
-          endPending()
-        })
+      try {
+        void Promise.resolve(result)
+          .catch(error => {
+            if (typeof console !== 'undefined' && typeof console.error === 'function') {
+              console.error('[fict/transition] Async transition failed.', error)
+            }
+          })
+          .finally(() => {
+            finishPending()
+          })
+      } catch (error) {
+        finishPending()
+        throw error
+      }
       return
     }
 
     // Keep pending true for at least one microtask so UI can observe it.
     if (typeof queueMicrotask === 'function') {
-      queueMicrotask(endPending)
+      queueMicrotask(finishPending)
     } else {
-      Promise.resolve().then(endPending)
+      Promise.resolve().then(finishPending)
     }
   }
 
