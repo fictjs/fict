@@ -23,6 +23,7 @@ import {
   Redirect,
   clearAllScrollPositions,
   type History,
+  type Location,
   type NavigateOptions,
   type RouteDefinition,
   type To,
@@ -560,6 +561,86 @@ describe('Router integration (MemoryRouter)', () => {
       expect(screen.getByTestId('undefined-error').textContent).toBe('failed')
     })
     expect(screen.queryByTestId('undefined-error-content')).toBeNull()
+  })
+
+  it('renders the route error element when the initial preload throws synchronously', async () => {
+    const preloadError = new Error('initial preload failed')
+    const preload = vi.fn(() => {
+      throw preloadError
+    })
+
+    expect(() => {
+      render(() => (
+        <MemoryRouter initialEntries={['/failed']}>
+          <Route
+            path="/failed"
+            preload={preload}
+            loadingElement={<span data-testid="sync-initial-loading">loading</span>}
+            errorElement={<span data-testid="sync-initial-error">failed</span>}
+            element={<span data-testid="sync-initial-content">content</span>}
+          />
+        </MemoryRouter>
+      ))
+    }).not.toThrow()
+
+    expect(screen.getByTestId('sync-initial-loading').textContent).toBe('loading')
+
+    await vi.waitFor(() => {
+      expect(screen.getByTestId('sync-initial-error').textContent).toBe('failed')
+    })
+    expect(preload).toHaveBeenCalledOnce()
+    expect(screen.queryByTestId('sync-initial-loading')).toBeNull()
+    expect(screen.queryByTestId('sync-initial-content')).toBeNull()
+  })
+
+  it('settles loading and pending state when a navigated preload throws synchronously', async () => {
+    const preloadError = new Error('navigation preload failed')
+    const preload = vi.fn(({ location }: { location: Location }) => {
+      if (location.pathname === '/failed') throw preloadError
+      return 'ready'
+    })
+
+    render(() => (
+      <MemoryRouter initialEntries={['/from']}>
+        <Route
+          path="/:page"
+          preload={preload}
+          loadingElement={<span data-testid="sync-navigation-loading">loading</span>}
+          errorElement={
+            <div>
+              <PendingText />
+              <span data-testid="sync-navigation-error">failed</span>
+            </div>
+          }
+          element={
+            <div>
+              <span data-testid="sync-navigation-from">from</span>
+              <PendingText />
+              <NavigateButton to="/failed" />
+            </div>
+          }
+        />
+      </MemoryRouter>
+    ))
+
+    expect(screen.getByTestId('sync-navigation-loading').textContent).toBe('loading')
+    await vi.waitFor(() => {
+      expect(screen.getByTestId('sync-navigation-from').textContent).toBe('from')
+    })
+    expect(preload).toHaveBeenCalledOnce()
+    expect(screen.getByTestId('pending').textContent).toBe('none')
+
+    await act(async () => {
+      screen.getByTestId('go-/failed').click()
+    })
+
+    await vi.waitFor(() => {
+      expect(screen.getByTestId('sync-navigation-error').textContent).toBe('failed')
+    })
+    expect(preload).toHaveBeenCalledTimes(2)
+    expect(screen.queryByTestId('sync-navigation-loading')).toBeNull()
+    expect(screen.queryByTestId('sync-navigation-from')).toBeNull()
+    expect(screen.getByTestId('pending').textContent).toBe('none')
   })
 
   it('navigates between routes and updates location signal', async () => {

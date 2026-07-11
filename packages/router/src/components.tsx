@@ -251,7 +251,8 @@ function RenderMatchesView(props: RenderMatchesProps): FictNode {
 
         dataState({ data: undefined, error: undefined, hasError: false, loading: true })
 
-        Promise.resolve(preload(preloadArgs))
+        Promise.resolve()
+          .then(() => preload(preloadArgs))
           .then(result => {
             // Only apply result if this preload is still current
             if (currentToken === preloadToken) {
