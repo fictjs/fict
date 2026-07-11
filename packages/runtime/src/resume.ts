@@ -95,10 +95,27 @@ interface ResumedScopeEntry {
   clientOwned: boolean
   /** Idempotent root teardown installed after successful client hydration. */
   dispose?: () => void
+  /** Ref-counted DOM/ShadowRoot observers retained for this hydrated scope. */
+  observedRoots?: Set<Document | ShadowRoot>
 }
 
 const resumedScopes = new Map<string, ResumedScopeEntry>()
 const resumedScopeHosts = new WeakMap<Element, ResumedScopeEntry>()
+interface ResumedScopeRootObserver {
+  observer: MutationObserver
+  entries: Set<ResumedScopeEntry>
+  drainScheduled: boolean
+}
+type ResumedScopeDisposeListener = (scopeId: string, host: Element, context: HookContext) => void
+
+const resumedScopeRootObservers = new Map<Document | ShadowRoot, ResumedScopeRootObserver>()
+const resumedScopeDisposeListeners = new Set<ResumedScopeDisposeListener>()
+const enqueueResumedScopeMicrotask: (callback: () => void) => void =
+  typeof globalThis.queueMicrotask === 'function'
+    ? globalThis.queueMicrotask.bind(globalThis)
+    : callback => {
+        void Promise.resolve().then(callback)
+      }
 const componentMetaRegistry = new WeakMap<object, ComponentMeta>()
 const COMMITTED_SSR_STATE_ERROR = Symbol('fict:committed-ssr-state-error')
 
@@ -291,6 +308,13 @@ export function __fictDeleteResumedScopeForHost(
   return entry.id
 }
 
+export function __fictOnResumedScopeDisposed(listener: ResumedScopeDisposeListener): () => void {
+  resumedScopeDisposeListeners.add(listener)
+  return () => {
+    resumedScopeDisposeListeners.delete(listener)
+  }
+}
+
 export function __fictRegisterResumedScopeTeardown(
   host: Element,
   teardown: () => void,
@@ -308,11 +332,212 @@ export function __fictRegisterResumedScopeTeardown(
   const dispose = () => {
     if (disposed) return
     disposed = true
-    detachResumedScopeEntry(entry)
-    teardown()
+    try {
+      detachResumedScopeEntry(entry)
+    } finally {
+      teardown()
+    }
   }
   entry.dispose = dispose
+  try {
+    observeResumedScopeRoots(entry)
+  } catch (error) {
+    dispose()
+    throw error
+  }
   return dispose
+}
+
+function observeResumedScopeRoots(entry: ResumedScopeEntry): void {
+  reconcileResumedScopeObservationRoots(entry, collectResumedScopeObservationRoots(entry.host))
+}
+
+function collectResumedScopeObservationRoots(host: Element): Set<Document | ShadowRoot> {
+  const roots = new Set<Document | ShadowRoot>()
+  const doc = host.ownerDocument
+  let current: Node = host
+
+  while (true) {
+    const root = current.getRootNode()
+    if (root === doc) {
+      roots.add(doc)
+      return roots
+    }
+    const shadowHost = getShadowRootHost(root)
+    if (!shadowHost) {
+      return new Set()
+    }
+    roots.add(root as ShadowRoot)
+    current = shadowHost
+  }
+}
+
+function getShadowRootHost(root: Node): Element | null {
+  if (root.nodeType !== 11 || !('host' in root) || !('mode' in root)) return null
+  const shadowRoot = root as ShadowRoot
+  if (shadowRoot.mode !== 'open' && shadowRoot.mode !== 'closed') return null
+  const host = shadowRoot.host
+  return host && typeof host.getRootNode === 'function' ? host : null
+}
+
+function reconcileResumedScopeObservationRoots(
+  entry: ResumedScopeEntry,
+  nextRoots: Set<Document | ShadowRoot>,
+): void {
+  const previousRoots = entry.observedRoots ?? new Set<Document | ShadowRoot>()
+  const retainedRoots: (Document | ShadowRoot)[] = []
+  try {
+    // Acquire the new observation chain before releasing the old one. If any
+    // realm rejects observation, roll back this acquisition and leave the
+    // previous chain authoritative.
+    for (const root of nextRoots) {
+      if (previousRoots.has(root)) continue
+      retainResumedScopeRootObserver(root, entry)
+      retainedRoots.push(root)
+    }
+  } catch (error) {
+    for (const root of retainedRoots.reverse()) {
+      try {
+        releaseResumedScopeRootObserver(root, entry)
+      } catch (cleanupError) {
+        if (typeof console !== 'undefined' && typeof console.error === 'function') {
+          console.error('[fict] Failed to roll back resumed scope observation.', cleanupError)
+        }
+      }
+    }
+    throw error
+  }
+
+  for (const root of previousRoots) {
+    if (!nextRoots.has(root)) releaseResumedScopeRootObserver(root, entry)
+  }
+  if (nextRoots.size > 0) {
+    entry.observedRoots = nextRoots
+  } else {
+    delete entry.observedRoots
+  }
+}
+
+function retainResumedScopeRootObserver(
+  root: Document | ShadowRoot,
+  entry: ResumedScopeEntry,
+): void {
+  let record = resumedScopeRootObservers.get(root)
+  if (!record) {
+    const Observer =
+      entry.host.ownerDocument.defaultView?.MutationObserver ?? globalThis.MutationObserver
+    if (typeof Observer === 'undefined') return
+    const observer = new Observer(mutations => {
+      if (!mutations.some(mutation => mutation.removedNodes.length > 0)) return
+      const current = resumedScopeRootObservers.get(root)
+      if (current) scheduleResumedScopeRootDrain(root, current)
+    })
+    record = { observer, entries: new Set(), drainScheduled: false }
+    try {
+      observer.observe(root, { childList: true, subtree: true })
+    } catch (error) {
+      try {
+        observer.disconnect()
+      } catch (cleanupError) {
+        if (typeof console !== 'undefined' && typeof console.error === 'function') {
+          console.error('[fict] Failed to release a rejected scope observer.', cleanupError)
+        }
+      }
+      throw error
+    }
+    resumedScopeRootObservers.set(root, record)
+  }
+  record.entries.add(entry)
+}
+
+function scheduleResumedScopeRootDrain(
+  root: Document | ShadowRoot,
+  record: ResumedScopeRootObserver,
+): void {
+  if (record.drainScheduled) return
+  record.drainScheduled = true
+  enqueueResumedScopeMicrotask(() => {
+    record.drainScheduled = false
+    if (resumedScopeRootObservers.get(root) !== record) return
+
+    let firstError: unknown
+    let didThrow = false
+    const attempt = (operation: () => void) => {
+      try {
+        operation()
+      } catch (error) {
+        if (!didThrow) {
+          firstError = error
+          didThrow = true
+        }
+      }
+    }
+    const disconnected: { entry: ResumedScopeEntry; depth: number }[] = []
+    for (const entry of Array.from(record.entries)) {
+      if (resumedScopes.get(entry.id) !== entry) {
+        attempt(() => {
+          releaseResumedScopeObservationRoots(entry)
+        })
+      } else if (entry.host.isConnected) {
+        attempt(() => {
+          reconcileResumedScopeObservationRoots(
+            entry,
+            collectResumedScopeObservationRoots(entry.host),
+          )
+        })
+      } else {
+        disconnected.push({ entry, depth: getComposedNodeDepth(entry.host) })
+      }
+    }
+    disconnected.sort((left, right) => right.depth - left.depth)
+    for (const { entry } of disconnected) {
+      attempt(() => disposeResumedScopeEntry(entry))
+    }
+    if (didThrow) throw firstError
+  })
+}
+
+function getComposedNodeDepth(node: Node): number {
+  let depth = 0
+  let current: Node | null = node
+  const visited = new Set<Node>()
+  while (current && !visited.has(current)) {
+    visited.add(current)
+    const parent: Node | null =
+      (current.parentNode as Node | null) ?? getShadowRootHost(current.getRootNode())
+    if (!parent) break
+    depth++
+    current = parent
+  }
+  return depth
+}
+
+function releaseResumedScopeObservationRoots(entry: ResumedScopeEntry): void {
+  const roots = entry.observedRoots
+  if (!roots) return
+  delete entry.observedRoots
+  for (const root of roots) {
+    releaseResumedScopeRootObserver(root, entry)
+  }
+}
+
+function releaseResumedScopeRootObserver(
+  root: Document | ShadowRoot,
+  entry: ResumedScopeEntry,
+): void {
+  const record = resumedScopeRootObservers.get(root)
+  if (!record) return
+  record.entries.delete(entry)
+  if (record.entries.size === 0) {
+    resumedScopeRootObservers.delete(root)
+    try {
+      record.observer.disconnect()
+    } catch (error) {
+      if (typeof console !== 'undefined' && typeof console.error === 'function') {
+        console.error('[fict] Failed to disconnect a resumed scope observer.', error)
+      }
+    }
+  }
 }
 
 function disposeResumedScopes(scopeIds: Iterable<string>): void {
@@ -343,13 +568,27 @@ function disposeResumedScopeEntry(entry: ResumedScopeEntry): void {
 }
 
 function detachResumedScopeEntry(entry: ResumedScopeEntry): void {
+  let detached = false
   if (resumedScopes.get(entry.id) === entry) {
     resumedScopes.delete(entry.id)
+    detached = true
   }
   if (resumedScopeHosts.get(entry.host) === entry) {
     resumedScopeHosts.delete(entry.host)
   }
+  releaseResumedScopeObservationRoots(entry)
   delete entry.dispose
+  if (detached) {
+    for (const listener of resumedScopeDisposeListeners) {
+      try {
+        listener(entry.id, entry.host, entry.ctx)
+      } catch (error) {
+        if (typeof console !== 'undefined' && typeof console.error === 'function') {
+          console.error('[fict] Resumed scope disposal listener failed.', error)
+        }
+      }
+    }
+  }
 }
 
 export function __fictIsResumable(): boolean {
@@ -500,7 +739,20 @@ export function __fictEnsureScope(
 ): HookContext {
   const existing = resumedScopes.get(scopeId)
   if (existing) {
-    if (existing.host === host) return existing.ctx
+    if (existing.host === host) {
+      // A removal observer may already own a queued record for this host.
+      // Retain that old root chain until it can decide whether the host was
+      // synchronously reparented; disconnecting here would discard the record.
+      if (host.isConnected || !existing.observedRoots?.size) {
+        try {
+          observeResumedScopeRoots(existing)
+        } catch (error) {
+          disposeResumedScopeEntry(existing)
+          throw error
+        }
+      }
+      return existing.ctx
+    }
     if (existing.host.isConnected) {
       throw new Error(`[fict] Cannot resume scope "${scopeId}" on multiple connected hosts.`)
     }
@@ -542,6 +794,12 @@ export function __fictEnsureScope(
   captureAcceptedStoreTopologies(entry)
   resumedScopes.set(scopeId, entry)
   resumedScopeHosts.set(host, entry)
+  try {
+    observeResumedScopeRoots(entry)
+  } catch (error) {
+    disposeResumedScopeEntry(entry)
+    throw error
+  }
   return ctx
 }
 

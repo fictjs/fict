@@ -2166,7 +2166,7 @@ describe('resumable loader snapshot validation', () => {
       doc: Document,
       scopeId: string,
       resumeName: string,
-      parent: Element = doc.body,
+      parent: ParentNode = doc.body,
     ): HTMLElement => {
       const host = doc.createElement('div')
       host.setAttribute('data-fict-s', scopeId)
@@ -2183,6 +2183,511 @@ describe('resumable loader snapshot validation', () => {
       host.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
       await waitForPendingHandlers()
     }
+
+    const resumeShadowHost = async (host: HTMLElement): Promise<void> => {
+      host.dispatchEvent(new Event('click', { bubbles: true, cancelable: true, composed: true }))
+      await waitForPendingHandlers()
+    }
+
+    it.each(['open', 'closed'] as const)(
+      'releases a resumed scope removed directly from an %s shadow root',
+      async mode => {
+        const scopeId = `sShadow-${mode}`
+        const resumeName = `__fict_teardown_shadow_${mode}`
+        const doc = createLifecycleDocument(scopeId)
+        const shadowHost = doc.createElement('section')
+        doc.body.appendChild(shadowHost)
+        const shadowRoot = shadowHost.attachShadow({ mode })
+        const host = appendLifecycleHost(doc, scopeId, resumeName, shadowRoot)
+        const probe = createLifecycleProbe()
+        __fictRegisterResume(resumeName, (resumedScopeId, node) => {
+          hydrateResumedScopeProbe(resumedScopeId as string, node as Element, probe)
+        })
+        installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+        if (mode === 'open') {
+          await resumeShadowHost(host)
+        } else {
+          // Closed shadow trees intentionally hide their internal composed path
+          // from document listeners; exercise the same generated resume entry
+          // directly while retaining the closed root reference.
+          hydrateResumedScopeProbe(scopeId, host, probe)
+        }
+        expect(probe.effectRuns).toBe(1)
+        if (mode === 'closed') {
+          host.removeAttribute('data-fict-s')
+        }
+        host.remove()
+        await vi.waitFor(() => expect(probe.destroys).toBe(1))
+
+        expect(() => __fictUseLexicalScope(scopeId, ['signal'])).toThrow('Missing resumed scope')
+        const runsAfterRemoval = probe.effectRuns
+        probe.signal!(2)
+        expect(probe.effectRuns).toBe(runsAfterRemoval)
+        cleanupEventListeners()
+        expect(probe.destroys).toBe(1)
+      },
+    )
+
+    it('keeps a scope alive across shadow-root reparenting and observes its new root', async () => {
+      const doc = createLifecycleDocument('sShadowMoved')
+      const leftHost = doc.createElement('section')
+      const rightHost = doc.createElement('section')
+      doc.body.append(leftHost, rightHost)
+      const leftRoot = leftHost.attachShadow({ mode: 'open' })
+      const rightRoot = rightHost.attachShadow({ mode: 'closed' })
+      const host = appendLifecycleHost(
+        doc,
+        'sShadowMoved',
+        '__fict_teardown_shadow_moved',
+        leftRoot,
+      )
+      const probe = createLifecycleProbe()
+      __fictRegisterResume('__fict_teardown_shadow_moved', (scopeId, node) => {
+        hydrateResumedScopeProbe(scopeId as string, node as Element, probe)
+      })
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+      await resumeShadowHost(host)
+      rightRoot.appendChild(host)
+      await flushMutationObservers()
+
+      expect(probe.destroys).toBe(0)
+      const runsBeforeUpdate = probe.effectRuns
+      probe.store!.value = 2
+      await vi.waitFor(() => expect(probe.effectRuns).toBeGreaterThan(runsBeforeUpdate))
+
+      host.remove()
+      await vi.waitFor(() => expect(probe.destroys).toBe(1))
+      cleanupEventListeners()
+      expect(probe.destroys).toBe(1)
+    })
+
+    it('starts observing a closed shadow root entered after light-DOM hydration', async () => {
+      const doc = createLifecycleDocument('sLightToShadow')
+      const boundary = doc.createElement('section')
+      doc.body.appendChild(boundary)
+      const shadowRoot = boundary.attachShadow({ mode: 'closed' })
+      const host = appendLifecycleHost(doc, 'sLightToShadow', '__fict_teardown_light_to_shadow')
+      const probe = createLifecycleProbe()
+      __fictRegisterResume('__fict_teardown_light_to_shadow', (scopeId, node) => {
+        hydrateResumedScopeProbe(scopeId as string, node as Element, probe)
+      })
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+      await resumeHost(host)
+      shadowRoot.appendChild(host)
+      await flushMutationObservers()
+      expect(probe.destroys).toBe(0)
+
+      host.remove()
+      await vi.waitFor(() => expect(probe.destroys).toBe(1))
+      expect(() => __fictUseLexicalScope('sLightToShadow', ['signal'])).toThrow(
+        'Missing resumed scope',
+      )
+    })
+
+    it('releases a shadow scope while its first resume is still pending', async () => {
+      const doc = createLifecycleDocument('sPendingShadow')
+      const boundary = doc.createElement('section')
+      doc.body.appendChild(boundary)
+      const shadowRoot = boundary.attachShadow({ mode: 'open' })
+      const host = appendLifecycleHost(
+        doc,
+        'sPendingShadow',
+        '__fict_teardown_pending_shadow',
+        shadowRoot,
+      )
+      let resumeStarted = false
+      let releaseResume!: () => void
+      const resumeGate = new Promise<void>(resolve => {
+        releaseResume = resolve
+      })
+      __fictRegisterResume('__fict_teardown_pending_shadow', async () => {
+        resumeStarted = true
+        await resumeGate
+      })
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+      host.dispatchEvent(new Event('click', { bubbles: true, cancelable: true, composed: true }))
+      await vi.waitFor(() => expect(resumeStarted).toBe(true))
+      host.remove()
+      await vi.waitFor(() =>
+        expect(() => __fictUseLexicalScope('sPendingShadow', ['signal'])).toThrow(
+          'Missing resumed scope',
+        ),
+      )
+
+      releaseResume()
+      await waitForPendingHandlers()
+      cleanupEventListeners()
+    })
+
+    it('keeps a queued shadow removal observable across same-host scope lookup', async () => {
+      const doc = createLifecycleDocument('sRemovedThenEnsured')
+      const boundary = doc.createElement('section')
+      doc.body.appendChild(boundary)
+      const shadowRoot = boundary.attachShadow({ mode: 'closed' })
+      const host = appendLifecycleHost(
+        doc,
+        'sRemovedThenEnsured',
+        '__fict_teardown_removed_then_ensured',
+        shadowRoot,
+      )
+      const probe = createLifecycleProbe()
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+      hydrateResumedScopeProbe('sRemovedThenEnsured', host, probe)
+
+      host.remove()
+      expect(
+        __fictEnsureScope('sRemovedThenEnsured', host, __fictGetSSRScope('sRemovedThenEnsured')),
+      ).toBeDefined()
+      await vi.waitFor(() => expect(probe.destroys).toBe(1))
+
+      expect(() => __fictUseLexicalScope('sRemovedThenEnsured', ['signal'])).toThrow(
+        'Missing resumed scope',
+      )
+    })
+
+    it('releases a shadow scope when its connected shadow host is removed', async () => {
+      const doc = createLifecycleDocument('sShadowBoundary')
+      const shadowHost = doc.createElement('section')
+      doc.body.appendChild(shadowHost)
+      const shadowRoot = shadowHost.attachShadow({ mode: 'closed' })
+      const host = appendLifecycleHost(
+        doc,
+        'sShadowBoundary',
+        '__fict_teardown_shadow_boundary',
+        shadowRoot,
+      )
+      const probe = createLifecycleProbe()
+      __fictRegisterResume('__fict_teardown_shadow_boundary', (scopeId, node) => {
+        hydrateResumedScopeProbe(scopeId as string, node as Element, probe)
+      })
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+      hydrateResumedScopeProbe('sShadowBoundary', host, probe)
+      shadowHost.remove()
+      await vi.waitFor(() => expect(probe.destroys).toBe(1))
+
+      cleanupEventListeners()
+      expect(probe.destroys).toBe(1)
+    })
+
+    it('observes every shadow boundary in a nested closed-root chain', async () => {
+      const doc = createLifecycleDocument('sNestedShadow')
+      const outerHost = doc.createElement('section')
+      doc.body.appendChild(outerHost)
+      const outerRoot = outerHost.attachShadow({ mode: 'open' })
+      const innerHost = doc.createElement('article')
+      outerRoot.appendChild(innerHost)
+      const innerRoot = innerHost.attachShadow({ mode: 'closed' })
+      const host = appendLifecycleHost(
+        doc,
+        'sNestedShadow',
+        '__fict_teardown_nested_shadow',
+        innerRoot,
+      )
+      const probe = createLifecycleProbe()
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+      hydrateResumedScopeProbe('sNestedShadow', host, probe)
+
+      innerHost.remove()
+      await vi.waitFor(() => expect(probe.destroys).toBe(1))
+
+      cleanupEventListeners()
+      expect(probe.destroys).toBe(1)
+    })
+
+    it('disposes nested shadow hydration roots child-first', async () => {
+      const doc = createLifecycleDocument('sShadowParent', 'sShadowChild')
+      const boundary = doc.createElement('section')
+      doc.body.appendChild(boundary)
+      const outerRoot = boundary.attachShadow({ mode: 'closed' })
+      const parentHost = appendLifecycleHost(
+        doc,
+        'sShadowParent',
+        '__fict_teardown_shadow_parent',
+        outerRoot,
+      )
+      const innerRoot = parentHost.attachShadow({ mode: 'closed' })
+      const childHost = appendLifecycleHost(
+        doc,
+        'sShadowChild',
+        '__fict_teardown_shadow_child',
+        innerRoot,
+      )
+      const parentProbe = createLifecycleProbe()
+      const childProbe = createLifecycleProbe()
+      const destroyOrder: string[] = []
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+      hydrateResumedScopeProbe(
+        'sShadowParent',
+        parentHost,
+        parentProbe,
+        __fictGetSSRScope('sShadowParent'),
+        () => onDestroy(() => destroyOrder.push('parent')),
+      )
+      hydrateResumedScopeProbe(
+        'sShadowChild',
+        childHost,
+        childProbe,
+        __fictGetSSRScope('sShadowChild'),
+        () => onDestroy(() => destroyOrder.push('child')),
+      )
+
+      boundary.remove()
+      await vi.waitFor(() => {
+        expect(parentProbe.destroys).toBe(1)
+        expect(childProbe.destroys).toBe(1)
+      })
+
+      expect(destroyOrder).toEqual(['child', 'parent'])
+    })
+
+    it('shares and releases shadow-root observers by active scope lease count', async () => {
+      const NativeObserver = MutationObserver
+      const observerRecords: Array<{ disconnects: number }> = []
+      class TrackingMutationObserver {
+        private readonly inner: MutationObserver
+        private readonly record = { disconnects: 0 }
+
+        constructor(callback: MutationCallback) {
+          this.inner = new NativeObserver(callback)
+          observerRecords.push(this.record)
+        }
+
+        observe(target: Node, options?: MutationObserverInit): void {
+          this.inner.observe(target, options)
+        }
+
+        disconnect(): void {
+          this.record.disconnects++
+          this.inner.disconnect()
+        }
+
+        takeRecords(): MutationRecord[] {
+          return this.inner.takeRecords()
+        }
+      }
+
+      vi.stubGlobal('MutationObserver', TrackingMutationObserver)
+      try {
+        const doc = createLifecycleDocument('sShadowLeaseA', 'sShadowLeaseB')
+        const boundary = doc.createElement('section')
+        doc.body.appendChild(boundary)
+        const shadowRoot = boundary.attachShadow({ mode: 'closed' })
+        const hostA = appendLifecycleHost(
+          doc,
+          'sShadowLeaseA',
+          '__fict_teardown_shadow_lease_a',
+          shadowRoot,
+        )
+        const hostB = appendLifecycleHost(
+          doc,
+          'sShadowLeaseB',
+          '__fict_teardown_shadow_lease_b',
+          shadowRoot,
+        )
+        const probeA = createLifecycleProbe()
+        const probeB = createLifecycleProbe()
+        installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+        hydrateResumedScopeProbe('sShadowLeaseA', hostA, probeA)
+        hydrateResumedScopeProbe('sShadowLeaseB', hostB, probeB)
+
+        expect(observerRecords).toHaveLength(3)
+        hostA.remove()
+        await vi.waitFor(() => expect(probeA.destroys).toBe(1))
+        expect(observerRecords.reduce((sum, record) => sum + record.disconnects, 0)).toBe(0)
+
+        hostB.remove()
+        await vi.waitFor(() => expect(probeB.destroys).toBe(1))
+        expect(observerRecords.reduce((sum, record) => sum + record.disconnects, 0)).toBe(2)
+
+        cleanupEventListeners()
+        expect(observerRecords.reduce((sum, record) => sum + record.disconnects, 0)).toBe(3)
+      } finally {
+        cleanupEventListeners()
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('rolls back every acquired root when a later shadow observer rejects setup', async () => {
+      const doc = createLifecycleDocument('sObserveRejected', 'sObserveRetry')
+      const boundary = doc.createElement('section')
+      doc.body.appendChild(boundary)
+      const outerRoot = boundary.attachShadow({ mode: 'closed' })
+      const innerBoundary = doc.createElement('article')
+      outerRoot.appendChild(innerBoundary)
+      const innerRoot = innerBoundary.attachShadow({ mode: 'closed' })
+      const rejectedHost = appendLifecycleHost(
+        doc,
+        'sObserveRejected',
+        '__fict_teardown_observe_rejected',
+        innerRoot,
+      )
+      const retryHost = appendLifecycleHost(
+        doc,
+        'sObserveRetry',
+        '__fict_teardown_observe_retry',
+        innerRoot,
+      )
+      const rejectedProbe = createLifecycleProbe()
+      const retryProbe = createLifecycleProbe()
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+      const NativeObserver = MutationObserver
+      const observerRecords: Array<{ disconnects: number }> = []
+      let observeCalls = 0
+      class RejectingMutationObserver {
+        private readonly inner: MutationObserver
+        private readonly record = { disconnects: 0 }
+
+        constructor(callback: MutationCallback) {
+          this.inner = new NativeObserver(callback)
+          observerRecords.push(this.record)
+        }
+
+        observe(target: Node, options?: MutationObserverInit): void {
+          observeCalls++
+          if (observeCalls === 2) throw new Error('shadow observe failed')
+          this.inner.observe(target, options)
+        }
+
+        disconnect(): void {
+          this.record.disconnects++
+          this.inner.disconnect()
+        }
+
+        takeRecords(): MutationRecord[] {
+          return this.inner.takeRecords()
+        }
+      }
+
+      vi.stubGlobal('MutationObserver', RejectingMutationObserver)
+      try {
+        expect(() =>
+          hydrateResumedScopeProbe('sObserveRejected', rejectedHost, rejectedProbe),
+        ).toThrow('shadow observe failed')
+        expect(() => __fictUseLexicalScope('sObserveRejected', ['signal'])).toThrow(
+          'Missing resumed scope',
+        )
+        expect(observerRecords.slice(0, 2).map(record => record.disconnects)).toEqual([1, 1])
+
+        hydrateResumedScopeProbe('sObserveRetry', retryHost, retryProbe)
+        retryHost.remove()
+        await vi.waitFor(() => expect(retryProbe.destroys).toBe(1))
+
+        expect(observerRecords).toHaveLength(5)
+        expect(observerRecords.map(record => record.disconnects)).toEqual([1, 1, 1, 1, 1])
+      } finally {
+        cleanupEventListeners()
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('finishes scope teardown when a shadow observer rejects disconnect', async () => {
+      const doc = createLifecycleDocument('sDisconnectRejected', 'sDisconnectRetry')
+      const boundary = doc.createElement('section')
+      doc.body.appendChild(boundary)
+      const shadowRoot = boundary.attachShadow({ mode: 'closed' })
+      const rejectedHost = appendLifecycleHost(
+        doc,
+        'sDisconnectRejected',
+        '__fict_teardown_disconnect_rejected',
+        shadowRoot,
+      )
+      const retryHost = appendLifecycleHost(
+        doc,
+        'sDisconnectRetry',
+        '__fict_teardown_disconnect_retry',
+        shadowRoot,
+      )
+      const rejectedProbe = createLifecycleProbe()
+      const retryProbe = createLifecycleProbe()
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+      const NativeObserver = MutationObserver
+      const observerRecords: Array<{ disconnects: number }> = []
+      let rejectNextDisconnect = true
+      class RejectingDisconnectObserver {
+        private readonly inner: MutationObserver
+        private readonly record = { disconnects: 0 }
+
+        constructor(callback: MutationCallback) {
+          this.inner = new NativeObserver(callback)
+          observerRecords.push(this.record)
+        }
+
+        observe(target: Node, options?: MutationObserverInit): void {
+          this.inner.observe(target, options)
+        }
+
+        disconnect(): void {
+          this.record.disconnects++
+          this.inner.disconnect()
+          if (rejectNextDisconnect) {
+            rejectNextDisconnect = false
+            throw new Error('shadow disconnect failed')
+          }
+        }
+
+        takeRecords(): MutationRecord[] {
+          return this.inner.takeRecords()
+        }
+      }
+
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      vi.stubGlobal('MutationObserver', RejectingDisconnectObserver)
+      try {
+        hydrateResumedScopeProbe('sDisconnectRejected', rejectedHost, rejectedProbe)
+        rejectedHost.remove()
+        await vi.waitFor(() => expect(rejectedProbe.destroys).toBe(1))
+        expect(rejectedProbe.effectCleanups).toBe(1)
+        expect(() => __fictUseLexicalScope('sDisconnectRejected', ['signal'])).toThrow(
+          'Missing resumed scope',
+        )
+        expect(consoleError).toHaveBeenCalledWith(
+          '[fict] Failed to disconnect a resumed scope observer.',
+          expect.objectContaining({ message: 'shadow disconnect failed' }),
+        )
+
+        hydrateResumedScopeProbe('sDisconnectRetry', retryHost, retryProbe)
+        retryHost.remove()
+        await vi.waitFor(() => expect(retryProbe.destroys).toBe(1))
+
+        expect(observerRecords).toHaveLength(4)
+        expect(observerRecords.map(record => record.disconnects)).toEqual([1, 1, 1, 1])
+      } finally {
+        consoleError.mockRestore()
+        cleanupEventListeners()
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('disposes once when shadow removal races loader cleanup and a queued drain', async () => {
+      const doc = createLifecycleDocument('sShadowCleanupRace')
+      const boundary = doc.createElement('section')
+      doc.body.appendChild(boundary)
+      const shadowRoot = boundary.attachShadow({ mode: 'closed' })
+      const host = appendLifecycleHost(
+        doc,
+        'sShadowCleanupRace',
+        '__fict_teardown_shadow_cleanup_race',
+        shadowRoot,
+      )
+      const probe = createLifecycleProbe()
+      installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+      hydrateResumedScopeProbe('sShadowCleanupRace', host, probe)
+
+      host.remove()
+      await Promise.resolve()
+      cleanupEventListeners()
+      await flushMutationObservers()
+
+      expect(probe.destroys).toBe(1)
+      expect(probe.effectCleanups).toBe(1)
+    })
 
     it('releases a permanently removed scope root, effects, store subscriptions, and registry exactly once', async () => {
       const doc = createLifecycleDocument('sRemoved')

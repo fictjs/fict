@@ -11,6 +11,7 @@ import {
   __fictEnsureScope,
   __fictGetResume,
   __fictIsCommittedSSRStateError,
+  __fictOnResumedScopeDisposed,
   __fictSetSSRState,
   __fictUseLexicalScope,
   serializeValue,
@@ -430,6 +431,7 @@ interface LoaderInstallation {
   eventListenerCleanup: (() => void) | null
   prefetchCleanup: (() => void) | null
   snapshotObserver: MutationObserver | null
+  resumedScopeDisposeCleanup: (() => void) | null
 }
 
 const loaderInstallations = new Map<Document, LoaderInstallation>()
@@ -576,8 +578,17 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
     eventListenerCleanup: null,
     prefetchCleanup: null,
     snapshotObserver: null,
+    resumedScopeDisposeCleanup: null,
   }
   loaderInstallations.set(doc, installation)
+  installation.resumedScopeDisposeCleanup = __fictOnResumedScopeDisposed(
+    (scopeId, host, context) => {
+      const lease = installation.scopeContexts.get(scopeId)
+      if (lease?.host === host && lease.context === context) {
+        clearLoaderScopeLease(installation, scopeId, host)
+      }
+    },
+  )
 
   const snapshotEl = doc.getElementById(scriptId)
   if (snapshotEl?.textContent) {
@@ -817,9 +828,13 @@ function cleanupLoaderInstallation(
   if (installation.snapshotObserver) {
     attempt(() => installation.snapshotObserver?.disconnect())
   }
+  if (installation.resumedScopeDisposeCleanup) {
+    attempt(installation.resumedScopeDisposeCleanup)
+  }
   installation.eventListenerCleanup = null
   installation.prefetchCleanup = null
   installation.snapshotObserver = null
+  installation.resumedScopeDisposeCleanup = null
   installation.initialized = false
   installation.pendingScopeResumes.clear()
   installation.pendingScopeHandlers.clear()
