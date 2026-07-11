@@ -394,15 +394,18 @@ interface NavigateComponentProps {
  */
 export function Navigate(props: NavigateComponentProps): FictNode {
   const router = useRouter()
-  const to = untrack(() => props.to)
-  const replace = untrack(() => props.replace)
-  const state = untrack(() => props.state)
 
-  // Navigate on mount
+  // Track only declarative inputs. Router state read by navigate must not turn
+  // this effect into a self-triggering navigation loop.
   createEffect(() => {
-    router.navigate(to, {
-      replace: replace ?? true,
-      state,
+    const to = props.to
+    const replace = props.replace
+    const state = props.state
+    untrack(() => {
+      router.navigate(to, {
+        replace: replace ?? true,
+        state,
+      })
     })
   })
 
@@ -449,15 +452,17 @@ interface RedirectProps {
  */
 export function Redirect(props: RedirectProps): FictNode {
   const router = useRouter()
-  const to = untrack(() => props.to)
-  const push = untrack(() => props.push)
-  const state = untrack(() => props.state)
 
-  // Redirect on mount
+  // As with Navigate, only prop reads belong to this effect's dependency set.
   createEffect(() => {
-    router.navigate(to, {
-      replace: push !== true, // Replace by default, push only if explicitly requested
-      state,
+    const to = props.to
+    const push = props.push
+    const state = props.state
+    untrack(() => {
+      router.navigate(to, {
+        replace: push !== true, // Replace by default, push only if explicitly requested
+        state,
+      })
     })
   })
 

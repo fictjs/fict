@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { untrack } from '@fictjs/runtime'
 import { render, screen, act } from '@fictjs/testing-library'
+import { $state } from 'fict'
 
 import {
   Router,
@@ -16,6 +17,8 @@ import {
   NavLink,
   Link,
   Form,
+  Navigate,
+  Redirect,
   type History,
 } from '../src'
 import { RouterProvider } from '../src/router-provider'
@@ -74,6 +77,173 @@ function Guarded({
     return handleCall(event.retry, event.preventDefault)
   })
   return <div data-testid="guarded" />
+}
+
+const firstReactiveLinkClick = vi.fn()
+const secondReactiveLinkClick = vi.fn()
+let reactiveLinkControls: {
+  updateNavigation: () => void
+  setDisabled: (value: boolean) => void
+  setPrefetch: (value: 'none' | 'intent' | 'render') => void
+  setTo: (value: string) => void
+} = {
+  updateNavigation: () => {},
+  setDisabled: () => {},
+  setPrefetch: () => {},
+  setTo: () => {},
+}
+
+function ReactiveLinkFixture() {
+  let to = $state('/first')
+  let state = $state<unknown>({ version: 1 })
+  let replace = $state(false)
+  let disabled = $state(false)
+  let prefetch = $state<'none' | 'intent' | 'render'>('none')
+  let useSecondHandler = $state(false)
+
+  reactiveLinkControls = {
+    updateNavigation: () => {
+      to = '/second'
+      state = { version: 2 }
+      replace = true
+      useSecondHandler = true
+    },
+    setDisabled: value => {
+      disabled = value
+    },
+    setPrefetch: value => {
+      prefetch = value
+    },
+    setTo: value => {
+      to = value
+    },
+  }
+
+  return (
+    <Link
+      to={to}
+      state={state}
+      replace={replace}
+      disabled={disabled}
+      prefetch={prefetch}
+      onClick={useSecondHandler ? secondReactiveLinkClick : firstReactiveLinkClick}
+      data-testid="reactive-link"
+    >
+      link
+    </Link>
+  )
+}
+
+const firstNavChild = () => <span data-testid="nav-child">first</span>
+const secondNavChild = () => <span data-testid="nav-child">second</span>
+let reactiveNavLinkControls: {
+  updatePresentation: () => void
+  setDisabled: (value: boolean) => void
+  setPendingClass: (value: string) => void
+  setTo: (value: string) => void
+} = {
+  updatePresentation: () => {},
+  setDisabled: () => {},
+  setPendingClass: () => {},
+  setTo: () => {},
+}
+
+function ReactiveNavLinkFixture() {
+  let to = $state('/current')
+  let className = $state('base-one')
+  let activeClassName = $state('active-one')
+  let pendingClassName = $state('pending-one')
+  let disabled = $state(false)
+  let useSecondChild = $state(false)
+
+  reactiveNavLinkControls = {
+    updatePresentation: () => {
+      className = 'base-two'
+      activeClassName = 'active-two'
+      useSecondChild = true
+    },
+    setDisabled: value => {
+      disabled = value
+    },
+    setPendingClass: value => {
+      pendingClassName = value
+    },
+    setTo: value => {
+      to = value
+    },
+  }
+
+  return (
+    <NavLink
+      to={to}
+      className={className}
+      activeClassName={activeClassName}
+      pendingClassName={pendingClassName}
+      disabled={disabled}
+      data-testid="reactive-nav-link"
+      children={useSecondChild ? secondNavChild : firstNavChild}
+    />
+  )
+}
+
+const firstReactiveFormSubmit = vi.fn()
+const secondReactiveFormSubmit = vi.fn()
+let updateReactiveForm: () => void = () => {}
+
+function ReactiveFormFixture() {
+  let action = $state('/first-action')
+  let method = $state<'get' | 'post'>('post')
+  let replace = $state(false)
+  let useSecondHandler = $state(false)
+
+  updateReactiveForm = () => {
+    action = '/second-action'
+    method = 'get'
+    replace = true
+    useSecondHandler = true
+  }
+
+  return (
+    <Form
+      action={action}
+      method={method}
+      replace={replace}
+      onSubmit={useSecondHandler ? secondReactiveFormSubmit : firstReactiveFormSubmit}
+      data-testid="reactive-form"
+    >
+      <input name="query" value="fict" />
+    </Form>
+  )
+}
+
+let updateReactiveNavigate: () => void = () => {}
+function ReactiveNavigateFixture() {
+  let to = $state('/navigate-one')
+  let state = $state<unknown>({ version: 1 })
+  let replace = $state(true)
+
+  updateReactiveNavigate = () => {
+    to = '/navigate-two'
+    state = { version: 2 }
+    replace = false
+  }
+
+  return <Navigate to={to} state={state} replace={replace} />
+}
+
+let updateReactiveRedirect: () => void = () => {}
+function ReactiveRedirectFixture() {
+  let to = $state('/redirect-one')
+  let state = $state<unknown>({ version: 1 })
+  let push = $state(false)
+
+  updateReactiveRedirect = () => {
+    to = '/redirect-two'
+    state = { version: 2 }
+    push = true
+  }
+
+  return <Redirect to={to} state={state} push={push} />
 }
 
 function createLegacyMemoryHistory(): History {
@@ -814,5 +984,212 @@ describe('Router integration (MemoryRouter)', () => {
       consoleError.mockRestore()
       fetchMock.mockRestore()
     }
+  })
+
+  it('keeps Link navigation, disabled state, handlers, and intent preloads reactive', async () => {
+    firstReactiveLinkClick.mockClear()
+    secondReactiveLinkClick.mockClear()
+    const history = createMemoryHistory({ initialEntries: ['/start', '/current'] })
+    const preloads: Array<{ href: string; to: string }> = []
+    const onPreload = (event: Event) => {
+      preloads.push((event as CustomEvent<{ href: string; to: string }>).detail)
+    }
+    window.addEventListener('fict-router:preload', onPreload)
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <ReactiveLinkFixture />
+        </RouterProvider>
+      ))
+
+      expect(screen.getByTestId('reactive-link').tagName).toBe('A')
+      expect(screen.getByTestId('reactive-link').getAttribute('href')).toBe('/first')
+
+      await act(async () => {
+        reactiveLinkControls.updateNavigation()
+      })
+
+      expect(screen.getByTestId('reactive-link').getAttribute('href')).toBe('/second')
+
+      await act(async () => {
+        reactiveLinkControls.setDisabled(true)
+      })
+      expect(screen.getByTestId('reactive-link').tagName).toBe('SPAN')
+
+      await act(async () => {
+        reactiveLinkControls.setDisabled(false)
+        reactiveLinkControls.setPrefetch('intent')
+      })
+
+      let link = screen.getByTestId('reactive-link') as HTMLAnchorElement
+      link.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+      expect(preloads).toEqual([{ href: '/second', to: '/second' }])
+
+      await act(async () => {
+        reactiveLinkControls.setTo('/third')
+      })
+      link = screen.getByTestId('reactive-link') as HTMLAnchorElement
+      expect(link.getAttribute('href')).toBe('/third')
+      link.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+      expect(preloads).toEqual([
+        { href: '/second', to: '/second' },
+        { href: '/third', to: '/third' },
+      ])
+
+      await act(async () => {
+        reactiveLinkControls.setTo('/rendered')
+        reactiveLinkControls.setPrefetch('render')
+      })
+      await vi.waitFor(() =>
+        expect(preloads).toEqual([
+          { href: '/second', to: '/second' },
+          { href: '/third', to: '/third' },
+          { href: '/rendered', to: '/rendered' },
+        ]),
+      )
+
+      link = screen.getByTestId('reactive-link') as HTMLAnchorElement
+      link.click()
+      await vi.waitFor(() => expect(history.location.pathname).toBe('/rendered'))
+      expect(history.action).toBe('REPLACE')
+      expect(history.location.state).toEqual({ version: 2 })
+      expect(firstReactiveLinkClick).not.toHaveBeenCalled()
+      expect(secondReactiveLinkClick).toHaveBeenCalledTimes(1)
+    } finally {
+      window.removeEventListener('fict-router:preload', onPreload)
+      history.destroy?.()
+    }
+  })
+
+  it('keeps NavLink target, presentation, pending class, children, and disabled state reactive', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/current'] })
+    let cancelNavigation: (() => void) | undefined
+    const guard = vi.fn(
+      (_retry, prevent) =>
+        new Promise<void>(resolve => {
+          cancelNavigation = () => {
+            prevent()
+            resolve()
+          }
+        }),
+    )
+
+    render(() => (
+      <RouterProvider history={history} routes={[]}>
+        <ReactiveNavLinkFixture />
+        <Guarded onCall={guard} />
+      </RouterProvider>
+    ))
+
+    let navLink = screen.getByTestId('reactive-nav-link') as HTMLAnchorElement
+    expect(navLink.className).toBe('base-one active-one')
+    expect(screen.getByTestId('nav-child').textContent).toBe('first')
+
+    await act(async () => {
+      reactiveNavLinkControls.updatePresentation()
+    })
+    await vi.waitFor(() => expect(navLink.className).toBe('base-two active-two'))
+    await vi.waitFor(() => expect(screen.getByTestId('nav-child').textContent).toBe('second'))
+
+    await act(async () => {
+      reactiveNavLinkControls.setTo('/pending')
+    })
+    expect(navLink.getAttribute('href')).toBe('/pending')
+    await vi.waitFor(() => expect(navLink.className).toBe('base-two'))
+
+    navLink.click()
+    await vi.waitFor(() => expect(navLink.className).toBe('base-two pending-one'))
+    expect(guard).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      reactiveNavLinkControls.setPendingClass('pending-two')
+    })
+    expect(navLink.className).toBe('base-two pending-two')
+
+    await act(async () => {
+      cancelNavigation?.()
+    })
+    await vi.waitFor(() => expect(navLink.className).toBe('base-two'))
+
+    await act(async () => {
+      reactiveNavLinkControls.setDisabled(true)
+    })
+    navLink = screen.getByTestId('reactive-nav-link') as HTMLAnchorElement
+    expect(navLink.tagName).toBe('SPAN')
+    expect(navLink.className).toBe('base-two')
+    history.destroy?.()
+  })
+
+  it('reads current Form action, method, replace option, and submit handler', async () => {
+    firstReactiveFormSubmit.mockClear()
+    secondReactiveFormSubmit.mockClear()
+    const history = createMemoryHistory({ initialEntries: ['/start', '/form'] })
+
+    render(() => (
+      <RouterProvider history={history} routes={[]}>
+        <ReactiveFormFixture />
+      </RouterProvider>
+    ))
+
+    const form = screen.getByTestId('reactive-form') as HTMLFormElement
+    expect(form.getAttribute('action')).toBe('/first-action')
+    expect(form.getAttribute('method')).toBe('post')
+
+    await act(async () => {
+      updateReactiveForm()
+    })
+    expect(form.getAttribute('action')).toBe('/second-action')
+    expect(form.getAttribute('method')).toBe('get')
+
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(history.location.pathname).toBe('/second-action'))
+    expect(history.location.search).toBe('?query=fict')
+    expect(history.action).toBe('REPLACE')
+    expect(firstReactiveFormSubmit).not.toHaveBeenCalled()
+    expect(secondReactiveFormSubmit).toHaveBeenCalledTimes(1)
+    history.destroy?.()
+  })
+
+  it('reruns Navigate only for current reactive navigation props', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/start'] })
+    render(() => (
+      <RouterProvider history={history} routes={[]}>
+        <ReactiveNavigateFixture />
+      </RouterProvider>
+    ))
+
+    await vi.waitFor(() => expect(history.location.pathname).toBe('/navigate-one'))
+    expect(history.action).toBe('REPLACE')
+    expect(history.location.state).toEqual({ version: 1 })
+
+    await act(async () => {
+      updateReactiveNavigate()
+    })
+    await vi.waitFor(() => expect(history.location.pathname).toBe('/navigate-two'))
+    expect(history.action).toBe('PUSH')
+    expect(history.location.state).toEqual({ version: 2 })
+    history.destroy?.()
+  })
+
+  it('reruns Redirect only for current reactive redirect props', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/start'] })
+    render(() => (
+      <RouterProvider history={history} routes={[]}>
+        <ReactiveRedirectFixture />
+      </RouterProvider>
+    ))
+
+    await vi.waitFor(() => expect(history.location.pathname).toBe('/redirect-one'))
+    expect(history.action).toBe('REPLACE')
+    expect(history.location.state).toEqual({ version: 1 })
+
+    await act(async () => {
+      updateReactiveRedirect()
+    })
+    await vi.waitFor(() => expect(history.location.pathname).toBe('/redirect-two'))
+    expect(history.action).toBe('PUSH')
+    expect(history.location.state).toEqual({ version: 2 })
+    history.destroy?.()
   })
 })

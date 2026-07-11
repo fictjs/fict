@@ -6,8 +6,8 @@
  */
 
 import { createEffect, untrack, type FictNode, type JSX, type StyleProp } from '@fictjs/runtime'
-import { createSignal } from '@fictjs/runtime/advanced'
-import { spread } from '@fictjs/runtime/internal'
+import { createSignal, reactive } from '@fictjs/runtime/advanced'
+import { __fictPropsRest, spread } from '@fictjs/runtime/internal'
 
 import {
   useRouter,
@@ -28,7 +28,7 @@ const joinClassNames = (
   active: string | undefined,
   pending: string | undefined,
 ): string | undefined => {
-  const className = `${base ?? ''} ${active ?? ''} ${pending ?? ''}`.trim()
+  const className = [base, active, pending].filter(Boolean).join(' ')
   return className || undefined
 }
 
@@ -62,7 +62,124 @@ function getExternalHref(to: To): string | null {
   return `${pathname}${to.search || ''}${to.hash || ''}`
 }
 
-const createSpreadRef = <T extends Element>(props: Record<string, unknown>) => {
+interface LinkBehaviorSnapshot {
+  to: To
+  replace: boolean | undefined
+  state: unknown
+  scroll: boolean | undefined
+  relative: 'route' | 'path' | undefined
+  reloadDocument: boolean | undefined
+  prefetch: 'none' | 'intent' | 'render' | undefined
+  disabled: boolean | undefined
+  externalHref: string | null
+}
+
+type LinkBehaviorProps = Pick<
+  LinkProps,
+  | 'to'
+  | 'replace'
+  | 'state'
+  | 'scroll'
+  | 'relative'
+  | 'reloadDocument'
+  | 'prefetch'
+  | 'disabled'
+  | 'onClick'
+  | 'onMouseEnter'
+  | 'onFocus'
+>
+
+function readLinkBehavior(props: LinkBehaviorProps): LinkBehaviorSnapshot {
+  const to = props.to
+  return {
+    to,
+    replace: props.replace,
+    state: props.state,
+    scroll: props.scroll,
+    relative: props.relative,
+    reloadDocument: props.reloadDocument,
+    prefetch: props.prefetch,
+    disabled: props.disabled,
+    externalHref: getExternalHref(to),
+  }
+}
+
+function readLinkClick(
+  props: LinkBehaviorProps,
+  event: MouseEvent,
+): LinkBehaviorSnapshot | undefined {
+  untrack(() => props.onClick?.(event))
+  if (event.defaultPrevented) return undefined
+  if (event.metaKey || event.altKey || event.ctrlKey || event.shiftKey) return undefined
+  if (event.button !== 0) return undefined
+
+  const snapshot = untrack(() => readLinkBehavior(props))
+  if (snapshot.reloadDocument || snapshot.disabled || snapshot.externalHref) return undefined
+
+  const target = (event.currentTarget as HTMLAnchorElement).target
+  if (target && target !== '_self') return undefined
+  return snapshot
+}
+
+function createPreloadBehavior(props: LinkBehaviorProps, getHrefValue: () => string) {
+  let lastPreloadedHref: string | undefined
+
+  const trigger = (snapshot: LinkBehaviorSnapshot) => {
+    if (snapshot.disabled || snapshot.externalHref || snapshot.prefetch === 'none') return
+    const href = getHrefValue()
+    if (lastPreloadedHref === href) return
+    lastPreloadedHref = href
+
+    if (typeof window !== 'undefined' && window.dispatchEvent) {
+      window.dispatchEvent(
+        new CustomEvent('fict-router:preload', {
+          detail: { href, to: snapshot.to },
+        }),
+      )
+    }
+  }
+
+  createEffect(() => {
+    const snapshot = readLinkBehavior(props)
+    if (snapshot.prefetch === 'render') trigger(snapshot)
+  })
+
+  return {
+    handleMouseEnter(event: MouseEvent) {
+      untrack(() => {
+        const snapshot = readLinkBehavior(props)
+        if (snapshot.prefetch === 'intent' || snapshot.prefetch === undefined) trigger(snapshot)
+        props.onMouseEnter?.(event)
+      })
+    },
+    handleFocus(event: FocusEvent) {
+      untrack(() => {
+        const snapshot = readLinkBehavior(props)
+        if (snapshot.prefetch === 'intent' || snapshot.prefetch === undefined) trigger(snapshot)
+        props.onFocus?.(event)
+      })
+    },
+  }
+}
+
+const LINK_DOM_PROP_EXCLUSIONS = [
+  'to',
+  'replace',
+  'state',
+  'scroll',
+  'relative',
+  'reloadDocument',
+  'prefetch',
+  'disabled',
+  'onClick',
+  'onMouseEnter',
+  'onFocus',
+  'children',
+]
+
+const createSpreadRef = <T extends Element>(
+  props: Record<string, unknown> | (() => Record<string, unknown>),
+) => {
   let current: T | null = null
   return (el: T | null) => {
     if (!el) {
@@ -113,139 +230,50 @@ export interface LinkProps extends Omit<JSX.IntrinsicElements['a'], 'href'> {
  */
 export function Link(props: LinkProps): FictNode {
   const router = useRouter()
-  const to = untrack(() => props.to)
-  const replace = untrack(() => props.replace)
-  const state = untrack(() => props.state)
-  const scroll = untrack(() => props.scroll)
-  const relative = untrack(() => props.relative)
-  const reloadDocument = untrack(() => props.reloadDocument)
-  const prefetchMode = untrack(() => props.prefetch)
-  const isDisabled = untrack(() => props.disabled)
-  const onClick = untrack(() => props.onClick)
-  const externalHref = getExternalHref(to)
-  const href = useHref(() => to)
-  const getHrefValue = () =>
-    externalHref ?? readAccessor(readAccessor(href as MaybeAccessor<MaybeAccessor<string>>))
-  let preloadTriggered = false
+  const href = useHref(() => props.to)
+  const getHrefValue = () => {
+    const externalHref = getExternalHref(props.to)
+    return externalHref ?? readAccessor(readAccessor(href as MaybeAccessor<MaybeAccessor<string>>))
+  }
+  const { handleMouseEnter, handleFocus } = createPreloadBehavior(props, getHrefValue)
 
   const handleClick = (event: MouseEvent) => {
-    // Call custom onClick handler first
-    if (onClick) {
-      onClick(event)
-    }
-
-    // Don't handle if default was prevented
-    if (event.defaultPrevented) return
-
-    // Don't handle modifier keys (open in new tab, etc.)
-    if (event.metaKey || event.altKey || event.ctrlKey || event.shiftKey) return
-
-    // Don't handle right-clicks
-    if (event.button !== 0) return
-
-    // Don't handle if reloadDocument is set
-    if (reloadDocument) return
-
-    // Don't handle if disabled
-    if (isDisabled) return
-
-    // Let the browser handle absolute and protocol-relative URLs.
-    if (externalHref) return
-
-    // Don't handle external links
-    const target = (event.currentTarget as HTMLAnchorElement).target
-    if (target && target !== '_self') return
-
-    // Prevent default browser navigation
+    const snapshot = readLinkClick(props, event)
+    if (!snapshot) return
     event.preventDefault()
-
-    // Navigate using the router
     const options: NavigateOptions = {
-      replace,
-      state,
-      scroll,
-      relative,
+      replace: snapshot.replace,
+      state: snapshot.state,
+      scroll: snapshot.scroll,
+      relative: snapshot.relative,
     }
-
-    router.navigate(to, options)
+    untrack(() => router.navigate(snapshot.to, options))
   }
 
-  // Preload handler for hover/focus
-  const triggerPreload = () => {
-    if (preloadTriggered || isDisabled || externalHref || prefetchMode === 'none') return
-    preloadTriggered = true
-
-    // Emit a preload event that can be handled by route preloaders
-    const hrefValue = getHrefValue()
-    if (typeof window !== 'undefined' && window.dispatchEvent) {
-      window.dispatchEvent(
-        new CustomEvent('fict-router:preload', {
-          detail: { href: hrefValue, to },
-        }),
-      )
-    }
-  }
-
-  const handleMouseEnter = (event: MouseEvent) => {
-    if (prefetchMode === 'intent' || prefetchMode === undefined) {
-      triggerPreload()
-    }
-    // Call original handler if provided
-    const propsRecord = props as unknown as Record<string, unknown>
-    const onMouseEnter = propsRecord.onMouseEnter as ((event: MouseEvent) => void) | undefined
-    if (onMouseEnter) onMouseEnter(event)
-  }
-
-  const handleFocus = (event: FocusEvent) => {
-    if (prefetchMode === 'intent' || prefetchMode === undefined) {
-      triggerPreload()
-    }
-    // Call original handler if provided
-    const propsRecord = props as unknown as Record<string, unknown>
-    const onFocus = propsRecord.onFocus as ((event: FocusEvent) => void) | undefined
-    if (onFocus) onFocus(event)
-  }
-
-  // Extract link-specific props, pass rest to anchor
-  const {
-    to: _to,
-    replace: _replace,
-    state: _state,
-    scroll: _scroll,
-    relative: _relative,
-    reloadDocument: _reloadDocument,
-    prefetch: _prefetch,
-    disabled: _disabled,
-    onClick: _onClick,
-    onMouseEnter: _onMouseEnter,
-    onFocus: _onFocus,
-    children,
-    ...anchorProps
-  } = props
-  const anchorRef = createSpreadRef<HTMLAnchorElement>(anchorProps as Record<string, unknown>)
-  const spanRef = createSpreadRef<HTMLSpanElement>(anchorProps as Record<string, unknown>)
-
-  if (isDisabled) {
-    // Render as span when disabled
-    return <span ref={spanRef}>{children}</span>
-  }
-
-  // Trigger preload immediately if prefetch='render'
-  if (prefetchMode === 'render') {
-    triggerPreload()
-  }
-
-  return (
-    <a
-      ref={anchorRef}
-      href={getHrefValue()}
-      onClick={handleClick}
-      onMouseEnter={handleMouseEnter}
-      onFocus={handleFocus}
-    >
-      {children}
-    </a>
+  const domProps = __fictPropsRest(
+    props as unknown as Record<string, unknown>,
+    LINK_DOM_PROP_EXCLUSIONS,
   )
+  const anchorRef = createSpreadRef<HTMLAnchorElement>(() => ({
+    ...domProps,
+    href: getHrefValue(),
+    onClick: handleClick,
+    onMouseEnter: handleMouseEnter,
+    onFocus: handleFocus,
+  }))
+  const spanRef = createSpreadRef<HTMLSpanElement>(domProps)
+  const reactiveChildren = reactive(() => props.children)
+  const renderLink = reactive(() =>
+    props.disabled ? (
+      <span ref={spanRef}>{reactiveChildren as unknown as FictNode}</span>
+    ) : (
+      <a ref={anchorRef}>{reactiveChildren as unknown as FictNode}</a>
+    ),
+  )
+
+  // A reactive component root needs a child binding host so disabled can swap
+  // the semantic element without remounting the surrounding component.
+  return [renderLink as unknown as FictNode]
 }
 
 // ============================================================================
@@ -284,6 +312,19 @@ export interface NavLinkProps extends Omit<LinkProps, 'className' | 'style' | 'c
   'aria-current'?: 'page' | 'step' | 'location' | 'date' | 'time' | 'true' | 'false'
 }
 
+const NAV_LINK_DOM_PROP_EXCLUSIONS = [
+  ...LINK_DOM_PROP_EXCLUSIONS,
+  'className',
+  'style',
+  'end',
+  'caseSensitive',
+  'activeClassName',
+  'pendingClassName',
+  'activeStyle',
+  'pendingStyle',
+  'aria-current',
+]
+
 /**
  * NavLink component for navigation with active state
  *
@@ -307,30 +348,17 @@ export interface NavLinkProps extends Omit<LinkProps, 'className' | 'style' | 'c
  */
 export function NavLink(props: NavLinkProps): FictNode {
   const router = useRouter()
-  const to = untrack(() => props.to)
-  const end = untrack(() => props.end)
-  const caseSensitive = untrack(() => props.caseSensitive)
-  const replace = untrack(() => props.replace)
-  const state = untrack(() => props.state)
-  const scroll = untrack(() => props.scroll)
-  const relative = untrack(() => props.relative)
-  const reloadDocument = untrack(() => props.reloadDocument)
-  const isDisabled = untrack(() => props.disabled)
-  const onClick = untrack(() => props.onClick)
-  const classNameProp = untrack(() => props.className)
-  const styleProp = untrack(() => props.style)
-  const childrenProp = untrack(() => props.children)
-  const activeClassNameProp = untrack(() => props.activeClassName)
-  const pendingClassNameProp = untrack(() => props.pendingClassName)
-  const activeStyleProp = untrack(() => props.activeStyle)
-  const pendingStyleProp = untrack(() => props.pendingStyle)
-  const ariaCurrentProp = untrack(() => props['aria-current'])
-  const externalHref = getExternalHref(to)
-  const internalIsActive = useIsActive(() => to, { end, caseSensitive })
-  const isActive = externalHref ? () => false : internalIsActive
-  const href = useHref(() => to)
-  const getHrefValue = () =>
-    externalHref ?? readAccessor(readAccessor(href as MaybeAccessor<MaybeAccessor<string>>))
+  const internalIsActive = useIsActive(() => props.to, props)
+  const isActive = () =>
+    getExternalHref(props.to)
+      ? false
+      : readAccessor(readAccessor(internalIsActive as MaybeAccessor<MaybeAccessor<boolean>>))
+  const href = useHref(() => props.to)
+  const getHrefValue = () => {
+    const externalHref = getExternalHref(props.to)
+    return externalHref ?? readAccessor(readAccessor(href as MaybeAccessor<MaybeAccessor<string>>))
+  }
+  const { handleMouseEnter, handleFocus } = createPreloadBehavior(props, getHrefValue)
   const pendingLocation = usePendingLocation()
 
   // Compute isPending by comparing pending location with this link's target
@@ -349,13 +377,13 @@ export function NavLink(props: NavLinkProps): FictNode {
     // Parse the resolved href to get pathname
     const parsed = parseURL(resolvedHref)
     let targetPathWithoutBase = stripBasePath(parsed.pathname, baseToStrip)
-    if (!caseSensitive) {
+    if (!props.caseSensitive) {
       pendingPathWithoutBase = pendingPathWithoutBase.toLowerCase()
       targetPathWithoutBase = targetPathWithoutBase.toLowerCase()
     }
 
     // Check if the pending navigation is to this link's destination
-    if (end) {
+    if (props.end) {
       return pendingPathWithoutBase === targetPathWithoutBase
     }
 
@@ -381,112 +409,66 @@ export function NavLink(props: NavLinkProps): FictNode {
     renderProps.isPending = computeIsPending()
     renderProps.isTransitioning = readAccessor(router.isRouting)
 
+    const classNameProp = props.className
+    const styleProp = props.style
+    const childrenProp = props.children
     const baseClassName =
       typeof classNameProp === 'function' ? classNameProp(renderProps) : classNameProp
-    const activeClassName = renderProps.isActive ? activeClassNameProp : undefined
-    const pendingClassName = renderProps.isPending ? pendingClassNameProp : undefined
+    const activeClassName = renderProps.isActive ? props.activeClassName : undefined
+    const pendingClassName = renderProps.isPending ? props.pendingClassName : undefined
 
     const baseStyle = typeof styleProp === 'function' ? styleProp(renderProps) : styleProp
-    const activeStyle = renderProps.isActive ? activeStyleProp : undefined
-    const pendingStyle = renderProps.isPending ? pendingStyleProp : undefined
+    const activeStyle = renderProps.isActive ? props.activeStyle : undefined
+    const pendingStyle = renderProps.isPending ? props.pendingStyle : undefined
 
     computedClassName(joinClassNames(baseClassName, activeClassName, pendingClassName))
     computedStyle(mergeStyles(baseStyle, activeStyle, pendingStyle))
     computedChildren(typeof childrenProp === 'function' ? childrenProp(renderProps) : childrenProp)
-    ariaCurrent(renderProps.isActive ? (ariaCurrentProp ?? 'page') : undefined)
+    ariaCurrent(renderProps.isActive ? (props['aria-current'] ?? 'page') : undefined)
   })
 
   const handleClick = (event: MouseEvent) => {
-    // Call custom onClick handler first
-    if (onClick) {
-      onClick(event)
-    }
-
-    // Don't handle if default was prevented
-    if (event.defaultPrevented) return
-
-    // Don't handle modifier keys
-    if (event.metaKey || event.altKey || event.ctrlKey || event.shiftKey) return
-
-    // Don't handle right-clicks
-    if (event.button !== 0) return
-
-    // Don't handle if reloadDocument is set
-    if (reloadDocument) return
-
-    // Don't handle if disabled
-    if (isDisabled) return
-
-    if (externalHref) return
-
-    // Don't handle external links
-    const target = (event.currentTarget as HTMLAnchorElement).target
-    if (target && target !== '_self') return
-
-    // Prevent default browser navigation
+    const snapshot = readLinkClick(props, event)
+    if (!snapshot) return
     event.preventDefault()
-
-    // Navigate using the router
-    router.navigate(to, {
-      replace,
-      state,
-      scroll,
-      relative,
-    })
-  }
-
-  // Extract NavLink-specific props
-  const {
-    to: _to,
-    replace: _replace,
-    state: _state,
-    scroll: _scroll,
-    relative: _relative,
-    reloadDocument: _reloadDocument,
-    prefetch: _prefetch,
-    disabled: _disabled,
-    onClick: _onClick,
-    children: _children,
-    className: _className,
-    style: _style,
-    end: _end,
-    caseSensitive: _caseSensitive,
-    activeClassName: _activeClassName,
-    pendingClassName: _pendingClassName,
-    activeStyle: _activeStyle,
-    pendingStyle: _pendingStyle,
-    'aria-current': _ariaCurrent,
-    ...anchorProps
-  } = props
-  const anchorRef = createSpreadRef<HTMLAnchorElement>(anchorProps as Record<string, unknown>)
-  const spanRef = createSpreadRef<HTMLSpanElement>(anchorProps as Record<string, unknown>)
-
-  if (isDisabled) {
-    const disabledClassName = computedClassName()
-    const disabledStyle = computedStyle()
-    return (
-      <span
-        ref={spanRef}
-        class={disabledClassName as string}
-        style={disabledStyle as NonNullable<JSX.IntrinsicElements['span']['style']>}
-      >
-        {computedChildren()}
-      </span>
+    untrack(() =>
+      router.navigate(snapshot.to, {
+        replace: snapshot.replace,
+        state: snapshot.state,
+        scroll: snapshot.scroll,
+        relative: snapshot.relative,
+      }),
     )
   }
 
-  return (
-    <a
-      ref={anchorRef}
-      href={getHrefValue()}
-      class={computedClassName() as string}
-      style={computedStyle() as NonNullable<JSX.IntrinsicElements['a']['style']>}
-      aria-current={ariaCurrent() as NonNullable<JSX.IntrinsicElements['a']['aria-current']>}
-      onClick={handleClick}
-    >
-      {computedChildren()}
-    </a>
+  const domProps = __fictPropsRest(
+    props as unknown as Record<string, unknown>,
+    NAV_LINK_DOM_PROP_EXCLUSIONS,
   )
+  const anchorRef = createSpreadRef<HTMLAnchorElement>(() => ({
+    ...domProps,
+    href: getHrefValue(),
+    class: computedClassName(),
+    style: computedStyle(),
+    'aria-current': ariaCurrent(),
+    onClick: handleClick,
+    onMouseEnter: handleMouseEnter,
+    onFocus: handleFocus,
+  }))
+  const spanRef = createSpreadRef<HTMLSpanElement>(() => ({
+    ...domProps,
+    class: computedClassName(),
+    style: computedStyle(),
+  }))
+  const renderNavLink = reactive(() =>
+    props.disabled ? (
+      <span ref={spanRef}>{computedChildren as unknown as FictNode}</span>
+    ) : (
+      <a ref={anchorRef}>{computedChildren as unknown as FictNode}</a>
+    ),
+  )
+
+  return [renderNavLink as unknown as FictNode]
 }
 
 // ============================================================================
@@ -512,6 +494,18 @@ export interface FormProps extends Omit<JSX.IntrinsicElements['form'], 'action' 
   onSubmit?: (event: SubmitEvent) => void
 }
 
+const FORM_DOM_PROP_EXCLUSIONS = [
+  'action',
+  'method',
+  'replace',
+  'relative',
+  'preventScrollReset',
+  'navigate',
+  'fetcherKey',
+  'children',
+  'onSubmit',
+]
+
 /**
  * Form component for action submissions
  *
@@ -525,17 +519,9 @@ export interface FormProps extends Omit<JSX.IntrinsicElements['form'], 'action' 
  */
 export function Form(props: FormProps): FictNode {
   const router = useRouter()
-  const actionProp = untrack(() => props.action)
-  const methodProp = untrack(() => props.method)
-  const replace = untrack(() => props.replace)
-  const shouldNavigate = untrack(() => props.navigate)
-  const onSubmit = untrack(() => props.onSubmit)
 
   const handleSubmit = (event: SubmitEvent) => {
-    // Call custom onSubmit
-    if (onSubmit) {
-      onSubmit(event)
-    }
+    untrack(() => props.onSubmit?.(event))
 
     // Don't handle if prevented
     if (event.defaultPrevented) return
@@ -549,10 +535,16 @@ export function Form(props: FormProps): FictNode {
     // Prevent default form submission
     event.preventDefault()
 
+    const snapshot = untrack(() => ({
+      action: props.action,
+      method: props.method,
+      navigate: props.navigate,
+      replace: props.replace,
+    }))
     const formData = new FormData(form)
-    const method = methodProp?.toUpperCase() || 'GET'
+    const method = snapshot.method?.toUpperCase() || 'GET'
 
-    const actionUrl = actionProp || readAccessor(router.location).pathname
+    const actionUrl = snapshot.action || untrack(() => readAccessor(router.location).pathname)
 
     if (method === 'GET') {
       // For GET, navigate with search params
@@ -563,18 +555,20 @@ export function Form(props: FormProps): FictNode {
         }
       })
 
-      router.navigate(
-        {
-          pathname: actionUrl,
-          search: '?' + searchParams.toString(),
-        },
-        { replace },
+      untrack(() =>
+        router.navigate(
+          {
+            pathname: actionUrl,
+            search: '?' + searchParams.toString(),
+          },
+          { replace: snapshot.replace },
+        ),
       )
     } else {
       // For POST/PUT/PATCH/DELETE, submit via fetch
       void submitFormAction(form, actionUrl, method, formData, {
-        navigate: shouldNavigate !== false,
-        replace: replace ?? false,
+        navigate: snapshot.navigate !== false,
+        replace: snapshot.replace ?? false,
         router,
       }).catch(() => {
         // submitFormAction already reports the failure through `formerror`
@@ -648,33 +642,24 @@ export function Form(props: FormProps): FictNode {
     }
   }
 
-  const {
-    action: _action,
-    method: _method,
-    replace: _replace,
-    relative: _relative,
-    preventScrollReset: _preventScrollReset,
-    navigate: _navigate,
-    fetcherKey: _fetcherKey,
-    children,
-    onSubmit: _onSubmit,
-    ...formProps
-  } = props
-  const formRef = createSpreadRef<HTMLFormElement>(formProps as Record<string, unknown>)
+  const formProps = __fictPropsRest(
+    props as unknown as Record<string, unknown>,
+    FORM_DOM_PROP_EXCLUSIONS,
+  )
 
   // Only use standard form methods (get, post) for the HTML attribute
   // Other methods (put, patch, delete) are handled via fetch in handleSubmit
-  const htmlMethod =
-    methodProp && ['get', 'post'].includes(methodProp) ? (methodProp as 'get' | 'post') : undefined
+  const htmlMethod = reactive(() => {
+    const method = props.method
+    return method && ['get', 'post'].includes(method) ? (method as 'get' | 'post') : undefined
+  })
+  const children = reactive(() => props.children)
+  const formRef = createSpreadRef<HTMLFormElement>(() => ({
+    ...formProps,
+    action: props.action,
+    method: htmlMethod(),
+    onSubmit: handleSubmit,
+  }))
 
-  return (
-    <form
-      ref={formRef}
-      action={actionProp as string}
-      method={htmlMethod as 'get' | 'post'}
-      onSubmit={handleSubmit}
-    >
-      {children}
-    </form>
-  )
+  return <form ref={formRef}>{children as unknown as FictNode}</form>
 }
