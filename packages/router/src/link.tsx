@@ -652,12 +652,19 @@ function prependNakedIndexParam(search: string): string {
   return search ? `?index&${search.replace(/^\?/, '')}` : '?index'
 }
 
+function normalizeFormUrlEncodedLineBreaks(value: string): string {
+  return value.replace(/\r\n|\r|\n/g, '\r\n')
+}
+
 function serializeGetFormData(formData: FormData): string {
   const searchParams = new URLSearchParams()
   formData.forEach((value, key) => {
-    // application/x-www-form-urlencoded converts File entries to their
-    // filename while preserving their position and repeated keys.
-    searchParams.append(key, typeof value === 'string' ? value : value.name)
+    // Converting a form entry list to application/x-www-form-urlencoded
+    // canonicalizes line breaks in names, string values, and filenames.
+    searchParams.append(
+      normalizeFormUrlEncodedLineBreaks(key),
+      normalizeFormUrlEncodedLineBreaks(typeof value === 'string' ? value : value.name),
+    )
   })
   const search = searchParams.toString()
   return search ? `?${search}` : ''
@@ -721,8 +728,7 @@ export function Form(props: FormProps): FictNode {
     ) {
       search = prependNakedIndexParam(search)
     }
-    const registeredAction =
-      sourceRegisteredAction ?? getRegisteredAction(pathname)
+    const registeredAction = sourceRegisteredAction ?? getRegisteredAction(pathname)
 
     return {
       pathname,

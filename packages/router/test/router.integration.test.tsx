@@ -177,8 +177,7 @@ function HrefText({ to, testId = 'href' }: { to: To; testId?: string }) {
 
 function ActiveText({ to, testId }: { to: To; testId: string }) {
   const active = useIsActive(to, { end: true })
-  const value = () =>
-    readAccessor(readAccessor(active as MaybeAccessor<MaybeAccessor<boolean>>))
+  const value = () => readAccessor(readAccessor(active as MaybeAccessor<MaybeAccessor<boolean>>))
   return <span data-testid={testId} data-active={String(value())} />
 }
 
@@ -1831,23 +1830,15 @@ describe('Router integration (MemoryRouter)', () => {
       expect(href('encoded-base-boundary-link')).toBe('/app/app%2Fsave')
       expect(href('encoded-base-child-link')).toBe('/app/%73ave')
       expect(href('relative-route-link')).toBe('/app/app/projects/42/save?mode=route#done')
-      expect(href('relative-path-link')).toBe(
-        '/app/app/projects/42/current/save?mode=path#done',
-      )
-      expect(href('based-search-only-link')).toBe(
-        '/app/app/projects/42/current?tab=next',
-      )
+      expect(href('relative-path-link')).toBe('/app/app/projects/42/current/save?mode=path#done')
+      expect(href('based-search-only-link')).toBe('/app/app/projects/42/current?tab=next')
       expect(href('based-hash-only-link')).toBe('/app/app/projects/42/current#section')
       expect(href('based-object-route-link')).toBe('/app/object?mode=object#done')
       expect(href('repeated-object-path-link')).toBe('/app/app/object?mode=object#done')
-      expect(href('external-based-link')).toBe(
-        'https://example.com/app/save?mode=external#done',
-      )
+      expect(href('external-based-link')).toBe('https://example.com/app/save?mode=external#done')
       expect(href('protocol-relative-based-link')).toBe('//cdn.example.com/app/save')
       expect(href('based-active-route-nav-link')).toBe('/app/app/projects/42/current')
-      expect(href('based-active-path-nav-link')).toBe(
-        '/app/app/projects/42/current?mode=object',
-      )
+      expect(href('based-active-path-nav-link')).toBe('/app/app/projects/42/current?mode=object')
       expect(screen.getByTestId('based-active-route-nav-link').className).toBe('active')
       expect(screen.getByTestId('based-active-path-nav-link').className).toBe('active')
     } finally {
@@ -2305,10 +2296,7 @@ describe('Router integration (MemoryRouter)', () => {
                 }}
                 testId="external-hook-object"
               />
-              <HrefText
-                to="mailto:dev@example.com?subject=fict"
-                testId="external-hook-scheme"
-              />
+              <HrefText to="mailto:dev@example.com?subject=fict" testId="external-hook-scheme" />
             </>
           }
         />
@@ -2316,13 +2304,9 @@ describe('Router integration (MemoryRouter)', () => {
     ))
 
     const href = (testId: string) => screen.getByTestId(testId).getAttribute('data-href')
-    expect(href('external-hook-string')).toBe(
-      'https://example.com/app/save?mode=string#done',
-    )
+    expect(href('external-hook-string')).toBe('https://example.com/app/save?mode=string#done')
     expect(href('external-hook-protocol')).toBe('//cdn.example.com/app/save')
-    expect(href('external-hook-object')).toBe(
-      'https://example.org/object?mode=object#done',
-    )
+    expect(href('external-hook-object')).toBe('https://example.org/object?mode=object#done')
     expect(href('external-hook-scheme')).toBe('mailto:dev@example.com?subject=fict')
   })
 
@@ -2335,16 +2319,11 @@ describe('Router integration (MemoryRouter)', () => {
       render(() => (
         <RouterProvider history={history} routes={[]} base="/app">
           <ActiveText to="https://example.com/docs" testId="external-active-string" />
-          <ActiveText
-            to={{ pathname: '//example.com/docs' }}
-            testId="external-active-protocol"
-          />
+          <ActiveText to={{ pathname: '//example.com/docs' }} testId="external-active-protocol" />
         </RouterProvider>
       ))
 
-      expect(screen.getByTestId('external-active-string').getAttribute('data-active')).toBe(
-        'false',
-      )
+      expect(screen.getByTestId('external-active-string').getAttribute('data-active')).toBe('false')
       expect(screen.getByTestId('external-active-protocol').getAttribute('data-active')).toBe(
         'false',
       )
@@ -2853,6 +2832,64 @@ describe('Router integration (MemoryRouter)', () => {
     }
   })
 
+  it('normalizes navigate=false GET entry names, string values, and filenames to CRLF', async () => {
+    cleanupDataUtilities()
+    const rawName = '字段\r键\n名\r\n尾'
+    const normalizedName = '字段\r\n键\r\n名\r\n尾'
+    const NativeFormData = FormData
+    class FormDataWithFile extends NativeFormData {
+      constructor(form?: HTMLFormElement, submitter?: HTMLElement | null) {
+        super(form, submitter)
+        if (form?.getAttribute('data-testid') === 'newline-get-fetcher') {
+          this.append(rawName, new File(['report'], '文件\r甲\n乙\r\n丙.txt'))
+        }
+      }
+    }
+    vi.stubGlobal('FormData', FormDataWithFile)
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ matches: 1 })))
+    const history = createMemoryHistory({ initialEntries: ['/form?keep=current'] })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <Form
+            action="/search?source=discarded#results"
+            method="get"
+            navigate={false}
+            data-testid="newline-get-fetcher"
+          >
+            <input type="hidden" name={rawName} value={'甲\r乙'} />
+            <input type="hidden" name={rawName} value={'丙\n丁'} />
+            <input type="hidden" name={rawName} value={'戊\r\n己'} />
+          </Form>
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('newline-get-fetcher') as HTMLFormElement
+      form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      const requestUrl = fetchMock.mock.calls[0]?.[0]
+      expect(typeof requestUrl).toBe('string')
+      expect(Array.from(new URL(requestUrl as string, 'http://localhost').searchParams)).toEqual([
+        [normalizedName, '甲\r\n乙'],
+        [normalizedName, '丙\r\n丁'],
+        [normalizedName, '戊\r\n己'],
+        [normalizedName, '文件\r\n甲\r\n乙\r\n丙.txt'],
+      ])
+      expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'GET' })
+      expect(fetchMock.mock.calls[0]?.[1]).not.toHaveProperty('body')
+      expect(history.location).toMatchObject({ pathname: '/form', search: '?keep=current' })
+    } finally {
+      history.destroy?.()
+      fetchMock.mockRestore()
+      vi.stubGlobal('FormData', NativeFormData)
+      cleanupDataUtilities()
+    }
+  })
+
   it('suppresses stale navigate=false GET results and errors for the same fetcher key', async () => {
     cleanupDataUtilities()
     const settleFetches: Array<(response: Response) => void> = []
@@ -3092,9 +3129,7 @@ describe('Router integration (MemoryRouter)', () => {
       expect(form.dispatchEvent(submitEvent)).toBe(false)
 
       expect(fetchMock).toHaveBeenCalledTimes(1)
-      expect(fetchMock.mock.calls[0]?.[0]).toBe(
-        'https://api.example.com/search?query=fict+router',
-      )
+      expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.example.com/search?query=fict+router')
       expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'GET' })
       expect(fetchMock.mock.calls[0]?.[1]).not.toHaveProperty('body')
       await vi.waitFor(() => expect(results).toEqual([{ matches: 1 }]))
@@ -3372,6 +3407,53 @@ describe('Router integration (MemoryRouter)', () => {
       expect(history.location.search).toBe(
         '?query=fict+router&intent=preview&upload=report+one.txt&upload=',
       )
+      expect(history.location.hash).toBe('#results')
+    } finally {
+      vi.stubGlobal('FormData', NativeFormData)
+      history.destroy?.()
+    }
+  })
+
+  it('normalizes navigating GET entry names, string values, and filenames to CRLF', async () => {
+    const rawName = '字段\r键\n名\r\n尾'
+    const normalizedName = '字段\r\n键\r\n名\r\n尾'
+    const NativeFormData = FormData
+    class FormDataWithFile extends NativeFormData {
+      constructor(form?: HTMLFormElement, submitter?: HTMLElement | null) {
+        super(form, submitter)
+        if (form?.getAttribute('data-testid') === 'newline-get-navigation') {
+          this.append(rawName, new File(['report'], '文件\r甲\n乙\r\n丙.txt'))
+        }
+      }
+    }
+    vi.stubGlobal('FormData', FormDataWithFile)
+    const history = createMemoryHistory({ initialEntries: ['/form'] })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <Form
+            action="/search?source=discarded#results"
+            method="get"
+            data-testid="newline-get-navigation"
+          >
+            <input type="hidden" name={rawName} value={'甲\r乙'} />
+            <input type="hidden" name={rawName} value={'丙\n丁'} />
+            <input type="hidden" name={rawName} value={'戊\r\n己'} />
+          </Form>
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('newline-get-navigation') as HTMLFormElement
+      form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+      await vi.waitFor(() => expect(history.location.pathname).toBe('/search'))
+      expect(Array.from(new URLSearchParams(history.location.search))).toEqual([
+        [normalizedName, '甲\r\n乙'],
+        [normalizedName, '丙\r\n丁'],
+        [normalizedName, '戊\r\n己'],
+        [normalizedName, '文件\r\n甲\r\n乙\r\n丙.txt'],
+      ])
       expect(history.location.hash).toBe('#results')
     } finally {
       vi.stubGlobal('FormData', NativeFormData)
@@ -4106,9 +4188,7 @@ describe('Router integration (MemoryRouter)', () => {
       const registeredRouteForm = screen.getByTestId(
         'registered-based-route-form',
       ) as HTMLFormElement
-      const registeredPathForm = screen.getByTestId(
-        'registered-based-path-form',
-      ) as HTMLFormElement
+      const registeredPathForm = screen.getByTestId('registered-based-path-form') as HTMLFormElement
       const registeredRepeatedRouteForm = screen.getByTestId(
         'registered-repeated-base-route-form',
       ) as HTMLFormElement
@@ -4145,9 +4225,7 @@ describe('Router integration (MemoryRouter)', () => {
       repeatedRouteForm.dispatchEvent(
         new SubmitEvent('submit', { bubbles: true, cancelable: true }),
       )
-      repeatedPathForm.dispatchEvent(
-        new SubmitEvent('submit', { bubbles: true, cancelable: true }),
-      )
+      repeatedPathForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
       registeredRouteForm.dispatchEvent(
         new SubmitEvent('submit', { bubbles: true, cancelable: true }),
       )
