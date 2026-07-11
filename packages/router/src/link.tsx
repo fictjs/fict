@@ -710,16 +710,17 @@ export function Form(props: FormProps): FictNode {
       // For GET, navigate with search params
       const searchParams = new URLSearchParams()
       formData.forEach((value, key) => {
-        if (typeof value === 'string') {
-          searchParams.append(key, value)
-        }
+        // application/x-www-form-urlencoded converts File entries to their
+        // filename while preserving their position and repeated keys.
+        searchParams.append(key, typeof value === 'string' ? value : value.name)
       })
+      const search = searchParams.toString()
 
       untrack(() =>
         router.navigate(
           {
             pathname: snapshot.action.pathname,
-            search: '?' + searchParams.toString(),
+            search: search ? '?' + search : '',
             hash: snapshot.action.hash,
           },
           { replace: snapshot.replace, scroll: snapshot.scroll },

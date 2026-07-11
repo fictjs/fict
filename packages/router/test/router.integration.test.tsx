@@ -2153,6 +2153,68 @@ describe('Router integration (MemoryRouter)', () => {
     }
   })
 
+  it('omits the query marker for an empty GET form while preserving the hash', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/form'] })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <Form action="/search#results" method="get" data-testid="empty-get-form" />
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('empty-get-form') as HTMLFormElement
+      form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+      await vi.waitFor(() => expect(history.location.pathname).toBe('/search'))
+      expect(history.location.search).toBe('')
+      expect(history.location.hash).toBe('#results')
+    } finally {
+      history.destroy?.()
+    }
+  })
+
+  it('serializes GET File entries as repeated filename strings', async () => {
+    const NativeFormData = FormData
+    class FormDataWithFiles extends NativeFormData {
+      constructor(form?: HTMLFormElement, submitter?: HTMLElement | null) {
+        super(form, submitter)
+        if (form?.getAttribute('data-testid') === 'file-get-form') {
+          this.append('upload', new File(['report'], 'report one.txt'))
+          this.append('upload', new File([], ''))
+        }
+      }
+    }
+    vi.stubGlobal('FormData', FormDataWithFiles)
+    const history = createMemoryHistory({ initialEntries: ['/form'] })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <Form action="/search#results" method="get" data-testid="file-get-form">
+            <input name="query" value="fict router" />
+            <button type="submit" name="intent" value="preview" data-testid="file-get-submitter">
+              Search
+            </button>
+          </Form>
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('file-get-form') as HTMLFormElement
+      const submitter = screen.getByTestId('file-get-submitter') as HTMLButtonElement
+      form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true, submitter }))
+
+      await vi.waitFor(() => expect(history.location.pathname).toBe('/search'))
+      expect(history.location.search).toBe(
+        '?query=fict+router&intent=preview&upload=report+one.txt&upload=',
+      )
+      expect(history.location.hash).toBe('#results')
+    } finally {
+      vi.stubGlobal('FormData', NativeFormData)
+      history.destroy?.()
+    }
+  })
+
   it('restores the outgoing position after a scroll-disabled navigation and POP', async () => {
     const history = createMemoryHistory({ initialEntries: ['/from'] })
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
