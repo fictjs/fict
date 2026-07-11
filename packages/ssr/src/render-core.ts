@@ -24,7 +24,10 @@ import { createStreamRuntimeCode } from './stream-runtime'
 const DEFAULT_HTML = '<!doctype html><html><head></head><body></body></html>'
 const SVG_HTML_INTEGRATION_POINTS = new Set(['foreignobject', 'title', 'desc'])
 const MATHML_TEXT_INTEGRATION_POINTS = new Set(['mi', 'mo', 'mn', 'ms', 'mtext'])
+const STREAM_IDENTIFIER_PREFIX_PATTERN = /^[A-Za-z0-9_.:-]+$/
 let streamTailMarkerId = 0
+let streamIdentifierSequence = 0
+const streamIdentifierSeed = createStreamIdentifierSeed()
 
 type StreamPatchNamespace = 'svg' | 'mathml' | null
 
@@ -151,6 +154,16 @@ export interface RenderToStreamOptions extends RenderToStringOptions {
    * Defaults to 'inline' for inline runtimes and 'observer' for external runtimes.
    */
   streamPatchMode?: 'inline' | 'observer'
+  /**
+   * Stable namespace for Suspense patch identifiers. Set this when independently
+   * cached or separately rendered streams can share a document, and keep it unique
+   * within that document. This does not change resumable scope identifiers.
+   *
+   * Values must contain 1-128 ASCII letters, digits, `_`, `.`, `:`, or `-`, and
+   * must not contain `--`. When omitted, each shell stream gets an automatic
+   * edge-safe namespace.
+   */
+  streamIdentifierPrefix?: string
 }
 
 export interface PipeableStream {
@@ -303,6 +316,7 @@ export function renderToStream(
   view: () => FictNode,
   options: RenderToStreamOptions = {},
 ): ReadableStream<Uint8Array> {
+  validateStreamIdentifierPrefix(options.streamIdentifierPrefix)
   const encoder = new TextEncoder()
   let controller: ReadableStreamDefaultController<Uint8Array> | null = null
   let abortRender: ((reason?: unknown) => void) | null = null
@@ -603,7 +617,10 @@ function startStreamingRenderInSession(
   let removeAbortListener = () => {}
   let canFinalize = false
 
+  validateStreamIdentifierPrefix(options.streamIdentifierPrefix)
   const mode = options.mode ?? 'shell'
+  const streamIdentifierPrefix =
+    mode === 'shell' ? resolveStreamIdentifierPrefix(options.streamIdentifierPrefix) : null
   const includeSnapshot = options.includeSnapshot !== false
   const sentScopes = new Set<string>()
 
@@ -834,7 +851,8 @@ function startStreamingRenderInSession(
 
   const hooks = {
     registerBoundary(start: Comment, end: Comment) {
-      const id = `s${++boundaryId}`
+      const localId = `s${++boundaryId}`
+      const id = streamIdentifierPrefix ? `${streamIdentifierPrefix}:${localId}` : localId
       boundaryMap.set(id, { start, end, pending: false })
       return id
     },
@@ -1033,6 +1051,40 @@ function buildPatchChunk(
 function resolveStreamPatchMode(options: RenderToStreamOptions): 'inline' | 'observer' {
   if (options.streamPatchMode) return options.streamPatchMode
   return options.streamRuntime === 'external' ? 'observer' : 'inline'
+}
+
+function resolveStreamIdentifierPrefix(configured: string | undefined): string {
+  if (configured !== undefined) return configured
+
+  return `f${streamIdentifierSeed}.${(++streamIdentifierSequence).toString(36)}`
+}
+
+function validateStreamIdentifierPrefix(configured: unknown): void {
+  if (configured === undefined) return
+  if (
+    typeof configured !== 'string' ||
+    configured.length === 0 ||
+    configured.length > 128 ||
+    !STREAM_IDENTIFIER_PREFIX_PATTERN.test(configured) ||
+    configured.includes('--')
+  ) {
+    throw new TypeError(
+      '[fict/ssr] streamIdentifierPrefix must contain 1-128 ASCII letters, digits, "_", ".", ":", or "-", and must not contain "--".',
+    )
+  }
+}
+
+function createStreamIdentifierSeed(): string {
+  try {
+    const uuid = globalThis.crypto?.randomUUID?.()
+    const normalized = uuid?.replace(/[^A-Za-z0-9]/g, '')
+    if (normalized) return normalized
+  } catch {
+    // Fall through for edge runtimes that expose a partial or guarded Crypto object.
+  }
+
+  const random = Math.random().toString(36).slice(2) || '0'
+  return `${Date.now().toString(36)}${random}`
 }
 
 function serializeBetween(

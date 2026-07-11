@@ -546,6 +546,7 @@ describe('@fictjs/ssr streaming', () => {
     const stream = renderToStream(() => ({ type: App, props: {} }), {
       mode: 'shell',
       scriptNonce: 'nonce-&-"',
+      streamIdentifierPrefix: 'nonce_test',
     })
     const readAll = readReadableStream(stream)
     await Promise.resolve()
@@ -555,7 +556,9 @@ describe('@fictjs/ssr streaming', () => {
     const html = await readAll
     expect(html).toContain('nonce="nonce-&amp;-&quot;"')
     expect(html).toContain('<script nonce="nonce-&amp;-&quot;">(function(){')
-    expect(html).toContain('<script nonce="nonce-&amp;-&quot;">__FICT_STREAM.apply("s1")</script>')
+    expect(html).toContain(
+      '<script nonce="nonce-&amp;-&quot;">__FICT_STREAM.apply("nonce_test:s1")</script>',
+    )
     expect(html).toContain('<script nonce="nonce-&amp;-&quot;" type="application/json"')
   })
 
@@ -581,6 +584,7 @@ describe('@fictjs/ssr streaming', () => {
     const stream = renderToStream(() => ({ type: App, props: {} }), {
       mode: 'shell',
       streamPatchMode: 'observer',
+      streamIdentifierPrefix: 'observer_test',
     })
     const readAll = readReadableStream(stream)
     await Promise.resolve()
@@ -589,9 +593,9 @@ describe('@fictjs/ssr streaming', () => {
 
     const html = await readAll
     expect(html).toContain('MutationObserver')
-    expect(html).toContain('data-fict-suspense="s1"')
+    expect(html).toContain('data-fict-suspense="observer_test:s1"')
     expect(html).toContain('ObserverDone')
-    expect(html).not.toContain('__FICT_STREAM.apply("s1")')
+    expect(html).not.toContain('__FICT_STREAM.apply(')
   })
 
   it('can reference an external stream runtime for strict CSP', async () => {
@@ -618,6 +622,7 @@ describe('@fictjs/ssr streaming', () => {
       streamRuntime: 'external',
       streamRuntimeSrc: '/assets/fict-stream-runtime.js',
       scriptNonce: 'external-nonce',
+      streamIdentifierPrefix: 'external_test',
     })
     const readAll = readReadableStream(stream)
     await Promise.resolve()
@@ -629,7 +634,8 @@ describe('@fictjs/ssr streaming', () => {
       '<script nonce="external-nonce" src="/assets/fict-stream-runtime.js" data-fict-stream-runtime data-fict-stream-observer></script>',
     )
     expect(html).toContain('ExternalDone')
-    expect(html).not.toContain('__FICT_STREAM.apply("s1")')
+    expect(html).toContain('data-fict-suspense="external_test:s1"')
+    expect(html).not.toContain('__FICT_STREAM.apply(')
   })
 
   it('exposes classic stream runtime code for external assets', () => {

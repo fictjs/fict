@@ -346,6 +346,23 @@ Trusted Types deployments should use this external observer runtime. The patch
 runtime moves `<template>` content with DOM APIs (`content` + `insertBefore`) and
 does not call `innerHTML`, `insertAdjacentHTML`, `eval`, or `Function`.
 
+Each shell stream receives an automatic unique namespace for its Suspense patch
+identifiers. When independently cached fragments or streams from multiple
+services can be composed into one document, pass a stable
+`streamIdentifierPrefix` that is unique within that final document:
+
+```typescript
+renderToStream(() => <App />, {
+  mode: 'shell',
+  streamIdentifierPrefix: 'account_shell',
+})
+```
+
+The prefix only affects streaming patch identifiers; resumable scope IDs are
+unchanged. Reusing a prefix for two live streams in the same document can make
+their patches ambiguous. Prefixes accept 1-128 ASCII letters, digits, `_`, `.`,
+`:`, or `-`, but may not contain `--`.
+
 ### renderToPipeableStream
 
 Node.js-style stream variant (compatible with `pipe()`).

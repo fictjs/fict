@@ -1896,6 +1896,9 @@ Key options:
 - `scriptNonce` — nonce for generated scripts
 - `streamRuntime: 'inline' | 'external'` — external mode expects `streamRuntimeSrc`
   to serve the published `@fictjs/ssr/fict-stream-runtime.js` asset
+- `streamIdentifierPrefix` — stable Suspense patch namespace for cached or
+  independently rendered streams that may share one document; it must be unique
+  within that document and does not alter resumable scope IDs
 
 ### Stream Runtime Asset
 
