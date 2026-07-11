@@ -433,7 +433,10 @@ export async function submitAction<T>(
       activeSubmissions(submissions)
     },
     retry: () => {
-      submitAction(action, formData, params)
+      // The retried submission records its own idle/error state. Since retry is
+      // intentionally a void API, consume the returned rejection after that
+      // state update instead of leaking an unhandled promise.
+      void submitAction(action, formData, params).catch(() => {})
     },
   }
 

@@ -950,6 +950,51 @@ describe('submitAction', () => {
     original.clear()
     expect(current()).toBe(retried)
   })
+
+  it('contains a rejected retry while preserving its submission error', async () => {
+    const settlers: Array<{
+      resolve: (value: string) => void
+      reject: (error: Error) => void
+    }> = []
+    const save = action<string>(
+      () =>
+        new Promise<string>((resolve, reject) => {
+          settlers.push({ resolve, reject })
+        }),
+      'rejectedRetry',
+    )
+    const current = useSubmission(save)
+    const originalPromise = submitAction(save, new FormData())
+    const original = current()!
+    const catchSpy = vi.spyOn(Promise.prototype, 'catch')
+    let retryRejected = false
+
+    try {
+      catchSpy.mockClear()
+      const retryResult = original.retry()
+      const retried = current()!
+      const attachedRejectionHandlers = catchSpy.mock.calls.length
+      catchSpy.mockRestore()
+
+      expect(retryResult).toBeUndefined()
+      expect(retried.key).not.toBe(original.key)
+      expect(attachedRejectionHandlers).toBe(1)
+
+      const retryError = new Error('retry failed')
+      retryRejected = true
+      settlers[1]!.reject(retryError)
+
+      await vi.waitFor(() => expect(retried).toMatchObject({ state: 'idle', error: retryError }))
+      expect(current()).toBe(retried)
+      expect(current()?.error).toBe(retryError)
+    } finally {
+      catchSpy.mockRestore()
+      settlers[0]?.resolve('original')
+      if (!retryRejected) settlers[1]?.resolve('retry cleanup')
+      await expect(originalPromise).resolves.toBe('original')
+      await new Promise(resolve => setTimeout(resolve, 0))
+    }
+  })
 })
 
 describe('createResource', () => {
