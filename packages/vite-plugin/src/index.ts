@@ -1057,12 +1057,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     let publicModuleId: string | undefined
     if (config?.command === 'build' && config.root) {
       const identityId = transformOptions?.publicIdentityId ?? normalizedFilename
-      const lookupKey = createPublicModuleLookupKey(identityId, config.root)
+      const preserveSymlinks = config.resolve.preserveSymlinks === true
+      const lookupKey = createPublicModuleLookupKey(identityId, config.root, preserveSymlinks)
       const publicIdentity = createPublicModuleIdentity(
         identityId,
         config.root,
         packageBoundaryCache,
         publicIdentityNamespace,
+        preserveSymlinks,
       )
       publicModuleId = publicIdentity.id
       const previous = publicModuleIds.get(lookupKey)
@@ -1855,6 +1857,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
                   config?.root,
                   packageBoundaryCache,
                   publicIdentityNamespace,
+                  config?.resolve?.preserveSymlinks === true,
                 )
                 state.extractedHandlers.set(handlerId, handler)
                 if (config?.command === 'build' && !config?.build?.ssr) {
@@ -1946,6 +1949,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               config?.root,
               packageBoundaryCache,
               publicIdentityNamespace,
+              config?.resolve?.preserveSymlinks === true,
             )
           } catch (error) {
             this.warn(buildPluginMessage('extractAndRewriteHandlers failed', filename, error))
@@ -1971,6 +1975,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
                   config?.root,
                   packageBoundaryCache,
                   publicIdentityNamespace,
+                  config?.resolve?.preserveSymlinks === true,
                 )
                 const virtualModuleId = `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}`
                 this.emitFile({
@@ -2008,6 +2013,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
                     config?.root,
                     packageBoundaryCache,
                     publicIdentityNamespace,
+                    config?.resolve?.preserveSymlinks === true,
                   ),
                 ),
               )
@@ -2133,6 +2139,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
                 config.root,
                 packageBoundaryCache,
                 publicIdentityNamespace,
+                config.resolve.preserveSymlinks === true,
               ).portable
             ) {
               this.error(
@@ -2143,7 +2150,11 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             continue
           }
           if (moduleId.startsWith('\0')) continue
-          const lookupKey = createPublicModuleLookupKey(moduleId, config.root)
+          const lookupKey = createPublicModuleLookupKey(
+            moduleId,
+            config.root,
+            config.resolve.preserveSymlinks === true,
+          )
           const publicId = publicModuleIds.get(lookupKey)
           if (
             publicId &&
@@ -2194,7 +2205,13 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           // Only modules whose generated chunk actually embeds their public QRL
           // identity need a manifest entry. Ordinary Rollup modules are private
           // implementation details and must not expose build-machine paths.
-          const key = publicModuleIds.get(createPublicModuleLookupKey(moduleId, config.root))
+          const key = publicModuleIds.get(
+            createPublicModuleLookupKey(
+              moduleId,
+              config.root,
+              config.resolve.preserveSymlinks === true,
+            ),
+          )
           if (!key) continue
           if (typeof output.code === 'string' && output.code.includes(key)) {
             addManifestEntry(key, url)
@@ -2469,6 +2486,13 @@ function normalizeIdentityPath(filename: string): string {
   }
 }
 
+function normalizeModuleIdentityPath(filename: string, preserveSymlinks: boolean): string {
+  const normalized = path.normalize(path.resolve(filename))
+  // Vite intentionally treats symlink requests as separate modules when this option is on.
+  // Preserve that logical identity; otherwise follow Vite's default physical-module semantics.
+  return preserveSymlinks ? normalized : normalizeIdentityPath(normalized)
+}
+
 function isPathAtOrInsideDirectory(directory: string, filename: string): boolean {
   const relative = path.relative(directory, filename)
   return (
@@ -2484,9 +2508,13 @@ function portableRelativePath(directory: string, filename: string): string {
 function getPublicModuleIdentityParts(
   id: string,
   rootDir: string,
+  preserveSymlinks = false,
 ): { filename: string; lookupKey: string; suffix: string } {
   const { filename, suffix } = splitModuleId(id, { root: rootDir })
-  const normalizedFilename = normalizeIdentityPath(normalizeFileName(filename, rootDir))
+  const normalizedFilename = normalizeModuleIdentityPath(
+    normalizeFileName(filename, rootDir),
+    preserveSymlinks,
+  )
   return {
     filename: normalizedFilename,
     lookupKey: JSON.stringify([normalizedFilename, suffix]),
@@ -2494,8 +2522,12 @@ function getPublicModuleIdentityParts(
   }
 }
 
-function createPublicModuleLookupKey(id: string, rootDir: string): string {
-  return getPublicModuleIdentityParts(id, rootDir).lookupKey
+function createPublicModuleLookupKey(
+  id: string,
+  rootDir: string,
+  preserveSymlinks = false,
+): string {
+  return getPublicModuleIdentityParts(id, rootDir, preserveSymlinks).lookupKey
 }
 
 interface PublicModuleIdentity {
@@ -2515,9 +2547,14 @@ function createPublicModuleSourceIdentity(
   rootDir: string,
   packageBoundaryCache: Map<string, PackageBoundary | null>,
   explicitNamespace?: string,
+  preserveSymlinks = false,
 ): Omit<PublicModuleIdentity, 'id'> {
-  const root = normalizeIdentityPath(rootDir)
-  const { filename: source, suffix } = getPublicModuleIdentityParts(filename, rootDir)
+  const root = normalizeModuleIdentityPath(rootDir, preserveSymlinks)
+  const { filename: source, suffix } = getPublicModuleIdentityParts(
+    filename,
+    rootDir,
+    preserveSymlinks,
+  )
   if (isPathAtOrInsideDirectory(root, source)) {
     if (explicitNamespace) {
       return {
@@ -2535,7 +2572,7 @@ function createPublicModuleSourceIdentity(
       packageBoundaryCache,
     )
     if (projectBoundary) {
-      const packageRoot = normalizeIdentityPath(projectBoundary.root)
+      const packageRoot = normalizeModuleIdentityPath(projectBoundary.root, preserveSymlinks)
       return {
         portable: true,
         source: JSON.stringify([
@@ -2556,7 +2593,7 @@ function createPublicModuleSourceIdentity(
 
   const boundary = findOwningPackageBoundary(source, packageBoundaryCache)
   if (boundary) {
-    const packageRoot = normalizeIdentityPath(boundary.root)
+    const packageRoot = normalizeModuleIdentityPath(boundary.root, preserveSymlinks)
     if (isPathAtOrInsideDirectory(packageRoot, source)) {
       return {
         portable: true,
@@ -2582,8 +2619,15 @@ function createPublicModuleId(
   rootDir: string,
   packageBoundaryCache: Map<string, PackageBoundary | null>,
   explicitNamespace?: string,
+  preserveSymlinks = false,
 ): string {
-  return createPublicModuleIdentity(filename, rootDir, packageBoundaryCache, explicitNamespace).id
+  return createPublicModuleIdentity(
+    filename,
+    rootDir,
+    packageBoundaryCache,
+    explicitNamespace,
+    preserveSymlinks,
+  ).id
 }
 
 function createPublicModuleIdentity(
@@ -2591,12 +2635,14 @@ function createPublicModuleIdentity(
   rootDir: string,
   packageBoundaryCache: Map<string, PackageBoundary | null>,
   explicitNamespace?: string,
+  preserveSymlinks = false,
 ): PublicModuleIdentity {
   const sourceIdentity = createPublicModuleSourceIdentity(
     filename,
     rootDir,
     packageBoundaryCache,
     explicitNamespace,
+    preserveSymlinks,
   )
   return {
     ...sourceIdentity,
@@ -3849,14 +3895,19 @@ export const __fictVitePluginInternals = {
   computePackageMetadataCacheFingerprint,
   buildFictPackageMappingResult,
   applyFictPackageMappings,
-  createPublicModuleId: (filename: string, root: string, namespace?: string): string =>
-    createPublicModuleId(filename, root, new Map(), namespace),
+  createPublicModuleId: (
+    filename: string,
+    root: string,
+    namespace?: string,
+    preserveSymlinks = false,
+  ): string => createPublicModuleId(filename, root, new Map(), namespace, preserveSymlinks),
   createHandlerId: (
     filename: string,
     exportName: string,
     root: string,
     namespace?: string,
-  ): string => createHandlerId(filename, exportName, root, new Map(), namespace),
+    preserveSymlinks = false,
+  ): string => createHandlerId(filename, exportName, root, new Map(), namespace, preserveSymlinks),
 }
 
 function hashString(value: string): string {
@@ -4276,17 +4327,19 @@ function createHandlerSourceIdentity(
   rootDir?: string,
   packageBoundaryCache = new Map<string, PackageBoundary | null>(),
   explicitNamespace?: string,
+  preserveSymlinks = false,
 ): string {
   if (!rootDir) {
     return `external:${hashString(sourceModule.split(path.sep).join('/'))}`
   }
-  const root = normalizeIdentityPath(rootDir)
-  const { filename, suffix } = getPublicModuleIdentityParts(sourceModule, rootDir)
+  const root = normalizeModuleIdentityPath(rootDir, preserveSymlinks)
+  const { filename, suffix } = getPublicModuleIdentityParts(sourceModule, rootDir, preserveSymlinks)
   const publicIdentity = createPublicModuleSourceIdentity(
     sourceModule,
     rootDir,
     packageBoundaryCache,
     explicitNamespace,
+    preserveSymlinks,
   )
   if (!publicIdentity.portable && isPathAtOrInsideDirectory(root, filename)) {
     // Preserve the established root-local handler ABI while extending the same
@@ -4302,12 +4355,14 @@ function createHandlerId(
   rootDir?: string,
   packageBoundaryCache?: Map<string, PackageBoundary | null>,
   explicitNamespace?: string,
+  preserveSymlinks = false,
 ): string {
   const sourceIdentity = createHandlerSourceIdentity(
     sourceModule,
     rootDir,
     packageBoundaryCache,
     explicitNamespace,
+    preserveSymlinks,
   )
   return `h${hashString(sourceIdentity).slice(0, 32)}$$${exportName}`
 }
@@ -4854,12 +4909,14 @@ function createHandlerDependencyExportName(
   rootDir?: string,
   packageBoundaryCache?: Map<string, PackageBoundary | null>,
   explicitNamespace?: string,
+  preserveSymlinks = false,
 ): string {
   const sourceIdentity = createHandlerSourceIdentity(
     sourceModule,
     rootDir,
     packageBoundaryCache,
     explicitNamespace,
+    preserveSymlinks,
   )
   const hash = hashString(`${sourceIdentity}:${localName}`).slice(0, 8)
   const base = `${HANDLER_DEP_PREFIX}${hash}_${localName}`
@@ -4888,6 +4945,7 @@ function extractAndRewriteHandlers(
   rootDir?: string,
   packageBoundaryCache?: Map<string, PackageBoundary | null>,
   explicitNamespace?: string,
+  preserveSymlinks = false,
 ): { code: string; handlers: string[]; map: TransformResult['map'] } | null {
   let ast: ReturnType<typeof parse>
 
@@ -5061,6 +5119,7 @@ function extractAndRewriteHandlers(
                 rootDir,
                 packageBoundaryCache,
                 explicitNamespace,
+                preserveSymlinks,
               )
               dependencyExportNames.set(localName, exportName)
             }
@@ -5074,6 +5133,7 @@ function extractAndRewriteHandlers(
             rootDir,
             packageBoundaryCache,
             explicitNamespace,
+            preserveSymlinks,
           )
           handlerRegistry.set(handlerId, {
             sourceModule,
@@ -5144,6 +5204,7 @@ function extractAndRewriteHandlers(
               rootDir,
               packageBoundaryCache,
               explicitNamespace,
+              preserveSymlinks,
             )
             dependencyExportNames.set(localName, exportName)
           }
@@ -5157,6 +5218,7 @@ function extractAndRewriteHandlers(
           rootDir,
           packageBoundaryCache,
           explicitNamespace,
+          preserveSymlinks,
         )
         handlerRegistry.set(handlerId, {
           sourceModule,
@@ -5222,6 +5284,7 @@ function extractAndRewriteHandlers(
         rootDir,
         packageBoundaryCache,
         explicitNamespace,
+        preserveSymlinks,
       )
       const virtualModuleId = `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}`
       if (path.node.arguments.length === 2) {

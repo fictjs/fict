@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build, type Rollup } from 'vite'
 import { describe, expect, it } from 'vitest'
 
-import fict, { registerExtractedHandler } from '..'
+import fict, { __fictVitePluginInternals, registerExtractedHandler } from '..'
 import type { FictNode } from '../../../runtime/src/types'
 import { renderToString } from '../../../ssr/src/index'
 
@@ -204,6 +204,87 @@ async function buildMacroFixture(
   }))
 }
 
+async function writePreservedSymlinkFixture(root: string): Promise<void> {
+  await Promise.all([
+    mkdir(path.join(root, 'shared'), { recursive: true }),
+    mkdir(path.join(root, 'src', 'a'), { recursive: true }),
+    mkdir(path.join(root, 'src', 'b'), { recursive: true }),
+  ])
+  await linkFixtureRuntime(root)
+  await writeFile(
+    path.join(root, 'package.json'),
+    JSON.stringify({ name: 'preserved-symlink-fixture', version: '1.0.0', type: 'module' }),
+  )
+  await writeFile(
+    path.join(root, 'shared', 'Counter.tsx'),
+    `
+      import { label } from './config'
+
+      export function Counter() {
+        return (
+          <button onClick$={() => { globalThis.__fictPreservedLabel = label }}>
+            {label}
+          </button>
+        )
+      }
+    `,
+  )
+  await Promise.all([
+    writeFile(path.join(root, 'shared', 'config.ts'), `export const label = 'BASE'\n`),
+    writeFile(path.join(root, 'src', 'a', 'config.ts'), `export const label = 'A'\n`),
+    writeFile(path.join(root, 'src', 'b', 'config.ts'), `export const label = 'B'\n`),
+    symlink('../../shared/Counter.tsx', path.join(root, 'src', 'a', 'Counter.tsx')),
+    symlink('../../shared/Counter.tsx', path.join(root, 'src', 'b', 'Counter.tsx')),
+    writeFile(
+      path.join(root, 'src', 'entry.ts'),
+      `
+        export { Counter as CounterA } from './a/Counter'
+        export { Counter as CounterB } from './b/Counter'
+      `,
+    ),
+  ])
+}
+
+async function buildPreservedSymlinkFixture(
+  root: string,
+  preserveSymlinks: boolean,
+): Promise<BuildArtifact[]> {
+  const result = await build({
+    root,
+    configFile: false,
+    logLevel: 'silent',
+    resolve: { preserveSymlinks },
+    plugins: [
+      fict({
+        cache: false,
+        useTypeScriptProject: false,
+        functionSplitting: true,
+        resumable: true,
+      }),
+    ],
+    build: {
+      write: false,
+      lib: {
+        entry: path.join(root, 'src', 'entry.ts'),
+        formats: ['es'],
+        fileName: () => 'app.js',
+      },
+      rollupOptions: {
+        external: id => id === 'fict' || id.startsWith('fict/'),
+        output: { chunkFileNames: 'chunks/[name].js' },
+      },
+    },
+  })
+  const outputs = (Array.isArray(result) ? result : [result]).flatMap(output =>
+    'output' in output ? output.output : [],
+  ) as Rollup.OutputFile[]
+
+  return outputs.map(output => ({
+    fileName: output.fileName,
+    source: output.type === 'chunk' ? output.code : String(output.source),
+  }))
+}
+
 describe('function splitting build identity', () => {
   it('keeps manually registered handler IDs opaque and loadable', () => {
     const sourceModule = String.raw`C:\private build\App #?.tsx`
@@ -247,6 +328,102 @@ describe('function splitting build identity', () => {
         rm(firstRoot, { recursive: true, force: true }),
         rm(secondRoot, { recursive: true, force: true }),
       ])
+    }
+  })
+
+  it('keeps preserve-symlinks identities stable across root path aliases', async () => {
+    const realRoot = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-symlink-root-real-')))
+    const aliasParent = await realpath(
+      await mkdtemp(path.join(tmpdir(), 'fict-symlink-root-alias-')),
+    )
+    const aliasRoot = path.join(aliasParent, 'project')
+    const realModule = path.join(realRoot, 'src', 'Counter.tsx')
+    const aliasModule = path.join(aliasRoot, 'src', 'Counter.tsx')
+
+    try {
+      await mkdir(path.dirname(realModule), { recursive: true })
+      await Promise.all([
+        writeFile(
+          path.join(realRoot, 'package.json'),
+          JSON.stringify({ name: 'root-alias-fixture', version: '1.0.0' }),
+        ),
+        writeFile(realModule, 'export function Counter() {}'),
+      ])
+      await symlink(realRoot, aliasRoot, 'junction')
+
+      const realPublicId = __fictVitePluginInternals.createPublicModuleId(
+        realModule,
+        realRoot,
+        undefined,
+        true,
+      )
+      const aliasPublicId = __fictVitePluginInternals.createPublicModuleId(
+        aliasModule,
+        aliasRoot,
+        undefined,
+        true,
+      )
+      const realHandlerId = __fictVitePluginInternals.createHandlerId(
+        realModule,
+        '__fict_e0',
+        realRoot,
+        undefined,
+        true,
+      )
+      const aliasHandlerId = __fictVitePluginInternals.createHandlerId(
+        aliasModule,
+        '__fict_e0',
+        aliasRoot,
+        undefined,
+        true,
+      )
+
+      expect(aliasPublicId).toBe(realPublicId)
+      expect(aliasHandlerId).toBe(realHandlerId)
+      expect(__fictVitePluginInternals.createPublicModuleId(aliasModule, aliasRoot)).toBe(
+        __fictVitePluginInternals.createPublicModuleId(realModule, realRoot),
+      )
+      expect(
+        __fictVitePluginInternals.createHandlerId(aliasModule, '__fict_e0', aliasRoot),
+      ).toBe(__fictVitePluginInternals.createHandlerId(realModule, '__fict_e0', realRoot))
+    } finally {
+      await Promise.all([
+        rm(aliasParent, { recursive: true, force: true }),
+        rm(realRoot, { recursive: true, force: true }),
+      ])
+    }
+  })
+
+  it('preserves logical symlink module identities only when Vite preserves symlinks', async () => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-preserved-symlinks-')))
+
+    try {
+      await writePreservedSymlinkFixture(root)
+      const [physicalArtifacts, logicalArtifacts] = await Promise.all([
+        buildPreservedSymlinkFixture(root, false),
+        buildPreservedSymlinkFixture(root, true),
+      ])
+      const readManifest = (artifacts: BuildArtifact[]) =>
+        JSON.parse(
+          artifacts.find(artifact => artifact.fileName === 'fict.manifest.json')!.source,
+        ) as Record<string, string>
+      const manifestKeys = (artifacts: BuildArtifact[], prefix: string) =>
+        Object.keys(readManifest(artifacts)).filter(key => key.startsWith(prefix))
+
+      expect(manifestKeys(physicalArtifacts, 'fict:module:')).toHaveLength(1)
+      expect(manifestKeys(physicalArtifacts, 'virtual:fict-handler:')).toHaveLength(1)
+      expect(manifestKeys(logicalArtifacts, 'fict:module:')).toHaveLength(2)
+      expect(manifestKeys(logicalArtifacts, 'virtual:fict-handler:')).toHaveLength(2)
+
+      const logicalJavaScript = logicalArtifacts
+        .filter(artifact => artifact.fileName.endsWith('.js'))
+        .map(artifact => artifact.source)
+        .join('\n')
+      expect(logicalJavaScript).toContain('"A"')
+      expect(logicalJavaScript).toContain('"B"')
+      expect(logicalJavaScript).not.toContain(root)
+    } finally {
+      await rm(root, { recursive: true, force: true })
     }
   })
 
