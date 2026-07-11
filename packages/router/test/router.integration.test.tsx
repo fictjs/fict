@@ -168,6 +168,27 @@ function ReactiveDownloadLinkFixture() {
   )
 }
 
+let setReactiveLinkTarget: (value: string) => void = () => {}
+
+function ReactiveTargetLinkFixture() {
+  let target = $state('_BLANK')
+
+  setReactiveLinkTarget = value => {
+    target = value
+  }
+
+  return (
+    <>
+      <Link to="/reactive-link-target" target={target} data-testid="reactive-target-link">
+        link target
+      </Link>
+      <NavLink to="/reactive-nav-target" target={target} data-testid="reactive-target-nav-link">
+        nav target
+      </NavLink>
+    </>
+  )
+}
+
 const firstNavChild = () => <span data-testid="nav-child">first</span>
 const secondNavChild = () => <span data-testid="nav-child">second</span>
 let reactiveNavLinkControls: {
@@ -1554,6 +1575,126 @@ describe('Router integration (MemoryRouter)', () => {
     expect(anchor.getAttribute('href')).toBe('https://example.com/docs')
     expect(routerPreventedDefault).toBe(false)
     expect(screen.getByTestId('path').textContent).toBe('/from')
+  })
+
+  it('intercepts mixed-case _self targets for Link and NavLink', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/from'] })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <Link to="/link-self" target="_SELF" data-testid="link-self-target">
+            link
+          </Link>
+          <NavLink to="/nav-self" target="_SeLf" data-testid="nav-self-target">
+            nav
+          </NavLink>
+        </RouterProvider>
+      ))
+
+      const linkEvent = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })
+      expect(screen.getByTestId('link-self-target').dispatchEvent(linkEvent)).toBe(false)
+      expect(linkEvent.defaultPrevented).toBe(true)
+      await vi.waitFor(() => expect(history.location.pathname).toBe('/link-self'))
+
+      await act(async () => {
+        history.replace('/from')
+      })
+      const navEvent = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })
+      expect(screen.getByTestId('nav-self-target').dispatchEvent(navEvent)).toBe(false)
+      expect(navEvent.defaultPrevented).toBe(true)
+      await vi.waitFor(() => expect(history.location.pathname).toBe('/nav-self'))
+    } finally {
+      history.destroy?.()
+    }
+  })
+
+  it('leaves other reserved and named targets to native navigation', () => {
+    const history = createMemoryHistory({ initialEntries: ['/from'] })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <Link to="/blank" target="_BLANK" data-testid="blank-target">
+            blank
+          </Link>
+          <NavLink to="/parent" target="_PaReNt" data-testid="parent-target">
+            parent
+          </NavLink>
+          <Link to="/top" target="_ToP" data-testid="top-target">
+            top
+          </Link>
+          <NavLink to="/named" target="reportFrame" data-testid="named-target">
+            named
+          </NavLink>
+        </RouterProvider>
+      ))
+
+      const routerPreventedDefaults: boolean[] = []
+      const observeClick = (event: MouseEvent) => {
+        routerPreventedDefaults.push(event.defaultPrevented)
+        event.preventDefault()
+      }
+      window.addEventListener('click', observeClick)
+
+      try {
+        for (const testId of ['blank-target', 'parent-target', 'top-target', 'named-target']) {
+          screen
+            .getByTestId(testId)
+            .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }))
+        }
+      } finally {
+        window.removeEventListener('click', observeClick)
+      }
+
+      expect(routerPreventedDefaults).toEqual([false, false, false, false])
+      expect(history.location.pathname).toBe('/from')
+    } finally {
+      history.destroy?.()
+    }
+  })
+
+  it('uses the current reactive target when deciding Link interception', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/from'] })
+    const routerPreventedDefaults: boolean[] = []
+    const observeClick = (event: MouseEvent) => {
+      routerPreventedDefaults.push(event.defaultPrevented)
+      if (!event.defaultPrevented) event.preventDefault()
+    }
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <ReactiveTargetLinkFixture />
+        </RouterProvider>
+      ))
+      window.addEventListener('click', observeClick)
+
+      const link = screen.getByTestId('reactive-target-link') as HTMLAnchorElement
+      const navLink = screen.getByTestId('reactive-target-nav-link') as HTMLAnchorElement
+      expect(link.getAttribute('target')).toBe('_BLANK')
+      expect(navLink.getAttribute('target')).toBe('_BLANK')
+      link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }))
+      navLink.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }))
+      expect(history.location.pathname).toBe('/from')
+
+      await act(async () => {
+        setReactiveLinkTarget('_SELF')
+      })
+      expect(link.getAttribute('target')).toBe('_SELF')
+      expect(navLink.getAttribute('target')).toBe('_SELF')
+      link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }))
+      await vi.waitFor(() => expect(history.location.pathname).toBe('/reactive-link-target'))
+      await act(async () => {
+        history.replace('/from')
+      })
+      navLink.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }))
+      await vi.waitFor(() => expect(history.location.pathname).toBe('/reactive-nav-target'))
+      expect(routerPreventedDefaults).toEqual([false, false, true, true])
+    } finally {
+      window.removeEventListener('click', observeClick)
+      history.destroy?.()
+    }
   })
 
   it('leaves Link and NavLink downloads to the browser after onClick', () => {

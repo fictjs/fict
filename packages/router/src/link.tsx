@@ -140,7 +140,7 @@ function readLinkClick(
   if (snapshot.reloadDocument || snapshot.disabled || snapshot.externalHref) return undefined
 
   const target = anchor.target
-  if (target && target !== '_self') return undefined
+  if (target && target.toLowerCase() !== '_self') return undefined
   return snapshot
 }
 
