@@ -8,6 +8,7 @@ import {
   __fictEnableResumable,
   __fictEnsureScope,
   __fictGetResume,
+  __fictIsCommittedSSRStateError,
   __fictSetSSRState,
   __fictUseLexicalScope,
   serializeValue,
@@ -363,6 +364,7 @@ export type SnapshotIssueCode =
   | 'snapshot_invalid_shape'
   | 'snapshot_unsupported_version'
   | 'snapshot_migration_failed'
+  | 'snapshot_effect_failed'
   | 'snapshot_fallback_failed'
   | 'scope_snapshot_missing'
   | 'resume_import_failed'
@@ -733,6 +735,18 @@ function applySnapshotState(
     installation.scopeIds = nextScopeIds
     return true
   } catch (error) {
+    if (__fictIsCommittedSSRStateError(error)) {
+      installation.state = nextState
+      installation.scopeIds = nextScopeIds
+      emitSnapshotIssue(installation, {
+        code: 'snapshot_effect_failed',
+        message: `[fict/loader] Snapshot state was committed, but a reactive effect failed: ${formatImportError(error.cause)}`,
+        source,
+        expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        error: error.cause,
+      })
+      return true
+    }
     emitSnapshotIssue(installation, {
       code: 'snapshot_invalid_shape',
       message: `[fict/loader] Snapshot payload contains invalid scope data: ${formatImportError(error)}`,

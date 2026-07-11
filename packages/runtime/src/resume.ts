@@ -1,7 +1,7 @@
 import type { HookContext } from './hooks'
 import { registerRootCleanup } from './lifecycle'
 import { materializePropsForSnapshot, unwrapProps } from './props'
-import { createSignal, isSignal } from './signal'
+import { batch, createSignal, isSignal } from './signal'
 import {
   __fictCreateSSRSession,
   __fictGetCurrentSSRSession,
@@ -77,11 +77,47 @@ export interface ComponentMeta {
 let resumableEnabled = false
 let hydrationDepth = 0
 const defaultSSRSession = __fictCreateSSRSession()
-const resumedScopes = new Map<
-  string,
-  { ctx: HookContext; host: Element; props?: Record<string, unknown> }
->()
+
+type StoreSetter = (fn: (state: object) => void | object) => void
+
+interface ResumedScopeEntry {
+  ctx: HookContext
+  host: Element
+  props?: Record<string, unknown>
+  signalAccessors: Map<number, unknown>
+  storeProxies: Map<number, unknown>
+  storeSetters: Map<number, StoreSetter>
+  storeTopologies: Map<number, Map<string, object>>
+  /** Last server revision observed for three-way ownership checks. */
+  serverBaseline?: ScopeSnapshot
+  /** Client ownership is sticky for the lifetime of a resumed scope. */
+  clientOwned: boolean
+}
+
+const resumedScopes = new Map<string, ResumedScopeEntry>()
 const componentMetaRegistry = new WeakMap<object, ComponentMeta>()
+const COMMITTED_SSR_STATE_ERROR = Symbol('fict:committed-ssr-state-error')
+
+export function __fictIsCommittedSSRStateError(
+  error: unknown,
+): error is Error & { readonly cause: unknown } {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { [COMMITTED_SSR_STATE_ERROR]?: boolean })[COMMITTED_SSR_STATE_ERROR] === true
+  )
+}
+
+function createCommittedSSRStateError(cause: unknown): Error & { readonly cause: unknown } {
+  const message = cause instanceof Error ? cause.message : String(cause)
+  const error = new Error(message) as Error & { readonly cause: unknown }
+  Object.defineProperties(error, {
+    cause: { value: cause, configurable: true },
+    [COMMITTED_SSR_STATE_ERROR]: { value: true },
+  })
+  error.name = 'CommittedSSRStateError'
+  return error
+}
 
 const WELL_KNOWN_SYMBOLS = new Map<symbol, string>([
   [Symbol.asyncIterator, 'asyncIterator'],
@@ -349,21 +385,27 @@ export function __fictSerializeSSRStateForScopes(scopeIds: Iterable<string>): SS
 }
 
 export function __fictSetSSRState(state: SSRState | null): void {
-  setSnapshotState(state ? validateSSRState(state, '__fictSetSSRState') : null)
   if (!state) {
+    setSnapshotState(null)
     resumedScopes.clear()
+    return
   }
+
+  const validated = validateSSRState(state, '__fictSetSSRState')
+  reconcileResumedScopeRevisions(validated.scopes, () => setSnapshotState(validated))
 }
 
 export function __fictMergeSSRState(state: SSRState | null): void {
   if (!state) return
   const validated = validateSSRState(state, '__fictMergeSSRState')
   const snapshotState = getSnapshotState()
-  if (!snapshotState) {
-    setSnapshotState(validated)
-    return
-  }
-  Object.assign(snapshotState.scopes, validated.scopes)
+  reconcileResumedScopeRevisions(validated.scopes, () => {
+    if (!snapshotState) {
+      setSnapshotState(validated)
+    } else {
+      Object.assign(snapshotState.scopes, validated.scopes)
+    }
+  })
 }
 
 export function __fictGetSSRScope(id: string): ScopeSnapshot | undefined {
@@ -381,15 +423,30 @@ export function __fictEnsureScope(
   if (existing) return existing.ctx
 
   const refs = new Map<string, unknown>()
-  const ctx = createContextFromSnapshot(snapshot, refs)
+  const signalAccessors = new Map<number, unknown>()
+  const storeProxies = new Map<number, unknown>()
+  const storeSetters = new Map<number, StoreSetter>()
+  const ctx = createContextFromSnapshot(snapshot, refs, signalAccessors, storeProxies, storeSetters)
   ctx.scopeId = scopeId
   if (snapshot?.t !== undefined) {
     ctx.scopeType = snapshot.t
   }
-  const entry: { ctx: HookContext; host: Element; props?: Record<string, unknown> } = { ctx, host }
+  const entry: ResumedScopeEntry = {
+    ctx,
+    host,
+    signalAccessors,
+    storeProxies,
+    storeSetters,
+    storeTopologies: new Map(),
+    clientOwned: false,
+  }
+  if (snapshot !== undefined) {
+    entry.serverBaseline = snapshot
+  }
   if (snapshot?.props !== undefined) {
     entry.props = deserializeValue(snapshot.props, refs, '$.props') as Record<string, unknown>
   }
+  captureAcceptedStoreTopologies(entry)
   resumedScopes.set(scopeId, entry)
   return ctx
 }
@@ -409,6 +466,733 @@ export function __fictUseLexicalScope(scopeId: string, names: string[]): unknown
 
 export function __fictGetScopeProps(scopeId: string): Record<string, unknown> | undefined {
   return resumedScopes.get(scopeId)?.props
+}
+
+interface DeserializedScopeSlot {
+  index: number
+  type: SlotSnapshot[1]
+  value: unknown
+}
+
+interface DeserializedScopeRevision {
+  slots: DeserializedScopeSlot[]
+  hasProps: boolean
+  props?: Record<string, unknown>
+}
+
+interface PreparedScopeRevision {
+  entry: ResumedScopeEntry
+  snapshot: ScopeSnapshot
+  deserialized: DeserializedScopeRevision
+  serverOwned: boolean
+  hasServerChanges: boolean
+  clientOwned: boolean
+  initializing: boolean
+}
+
+/**
+ * Treat streamed snapshots for a scope as ordered server revisions. A live scope
+ * remains server-owned while its complete serializable state equals the previous
+ * server revision. Once client code changes any part of that state, ownership of
+ * the whole scope permanently moves to the client: later revisions advance the
+ * comparison baseline, but never roll the live scope back or reclaim ownership
+ * merely because values happen to converge again.
+ */
+function reconcileResumedScopeRevisions(
+  scopes: Record<string, ScopeSnapshot>,
+  publishSnapshot: () => void,
+): void {
+  const prepared: PreparedScopeRevision[] = []
+
+  // Deserialize and validate every affected live scope before mutating any of
+  // them, so a malformed incremental payload cannot leave a partial revision.
+  for (const [scopeId, snapshot] of Object.entries(scopes)) {
+    const entry = resumedScopes.get(scopeId)
+    if (!entry) continue
+    prepared.push(prepareScopeRevision(scopeId, entry, snapshot))
+  }
+
+  let fullyApplied = false
+  const commit = () => {
+    // Publish the global snapshot and every ownership/baseline decision before
+    // applying reactive writes. The enclosing batch cannot flush effects until
+    // all observable representations point at the same revision.
+    publishSnapshot()
+    for (const revision of prepared) {
+      revision.entry.serverBaseline = revision.snapshot
+      revision.entry.clientOwned = revision.clientOwned
+      if (revision.clientOwned) releaseCapturedServerState(revision.entry)
+    }
+    for (const revision of prepared) {
+      applyScopeRevision(revision)
+    }
+    fullyApplied = true
+  }
+
+  try {
+    if (prepared.some(revision => revision.serverOwned && revision.hasServerChanges)) {
+      batch(commit)
+    } else {
+      commit()
+    }
+  } catch (error) {
+    if (fullyApplied) throw createCommittedSSRStateError(error)
+    throw error
+  }
+}
+
+function releaseCapturedServerState(entry: ResumedScopeEntry): void {
+  // A client-owned scope can never be reclaimed by later server revisions.
+  // Drop identity snapshots and setter closures so replaced server objects do
+  // not stay strongly reachable for the remainder of the scope lifetime.
+  entry.signalAccessors.clear()
+  entry.storeProxies.clear()
+  entry.storeSetters.clear()
+  entry.storeTopologies.clear()
+}
+
+function prepareScopeRevision(
+  scopeId: string,
+  entry: ResumedScopeEntry,
+  snapshot: ScopeSnapshot,
+): PreparedScopeRevision {
+  const deserialized = deserializeScopeRevision(snapshot, scopeId)
+  const baseline = entry.serverBaseline
+  if (!baseline) {
+    assertUninitializedScopeCanInstall(scopeId, entry)
+    return {
+      entry,
+      snapshot,
+      deserialized,
+      serverOwned: true,
+      hasServerChanges: true,
+      clientOwned: false,
+      initializing: true,
+    }
+  }
+
+  assertCompatibleScopeRevision(scopeId, baseline, snapshot)
+
+  const matchesCapturedIdentities =
+    !entry.clientOwned && capturedSlotIdentitiesMatch(entry, snapshot)
+  const matchesBaseline = matchesCapturedIdentities && isScopeAtServerBaseline(entry, baseline)
+  const matchesStoreTopology = matchesBaseline && acceptedStoreTopologiesMatch(entry)
+  const clientOwned = entry.clientOwned || !matchesBaseline || !matchesStoreTopology
+  const serverOwned = !clientOwned
+  const hasServerChanges = !serializedValuesEqual(baseline, snapshot)
+  if (serverOwned && hasServerChanges) {
+    // Generated event handlers fetch entry.props on every invocation, but the
+    // generated component resume function passes snapshot.props into hydration
+    // once. A host with a resume QRL may therefore have captured the old object.
+    if (
+      entry.host.hasAttribute('data-fict-h') &&
+      !serializedValuesEqual(baseline.props, snapshot.props)
+    ) {
+      throw new Error(
+        `[fict] Cannot merge SSR snapshot scope "${scopeId}": component props identity may already be captured by hydration.`,
+      )
+    }
+    for (const slot of deserialized.slots) {
+      const current = entry.ctx.slots[slot.index]
+      if (slot.type === 'sig' && !isSignal(current)) {
+        throw new Error(
+          `[fict] Cannot merge SSR snapshot scope "${scopeId}" slot ${slot.index}: live signal identity was lost.`,
+        )
+      }
+      if (slot.type === 'store' && !entry.storeSetters.has(slot.index)) {
+        throw new Error(
+          `[fict] Cannot merge SSR snapshot scope "${scopeId}" slot ${slot.index}: live store identity was lost.`,
+        )
+      }
+      if (slot.type === 'store') {
+        assertCompatibleStoreRevision(scopeId, slot.index, current, slot.value as object)
+      }
+    }
+    assertSafeStoreAliasTopology(scopeId, deserializeScopeRevision(baseline, scopeId), 'current')
+    assertSafeStoreAliasTopology(scopeId, deserialized, 'incoming')
+  }
+
+  return {
+    entry,
+    snapshot,
+    deserialized,
+    serverOwned,
+    hasServerChanges,
+    clientOwned,
+    initializing: false,
+  }
+}
+
+function applyScopeRevision(revision: PreparedScopeRevision): void {
+  const { entry, deserialized, serverOwned, hasServerChanges, initializing } = revision
+  if (!serverOwned || !hasServerChanges) return
+  if (initializing) {
+    installInitialScopeRevision(revision)
+    return
+  }
+
+  // All roots came from one refs map. Installing signal/raw/props values from
+  // this graph together preserves aliases (including topology changes) between
+  // those runtime-owned roots; store roots are separately rejected unless safely
+  // reconcilable. References copied into arbitrary user closures are outside the
+  // snapshot graph and cannot be retargeted by an incremental revision.
+  for (const slot of deserialized.slots) {
+    if (slot.type === 'sig') {
+      ;(entry.signalAccessors.get(slot.index)! as (value: unknown) => void)(slot.value)
+    } else if (slot.type === 'store') {
+      entry.storeSetters.get(slot.index)!(() => slot.value as object)
+    } else {
+      entry.ctx.slots[slot.index] = slot.value
+    }
+  }
+
+  if (deserialized.hasProps) {
+    entry.props = deserialized.props!
+  } else {
+    delete entry.props
+  }
+  captureAcceptedStoreTopologies(entry)
+}
+
+function capturedSlotIdentitiesMatch(entry: ResumedScopeEntry, snapshot: ScopeSnapshot): boolean {
+  for (const [index, type] of snapshot.slots) {
+    const current = entry.ctx.slots[index]
+    if (
+      type === 'sig' &&
+      (!entry.signalAccessors.has(index) || current !== entry.signalAccessors.get(index))
+    ) {
+      return false
+    }
+    if (
+      type === 'store' &&
+      (!entry.storeProxies.has(index) ||
+        current !== entry.storeProxies.get(index) ||
+        !entry.storeSetters.has(index))
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
+function assertUninitializedScopeCanInstall(scopeId: string, entry: ResumedScopeEntry): void {
+  const contextKeys = Reflect.ownKeys(entry.ctx)
+  const slotsDescriptor = Object.getOwnPropertyDescriptor(entry.ctx, 'slots')
+  const cursorDescriptor = Object.getOwnPropertyDescriptor(entry.ctx, 'cursor')
+  const scopeIdDescriptor = Object.getOwnPropertyDescriptor(entry.ctx, 'scopeId')
+  const pristineContext =
+    Object.getPrototypeOf(entry.ctx) === Object.prototype &&
+    Object.isExtensible(entry.ctx) &&
+    contextKeys.length === 3 &&
+    contextKeys.every(key => key === 'slots' || key === 'cursor' || key === 'scopeId') &&
+    isCanonicalWritableDataDescriptor(slotsDescriptor) &&
+    isCanonicalWritableDataDescriptor(cursorDescriptor) &&
+    isCanonicalWritableDataDescriptor(scopeIdDescriptor) &&
+    cursorDescriptor.value === 0 &&
+    scopeIdDescriptor.value === scopeId
+  const slots = slotsDescriptor && 'value' in slotsDescriptor ? slotsDescriptor.value : undefined
+  const lengthDescriptor = Array.isArray(slots)
+    ? Object.getOwnPropertyDescriptor(slots, 'length')
+    : undefined
+  const pristineSlots =
+    Array.isArray(slots) &&
+    Object.getPrototypeOf(slots) === Array.prototype &&
+    Object.isExtensible(slots) &&
+    slots.length === 0 &&
+    Reflect.ownKeys(slots).every(key => key === 'length') &&
+    !!lengthDescriptor &&
+    'value' in lengthDescriptor &&
+    lengthDescriptor.writable === true
+  if (
+    !pristineContext ||
+    !pristineSlots ||
+    entry.props !== undefined ||
+    entry.signalAccessors.size !== 0 ||
+    entry.storeProxies.size !== 0 ||
+    entry.storeSetters.size !== 0 ||
+    entry.storeTopologies.size !== 0
+  ) {
+    throw new Error(
+      `[fict] Cannot install first SSR snapshot scope "${scopeId}": live scope is no longer empty.`,
+    )
+  }
+}
+
+function isCanonicalWritableDataDescriptor(
+  descriptor: PropertyDescriptor | undefined,
+): descriptor is PropertyDescriptor & { value: unknown } {
+  return (
+    !!descriptor &&
+    'value' in descriptor &&
+    descriptor.writable === true &&
+    descriptor.enumerable === true &&
+    descriptor.configurable === true
+  )
+}
+
+function installInitialScopeRevision(revision: PreparedScopeRevision): void {
+  const { entry, snapshot, deserialized } = revision
+  for (const slot of deserialized.slots) {
+    if (slot.type === 'sig') {
+      const signal = createSignal(slot.value)
+      entry.ctx.slots[slot.index] = signal
+      entry.signalAccessors.set(slot.index, signal)
+    } else if (slot.type === 'store') {
+      const [store, setStore] = createStore(slot.value as object)
+      entry.ctx.slots[slot.index] = store
+      entry.storeProxies.set(slot.index, store)
+      entry.storeSetters.set(slot.index, setStore)
+    } else {
+      entry.ctx.slots[slot.index] = slot.value
+    }
+  }
+
+  if (snapshot.vars) {
+    entry.ctx.slotMap = Object.assign(Object.create(null) as Record<string, number>, snapshot.vars)
+  }
+  if (snapshot.t !== undefined) entry.ctx.scopeType = snapshot.t
+  if (deserialized.hasProps) entry.props = deserialized.props!
+  captureAcceptedStoreTopologies(entry)
+}
+
+function captureAcceptedStoreTopologies(entry: ResumedScopeEntry): void {
+  const topologies = new Map<number, Map<string, object>>()
+  for (const [index, store] of entry.storeProxies) {
+    topologies.set(index, captureStorePlainNodeTopology(store))
+  }
+  entry.storeTopologies = topologies
+}
+
+function acceptedStoreTopologiesMatch(entry: ResumedScopeEntry): boolean {
+  if (entry.storeTopologies.size !== entry.storeProxies.size) return false
+  for (const [index, store] of entry.storeProxies) {
+    const accepted = entry.storeTopologies.get(index)
+    if (!accepted) return false
+    const current = captureStorePlainNodeTopology(store)
+    if (current.size !== accepted.size) return false
+    for (const [path, value] of accepted) {
+      if (current.get(path) !== value) return false
+    }
+  }
+  return true
+}
+
+function captureStorePlainNodeTopology(value: unknown): Map<string, object> {
+  const topology = new Map<string, object>()
+  const seen = new WeakSet<object>()
+
+  const visit = (currentValue: unknown, path: string): void => {
+    const current = unwrapStore(currentValue)
+    if (current === null || typeof current !== 'object') return
+    const prototype = Object.getPrototypeOf(current)
+    if (!Array.isArray(current) && prototype !== Object.prototype && prototype !== null) return
+
+    topology.set(path, current)
+    if (seen.has(current)) return
+    seen.add(current)
+    for (const key of Reflect.ownKeys(current)) {
+      const descriptor = Object.getOwnPropertyDescriptor(current, key)
+      if (!descriptor?.enumerable || !('value' in descriptor)) continue
+      visit(descriptor.value, storeChildPath(path, key))
+    }
+  }
+
+  visit(value, '$')
+  return topology
+}
+
+function assertCompatibleStoreRevision(
+  scopeId: string,
+  slotIndex: number,
+  liveValue: unknown,
+  nextValue: object,
+): void {
+  assertCanonicalStoreReconcileTree(
+    scopeId,
+    slotIndex,
+    unwrapStore(liveValue),
+    nextValue,
+    '$',
+    new WeakSet<object>(),
+  )
+}
+
+function assertCanonicalStoreReconcileTree(
+  scopeId: string,
+  slotIndex: number,
+  currentValue: unknown,
+  nextValue: unknown,
+  path: string,
+  seen: WeakSet<object>,
+): void {
+  const current = unwrapStore(currentValue)
+  const next = unwrapStore(nextValue)
+  if (
+    current === null ||
+    next === null ||
+    typeof current !== 'object' ||
+    typeof next !== 'object'
+  ) {
+    failUnsafeStoreReconcile(scopeId, slotIndex, path, 'store node is not an object')
+  }
+
+  const currentIsArray = Array.isArray(current)
+  const nextIsArray = Array.isArray(next)
+  const currentPrototype = Object.getPrototypeOf(current)
+  const nextPrototype = Object.getPrototypeOf(next)
+  const hasCanonicalPrototype = currentIsArray
+    ? currentPrototype === Array.prototype
+    : currentPrototype === Object.prototype || currentPrototype === null
+  if (
+    !hasCanonicalPrototype ||
+    currentIsArray !== nextIsArray ||
+    currentPrototype !== nextPrototype
+  ) {
+    failUnsafeStoreReconcile(scopeId, slotIndex, path, 'store prototype is not canonical')
+  }
+
+  if (seen.has(current)) return
+  seen.add(current)
+
+  if (!Object.isExtensible(current)) {
+    failUnsafeStoreReconcile(scopeId, slotIndex, path, 'store node is not extensible')
+  }
+
+  if (currentIsArray) {
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(current, 'length')
+    if (
+      !lengthDescriptor ||
+      !('value' in lengthDescriptor) ||
+      lengthDescriptor.value !== current.length ||
+      lengthDescriptor.writable !== true ||
+      lengthDescriptor.enumerable !== false ||
+      lengthDescriptor.configurable !== false
+    ) {
+      failUnsafeStoreReconcile(scopeId, slotIndex, `${path}.length`, 'array length is not writable')
+    }
+  }
+
+  for (const key of Reflect.ownKeys(current)) {
+    if (currentIsArray && key === 'length') continue
+    const descriptor = Object.getOwnPropertyDescriptor(current, key)
+    if (
+      !descriptor ||
+      !('value' in descriptor) ||
+      descriptor.writable !== true ||
+      descriptor.enumerable !== true ||
+      descriptor.configurable !== true
+    ) {
+      failUnsafeStoreReconcile(
+        scopeId,
+        slotIndex,
+        storeChildPath(path, key),
+        'store property descriptor is not canonical',
+      )
+    }
+    if (currentIsArray && (typeof key !== 'string' || !isArrayIndexKey(key))) {
+      failUnsafeStoreReconcile(
+        scopeId,
+        slotIndex,
+        storeChildPath(path, key),
+        'array store contains a non-index property',
+      )
+    }
+  }
+
+  for (const key of enumerableStoreKeys(next)) {
+    const currentDescriptor = Object.getOwnPropertyDescriptor(current, key)
+    const nextDescriptor = Object.getOwnPropertyDescriptor(next, key)!
+    if (!currentDescriptor) {
+      if (key === '__proto__') {
+        failUnsafeStoreReconcile(
+          scopeId,
+          slotIndex,
+          storeChildPath(path, key),
+          'adding __proto__ would invoke an inherited setter',
+        )
+      }
+      const inherited = getInheritedPropertyDescriptor(current, key)
+      if (inherited && (!('value' in inherited) || inherited.writable !== true)) {
+        failUnsafeStoreReconcile(
+          scopeId,
+          slotIndex,
+          storeChildPath(path, key),
+          'adding the property would invoke or violate an inherited descriptor',
+        )
+      }
+      continue
+    }
+
+    const currentChild = (currentDescriptor as PropertyDescriptor & { value: unknown }).value
+    const nextChild = (nextDescriptor as PropertyDescriptor & { value: unknown }).value
+    if (areStoreNodesRecursivelyReconciled(currentChild, nextChild)) {
+      assertCanonicalStoreReconcileTree(
+        scopeId,
+        slotIndex,
+        currentChild,
+        nextChild,
+        storeChildPath(path, key),
+        seen,
+      )
+    }
+  }
+}
+
+function areStoreNodesRecursivelyReconciled(currentValue: unknown, nextValue: unknown): boolean {
+  const current = unwrapStore(currentValue)
+  const next = unwrapStore(nextValue)
+  if (
+    current === null ||
+    next === null ||
+    typeof current !== 'object' ||
+    typeof next !== 'object'
+  ) {
+    return false
+  }
+  const currentPrototype = Object.getPrototypeOf(current)
+  const nextPrototype = Object.getPrototypeOf(next)
+  const currentPlain = currentPrototype === Object.prototype || currentPrototype === null
+  const nextPlain = nextPrototype === Object.prototype || nextPrototype === null
+  return (
+    (Array.isArray(current) && Array.isArray(next)) ||
+    (!Array.isArray(current) && !Array.isArray(next) && currentPlain && nextPlain)
+  )
+}
+
+function enumerableStoreKeys(value: object): (string | symbol)[] {
+  return Reflect.ownKeys(value).filter(key => {
+    return Object.getOwnPropertyDescriptor(value, key)?.enumerable === true
+  })
+}
+
+function getInheritedPropertyDescriptor(
+  value: object,
+  key: string | symbol,
+): PropertyDescriptor | undefined {
+  let prototype = Object.getPrototypeOf(value)
+  while (prototype) {
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, key)
+    if (descriptor) return descriptor
+    prototype = Object.getPrototypeOf(prototype)
+  }
+  return undefined
+}
+
+function storeChildPath(path: string, key: string | symbol): string {
+  return typeof key === 'symbol' ? `${path}[${String(key)}]` : `${path}[${JSON.stringify(key)}]`
+}
+
+function failUnsafeStoreReconcile(
+  scopeId: string,
+  slotIndex: number,
+  path: string,
+  reason: string,
+): never {
+  throw new Error(
+    `[fict] Cannot merge SSR snapshot scope "${scopeId}" slot ${slotIndex} at ${path}: ${reason}.`,
+  )
+}
+
+/**
+ * Store reconciliation preserves the live proxy/root identity by mutating its
+ * object tree. It cannot safely create or remove aliases/cycles within that tree,
+ * or preserve an alias shared with another slot/props root. Reject such revisions
+ * before any live state changes instead of silently corrupting reference topology.
+ */
+function assertSafeStoreAliasTopology(
+  scopeId: string,
+  revision: DeserializedScopeRevision,
+  label: 'current' | 'incoming',
+): void {
+  const storeObjects = new Set<object>()
+  const storeSlots = revision.slots.filter(slot => slot.type === 'store')
+  if (storeSlots.length === 0) return
+
+  const fail = (slotIndex: number) => {
+    throw new Error(
+      `[fict] Cannot merge SSR snapshot scope "${scopeId}" slot ${slotIndex}: ${label} store aliases or cycles cannot be reconciled safely.`,
+    )
+  }
+
+  for (const slot of storeSlots) {
+    const seenInStore = new Set<object>()
+    walkObjectGraph(slot.value, value => {
+      if (seenInStore.has(value) || storeObjects.has(value)) fail(slot.index)
+      seenInStore.add(value)
+      storeObjects.add(value)
+    })
+  }
+
+  const nonStoreRoots: unknown[] = revision.slots
+    .filter(slot => slot.type !== 'store')
+    .map(slot => slot.value)
+  if (revision.hasProps) nonStoreRoots.push(revision.props)
+
+  for (const root of nonStoreRoots) {
+    const seen = new Set<object>()
+    walkObjectGraph(root, value => {
+      if (storeObjects.has(value)) fail(storeSlots[0]!.index)
+      if (seen.has(value)) return false
+      seen.add(value)
+      return true
+    })
+  }
+}
+
+function walkObjectGraph(value: unknown, visit: (value: object) => boolean | void): void {
+  if (value === null || typeof value !== 'object') return
+  if (visit(value) === false) return
+
+  if (value instanceof Map) {
+    for (const [key, entryValue] of value) {
+      walkObjectGraph(key, visit)
+      walkObjectGraph(entryValue, visit)
+    }
+    return
+  }
+
+  if (value instanceof Set) {
+    for (const entryValue of value) walkObjectGraph(entryValue, visit)
+    return
+  }
+
+  if (value instanceof Date || value instanceof RegExp) return
+
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    if (!descriptor?.enumerable || !('value' in descriptor)) continue
+    walkObjectGraph(descriptor.value, visit)
+  }
+}
+
+function deserializeScopeRevision(
+  snapshot: ScopeSnapshot,
+  scopeId: string,
+): DeserializedScopeRevision {
+  const refs = new Map<string, unknown>()
+  const seenSlots = new Set<number>()
+  const slots: DeserializedScopeSlot[] = []
+
+  for (const [index, type, value] of snapshot.slots) {
+    if (seenSlots.has(index)) {
+      throw new Error(`[fict] Invalid SSR snapshot scope "${scopeId}": duplicate slot ${index}.`)
+    }
+    seenSlots.add(index)
+    const restored = deserializeValue(value, refs, `$[${index}]`)
+    if (type === 'store' && (restored === null || typeof restored !== 'object')) {
+      throw new Error(
+        `[fict] Invalid SSR snapshot scope "${scopeId}" slot ${index}: store value must be an object.`,
+      )
+    }
+    slots.push({ index, type, value: restored })
+  }
+
+  if (snapshot.props === undefined) {
+    return { slots, hasProps: false }
+  }
+
+  return {
+    slots,
+    hasProps: true,
+    props: deserializeValue(snapshot.props, refs, '$.props') as Record<string, unknown>,
+  }
+}
+
+function assertCompatibleScopeRevision(
+  scopeId: string,
+  baseline: ScopeSnapshot,
+  snapshot: ScopeSnapshot,
+): void {
+  if (baseline.id !== snapshot.id || baseline.t !== snapshot.t) {
+    throw new Error(
+      `[fict] Cannot merge SSR snapshot scope "${scopeId}": component identity changed.`,
+    )
+  }
+
+  const baselineLayout = baseline.slots.map(([index, type]) => [index, type])
+  const nextLayout = snapshot.slots.map(([index, type]) => [index, type])
+  if (
+    !serializedValuesEqual(baselineLayout, nextLayout) ||
+    !serializedValuesEqual(baseline.vars, snapshot.vars)
+  ) {
+    throw new Error(`[fict] Cannot merge SSR snapshot scope "${scopeId}": hook layout changed.`)
+  }
+}
+
+function isScopeAtServerBaseline(entry: ResumedScopeEntry, baseline: ScopeSnapshot): boolean {
+  try {
+    const record: ScopeRecord = {
+      id: baseline.id,
+      ctx: entry.ctx,
+      host: entry.host,
+    }
+    if (entry.ctx.scopeType !== undefined) {
+      record.type = entry.ctx.scopeType
+    }
+    if (entry.props !== undefined) {
+      record.props = entry.props
+    }
+    return serializedValuesEqual(serializeScopeRecord(record), baseline)
+  } catch {
+    // Values that can no longer be serialized are necessarily client-owned.
+    return false
+  }
+}
+
+interface SerializedComparisonState {
+  leftToRight: WeakMap<object, object>
+  rightToLeft: WeakMap<object, object>
+}
+
+function serializedValuesEqual(
+  left: unknown,
+  right: unknown,
+  compared: SerializedComparisonState = {
+    leftToRight: new WeakMap<object, object>(),
+    rightToLeft: new WeakMap<object, object>(),
+  },
+): boolean {
+  if (Object.is(left, right) && (left === null || typeof left !== 'object')) return true
+  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') {
+    return false
+  }
+
+  const mappedRight = compared.leftToRight.get(left)
+  if (mappedRight !== undefined) return mappedRight === right
+  const mappedLeft = compared.rightToLeft.get(right)
+  if (mappedLeft !== undefined) return mappedLeft === left
+  compared.leftToRight.set(left, right)
+  compared.rightToLeft.set(right, left)
+
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
+    for (let index = 0; index < left.length; index++) {
+      if (
+        Object.prototype.hasOwnProperty.call(left, index) !==
+        Object.prototype.hasOwnProperty.call(right, index)
+      ) {
+        return false
+      }
+      if (
+        Object.prototype.hasOwnProperty.call(left, index) &&
+        !serializedValuesEqual(left[index], right[index], compared)
+      ) {
+        return false
+      }
+    }
+    return true
+  }
+
+  const leftRecord = left as Record<string, unknown>
+  const rightRecord = right as Record<string, unknown>
+  const leftKeys = Object.keys(leftRecord)
+  const rightKeys = Object.keys(rightRecord)
+  if (leftKeys.length !== rightKeys.length) return false
+  for (const key of leftKeys) {
+    if (!Object.prototype.hasOwnProperty.call(rightRecord, key)) return false
+    if (!serializedValuesEqual(leftRecord[key], rightRecord[key], compared)) return false
+  }
+  return true
 }
 
 function isComponentMetaTarget(value: unknown): value is object {
@@ -607,6 +1391,9 @@ function serializeSlots(ctx: HookContext, seen = new Map<object, string>()): Slo
 function createContextFromSnapshot(
   snapshot?: ScopeSnapshot,
   refs = new Map<string, unknown>(),
+  signalAccessors = new Map<number, unknown>(),
+  storeProxies = new Map<number, unknown>(),
+  storeSetters = new Map<number, StoreSetter>(),
 ): HookContext {
   const ctx: HookContext = { slots: [], cursor: 0 }
   if (!snapshot) return ctx
@@ -616,9 +1403,14 @@ function createContextFromSnapshot(
     const path = `$[${index}]`
     const restored = deserializeValue(value, refs, path)
     if (type === 'sig') {
-      ctx.slots[index] = createSignal(restored)
+      const signal = createSignal(restored)
+      ctx.slots[index] = signal
+      signalAccessors.set(index, signal)
     } else if (type === 'store') {
-      ctx.slots[index] = createStore(restored as object)[0]
+      const [store, setStore] = createStore(restored as object)
+      ctx.slots[index] = store
+      storeProxies.set(index, store)
+      storeSetters.set(index, setStore)
     } else {
       ctx.slots[index] = restored
     }

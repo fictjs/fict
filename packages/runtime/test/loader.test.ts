@@ -16,8 +16,13 @@ import {
   __fictGetScopeProps,
   __fictRegisterResume,
   __fictGetSSRScope,
+  __fictMergeSSRState,
   __fictSetSSRState,
   __fictUseLexicalScope,
+  createEffect,
+  createSignal,
+  createStore,
+  unwrapStore,
 } from '../src/internal'
 
 function createDocumentWithSnapshots(
@@ -76,6 +81,73 @@ describe('resumable loader snapshot validation', () => {
     expect(scope?.id).toBe('s1')
     expect(scope?.slots[0]?.[2]).toBe(123)
   })
+
+  it('installs the first revision into a scope ensured before its snapshot exists', () => {
+    const ctx = __fictEnsureScope('sLate', document.createElement('div'))
+    expect(ctx.slots).toEqual([])
+
+    const state = (value: number) => ({
+      v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+      scopes: {
+        sLate: {
+          id: 'sLate',
+          t: 'Late@component',
+          slots: [
+            [0, 'sig', value] as [number, 'sig', number],
+            [1, 'store', { value }] as [number, 'store', { value: number }],
+            [2, 'raw', { value }] as [number, 'raw', { value: number }],
+          ],
+          props: { value },
+          vars: { signal: 0, store: 1, raw: 2 },
+        },
+      },
+    })
+
+    __fictSetSSRState(state(1))
+    const [signal, store, raw] = __fictUseLexicalScope('sLate', ['signal', 'store', 'raw']) as [
+      () => number,
+      { value: number },
+      { value: number },
+    ]
+    expect(signal()).toBe(1)
+    expect(store.value).toBe(1)
+    expect(raw).toEqual({ value: 1 })
+    expect(__fictGetScopeProps('sLate')).toEqual({ value: 1 })
+    expect(ctx.scopeType).toBe('Late@component')
+
+    __fictSetSSRState(state(2))
+    expect(signal()).toBe(2)
+    expect(store.value).toBe(2)
+    expect(__fictUseLexicalScope('sLate', ['raw'])[0]).toEqual({ value: 2 })
+    expect(__fictGetScopeProps('sLate')).toEqual({ value: 2 })
+  })
+
+  it.each(['cursor', 'rendering'] as const)(
+    'fails closed when an empty scope was already touched through %s',
+    field => {
+      const scopeId = `sTouched-${field}`
+      const ctx = __fictEnsureScope(scopeId, document.createElement('div'))
+      if (field === 'cursor') {
+        ctx.cursor = 1
+      } else {
+        ctx.rendering = true
+      }
+
+      expect(() =>
+        __fictSetSSRState({
+          v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+          scopes: {
+            [scopeId]: {
+              id: scopeId,
+              slots: [[0, 'raw', 1]],
+            },
+          },
+        }),
+      ).toThrow('live scope is no longer empty')
+      expect(__fictGetSSRScope(scopeId)).toBeUndefined()
+      expect(ctx.slots).toEqual([])
+    },
+  )
 
   it('merges every legacy snapshot script when static fragments duplicate the script id', () => {
     const doc = createDocumentWithSnapshots(
@@ -865,6 +937,915 @@ describe('resumable loader snapshot validation', () => {
     )
   })
 
+  it('rejects malformed live revisions before mutating any resumed scope', async () => {
+    const issues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sFirst: {
+            id: 'sFirst',
+            slots: [[0, 'sig', 1]],
+            vars: { value: 0 },
+          },
+          sSecond: {
+            id: 'sSecond',
+            slots: [[0, 'sig', 1]],
+            vars: { value: 0 },
+          },
+        },
+      }),
+    )
+
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: false,
+      onSnapshotIssue: issue => issues.push(issue),
+    })
+
+    const firstSnapshot = __fictGetSSRScope('sFirst')
+    const secondSnapshot = __fictGetSSRScope('sSecond')
+    __fictEnsureScope('sFirst', doc.createElement('div'), firstSnapshot)
+    __fictEnsureScope('sSecond', doc.createElement('div'), secondSnapshot)
+    const first = __fictUseLexicalScope('sFirst', ['value'])[0] as {
+      (): number
+      (value: number): void
+    }
+    const second = __fictUseLexicalScope('sSecond', ['value'])[0] as () => number
+    first(9)
+
+    const script = doc.createElement('script')
+    script.type = 'application/json'
+    script.setAttribute('data-fict-snapshot', '')
+    script.textContent = JSON.stringify({
+      v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+      scopes: {
+        sFirst: {
+          id: 'sFirst',
+          slots: [[0, 'sig', 2]],
+          vars: { value: 0 },
+        },
+        sSecond: {
+          id: 'sSecond',
+          slots: [[0, 'sig', { __t: 'ref', v: '$.missing' }]],
+          vars: { value: 0 },
+        },
+      },
+    })
+    doc.body.appendChild(script)
+
+    await vi.waitFor(() => {
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          code: 'snapshot_invalid_shape',
+          source: '<script[data-fict-snapshot]>',
+        }),
+      )
+    })
+    expect(first()).toBe(9)
+    expect(second()).toBe(1)
+    expect(__fictGetSSRScope('sFirst')?.slots[0]?.[2]).toBe(1)
+    expect(__fictGetSSRScope('sSecond')?.slots[0]?.[2]).toBe(1)
+
+    // The failed multi-scope prepare must not persist the tentative client-owned
+    // decision for sFirst. Once it converges to the accepted baseline, a later
+    // valid revision can still update it.
+    first(1)
+    const retry = doc.createElement('script')
+    retry.type = 'application/json'
+    retry.setAttribute('data-fict-snapshot', '')
+    retry.textContent = JSON.stringify({
+      v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+      scopes: {
+        sFirst: {
+          id: 'sFirst',
+          slots: [[0, 'sig', 2]],
+          vars: { value: 0 },
+        },
+        sSecond: {
+          id: 'sSecond',
+          slots: [[0, 'sig', 2]],
+          vars: { value: 0 },
+        },
+      },
+    })
+    doc.body.appendChild(retry)
+
+    await vi.waitFor(() => {
+      expect(__fictGetSSRScope('sSecond')?.slots[0]?.[2]).toBe(2)
+    })
+    expect(first()).toBe(2)
+    expect(second()).toBe(2)
+  })
+
+  it('commits every scope in one streamed revision before flushing effects', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sFirst: {
+            id: 'sFirst',
+            slots: [[0, 'sig', 1]],
+            vars: { value: 0 },
+          },
+          sSecond: {
+            id: 'sSecond',
+            slots: [[0, 'sig', 1]],
+            vars: { value: 0 },
+          },
+        },
+      }),
+    )
+
+    installResumableLoader({ document: doc, events: [], prefetch: false })
+    const firstSnapshot = __fictGetSSRScope('sFirst')
+    const secondSnapshot = __fictGetSSRScope('sSecond')
+    __fictEnsureScope('sFirst', doc.createElement('div'), firstSnapshot)
+    __fictEnsureScope('sSecond', doc.createElement('div'), secondSnapshot)
+    const first = __fictUseLexicalScope('sFirst', ['value'])[0] as () => number
+    const second = __fictUseLexicalScope('sSecond', ['value'])[0] as () => number
+    const observed: Array<[number, number]> = []
+    const dispose = createEffect(() => {
+      observed.push([first(), second()])
+    })
+
+    try {
+      const script = doc.createElement('script')
+      script.type = 'application/json'
+      script.setAttribute('data-fict-snapshot', '')
+      script.textContent = JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sFirst: {
+            id: 'sFirst',
+            slots: [[0, 'sig', 2]],
+            vars: { value: 0 },
+          },
+          sSecond: {
+            id: 'sSecond',
+            slots: [[0, 'sig', 2]],
+            vars: { value: 0 },
+          },
+        },
+      })
+      doc.body.appendChild(script)
+
+      await vi.waitFor(() => {
+        expect(__fictGetSSRScope('sSecond')?.slots[0]?.[2]).toBe(2)
+      })
+      expect(observed).toEqual([
+        [1, 1],
+        [2, 2],
+      ])
+    } finally {
+      dispose()
+    }
+  })
+
+  it.each(['set', 'merge'] as const)(
+    'publishes %s snapshot state before a live revision effect can throw',
+    operation => {
+      const scope = (value: number) => ({
+        id: 'sEffect',
+        slots: [[0, 'sig', value] as [number, 'sig', number]],
+        vars: { value: 0 },
+      })
+      __fictSetSSRState({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: { sEffect: scope(1) },
+      })
+      __fictEnsureScope('sEffect', document.createElement('div'), __fictGetSSRScope('sEffect'))
+      const signal = __fictUseLexicalScope('sEffect', ['value'])[0] as () => number
+      const effectError = new Error(`${operation} effect failed`)
+      let snapshotDuringFlush: unknown
+      const dispose = createEffect(() => {
+        if (signal() !== 2) return
+        snapshotDuringFlush = __fictGetSSRScope('sEffect')?.slots[0]?.[2]
+        throw effectError
+      })
+      const apply = (value: number) => {
+        const state = {
+          v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+          scopes: { sEffect: scope(value) },
+        }
+        if (operation === 'set') {
+          __fictSetSSRState(state)
+        } else {
+          __fictMergeSSRState(state)
+        }
+      }
+
+      let thrown: unknown
+      try {
+        apply(2)
+      } catch (error) {
+        thrown = error
+      } finally {
+        dispose()
+      }
+      expect(thrown).toMatchObject({ message: effectError.message, cause: effectError })
+      expect(snapshotDuringFlush).toBe(2)
+      expect(__fictGetSSRScope('sEffect')?.slots[0]?.[2]).toBe(2)
+      expect(signal()).toBe(2)
+
+      // A later revision proves the live baseline advanced with the state that
+      // was already published before the failed effect flush.
+      apply(3)
+      expect(__fictGetSSRScope('sEffect')?.slots[0]?.[2]).toBe(3)
+      expect(signal()).toBe(3)
+    },
+  )
+
+  it('keeps loader state aligned after a committed streamed effect fails', async () => {
+    const issues: SnapshotIssue[] = []
+    const fallback = vi.fn()
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sEffect: {
+            id: 'sEffect',
+            slots: [[0, 'sig', 1]],
+            vars: { value: 0 },
+          },
+          sOther: {
+            id: 'sOther',
+            slots: [[0, 'raw', 1]],
+            vars: { value: 0 },
+          },
+        },
+      }),
+    )
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: false,
+      onSnapshotIssue: issue => issues.push(issue),
+      onSnapshotRejected: fallback,
+    })
+    __fictEnsureScope('sEffect', doc.createElement('div'), __fictGetSSRScope('sEffect'))
+    const signal = __fictUseLexicalScope('sEffect', ['value'])[0] as () => number
+    const effectError = new Error('streamed effect failed')
+    const dispose = createEffect(() => {
+      if (signal() === 2) throw effectError
+    })
+
+    try {
+      const appendSnapshot = (scopes: Record<string, unknown>) => {
+        const script = doc.createElement('script')
+        script.type = 'application/json'
+        script.setAttribute('data-fict-snapshot', '')
+        script.textContent = JSON.stringify({
+          v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+          scopes,
+        })
+        doc.body.appendChild(script)
+      }
+
+      appendSnapshot({
+        sEffect: {
+          id: 'sEffect',
+          slots: [[0, 'sig', 2]],
+          vars: { value: 0 },
+        },
+      })
+      await vi.waitFor(() => {
+        expect(issues).toContainEqual(
+          expect.objectContaining({
+            code: 'snapshot_effect_failed',
+            error: effectError,
+          }),
+        )
+      })
+      expect(fallback).not.toHaveBeenCalled()
+      expect(signal()).toBe(2)
+      expect(__fictGetSSRScope('sEffect')?.slots[0]?.[2]).toBe(2)
+      expect(__fictUseLexicalScope('sEffect', ['value'])[0]).toBe(signal)
+
+      // This payload does not mention sEffect. The loader must merge it over the
+      // committed installation state instead of replaying stale sEffect=1.
+      appendSnapshot({
+        sOther: {
+          id: 'sOther',
+          slots: [[0, 'raw', 2]],
+          vars: { value: 0 },
+        },
+      })
+      await vi.waitFor(() => {
+        expect(__fictGetSSRScope('sOther')?.slots[0]?.[2]).toBe(2)
+      })
+      expect(signal()).toBe(2)
+      expect(__fictGetSSRScope('sEffect')?.slots[0]?.[2]).toBe(2)
+      expect(fallback).not.toHaveBeenCalled()
+    } finally {
+      dispose()
+    }
+  })
+
+  it('rejects descriptor-mutated stores before publishing any scope in a revision', async () => {
+    const issues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sSignal: {
+            id: 'sSignal',
+            slots: [[0, 'sig', 1]],
+            vars: { value: 0 },
+          },
+          sStore: {
+            id: 'sStore',
+            slots: [[0, 'store', { nested: { value: 1 } }]],
+            vars: { store: 0 },
+          },
+        },
+      }),
+    )
+
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: false,
+      onSnapshotIssue: issue => issues.push(issue),
+    })
+    __fictEnsureScope('sSignal', doc.createElement('div'), __fictGetSSRScope('sSignal'))
+    __fictEnsureScope('sStore', doc.createElement('div'), __fictGetSSRScope('sStore'))
+    const signal = __fictUseLexicalScope('sSignal', ['value'])[0] as () => number
+    const store = __fictUseLexicalScope('sStore', ['store'])[0] as {
+      nested: { value: number }
+    }
+    const rawStore = unwrapStore(store)
+    Object.defineProperty(rawStore.nested, 'value', {
+      value: 1,
+      writable: false,
+      enumerable: true,
+      configurable: true,
+    })
+
+    const appendRevision = () => {
+      const script = doc.createElement('script')
+      script.type = 'application/json'
+      script.setAttribute('data-fict-snapshot', '')
+      script.textContent = JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sSignal: {
+            id: 'sSignal',
+            slots: [[0, 'sig', 2]],
+            vars: { value: 0 },
+          },
+          sStore: {
+            id: 'sStore',
+            slots: [[0, 'store', { nested: { value: 2 } }]],
+            vars: { store: 0 },
+          },
+        },
+      })
+      doc.body.appendChild(script)
+    }
+
+    appendRevision()
+    await vi.waitFor(() => {
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          code: 'snapshot_invalid_shape',
+          message: expect.stringContaining('store property descriptor is not canonical'),
+        }),
+      )
+    })
+    expect(signal()).toBe(1)
+    expect(store.nested.value).toBe(1)
+    expect(__fictGetSSRScope('sSignal')?.slots[0]?.[2]).toBe(1)
+    expect(__fictGetSSRScope('sStore')?.slots[0]?.[2]).toEqual({ nested: { value: 1 } })
+
+    Object.defineProperty(rawStore.nested, 'value', {
+      value: 1,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    })
+    appendRevision()
+    await vi.waitFor(() => {
+      expect(__fictGetSSRScope('sStore')?.slots[0]?.[2]).toEqual({ nested: { value: 2 } })
+    })
+    expect(signal()).toBe(2)
+    expect(store.nested.value).toBe(2)
+  })
+
+  it('makes a value-equal replacement signal client-owned without blocking siblings', async () => {
+    const issues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sOther: {
+            id: 'sOther',
+            slots: [[0, 'sig', 1]],
+            vars: { value: 0 },
+          },
+          sSignal: {
+            id: 'sSignal',
+            slots: [[0, 'sig', 1]],
+            vars: { value: 0 },
+          },
+        },
+      }),
+    )
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: false,
+      onSnapshotIssue: issue => issues.push(issue),
+    })
+    __fictEnsureScope('sOther', doc.createElement('div'), __fictGetSSRScope('sOther'))
+    const signalContext = __fictEnsureScope(
+      'sSignal',
+      doc.createElement('div'),
+      __fictGetSSRScope('sSignal'),
+    )
+    const other = __fictUseLexicalScope('sOther', ['value'])[0] as () => number
+    const original = __fictUseLexicalScope('sSignal', ['value'])[0] as () => number
+    const replacement = createSignal(1)
+    signalContext.slots[0] = replacement
+
+    const appendRevision = (value: number) => {
+      const script = doc.createElement('script')
+      script.type = 'application/json'
+      script.setAttribute('data-fict-snapshot', '')
+      script.textContent = JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sOther: {
+            id: 'sOther',
+            slots: [[0, 'sig', value]],
+            vars: { value: 0 },
+          },
+          sSignal: {
+            id: 'sSignal',
+            slots: [[0, 'sig', value]],
+            vars: { value: 0 },
+          },
+        },
+      })
+      doc.body.appendChild(script)
+    }
+
+    appendRevision(2)
+    await vi.waitFor(() => {
+      expect(__fictGetSSRScope('sSignal')?.slots[0]?.[2]).toBe(2)
+    })
+    expect(other()).toBe(2)
+    expect(original()).toBe(1)
+    expect(replacement()).toBe(1)
+    expect(signalContext.slots[0]).toBe(replacement)
+    expect(__fictGetSSRScope('sOther')?.slots[0]?.[2]).toBe(2)
+    expect(issues).toEqual([])
+
+    appendRevision(3)
+    await vi.waitFor(() => {
+      expect(__fictGetSSRScope('sSignal')?.slots[0]?.[2]).toBe(3)
+    })
+    expect(other()).toBe(3)
+    expect(original()).toBe(1)
+    expect(replacement()).toBe(1)
+    expect(signalContext.slots[0]).toBe(replacement)
+    expect(issues).toEqual([])
+  })
+
+  it('makes a value-equal replacement store client-owned without using its captured setter', async () => {
+    const issues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sOther: {
+            id: 'sOther',
+            slots: [[0, 'sig', 1]],
+            vars: { value: 0 },
+          },
+          sStore: {
+            id: 'sStore',
+            slots: [[0, 'store', { value: 1 }]],
+            vars: { store: 0 },
+          },
+        },
+      }),
+    )
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: false,
+      onSnapshotIssue: issue => issues.push(issue),
+    })
+    __fictEnsureScope('sOther', doc.createElement('div'), __fictGetSSRScope('sOther'))
+    const storeContext = __fictEnsureScope(
+      'sStore',
+      doc.createElement('div'),
+      __fictGetSSRScope('sStore'),
+    )
+    const other = __fictUseLexicalScope('sOther', ['value'])[0] as () => number
+    const original = __fictUseLexicalScope('sStore', ['store'])[0] as { value: number }
+    const [replacement] = createStore({ value: 1 })
+    storeContext.slots[0] = replacement
+
+    const appendRevision = (value: number) => {
+      const script = doc.createElement('script')
+      script.type = 'application/json'
+      script.setAttribute('data-fict-snapshot', '')
+      script.textContent = JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sOther: {
+            id: 'sOther',
+            slots: [[0, 'sig', value]],
+            vars: { value: 0 },
+          },
+          sStore: {
+            id: 'sStore',
+            slots: [[0, 'store', { value }]],
+            vars: { store: 0 },
+          },
+        },
+      })
+      doc.body.appendChild(script)
+    }
+
+    appendRevision(2)
+    await vi.waitFor(() => {
+      expect(__fictGetSSRScope('sStore')?.slots[0]?.[2]).toEqual({ value: 2 })
+    })
+    expect(other()).toBe(2)
+    expect(original.value).toBe(1)
+    expect(replacement.value).toBe(1)
+    expect(storeContext.slots[0]).toBe(replacement)
+    expect(__fictGetSSRScope('sOther')?.slots[0]?.[2]).toBe(2)
+    expect(issues).toEqual([])
+
+    appendRevision(3)
+    await vi.waitFor(() => {
+      expect(__fictGetSSRScope('sStore')?.slots[0]?.[2]).toEqual({ value: 3 })
+    })
+    expect(other()).toBe(3)
+    expect(original.value).toBe(1)
+    expect(replacement.value).toBe(1)
+    expect(storeContext.slots[0]).toBe(replacement)
+    expect(issues).toEqual([])
+  })
+
+  it('makes a value-equal nested store identity substitution client-owned', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sOther: {
+            id: 'sOther',
+            slots: [[0, 'sig', 1]],
+            vars: { value: 0 },
+          },
+          sStore: {
+            id: 'sStore',
+            slots: [[0, 'store', { nested: { value: 1 } }]],
+            vars: { store: 0 },
+          },
+        },
+      }),
+    )
+    installResumableLoader({ document: doc, events: [], prefetch: false })
+    __fictEnsureScope('sOther', doc.createElement('div'), __fictGetSSRScope('sOther'))
+    __fictEnsureScope('sStore', doc.createElement('div'), __fictGetSSRScope('sStore'))
+    const other = __fictUseLexicalScope('sOther', ['value'])[0] as () => number
+    const store = __fictUseLexicalScope('sStore', ['store'])[0] as {
+      nested: { value: number }
+    }
+    const external = { value: 1 }
+    store.nested = external
+
+    const appendRevision = (value: number) => {
+      const script = doc.createElement('script')
+      script.type = 'application/json'
+      script.setAttribute('data-fict-snapshot', '')
+      script.textContent = JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sOther: {
+            id: 'sOther',
+            slots: [[0, 'sig', value]],
+            vars: { value: 0 },
+          },
+          sStore: {
+            id: 'sStore',
+            slots: [[0, 'store', { nested: { value } }]],
+            vars: { store: 0 },
+          },
+        },
+      })
+      doc.body.appendChild(script)
+    }
+
+    appendRevision(2)
+    await vi.waitFor(() => {
+      expect(__fictGetSSRScope('sStore')?.slots[0]?.[2]).toEqual({ nested: { value: 2 } })
+    })
+    expect(other()).toBe(2)
+    expect(unwrapStore(store.nested)).toBe(external)
+    expect(external.value).toBe(1)
+
+    // Ownership remains sticky even if the external object later converges to
+    // the accepted server baseline.
+    external.value = 2
+    appendRevision(3)
+    await vi.waitFor(() => {
+      expect(__fictGetSSRScope('sStore')?.slots[0]?.[2]).toEqual({ nested: { value: 3 } })
+    })
+    expect(other()).toBe(3)
+    expect(unwrapStore(store.nested)).toBe(external)
+    expect(external.value).toBe(2)
+  })
+
+  it.each<{
+    name: string
+    initial: Record<string, unknown>
+    next: Record<string, unknown>
+    mutate: (raw: Record<string, unknown>) => void
+    reason: string
+  }>([
+    {
+      name: 'a non-extensible nested object',
+      initial: { nested: { value: 1 } },
+      next: { nested: { value: 2 } },
+      mutate(raw) {
+        Object.preventExtensions(raw.nested as object)
+      },
+      reason: 'store node is not extensible',
+    },
+    {
+      name: 'an accessor descriptor',
+      initial: { nested: { value: 1 } },
+      next: { nested: { value: 2 } },
+      mutate(raw) {
+        Object.defineProperty(raw.nested as object, 'value', {
+          get: () => 1,
+          enumerable: true,
+          configurable: true,
+        })
+      },
+      reason: 'store property descriptor is not canonical',
+    },
+    {
+      name: 'a non-configurable descriptor',
+      initial: { nested: { value: 1 } },
+      next: { nested: { value: 2 } },
+      mutate(raw) {
+        Object.defineProperty(raw.nested as object, 'value', {
+          value: 1,
+          writable: true,
+          enumerable: true,
+          configurable: false,
+        })
+      },
+      reason: 'store property descriptor is not canonical',
+    },
+    {
+      name: 'a non-writable array length',
+      initial: { items: [1] },
+      next: { items: [1, 2] },
+      mutate(raw) {
+        Object.defineProperty(raw.items as unknown[], 'length', { writable: false })
+      },
+      reason: 'array length is not writable',
+    },
+    {
+      name: 'a new __proto__ key',
+      initial: { safe: 1 },
+      next: JSON.parse('{"safe":1,"__proto__":{"polluted":true}}') as Record<string, unknown>,
+      mutate() {},
+      reason: 'adding __proto__ would invoke an inherited setter',
+    },
+  ])('fails closed before reconciling $name', async ({ initial, next, mutate, reason }) => {
+    const issues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sStore: {
+            id: 'sStore',
+            slots: [[0, 'store', initial]],
+            vars: { store: 0 },
+          },
+        },
+      }),
+    )
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: false,
+      onSnapshotIssue: issue => issues.push(issue),
+    })
+    __fictEnsureScope('sStore', doc.createElement('div'), __fictGetSSRScope('sStore'))
+    const store = __fictUseLexicalScope('sStore', ['store'])[0] as Record<string, unknown>
+    const raw = unwrapStore(store)
+    mutate(raw)
+
+    const script = doc.createElement('script')
+    script.type = 'application/json'
+    script.setAttribute('data-fict-snapshot', '')
+    script.textContent = JSON.stringify({
+      v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+      scopes: {
+        sStore: {
+          id: 'sStore',
+          slots: [[0, 'store', next]],
+          vars: { store: 0 },
+        },
+      },
+    })
+    doc.body.appendChild(script)
+
+    await vi.waitFor(() => {
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          code: 'snapshot_invalid_shape',
+          message: expect.stringContaining(reason),
+        }),
+      )
+    })
+    expect(__fictGetSSRScope('sStore')?.slots[0]?.[2]).toEqual(initial)
+    if (Object.prototype.hasOwnProperty.call(next, '__proto__')) {
+      expect(Object.getPrototypeOf(raw)).toBe(Object.prototype)
+    }
+  })
+
+  it('fails closed when a streamed store shares reference topology with another slot', async () => {
+    const issues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sAliased: {
+            id: 'sAliased',
+            slots: [
+              [0, 'store', { value: 1 }],
+              [1, 'raw', { __t: 'ref', v: '$[0]' }],
+            ],
+            vars: { store: 0, raw: 1 },
+          },
+        },
+      }),
+    )
+
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: false,
+      onSnapshotIssue: issue => issues.push(issue),
+    })
+    const initialSnapshot = __fictGetSSRScope('sAliased')
+    __fictEnsureScope('sAliased', doc.createElement('div'), initialSnapshot)
+    const [store, raw] = __fictUseLexicalScope('sAliased', ['store', 'raw']) as [
+      { value: number },
+      { value: number },
+    ]
+
+    const script = doc.createElement('script')
+    script.type = 'application/json'
+    script.setAttribute('data-fict-snapshot', '')
+    script.textContent = JSON.stringify({
+      v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+      scopes: {
+        sAliased: {
+          id: 'sAliased',
+          slots: [
+            [0, 'store', { value: 2 }],
+            [1, 'raw', { __t: 'ref', v: '$[0]' }],
+          ],
+          vars: { store: 0, raw: 1 },
+        },
+      },
+    })
+    doc.body.appendChild(script)
+
+    await vi.waitFor(() => {
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          code: 'snapshot_invalid_shape',
+          message: expect.stringContaining('store aliases or cycles cannot be reconciled safely'),
+        }),
+      )
+    })
+    expect(store.value).toBe(1)
+    expect(raw.value).toBe(1)
+    expect(__fictGetSSRScope('sAliased')?.slots[0]?.[2]).toEqual({ value: 1 })
+  })
+
+  it('preserves streamed alias topology across signal, raw, and props roots', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sAliased: {
+            id: 'sAliased',
+            slots: [
+              [0, 'sig', { value: 1 }],
+              [1, 'raw', { __t: 'ref', v: '$[0]' }],
+            ],
+            props: { __t: 'ref', v: '$[0]' },
+            vars: { signal: 0, raw: 1 },
+          },
+        },
+      }),
+    )
+
+    installResumableLoader({ document: doc, events: [], prefetch: false })
+    const initialSnapshot = __fictGetSSRScope('sAliased')
+    __fictEnsureScope('sAliased', doc.createElement('div'), initialSnapshot)
+
+    const script = doc.createElement('script')
+    script.type = 'application/json'
+    script.setAttribute('data-fict-snapshot', '')
+    script.textContent = JSON.stringify({
+      v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+      scopes: {
+        sAliased: {
+          id: 'sAliased',
+          slots: [
+            [0, 'sig', { value: 1 }],
+            [1, 'raw', { value: 1 }],
+          ],
+          props: { __t: 'ref', v: '$[1]' },
+          vars: { signal: 0, raw: 1 },
+        },
+      },
+    })
+    doc.body.appendChild(script)
+
+    await vi.waitFor(() => {
+      expect(__fictGetSSRScope('sAliased')?.props).toEqual({ __t: 'ref', v: '$[1]' })
+    })
+    const [signal, raw] = __fictUseLexicalScope('sAliased', ['signal', 'raw']) as [
+      () => { value: number },
+      { value: number },
+    ]
+    expect(signal()).toEqual({ value: 1 })
+    expect(signal()).not.toBe(raw)
+    expect(raw).toEqual({ value: 1 })
+    expect(__fictGetScopeProps('sAliased')).toBe(raw)
+  })
+
+  it('fails closed when a resumable component props identity may already be captured', async () => {
+    const issues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sProps: {
+            id: 'sProps',
+            slots: [],
+            props: { value: 1 },
+          },
+        },
+      }),
+    )
+
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: false,
+      onSnapshotIssue: issue => issues.push(issue),
+    })
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-h', 'data:text/javascript,export default null#resume')
+    __fictEnsureScope('sProps', host, __fictGetSSRScope('sProps'))
+
+    const script = doc.createElement('script')
+    script.type = 'application/json'
+    script.setAttribute('data-fict-snapshot', '')
+    script.textContent = JSON.stringify({
+      v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+      scopes: {
+        sProps: {
+          id: 'sProps',
+          slots: [],
+          props: { value: 2 },
+        },
+      },
+    })
+    doc.body.appendChild(script)
+
+    await vi.waitFor(() => {
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          code: 'snapshot_invalid_shape',
+          message: expect.stringContaining(
+            'component props identity may already be captured by hydration',
+          ),
+        }),
+      )
+    })
+    expect(__fictGetScopeProps('sProps')).toEqual({ value: 1 })
+    expect(__fictGetSSRScope('sProps')?.props).toEqual({ value: 1 })
+  })
+
   it('retries an incremental snapshot after its partial payload is completed', async () => {
     const doc = createDocumentWithSnapshots(
       JSON.stringify({
@@ -955,6 +1936,142 @@ describe('resumable loader snapshot validation', () => {
       vi.unstubAllGlobals()
       iframe.remove()
     }
+  })
+
+  it('merges streamed revisions into resumed scopes without overwriting client-owned state', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sStreamed: {
+            id: 'sStreamed',
+            slots: [
+              [0, 'sig', 1],
+              [1, 'store', { value: 1 }],
+              [2, 'raw', { value: 1 }],
+            ],
+            vars: { count: 0, store: 1, raw: 2 },
+          },
+        },
+      }),
+    )
+    const observed: Array<[number, number, number]> = []
+    ;(
+      globalThis as {
+        __fictReadStreamedScope?: (scopeId: string) => void
+      }
+    ).__fictReadStreamedScope = scopeId => {
+      const [count, store, raw] = __fictUseLexicalScope(scopeId, ['count', 'store', 'raw']) as [
+        () => number,
+        { value: number },
+        { value: number },
+      ]
+      observed.push([count(), store.value, raw.value])
+    }
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 'sStreamed')
+    const button = doc.createElement('button')
+    button.setAttribute(
+      'on:click',
+      'data:text/javascript,export function handle(scopeId){globalThis.__fictReadStreamedScope(scopeId)}#handle',
+    )
+    host.appendChild(button)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await waitForPendingHandlers()
+    expect(observed).toEqual([[1, 1, 1]])
+
+    const [count, store] = __fictUseLexicalScope('sStreamed', ['count', 'store']) as [
+      {
+        (): number
+        (value: number): void
+      },
+      { value: number },
+    ]
+    const appendRevision = (value: number) => {
+      const script = doc.createElement('script')
+      script.type = 'application/json'
+      script.setAttribute('data-fict-snapshot', '')
+      script.textContent = JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sStreamed: {
+            id: 'sStreamed',
+            slots: [
+              [0, 'sig', value],
+              [1, 'store', { value }],
+              [2, 'raw', { value }],
+            ],
+            vars: { count: 0, store: 1, raw: 2 },
+          },
+        },
+      })
+      doc.body.appendChild(script)
+    }
+
+    appendRevision(2)
+    await vi.waitFor(() => {
+      expect(__fictGetSSRScope('sStreamed')?.slots[0]?.[2]).toBe(2)
+    })
+    expect(count()).toBe(2)
+    expect(store.value).toBe(2)
+    expect(__fictUseLexicalScope('sStreamed', ['store'])[0]).toBe(store)
+    expect(__fictUseLexicalScope('sStreamed', ['raw'])[0]).toEqual({ value: 2 })
+
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await waitForPendingHandlers()
+    expect(observed).toEqual([
+      [1, 1, 1],
+      [2, 2, 2],
+    ])
+
+    count(9)
+    store.value = 9
+    const clientRaw = __fictUseLexicalScope('sStreamed', ['raw'])[0] as { value: number }
+    clientRaw.value = 9
+    appendRevision(3)
+    await vi.waitFor(() => {
+      expect(__fictGetSSRScope('sStreamed')?.slots[0]?.[2]).toBe(3)
+    })
+    expect(count()).toBe(9)
+    expect(store.value).toBe(9)
+    expect(__fictUseLexicalScope('sStreamed', ['raw'])[0]).toBe(clientRaw)
+    expect(clientRaw.value).toBe(9)
+
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await waitForPendingHandlers()
+    expect(observed).toEqual([
+      [1, 1, 1],
+      [2, 2, 2],
+      [9, 9, 9],
+    ])
+
+    // Converging back to the latest server baseline must not let a later
+    // revision reclaim a scope that the client already owns.
+    count(3)
+    store.value = 3
+    clientRaw.value = 3
+    appendRevision(4)
+    await vi.waitFor(() => {
+      expect(__fictGetSSRScope('sStreamed')?.slots[0]?.[2]).toBe(4)
+    })
+    expect(count()).toBe(3)
+    expect(store.value).toBe(3)
+    expect(clientRaw.value).toBe(3)
+
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await waitForPendingHandlers()
+    expect(observed.at(-1)).toEqual([3, 3, 3])
+
+    delete (
+      globalThis as {
+        __fictReadStreamedScope?: (scopeId: string) => void
+      }
+    ).__fictReadStreamedScope
   })
 
   it('keeps independent document loaders isolated until shared cleanup', async () => {
