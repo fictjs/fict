@@ -133,6 +133,7 @@ function serializeElement(element: Element, serializedParent: Element | null): s
   }
 
   if (isHtml && HTML_VOID_ELEMENTS.has(normalizedTagName)) {
+    assertEmptyHtmlVoidElement(element, normalizedTagName)
     return `${html}>`
   }
 
@@ -147,6 +148,24 @@ function serializeElement(element: Element, serializedParent: Element | null): s
   html += serializeHtmlChildren(childSource)
   html += `</${tagName}>`
   return html
+}
+
+function assertEmptyHtmlVoidElement(element: Element, tagName: string): void {
+  const childCount = element.childNodes.length
+  if (childCount === 0) return
+
+  const feature = findResumableFeature(element)
+  const discardedResumableState =
+    feature?.kind === 'scope'
+      ? ` The discarded children contain a resumable scope (${feature.detail}), which would leave orphaned snapshot state.`
+      : feature
+        ? ` The discarded children contain a resumable event (${feature.detail}), which would disappear from the parsed document.`
+        : ''
+  throw new Error(
+    `[fict/ssr] Cannot serialize <${tagName}> with ${childCount} child node${childCount === 1 ? '' : 's'}. ` +
+      `HTML void elements cannot contain children, and browsers omit every child when serializing or parsing <${tagName}>.${discardedResumableState} ` +
+      `Remove all children from <${tagName}> and move the content outside the void element.`,
+  )
 }
 
 function assertSafeResumableHostContext(element: Element, serializedParent: Element | null): void {
@@ -197,12 +216,12 @@ function getResumableHostRewriteSuggestion(contextTag: string): string {
   return 'Move the component into <body> content, outside document-structure elements.'
 }
 
-type TemplateResumableFeature =
+type SerializedResumableFeature =
   | { kind: 'scope'; detail: string }
   | { kind: 'event'; detail: string }
 
 function assertSafeTemplateContent(content: DocumentFragment | Element): void {
-  const feature = findTemplateResumableFeature(content)
+  const feature = findResumableFeature(content)
   if (!feature) return
 
   const label = feature.kind === 'scope' ? 'resumable scope' : 'resumable event'
@@ -213,7 +232,7 @@ function assertSafeTemplateContent(content: DocumentFragment | Element): void {
   )
 }
 
-function findTemplateResumableFeature(root: Node): TemplateResumableFeature | null {
+function findResumableFeature(root: Node): SerializedResumableFeature | null {
   for (const child of Array.from(root.childNodes)) {
     if (child.nodeType !== ELEMENT_NODE) continue
     const element = child as Element
@@ -237,7 +256,7 @@ function findTemplateResumableFeature(root: Node): TemplateResumableFeature | nu
       'content' in element
         ? ((element as HTMLTemplateElement).content ?? element)
         : element
-    const nested = findTemplateResumableFeature(childRoot)
+    const nested = findResumableFeature(childRoot)
     if (nested) return nested
   }
   return null

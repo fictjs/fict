@@ -298,3 +298,72 @@ describe('resumable host HTML parser context validation', () => {
     expect(serializeHtmlNode(template)).toBe('<template><span>static</span></template>')
   })
 })
+
+describe('HTML void element child validation', () => {
+  it.each([
+    'area',
+    'base',
+    'basefont',
+    'bgsound',
+    'br',
+    'col',
+    'embed',
+    'hr',
+    'img',
+    'input',
+    'keygen',
+    'link',
+    'meta',
+    'param',
+    'source',
+    'track',
+    'wbr',
+  ])('rejects child nodes that HTML serialization would discard from <%s>', tagName => {
+    const { document } = parseHTML('<!doctype html><html><body></body></html>')
+    const element = document.createElement(tagName)
+    element.append(document.createTextNode('lost'))
+
+    expect(() => serializeHtmlNode(element)).toThrowError(
+      new RegExp(`Cannot serialize <${tagName}> with 1 child node`),
+    )
+  })
+
+  it('rejects even empty text and comment children because node identity cannot round-trip', () => {
+    const { document } = parseHTML('<!doctype html><html><body></body></html>')
+    const br = document.createElement('br')
+    br.append(document.createTextNode(''), document.createComment('lost'))
+
+    expect(() => serializeHtmlNode(br)).toThrowError(/<br> with 2 child nodes/)
+  })
+
+  it('rejects an orphaned resumable scope inside a void element', () => {
+    function LostChild(): FictNode {
+      return { type: 'span', props: { children: 'lost scope' } }
+    }
+
+    expect(() =>
+      renderToString(() => ({
+        type: 'input',
+        props: { children: { type: LostChild, props: {} } },
+      })),
+    ).toThrowError(/Cannot serialize <input> with 1 child node.*resumable scope/i)
+  })
+
+  it('continues to serialize empty HTML void elements without closing tags', () => {
+    const { document } = parseHTML('<!doctype html><html><body></body></html>')
+    const input = document.createElement('input')
+    input.setAttribute('value', 'safe')
+
+    expect(serializeHtmlNode(input)).toBe('<input value="safe">')
+  })
+
+  it('keeps same-named foreign-namespace elements out of HTML void rules', () => {
+    const { document } = parseHTML('<!doctype html><html><body></body></html>')
+    const input = document.createElementNS('http://www.w3.org/2000/svg', 'input')
+    const child = document.createElementNS('http://www.w3.org/2000/svg', 'value')
+    child.textContent = 'safe'
+    input.appendChild(child)
+
+    expect(serializeHtmlNode(input)).toBe('<input><value>safe</value></input>')
+  })
+})
