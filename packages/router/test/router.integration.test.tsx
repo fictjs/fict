@@ -441,6 +441,59 @@ function DefaultActionOwnerIndex() {
   )
 }
 
+function BasePrefixedFormLayout(props: { children?: FictNode }) {
+  return (
+    <>
+      <Form action="/app/save" method="post" relative="route" data-testid="based-route-form" />
+      <Form action="/app/save" method="post" relative="path" data-testid="based-path-form" />
+      <Form
+        action="/app/app/save"
+        method="post"
+        relative="route"
+        data-testid="repeated-base-route-form"
+      />
+      <Form
+        action="/app/app/save"
+        method="post"
+        relative="path"
+        data-testid="repeated-base-path-form"
+      />
+      <Form
+        action="/app/_action/base-normalization-collision"
+        method="post"
+        relative="route"
+        data-testid="registered-based-route-form"
+      />
+      <Form
+        action="/app/_action/base-normalization-collision"
+        method="post"
+        relative="path"
+        data-testid="registered-based-path-form"
+      />
+      <Form
+        action="/app/app/_action/base-normalization-collision"
+        method="post"
+        relative="route"
+        data-testid="registered-repeated-base-route-form"
+      />
+      <Form
+        action="/app/app/_action/base-normalization-collision"
+        method="post"
+        relative="path"
+        data-testid="registered-repeated-base-path-form"
+      />
+      <Form action="/application" method="post" data-testid="base-boundary-form" />
+      <Form action="/application/fallback" method="post" data-testid="based-submitter-form">
+        <button type="submit" formAction="/app/submitter" data-testid="based-submitter">
+          submit
+        </button>
+      </Form>
+      <Form method="post" data-testid="same-segment-owner-form" />
+      {props.children}
+    </>
+  )
+}
+
 function RelativeLinkParent(props: { children?: FictNode }) {
   return (
     <div>
@@ -3304,6 +3357,174 @@ describe('Router integration (MemoryRouter)', () => {
       expect(screen.getByTestId('index-owner-form').getAttribute('action')).toBe(
         `${initialPath}?index&query=fict`,
       )
+    } finally {
+      fetchMock.mockRestore()
+      history.destroy?.()
+      cleanupDataUtilities()
+    }
+  })
+
+  it('normalizes explicit base-prefixed Form actions before route resolution', async () => {
+    cleanupDataUtilities()
+    const initialPath = '/app/app/projects/42'
+    const history = createMemoryHistory({ initialEntries: [initialPath] })
+    const routes: RouteDefinition[] = [
+      {
+        path: '/app/projects/:id',
+        component: BasePrefixedFormLayout,
+      },
+    ]
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async () => new Response(null, { status: 204 }))
+    const registeredHandler = vi.fn(() => 'registered')
+    action(registeredHandler, 'base-normalization-collision')
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={routes} base="/app">
+          <Routes routes={routes} />
+        </RouterProvider>
+      ))
+
+      const routeForm = screen.getByTestId('based-route-form') as HTMLFormElement
+      const pathForm = screen.getByTestId('based-path-form') as HTMLFormElement
+      const repeatedRouteForm = screen.getByTestId('repeated-base-route-form') as HTMLFormElement
+      const repeatedPathForm = screen.getByTestId('repeated-base-path-form') as HTMLFormElement
+      const registeredRouteForm = screen.getByTestId(
+        'registered-based-route-form',
+      ) as HTMLFormElement
+      const registeredPathForm = screen.getByTestId(
+        'registered-based-path-form',
+      ) as HTMLFormElement
+      const registeredRepeatedRouteForm = screen.getByTestId(
+        'registered-repeated-base-route-form',
+      ) as HTMLFormElement
+      const registeredRepeatedPathForm = screen.getByTestId(
+        'registered-repeated-base-path-form',
+      ) as HTMLFormElement
+      const boundaryForm = screen.getByTestId('base-boundary-form') as HTMLFormElement
+      const submitterForm = screen.getByTestId('based-submitter-form') as HTMLFormElement
+      const submitter = screen.getByTestId('based-submitter') as HTMLButtonElement
+      const ownerForm = screen.getByTestId('same-segment-owner-form') as HTMLFormElement
+
+      expect(routeForm.getAttribute('action')).toBe('/app/save')
+      expect(pathForm.getAttribute('action')).toBe('/app/save')
+      expect(repeatedRouteForm.getAttribute('action')).toBe('/app/app/save')
+      expect(repeatedPathForm.getAttribute('action')).toBe('/app/app/save')
+      expect(registeredRouteForm.getAttribute('action')).toBe(
+        '/app/_action/base-normalization-collision',
+      )
+      expect(registeredPathForm.getAttribute('action')).toBe(
+        '/app/_action/base-normalization-collision',
+      )
+      expect(registeredRepeatedRouteForm.getAttribute('action')).toBe(
+        '/app/app/_action/base-normalization-collision',
+      )
+      expect(registeredRepeatedPathForm.getAttribute('action')).toBe(
+        '/app/app/_action/base-normalization-collision',
+      )
+      expect(boundaryForm.getAttribute('action')).toBe('/app/application')
+      expect(submitterForm.getAttribute('action')).toBe('/app/application/fallback')
+      expect(ownerForm.getAttribute('action')).toBe(initialPath)
+
+      routeForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      pathForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      repeatedRouteForm.dispatchEvent(
+        new SubmitEvent('submit', { bubbles: true, cancelable: true }),
+      )
+      repeatedPathForm.dispatchEvent(
+        new SubmitEvent('submit', { bubbles: true, cancelable: true }),
+      )
+      registeredRouteForm.dispatchEvent(
+        new SubmitEvent('submit', { bubbles: true, cancelable: true }),
+      )
+      registeredPathForm.dispatchEvent(
+        new SubmitEvent('submit', { bubbles: true, cancelable: true }),
+      )
+      registeredRepeatedRouteForm.dispatchEvent(
+        new SubmitEvent('submit', { bubbles: true, cancelable: true }),
+      )
+      registeredRepeatedPathForm.dispatchEvent(
+        new SubmitEvent('submit', { bubbles: true, cancelable: true }),
+      )
+      boundaryForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      submitterForm.dispatchEvent(
+        new SubmitEvent('submit', {
+          bubbles: true,
+          cancelable: true,
+          submitter,
+        }),
+      )
+      ownerForm.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+      expect(fetchMock.mock.calls.map(call => call[0])).toEqual([
+        '/app/save',
+        '/app/save',
+        '/app/app/save',
+        '/app/app/save',
+        '/app/app/_action/base-normalization-collision',
+        '/app/app/_action/base-normalization-collision',
+        '/app/application',
+        '/app/submitter',
+        initialPath,
+      ])
+      expect(registeredHandler).toHaveBeenCalledTimes(2)
+      expect(fetchMock.mock.calls.every(call => call[1]?.method === 'POST')).toBe(true)
+      expect(history.location.pathname).toBe(initialPath)
+    } finally {
+      fetchMock.mockRestore()
+      history.destroy?.()
+      cleanupDataUtilities()
+    }
+  })
+
+  it('does not strip a base-shaped prefix from registered action identities', async () => {
+    cleanupDataUtilities()
+    const registeredHandler = vi.fn(() => 'registered')
+    const registered = action(registeredHandler, 'base-prefix-preservation')
+    const browserAction = `/_action${registered.url}`
+    const history = createMemoryHistory({ initialEntries: ['/_action/form'] })
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValue(new Error('registered actions must not use fetch'))
+
+    function RegisteredForms() {
+      return (
+        <>
+          <Form action={registered} method="post" data-testid="registered-object-form" />
+          <Form action={registered.url} method="post" data-testid="registered-url-form" />
+          <Form action={browserAction} method="post" data-testid="registered-browser-form" />
+        </>
+      )
+    }
+
+    const routes: RouteDefinition[] = [{ path: '/form', component: RegisteredForms }]
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={routes} base="/_action">
+          <Routes routes={routes} />
+        </RouterProvider>
+      ))
+
+      const forms = [
+        screen.getByTestId('registered-object-form'),
+        screen.getByTestId('registered-url-form'),
+        screen.getByTestId('registered-browser-form'),
+      ] as HTMLFormElement[]
+
+      expect(forms.map(form => form.getAttribute('action'))).toEqual([
+        browserAction,
+        browserAction,
+        browserAction,
+      ])
+      for (const form of forms) {
+        form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+      }
+
+      expect(registeredHandler).toHaveBeenCalledTimes(3)
+      expect(fetchMock).not.toHaveBeenCalled()
     } finally {
       fetchMock.mockRestore()
       history.destroy?.()

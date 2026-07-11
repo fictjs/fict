@@ -27,6 +27,7 @@ import {
   type MaybeAccessor,
 } from './context'
 import { getRegisteredAction, submitActionFromForm } from './data'
+import { stripBaseIfPresent } from './router-internals'
 import type { Action, Params, To, NavigateOptions } from './types'
 import { parseURL, prependBasePath, stripBasePath } from './utils'
 
@@ -695,12 +696,18 @@ export function Form(props: FormProps): FictNode {
       }
     }
 
-    const resolver =
-      (props.relative ?? 'route') === 'path' || !hasRouteContext
-        ? readAccessor(router.resolvePath as MaybeAccessor<(to: To) => string>)
-        : readAccessor(route.resolvePath as MaybeAccessor<(to: To) => string>)
-    const pathname = resolver(action.pathname || '.')
+    const usesRouteResolver = (props.relative ?? 'route') !== 'path' && hasRouteContext
+    const resolver = usesRouteResolver
+      ? readAccessor(route.resolvePath as MaybeAccessor<(to: To) => string>)
+      : readAccessor(router.resolvePath as MaybeAccessor<(to: To) => string>)
     const base = readAccessor(router.base)
+    const actionPathname = action.pathname || '.'
+    const sourceRegisteredAction = directAction ?? getRegisteredAction(action.pathname)
+    const pathname = resolver(
+      usesRouteResolver && sourceRegisteredAction === undefined && action.pathname.startsWith('/')
+        ? stripBaseIfPresent(action.pathname, base)
+        : actionPathname,
+    )
     let search = isActionOmitted
       ? removeNakedIndexParam(readAccessor(router.location).search)
       : action.search
@@ -713,10 +720,7 @@ export function Form(props: FormProps): FictNode {
       search = prependNakedIndexParam(search)
     }
     const registeredAction =
-      directAction ??
-      getRegisteredAction(action.pathname) ??
-      getRegisteredAction(pathname) ??
-      getRegisteredAction(stripBasePath(pathname, base))
+      sourceRegisteredAction ?? getRegisteredAction(pathname)
 
     return {
       pathname,
