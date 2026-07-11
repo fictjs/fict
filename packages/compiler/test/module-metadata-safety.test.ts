@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import {
   existsSync,
   mkdirSync,
@@ -37,6 +38,63 @@ describe('module metadata safety', () => {
       resolveModuleMetadata(filename, undefined, { emitModuleMetadata: false }),
     ).toBeUndefined()
     clearModuleMetadata()
+  })
+
+  it('invalidates only integration-owned metadata while preserving default memory and disk owners', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_metadata_integration_invalidation__')
+    const sourceFilename = path.join(baseDir, 'source-module.ts')
+    const diskFilename = path.join(baseDir, 'disk-module.ts')
+    const importer = path.join(baseDir, 'consumer.ts')
+    const cacheDir = path.join(baseDir, 'cache')
+    const cachedSourceMetaPath = path.join(
+      cacheDir,
+      `${createHash('sha256').update(sourceFilename).digest('hex')}.fict.meta.json`,
+    )
+    const diskMetaPath = `${diskFilename}.fict.meta.json`
+    const sourceOwned: ModuleReactiveMetadata = { exports: { value: 'signal' } }
+    const cachedOwned: ModuleReactiveMetadata = { exports: { value: 'store' } }
+    const diskOwned: ModuleReactiveMetadata = { exports: { value: 'signal' } }
+    const freshDiskOwned: ModuleReactiveMetadata = { exports: { value: 'memo' } }
+    const integrationOwned: ModuleReactiveMetadata = { exports: { value: 'store' } }
+    const defaultOptions = { emitModuleMetadata: false as const }
+    const integrationMetadata = new Map([
+      [sourceFilename, integrationOwned],
+      [diskFilename, integrationOwned],
+    ])
+
+    try {
+      mkdirSync(cacheDir, { recursive: true })
+      writeFileSync(cachedSourceMetaPath, JSON.stringify(cachedOwned), 'utf8')
+      writeFileSync(diskMetaPath, JSON.stringify(diskOwned), 'utf8')
+      setModuleMetadata(sourceFilename, sourceOwned, defaultOptions)
+      expect(resolveModuleMetadata('./source-module', importer, defaultOptions)).toEqual(
+        sourceOwned,
+      )
+      expect(resolveModuleMetadata('./disk-module', importer, defaultOptions)).toEqual(diskOwned)
+
+      const integrationOptions = {
+        ...defaultOptions,
+        moduleMetadata: integrationMetadata,
+        validateIntegrationMetadata: true,
+      }
+      invalidateModuleMetadata(sourceFilename, integrationOptions)
+      invalidateModuleMetadata(diskFilename, integrationOptions)
+
+      expect(integrationMetadata.size).toBe(0)
+      expect(JSON.parse(readFileSync(cachedSourceMetaPath, 'utf8'))).toEqual(cachedOwned)
+      expect(JSON.parse(readFileSync(diskMetaPath, 'utf8'))).toEqual(diskOwned)
+      expect(resolveModuleMetadata('./source-module', importer, defaultOptions)).toEqual(
+        sourceOwned,
+      )
+      writeFileSync(diskMetaPath, JSON.stringify(freshDiskOwned), 'utf8')
+      expect(resolveModuleMetadata('./disk-module', importer, defaultOptions)).toEqual(
+        freshDiskOwned,
+      )
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+      clearModuleMetadata()
+    }
   })
 
   it('does not hide failures while removing stale incomplete sidecars', () => {

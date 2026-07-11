@@ -819,6 +819,77 @@ describe('@fictjs/babel-preset TypeScript integration', () => {
     expect(output).toMatch(/useCount\(\)\s*\*\s*2/)
   })
 
+  it('treats an integration resolver as authoritative over a matching local file', () => {
+    const baseDir = mkdtempSync(path.join(tmpdir(), 'fict-integration-resolver-'))
+    const filename = path.join(baseDir, 'app.ts')
+    try {
+      writeFileSync(path.join(baseDir, 'use-count.ts'), 'export const useCount = () => 1')
+      expect(() =>
+        transformSync(
+          `
+            import { useCount } from './use-count'
+            export function App() { return useCount() * 2 }
+          `,
+          {
+            filename,
+            configFile: false,
+            babelrc: false,
+            presets: [
+              [
+                fictPreset,
+                {
+                  dev: false,
+                  strictGuarantee: true,
+                  emitModuleMetadata: false,
+                  integrationDiagnostics: [],
+                  resolveModuleMetadata: () => null,
+                  validateIntegrationMetadata: true,
+                },
+              ],
+            ],
+          },
+        ),
+      ).toThrow(/FICT-H003/)
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true })
+    }
+  })
+
+  it('marks integration output incomplete when compiler emission republishes metadata', () => {
+    const filename = path.resolve('integration-incomplete-output.ts')
+    const moduleMetadata = new Map()
+    const result = transformSync(
+      `
+        import { useCount } from './use-count'
+        export function useWrappedCount() { return useCount() }
+      `,
+      {
+        filename,
+        configFile: false,
+        babelrc: false,
+        presets: [
+          [
+            fictPreset,
+            {
+              dev: false,
+              strictGuarantee: false,
+              emitModuleMetadata: false,
+              integrationDiagnostics: [],
+              moduleMetadata,
+              resolveModuleMetadata: () => null,
+              validateIntegrationMetadata: true,
+            },
+          ],
+        ],
+      },
+    )
+
+    expect(
+      (result?.metadata as Record<string, unknown> | undefined)?.fictModuleMetadataIncomplete,
+    ).toBe(true)
+    expect(moduleMetadata.has(filename)).toBe(true)
+  })
+
   it('resolves syntax plugins from the preset in an isolated consumer cwd', () => {
     const consumerCwd = mkdtempSync(path.join(tmpdir(), 'fict-babel-preset-consumer-'))
     try {

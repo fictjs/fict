@@ -284,26 +284,20 @@ function isReactiveExportKind(value: unknown): value is ModuleReactiveMetadata['
   return value === 'signal' || value === 'memo' || value === 'store'
 }
 
-function isHookAccessorKind(value: unknown): value is ModuleReactiveMetadata['exports'][string] {
-  return isReactiveExportKind(value)
-}
-
 function isHookReturnInfo(value: unknown): boolean {
   if (!isPlainObject(value)) return false
 
-  if ('directAccessor' in value && !isHookAccessorKind(value.directAccessor)) {
-    return false
-  }
+  if ('directAccessor' in value && !isReactiveExportKind(value.directAccessor)) return false
 
   if ('objectProps' in value) {
     if (!isPlainObject(value.objectProps)) return false
-    if (!Object.values(value.objectProps).every(isHookAccessorKind)) return false
+    if (!Object.values(value.objectProps).every(isReactiveExportKind)) return false
   }
 
   if ('arrayProps' in value) {
     if (!isPlainObject(value.arrayProps)) return false
     if (!Object.keys(value.arrayProps).every(isCanonicalArrayPropIndex)) return false
-    if (!Object.values(value.arrayProps).every(isHookAccessorKind)) return false
+    if (!Object.values(value.arrayProps).every(isReactiveExportKind)) return false
   }
 
   return true
@@ -328,7 +322,7 @@ function isModuleReactiveMetadata(value: unknown): value is ModuleReactiveMetada
   return true
 }
 
-function parseModuleReactiveMetadata(raw: string): ModuleReactiveMetadata | null {
+export function parseModuleReactiveMetadata(raw: string): ModuleReactiveMetadata | null {
   try {
     const parsed = JSON.parse(raw) as unknown
     if (!isModuleReactiveMetadata(parsed)) return null
@@ -559,9 +553,7 @@ function resolveImportSourceByMetadata(
 
   for (const candidate of candidates) {
     const metaPaths = getMetadataReadPaths(candidate, options)
-    if (metaPaths.some(metaPath => pathIsFile(metaPath, fsCache))) {
-      return candidate
-    }
+    if (metaPaths.some(metaPath => pathIsFile(metaPath, fsCache))) return candidate
   }
 
   return undefined
@@ -576,14 +568,12 @@ export function resolveModuleMetadata(
   const cacheKey = `${importer ?? ''}\0${source}`
   if (useResolutionCache) {
     const cache = getResolutionCache(options)
-    if (cache.has(cacheKey)) {
-      return cache.get(cacheKey)
-    }
+    if (cache.has(cacheKey)) return cache.get(cacheKey)
   }
 
   if (options?.resolveModuleMetadata) {
     const resolved = options.resolveModuleMetadata(source, importer)
-    if (resolved) return resolved
+    if (resolved !== undefined) return resolved ?? undefined
   }
   if (hasQuerySuffix(source)) {
     const packageMetadata = resolvePackageModuleMetadata(source, importer, options)
@@ -705,10 +695,18 @@ export function clearModuleMetadata(options?: FictCompilerOptions): void {
   clearFsProbeCache()
 }
 
-/** @internal Removes one integration-owned metadata entry and both possible sidecar files. */
+/**
+ * @internal Integration-owned validation clears only its explicit store and resolution caches.
+ * Ordinary invalidation also clears default state and removes both possible sidecars.
+ */
 export function invalidateModuleMetadata(fileName: string, options?: FictCompilerOptions): void {
   const normalized = normalizeConcreteFileName(fileName)
   if (!normalized) return
+  if (options?.validateIntegrationMetadata) {
+    options.moduleMetadata?.delete(normalized)
+    clearResolutionCaches()
+    return
+  }
   globalMetadata.delete(normalized)
   options?.moduleMetadata?.delete(normalized)
   diskLoadedMetadataKeys.delete(normalized)

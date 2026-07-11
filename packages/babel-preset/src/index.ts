@@ -957,6 +957,7 @@ function createIsolatedFictPrepass(
     visitor: {},
     pre(file) {
       const graphEnabled = !compilerOptions.moduleMetadata && !compilerOptions.resolveModuleMetadata
+      const validateMetadata = graphEnabled || compilerOptions.validateIntegrationMetadata === true
       const graphSessionId = graphOptions.sessionId ?? createImplicitGraphSessionId()
       const ownsGraphSession = graphEnabled && graphOptions.sessionId === undefined
       let graphSession = implicitGraphSessions.get(graphSessionId)
@@ -985,6 +986,15 @@ function createIsolatedFictPrepass(
         source: string,
         importer: string | undefined,
       ): GraphModuleResolution => {
+        if (!graphEnabled) {
+          if (isNodeBuiltinSource(source.split('#', 1)[0]!)) {
+            return { metadata: OPAQUE_MODULE_METADATA, resolved: true }
+          }
+          const metadata = resolveCompilerModuleMetadata(source, importer, compilerOptions)
+          return metadata
+            ? { metadata, resolved: true }
+            : { metadata: OPAQUE_MODULE_METADATA, resolved: false }
+        }
         const localResolution = resolveLocalModuleSource(source, importer)
         if (localResolution.kind === 'resource') {
           return { metadata: OPAQUE_MODULE_METADATA, resolved: true }
@@ -1041,14 +1051,18 @@ function createIsolatedFictPrepass(
           ? { metadata: prepared.metadata, resolved: true }
           : { metadata: OPAQUE_MODULE_METADATA, resolved: false }
       }
-      const effectiveCompilerOptions: FictCompilerOptions = graphEnabled
+      const effectiveCompilerOptions: FictCompilerOptions = validateMetadata
         ? {
             ...compilerOptions,
-            emitModuleMetadata: false,
-            moduleMetadata: graphSession.compilerMetadata,
             integrationDiagnostics,
-            resolveModuleMetadata: (source, importer) =>
-              resolveGraphModule(source, importer).metadata,
+            ...(graphEnabled
+              ? {
+                  emitModuleMetadata: false,
+                  moduleMetadata: graphSession.compilerMetadata,
+                  resolveModuleMetadata: (source: string, importer?: string) =>
+                    resolveGraphModule(source, importer).metadata,
+                }
+              : {}),
           }
         : compilerOptions
       const plugins: NonNullable<TransformOptions['plugins']> = []
@@ -1068,7 +1082,7 @@ function createIsolatedFictPrepass(
         }
         plugins.push([transformTypeScript, typeScriptTransformOptions])
       }
-      if (graphEnabled) {
+      if (validateMetadata) {
         if (currentFilename) graphSession.compilerMetadata.delete(currentFilename)
         plugins.push(
           createImplicitGraphValidationPlugin({
@@ -1144,6 +1158,9 @@ function createIsolatedFictPrepass(
       file.path.replaceWith(inner.ast.program)
       if (inner.ast.comments !== undefined) file.ast.comments = inner.ast.comments
       Object.assign(file.metadata, inner.metadata)
+      if (validateMetadata) {
+        Object.assign(file.metadata, { fictModuleMetadataIncomplete: currentMetadataIncomplete })
+      }
       file.path.scope.crawl()
     },
   }

@@ -124,6 +124,8 @@ export interface FictCompilerOptions {
   onWarn?: (warning: CompilerWarning) => void
   /** Diagnostics prepared by an official integration before compiler traversal. @internal */
   integrationDiagnostics?: CompilerWarning[]
+  /** Validate an integration-owned metadata graph without mutating persisted sidecars. @internal */
+  validateIntegrationMetadata?: boolean
   /**
    * Emit a structured explanation artifact for compiler decisions.
    * When true, the artifact is attached to Babel result metadata as `fictExplain`.
@@ -214,6 +216,8 @@ export interface FictCompilerOptions {
   /**
    * Optional hook to resolve module metadata for a given import source.
    * Tooling can override the default resolution strategy.
+   * Return `undefined` to continue with the compiler's default resolution.
+   * Return `null` for an authoritative miss that must not fall back to another resolver.
    */
   resolveModuleMetadata?: (
     source: string,

@@ -392,12 +392,9 @@ const STRICT_GUARANTEE_WARNING_CODES = wordSet(
   'FICT-P001 FICT-P002 FICT-P003 FICT-P004 FICT-P005 FICT-J003 FICT-M003 FICT-S002 FICT-H FICT-R002 FICT-R003 FICT-R005 FICT-R006 FICT-R007',
 )
 
-function matchesStrictGuaranteeWarningCode(code: string): boolean {
-  return (
-    STRICT_GUARANTEE_EXACT_WARNING_CODES.has(code) ||
-    matchesAnyDiagnosticCode(code, STRICT_GUARANTEE_WARNING_CODES)
-  )
-}
+const matchesStrictGuaranteeWarningCode = (code: string): boolean =>
+  STRICT_GUARANTEE_EXACT_WARNING_CODES.has(code) ||
+  matchesAnyDiagnosticCode(code, STRICT_GUARANTEE_WARNING_CODES)
 
 function readBooleanEnv(name: string): boolean | undefined {
   const raw = process.env[name]
@@ -4946,6 +4943,7 @@ export function getCompilerCacheFingerprint(): string {
 export {
   clearModuleMetadata,
   invalidateModuleMetadata,
+  parseModuleReactiveMetadata,
   resolveModuleMetadata,
   resolvePackageModuleMetadata,
   setModuleMetadata,
