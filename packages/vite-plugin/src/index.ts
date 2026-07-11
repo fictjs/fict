@@ -178,8 +178,15 @@ interface ResolvedMetadataModule {
   filename: string
 }
 
+interface DevHandlerGeneration {
+  id: string
+  registries: Map<string, Map<string, ExtractedHandler>>
+}
+
 interface MetadataTransformState {
   blockUnscopedTransforms: boolean
+  devEnvironmentId: string | null
+  devHandlerGeneration: DevHandlerGeneration | null
   environment: object | null
   moduleMetadata: Map<string, ModuleReactiveMetadata>
   resolvedLocalModules: Map<string, ResolvedMetadataModule>
@@ -386,6 +393,8 @@ const FICT_FRAMEWORK_PACKAGES = new Set([
 // Virtual module prefix for extracted handlers
 const VIRTUAL_HANDLER_PREFIX = '\0fict-handler:'
 const VIRTUAL_HANDLER_RESOLVE_PREFIX = 'virtual:fict-handler:'
+const DEV_VIRTUAL_HANDLER_PREFIX = '\0fict-handler-dev:'
+const VITE_DEV_HANDLER_PREFIX = '/@id/__x00__fict-handler-dev:'
 const PUBLIC_MODULE_PREFIX = 'fict:module:m'
 
 /**
@@ -464,9 +473,45 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   let cache: TransformCache | null = null
   let addTypeScriptConfigWatchFiles: ((files: string[]) => void) | null = null
   const transformStates = new Set<MetadataTransformState>()
+  const activeDevHandlerGenerations = new Map<string, DevHandlerGeneration>()
+  const devEnvironmentIds = new WeakMap<object, string>()
+  let nextDevEnvironmentId = 0
+  let nextDevHandlerGenerationId = 0
+  const getDevEnvironmentId = (environment: object): string => {
+    let id = devEnvironmentIds.get(environment)
+    if (!id) {
+      nextDevEnvironmentId += 1
+      id = `e${nextDevEnvironmentId.toString(36)}`
+      devEnvironmentIds.set(environment, id)
+    }
+    return id
+  }
+  const createDevHandlerGeneration = (): DevHandlerGeneration => {
+    nextDevHandlerGenerationId += 1
+    const generation: DevHandlerGeneration = {
+      id: `g${nextDevHandlerGenerationId.toString(36)}`,
+      registries: new Map(),
+    }
+    activeDevHandlerGenerations.set(generation.id, generation)
+    return generation
+  }
+  let currentDevHandlerGeneration = createDevHandlerGeneration()
+  let lastDevHandlerHotUpdateTimestamp: number | undefined
+  const devEnvironments = new Set<object>()
   const createTransformState = (environment: object | null = null): MetadataTransformState => {
+    const devEnvironmentId = environment ? getDevEnvironmentId(environment) : null
+    const devHandlerGeneration =
+      environment && config?.command === 'serve' && compilerOptions.resumable === true
+        ? currentDevHandlerGeneration
+        : null
+    const extractedHandlers = new Map<string, ExtractedHandler>()
+    if (devHandlerGeneration && devEnvironmentId) {
+      devHandlerGeneration.registries.set(devEnvironmentId, extractedHandlers)
+    }
     const state: MetadataTransformState = {
       blockUnscopedTransforms: false,
+      devEnvironmentId,
+      devHandlerGeneration,
       environment,
       moduleMetadata: new Map(),
       resolvedLocalModules: new Map(),
@@ -475,7 +520,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       pipelineTransformsInProgress: new Map(),
       pipelineTransformedModules: new Set(),
       metadataPreparationQueue: Promise.resolve(),
-      extractedHandlers: new Map(),
+      extractedHandlers,
       packageMetadataDependencies: new Set(),
       tsConfigDependencies: new Set(),
       tsConfigWatchFiles: new Set(),
@@ -538,6 +583,15 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     state.pipelineCompilerInputs.clear()
     state.pipelineTransformsInProgress.clear()
     state.pipelineTransformedModules.clear()
+    if (
+      state.devHandlerGeneration &&
+      state.devEnvironmentId &&
+      state.devHandlerGeneration.registries.get(state.devEnvironmentId) === state.extractedHandlers
+    ) {
+      state.devHandlerGeneration.registries.delete(state.devEnvironmentId)
+    }
+    state.devHandlerGeneration = null
+    state.devEnvironmentId = null
     state.extractedHandlers.clear()
     state.packageMetadataDependencies.clear()
     state.tsConfigDependencies.clear()
@@ -678,7 +732,34 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     moduleGraph.invalidateAll()
   }
 
+  const replaceInvalidatedDevHandlerGeneration = (
+    environments: Iterable<object>,
+    timestamp?: number,
+  ) => {
+    const affectedEnvironments = new Set([...devEnvironments, ...environments])
+    if (timestamp !== undefined && lastDevHandlerHotUpdateTimestamp === timestamp) {
+      // Vite invokes hotUpdate once per environment for the same timestamp. The first
+      // invocation normally replaces every configured environment; also repair an
+      // explicitly supplied late environment without rotating the generation again.
+      for (const environment of affectedEnvironments) {
+        const state = environmentTransformStates.get(environment)
+        if (state && state.devHandlerGeneration !== currentDevHandlerGeneration) {
+          replaceInvalidatedEnvironmentState(environment)
+        }
+      }
+      return
+    }
+
+    lastDevHandlerHotUpdateTimestamp = timestamp
+    activeDevHandlerGenerations.delete(currentDevHandlerGeneration.id)
+    currentDevHandlerGeneration = createDevHandlerGeneration()
+    for (const environment of affectedEnvironments) {
+      replaceInvalidatedEnvironmentState(environment)
+    }
+  }
+
   const wrapDevEnvironmentRequests = (environment: object) => {
+    devEnvironments.add(environment)
     if (wrappedDevEnvironments.has(environment)) return
     wrappedDevEnvironments.add(environment)
     // Capture the generation before resolve/load and arbitrary earlier transforms run.
@@ -722,6 +803,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         const targetsFict =
           typeof requestedId === 'string' &&
           (requestedId.startsWith(VIRTUAL_HANDLER_PREFIX) ||
+            requestedId.startsWith(DEV_VIRTUAL_HANDLER_PREFIX) ||
             requestedId.startsWith(VIRTUAL_HANDLER_RESOLVE_PREFIX) ||
             shouldCompileModule(stripQuery(requestedId, { root: config?.root })))
         if (kind === 'container' && !trusted && targetsFict) {
@@ -822,6 +904,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           await Promise.allSettled([...(detachedPendingRequests.get(environment) ?? [])])
           detachedPendingRequests.delete(environment)
           environmentTransformStates.delete(environment)
+          devEnvironments.delete(environment)
+          if (devEnvironments.size === 0) {
+            activeDevHandlerGenerations.clear()
+            currentDevHandlerGeneration = createDevHandlerGeneration()
+            lastDevHandlerHotUpdateTimestamp = undefined
+          }
         }
       }
     }
@@ -1591,6 +1679,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       resetCache()
       // A plugin instance can be reused by Vite restarts. Retire request-scoped dev
       // generations instead of clearing maps that old transforms may still reference.
+      activeDevHandlerGenerations.clear()
+      currentDevHandlerGeneration = createDevHandlerGeneration()
+      lastDevHandlerHotUpdateTimestamp = undefined
       for (const state of [...transformStates]) {
         if (state !== buildTransformState) retireTransformState(state)
       }
@@ -1657,6 +1748,22 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     },
 
     load(id: string) {
+      if (id.startsWith(DEV_VIRTUAL_HANDLER_PREFIX)) {
+        const identity = parseDevHandlerVirtualId(id)
+        if (!identity) {
+          throw new Error(`[fict] Invalid dev handler module id: ${JSON.stringify(id)}.`)
+        }
+        const generation = activeDevHandlerGenerations.get(identity.generationId)
+        const handler = generation?.registries.get(identity.environmentId)?.get(identity.handlerId)
+        if (!handler) {
+          throw new Error(
+            `[fict] Dev handler ${JSON.stringify(identity.handlerId)} belongs to an expired ` +
+              `or unavailable generation (${identity.generationId}/${identity.environmentId}).`,
+          )
+        }
+        return generateHandlerModule(handler)
+      }
+
       // Load virtual handler modules
       if (!id.startsWith(VIRTUAL_HANDLER_PREFIX)) {
         return null
@@ -1865,6 +1972,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
                 tsImportElision,
                 shouldSplit,
                 dependencyFingerprint,
+                state.devHandlerGeneration && state.devEnvironmentId
+                  ? `${state.devHandlerGeneration.id}:${state.devEnvironmentId}`
+                  : '',
               )
             : null
 
@@ -1964,6 +2074,15 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         })
         if (shouldSplit) {
           try {
+            const devHandlerModuleOptions =
+              state.devHandlerGeneration && state.devEnvironmentId
+                ? {
+                    base: config?.base,
+                    environmentId: state.devEnvironmentId,
+                    generationId: state.devHandlerGeneration.id,
+                    origin: config?.server.origin,
+                  }
+                : undefined
             splitResult = extractAndRewriteHandlers(
               finalCode,
               id,
@@ -1973,6 +2092,15 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               packageBoundaryCache,
               publicIdentityNamespace,
               config?.resolve?.preserveSymlinks === true,
+              devHandlerModuleOptions
+                ? handlerId =>
+                    createDevHandlerModuleId(
+                      handlerId,
+                      devHandlerModuleOptions.generationId,
+                      devHandlerModuleOptions.environmentId,
+                      devHandlerModuleOptions,
+                    )
+                : undefined,
             )
           } catch (error) {
             this.warn(buildPluginMessage('extractAndRewriteHandlers failed', filename, error))
@@ -2078,7 +2206,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       }
     },
 
-    hotUpdate({ file, modules }) {
+    hotUpdate({ file, modules, timestamp }) {
       const environment = this.environment
       const state = getEnvironmentTransformState(environment)
       const tsConfigChanged = isTypeScriptConfigDependency(state, file)
@@ -2087,7 +2215,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       if (!tsConfigChanged && !packageMetadataChanged && !affectsTransform) return undefined
 
       if (tsConfigChanged || packageMetadataChanged) resetCache()
-      replaceInvalidatedEnvironmentState(environment)
+      replaceInvalidatedDevHandlerGeneration([environment], timestamp)
       environment.hot.send({ type: 'full-reload', path: '*' })
       return []
     },
@@ -2120,7 +2248,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       if (environments.length === 0) {
         replaceBuildTransformState()
       } else {
-        for (const environment of environments) replaceInvalidatedEnvironmentState(environment)
+        replaceInvalidatedDevHandlerGeneration(environments)
       }
       server.ws.send({ type: 'full-reload', path: '*' })
       return []
@@ -2565,6 +2693,34 @@ function createDevPublicModuleId(
   const absolute = encodeViteModulePath(identityFilename)
   const fsPath = absolute.startsWith('/') ? absolute : `/${absolute}`
   return prependViteDevUrl(`/@fs${fsPath}${suffix}`, options)
+}
+
+function createDevHandlerModuleId(
+  handlerId: string,
+  generationId: string,
+  environmentId: string,
+  options: DevPublicModuleIdOptions = {},
+): string {
+  return prependViteDevUrl(
+    `${VITE_DEV_HANDLER_PREFIX}${generationId}:${environmentId}:${handlerId}`,
+    options,
+  )
+}
+
+function parseDevHandlerVirtualId(id: string): {
+  generationId: string
+  environmentId: string
+  handlerId: string
+} | null {
+  if (!id.startsWith(DEV_VIRTUAL_HANDLER_PREFIX)) return null
+  const [generationId, environmentId, ...handlerSegments] = id
+    .slice(DEV_VIRTUAL_HANDLER_PREFIX.length)
+    .split(':')
+  const handlerId = handlerSegments.join(':')
+  if (!generationId?.match(/^g[0-9a-z]+$/) || !environmentId?.match(/^e[0-9a-z]+$/) || !handlerId) {
+    return null
+  }
+  return { generationId, environmentId, handlerId }
 }
 
 function prependViteDevUrl(modulePath: string, options: DevPublicModuleIdOptions): string {
@@ -4079,6 +4235,7 @@ function buildCacheKey(
   tsImportElision: TypeScriptImportElision,
   shouldSplit: boolean,
   packageMetadataFingerprint: string,
+  devHandlerNamespace = '',
 ): string {
   const codeHash = hashString(code)
   const optionsHash = hashString(stableStringify(normalizeOptionsForCache(options)))
@@ -4094,6 +4251,7 @@ function buildCacheKey(
       tsImportElision,
       shouldSplit ? 'split' : 'inline',
       packageMetadataFingerprint,
+      devHandlerNamespace,
     ].join('|'),
   )
 }
@@ -5038,6 +5196,7 @@ function extractAndRewriteHandlers(
   packageBoundaryCache?: Map<string, PackageBoundary | null>,
   explicitNamespace?: string,
   preserveSymlinks = false,
+  resolveHandlerModuleId?: (handlerId: string) => string,
 ): { code: string; handlers: string[]; map: TransformResult['map'] } | null {
   let ast: ReturnType<typeof parse>
 
@@ -5356,10 +5515,10 @@ function extractAndRewriteHandlers(
     },
 
     CallExpression(path) {
-      // Rewrite __fictQrl(import.meta.url, "__fict_e0") -> "virtual:...#default".
+      // Rewrite __fictQrl(import.meta.url, "__fict_e0") to the handler module URL.
       // Flagged QRLs retain the helper call so its metadata suffix is preserved:
       // __fictQrl(import.meta.url, "__fict_e0", "pd")
-      //   -> __fictQrl("virtual:...", "default", "pd")
+      //   -> __fictQrl("<handler-module-url>", "default", "pd")
       if (!t.isIdentifier(path.node.callee, { name: '__fictQrl' })) return
       if (path.node.arguments.length < 2) return
 
@@ -5379,13 +5538,14 @@ function extractAndRewriteHandlers(
         preserveSymlinks,
       )
       const virtualModuleId = `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}`
+      const handlerModuleId = resolveHandlerModuleId?.(handlerId) ?? virtualModuleId
       if (path.node.arguments.length === 2) {
-        path.replaceWith(t.stringLiteral(`${virtualModuleId}#default`))
+        path.replaceWith(t.stringLiteral(`${handlerModuleId}#default`))
         return
       }
 
       path.node.arguments = [
-        t.stringLiteral(virtualModuleId),
+        t.stringLiteral(handlerModuleId),
         t.stringLiteral('default'),
         ...path.node.arguments.slice(2),
       ]

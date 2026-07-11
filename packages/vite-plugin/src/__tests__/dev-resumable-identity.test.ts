@@ -26,8 +26,10 @@ async function createFixtureServer(
   options: {
     allow?: string[]
     base?: string
+    functionSplitting?: boolean
     http?: boolean
     include?: string[]
+    onHotUpdate?: (file: string) => void
     origin?: string
     port?: number
     preserveSymlinks?: boolean
@@ -55,10 +57,20 @@ async function createFixtureServer(
       fict({
         cache: false,
         useTypeScriptProject: false,
-        functionSplitting: false,
+        functionSplitting: options.functionSplitting ?? false,
         resumable: true,
         ...(options.include ? { include: options.include } : {}),
       }),
+      ...(options.onHotUpdate
+        ? [
+            {
+              name: 'fict-dev-resumable-hot-update-probe',
+              handleHotUpdate({ file }: { file: string }) {
+                options.onHotUpdate?.(file)
+              },
+            },
+          ]
+        : []),
     ],
   })
 }
@@ -92,8 +104,36 @@ async function transformModule(server: ViteDevServer, url: string): Promise<stri
   return result!.code
 }
 
+async function importServedDefault(qrl: string): Promise<unknown> {
+  const moduleUrl = qrl.slice(0, qrl.lastIndexOf('#'))
+  const code = await fetchModule(moduleUrl)
+  const dataUrl = `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
+  const imported = (await import(/* @vite-ignore */ dataUrl)) as { default?: unknown }
+  return imported.default
+}
+
+async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(`Timed out: ${label}`)), 3_000)
+      }),
+    ])
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 function readEventModuleId(code: string): string {
   const match = code.match(/["']([^"']+)["']\s*,\s*["']__fict_e0["']/)
+  expect(match).not.toBeNull()
+  return match![1]!
+}
+
+function readSplitHandlerQrl(code: string): string {
+  const match = code.match(/handlerUrl\s*=\s*["']([^"']+)["']/)
   expect(match).not.toBeNull()
   return match![1]!
 }
@@ -105,6 +145,13 @@ const counterSource = `
     let count = $state(0)
     return <button onClick$={() => count++}>{count}</button>
   }
+`
+
+const splitHandlerSource = (label: string) => `
+  import { __fictQrl } from 'fict/internal'
+
+  export const __fict_e0 = () => ${JSON.stringify(label)}
+  export const handlerUrl = __fictQrl(import.meta.url, '__fict_e0')
 `
 
 async function createAliasedDelimiterRoot(delimiter: string): Promise<{
@@ -280,6 +327,7 @@ describe('Vite dev resumable module identities', () => {
 
         const insidePath = `${basePrefix}/src/Inside%20App-%C3%A4%25literal.tsx`
         const insideCode = await fetchModule(`${actualOrigin}${insidePath}?import&t=4`)
+        expect(insideCode).not.toContain('/@id/__x00__fict-handler:')
         const insidePublicId = readEventModuleId(insideCode)
         expect(insidePublicId).toBe(`${identityOrigin}${insidePath}?t=4`)
 
@@ -307,6 +355,152 @@ describe('Vite dev resumable module identities', () => {
       }
     },
   )
+
+  it('serves split handlers as importable Vite URLs across query and HMR generations', async () => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-dev-split-handler-')))
+    const module = path.join(root, 'src', 'Handler.ts')
+    const port = await reservePort()
+    const origin = `http://127.0.0.1:${port}`
+    let resolveHotUpdate!: () => void
+    const hotUpdateSeen = new Promise<void>(resolve => {
+      resolveHotUpdate = resolve
+    })
+    let server: ViteDevServer | undefined
+
+    try {
+      await mkdir(path.dirname(module), { recursive: true })
+      await linkFixtureRuntime(root)
+      await Promise.all([
+        writeFile(
+          path.join(root, 'package.json'),
+          JSON.stringify({ name: 'dev-split-handler-fixture', type: 'module' }),
+        ),
+        writeFile(module, splitHandlerSource('first')),
+      ])
+
+      server = await createFixtureServer(root, {
+        base: '/app/',
+        functionSplitting: true,
+        http: true,
+        onHotUpdate: file => {
+          if (path.normalize(file) === path.normalize(module)) resolveHotUpdate()
+        },
+        origin,
+        port,
+      })
+      await server.listen()
+
+      const firstCode = await fetchModule(`${origin}/app/src/Handler.ts?import&t=41`)
+      const firstQrl = readSplitHandlerQrl(firstCode)
+      expect(firstQrl).toMatch(
+        new RegExp(
+          `^${origin}/app/@id/__x00__fict-handler-dev:g[0-9a-z]+:e[0-9a-z]+:h[a-f0-9]{32}\\$\\$__fict_e0#default$`,
+        ),
+      )
+      const firstHandler = await importServedDefault(firstQrl)
+      expect(firstHandler).toBeTypeOf('function')
+      expect((firstHandler as () => unknown)()).toBe('first')
+
+      await server.watcher.unwatch(module)
+      await writeFile(module, splitHandlerSource('second'))
+      server.watcher.emit('change', module)
+      await withTimeout(hotUpdateSeen, 'split handler HMR invalidation')
+
+      const secondCode = await fetchModule(`${origin}/app/src/Handler.ts?import&t=42`)
+      const secondQrl = readSplitHandlerQrl(secondCode)
+      expect(secondQrl).not.toBe(firstQrl)
+      expect(secondQrl).toMatch(
+        new RegExp(
+          `^${origin}/app/@id/__x00__fict-handler-dev:g[0-9a-z]+:e[0-9a-z]+:h[a-f0-9]{32}\\$\\$__fict_e0#default$`,
+        ),
+      )
+      const secondHandler = await importServedDefault(secondQrl)
+      expect(secondHandler).toBeTypeOf('function')
+      expect((secondHandler as () => unknown)()).toBe('second')
+    } finally {
+      await server?.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('serves environment-scoped split handlers without crossing HMR generations', async () => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-dev-shared-handler-')))
+    const module = path.join(root, 'src', 'Handler.ts')
+    const port = await reservePort()
+    const origin = `http://127.0.0.1:${port}`
+    let resolveHotUpdate!: () => void
+    const hotUpdateSeen = new Promise<void>(resolve => {
+      resolveHotUpdate = resolve
+    })
+    let server: ViteDevServer | undefined
+
+    try {
+      await mkdir(path.dirname(module), { recursive: true })
+      await linkFixtureRuntime(root)
+      await Promise.all([
+        writeFile(
+          path.join(root, 'package.json'),
+          JSON.stringify({ name: 'dev-shared-handler-fixture', type: 'module' }),
+        ),
+        writeFile(module, splitHandlerSource('old')),
+      ])
+
+      server = await createFixtureServer(root, {
+        base: '/ssr/',
+        functionSplitting: true,
+        http: true,
+        onHotUpdate: file => {
+          if (path.normalize(file) === path.normalize(module)) resolveHotUpdate()
+        },
+        origin,
+        port,
+      })
+      await server.listen()
+
+      const oldResult = await server.environments.ssr.transformRequest('/src/Handler.ts?t=41')
+      expect(oldResult).not.toBeNull()
+      const oldQrl = readSplitHandlerQrl(oldResult!.code)
+      expect(server.environments.client.moduleGraph.getModuleById(module)).toBeUndefined()
+      expect(server.environments.client.moduleGraph.getModuleById(`${module}?t=41`)).toBeUndefined()
+      const oldHandler = await importServedDefault(oldQrl)
+      expect(oldHandler).toBeTypeOf('function')
+      expect((oldHandler as () => unknown)()).toBe('old')
+      expect(server.environments.client.moduleGraph.getModuleById(module)).toBeUndefined()
+
+      await server.watcher.unwatch(module)
+      await writeFile(module, splitHandlerSource('new'))
+      server.watcher.emit('change', module)
+      await withTimeout(hotUpdateSeen, 'shared handler HMR invalidation')
+
+      const oldModuleUrl = oldQrl.slice(0, oldQrl.lastIndexOf('#'))
+      const staleResponse = await fetch(oldModuleUrl, {
+        headers: { accept: 'text/javascript' },
+      })
+      expect(staleResponse.status).not.toBe(200)
+
+      const [newSsrResult, newClientResult] = await Promise.all([
+        server.environments.ssr.transformRequest('/src/Handler.ts?t=42'),
+        server.environments.client.transformRequest('/src/Handler.ts?t=42'),
+      ])
+      expect(newSsrResult).not.toBeNull()
+      expect(newClientResult).not.toBeNull()
+      const newSsrQrl = readSplitHandlerQrl(newSsrResult!.code)
+      const newClientQrl = readSplitHandlerQrl(newClientResult!.code)
+      expect(newSsrQrl).not.toBe(newClientQrl)
+      expect(newSsrQrl).not.toBe(oldQrl)
+      const [newSsrHandler, newClientHandler] = await Promise.all([
+        importServedDefault(newSsrQrl),
+        importServedDefault(newClientQrl),
+      ])
+      expect(newSsrHandler).toBeTypeOf('function')
+      expect(newClientHandler).toBeTypeOf('function')
+      expect((newSsrHandler as () => unknown)()).toBe('new')
+      expect((newClientHandler as () => unknown)()).toBe('new')
+    } finally {
+      await server?.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 
   it.each(['?', '#'])('rejects resumable dev when the Vite root contains %s', async delimiter => {
     const workspace = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-dev-root-path-')))
