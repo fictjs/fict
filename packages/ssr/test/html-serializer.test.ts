@@ -68,6 +68,62 @@ describe('SSR HTML serializer DOM name validation', () => {
     ).toThrowError(/Cannot serialize HTML <plaintext>.*snapshot script/i)
   })
 
+  it.each([
+    'iframe',
+    'noembed',
+    'noframes',
+    'noscript',
+    'script',
+    'style',
+    'xmp',
+    'textarea',
+    'title',
+  ])('rejects a non-text DOM child that would disappear inside <%s>', tagName => {
+    const { document } = parseHTML('<!doctype html><html><body></body></html>')
+    const parent = document.createElement(tagName)
+    const child = document.createElement('span')
+    child.id = 'lost-child'
+    child.textContent = 'content'
+    parent.appendChild(child)
+
+    expect(() => serializeHtmlNode(parent)).toThrowError(
+      new RegExp(`<${tagName}>.*<span>.*treats .* contents as text.*silently disappear`, 'i'),
+    )
+  })
+
+  it('rejects a comment child inside RCDATA content', () => {
+    const { document } = parseHTML('<!doctype html><html><body></body></html>')
+    const textarea = document.createElement('textarea')
+    textarea.appendChild(document.createComment('lost'))
+
+    expect(() => serializeHtmlNode(textarea)).toThrowError(
+      /<textarea>.*non-text DOM nodes cannot round-trip/i,
+    )
+  })
+
+  it('rejects intrinsic JSX children inside a parser text-only element', () => {
+    expect(() =>
+      renderToString(
+        () => ({
+          type: 'textarea',
+          props: { children: { type: 'span', props: { children: 'lost' } } },
+        }),
+        { includeSnapshot: false },
+      ),
+    ).toThrowError(/<textarea>.*<span>.*silently disappear/i)
+  })
+
+  it.each(['script', 'style', 'textarea', 'title'])(
+    'continues to serialize ordinary text content inside <%s>',
+    tagName => {
+      const { document } = parseHTML('<!doctype html><html><body></body></html>')
+      const parent = document.createElement(tagName)
+      parent.textContent = 'plain text'
+
+      expect(serializeHtmlNode(parent)).toContain('plain text')
+    },
+  )
+
   it('rejects an invalid element accepted by a permissive server DOM', () => {
     const { document } = parseHTML('<!doctype html><html><body></body></html>')
     const name = 'div><script data-fict-xss="tag">'

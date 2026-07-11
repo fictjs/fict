@@ -36,6 +36,7 @@ const HTML_RAW_TEXT_ELEMENTS = new Set([
   'style',
   'xmp',
 ])
+const HTML_RCDATA_ELEMENTS = new Set(['textarea', 'title'])
 
 const HTML_TABLE_SECTION_ELEMENTS = new Set(['tbody', 'thead', 'tfoot'])
 const HTML_TEXT_ONLY_ELEMENTS = new Set([
@@ -189,8 +190,31 @@ function serializeElement(element: Element, serializedParent: Element | null): s
     assertSafeTemplateContent(childSource)
   }
   html += serializeHtmlChildren(childSource)
+  if (
+    isHtml &&
+    (HTML_RAW_TEXT_ELEMENTS.has(normalizedTagName) || HTML_RCDATA_ELEMENTS.has(normalizedTagName))
+  ) {
+    // Serialize first so more specific resumable-scope and streaming-boundary diagnostics win.
+    // The accumulated string is still local and is never returned when this validation fails.
+    assertTextOnlyHtmlChildren(childSource, normalizedTagName)
+  }
   html += `</${tagName}>`
   return html
+}
+
+function assertTextOnlyHtmlChildren(element: Node, tagName: string): void {
+  for (const child of Array.from(element.childNodes)) {
+    if (child.nodeType === TEXT_NODE || child.nodeType === CDATA_SECTION_NODE) continue
+    const childDescription =
+      child.nodeType === ELEMENT_NODE
+        ? `<${((child as Element).localName || (child as Element).tagName).toLowerCase()}>`
+        : child.nodeType === COMMENT_NODE
+          ? 'a comment'
+          : `a ${child.nodeName || `nodeType ${child.nodeType}`} node`
+    throw new Error(
+      `[fict/ssr] Cannot serialize HTML <${tagName}> with ${childDescription} child. The HTML parser treats this element's contents as text, so non-text DOM nodes cannot round-trip and would silently disappear. Provide string/textContent content instead.`,
+    )
+  }
 }
 
 function assertEmptyHtmlVoidElement(element: Element, tagName: string): void {
