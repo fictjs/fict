@@ -1,6 +1,8 @@
 import type { FictNode } from './types'
 
-export const Fragment = Symbol('Fragment')
+type FictFragmentSymbol = symbol & { readonly __fictFragmentBrand: 'fict:fragment' }
+
+export const Fragment = Symbol.for('fict:fragment') as FictFragmentSymbol
 
 export function jsx(
   type: string | typeof Fragment | ((props: Record<string, unknown>) => FictNode),
