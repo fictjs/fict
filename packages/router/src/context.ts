@@ -8,6 +8,7 @@
 import { createContext, hasContext, onCleanup, useContext } from '@fictjs/runtime'
 
 import { wrapAccessor, wrapValue } from './accessor-utils'
+import { stripBaseIfPresent } from './router-internals'
 import type {
   RouterContextValue,
   RouteContextValue,
@@ -394,12 +395,17 @@ export function useHref(
 
       resolved = stripBasePath(currentPathname, base)
     } else {
+      const usesRouteResolver = options?.relative !== 'path' && hasRouteContext
       const resolvePath = readAccessor(
-        options?.relative !== 'path' && hasRouteContext
+        usesRouteResolver
           ? (route.resolvePath as MaybeAccessor<(to: To) => string>)
           : (router.resolvePath as MaybeAccessor<(to: To) => string>),
       )
-      resolved = resolvePath(pathname)
+      resolved = resolvePath(
+        usesRouteResolver && pathname.startsWith('/')
+          ? stripBaseIfPresent(pathname, base)
+          : pathname,
+      )
     }
     // Prepend base to get the full href, then append search/hash
     const baseHref = prependBasePath(resolved, base)

@@ -494,6 +494,110 @@ function BasePrefixedFormLayout(props: { children?: FictNode }) {
   )
 }
 
+function BasePrefixedLinkLayout(props: { children?: FictNode }) {
+  return (
+    <>
+      <Link to="/app/save" relative="route" data-testid="based-route-link">
+        based route
+      </Link>
+      <Link to="/app/save" relative="path" data-testid="based-path-link">
+        based path
+      </Link>
+      <Link to="/app/app/save" relative="route" data-testid="repeated-base-route-link">
+        repeated route
+      </Link>
+      <Link to="/app/app/save" relative="path" data-testid="repeated-base-path-link">
+        repeated path
+      </Link>
+      <Link to="/app" relative="route" data-testid="exact-base-link">
+        exact base
+      </Link>
+      <Link to="/app/" relative="route" data-testid="trailing-exact-base-link">
+        trailing exact base
+      </Link>
+      <Link to="/application" relative="route" data-testid="base-boundary-link">
+        boundary
+      </Link>
+      <Link to="/app%2Fsave" relative="route" data-testid="encoded-base-boundary-link">
+        encoded boundary
+      </Link>
+      <Link to="/app/%73ave" relative="route" data-testid="encoded-base-child-link">
+        encoded child
+      </Link>
+      <Link to="save?mode=route#done" relative="route" data-testid="relative-route-link">
+        relative route
+      </Link>
+      <Link to="save?mode=path#done" relative="path" data-testid="relative-path-link">
+        relative path
+      </Link>
+      <Link to="?tab=next" relative="route" data-testid="based-search-only-link">
+        search
+      </Link>
+      <Link to="#section" relative="route" data-testid="based-hash-only-link">
+        hash
+      </Link>
+      <Link
+        to={{ pathname: '/app/object', search: '?mode=object', hash: '#done' }}
+        relative="route"
+        data-testid="based-object-route-link"
+      >
+        object route
+      </Link>
+      <Link
+        to={{ pathname: '/app/app/object', search: '?mode=object', hash: '#done' }}
+        relative="path"
+        data-testid="repeated-object-path-link"
+      >
+        object path
+      </Link>
+      <Link to="https://example.com/app/save?mode=external#done" data-testid="external-based-link">
+        external
+      </Link>
+      <Link to="//cdn.example.com/app/save" data-testid="protocol-relative-based-link">
+        protocol relative
+      </Link>
+      <NavLink
+        to="/app/app/projects/42/current"
+        relative="route"
+        end
+        activeClassName="active"
+        data-testid="based-active-route-nav-link"
+      >
+        active route
+      </NavLink>
+      <NavLink
+        to={{ pathname: '/app/app/projects/42/current', search: '?mode=object' }}
+        relative="path"
+        end
+        activeClassName="active"
+        data-testid="based-active-path-nav-link"
+      >
+        active path
+      </NavLink>
+      <NavLink
+        to="/app/app/projects/42/pending"
+        relative="route"
+        end
+        pendingClassName="pending"
+        data-testid="based-pending-route-nav-link"
+      >
+        pending route
+      </NavLink>
+      <NavLink
+        to="/app/app/projects/42/pending"
+        relative="path"
+        end
+        pendingClassName="pending"
+        data-testid="based-pending-path-nav-link"
+      >
+        pending path
+      </NavLink>
+      <NavigateButton to="/app/app/projects/42/pending" />
+      {props.children}
+    </>
+  )
+}
+
 function RelativeLinkParent(props: { children?: FictNode }) {
   return (
     <div>
@@ -1632,6 +1736,149 @@ describe('Router integration (MemoryRouter)', () => {
       expect(screen.getByTestId('route-active-search-only').getAttribute('href')).toBe(
         '/app/projects/42/edit/details?tab=search-only',
       )
+    } finally {
+      history.destroy?.()
+    }
+  })
+
+  it('normalizes explicit base-prefixed Link targets exactly once', () => {
+    const initialPath = '/app/app/projects/42/current?current=1#current'
+    const history = createMemoryHistory({ initialEntries: [initialPath] })
+    const routes: RouteDefinition[] = [
+      {
+        path: '/app/projects/:id',
+        component: BasePrefixedLinkLayout,
+        children: [
+          { path: 'current', element: <span data-testid="based-current-route" /> },
+          { path: 'pending', element: <span data-testid="based-pending-route" /> },
+        ],
+      },
+    ]
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={routes} base="/app">
+          <Routes routes={routes} />
+        </RouterProvider>
+      ))
+
+      const href = (testId: string) => screen.getByTestId(testId).getAttribute('href')
+
+      expect(href('based-route-link')).toBe('/app/save')
+      expect(href('based-path-link')).toBe('/app/save')
+      expect(href('repeated-base-route-link')).toBe('/app/app/save')
+      expect(href('repeated-base-path-link')).toBe('/app/app/save')
+      expect(href('exact-base-link')).toBe('/app')
+      expect(href('trailing-exact-base-link')).toBe('/app')
+      expect(href('base-boundary-link')).toBe('/app/application')
+      expect(href('encoded-base-boundary-link')).toBe('/app/app%2Fsave')
+      expect(href('encoded-base-child-link')).toBe('/app/%73ave')
+      expect(href('relative-route-link')).toBe('/app/app/projects/42/save?mode=route#done')
+      expect(href('relative-path-link')).toBe(
+        '/app/app/projects/42/current/save?mode=path#done',
+      )
+      expect(href('based-search-only-link')).toBe(
+        '/app/app/projects/42/current?tab=next',
+      )
+      expect(href('based-hash-only-link')).toBe('/app/app/projects/42/current#section')
+      expect(href('based-object-route-link')).toBe('/app/object?mode=object#done')
+      expect(href('repeated-object-path-link')).toBe('/app/app/object?mode=object#done')
+      expect(href('external-based-link')).toBe(
+        'https://example.com/app/save?mode=external#done',
+      )
+      expect(href('protocol-relative-based-link')).toBe('//cdn.example.com/app/save')
+      expect(href('based-active-route-nav-link')).toBe('/app/app/projects/42/current')
+      expect(href('based-active-path-nav-link')).toBe(
+        '/app/app/projects/42/current?mode=object',
+      )
+      expect(screen.getByTestId('based-active-route-nav-link').className).toBe('active')
+      expect(screen.getByTestId('based-active-path-nav-link').className).toBe('active')
+    } finally {
+      history.destroy?.()
+    }
+  })
+
+  it.each([
+    {
+      label: 'root base',
+      base: '/',
+      initialPath: '/projects/42',
+      target: '/save',
+      expected: '/save',
+    },
+    {
+      label: 'trailing-slash base',
+      base: '/app/',
+      initialPath: '/app/projects/42',
+      target: '/app/save',
+      expected: '/app/save',
+    },
+  ])('normalizes route-relative Link targets under a $label', scenario => {
+    render(() => (
+      <MemoryRouter initialEntries={[scenario.initialPath]} base={scenario.base}>
+        <Route
+          path="/projects/:id"
+          element={
+            <Link to={scenario.target} relative="route" data-testid="normalized-base-link">
+              target
+            </Link>
+          }
+        />
+      </MemoryRouter>
+    ))
+
+    expect(screen.getByTestId('normalized-base-link').getAttribute('href')).toBe(scenario.expected)
+  })
+
+  it('matches pending NavLinks against a base-prefixed browser target', async () => {
+    const initialPath = '/app/app/projects/42/current'
+    const history = createMemoryHistory({ initialEntries: [initialPath] })
+    const routes: RouteDefinition[] = [
+      {
+        path: '/app/projects/:id',
+        component: BasePrefixedLinkLayout,
+        children: [
+          { path: 'current', element: <span data-testid="based-current-route" /> },
+          { path: 'pending', element: <span data-testid="based-pending-route" /> },
+        ],
+      },
+    ]
+    let finishNavigation: (() => void) | undefined
+    const onCall = vi.fn(
+      (_retry, prevent) =>
+        new Promise<void>(resolve => {
+          finishNavigation = () => {
+            prevent()
+            resolve()
+          }
+        }),
+    )
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={routes} base="/app">
+          <Guarded onCall={onCall} />
+          <Routes routes={routes} />
+        </RouterProvider>
+      ))
+
+      await act(async () => {
+        screen.getByTestId('go-/app/app/projects/42/pending').click()
+        await Promise.resolve()
+      })
+
+      expect(onCall).toHaveBeenCalledOnce()
+      expect(history.location.pathname).toBe(initialPath)
+      expect(screen.getByTestId('based-pending-route-nav-link').className).toBe('pending')
+      expect(screen.getByTestId('based-pending-path-nav-link').className).toBe('pending')
+
+      await act(async () => {
+        finishNavigation?.()
+        await Promise.resolve()
+      })
+
+      expect(screen.getByTestId('based-pending-route-nav-link').className).toBe('')
+      expect(screen.getByTestId('based-pending-path-nav-link').className).toBe('')
     } finally {
       history.destroy?.()
     }
