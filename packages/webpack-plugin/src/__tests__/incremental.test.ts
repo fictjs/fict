@@ -5,6 +5,7 @@ import webpack from 'webpack'
 
 import {
   backdateFixtureInputs,
+  buildAssetMatches,
   builtFixtureFiles,
   closeWatching,
   createBuildQueue,
@@ -12,6 +13,7 @@ import {
   createWebpackConfiguration,
   runApp,
   runCompiler,
+  waitForWatchingReady,
 } from './fixture'
 
 const signalHook = (value: number): string => `
@@ -48,19 +50,33 @@ describe('@fictjs/webpack-plugin incremental metadata', () => {
     const firstBuild = builds.next()
     const watching = compiler.watch({ aggregateTimeout: 5 }, (error, stats) => {
       builds.push(error, stats)
+      // Model a trailing duplicate callback so each transition must select its own build result.
+      builds.push(error, stats)
     })!
 
     try {
       await firstBuild
       expect(runApp(root)).toBe(2)
+      await waitForWatchingReady(watching)
 
-      const plainBuild = builds.next()
+      const plainBuild = builds.nextMatching(
+        stats => buildAssetMatches(stats, /return count\s*\*\s*2/),
+        {
+          description: 'the plain-hook runtime bundle',
+        },
+      )
       await writeFile(hookPath, plainHook(3))
       const plainStats = await plainBuild
       expect(runApp(root)).toBe(6)
       expect(builtFixtureFiles(plainStats, root)).toContain(path.join(root, 'entry.ts'))
+      await waitForWatchingReady(watching)
 
-      const signalBuild = builds.next()
+      const signalBuild = builds.nextMatching(
+        stats => buildAssetMatches(stats, /count\(\)\s*\*\s*2/),
+        {
+          description: 'the signal-hook runtime bundle',
+        },
+      )
       await writeFile(hookPath, signalHook(2))
       const signalStats = await signalBuild
       expect(runApp(root)).toBe(4)

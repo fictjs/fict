@@ -10,6 +10,7 @@ import webpack, {
 
 import {
   backdateFixtureInputs,
+  buildAssetMatches,
   builtFixtureFiles,
   closeWatching,
   createBuildQueue,
@@ -17,6 +18,7 @@ import {
   createWebpackConfiguration,
   runApp,
   runCompiler,
+  waitForWatchingReady,
 } from './fixture'
 
 const entrySource = (request: string): string => `
@@ -1775,8 +1777,12 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
       expect(await readBundle(root)).toMatch(/count\(\)\s*\*\s*2/)
       expect(firstStats.compilation.fileDependencies).toContain(packagePath)
       expect(firstStats.compilation.fileDependencies).toContain(sidecarPath)
+      await waitForWatchingReady(watching)
 
-      const plainBuild = builds.next()
+      const plainBuild = builds.nextMatching(
+        stats => buildAssetMatches(stats, /return count\s*\*\s*2/),
+        { description: 'the plain external-package bundle' },
+      )
       await writeFile(sidecarPath, plainMetadata)
       const plainStats = await plainBuild
       const plainBundle = await readBundle(root)
@@ -1962,16 +1968,24 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
       expect(await readBundle(root)).toMatch(/count\(\)\s*\*\s*2/)
       expect(firstStats.compilation.fileDependencies).toContain(packagePath)
       expect(firstStats.compilation.fileDependencies).toContain(sidecarPath)
+      await waitForWatchingReady(watching)
 
-      const plainBuild = builds.next()
+      const plainBuild = builds.nextMatching(
+        stats => buildAssetMatches(stats, /return count\s*\*\s*2/),
+        { description: 'the plain aliased-package bundle' },
+      )
       await writeFile(sidecarPath, plainMetadata)
       const plainStats = await plainBuild
       const plainBundle = await readBundle(root)
       expect(plainBundle).toMatch(/return count\s*\*\s*2/)
       expect(plainBundle).not.toMatch(/count\(\)\s*\*\s*2/)
       expect(builtFixtureFiles(plainStats, root)).toContain(entryPath)
+      await waitForWatchingReady(watching)
 
-      const signalBuild = builds.next()
+      const signalBuild = builds.nextMatching(
+        stats => buildAssetMatches(stats, /count\(\)\s*\*\s*2/),
+        { description: 'the signal aliased-package bundle' },
+      )
       await writeFile(sidecarPath, signalMetadata)
       const signalStats = await signalBuild
       expect(await readBundle(root)).toMatch(/count\(\)\s*\*\s*2/)
@@ -3049,10 +3063,18 @@ describe('@fictjs/webpack-plugin resolver package boundaries', () => {
           dependency.endsWith(`${path.sep}future.js`),
         ),
       ).toBe(true)
+      await waitForWatchingReady(watching)
 
-      const nextBuild = builds.next()
+      const nextBuild = builds.nextMatching(
+        stats =>
+          stats.compilation.fileDependencies.has(futurePath) &&
+          !stats.compilation.missingDependencies.has(futurePath),
+        { description: 'the build that resolves the future package file' },
+      )
       await writeFile(futurePath, 'exports.useCounter = () => 3')
-      await nextBuild
+      const nextStats = await nextBuild
+      expect(nextStats.compilation.fileDependencies).toContain(futurePath)
+      expect(nextStats.compilation.missingDependencies).not.toContain(futurePath)
     } finally {
       await closeWatching(watching, compiler)
       await rm(root, { recursive: true, force: true })

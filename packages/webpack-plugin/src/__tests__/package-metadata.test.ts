@@ -5,12 +5,14 @@ import webpack, { type Compiler, type Configuration, type Stats } from 'webpack'
 
 import {
   backdateFixtureInputs,
+  buildAssetMatches,
   builtFixtureFiles,
   closeWatching,
   createBuildQueue,
   createFixture,
   createWebpackConfiguration,
   runCompiler,
+  waitForWatchingReady,
 } from './fixture'
 
 const entrySource = `
@@ -173,8 +175,12 @@ describe('@fictjs/webpack-plugin package metadata', () => {
       expect(firstStored.metadataDependencies).toEqual([packagePath, sidecarPath].sort())
       expect(firstStats.compilation.fileDependencies).toContain(packagePath)
       expect(firstStats.compilation.fileDependencies).toContain(sidecarPath)
+      await waitForWatchingReady(watching)
 
-      const sidecarBuild = builds.next()
+      const sidecarBuild = builds.nextMatching(
+        stats => buildAssetMatches(stats, /return count\s*\*\s*2/),
+        { description: 'the plain sidecar bundle' },
+      )
       await writeFile(sidecarPath, hookMetadata(false))
       const sidecarStats = await sidecarBuild
       const plainBundle = await readBundle(root)
@@ -183,8 +189,12 @@ describe('@fictjs/webpack-plugin package metadata', () => {
       expect(builtFixtureFiles(sidecarStats, root)).toContain(entryPath)
       const sidecarStored = storedMetadata(sidecarStats, entryPath)
       expect(sidecarStored.dependencyFingerprint).not.toBe(firstStored.dependencyFingerprint)
+      await waitForWatchingReady(watching)
 
-      const manifestBuild = builds.next()
+      const manifestBuild = builds.nextMatching(
+        stats => buildAssetMatches(stats, /count\(\)\s*\*\s*2/),
+        { description: 'the reactive manifest bundle' },
+      )
       await writeFile(packagePath, packageJson('./reactive-again.fict.meta.json'))
       const manifestStats = await manifestBuild
       expect(await readBundle(root)).toMatch(/count\(\)\s*\*\s*2/)
@@ -308,8 +318,12 @@ describe('@fictjs/webpack-plugin package metadata', () => {
       expect(storedMetadata(firstStats, entryPath).metadataDependencies).toEqual(
         [lexicalPackagePath, lexicalSidecarPath, realPackagePath, realSidecarPath].sort(),
       )
+      await waitForWatchingReady(watching)
 
-      const rebuilt = builds.next()
+      const rebuilt = builds.nextMatching(
+        stats => buildAssetMatches(stats, /return count\s*\*\s*2/),
+        { description: 'the plain managed-package bundle' },
+      )
       await writeFile(realSidecarPath, hookMetadata(false))
       const changedStats = await rebuilt
       const changedBundle = await readBundle(root)
