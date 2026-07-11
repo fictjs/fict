@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
-import { builtinModules, createRequire, findPackageJSON } from 'node:module'
+import { builtinModules, createRequire } from 'node:module'
 import path from 'node:path'
 
 import type { Compilation, Compiler, NormalModule } from 'webpack'
@@ -234,6 +234,27 @@ function getExternalPackageDescriptor(
     : { fingerprint }
 }
 
+function resolveNodePackageJsonPath(
+  nodeRequire: NodeJS.Require,
+  packageName: string,
+  runtimeResource: string,
+): string | undefined {
+  for (const searchPath of nodeRequire.resolve.paths(packageName) ?? []) {
+    try {
+      const packageJsonPath = realpathSync(path.join(searchPath, packageName, 'package.json'))
+      if (
+        statSync(packageJsonPath).isFile() &&
+        isPackageResourcePathContained(packageJsonPath, runtimeResource)
+      ) {
+        return packageJsonPath
+      }
+    } catch {
+      // Keep looking through Node's remaining package search paths.
+    }
+  }
+  return undefined
+}
+
 function resolveExternalPackageResource(
   compilation: Compilation,
   compiler: Compiler,
@@ -245,9 +266,12 @@ function resolveExternalPackageResource(
   let runtimePackageJsonPath: string | undefined
   const runtimeProbe = path.join(runtimeDirectory, '__fict_external__.cjs')
   try {
-    runtimeResource = realpathSync(createRequire(runtimeProbe).resolve(runtimeRequest))
-    const packageJsonPath = findPackageJSON(runtimeRequest, runtimeProbe)
-    if (packageJsonPath) runtimePackageJsonPath = realpathSync(packageJsonPath)
+    const nodeRequire = createRequire(runtimeProbe)
+    runtimeResource = realpathSync(nodeRequire.resolve(runtimeRequest))
+    const packageName = getCanonicalPackageName(runtimeRequest)
+    if (packageName) {
+      runtimePackageJsonPath = resolveNodePackageJsonPath(nodeRequire, packageName, runtimeResource)
+    }
   } catch {
     // The clean resolver below still records the package lookup paths for watch mode.
   }

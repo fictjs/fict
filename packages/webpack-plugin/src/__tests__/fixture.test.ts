@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises'
+
 import type { Stats } from 'webpack'
 
 import { createBuildQueue } from './fixture'
@@ -32,5 +34,17 @@ describe('@fictjs/webpack-plugin build queue', () => {
     builds.push(failure, undefined)
 
     await rejection
+  })
+})
+
+describe('@fictjs/webpack-plugin package entrypoints', () => {
+  it('does not import the Node 22-only findPackageJSON API', async () => {
+    const entries = await Promise.all(
+      ['index.js', 'index.cjs'].map(filename =>
+        readFile(new URL(`../../dist/${filename}`, import.meta.url), 'utf8'),
+      ),
+    )
+
+    for (const entry of entries) expect(entry).not.toContain('findPackageJSON')
   })
 })
