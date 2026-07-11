@@ -1,5 +1,14 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -107,6 +116,14 @@ async function buildFictEntry(
     esbuild?: NonNullable<Parameters<typeof build>[0]>['esbuild']
   },
 ): Promise<string> {
+  try {
+    await access(path.join(root, 'package.json'))
+  } catch {
+    await writeFile(
+      path.join(root, 'package.json'),
+      JSON.stringify({ name: 'vite-build-fixture', version: '1.0.0', private: true }),
+    )
+  }
   const result = await build({
     root,
     logLevel: 'silent',
@@ -252,6 +269,398 @@ function originalPositionFor(
 }
 
 describe('fict vite-plugin', () => {
+  it('namespaces root-local identities by their owning project package', async () => {
+    const firstRoot = await mkdtemp(path.join(tmpdir(), 'fict-public-project-a-'))
+    const secondRoot = await mkdtemp(path.join(tmpdir(), 'fict-public-project-b-'))
+    const firstModule = path.join(firstRoot, 'src', 'Counter.tsx')
+    const secondModule = path.join(secondRoot, 'src', 'Counter.tsx')
+
+    try {
+      await Promise.all([
+        mkdir(path.dirname(firstModule), { recursive: true }),
+        mkdir(path.dirname(secondModule), { recursive: true }),
+      ])
+      await Promise.all([
+        writeFile(
+          path.join(firstRoot, 'package.json'),
+          JSON.stringify({ name: '@fixture/app-a', version: '1.0.0' }),
+        ),
+        writeFile(
+          path.join(secondRoot, 'package.json'),
+          JSON.stringify({ name: '@fixture/app-b', version: '1.0.0' }),
+        ),
+        writeFile(firstModule, 'export function Counter() {}'),
+        writeFile(secondModule, 'export function Counter() {}'),
+      ])
+
+      const firstIdentity = __fictVitePluginInternals.createPublicModuleId(firstModule, firstRoot)
+      const firstHandler = __fictVitePluginInternals.createHandlerId(
+        firstModule,
+        '__fict_e0',
+        firstRoot,
+      )
+      expect(__fictVitePluginInternals.createPublicModuleId(secondModule, secondRoot)).not.toBe(
+        firstIdentity,
+      )
+      expect(
+        __fictVitePluginInternals.createHandlerId(secondModule, '__fict_e0', secondRoot),
+      ).not.toBe(firstHandler)
+
+      await writeFile(
+        path.join(secondRoot, 'package.json'),
+        JSON.stringify({ name: '@fixture/app-a', version: '1.0.0' }),
+      )
+      expect(__fictVitePluginInternals.createPublicModuleId(secondModule, secondRoot)).toBe(
+        firstIdentity,
+      )
+      expect(__fictVitePluginInternals.createHandlerId(secondModule, '__fict_e0', secondRoot)).toBe(
+        firstHandler,
+      )
+    } finally {
+      await Promise.all([
+        rm(firstRoot, { recursive: true, force: true }),
+        rm(secondRoot, { recursive: true, force: true }),
+      ])
+    }
+  })
+
+  it('derives linked identities from package name, version, and relative path', async () => {
+    const firstWorkspace = await mkdtemp(path.join(tmpdir(), 'fict-public-package-a-'))
+    const secondWorkspace = await mkdtemp(path.join(tmpdir(), 'fict-public-package-b-'))
+    const firstRoot = path.join(firstWorkspace, 'apps', 'client')
+    const secondRoot = path.join(secondWorkspace, 'application')
+    const firstPackage = path.join(firstWorkspace, 'packages', 'shared')
+    const secondPackage = path.join(secondWorkspace, 'vendor', 'nested', 'shared')
+    const firstModule = path.join(firstPackage, 'src', 'Counter.tsx')
+    const secondModule = path.join(secondPackage, 'src', 'Counter.tsx')
+
+    try {
+      await Promise.all([
+        mkdir(firstRoot, { recursive: true }),
+        mkdir(secondRoot, { recursive: true }),
+        mkdir(path.dirname(firstModule), { recursive: true }),
+        mkdir(path.dirname(secondModule), { recursive: true }),
+      ])
+      await Promise.all([
+        writeFile(
+          path.join(firstPackage, 'package.json'),
+          JSON.stringify({ name: '@fixture/shared', version: '1.2.3' }),
+        ),
+        writeFile(
+          path.join(secondPackage, 'package.json'),
+          JSON.stringify({ name: '@fixture/shared', version: '1.2.3' }),
+        ),
+        writeFile(firstModule, 'export function Counter() {}'),
+        writeFile(secondModule, 'export function Counter() {}'),
+      ])
+
+      const firstIdentity = __fictVitePluginInternals.createPublicModuleId(firstModule, firstRoot)
+      const secondIdentity = __fictVitePluginInternals.createPublicModuleId(
+        secondModule,
+        secondRoot,
+      )
+      const firstHandler = __fictVitePluginInternals.createHandlerId(
+        firstModule,
+        '__fict_e0',
+        firstRoot,
+      )
+      const secondHandler = __fictVitePluginInternals.createHandlerId(
+        secondModule,
+        '__fict_e0',
+        secondRoot,
+      )
+
+      expect(firstIdentity).toBe(secondIdentity)
+      expect(firstHandler).toBe(secondHandler)
+      expect(firstIdentity).toMatch(/^fict:module:m[a-f0-9]{32}$/)
+      expect(firstIdentity).not.toContain(firstWorkspace)
+      expect(secondIdentity).not.toContain(secondWorkspace)
+
+      await writeFile(
+        path.join(secondPackage, 'package.json'),
+        JSON.stringify({ name: '@fixture/shared', version: '2.0.0' }),
+      )
+      expect(__fictVitePluginInternals.createPublicModuleId(secondModule, secondRoot)).not.toBe(
+        firstIdentity,
+      )
+      expect(
+        __fictVitePluginInternals.createHandlerId(secondModule, '__fict_e0', secondRoot),
+      ).not.toBe(firstHandler)
+    } finally {
+      await Promise.all([
+        rm(firstWorkspace, { recursive: true, force: true }),
+        rm(secondWorkspace, { recursive: true, force: true }),
+      ])
+    }
+  })
+
+  it('keeps public identities distinct for Vite suffix variants and physical delimiters', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-public-suffix-'))
+    const module = path.join(root, 'src', 'Counter?physical.tsx')
+
+    try {
+      await mkdir(path.dirname(module), { recursive: true })
+      await writeFile(
+        path.join(root, 'package.json'),
+        JSON.stringify({ name: 'suffix-identity-fixture', version: '1.0.0' }),
+      )
+      await writeFile(module, 'export function Counter() {}')
+
+      const canonical = __fictVitePluginInternals.createPublicModuleId(module, root)
+      const imported = __fictVitePluginInternals.createPublicModuleId(`${module}?import`, root)
+      const fragment = __fictVitePluginInternals.createPublicModuleId(`${module}#fragment`, root)
+
+      expect(new Set([canonical, imported, fragment]).size).toBe(3)
+      expect([canonical, imported, fragment]).toEqual([
+        expect.stringMatching(/^fict:module:m[a-f0-9]{32}$/),
+        expect.stringMatching(/^fict:module:m[a-f0-9]{32}$/),
+        expect.stringMatching(/^fict:module:m[a-f0-9]{32}$/),
+      ])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('emits separate manifest owners for transformed suffix variants', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-public-suffix-manifest-'))
+    const module = path.join(root, 'src', 'Counter.tsx')
+    const source = `
+      export function Counter() {
+        return <button onClick$={() => 1}>count</button>
+      }
+    `
+
+    try {
+      await mkdir(path.dirname(module), { recursive: true })
+      await writeFile(
+        path.join(root, 'package.json'),
+        JSON.stringify({ name: 'suffix-manifest-fixture', version: '1.0.0' }),
+      )
+      await writeFile(module, source)
+      const plugin = getTestPlugin({
+        cache: false,
+        functionSplitting: false,
+        resumable: true,
+        useTypeScriptProject: false,
+      })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+      const transformContext = {
+        emitFile: vi.fn(),
+        warn: vi.fn(),
+        error(error: unknown): never {
+          throw error instanceof Error ? error : new Error(String(error))
+        },
+      }
+      const firstId = `${module}?v=first`
+      const secondId = `${module}?v=second`
+      const first = (await plugin.transform?.call(transformContext, source, firstId)) as {
+        code: string
+      }
+      const second = (await plugin.transform?.call(transformContext, source, secondId)) as {
+        code: string
+      }
+      const emitFile = vi.fn()
+
+      plugin.generateBundle?.call(
+        {
+          emitFile,
+          error(error: unknown): never {
+            throw error instanceof Error ? error : new Error(String(error))
+          },
+        },
+        {},
+        {
+          'first.js': {
+            type: 'chunk',
+            fileName: 'first.js',
+            modules: { [firstId]: {} },
+            code: first.code,
+          },
+          'second.js': {
+            type: 'chunk',
+            fileName: 'second.js',
+            modules: { [secondId]: {} },
+            code: second.code,
+          },
+        },
+      )
+
+      const manifestAsset = emitFile.mock.calls
+        .map(([asset]) => asset as { fileName?: string; source?: string })
+        .find(asset => asset.fileName === 'fict.manifest.json')
+      expect(manifestAsset).toBeDefined()
+      const manifest = JSON.parse(manifestAsset!.source!) as Record<string, string>
+      const publicEntries = Object.entries(manifest).filter(([key]) =>
+        key.startsWith('fict:module:'),
+      )
+      expect(publicEntries).toHaveLength(2)
+      expect(new Set(publicEntries.map(([, url]) => url))).toEqual(
+        new Set(['/first.js', '/second.js']),
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('requires an explicit namespace when a resumable project has no package boundary', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-public-unowned-root-'))
+    const module = path.join(root, 'src', 'Counter.tsx')
+    const source = `
+      export function Counter() {
+        return <button onClick$={() => 1}>count</button>
+      }
+    `
+    const transformContext = {
+      emitFile: vi.fn(),
+      warn: vi.fn(),
+      error(error: unknown): never {
+        throw error instanceof Error ? error : new Error(String(error))
+      },
+    }
+
+    try {
+      await mkdir(path.dirname(module), { recursive: true })
+      await writeFile(module, source)
+
+      const transformAndGenerate = async (namespace?: string) => {
+        const plugin = getTestPlugin({
+          cache: false,
+          functionSplitting: false,
+          publicIdentityNamespace: namespace,
+          resumable: true,
+          useTypeScriptProject: false,
+        })
+        plugin.configResolved?.({ ...mockBuildConfig, root })
+        const transformed = (await plugin.transform?.call(transformContext, source, module)) as {
+          code: string
+        }
+        const emitFile = vi.fn()
+        plugin.generateBundle?.call(
+          {
+            emitFile,
+            error(error: unknown): never {
+              throw error instanceof Error ? error : new Error(String(error))
+            },
+          },
+          {},
+          {
+            'counter.js': {
+              type: 'chunk',
+              fileName: 'counter.js',
+              modules: { [module]: {} },
+              code: transformed.code,
+            },
+          },
+        )
+        return emitFile
+      }
+
+      await expect(transformAndGenerate()).rejects.toThrow('stable project identity')
+      const emitFile = await transformAndGenerate('fixture-unowned-app')
+      expect(
+        emitFile.mock.calls.some(
+          ([asset]) => (asset as { fileName?: string }).fileName === 'fict.manifest.json',
+        ),
+      ).toBe(true)
+      expect(() => getTestPlugin({ publicIdentityNamespace: '   ' })).toThrow(
+        'must be a non-empty string',
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed for a production source with no portable root or package identity', async () => {
+    const workspace = await mkdtemp(path.join(tmpdir(), 'fict-public-external-'))
+    const root = path.join(workspace, 'app')
+    const externalModule = path.join(workspace, 'unowned', 'Counter.tsx')
+
+    try {
+      await mkdir(root, { recursive: true })
+      await mkdir(path.dirname(externalModule), { recursive: true })
+      await writeFile(externalModule, 'export function Counter() {}')
+
+      const plugin = getTestPlugin({
+        cache: false,
+        functionSplitting: false,
+        useTypeScriptProject: false,
+      })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+      await expect(
+        plugin.transform?.call(
+          {
+            emitFile: vi.fn(),
+            warn: vi.fn(),
+            error(error: unknown): never {
+              const message =
+                error && typeof error === 'object' && 'message' in error
+                  ? String(error.message)
+                  : String(error)
+              throw new Error(message)
+            },
+          },
+          'export function Counter() {}',
+          externalModule,
+        ),
+      ).rejects.toThrow('outside the Vite root and has no named package.json boundary')
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects two physical modules that claim the same public package identity', async () => {
+    const workspace = await mkdtemp(path.join(tmpdir(), 'fict-public-collision-'))
+    const root = path.join(workspace, 'app')
+    const firstModule = path.join(workspace, 'first', 'src', 'Counter.tsx')
+    const secondModule = path.join(workspace, 'second', 'src', 'Counter.tsx')
+    const source = 'export function Counter() { return null }'
+
+    try {
+      await Promise.all([
+        mkdir(root, { recursive: true }),
+        mkdir(path.dirname(firstModule), { recursive: true }),
+        mkdir(path.dirname(secondModule), { recursive: true }),
+      ])
+      await Promise.all([
+        writeFile(
+          path.join(workspace, 'first', 'package.json'),
+          JSON.stringify({ name: '@fixture/duplicate', version: '1.0.0' }),
+        ),
+        writeFile(
+          path.join(workspace, 'second', 'package.json'),
+          JSON.stringify({ name: '@fixture/duplicate', version: '1.0.0' }),
+        ),
+        writeFile(firstModule, source),
+        writeFile(secondModule, source),
+      ])
+
+      const plugin = getTestPlugin({
+        cache: false,
+        functionSplitting: false,
+        useTypeScriptProject: false,
+      })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+      const context = {
+        emitFile: vi.fn(),
+        warn: vi.fn(),
+        error(error: unknown): never {
+          const message =
+            error && typeof error === 'object' && 'message' in error
+              ? String(error.message)
+              : String(error)
+          throw new Error(message)
+        },
+      }
+
+      await plugin.transform?.call(context, source, firstModule)
+      await expect(plugin.transform?.call(context, source, secondModule)).rejects.toThrow(
+        'public resumable identity',
+      )
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('does not recompile linked Fict framework build artifacts', async () => {
     const workspace = await mkdtemp(path.join(tmpdir(), 'fict-vite-framework-dist-'))
     const appRoot = path.join(workspace, 'app')

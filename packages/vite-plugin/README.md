@@ -35,6 +35,8 @@ export default defineConfig({
       tsconfigPath: './tsconfig.json',
       // Optional plugin debug logs (or set FICT_VITE_PLUGIN_DEBUG=1)
       debug: false,
+      // Required for resumable builds only when no named package.json owns the Vite root
+      // publicIdentityNamespace: 'com.example.my-app',
       // Allow $state/$effect inside reactive-scope callbacks (e.g., renderHook(() => ...))
       reactiveScopes: ['renderHook'],
     }),
@@ -52,6 +54,10 @@ Core defaults:
   - enabled by default
   - memory cache always on
   - persistent cache defaults to `true` during `vite build`, otherwise in-memory only
+- `publicIdentityNamespace`: optional stable application namespace. Production
+  resumable output otherwise derives it from the owning package name, version,
+  and Vite-root subpath; a root with neither source fails closed before emitting
+  an ambiguous manifest.
 
 The Vite plugin owns an isolated Babel pass and does not load project `.babelrc` or
 `babel.config.*` files. Use `@fictjs/babel-preset` in an explicit Babel pipeline when other Babel

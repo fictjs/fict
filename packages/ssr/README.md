@@ -133,18 +133,22 @@ init()
 QRL is the URL format Fict uses for lazy loading handlers:
 
 ```
-virtual:fict-handler:/path/to/file.tsx$$__fict_e0#default
-│                     │                  │         │
-│                     │                  │         └─ Export Name
-│                     │                  └─ Handler ID
-│                     └─ Source File Path
+virtual:fict-handler:h0123456789abcdef0123456789abcdef$$__fict_e0#default
+│                    │                                  │         │
+│                    │                                  │         └─ Export Name
+│                    │                                  └─ Handler Export
+│                    └─ Opaque Source Identity
 └─ Virtual Module Prefix
 ```
+
+Production identities are checkout-independent and do not contain source paths.
 
 **Representation in HTML:**
 
 ```html
-<button on:click="virtual:fict-handler:/src/App.tsx$$__fict_e0#default">Click me</button>
+<button on:click="virtual:fict-handler:h0123456789abcdef0123456789abcdef$$__fict_e0#default">
+  Click me
+</button>
 ```
 
 ### 2. State Snapshot
@@ -200,7 +204,7 @@ Each resumable component instance has a unique scope ID:
 <fict-host
   data-fict-s="account_scope:s1"                      <!-- scope ID -->
   data-fict-h="/assets/index.js#__fict_r0"            <!-- resume handler -->
-  data-fict-t="Counter@file:///src/App.tsx"           <!-- Component Type -->
+  data-fict-t="Counter@fict:module:m0123456789abcdef0123456789abcdef" <!-- Component Type -->
 >
   ...
 </fict-host>
@@ -561,11 +565,14 @@ Generated detailed `fict.manifest.json` during production build, mapping virtual
 
 ```json
 {
-  "virtual:fict-handler:/src/App.tsx$$__fict_e0": "/assets/handler-e0-abc123.js",
-  "virtual:fict-handler:/src/App.tsx$$__fict_e1": "/assets/handler-e1-def456.js",
-  "file:///src/App.tsx": "/assets/index-xyz789.js"
+  "fict:module:m0123456789abcdef0123456789abcdef": "/assets/index-xyz789.js",
+  "virtual:fict-handler:h0123456789abcdef0123456789abcdef$$__fict_e0": "/assets/handler-e0-abc123.js",
+  "virtual:fict-handler:h0123456789abcdef0123456789abcdef$$__fict_e1": "/assets/handler-e1-def456.js"
 }
 ```
+
+Only modules that own a resumable QRL are listed. Physical filenames and
+unrelated Rollup modules are deliberately excluded.
 
 Treat the manifest, SSR server, HTML snapshots, client loader, QRL chunks, and
 external stream runtime as one build. Prefer a build-scoped manifest URL. If a

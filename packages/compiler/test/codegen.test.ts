@@ -6562,7 +6562,11 @@ describe('resumable event handler transformation', () => {
     const hir = buildHIR(ast)
 
     try {
-      lowerHIRWithRegions(hir, t, { resumable: true, filename: 'module.tsx' })
+      lowerHIRWithRegions(hir, t, {
+        resumable: true,
+        filename: 'module.tsx',
+        publicModuleId: 'fict:module:diagnostic-test',
+      })
       throw new Error('expected lowerHIRWithRegions to throw')
     } catch (error) {
       expect(error).toBeInstanceOf(HIRError)
@@ -6995,6 +6999,28 @@ describe('resumable event handler transformation', () => {
     expect(code).toContain(
       '__fictRegisterResume(__fictQrl(import.meta.url, "__fict_r1"), __fict_r1)',
     )
+  })
+
+  it('uses a public module identity for resumable QRLs without replacing the physical filename', () => {
+    const ast = parseFile(`
+      export function Counter() {
+        return <button onClick$={() => 1}>count</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, {
+      filename: '/private/checkout/src/Counter.tsx',
+      publicModuleId: 'fict:module:m0123456789abcdef',
+      resumable: true,
+    })
+    const { code } = generate(file)
+
+    expect(code).toContain(
+      '__fictRegisterResume(__fictQrl(import.meta.url, "__fict_r0"), __fict_r0)',
+    )
+    expect(code).toContain('__fictQrl("fict:module:m0123456789abcdef", "__fict_e0")')
+    expect(code).toContain('"Counter@" + "fict:module:m0123456789abcdef"')
+    expect(code).not.toContain('/private/checkout')
   })
 
   it('allocates resumable component exports and metadata around existing module bindings', () => {

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, promises as fs, readFileSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 
 import { transformAsync, type PluginItem } from '@babel/core'
 import _generate from '@babel/generator'
@@ -92,6 +92,12 @@ export interface FictPluginOptions extends FictCompilerOptions {
    * @default false for dev, true for production build
    */
   functionSplitting?: boolean
+  /**
+   * Stable application namespace for public resumable identities.
+   * By default the plugin uses the owning package name, version, and Vite-root
+   * subpath. Set this when the Vite root has no named package.json boundary.
+   */
+  publicIdentityNamespace?: string
   /**
    * Enable verbose debug logs from the plugin.
    * Can also be enabled via `FICT_VITE_PLUGIN_DEBUG=1`.
@@ -231,6 +237,7 @@ interface FictPackageMappingResult {
 interface PackageBoundary {
   root: string
   name: string
+  version?: string | undefined
 }
 
 interface TypeScriptProject {
@@ -363,6 +370,7 @@ const FICT_FRAMEWORK_PACKAGES = new Set([
 // Virtual module prefix for extracted handlers
 const VIRTUAL_HANDLER_PREFIX = '\0fict-handler:'
 const VIRTUAL_HANDLER_RESOLVE_PREFIX = 'virtual:fict-handler:'
+const PUBLIC_MODULE_PREFIX = 'fict:module:m'
 
 /**
  * Information about an extracted resumable handler
@@ -420,8 +428,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     useTypeScriptProject = true,
     debug: debugOption,
     library: libraryOption,
+    publicIdentityNamespace: publicIdentityNamespaceOption,
+    publicModuleId: _integrationOwnedPublicModuleId,
     ...compilerOptions
   } = options
+  const publicIdentityNamespace = publicIdentityNamespaceOption?.trim()
+  if (publicIdentityNamespaceOption !== undefined && !publicIdentityNamespace) {
+    throw new Error('[fict] publicIdentityNamespace must be a non-empty string.')
+  }
   const libraryOptions = normalizeLibraryOptions(libraryOption)
   const includePatterns =
     include ?? (libraryOptions.enabled ? DEFAULT_LIBRARY_INCLUDE : DEFAULT_APP_INCLUDE)
@@ -468,6 +482,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   const wrappedDevEnvironments = new WeakSet<object>()
   const libraryMetadataAssets = new Map<string, LibraryMetadataAsset>()
   const packageBoundaryCache = new Map<string, PackageBoundary | null>()
+  const publicModuleIds = new Map<string, string>()
+  const publicModuleSourcesById = new Map<string, string>()
+  const publicModulePortability = new Map<string, boolean>()
   let projectPackageRoot: string | undefined
   const debugEnabled =
     debugOption === true ||
@@ -1006,6 +1023,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     tsImportElisionOverride?: TypeScriptImportElision,
     transformOptions?: {
       moduleMetadata?: Map<string, ModuleReactiveMetadata>
+      publicIdentityId?: string
       useTypeScriptProject?: boolean
     },
   ): Promise<{
@@ -1014,11 +1032,42 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     tsImportElision: TypeScriptImportElision
   }> => {
     assertTransformStateActive(state)
+    let publicModuleId: string | undefined
+    if (config?.command === 'build' && config.root) {
+      const identityId = transformOptions?.publicIdentityId ?? normalizedFilename
+      const lookupKey = createPublicModuleLookupKey(identityId, config.root)
+      const publicIdentity = createPublicModuleIdentity(
+        identityId,
+        config.root,
+        packageBoundaryCache,
+        publicIdentityNamespace,
+      )
+      publicModuleId = publicIdentity.id
+      const previous = publicModuleIds.get(lookupKey)
+      if (previous && previous !== publicModuleId) {
+        throw new Error(
+          `[fict] Vite assigned conflicting public resumable identities to ${JSON.stringify(identityId)}.`,
+        )
+      }
+      const previousSource = publicModuleSourcesById.get(publicModuleId)
+      if (previousSource && previousSource !== lookupKey) {
+        throw new Error(
+          `[fict] Vite assigned the public resumable identity "${publicModuleId}" to multiple modules. ` +
+            'Give linked source packages distinct package names or versions.',
+        )
+      }
+      publicModuleIds.set(lookupKey, publicModuleId)
+      publicModuleSourcesById.set(publicModuleId, lookupKey)
+      publicModulePortability.set(lookupKey, publicIdentity.portable)
+    }
     const fictOptions: FictCompilerOptions = {
       ...compilerOptions,
       dev: compilerOptions.dev ?? isDev,
       sourcemap: compilerOptions.sourcemap ?? true,
       filename: normalizedFilename,
+      // Production artifacts must never serialize the physical build-machine path.
+      // Dev keeps file:// identities so Vite can serve modules directly without a manifest.
+      ...(publicModuleId ? { publicModuleId } : {}),
       moduleMetadata: transformOptions?.moduleMetadata ?? state.moduleMetadata,
       resolveModuleMetadata: (source, importer) =>
         resolveCompilerModuleMetadata(state, source, importer),
@@ -1444,6 +1493,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         ]
       }
       packageBoundaryCache.clear()
+      publicModuleIds.clear()
+      publicModuleSourcesById.clear()
+      publicModulePortability.clear()
       projectPackageRoot =
         findOwningPackageBoundary(
           path.join(config.root, '__fict_project_entry__.js'),
@@ -1471,7 +1523,19 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             }
           : null
       // Vite can reuse plugin instances across watch rebuilds.
-      // Reset per-build metadata to avoid unbounded growth.
+      // Reset per-build identity and metadata so package name/version changes are
+      // reflected instead of colliding with a prior watch build.
+      packageBoundaryCache.clear()
+      publicModuleIds.clear()
+      publicModuleSourcesById.clear()
+      publicModulePortability.clear()
+      if (config) {
+        projectPackageRoot =
+          findOwningPackageBoundary(
+            path.join(config.root, '__fict_project_entry__.js'),
+            packageBoundaryCache,
+          )?.root ?? normalizeFileName(config.root)
+      }
       replaceBuildTransformState()
     },
 
@@ -1696,6 +1760,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           tsImportElision,
         } = await createCompilerOptions(state, code, normalizedFilename, undefined, {
           moduleMetadata: transformMetadata,
+          publicIdentityId: id,
           useTypeScriptProject: !isPassThroughVariant,
         })
         const aliasEntries = normalizeAliases(config?.resolve?.alias)
@@ -1742,6 +1807,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
                   handler.sourceModule,
                   handler.exportName,
                   config?.root,
+                  packageBoundaryCache,
+                  publicIdentityNamespace,
                 )
                 state.extractedHandlers.set(handlerId, handler)
                 if (config?.command === 'build' && !config?.build?.ssr) {
@@ -1827,6 +1894,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               state.extractedHandlers,
               finalMap,
               config?.root,
+              packageBoundaryCache,
+              publicIdentityNamespace,
             )
           } catch (error) {
             this.warn(buildPluginMessage('extractAndRewriteHandlers failed', filename, error))
@@ -1846,7 +1915,13 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             // This ensures the virtual modules are included in the build
             if (config?.command === 'build' && !config?.build?.ssr) {
               for (const handlerName of splitResult.handlers) {
-                const handlerId = createHandlerId(filename, handlerName, config?.root)
+                const handlerId = createHandlerId(
+                  filename,
+                  handlerName,
+                  config?.root,
+                  packageBoundaryCache,
+                  publicIdentityNamespace,
+                )
                 const virtualModuleId = `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}`
                 this.emitFile({
                   type: 'chunk',
@@ -1876,7 +1951,15 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           if (shouldSplit && splitResult?.handlers.length) {
             cachedTransform.extractedHandlers = splitResult.handlers
               .map(handlerName =>
-                state.extractedHandlers.get(createHandlerId(filename, handlerName, config?.root)),
+                state.extractedHandlers.get(
+                  createHandlerId(
+                    filename,
+                    handlerName,
+                    config?.root,
+                    packageBoundaryCache,
+                    publicIdentityNamespace,
+                  ),
+                ),
               )
               .filter((handler): handler is ExtractedHandler => !!handler)
           }
@@ -1980,10 +2063,63 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           libraryMetadataAssets.set(asset.chunkFileName, asset)
         }
       }
+      for (const output of Object.values(bundle)) {
+        if (output.type !== 'chunk') continue
+        for (const moduleId of Object.keys(output.modules)) {
+          if (moduleId.startsWith(VIRTUAL_HANDLER_PREFIX)) {
+            const handlerId = moduleId.slice(VIRTUAL_HANDLER_PREFIX.length)
+            const handler = buildTransformState.extractedHandlers.get(handlerId)
+            if (!handler && manuallyRegisteredHandlers.has(handlerId)) {
+              this.error(
+                '[fict] Standalone manually registered handlers cannot be emitted in a ' +
+                  'production resumability manifest; let the Vite transform own extraction.',
+              )
+            }
+            if (
+              handler &&
+              !createPublicModuleSourceIdentity(
+                handler.sourceModule,
+                config.root,
+                packageBoundaryCache,
+                publicIdentityNamespace,
+              ).portable
+            ) {
+              this.error(
+                '[fict] Resumable production output requires a stable project identity. ' +
+                  'Add a named package.json boundary or set publicIdentityNamespace.',
+              )
+            }
+            continue
+          }
+          if (moduleId.startsWith('\0')) continue
+          const lookupKey = createPublicModuleLookupKey(moduleId, config.root)
+          const publicId = publicModuleIds.get(lookupKey)
+          if (
+            publicId &&
+            typeof output.code === 'string' &&
+            output.code.includes(publicId) &&
+            publicModulePortability.get(lookupKey) === false
+          ) {
+            this.error(
+              '[fict] Resumable production output requires a stable project identity. ' +
+                'Add a named package.json boundary or set publicIdentityNamespace.',
+            )
+          }
+        }
+      }
       if (config.build.ssr) return
 
       const base = config.base ?? '/'
       const manifest: Record<string, string> = {}
+      const addManifestEntry = (key: string, url: string): void => {
+        const previous = manifest[key]
+        if (previous && previous !== url) {
+          this.error(
+            `[fict] Public resumable module identity collision for "${key}" (${previous} and ${url}).`,
+          )
+        }
+        manifest[key] = url
+      }
 
       for (const output of Object.values(bundle)) {
         if (output.type !== 'chunk') continue
@@ -1997,28 +2133,34 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             const handlerId = moduleId.slice(VIRTUAL_HANDLER_PREFIX.length)
             // Map the virtual module resolve prefix to the chunk URL
             const virtualKey = `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}`
-            if (!manifest[virtualKey]) {
-              manifest[virtualKey] = url
-            }
+            addManifestEntry(virtualKey, url)
             continue
           }
 
           // Skip other virtual modules
           if (moduleId.startsWith('\0')) continue
 
-          const normalized = normalizeFileName(moduleId, config.root)
-          if (!path.isAbsolute(normalized)) continue
-          const key = pathToFileURL(normalized).href
-          if (!manifest[key]) {
-            manifest[key] = url
+          // Only modules whose generated chunk actually embeds their public QRL
+          // identity need a manifest entry. Ordinary Rollup modules are private
+          // implementation details and must not expose build-machine paths.
+          const key = publicModuleIds.get(createPublicModuleLookupKey(moduleId, config.root))
+          if (!key) continue
+          if (typeof output.code === 'string' && output.code.includes(key)) {
+            addManifestEntry(key, url)
           }
         }
       }
 
+      if (Object.keys(manifest).length === 0) return
+
       this.emitFile({
         type: 'asset',
         fileName: 'fict.manifest.json',
-        source: JSON.stringify(manifest),
+        source: JSON.stringify(
+          Object.fromEntries(
+            Object.entries(manifest).sort(([left], [right]) => left.localeCompare(right)),
+          ),
+        ),
       })
     },
 
@@ -2074,9 +2216,18 @@ function findOwningPackageBoundary(
       try {
         const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as {
           name?: unknown
+          version?: unknown
         }
-        if (typeof packageJson.name === 'string') {
-          const boundary = { root: directory, name: packageJson.name }
+        const packageName =
+          typeof packageJson.name === 'string' ? packageJson.name.trim() : undefined
+        if (packageName) {
+          const packageVersion =
+            typeof packageJson.version === 'string' ? packageJson.version.trim() : undefined
+          const boundary: PackageBoundary = {
+            root: directory,
+            name: packageName,
+            ...(packageVersion ? { version: packageVersion } : {}),
+          }
           for (const item of visited) cache.set(item, boundary)
           return boundary
         }
@@ -2239,6 +2390,158 @@ function normalizeFileName(id: string, root?: string): string {
   if (path.isAbsolute(clean)) return path.normalize(clean)
   if (root) return path.normalize(path.resolve(root, clean))
   return path.normalize(path.resolve(clean))
+}
+
+function normalizeIdentityPath(filename: string): string {
+  const normalized = path.normalize(path.resolve(filename))
+  let existing = normalized
+  const missingSegments: string[] = []
+  while (!existsSync(existing)) {
+    const parent = path.dirname(existing)
+    if (parent === existing) return normalized
+    missingSegments.unshift(path.basename(existing))
+    existing = parent
+  }
+  try {
+    return path.normalize(path.join(realpathSync(existing), ...missingSegments))
+  } catch {
+    return normalized
+  }
+}
+
+function isPathAtOrInsideDirectory(directory: string, filename: string): boolean {
+  const relative = path.relative(directory, filename)
+  return (
+    relative === '' ||
+    (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`))
+  )
+}
+
+function portableRelativePath(directory: string, filename: string): string {
+  return (path.relative(directory, filename) || '.').split(path.sep).join('/')
+}
+
+function getPublicModuleIdentityParts(
+  id: string,
+  rootDir: string,
+): { filename: string; lookupKey: string; suffix: string } {
+  const { filename, suffix } = splitModuleId(id, { root: rootDir })
+  const normalizedFilename = normalizeIdentityPath(normalizeFileName(filename, rootDir))
+  return {
+    filename: normalizedFilename,
+    lookupKey: JSON.stringify([normalizedFilename, suffix]),
+    suffix,
+  }
+}
+
+function createPublicModuleLookupKey(id: string, rootDir: string): string {
+  return getPublicModuleIdentityParts(id, rootDir).lookupKey
+}
+
+interface PublicModuleIdentity {
+  id: string
+  portable: boolean
+  source: string
+}
+
+/**
+ * Derive a checkout-independent identity source without publishing a filesystem path.
+ * Files under the Vite root use their logical root-relative request. Linked files use
+ * a named, versioned package boundary. An unnamed external source has no portable
+ * identity, so production compilation fails closed instead of embedding a checkout path.
+ */
+function createPublicModuleSourceIdentity(
+  filename: string,
+  rootDir: string,
+  packageBoundaryCache: Map<string, PackageBoundary | null>,
+  explicitNamespace?: string,
+): Omit<PublicModuleIdentity, 'id'> {
+  const root = normalizeIdentityPath(rootDir)
+  const { filename: source, suffix } = getPublicModuleIdentityParts(filename, rootDir)
+  if (isPathAtOrInsideDirectory(root, source)) {
+    if (explicitNamespace) {
+      return {
+        portable: true,
+        source: JSON.stringify([
+          'project-namespace',
+          explicitNamespace,
+          portableRelativePath(root, source),
+          suffix,
+        ]),
+      }
+    }
+    const projectBoundary = findOwningPackageBoundary(
+      path.join(root, '__fict_project_entry__.js'),
+      packageBoundaryCache,
+    )
+    if (projectBoundary) {
+      const packageRoot = normalizeIdentityPath(projectBoundary.root)
+      return {
+        portable: true,
+        source: JSON.stringify([
+          'project-package',
+          projectBoundary.name,
+          projectBoundary.version ?? '',
+          portableRelativePath(packageRoot, root),
+          portableRelativePath(root, source),
+          suffix,
+        ]),
+      }
+    }
+    return {
+      portable: false,
+      source: JSON.stringify(['unowned-root', portableRelativePath(root, source), suffix]),
+    }
+  }
+
+  const boundary = findOwningPackageBoundary(source, packageBoundaryCache)
+  if (boundary) {
+    const packageRoot = normalizeIdentityPath(boundary.root)
+    if (isPathAtOrInsideDirectory(packageRoot, source)) {
+      return {
+        portable: true,
+        source: JSON.stringify([
+          'package',
+          boundary.name,
+          boundary.version ?? '',
+          portableRelativePath(packageRoot, source),
+          suffix,
+        ]),
+      }
+    }
+  }
+
+  throw new Error(
+    `[fict] Cannot derive a checkout-independent resumable identity for ${JSON.stringify(filename)}. ` +
+      'The source is outside the Vite root and has no named package.json boundary.',
+  )
+}
+
+function createPublicModuleId(
+  filename: string,
+  rootDir: string,
+  packageBoundaryCache: Map<string, PackageBoundary | null>,
+  explicitNamespace?: string,
+): string {
+  return createPublicModuleIdentity(filename, rootDir, packageBoundaryCache, explicitNamespace).id
+}
+
+function createPublicModuleIdentity(
+  filename: string,
+  rootDir: string,
+  packageBoundaryCache: Map<string, PackageBoundary | null>,
+  explicitNamespace?: string,
+): PublicModuleIdentity {
+  const sourceIdentity = createPublicModuleSourceIdentity(
+    filename,
+    rootDir,
+    packageBoundaryCache,
+    explicitNamespace,
+  )
+  return {
+    ...sourceIdentity,
+    id: `${PUBLIC_MODULE_PREFIX}${hashString(sourceIdentity.source).slice(0, 32)}`,
+  }
 }
 
 function normalizeTypeScriptConfigDependency(id: string, root?: string): string {
@@ -3444,6 +3747,14 @@ export const __fictVitePluginInternals = {
   computePackageMetadataCacheFingerprint,
   buildFictPackageMappingResult,
   applyFictPackageMappings,
+  createPublicModuleId: (filename: string, root: string, namespace?: string): string =>
+    createPublicModuleId(filename, root, new Map(), namespace),
+  createHandlerId: (
+    filename: string,
+    exportName: string,
+    root: string,
+    namespace?: string,
+  ): string => createHandlerId(filename, exportName, root, new Map(), namespace),
 }
 
 function hashString(value: string): string {
@@ -3858,28 +4169,44 @@ async function createTypeScriptProject(
  * safe to embed in QRL URLs. Keep the absolute source path only in the private
  * handler record, where Rollup needs it to resolve dependency imports.
  */
-function createHandlerSourceIdentity(sourceModule: string, rootDir?: string): string {
+function createHandlerSourceIdentity(
+  sourceModule: string,
+  rootDir?: string,
+  packageBoundaryCache = new Map<string, PackageBoundary | null>(),
+  explicitNamespace?: string,
+): string {
   if (!rootDir) {
     return `external:${hashString(sourceModule.split(path.sep).join('/'))}`
   }
-
-  const normalizeRealPath = (fileName: string): string => {
-    const normalized = path.normalize(path.resolve(fileName))
-    try {
-      return path.normalize(realpathSync(normalized))
-    } catch {
-      return normalized
-    }
-  }
-  const root = normalizeRealPath(rootDir)
-  const source = normalizeRealPath(
-    path.isAbsolute(sourceModule) ? sourceModule : path.resolve(root, sourceModule),
+  const root = normalizeIdentityPath(rootDir)
+  const { filename, suffix } = getPublicModuleIdentityParts(sourceModule, rootDir)
+  const publicIdentity = createPublicModuleSourceIdentity(
+    sourceModule,
+    rootDir,
+    packageBoundaryCache,
+    explicitNamespace,
   )
-  return path.relative(root, source).split(path.sep).join('/') || '.'
+  if (!publicIdentity.portable && isPathAtOrInsideDirectory(root, filename)) {
+    // Preserve the established root-local handler ABI while extending the same
+    // checkout-independent contract to namespaced projects and linked packages.
+    return `${portableRelativePath(root, filename)}${suffix}`
+  }
+  return publicIdentity.source
 }
 
-function createHandlerId(sourceModule: string, exportName: string, rootDir?: string): string {
-  const sourceIdentity = createHandlerSourceIdentity(sourceModule, rootDir)
+function createHandlerId(
+  sourceModule: string,
+  exportName: string,
+  rootDir?: string,
+  packageBoundaryCache?: Map<string, PackageBoundary | null>,
+  explicitNamespace?: string,
+): string {
+  const sourceIdentity = createHandlerSourceIdentity(
+    sourceModule,
+    rootDir,
+    packageBoundaryCache,
+    explicitNamespace,
+  )
   return `h${hashString(sourceIdentity).slice(0, 32)}$$${exportName}`
 }
 
@@ -4423,8 +4750,15 @@ function createHandlerDependencyExportName(
   localName: string,
   usedExportNames: Set<string>,
   rootDir?: string,
+  packageBoundaryCache?: Map<string, PackageBoundary | null>,
+  explicitNamespace?: string,
 ): string {
-  const sourceIdentity = createHandlerSourceIdentity(sourceModule, rootDir)
+  const sourceIdentity = createHandlerSourceIdentity(
+    sourceModule,
+    rootDir,
+    packageBoundaryCache,
+    explicitNamespace,
+  )
   const hash = hashString(`${sourceIdentity}:${localName}`).slice(0, 8)
   const base = `${HANDLER_DEP_PREFIX}${hash}_${localName}`
   let candidate = base
@@ -4450,6 +4784,8 @@ function extractAndRewriteHandlers(
   handlerRegistry: Map<string, ExtractedHandler>,
   inputSourceMap: TransformResult['map'] = null,
   rootDir?: string,
+  packageBoundaryCache?: Map<string, PackageBoundary | null>,
+  explicitNamespace?: string,
 ): { code: string; handlers: string[]; map: TransformResult['map'] } | null {
   let ast: ReturnType<typeof parse>
 
@@ -4624,6 +4960,8 @@ function extractAndRewriteHandlers(
                 localName,
                 usedExportNames,
                 rootDir,
+                packageBoundaryCache,
+                explicitNamespace,
               )
               dependencyExportNames.set(localName, exportName)
             }
@@ -4631,7 +4969,13 @@ function extractAndRewriteHandlers(
           })
 
           // Register the handler with its full code
-          const handlerId = createHandlerId(sourceModule, name, rootDir)
+          const handlerId = createHandlerId(
+            sourceModule,
+            name,
+            rootDir,
+            packageBoundaryCache,
+            explicitNamespace,
+          )
           handlerRegistry.set(handlerId, {
             sourceModule,
             exportName: name,
@@ -4699,6 +5043,8 @@ function extractAndRewriteHandlers(
               localName,
               usedExportNames,
               rootDir,
+              packageBoundaryCache,
+              explicitNamespace,
             )
             dependencyExportNames.set(localName, exportName)
           }
@@ -4706,7 +5052,13 @@ function extractAndRewriteHandlers(
         })
 
         // Register the handler with its full code
-        const handlerId = createHandlerId(sourceModule, name, rootDir)
+        const handlerId = createHandlerId(
+          sourceModule,
+          name,
+          rootDir,
+          packageBoundaryCache,
+          explicitNamespace,
+        )
         handlerRegistry.set(handlerId, {
           sourceModule,
           exportName: name,
@@ -4765,7 +5117,13 @@ function extractAndRewriteHandlers(
       if (!handlerNames.includes(handlerName)) return
 
       // Replace with the virtual module URL
-      const handlerId = createHandlerId(sourceModule, handlerName, rootDir)
+      const handlerId = createHandlerId(
+        sourceModule,
+        handlerName,
+        rootDir,
+        packageBoundaryCache,
+        explicitNamespace,
+      )
       const virtualModuleId = `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}`
       if (path.node.arguments.length === 2) {
         path.replaceWith(t.stringLiteral(`${virtualModuleId}#default`))

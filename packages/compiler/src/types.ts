@@ -134,6 +134,13 @@ export interface FictCompilerOptions {
   explain?: boolean | ((artifact: CompilerExplainArtifact) => void)
   /** Internal: filename of the module being compiled. */
   filename?: string
+  /**
+   * Stable public identity embedded in resumable component and event QRLs.
+   * Official build integrations provide this separately from `filename`, which
+   * remains the physical path used for diagnostics, resolution, and caches.
+   * @internal
+   */
+  publicModuleId?: string
   /** Enable lazy evaluation of conditional derived values (Rule J optimization). Default: true. */
   lazyConditional?: boolean
   /** Enable getter caching within the same sync block (Rule L optimization). Default: true. */

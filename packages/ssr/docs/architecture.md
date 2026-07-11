@@ -366,9 +366,11 @@ generateBundle(options, bundle) {
         continue
       }
 
-      // Normal module
-      const fileUrl = pathToFileURL(moduleId).href
-      manifest[fileUrl] = url
+      // Normal modules are private unless their transform registered a stable
+      // public identity and this chunk actually embeds it in a QRL/type token.
+      const publicId = publicModuleIds.get(normalizeModuleLookupKey(moduleId))
+      if (!publicId) continue
+      if (output.code.includes(publicId)) manifest[publicId] = url
     }
   }
 
@@ -379,6 +381,15 @@ generateBundle(options, bundle) {
   })
 }
 ```
+
+The transform registry hashes the owning project package name/version, Vite-root
+subpath, logical module path, and Vite suffix. An explicit
+`publicIdentityNamespace` replaces the project package namespace when needed;
+linked packages use their own name, version, path, and suffix. It rejects
+unnamed external sources, ambiguous unowned resumable roots, and conflicting
+physical owners. The compiler still receives the physical filename for
+diagnostics, resolution, sourcemaps, and private caches, but that path is never
+serialized into production JavaScript, HTML snapshots, or the manifest.
 
 ### 5.2 Resolution
 

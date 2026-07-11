@@ -1,15 +1,103 @@
-import { mkdtemp, mkdir, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { build, type Rollup } from 'vite'
 import { describe, expect, it } from 'vitest'
 
 import fict, { registerExtractedHandler } from '..'
+import type { FictNode } from '../../../runtime/src/types'
+import { renderToString } from '../../../ssr/src/index'
 
 interface BuildArtifact {
   fileName: string
   source: string
+}
+
+interface ResumableBuildArtifact extends BuildArtifact {
+  isEntry: boolean
+}
+
+const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..')
+
+async function linkFixtureRuntime(root: string): Promise<void> {
+  const nodeModulesDir = path.join(root, 'node_modules')
+  await mkdir(nodeModulesDir, { recursive: true })
+  await symlink(
+    path.join(workspaceRoot, 'packages/fict'),
+    path.join(nodeModulesDir, 'fict'),
+    'junction',
+  )
+}
+
+async function writeResumableIdentityFixture(root: string): Promise<string> {
+  const sourceDir = path.join(root, 'src')
+  const entry = path.join(sourceDir, 'Counter.tsx')
+  await mkdir(sourceDir, { recursive: true })
+  await linkFixtureRuntime(root)
+  await writeFile(
+    path.join(root, 'package.json'),
+    JSON.stringify({ name: 'identity-fixture', type: 'module' }),
+  )
+  await writeFile(path.join(sourceDir, 'plain.ts'), `export const label = 'stable'\n`)
+  await writeFile(
+    entry,
+    `
+      import { $state } from 'fict'
+      import { label } from './plain'
+
+      export function Counter() {
+        let count = $state(1)
+        return <button onClick$={() => count++}>{label}:{count}</button>
+      }
+    `,
+  )
+  return entry
+}
+
+async function buildResumableIdentityFixture(
+  root: string,
+  target: 'client' | 'ssr',
+): Promise<ResumableBuildArtifact[]> {
+  const entry = await writeResumableIdentityFixture(root)
+  const isSsr = target === 'ssr'
+  const result = await build({
+    root,
+    configFile: false,
+    logLevel: 'silent',
+    plugins: [
+      fict({
+        cache: false,
+        useTypeScriptProject: false,
+        functionSplitting: true,
+        resumable: true,
+      }),
+    ],
+    build: {
+      write: false,
+      sourcemap: false,
+      ...(isSsr
+        ? { ssr: entry }
+        : { lib: { entry, formats: ['es'], fileName: () => 'client.js' } }),
+      rollupOptions: {
+        external: id => id === 'fict' || id.startsWith('fict/'),
+        output: {
+          entryFileNames: isSsr ? 'server.mjs' : undefined,
+          chunkFileNames: 'chunks/[name].js',
+        },
+      },
+    },
+  })
+  const outputs = (Array.isArray(result) ? result : [result]).flatMap(output =>
+    'output' in output ? output.output : [],
+  ) as Rollup.OutputFile[]
+
+  return outputs.map(output => ({
+    fileName: output.fileName,
+    isEntry: output.type === 'chunk' && output.isEntry,
+    source: output.type === 'chunk' ? output.code : String(output.source),
+  }))
 }
 
 async function buildFixture(
@@ -20,6 +108,10 @@ async function buildFixture(
   const sourceDir = path.join(root, 'src')
   const entry = path.join(sourceDir, entryName)
   await mkdir(sourceDir, { recursive: true })
+  await writeFile(
+    path.join(root, 'package.json'),
+    JSON.stringify({ name: 'function-splitting-fixture', version: '1.0.0', type: 'module' }),
+  )
   await writeFile(
     entry,
     `
@@ -75,6 +167,10 @@ async function buildMacroFixture(
   const sourceDir = path.join(root, 'src')
   const entry = path.join(sourceDir, entryName)
   await mkdir(sourceDir, { recursive: true })
+  await writeFile(
+    path.join(root, 'package.json'),
+    JSON.stringify({ name: 'macro-splitting-fixture', version: '1.0.0', type: 'module' }),
+  )
   await writeFile(entry, source)
 
   const result = await build({
@@ -137,7 +233,6 @@ describe('function splitting build identity', () => {
         const manifest = JSON.parse(
           artifacts.find(artifact => artifact.fileName === 'fict.manifest.json')!.source,
         ) as Record<string, string>
-        // Ordinary file:// entries serve unsplit QRLs and have a separate identity contract.
         return Object.entries(manifest).filter(([key]) => key.startsWith('virtual:fict-handler:'))
       }
       const firstHandlers = handlerManifestEntries(first)
@@ -151,6 +246,112 @@ describe('function splitting build identity', () => {
       await Promise.all([
         rm(firstRoot, { recursive: true, force: true }),
         rm(secondRoot, { recursive: true, force: true }),
+      ])
+    }
+  })
+
+  it('does not emit an empty resumability manifest for a build without QRL owners', async () => {
+    const root = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-empty-manifest-')))
+    try {
+      const artifacts = await buildMacroFixture(
+        root,
+        'plain.ts',
+        'export const answer: number = 42',
+      )
+      expect(artifacts.some(artifact => artifact.fileName === 'fict.manifest.json')).toBe(false)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps public resumable identities private and interoperable across checkout roots', async () => {
+    const clientRoot = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-public-client-')))
+    const serverRoot = await realpath(await mkdtemp(path.join(tmpdir(), 'fict-public-server-')))
+    const globalRecord = globalThis as Record<string, unknown>
+
+    try {
+      const [clientArtifacts, serverArtifacts] = await Promise.all([
+        buildResumableIdentityFixture(clientRoot, 'client'),
+        buildResumableIdentityFixture(serverRoot, 'ssr'),
+      ])
+      const manifestArtifact = clientArtifacts.find(
+        artifact => artifact.fileName === 'fict.manifest.json',
+      )
+      expect(manifestArtifact).toBeDefined()
+      const manifest = JSON.parse(manifestArtifact!.source) as Record<string, string>
+      const manifestKeys = Object.keys(manifest)
+      const publicKeys = manifestKeys.filter(key => key.startsWith('fict:module:'))
+      const handlerKeys = manifestKeys.filter(key => key.startsWith('virtual:fict-handler:'))
+
+      expect(publicKeys).toHaveLength(1)
+      expect(publicKeys[0]).toMatch(/^fict:module:m[a-f0-9]{32}$/)
+      expect(handlerKeys).toHaveLength(1)
+      expect(manifestKeys).toHaveLength(2)
+      expect(manifestKeys.every(key => !key.startsWith('file://'))).toBe(true)
+
+      const publicKey = publicKeys[0]!
+      const clientJavaScript = clientArtifacts
+        .filter(artifact => artifact.fileName.endsWith('.js'))
+        .map(artifact => artifact.source)
+        .join('\n')
+      const serverJavaScript = serverArtifacts
+        .filter(artifact => artifact.fileName.endsWith('.js') || artifact.fileName.endsWith('.mjs'))
+        .map(artifact => artifact.source)
+        .join('\n')
+      const publicArtifacts = `${clientJavaScript}\n${serverJavaScript}\n${manifestArtifact!.source}`
+
+      expect(serverJavaScript).toContain(publicKey)
+      expect(publicArtifacts).not.toContain(clientRoot)
+      expect(publicArtifacts).not.toContain(serverRoot)
+      expect(publicArtifacts).not.toContain(pathToFileURL(clientRoot).href)
+      expect(publicArtifacts).not.toContain(pathToFileURL(serverRoot).href)
+
+      const serverOutputDir = path.join(serverRoot, 'test-output')
+      for (const artifact of serverArtifacts) {
+        const outputPath = path.join(serverOutputDir, artifact.fileName)
+        await mkdir(path.dirname(outputPath), { recursive: true })
+        await writeFile(outputPath, artifact.source)
+      }
+      const serverEntry = serverArtifacts.find(artifact => artifact.isEntry)
+      expect(serverEntry).toBeDefined()
+      const serverEntryUrl = pathToFileURL(path.join(serverOutputDir, serverEntry!.fileName)).href
+
+      delete globalRecord.__FICT_MANIFEST__
+      const missingManifestModule = (await import(`${serverEntryUrl}?manifest=missing`)) as {
+        Counter: (props?: Record<string, unknown>) => FictNode
+      }
+      const missingManifestHtml = renderToString(() => ({
+        type: missingManifestModule.Counter,
+        props: {},
+      }))
+      expect(missingManifestHtml).toContain(publicKey)
+      expect(missingManifestHtml).not.toContain('/@fs/')
+      expect(missingManifestHtml).not.toContain(clientRoot)
+      expect(missingManifestHtml).not.toContain(serverRoot)
+
+      globalRecord.__FICT_MANIFEST__ = manifest
+      const mappedModule = (await import(`${serverEntryUrl}?manifest=client-a`)) as {
+        Counter: (props?: Record<string, unknown>) => FictNode
+      }
+      const mappedHtml = renderToString(() => ({ type: mappedModule.Counter, props: {} }), {
+        manifest,
+      })
+      const snapshot = mappedHtml.match(
+        /<script[^>]*(?:data-fict-snapshot|id="__FICT_SNAPSHOT__")[^>]*>([\s\S]*?)<\/script>/,
+      )?.[1]
+
+      expect(snapshot).toBeDefined()
+      expect(mappedHtml).toContain(manifest[publicKey]!)
+      expect(mappedHtml).toContain(handlerKeys[0]!)
+      expect(mappedHtml).not.toContain(clientRoot)
+      expect(mappedHtml).not.toContain(serverRoot)
+      expect(snapshot).not.toContain(clientRoot)
+      expect(snapshot).not.toContain(serverRoot)
+    } finally {
+      delete globalRecord.__FICT_MANIFEST__
+      await Promise.all([
+        rm(clientRoot, { recursive: true, force: true }),
+        rm(serverRoot, { recursive: true, force: true }),
       ])
     }
   })

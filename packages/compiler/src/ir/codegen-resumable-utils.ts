@@ -164,18 +164,17 @@ export function capturesLexicalThisInExpr(
 
 /**
  * Generate module URL expression for QRL generation.
- * Uses filename from compiler options when available; falls back to import.meta.url.
+ * Build integrations can provide a stable public identity without replacing the
+ * physical filename used by diagnostics and module resolution. Standalone/dev
+ * compilation keeps the historical filename/import.meta.url behavior.
  */
 export function genModuleUrlExpr(ctx: CodegenContext): BabelCore.types.Expression {
   const { t } = ctx
+  const publicModuleId = ctx.options?.publicModuleId
+  if (publicModuleId) return t.stringLiteral(publicModuleId)
   const filename = ctx.options?.filename
   if (filename) {
-    let fileUrl: string
-    if (filename.startsWith('file://')) {
-      fileUrl = filename
-    } else {
-      fileUrl = pathToFileURL(filename).href
-    }
+    const fileUrl = filename.startsWith('file://') ? filename : pathToFileURL(filename).href
     return t.stringLiteral(fileUrl)
   }
   return t.memberExpression(
