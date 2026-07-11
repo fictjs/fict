@@ -358,11 +358,19 @@ function createRouterState(
   })
 
   // State accessor
-  const state = () => ({
-    location: locationSignal(),
-    matches: matchesSignal(),
-    isRouting: isRoutingSignal(),
-    pendingLocation: pendingLocationSignal(),
+  const state = (): RouterState => ({
+    get location() {
+      return locationSignal()
+    },
+    get matches() {
+      return matchesSignal()
+    },
+    get isRouting() {
+      return isRoutingSignal()
+    },
+    get pendingLocation() {
+      return pendingLocationSignal()
+    },
   })
 
   return {

@@ -173,8 +173,7 @@ export function Routes(props: RoutesProps) {
 
   // Update the active matches when router state changes.
   createEffect(() => {
-    const pendingLocation = readAccessor(router.pendingLocation)
-    const location = pendingLocation ?? readAccessor(router.location)
+    const location = readAccessor(router.location)
     const parentMatch = readAccessor(parentRoute.match)
     const base = readAccessor(router.base)
     const locationPath = stripBaseOrWarn(location.pathname, base)

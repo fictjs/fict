@@ -699,6 +699,51 @@ describe('Router integration (MemoryRouter)', () => {
     expect(screen.getByTestId('path').textContent).toBe('/to')
   })
 
+  it('keeps pending matches out of the rendered route tree while a guard is unresolved', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/outside'] })
+    const routes: RouteDefinition[] = [
+      { path: '/to', element: <span data-testid="guarded-target-route">target</span> },
+    ]
+    let blockNavigation: (() => void) | undefined
+    const onCall = vi.fn(
+      (_retry, prevent) =>
+        new Promise<void>(resolve => {
+          blockNavigation = () => {
+            prevent()
+            resolve()
+          }
+        }),
+    )
+
+    render(() => (
+      <RouterProvider history={history} routes={routes}>
+        <Guarded onCall={onCall} />
+        <LocationText />
+        <PendingText />
+        <NavigateButton to="/to" />
+        <Routes routes={routes} />
+      </RouterProvider>
+    ))
+
+    await act(async () => {
+      screen.getByTestId('go-/to').click()
+      await Promise.resolve()
+    })
+
+    expect(onCall).toHaveBeenCalledOnce()
+    expect(screen.getByTestId('path').textContent).toBe('/outside')
+    expect(screen.getByTestId('pending').textContent).toBe('/to')
+    expect(screen.queryByTestId('guarded-target-route')).toBeNull()
+
+    await act(async () => {
+      blockNavigation?.()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByTestId('path').textContent).toBe('/outside')
+    expect(screen.getByTestId('pending').textContent).toBe('none')
+  })
+
   it('clears pending location when beforeLeave blocks navigation', async () => {
     const onCall = vi.fn((_retry, prevent) => {
       prevent()
