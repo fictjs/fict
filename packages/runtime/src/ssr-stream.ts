@@ -2,6 +2,7 @@ import { __fictGetCurrentSSRSession } from './ssr-session'
 
 export interface SSRStreamHooks {
   registerBoundary?: (start: Comment, end: Comment) => string | null
+  registerErrorBoundary?: (start: Comment, end: Comment) => string | null
   boundaryPending?: (id: string) => void
   boundaryResolved?: (id: string) => void
   boundaryAbandoned?: (id: string) => void

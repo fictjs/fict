@@ -1,11 +1,12 @@
 import { createRequire } from 'node:module'
 import { PassThrough } from 'node:stream'
+import { runInNewContext } from 'node:vm'
 
 import { describe, it, expect, vi } from 'vitest'
 import { parseHTML } from 'linkedom'
 
 import type { FictNode } from '@fictjs/runtime'
-import { Suspense, createSuspenseToken, onDestroy } from '@fictjs/runtime'
+import { ErrorBoundary, Suspense, createSuspenseToken, onDestroy } from '@fictjs/runtime'
 import {
   __fictUseContext,
   __fictUseSignal,
@@ -1146,6 +1147,65 @@ describe('@fictjs/ssr streaming', () => {
     expect(error).toBeInstanceOf(Error)
     expect((error as Error).message).toContain('reject-boom')
   })
+
+  it.each(['shell', 'all'] as const)(
+    'renders an ErrorBoundary fallback when a suspense token rejects in $mode mode',
+    async mode => {
+      const token = createSuspenseToken()
+
+      function AsyncChild(): FictNode {
+        throw token.token
+      }
+
+      function App(): FictNode {
+        return {
+          type: ErrorBoundary,
+          props: {
+            fallback: { type: 'strong', props: { children: 'HandledReject' } },
+            children: {
+              type: Suspense,
+              props: {
+                fallback: { type: 'span', props: { children: 'HandledLoading' } },
+                children: { type: AsyncChild, props: {} },
+              },
+            },
+          },
+        }
+      }
+
+      const stream = renderToStream(() => ({ type: App, props: {} }), {
+        mode,
+        includeSnapshot: false,
+      })
+      const readAll = readReadableStream(stream)
+
+      await Promise.resolve()
+      token.reject(new Error('handled-reject'))
+
+      const html = await withTimeout(readAll, 500, 'handled rejection stream')
+      const window = parseHTML(html) as unknown as Window & {
+        __FICT_STREAM?: { apply(id: string): void }
+      }
+      if (mode === 'all') {
+        expect(window.document.body.textContent).toContain('HandledReject')
+        expect(window.document.body.textContent).not.toContain('HandledLoading')
+        return
+      }
+
+      runInNewContext(createStreamRuntimeCode({ observerMode: false }), {
+        document: window.document,
+        window,
+      })
+      const patch = Array.from(
+        window.document.querySelectorAll('template[data-fict-suspense]'),
+      ).find(template => template.content.querySelector('strong')?.textContent === 'HandledReject')
+
+      expect(patch).toBeDefined()
+      window.__FICT_STREAM?.apply(patch!.getAttribute('data-fict-suspense')!)
+      expect(window.document.body.textContent).toContain('HandledReject')
+      expect(window.document.body.textContent).not.toContain('HandledLoading')
+    },
+  )
 
   it('aborts a shell stream when Suspense onResolve throws', async () => {
     const token = createSuspenseToken()

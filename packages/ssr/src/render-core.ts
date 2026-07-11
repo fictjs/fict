@@ -868,13 +868,16 @@ function startStreamingRenderInSession(
     }
   }
 
+  const registerStreamBoundary = (start: Comment, end: Comment): string => {
+    const localId = `s${++boundaryId}`
+    const id = streamIdentifierPrefix ? `${streamIdentifierPrefix}:${localId}` : localId
+    boundaryMap.set(id, { start, end, pending: false })
+    return id
+  }
+
   const hooks = {
-    registerBoundary(start: Comment, end: Comment) {
-      const localId = `s${++boundaryId}`
-      const id = streamIdentifierPrefix ? `${streamIdentifierPrefix}:${localId}` : localId
-      boundaryMap.set(id, { start, end, pending: false })
-      return id
-    },
+    registerBoundary: registerStreamBoundary,
+    registerErrorBoundary: registerStreamBoundary,
     boundaryPending(id: string) {
       const entry = boundaryMap.get(id)
       if (!entry || entry.pending) return
@@ -888,7 +891,7 @@ function startStreamingRenderInSession(
         entry.pending = false
         pendingCount = Math.max(0, pendingCount - 1)
       }
-      if (mode === 'shell') {
+      if (mode === 'shell' && wroteShell) {
         try {
           writeSnapshotForBoundary(id)
           if (dom) {

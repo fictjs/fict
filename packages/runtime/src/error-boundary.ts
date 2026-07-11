@@ -16,6 +16,7 @@ import {
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
 import { resetKeysChanged } from './reset-keys'
 import { untrack } from './signal'
+import { __fictGetSSRStreamHooks, __fictPopSSRBoundary, __fictPushSSRBoundary } from './ssr-stream'
 import type { BaseProps, FictNode } from './types'
 
 interface ErrorBoundaryProps extends BaseProps {
@@ -25,12 +26,14 @@ interface ErrorBoundaryProps extends BaseProps {
 }
 
 export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
+  const streamHooks = __fictGetSSRStreamHooks()
   const hostRoot = getCurrentRoot()
   const boundaryRoot = createRootContext(hostRoot)
   const markerOwnerDocument = hostRoot?.ownerDocument ?? document
   const fragment = markerOwnerDocument.createDocumentFragment()
+  const startMarker = markerOwnerDocument.createComment('fict:error-boundary-start')
   const marker = markerOwnerDocument.createComment('fict:error-boundary')
-  fragment.appendChild(marker)
+  fragment.append(startMarker, marker)
 
   let cleanup: (() => void) | undefined
   let activeNodes: Node[] = []
@@ -38,6 +41,16 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
   let disposing = false
   let disposed = false
   let renderGeneration = 0
+  let streamBoundaryId: string | null = null
+  let streamPending = false
+
+  if (streamHooks?.registerErrorBoundary) {
+    streamBoundaryId = streamHooks.registerErrorBoundary(startMarker, marker) ?? null
+    if (streamBoundaryId) {
+      startMarker.data = `fict:suspense-start:${streamBoundaryId}`
+      marker.data = `fict:suspense-end:${streamBoundaryId}`
+    }
+  }
 
   let reset = () => {}
   const toFallback = (err: unknown): FictNode =>
@@ -72,6 +85,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
     const root = createRootContext(parentRoot)
     const prev = pushRoot(root)
     let nodes: Node[] = []
+    let streamBoundaryPushed = false
     let didPopRoot = false
     let attemptDestroyed = false
     const restoreRoot = () => {
@@ -89,7 +103,16 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
         removeNodes(nodes)
       }
     }
+    const popStreamBoundary = () => {
+      if (!streamBoundaryPushed) return
+      streamBoundaryPushed = false
+      __fictPopSSRBoundary(streamBoundaryId ?? undefined)
+    }
     try {
+      if (streamBoundaryId) {
+        __fictPushSSRBoundary(streamBoundaryId)
+        streamBoundaryPushed = true
+      }
       const output = untrack(() => createElement(value))
       nodes = toNodeArray(output, markerOwnerDocument)
       if (generation !== renderGeneration) {
@@ -108,6 +131,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
         return
       }
     } catch (err) {
+      popStreamBoundary()
       destroyAttempt()
       // Fall back immediately on render errors, avoid infinite recursion
       if (renderingFallback || generation !== renderGeneration) {
@@ -115,6 +139,8 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
       }
       captureError(err)
       return
+    } finally {
+      popStreamBoundary()
     }
 
     cleanup = () => {
@@ -132,6 +158,10 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
     if (disposing) {
       untrack(() => props.onError?.(err))
       return
+    }
+    if (!streamPending && streamBoundaryId && streamHooks?.boundaryPending) {
+      streamPending = true
+      streamHooks.boundaryPending(streamBoundaryId)
     }
     renderingFallback = true
     let rendered = false
@@ -153,6 +183,10 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
     if (rendered) renderingFallback = false
     untrack(() => props.onError?.(err))
     if (!rendered) throw fallbackError
+    if (streamPending && streamBoundaryId && streamHooks?.boundaryResolved) {
+      streamPending = false
+      streamHooks.boundaryResolved(streamBoundaryId)
+    }
   }
 
   reset = () => {
@@ -165,6 +199,10 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
     disposing = true
     renderGeneration++
     try {
+      if (streamBoundaryId && streamHooks?.boundaryAbandoned) {
+        streamPending = false
+        streamHooks.boundaryAbandoned(streamBoundaryId)
+      }
       if (cleanup) {
         cleanup()
         cleanup = undefined
