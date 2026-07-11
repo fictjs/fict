@@ -534,6 +534,66 @@ interface ResolvedFormAction {
   isExternal: boolean
 }
 
+type FormSubmitter = HTMLButtonElement | HTMLInputElement
+type HandledFormMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+
+const HANDLED_FORM_METHODS = new Set<HandledFormMethod>(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
+
+function getAssociatedFormSubmitter(
+  candidate: HTMLElement | null | undefined,
+  form: HTMLFormElement,
+): FormSubmitter | null {
+  if (!candidate) return null
+
+  if (candidate.tagName === 'BUTTON') {
+    const button = candidate as HTMLButtonElement
+    return button.form === form && button.type === 'submit' ? button : null
+  }
+
+  if (candidate.tagName === 'INPUT') {
+    const input = candidate as HTMLInputElement
+    return input.form === form && (input.type === 'submit' || input.type === 'image') ? input : null
+  }
+
+  return null
+}
+
+function getSubmitterOverride(
+  submitter: FormSubmitter | null,
+  attribute: 'formaction' | 'formmethod' | 'formtarget',
+): string | undefined {
+  if (!submitter?.hasAttribute(attribute)) return undefined
+  return submitter.getAttribute(attribute) ?? ''
+}
+
+function getHandledFormMethod(method: string | undefined): HandledFormMethod | null {
+  const normalized = (method ?? 'get').toUpperCase()
+  return HANDLED_FORM_METHODS.has(normalized as HandledFormMethod)
+    ? (normalized as HandledFormMethod)
+    : null
+}
+
+function createFormData(form: HTMLFormElement, submitter: FormSubmitter | null): FormData {
+  if (!submitter) return new FormData(form)
+
+  try {
+    return new FormData(form, submitter)
+  } catch {
+    // Older FormData implementations do not accept the submitter argument.
+    const formData = new FormData(form)
+    if (submitter.disabled) return formData
+
+    if (submitter.tagName === 'INPUT' && submitter.type === 'image') {
+      const prefix = submitter.name ? `${submitter.name}.` : ''
+      formData.append(`${prefix}x`, '0')
+      formData.append(`${prefix}y`, '0')
+    } else if (submitter.name) {
+      formData.append(submitter.name, submitter.value)
+    }
+    return formData
+  }
+}
+
 function splitFormAction(action: string): Omit<ResolvedFormAction, 'href' | 'isExternal'> {
   let pathname = action
   let hash = ''
@@ -570,8 +630,8 @@ export function Form(props: FormProps): FictNode {
   const route = useRoute()
   const hasRouteContext = hasContext(RouteContext)
 
-  const resolveAction = (): ResolvedFormAction => {
-    const rawAction = props.action ?? '.'
+  const resolveAction = (actionOverride?: string): ResolvedFormAction => {
+    const rawAction = actionOverride ?? props.action ?? '.'
     const externalHref = getExternalHref(rawAction)
     const action = splitFormAction(rawAction)
 
@@ -602,29 +662,40 @@ export function Form(props: FormProps): FictNode {
     if (event.defaultPrevented) return
 
     const form = event.currentTarget as HTMLFormElement
+    const submitter = getAssociatedFormSubmitter(event.submitter, form)
+    const submitterTarget = getSubmitterOverride(submitter, 'formtarget')
+    const target = submitterTarget ?? form.target
 
     // Don't handle if form has a target that opens in a new window/frame
-    const target = form.target
-    if (target && target !== '_self') return
+    if (target && target.toLowerCase() !== '_self') return
 
-    const snapshot = untrack(() => ({
-      action: resolveAction(),
-      method: props.method,
-      navigate: props.navigate,
-      replace: props.replace,
-      scroll: props.preventScrollReset === true ? false : undefined,
-    }))
-    const method = snapshot.method?.toUpperCase() || 'GET'
+    const snapshot = untrack(() => {
+      const method = getHandledFormMethod(
+        getSubmitterOverride(submitter, 'formmethod') ?? props.method,
+      )
+      if (!method) return null
+
+      return {
+        action: resolveAction(getSubmitterOverride(submitter, 'formaction')),
+        method,
+        navigate: props.navigate,
+        replace: props.replace,
+        scroll: props.preventScrollReset === true ? false : undefined,
+      }
+    })
+
+    // Unsupported methods (including dialog and explicit empty values) stay native.
+    if (!snapshot) return
 
     // Let the browser preserve native external GET form semantics.
-    if (method === 'GET' && snapshot.action.isExternal) return
+    if (snapshot.method === 'GET' && snapshot.action.isExternal) return
 
     // Prevent default form submission for router navigation and fetch submissions.
     event.preventDefault()
 
-    const formData = new FormData(form)
+    const formData = createFormData(form, submitter)
 
-    if (method === 'GET') {
+    if (snapshot.method === 'GET') {
       // For GET, navigate with search params
       const searchParams = new URLSearchParams()
       formData.forEach((value, key) => {
@@ -645,7 +716,7 @@ export function Form(props: FormProps): FictNode {
       )
     } else {
       // For POST/PUT/PATCH/DELETE, submit via fetch
-      void submitFormAction(form, snapshot.action.href, method, formData, {
+      void submitFormAction(form, snapshot.action.href, snapshot.method, formData, {
         navigate: snapshot.navigate !== false,
         replace: snapshot.replace ?? false,
         scroll: snapshot.scroll,

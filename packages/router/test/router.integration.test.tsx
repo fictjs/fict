@@ -214,6 +214,9 @@ function ReactiveFormFixture() {
       data-testid="reactive-form"
     >
       <input name="query" value="fict" />
+      <button type="submit" data-testid="reactive-form-submitter">
+        Submit
+      </button>
     </Form>
   )
 }
@@ -1304,7 +1307,8 @@ describe('Router integration (MemoryRouter)', () => {
     expect(form.getAttribute('action')).toBe('/second-action')
     expect(form.getAttribute('method')).toBe('get')
 
-    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    const submitter = screen.getByTestId('reactive-form-submitter') as HTMLButtonElement
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true, submitter }))
     await vi.waitFor(() => expect(history.location.pathname).toBe('/second-action'))
     expect(history.location.search).toBe('?query=fict')
     expect(history.action).toBe('REPLACE')
@@ -1491,6 +1495,219 @@ describe('Router integration (MemoryRouter)', () => {
       expect(form.dispatchEvent(event)).toBe(true)
       expect(event.defaultPrevented).toBe(false)
       expect(history.location.pathname).toBe('/form')
+    } finally {
+      history.destroy?.()
+    }
+  })
+
+  it('uses the associated submitter action, method, name, and value', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/form'] })
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }))
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <Form action="/fallback" method="get" data-testid="submitter-form">
+            <input name="query" value="fict" />
+            <button
+              type="submit"
+              name="intent"
+              value="preview"
+              formAction="/preview"
+              formMethod="get"
+              data-testid="preview-submitter"
+            >
+              Preview
+            </button>
+            <button
+              type="submit"
+              name="intent"
+              value="save"
+              formAction="/save"
+              formMethod="post"
+              data-testid="save-submitter"
+            >
+              Save
+            </button>
+          </Form>
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('submitter-form') as HTMLFormElement
+      const preview = screen.getByTestId('preview-submitter') as HTMLButtonElement
+      const save = screen.getByTestId('save-submitter') as HTMLButtonElement
+
+      const previewEvent = new SubmitEvent('submit', {
+        bubbles: true,
+        cancelable: true,
+        submitter: preview,
+      })
+      expect(form.dispatchEvent(previewEvent)).toBe(false)
+      await vi.waitFor(() => expect(history.location.pathname).toBe('/preview'))
+      expect(history.location.search).toBe('?query=fict&intent=preview')
+      expect(fetchMock).not.toHaveBeenCalled()
+
+      const saveEvent = new SubmitEvent('submit', {
+        bubbles: true,
+        cancelable: true,
+        submitter: save,
+      })
+      expect(form.dispatchEvent(saveEvent)).toBe(false)
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+      expect(fetchMock.mock.calls[0]?.[0]).toBe('/save')
+      expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' })
+      const body = fetchMock.mock.calls[0]?.[1]?.body as FormData
+      expect(body.get('query')).toBe('fict')
+      expect(body.get('intent')).toBe('save')
+    } finally {
+      fetchMock.mockRestore()
+      history.destroy?.()
+    }
+  })
+
+  it('leaves a submitter formTarget outside _self to the browser', () => {
+    const history = createMemoryHistory({ initialEntries: ['/form'] })
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }))
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <Form action="/fallback" method="post" data-testid="submitter-target-form">
+            <input
+              type="submit"
+              formAction="/search"
+              formMethod="get"
+              formTarget="_blank"
+              data-testid="blank-submitter"
+            />
+          </Form>
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('submitter-target-form') as HTMLFormElement
+      const submitter = screen.getByTestId('blank-submitter') as HTMLInputElement
+      const event = new SubmitEvent('submit', {
+        bubbles: true,
+        cancelable: true,
+        submitter,
+      })
+      expect(form.dispatchEvent(event)).toBe(true)
+      expect(event.defaultPrevented).toBe(false)
+      expect(history.location.pathname).toBe('/form')
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      fetchMock.mockRestore()
+      history.destroy?.()
+    }
+  })
+
+  it('leaves an external GET submitter action to the browser', () => {
+    const history = createMemoryHistory({ initialEntries: ['/form'] })
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }))
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <Form action="/fallback" method="post" data-testid="external-submitter-form">
+            <button
+              type="submit"
+              formAction="https://example.com/search"
+              formMethod="get"
+              data-testid="external-submitter"
+            />
+          </Form>
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('external-submitter-form') as HTMLFormElement
+      const submitter = screen.getByTestId('external-submitter') as HTMLButtonElement
+      const event = new SubmitEvent('submit', {
+        bubbles: true,
+        cancelable: true,
+        submitter,
+      })
+      expect(form.dispatchEvent(event)).toBe(true)
+      expect(event.defaultPrevented).toBe(false)
+      expect(history.location.pathname).toBe('/form')
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      fetchMock.mockRestore()
+      history.destroy?.()
+    }
+  })
+
+  it.each(['dialog', '', 'trace', ' get '])(
+    'leaves unsupported submitter formMethod %j native',
+    method => {
+      const history = createMemoryHistory({ initialEntries: ['/form'] })
+
+      try {
+        render(() => (
+          <RouterProvider history={history} routes={[]}>
+            <Form action="/fallback" method="get" data-testid="unsupported-method-form">
+              <button
+                type="submit"
+                formAction="/override"
+                formMethod={method}
+                data-testid="unsupported-method-submitter"
+              />
+            </Form>
+          </RouterProvider>
+        ))
+
+        const form = screen.getByTestId('unsupported-method-form') as HTMLFormElement
+        const submitter = screen.getByTestId('unsupported-method-submitter') as HTMLButtonElement
+        expect(submitter.getAttribute('formmethod')).toBe(method)
+        const event = new SubmitEvent('submit', {
+          bubbles: true,
+          cancelable: true,
+          submitter,
+        })
+        expect(form.dispatchEvent(event)).toBe(true)
+        expect(event.defaultPrevented).toBe(false)
+        expect(history.location.pathname).toBe('/form')
+      } finally {
+        history.destroy?.()
+      }
+    },
+  )
+
+  it('ignores a submitter associated with another form', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/form'] })
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <div>
+            <Form action="/fallback" method="get" data-testid="associated-form" />
+            <form>
+              <button
+                type="submit"
+                formAction="https://example.com/search"
+                formMethod="get"
+                data-testid="foreign-submitter"
+              />
+            </form>
+          </div>
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('associated-form') as HTMLFormElement
+      const submitter = screen.getByTestId('foreign-submitter') as HTMLButtonElement
+      expect(submitter.form).not.toBe(form)
+      const event = new SubmitEvent('submit', {
+        bubbles: true,
+        cancelable: true,
+        submitter,
+      })
+      expect(form.dispatchEvent(event)).toBe(false)
+      await vi.waitFor(() => expect(history.location.pathname).toBe('/fallback'))
     } finally {
       history.destroy?.()
     }
