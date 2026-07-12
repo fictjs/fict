@@ -93,6 +93,40 @@ describe('createStore iteration tracking', () => {
 
     expect(seen[seen.length - 1]).toEqual(['bar'])
   })
+
+  it('tracks property presence independently from undefined values', async () => {
+    const [state, setState] = createStore<{ value?: number }>({ value: undefined })
+    const presenceSnapshots: boolean[] = []
+    const valueSnapshots: Array<number | undefined> = []
+
+    createEffect(() => {
+      presenceSnapshots.push('value' in state)
+    })
+    createEffect(() => {
+      valueSnapshots.push(state.value)
+    })
+
+    setState(current => {
+      delete current.value
+    })
+    await tick()
+    expect(presenceSnapshots).toEqual([true, false])
+    expect(valueSnapshots).toEqual([undefined])
+
+    setState(current => {
+      current.value = undefined
+    })
+    await tick()
+    expect(presenceSnapshots).toEqual([true, false, true])
+    expect(valueSnapshots).toEqual([undefined])
+
+    setState(current => {
+      current.value = 1
+    })
+    await tick()
+    expect(presenceSnapshots).toEqual([true, false, true])
+    expect(valueSnapshots).toEqual([undefined, 1])
+  })
 })
 
 describe('createStore descriptor safety', () => {

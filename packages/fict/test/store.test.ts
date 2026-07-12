@@ -1163,6 +1163,34 @@ describe('$store', () => {
       expect(fn).toHaveBeenCalledTimes(2)
     })
 
+    it('should track property presence independently from undefined values', async () => {
+      const state = $store<{ value?: number }>({ value: undefined })
+      const presenceSnapshots: boolean[] = []
+      const valueSnapshots: Array<number | undefined> = []
+
+      createEffect(() => {
+        presenceSnapshots.push('value' in state)
+      })
+      createEffect(() => {
+        valueSnapshots.push(state.value)
+      })
+
+      delete state.value
+      await tick()
+      expect(presenceSnapshots).toEqual([true, false])
+      expect(valueSnapshots).toEqual([undefined])
+
+      state.value = undefined
+      await tick()
+      expect(presenceSnapshots).toEqual([true, false, true])
+      expect(valueSnapshots).toEqual([undefined])
+
+      state.value = 1
+      await tick()
+      expect(presenceSnapshots).toEqual([true, false, true])
+      expect(valueSnapshots).toEqual([undefined, 1])
+    })
+
     it('should react to Object.keys iteration', async () => {
       const state = $store<Record<string, number>>({ a: 1, b: 2 })
       const fn = vi.fn()

@@ -38,6 +38,8 @@ export function createStore<T extends object>(
 const proxyCache = new WeakMap<object, unknown>()
 // Map of target object -> Map<key, Signal>
 const signalCache = new WeakMap<object, Map<string | symbol, SignalAccessor<unknown>>>()
+// Map of target object -> Map<key, presence Signal>
+const presenceSignalCache = new WeakMap<object, Map<string | symbol, SignalAccessor<boolean>>>()
 // Map of target object -> monotonically increasing iterate version
 const iterateVersionCache = new WeakMap<object, number>()
 const defineNotificationSuppressions = new WeakMap<object, Set<string | symbol>>()
@@ -307,7 +309,7 @@ function wrap<T>(value: T): T {
     },
     has(target, prop) {
       const result = Reflect.has(target, prop)
-      track(target, prop)
+      trackPresence(target, prop, result)
       return result
     },
     ownKeys(target) {
@@ -341,6 +343,7 @@ function wrap<T>(value: T): T {
       }
       if (result) {
         trigger(target, prop, value, true)
+        triggerPresence(target, prop)
         if (!hadKey) {
           trigger(target, ITERATE_KEY)
         }
@@ -361,6 +364,17 @@ function wrap<T>(value: T): T {
                 if (!Number.isInteger(index) || String(index) !== key) continue
                 if (index >= nextLength && index < oldLength) {
                   trigger(target, key)
+                }
+              }
+            }
+            const presenceSignals = presenceSignalCache.get(target)
+            if (presenceSignals) {
+              for (const key of presenceSignals.keys()) {
+                if (typeof key !== 'string') continue
+                const index = Number(key)
+                if (!Number.isInteger(index) || String(index) !== key) continue
+                if (index >= nextLength && index < oldLength) {
+                  triggerPresence(target, key)
                 }
               }
             }
@@ -387,6 +401,7 @@ function wrap<T>(value: T): T {
         descriptorValue(target, prop, nextDescriptor, proxy as object, undefined),
         true,
       )
+      triggerPresence(target, prop)
 
       if (hadKey !== hasKey || descriptorShapeChanged(oldDescriptor, nextDescriptor)) {
         trigger(target, ITERATE_KEY)
@@ -408,6 +423,17 @@ function wrap<T>(value: T): T {
               }
             }
           }
+          const presenceSignals = presenceSignalCache.get(target)
+          if (presenceSignals) {
+            for (const key of presenceSignals.keys()) {
+              if (typeof key !== 'string') continue
+              const index = Number(key)
+              if (!Number.isInteger(index) || String(index) !== key) continue
+              if (index >= target.length && index < oldLength) {
+                triggerPresence(target, key)
+              }
+            }
+          }
           trigger(target, ITERATE_KEY)
         }
       }
@@ -419,6 +445,7 @@ function wrap<T>(value: T): T {
       const result = Reflect.deleteProperty(target, prop)
       if (result) {
         trigger(target, prop)
+        triggerPresence(target, prop)
         if (hadKey) {
           trigger(target, ITERATE_KEY)
         }
@@ -474,6 +501,31 @@ function track(
     signals.set(prop, s)
   }
   s() // subscribe
+}
+
+function trackPresence(target: object, prop: string | symbol, initialValue: boolean) {
+  // Keep presence tracking as lazy as ordinary property tracking.
+  if (!getActiveSub()) return
+
+  let signals = presenceSignalCache.get(target)
+  if (!signals) {
+    signals = new Map()
+    presenceSignalCache.set(target, signals)
+  }
+
+  let s = signals.get(prop)
+  if (!s) {
+    s = signal(initialValue)
+    signals.set(prop, s)
+  }
+  s()
+}
+
+function triggerPresence(target: object, prop: string | symbol) {
+  const signal = presenceSignalCache.get(target)?.get(prop)
+  if (signal) {
+    signal(Reflect.has(target, prop))
+  }
 }
 
 function trigger(

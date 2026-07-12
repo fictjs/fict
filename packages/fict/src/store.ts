@@ -61,9 +61,13 @@ const SKIP_MUTATION_WARNING_PROPS: (string | symbol)[] = [
 ]
 
 type SignalBucket = Record<string | symbol, Signal<unknown>>
+type PresenceSignalBucket = Record<string | symbol, Signal<boolean>>
 
 /** Cache of signals per object property */
 const SIGNAL_CACHE = new WeakMap<object, SignalBucket>()
+
+/** Cache of property-presence signals used by the `in` operator. */
+const PRESENCE_SIGNAL_CACHE = new WeakMap<object, PresenceSignalBucket>()
 
 /** Cache of bound methods to preserve function identity across reads */
 const BOUND_METHOD_CACHE = new WeakMap<object, Map<string | symbol, BoundMethodEntry>>()
@@ -107,6 +111,31 @@ function getCachedSignal(
 ): Signal<unknown> | undefined {
   if (!signals || !Object.prototype.hasOwnProperty.call(signals, prop)) return undefined
   return signals[prop]!
+}
+
+/**
+ * Get or create a signal that tracks whether a property exists on a target.
+ * Presence must be tracked separately from value so an own `undefined` key can
+ * be distinguished from a missing key.
+ * @internal
+ */
+function getPresenceSignal(target: object, prop: string | symbol): Signal<boolean> {
+  let signals = PRESENCE_SIGNAL_CACHE.get(target)
+  if (!signals) {
+    signals = Object.create(null) as PresenceSignalBucket
+    PRESENCE_SIGNAL_CACHE.set(target, signals)
+  }
+  if (!Object.prototype.hasOwnProperty.call(signals, prop)) {
+    signals[prop] = createSignal(Reflect.has(target, prop))
+  }
+  return signals[prop]!
+}
+
+/** Notify `in` subscribers when a property's presence changes. */
+function triggerPresence(target: object, prop: string | symbol): void {
+  const signals = PRESENCE_SIGNAL_CACHE.get(target)
+  if (!signals || !Object.prototype.hasOwnProperty.call(signals, prop)) return
+  signals[prop]!(Reflect.has(target, prop))
 }
 
 /**
@@ -352,6 +381,7 @@ export function $store<T extends object>(initialValue: T): T {
         }
         signal(nextValue)
       }
+      triggerPresence(target, prop)
 
       // If new property, trigger iteration update
       if (!hadKey) {
@@ -378,6 +408,7 @@ export function $store<T extends object>(initialValue: T): T {
               if (signal) {
                 signal(undefined)
               }
+              triggerPresence(target, key)
             }
           }
         }
@@ -390,6 +421,10 @@ export function $store<T extends object>(initialValue: T): T {
     deleteProperty(target, prop) {
       const hadKey = Object.prototype.hasOwnProperty.call(target, prop)
       const result = Reflect.deleteProperty(target, prop)
+
+      if (result) {
+        triggerPresence(target, prop)
+      }
 
       if (result && hadKey) {
         const signals = SIGNAL_CACHE.get(target)
@@ -419,7 +454,7 @@ export function $store<T extends object>(initialValue: T): T {
     },
 
     has(target, prop) {
-      getSignal(target, prop)()
+      getPresenceSignal(target, prop)()
       return Reflect.has(target, prop)
     },
 
@@ -450,6 +485,7 @@ export function $store<T extends object>(initialValue: T): T {
             : (target as IndexableObject)[prop]
         signal(nextValue)
       }
+      triggerPresence(target, prop)
 
       const shapeChanged = descriptorShapeChanged(oldDescriptor, nextDescriptor)
       if (hadKey !== hasKey || shapeChanged) {
@@ -468,6 +504,7 @@ export function $store<T extends object>(initialValue: T): T {
             if (indexSignal) {
               indexSignal(undefined)
             }
+            triggerPresence(target, String(i))
           }
           triggerIteration(target)
         }
