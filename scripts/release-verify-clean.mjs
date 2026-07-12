@@ -52,6 +52,12 @@ export function releaseIsolationEnv(checkoutDir, sharedStoreDir) {
   }
 }
 
+export function worktreeRemovalFailure(status, checkoutDir) {
+  return status === 0
+    ? null
+    : `[release-verify-clean] Failed to remove temporary worktree ${checkoutDir}`
+}
+
 function main() {
   const status = run('git', ['status', '--porcelain=v1', '--untracked-files=all'], {
     capture: true,
@@ -84,8 +90,10 @@ function main() {
         stdio: 'inherit',
       })
       if (removal.error) console.error(removal.error)
-      if (removal.status !== 0) {
-        console.error(`[release-verify-clean] Failed to remove temporary worktree ${checkoutDir}`)
+      const cleanupFailure = worktreeRemovalFailure(removal.status, checkoutDir)
+      if (cleanupFailure) {
+        console.error(cleanupFailure)
+        process.exitCode = 1
       }
     }
     rmSync(tempRoot, { recursive: true, force: true })

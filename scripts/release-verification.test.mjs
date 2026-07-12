@@ -15,6 +15,7 @@ import {
   dirtyCheckoutMessage,
   pnpmStoreRoot,
   releaseIsolationEnv,
+  worktreeRemovalFailure,
 } from './release-verify-clean.mjs'
 import { guardrailSampleFilename } from './hir-guardrails.mjs'
 
@@ -161,6 +162,14 @@ test('clean checkout isolates Turbo artifacts and uses CI browser behavior', () 
     HUSKY: '0',
     TURBO_CACHE_DIR: '/tmp/fict-clean/.turbo/release-cache',
   })
+})
+
+test('clean checkout fails when its temporary worktree cannot be removed', () => {
+  assert.equal(worktreeRemovalFailure(0, '/tmp/fict-clean'), null)
+  assert.equal(
+    worktreeRemovalFailure(128, '/tmp/fict-clean'),
+    '[release-verify-clean] Failed to remove temporary worktree /tmp/fict-clean',
+  )
 })
 
 test('HIR output-size samples use checkout-independent source identities', () => {
