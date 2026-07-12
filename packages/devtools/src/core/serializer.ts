@@ -10,13 +10,122 @@ const MAX_STRING_LENGTH = 500
 const MAX_ARRAY_LENGTH = 100
 const MAX_OBJECT_KEYS = 50
 const MAX_DEPTH = 5
+const UNINSPECTABLE_TEXT = '[Uninspectable]'
+
+interface SafeReadResult {
+  ok: boolean
+  value?: unknown
+}
+
+function safeRead(target: object, key: PropertyKey): SafeReadResult {
+  try {
+    let current: object | null = target
+    for (let depth = 0; current && depth < 8; depth += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(current, key)
+      if (descriptor) {
+        return 'value' in descriptor ? { ok: true, value: descriptor.value } : { ok: false }
+      }
+      current = Object.getPrototypeOf(current)
+    }
+    return { ok: true, value: undefined }
+  } catch {
+    return { ok: false }
+  }
+}
+
+function safeFunctionName(fn: object): string {
+  const result = safeRead(fn, 'name')
+  return result.ok && typeof result.value === 'string' && result.value ? result.value : 'anonymous'
+}
+
+function isInstanceOf(
+  value: object,
+  constructor: { [Symbol.hasInstance](candidate: unknown): boolean },
+): boolean {
+  try {
+    return value instanceof constructor
+  } catch {
+    return false
+  }
+}
+
+function isArray(value: object): boolean {
+  try {
+    return Array.isArray(value)
+  } catch {
+    return false
+  }
+}
+
+function safeConstructorName(value: object): string {
+  try {
+    let prototype = Object.getPrototypeOf(value)
+    for (let depth = 0; prototype && depth < 8; depth += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, 'constructor')
+      if (descriptor && 'value' in descriptor && typeof descriptor.value === 'function') {
+        const name = safeFunctionName(descriptor.value)
+        return name === 'anonymous' ? 'Object' : name
+      }
+      prototype = Object.getPrototypeOf(prototype)
+    }
+  } catch {
+    // Proxies may reject prototype or descriptor inspection.
+  }
+  return 'Object'
+}
+
+function uninspectableValue(value: object): SerializedValue {
+  const constructorName = safeConstructorName(value)
+  return {
+    type: 'object',
+    value: null,
+    displayText:
+      constructorName === 'Object'
+        ? UNINSPECTABLE_TEXT
+        : `${constructorName} ${UNINSPECTABLE_TEXT}`,
+    expandable: false,
+    constructorName,
+  }
+}
+
+function unreadableProperty(): SerializedValue {
+  return {
+    type: 'error',
+    value: null,
+    displayText: '[Unavailable property]',
+    expandable: false,
+  }
+}
+
+function safeStringProperty(value: object, key: PropertyKey, fallback: string): string {
+  const result = safeRead(value, key)
+  return result.ok && typeof result.value === 'string' ? result.value : fallback
+}
+
+function readCollectionSize(value: object, prototype: object): number | null {
+  try {
+    const getter = Object.getOwnPropertyDescriptor(prototype, 'size')?.get
+    if (!getter) return null
+    const size = Reflect.apply(getter, value, []) as unknown
+    return typeof size === 'number' && Number.isSafeInteger(size) && size >= 0 ? size : null
+  } catch {
+    return null
+  }
+}
 
 /**
  * Serialize a value for safe display in DevTools
  */
 export function serialize(value: unknown, depth = 0): SerializedValue {
   // Create a fresh WeakSet for each top-level call to avoid cross-call contamination
-  return serializeInternal(value, depth, new WeakSet<object>())
+  const normalizedDepth = Number.isFinite(depth) ? Math.max(0, Math.floor(depth)) : 0
+  try {
+    return serializeInternal(value, normalizedDepth, new WeakSet<object>())
+  } catch {
+    return value !== null && (typeof value === 'object' || typeof value === 'function')
+      ? uninspectableValue(value as object)
+      : { type: 'primitive', value: null, displayText: UNINSPECTABLE_TEXT }
+  }
 }
 
 /**
@@ -72,7 +181,7 @@ function serializeInternal(value: unknown, depth: number, seen: WeakSet<object>)
 
   if (type === 'function') {
     const fn = value as (...args: unknown[]) => unknown
-    const name = fn.name || 'anonymous'
+    const name = safeFunctionName(fn)
     return {
       type: 'function',
       value: null,
@@ -107,59 +216,76 @@ function serializeInternal(value: unknown, depth: number, seen: WeakSet<object>)
 
     try {
       // Date
-      if (obj instanceof Date) {
+      if (isInstanceOf(obj, Date)) {
+        const timestamp = Date.prototype.getTime.call(obj)
+        if (!Number.isFinite(timestamp)) {
+          return {
+            type: 'date',
+            value: null,
+            displayText: 'Invalid Date',
+          }
+        }
+        const iso = new Date(timestamp).toISOString()
         return {
           type: 'date',
-          value: obj.toISOString(),
-          displayText: obj.toISOString(),
+          value: iso,
+          displayText: iso,
         }
       }
 
       // RegExp
-      if (obj instanceof RegExp) {
+      if (isInstanceOf(obj, RegExp)) {
+        const display = RegExp.prototype.toString.call(obj)
         return {
           type: 'regexp',
-          value: obj.toString(),
-          displayText: obj.toString(),
+          value: display,
+          displayText: display,
         }
       }
 
       // Error
-      if (obj instanceof Error) {
+      if (isInstanceOf(obj, Error)) {
+        const name = safeStringProperty(obj, 'name', 'Error')
+        const message = safeStringProperty(obj, 'message', '')
+        const stack = safeStringProperty(obj, 'stack', '') || undefined
         return {
           type: 'error',
           value: {
-            name: obj.name,
-            message: obj.message,
-            stack: obj.stack,
+            name,
+            message,
+            stack,
           },
-          displayText: `${obj.name}: ${obj.message}`,
+          displayText: message ? `${name}: ${message}` : name,
         }
       }
 
       // Map
-      if (obj instanceof Map) {
+      if (isInstanceOf(obj, Map)) {
+        const size = readCollectionSize(obj, Map.prototype)
+        if (size === null) return uninspectableValue(obj)
         const entries: [string, SerializedValue][] = []
         let count = 0
-        for (const [key, val] of obj) {
+        for (const [key, val] of Map.prototype.entries.call(obj)) {
           if (count >= MAX_ARRAY_LENGTH) break
-          entries.push([String(key), serializeInternal(val, depth + 1, seen)])
+          entries.push([formatValueShort(key), serializeInternal(val, depth + 1, seen)])
           count++
         }
         return {
           type: 'map',
           value: entries,
-          displayText: `Map(${obj.size})`,
-          expandable: obj.size > 0,
+          displayText: `Map(${size})`,
+          expandable: size > 0,
           keys: entries.map(e => e[0]),
         }
       }
 
       // Set
-      if (obj instanceof Set) {
+      if (isInstanceOf(obj, Set)) {
+        const size = readCollectionSize(obj, Set.prototype)
+        if (size === null) return uninspectableValue(obj)
         const items: SerializedValue[] = []
         let count = 0
-        for (const item of obj) {
+        for (const item of Set.prototype.values.call(obj)) {
           if (count >= MAX_ARRAY_LENGTH) break
           items.push(serializeInternal(item, depth + 1, seen))
           count++
@@ -167,34 +293,50 @@ function serializeInternal(value: unknown, depth: number, seen: WeakSet<object>)
         return {
           type: 'set',
           value: items,
-          displayText: `Set(${obj.size})`,
-          expandable: obj.size > 0,
+          displayText: `Set(${size})`,
+          expandable: size > 0,
         }
       }
 
       // Array
-      if (Array.isArray(obj)) {
+      if (isArray(obj)) {
+        const lengthResult = safeRead(obj, 'length')
+        if (
+          !lengthResult.ok ||
+          typeof lengthResult.value !== 'number' ||
+          !Number.isSafeInteger(lengthResult.value) ||
+          lengthResult.value < 0
+        ) {
+          return uninspectableValue(obj)
+        }
+        const length = lengthResult.value
         const items: SerializedValue[] = []
-        const len = Math.min(obj.length, MAX_ARRAY_LENGTH)
+        const len = Math.min(length, MAX_ARRAY_LENGTH)
         for (let i = 0; i < len; i++) {
-          items.push(serializeInternal(obj[i], depth + 1, seen))
+          const item = safeRead(obj, i)
+          items.push(
+            item.ok ? serializeInternal(item.value, depth + 1, seen) : unreadableProperty(),
+          )
         }
         return {
           type: 'array',
           value: items,
-          displayText: `Array(${obj.length})`,
-          expandable: obj.length > 0,
+          displayText: `Array(${length})`,
+          expandable: length > 0,
         }
       }
 
       // Plain object
       const keys = Object.keys(obj).slice(0, MAX_OBJECT_KEYS)
-      const entries: Record<string, SerializedValue> = {}
+      const entries = Object.create(null) as Record<string, SerializedValue>
       for (const key of keys) {
-        entries[key] = serializeInternal((obj as Record<string, unknown>)[key], depth + 1, seen)
+        const property = safeRead(obj, key)
+        entries[key] = property.ok
+          ? serializeInternal(property.value, depth + 1, seen)
+          : unreadableProperty()
       }
 
-      const constructorName = obj.constructor?.name || 'Object'
+      const constructorName = safeConstructorName(obj)
 
       return {
         type: 'object',
@@ -207,6 +349,8 @@ function serializeInternal(value: unknown, depth: number, seen: WeakSet<object>)
         keys,
         constructorName,
       }
+    } catch {
+      return uninspectableValue(obj)
     } finally {
       seen.delete(obj)
     }
@@ -215,8 +359,8 @@ function serializeInternal(value: unknown, depth: number, seen: WeakSet<object>)
   // Unknown type
   return {
     type: 'primitive',
-    value: String(value),
-    displayText: String(value),
+    value: null,
+    displayText: UNINSPECTABLE_TEXT,
   }
 }
 
@@ -258,87 +402,87 @@ export function deserialize(input: string): unknown {
  * Format a value for display (short version)
  */
 export function formatValueShort(value: unknown): string {
-  if (value === null) return 'null'
-  if (value === undefined) return 'undefined'
+  try {
+    if (value === null) return 'null'
+    if (value === undefined) return 'undefined'
 
-  const type = typeof value
+    const type = typeof value
 
-  if (type === 'string') {
-    const str = value as string
-    if (str.length > 50) {
-      return JSON.stringify(str.slice(0, 50) + '...')
+    if (type === 'string') {
+      const str = value as string
+      if (str.length > 50) {
+        return JSON.stringify(str.slice(0, 50) + '...')
+      }
+      return JSON.stringify(str)
     }
-    return JSON.stringify(str)
-  }
 
-  if (type === 'number' || type === 'boolean') {
+    if (type === 'number' || type === 'boolean') return String(value)
+    if (type === 'bigint') return `${value}n`
+    if (type === 'symbol') return String(value)
+    if (type === 'function') return `ƒ ${safeFunctionName(value as object)}()`
+
+    if (type === 'object') {
+      const objectValue = value as object
+      if (isArray(objectValue)) {
+        const length = safeRead(objectValue, 'length')
+        return length.ok &&
+          typeof length.value === 'number' &&
+          Number.isSafeInteger(length.value) &&
+          length.value >= 0
+          ? `Array(${length.value})`
+          : UNINSPECTABLE_TEXT
+      }
+
+      if (isInstanceOf(objectValue, Date)) {
+        const timestamp = Date.prototype.getTime.call(objectValue)
+        return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : 'Invalid Date'
+      }
+
+      if (isInstanceOf(objectValue, Map)) {
+        const size = readCollectionSize(objectValue, Map.prototype)
+        return size === null ? UNINSPECTABLE_TEXT : `Map(${size})`
+      }
+
+      if (isInstanceOf(objectValue, Set)) {
+        const size = readCollectionSize(objectValue, Set.prototype)
+        return size === null ? UNINSPECTABLE_TEXT : `Set(${size})`
+      }
+
+      if (isInstanceOf(objectValue, Error)) {
+        const name = safeStringProperty(objectValue, 'name', 'Error')
+        const message = safeStringProperty(objectValue, 'message', '')
+        return message ? `${name}: ${message}` : name
+      }
+
+      const constructorName = safeConstructorName(objectValue)
+      if (constructorName !== 'Object') return constructorName
+      const keys = Object.keys(objectValue)
+      return keys.length <= 3 ? `{${keys.join(', ')}}` : `{${keys.slice(0, 3).join(', ')}, ...}`
+    }
+
     return String(value)
+  } catch {
+    return UNINSPECTABLE_TEXT
   }
-
-  if (type === 'bigint') {
-    return `${value}n`
-  }
-
-  if (type === 'symbol') {
-    return String(value)
-  }
-
-  if (type === 'function') {
-    return `ƒ ${(value as (...args: unknown[]) => unknown).name || 'anonymous'}()`
-  }
-
-  if (Array.isArray(value)) {
-    return `Array(${value.length})`
-  }
-
-  if (value instanceof Date) {
-    return value.toISOString()
-  }
-
-  if (value instanceof Map) {
-    return `Map(${value.size})`
-  }
-
-  if (value instanceof Set) {
-    return `Set(${value.size})`
-  }
-
-  if (value instanceof Error) {
-    return `${value.name}: ${value.message}`
-  }
-
-  if (type === 'object') {
-    const constructor = (value as object).constructor?.name
-    if (constructor && constructor !== 'Object') {
-      return constructor
-    }
-    const keys = Object.keys(value as object)
-    if (keys.length <= 3) {
-      return `{${keys.join(', ')}}`
-    }
-    return `{${keys.slice(0, 3).join(', ')}, ...}`
-  }
-
-  return String(value)
 }
 
 /**
  * Get the type name of a value
  */
 export function getTypeName(value: unknown): string {
-  if (value === null) return 'null'
-  if (value === undefined) return 'undefined'
+  try {
+    if (value === null) return 'null'
+    if (value === undefined) return 'undefined'
 
-  const type = typeof value
+    const type = typeof value
+    if (type !== 'object') return type
 
-  if (type !== 'object') {
-    return type
+    const objectValue = value as object
+    if (isArray(objectValue)) return 'array'
+
+    const constructorName = safeConstructorName(objectValue)
+    return constructorName === 'Object' ? 'object' : constructorName
+  } catch {
+    return 'object'
   }
-
-  if (Array.isArray(value)) {
-    return 'array'
-  }
-
-  const constructor = (value as object).constructor?.name
-  return constructor || 'object'
 }

@@ -170,4 +170,38 @@ describe('debugger transport serialization', () => {
       state!.timeline.some(event => event.type === 'computed:create' && event.nodeId === 1),
     ).toBe(false)
   })
+
+  it('keeps transport updates alive when application values reject inspection', async () => {
+    const { attachDebugger, hook } = await import('../src/core/debugger')
+    const hostile = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error('inspection denied')
+        },
+      },
+    )
+
+    attachDebugger()
+    expect(() => hook.registerSignal(101, new Date(Number.NaN), { name: 'date' })).not.toThrow()
+    expect(() => hook.registerSignal(102, hostile, { name: 'hostile' })).not.toThrow()
+
+    const panelChannel = new MockBroadcastChannel('fict-devtools')
+    const messages: Array<{ type?: string; payload?: unknown }> = []
+    panelChannel.onmessage = event => {
+      messages.push(event.data as { type?: string; payload?: unknown })
+    }
+    panelChannel.postMessage({
+      source: 'fict-devtools-panel',
+      type: 'connect',
+      timestamp: Date.now(),
+    })
+    await waitForTick()
+
+    const payload = messages.find(message => message.type === 'state:init')?.payload as {
+      signals: Array<{ id: number; value: unknown }>
+    }
+    expect(payload.signals.find(signal => signal.id === 101)?.value).toBe('Invalid Date')
+    expect(payload.signals.find(signal => signal.id === 102)?.value).toBe('[Uninspectable]')
+  })
 })

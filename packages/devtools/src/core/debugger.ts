@@ -1460,6 +1460,18 @@ function sanitizeForTransport(
   depth: number,
   seen: WeakMap<object, unknown>,
 ): unknown {
+  try {
+    return sanitizeForTransportUnsafe(value, depth, seen)
+  } catch {
+    return formatValueShort(value)
+  }
+}
+
+function sanitizeForTransportUnsafe(
+  value: unknown,
+  depth: number,
+  seen: WeakMap<object, unknown>,
+): unknown {
   if (value === null || value === undefined) return value
 
   const kind = typeof value
