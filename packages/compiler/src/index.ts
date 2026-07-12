@@ -36,7 +36,15 @@ import {
 } from './utils'
 import { matchesAnyDiagnosticCode, matchesDiagnosticCode } from './validation'
 
-export type { FictCompilerOptions, CompilerWarning } from './types'
+export type {
+  CompilerWarning,
+  FictCompilerOptions,
+  FictDiagnostic,
+  FictDiagnosticGuaranteeClass,
+  FictDiagnosticLabel,
+  FictDiagnosticSeverity,
+  FictSourceSpan,
+} from './types'
 
 const importSpecifierImportedName = (
   spec: BabelCore.types.ImportSpecifier,

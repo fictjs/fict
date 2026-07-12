@@ -38,6 +38,8 @@ oxc = { version = "=0.139.0", default-features = false, features = [
   "semantic",
   "transformer",
 ] }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = { version = "=1.0.150" }
 
 [profile.release]
 codegen-units = 1

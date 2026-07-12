@@ -73,6 +73,38 @@ export interface CompilerWarning {
   column: number
 }
 
+export type FictDiagnosticSeverity = 'error' | 'warning' | 'info'
+
+export type FictDiagnosticGuaranteeClass =
+  | 'notApplicable'
+  | 'advisory'
+  | 'fallback'
+  | 'unsupported'
+  | 'internal'
+
+/** Half-open UTF-8 byte range in the compilation source. */
+export interface FictSourceSpan {
+  start: number
+  end: number
+}
+
+export interface FictDiagnosticLabel {
+  span: FictSourceSpan
+  message: string
+}
+
+/** Structured native diagnostic before host-specific code-frame rendering. */
+export interface FictDiagnostic {
+  code: string
+  severity: FictDiagnosticSeverity
+  message: string
+  primarySpan: FictSourceSpan | null
+  secondaryLabels: FictDiagnosticLabel[]
+  help: string | null
+  notes: string[]
+  guaranteeClass: FictDiagnosticGuaranteeClass
+}
+
 export type CompilerExplainEventKind =
   | 'source-signal'
   | 'source-effect'
