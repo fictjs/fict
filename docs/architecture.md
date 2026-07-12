@@ -853,7 +853,9 @@ stream, but its return shape is not frozen as stable v1 API surface.
   resolved boundary) as `data-fict-snapshot` scripts, with any remaining scopes
   flushed at the end.
 - When `snapshotTarget: 'head'`, each snapshot chunk injects into `<head>` via a
-  small script.
+  small script. External runtime mode requires a non-empty `scriptNonce` for
+  incremental head snapshots; nonce-free strict-CSP routes use container/body
+  placement.
 
 ### 12.4 Edge runtime notes
 

@@ -157,13 +157,13 @@ Operational behavior:
 2. Never serialize secrets/tokens/PII into resumable snapshot state.
 3. Prefer IDs and server fetch on interaction for sensitive or high-volume data.
 4. Treat snapshot as client-visible data by design.
-5. Strict CSP deployments should pass `scriptNonce`, or use `streamRuntime: 'external'` with observer patch mode and the published `@fictjs/ssr/fict-stream-runtime.js` asset to avoid per-chunk inline patch scripts.
+5. Strict CSP deployments should pass `scriptNonce`, or use `streamRuntime: 'external'` with observer patch mode and the published `@fictjs/ssr/fict-stream-runtime.js` asset to avoid per-chunk inline patch scripts. Nonce-free routes that opt into Preview snapshots must keep `snapshotTarget` at `container` or `body`; incremental `head` snapshots require an inline mover and external mode rejects them without a non-empty nonce.
 6. Trusted Types deployments should prefer external observer mode. The streaming runtime avoids `innerHTML`/`eval`; host applications that require Trusted Types policies should apply them to the complete server-rendered HTML document rather than expecting Fict to create a browser-side policy.
 
 ## Streaming & Hydration Diagnostics
 
 1. SSR tracking state, stream hooks, and boundary scope registries are isolated per render.
-2. SSR does not expose DOM globals by default. `exposeGlobals: true` is a legacy compatibility mode for code that reads process-global `document/window`, and overlapping renders must not use it.
+2. SSR does not expose DOM globals by default. `exposeGlobals: true` is a legacy compatibility lease for code that reads process-global `document/window`; nested or overlapping leases are rejected, and installation restores exact descriptors or rolls back before rendering continues.
 3. Web Streams and Node pipeable streams must respect downstream pull/drain backpressure before continuing queued chunks.
 4. Hydration mismatches can be observed with `onHydrationIssue` and include node-missing, node-type, and text mismatch codes.
 5. `strictHydration: true` turns mismatches into thrown errors after reporting the issue, for tests and deployments that prefer fail-fast hydration.

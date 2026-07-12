@@ -1902,7 +1902,10 @@ Key options:
 
 - `mode: 'shell' | 'all'` — shell-first streaming vs all-ready
 - `includeSnapshot: true` — explicit Preview resumability opt-in; default false
-- `snapshotTarget: 'head' | 'body' | 'container'` — Preview snapshot placement
+- `snapshotTarget: 'head' | 'body' | 'container'` — Preview snapshot placement;
+  shell streaming with an external runtime and incremental head snapshots requires
+  a non-empty `scriptNonce`, while nonce-free strict-CSP routes use `container`
+  or `body`
 - `scriptNonce` — nonce for generated scripts
 - `scopeIdentifierPrefix` — stable resumable scope namespace shared by all SSR
   render entry points; it must be unique within a composed document
@@ -1920,6 +1923,11 @@ import { createStreamRuntimeCode } from '@fictjs/ssr/stream-runtime'
 
 `@fictjs/ssr/fict-stream-runtime.js` is the packaged classic script asset for
 strict CSP streaming routes.
+
+External observer mode emits no executable inline patch scripts. When Preview
+snapshots are also enabled, container/body snapshots remain non-executable JSON;
+incremental head placement uses a nonce-bearing inline mover and is rejected when
+no non-empty nonce is configured.
 
 ### renderToPartial
 

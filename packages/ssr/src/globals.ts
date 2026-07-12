@@ -4,11 +4,17 @@ import { getNodeRequire } from './node-require'
 
 interface GlobalSnapshot {
   key: string
-  exists: boolean
-  value: unknown
+  descriptor: PropertyDescriptor | undefined
 }
 
-export function installGlobals(window: Window, document: Document): () => void {
+const activeGlobalTargets = new WeakSet<object>()
+const GLOBALS_LEASE = Symbol.for('@fictjs/ssr.exposeGlobalsLease')
+
+export function installGlobals(
+  window: Window,
+  document: Document,
+  target: object = globalThis,
+): () => void {
   const win = window as Window & {
     Node?: typeof Node
     Element?: typeof Element
@@ -57,18 +63,53 @@ export function installGlobals(window: Window, document: Document): () => void {
     throw new Error(`[fict/ssr] Missing DOM globals: ${missing.join(', ')}`)
   }
 
-  const globals = { ...required, ...optional }
-  const keys = Object.keys(globals)
+  const globals = Object.entries({ ...required, ...optional }).filter(
+    ([, value]) => value !== undefined,
+  )
 
-  const snapshot = captureGlobals(keys)
-  for (const key of keys) {
-    const value = globals[key]
-    if (value !== undefined) {
-      ;(globalThis as Record<string, unknown>)[key] = value
+  const lease = acquireGlobalTarget(target)
+  let snapshot: GlobalSnapshot[] = []
+  let installingKey = '<capture>'
+  try {
+    snapshot = captureGlobals(
+      target,
+      globals.map(([key]) => key),
+    )
+    for (const [key, value] of globals) {
+      installingKey = key
+      const previous = snapshot.find(entry => entry.key === key)?.descriptor
+      Object.defineProperty(target, key, {
+        configurable: true,
+        enumerable: previous?.enumerable ?? true,
+        value,
+        writable: true,
+      })
     }
+  } catch (error) {
+    let rollbackError: unknown
+    try {
+      restoreGlobals(target, snapshot)
+      releaseGlobalTarget(target, lease)
+    } catch (caught) {
+      rollbackError = caught
+    }
+
+    const failure = new Error(
+      rollbackError === undefined
+        ? `[fict/ssr] Failed to install DOM global \`${installingKey}\`: ${formatError(error)}`
+        : `[fict/ssr] Failed to install DOM global \`${installingKey}\` and roll back the partial installation: ${formatError(error)}; rollback: ${formatError(rollbackError)}`,
+    )
+    ;(failure as Error & { cause?: unknown }).cause = error
+    throw failure
   }
 
-  return () => restoreGlobals(snapshot)
+  let active = true
+  return () => {
+    if (!active) return
+    restoreGlobals(target, snapshot)
+    releaseGlobalTarget(target, lease)
+    active = false
+  }
 }
 
 export function installManifest(manifest?: Record<string, string> | string): () => void {
@@ -108,24 +149,76 @@ export function installManifest(manifest?: Record<string, string> | string): () 
   }
 }
 
-function captureGlobals(keys: string[]): GlobalSnapshot[] {
+function captureGlobals(target: object, keys: string[]): GlobalSnapshot[] {
   const snapshot: GlobalSnapshot[] = []
   for (const key of keys) {
-    const exists = Object.prototype.hasOwnProperty.call(globalThis, key)
-    const value = (globalThis as Record<string, unknown>)[key]
-    snapshot.push({ key, exists, value })
+    snapshot.push({ key, descriptor: Object.getOwnPropertyDescriptor(target, key) })
   }
   return snapshot
 }
 
-function restoreGlobals(snapshot: GlobalSnapshot[]): void {
-  for (const entry of snapshot) {
-    if (entry.exists) {
-      ;(globalThis as Record<string, unknown>)[entry.key] = entry.value
-    } else {
-      delete (globalThis as Record<string, unknown>)[entry.key]
+function restoreGlobals(target: object, snapshot: GlobalSnapshot[]): void {
+  let firstError: unknown
+  for (let index = snapshot.length - 1; index >= 0; index--) {
+    const entry = snapshot[index]
+    if (!entry) continue
+    try {
+      if (entry.descriptor) {
+        Object.defineProperty(target, entry.key, entry.descriptor)
+      } else if (!Reflect.deleteProperty(target, entry.key)) {
+        throw new Error(`Could not delete newly installed global \`${entry.key}\`.`)
+      }
+    } catch (error) {
+      firstError ??= error
     }
   }
+  if (firstError !== undefined) throw firstError
+}
+
+function acquireGlobalTarget(target: object): object {
+  if (
+    activeGlobalTargets.has(target) ||
+    Object.getOwnPropertyDescriptor(target, GLOBALS_LEASE) !== undefined
+  ) {
+    throw new Error(
+      '[fict/ssr] `exposeGlobals: true` cannot be used by overlapping or nested renders. ' +
+        'Keep DOM access render-local, or wait for the active compatibility render to dispose.',
+    )
+  }
+
+  const lease = {}
+  activeGlobalTargets.add(target)
+  try {
+    Object.defineProperty(target, GLOBALS_LEASE, {
+      configurable: true,
+      enumerable: false,
+      value: lease,
+      writable: false,
+    })
+  } catch (error) {
+    activeGlobalTargets.delete(target)
+    const failure = new Error(
+      `[fict/ssr] Failed to acquire the process DOM-global compatibility lease: ${formatError(error)}`,
+    )
+    ;(failure as Error & { cause?: unknown }).cause = error
+    throw failure
+  }
+  return lease
+}
+
+function releaseGlobalTarget(target: object, lease: object): void {
+  const descriptor = Object.getOwnPropertyDescriptor(target, GLOBALS_LEASE)
+  if (!descriptor || !('value' in descriptor) || descriptor.value !== lease) {
+    throw new Error('[fict/ssr] The process DOM-global compatibility lease changed before cleanup.')
+  }
+  if (!Reflect.deleteProperty(target, GLOBALS_LEASE)) {
+    throw new Error('[fict/ssr] Could not release the process DOM-global compatibility lease.')
+  }
+  activeGlobalTargets.delete(target)
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function readTextFileFromPath(path: string): string {

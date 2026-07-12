@@ -88,6 +88,8 @@ export interface RenderToStringOptions {
    * Expose DOM globals (window/document/Node/Element/etc) during render.
    * Defaults to false. Set to true only for compatibility with components
    * that still read process-global DOM objects during server rendering.
+   * Nested or overlapping exposed-global renders are rejected. A
+   * renderToDocument lease remains active until dispose().
    */
   exposeGlobals?: boolean
   /**
@@ -114,6 +116,8 @@ export interface RenderToStringOptions {
   /**
    * Where to append the snapshot script when not returning full document.
    * Defaults to 'container'.
+   * External-runtime shell streams with incremental head snapshots require a
+   * non-empty scriptNonce because head placement uses an inline mover.
    * @experimental Part of the Preview resumability snapshot contract.
    */
   snapshotTarget?: 'container' | 'body' | 'head'
@@ -974,6 +978,7 @@ function startStreamingRenderInSession(
   }
 
   try {
+    validateExternalHeadSnapshotCsp(resolvedOptions, includeSnapshot, mode)
     __fictEnableSSR()
     __fictSetSSRScopeIdentifierPrefix(scopeIdentifierPrefix)
     __fictSetSSRStreamHooks(hooks)
@@ -1072,6 +1077,27 @@ function buildStreamRuntimeScript(options: RenderToStreamOptions): string {
   return `<script${nonce}>${createStreamRuntimeCode({
     observerMode: resolveStreamPatchMode(options) === 'observer',
   })}</script>`
+}
+
+function validateExternalHeadSnapshotCsp(
+  options: RenderToStreamOptions,
+  includeSnapshot: boolean,
+  mode: 'shell' | 'all',
+): void {
+  if (
+    includeSnapshot &&
+    mode === 'shell' &&
+    options.snapshotTarget === 'head' &&
+    options.streamRuntime === 'external' &&
+    !options.scriptNonce
+  ) {
+    throw new Error(
+      '[fict/ssr] Streaming Preview snapshots with `snapshotTarget: "head"` and an external ' +
+        'runtime require a non-empty `scriptNonce`, because incremental head insertion uses an ' +
+        'inline executable mover. Use `snapshotTarget: "container"` or `"body"` for a ' +
+        'nonce-free strict CSP route.',
+    )
+  }
 }
 
 function buildPatchChunk(

@@ -90,6 +90,43 @@ describe('@fictjs/ssr streaming', () => {
     expect(aliceSession).not.toBe(bobSession)
   })
 
+  it('rejects overlapping legacy global exposure without disturbing the active stream', async () => {
+    const pending = createSuspenseToken()
+
+    function PendingChild(): FictNode {
+      throw pending.token
+    }
+
+    const activeStream = renderToStream(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: { type: 'span', props: { children: 'active-global-shell' } },
+          children: { type: PendingChild, props: {} },
+        },
+      }),
+      { mode: 'shell', exposeGlobals: true },
+    )
+    const activeReader = activeStream.getReader()
+    const shell = await activeReader.read()
+    expect(shell.done).toBe(false)
+    expect(shell.value ? decoder.decode(shell.value) : '').toContain('active-global-shell')
+
+    const overlappingStream = renderToStream(() => 'overlap', {
+      exposeGlobals: true,
+    })
+    await expect(readReadableStream(overlappingStream)).rejects.toThrowError(
+      /cannot be used by overlapping or nested renders/,
+    )
+
+    await activeReader.cancel(new Error('release global compatibility render'))
+
+    await expect(
+      readReadableStream(renderToStream(() => 'after-cleanup', { exposeGlobals: true })),
+    ).resolves.toContain('after-cleanup')
+    pending.resolve()
+  })
+
   it('keeps a pending stream marked active until cleanup', async () => {
     const pending = createSuspenseToken()
     let ready = false
@@ -844,7 +881,7 @@ describe('@fictjs/ssr streaming', () => {
     expect(html).not.toContain('__FICT_STREAM.apply(')
   })
 
-  it('can reference an external stream runtime for strict CSP', async () => {
+  it('keeps external observer streaming free of executable inline scripts with snapshots', async () => {
     const token = createSuspenseToken()
     let ready = false
 
@@ -865,6 +902,7 @@ describe('@fictjs/ssr streaming', () => {
 
     const stream = renderToStream(() => ({ type: App, props: {} }), {
       mode: 'shell',
+      includeSnapshot: true,
       streamRuntime: 'external',
       streamRuntimeSrc: '/assets/fict-stream-runtime.js',
       scriptNonce: 'external-nonce',
@@ -881,7 +919,46 @@ describe('@fictjs/ssr streaming', () => {
     )
     expect(html).toContain('ExternalDone')
     expect(html).toContain('data-fict-suspense="external_test:s1"')
+    expect(html).toContain('type="application/json"')
+    expect(html).toContain('data-fict-snapshot')
     expect(html).not.toContain('__FICT_STREAM.apply(')
+    expect(html).not.toContain('document.head')
+    expect(html).not.toMatch(/<script(?![^>]*\bsrc=)(?![^>]*\btype="application\/json")[^>]*>\s*\S/)
+  })
+
+  it('rejects nonce-free external streaming snapshots that require a head mover', async () => {
+    const token = createSuspenseToken()
+    let renderCalls = 0
+
+    function AsyncChild(): FictNode {
+      throw token.token
+    }
+
+    const stream = renderToStream(
+      () => {
+        renderCalls++
+        return {
+          type: Suspense,
+          props: {
+            fallback: { type: 'span', props: { children: 'HeadCspLoading' } },
+            children: { type: AsyncChild, props: {} },
+          },
+        }
+      },
+      {
+        mode: 'shell',
+        includeSnapshot: true,
+        snapshotTarget: 'head',
+        streamRuntime: 'external',
+        streamRuntimeSrc: '/assets/fict-stream-runtime.js',
+      },
+    )
+
+    await expect(readReadableStream(stream)).rejects.toThrowError(
+      /require a non-empty `scriptNonce`/,
+    )
+    expect(renderCalls).toBe(0)
+    token.resolve()
   })
 
   it('exposes classic stream runtime code for external assets', () => {

@@ -308,7 +308,8 @@ By default SSR does not write `window`, `document`, `Node`, or related DOM const
 `globalThis`. This keeps concurrent renders from racing over process-global DOM state. Components
 should use Fict's render-provided document/ownerDocument paths; set `exposeGlobals: true` only for
 legacy code that still reads DOM globals during server render. That compatibility mode is restored
-on `dispose()`, but it is not concurrency-safe while overlapping renders are active.
+on `dispose()`. Nested or overlapping compatibility renders are rejected before they can replace
+the active render's globals.
 
 ### renderToStringAsync
 
@@ -375,6 +376,11 @@ need to materialize it themselves can import `createStreamRuntimeCode` from
 Trusted Types deployments should use this external observer runtime. The patch
 runtime moves `<template>` content with DOM APIs (`content` + `insertBefore`) and
 does not call `innerHTML`, `insertAdjacentHTML`, `eval`, or `Function`.
+
+When Preview snapshots are enabled on a nonce-free strict-CSP route, keep
+`snapshotTarget` at `container` or `body`. Incremental `head` snapshots require a
+small executable mover; external runtime mode rejects that combination unless
+`scriptNonce` is non-empty.
 
 Each shell stream receives an automatic unique namespace for its Suspense patch
 identifiers. When independently cached fragments or streams from multiple

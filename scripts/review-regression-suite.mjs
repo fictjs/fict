@@ -8,9 +8,14 @@ const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 
 const suites = [
   {
-    name: 'SSR HTML serialization',
+    name: 'SSR HTML serialization, CSP, and compatibility-global isolation',
     packageDir: 'packages/ssr',
-    files: ['test/html-serializer.test.ts'],
+    files: [
+      'test/html-serializer.test.ts',
+      'test/index.test.ts',
+      'test/globals.test.ts',
+      'test/streaming.test.ts',
+    ],
   },
   {
     name: 'Vite resumable handler extraction',
@@ -21,6 +26,17 @@ const suites = [
     name: 'Runtime selector and store ownership',
     packageDir: 'packages/runtime',
     files: ['test/signal.test.ts', 'test/store.test.ts'],
+  },
+  {
+    name: 'Runtime snapshot, prototype, Proxy, and SSR session security',
+    packageDir: 'packages/runtime',
+    files: [
+      'test/serialize.test.ts',
+      'test/loader.test.ts',
+      'test/resume-lifecycle.test.ts',
+      'test/props-proxy.test.ts',
+      'test/ssr-session.test.ts',
+    ],
   },
   {
     name: 'Public resource and store behavior',

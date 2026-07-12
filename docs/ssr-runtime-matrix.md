@@ -49,6 +49,7 @@ Preview graduation still follows [PREVIEW.md](./PREVIEW.md).
 1. CSP:
    - `scriptNonce` is applied to generated executable and JSON script tags.
    - Strict CSP routes can use `streamRuntime: 'external'` with observer patch mode and the published `@fictjs/ssr/fict-stream-runtime.js` asset.
+   - Nonce-free strict-CSP routes with Preview snapshots use `snapshotTarget: 'container'` or `'body'`; external mode rejects incremental head snapshots without a non-empty nonce.
    - Trusted Types routes should use the external observer runtime; a sink regression test forbids `innerHTML`, `insertAdjacentHTML`, `eval`, and `Function`.
 2. Snapshot compatibility:
    - SSR writers emit v2.
@@ -68,7 +69,7 @@ Preview graduation still follows [PREVIEW.md](./PREVIEW.md).
      routing is claimed.
 5. Concurrency:
    - SSR scope state and stream hooks are per render.
-   - DOM globals are not exposed by default; `exposeGlobals: true` is a legacy compatibility mode and is not concurrency-safe for overlapping renders.
+   - DOM globals are not exposed by default; `exposeGlobals: true` is a legacy compatibility lease whose exact descriptors are restored, and nested or overlapping leases fail closed.
 6. Streaming:
    - Web and Node writers respect pull/drain backpressure before continuing queued chunks.
    - `pnpm examples:verify` proves the built streaming example serves shell and
@@ -96,3 +97,8 @@ Preview graduation still follows [PREVIEW.md](./PREVIEW.md).
   application-owned client render.
 - `packages/ssr/test/streaming.test.ts`: streaming, CSP, Trusted Types,
   backpressure, and downstream failure.
+- `packages/ssr/test/globals.test.ts`: descriptor-safe compatibility-global
+  installation, transactional rollback, overlap rejection, and hostile Proxy
+  rollback behavior.
+- `docs/architecture/security-boundaries.md`: threat model, security findings,
+  explicit non-goals, and the complete focused verification command.

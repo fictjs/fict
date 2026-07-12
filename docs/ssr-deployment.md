@@ -195,5 +195,6 @@ build that produced the HTML. Alert separately on
 - Server, HTML, loader, manifest, QRL chunks, and stream runtime share one build ID.
 - Schema rollout and rollback purge CDN, PPR/ISR, KV/pre-rendered, and service-worker caches.
 - `onSnapshotIssue` telemetry and application-owned `onSnapshotRejected` CSR mount are wired.
-- CSP strategy chosen: `scriptNonce` for generated scripts, or `streamRuntime: 'external'` with observer patch mode and the published `@fictjs/ssr/fict-stream-runtime.js` asset served from `streamRuntimeSrc`.
+- CSP strategy chosen: `scriptNonce` for generated scripts, or `streamRuntime: 'external'` with observer patch mode and the published `@fictjs/ssr/fict-stream-runtime.js` asset served from `streamRuntimeSrc`; nonce-free routes with Preview snapshots use `snapshotTarget: 'container'` or `'body'`.
+- Legacy `exposeGlobals: true` routes do not overlap another compatibility render; overlap now fails closed and should be observable through SSR error handling.
 - Runtime matrix checked with `pnpm test:ssr-matrix`; manual Bun/Deno/host smoke results recorded when they apply.

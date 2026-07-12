@@ -25,6 +25,9 @@ boundary lives in [SCOPE.md](../SCOPE.md); Preview policy lives in
 ## Architecture And Internals
 
 - `architecture.md` — Runtime and compiler architecture notes
+- `architecture/security-boundaries.md` — Security threat model, findings,
+  non-goals, and executable evidence for HTML, snapshots, CSP, Proxy behavior,
+  and SSR isolation
 - `compiler-maintenance.md` — Compiler complexity budgets and profiling workflow
 - `compiler-pass-invariants.md` — Internal compiler pass ownership and invariant checklist
 - `metadata-packaging-architecture.md` — Architecture decision for compiler-generated metadata and build-time packaging

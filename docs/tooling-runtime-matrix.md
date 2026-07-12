@@ -75,8 +75,11 @@ renderToStream(() => <App />, {
 })
 ```
 
-Snapshot payloads are emitted as `application/json` script tags and inserted with
-`textContent` for head-target incremental snapshots. If a host application wraps
+Snapshot payloads use non-executable `application/json` script tags. For a
+nonce-free strict-CSP route that explicitly enables Preview snapshots, select
+`snapshotTarget: 'container'` or `'body'`. Incremental head placement needs a
+small inline mover that assigns JSON through `textContent`; external runtime
+mode rejects it unless `scriptNonce` is non-empty. If a host application wraps
 HTML delivery in a Trusted Types policy, the policy should cover the complete
 server-rendered HTML document; Fict does not currently create or require a
 browser-side Trusted Types policy of its own.
@@ -90,3 +93,5 @@ Before claiming v1.0 tooling readiness:
 3. Verify Vite HMR still performs full reloads for transformed source modules.
 4. Verify strict CSP routes use `streamRuntime: 'external'` when inline scripts
    are disallowed.
+5. Verify nonce-free strict-CSP routes that enable snapshots do not select
+   `snapshotTarget: 'head'`.

@@ -574,26 +574,27 @@ _Lower is better. Geometric mean is the weighted mean of all relative factors._
 
 ## Documentation
 
-| Doc                                                              | Description                            |
-| :--------------------------------------------------------------- | :------------------------------------- |
-| [Architecture](./docs/architecture.md)                           | How the compiler and runtime work      |
-| [API Reference](./docs/api-reference.md)                         | Complete API documentation             |
-| [Compiler Spec](./docs/compiler-spec.md)                         | Formal semantics                       |
-| [Migration Guide](./docs/migration-guide.md)                     | React/Vue/Svelte/Solid migration       |
-| [Strict Guarantee Cookbook](./docs/strict-guarantee-cookbook.md) | Fail-closed diagnostic rewrites        |
-| [Store API](./docs/store-api.md)                                 | `$state` vs `$store` ownership         |
-| [Release Policy](./docs/release-policy.md)                       | SemVer and changelog standards         |
-| [Scope Contract](./SCOPE.md)                                     | Core/Satellite/Preview/Internal tiers  |
-| [Preview Policy](./docs/PREVIEW.md)                              | Preview surface + degradation contract |
-| [ESLint Rules](./docs/eslint-rules.md)                           | Linting configuration                  |
-| [Diagnostic Codes](./docs/diagnostic-codes.md)                   | Compiler warnings reference            |
-| [Config Profiles](./docs/config-profiles.md)                     | Recommended dev/CI/prod settings       |
-| [Compiler Maintenance](./docs/compiler-maintenance.md)           | Compiler complexity guardrails         |
-| [Cycle Protection](./docs/cycle-protection.md)                   | Dev-mode infinite loop detection       |
-| [SSR SEO Guide](./docs/ssr-seo.md)                               | SEO best practices for SSR pages       |
-| [SSR Performance](./docs/ssr-performance.md)                     | Snapshot size & render-mode tuning     |
-| [SSR Deployment](./docs/ssr-deployment.md)                       | Vercel/Cloudflare/edge deployment      |
-| [DevTools](./packages/devtools/README.md)                        | Vite plugin usage & auto-injection     |
+| Doc                                                               | Description                            |
+| :---------------------------------------------------------------- | :------------------------------------- |
+| [Architecture](./docs/architecture.md)                            | How the compiler and runtime work      |
+| [API Reference](./docs/api-reference.md)                          | Complete API documentation             |
+| [Compiler Spec](./docs/compiler-spec.md)                          | Formal semantics                       |
+| [Migration Guide](./docs/migration-guide.md)                      | React/Vue/Svelte/Solid migration       |
+| [Strict Guarantee Cookbook](./docs/strict-guarantee-cookbook.md)  | Fail-closed diagnostic rewrites        |
+| [Store API](./docs/store-api.md)                                  | `$state` vs `$store` ownership         |
+| [Release Policy](./docs/release-policy.md)                        | SemVer and changelog standards         |
+| [Scope Contract](./SCOPE.md)                                      | Core/Satellite/Preview/Internal tiers  |
+| [Preview Policy](./docs/PREVIEW.md)                               | Preview surface + degradation contract |
+| [ESLint Rules](./docs/eslint-rules.md)                            | Linting configuration                  |
+| [Diagnostic Codes](./docs/diagnostic-codes.md)                    | Compiler warnings reference            |
+| [Config Profiles](./docs/config-profiles.md)                      | Recommended dev/CI/prod settings       |
+| [Compiler Maintenance](./docs/compiler-maintenance.md)            | Compiler complexity guardrails         |
+| [Cycle Protection](./docs/cycle-protection.md)                    | Dev-mode infinite loop detection       |
+| [SSR SEO Guide](./docs/ssr-seo.md)                                | SEO best practices for SSR pages       |
+| [SSR Performance](./docs/ssr-performance.md)                      | Snapshot size & render-mode tuning     |
+| [SSR Deployment](./docs/ssr-deployment.md)                        | Vercel/Cloudflare/edge deployment      |
+| [Security Boundaries](./docs/architecture/security-boundaries.md) | HTML/snapshot/CSP/isolation review     |
+| [DevTools](./packages/devtools/README.md)                         | Vite plugin usage & auto-injection     |
 
 <details>
 <summary><strong>🔍 Linting & diagnostics</strong></summary>

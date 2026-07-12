@@ -128,13 +128,13 @@ as `snapshot_fallback_failed`.
 
 ### Streaming failure modes
 
-| Failure                                       | Required behavior                                                                                  | Default if unspecified |
-| --------------------------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------- |
-| Client disconnect / `signal` abort mid-stream | Abort server render promptly; run cleanups; reject `shellReady`/`allReady`; release backpressure.  | Abort + cleanup        |
-| A Suspense boundary rejects after shell sent  | Route to nearest `ErrorBoundary` / `onError`; patch boundary with error UI; keep other boundaries. | Boundary error patch   |
-| Backpressure: consumer slower than producer   | Honor `desiredSize`; suspend writes until `pull`; bounded buffer; never unbounded memory growth.   | Pause on backpressure  |
-| Write throws after shell flushed              | Mark stream failed; abort; do not double-close the controller.                                     | Fail-fast abort        |
-| CSP active (`scriptNonce`)                    | All injected `<script>` carry the nonce; `external` runtime mode available for strict CSP.         | Nonce on every script  |
+| Failure                                       | Required behavior                                                                                                                                                                      | Default if unspecified |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| Client disconnect / `signal` abort mid-stream | Abort server render promptly; run cleanups; reject `shellReady`/`allReady`; release backpressure.                                                                                      | Abort + cleanup        |
+| A Suspense boundary rejects after shell sent  | Route to nearest `ErrorBoundary` / `onError`; patch boundary with error UI; keep other boundaries.                                                                                     | Boundary error patch   |
+| Backpressure: consumer slower than producer   | Honor `desiredSize`; suspend writes until `pull`; bounded buffer; never unbounded memory growth.                                                                                       | Pause on backpressure  |
+| Write throws after shell flushed              | Mark stream failed; abort; do not double-close the controller.                                                                                                                         | Fail-fast abort        |
+| CSP active (`scriptNonce`)                    | All injected `<script>` carry the nonce; `external` runtime mode avoids executable inline scripts with container/body snapshots. Incremental head snapshots require a non-empty nonce. | Nonce on every script  |
 
 ### Test obligations
 

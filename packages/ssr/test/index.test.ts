@@ -478,6 +478,31 @@ describe('@fictjs/ssr', () => {
     }
   })
 
+  it('holds the compatibility-global lease until renderToDocument disposal', () => {
+    const result = renderToDocument(() => 'leased', {
+      exposeGlobals: true,
+      includeSnapshot: false,
+    })
+
+    try {
+      expect(() =>
+        renderToDocument(() => 'overlap', {
+          exposeGlobals: true,
+          includeSnapshot: false,
+        }),
+      ).toThrowError(/cannot be used by overlapping or nested renders/)
+    } finally {
+      result.dispose()
+    }
+
+    expect(() =>
+      renderToString(() => 'after-dispose', {
+        exposeGlobals: true,
+        includeSnapshot: false,
+      }),
+    ).not.toThrow()
+  })
+
   it('restores process DOM globals when explicit disposal throws', () => {
     const globals = globalThis as Record<string, unknown>
     const hadDocument = Object.prototype.hasOwnProperty.call(globals, 'document')
