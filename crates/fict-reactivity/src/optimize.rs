@@ -4,11 +4,15 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
 use fict_hir::{
-    BinaryOperator, FunctionId, HirFile, HirFunction, HirInstructionKind, LiteralValue,
-    NumberLiteral, SsaName, UnaryOperator, ValueId, ValueKind, verify_hir,
+    ArrayElement, BinaryOperator, FunctionId, HirFile, HirFunction, HirInstructionKind,
+    LiteralValue, NumberLiteral, ObjectEntry, Place, PlaceBase, Projection, PropertyKey, SsaName,
+    TerminatorKind, UnaryOperator, ValueId, ValueKind, verify_hir,
 };
 
-use crate::{SsaAnalysis, SsaDefinitionLocation, SsaUseKind, SsaUseLocation, verify_ssa};
+use crate::{
+    DependencyAnalysis, DependencyPath, InstructionLocation, SsaAnalysis, SsaDefinitionLocation,
+    SsaUseKind, SsaUseLocation, verify_ssa,
+};
 
 /// Explicit fixed-point budget for constant propagation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +71,235 @@ pub struct ConstantPropagation {
     pub foldable_values: Vec<ValueId>,
     /// Deterministic statistics.
     pub stats: ConstantPropagationStats,
+}
+
+/// One duplicate pure result redirected to an earlier dominating result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CseReplacement {
+    /// Redundant result.
+    pub duplicate: ValueId,
+    /// Earlier result with the same pure expression.
+    pub canonical: ValueId,
+    /// Redundant instruction location.
+    pub location: InstructionLocation,
+}
+
+/// Common-subexpression elimination statistics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CseStats {
+    /// Pure expression candidates.
+    pub candidates: u32,
+    /// Redundant results.
+    pub replacements: u32,
+    /// Barriers that cleared the expression table.
+    pub invalidations: u32,
+}
+
+/// Barrier-aware, block-local CSE plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CseAnalysis {
+    /// Sorted duplicate-to-canonical replacements.
+    pub replacements: Vec<CseReplacement>,
+    /// Deterministic statistics.
+    pub stats: CseStats,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum CseExpression {
+    Unary(UnaryOperator, ValueId),
+    Binary(BinaryOperator, ValueId, ValueId),
+    Read(DependencyPath),
+}
+
+/// Find reusable pure expressions without crossing any dependency barrier.
+pub fn analyze_cse(
+    function: &HirFunction,
+    ssa: &SsaAnalysis,
+    dependencies: &DependencyAnalysis,
+) -> Result<CseAnalysis, DiagnosticBundle> {
+    verify_ssa(function, ssa)?;
+    let barriers: BTreeSet<_> = dependencies
+        .barriers
+        .iter()
+        .map(|barrier| barrier.location)
+        .collect();
+    let reads: BTreeMap<_, _> = dependencies
+        .reads
+        .iter()
+        .map(|read| (read.location, read.path.clone()))
+        .collect();
+    let mut replacements = Vec::new();
+    let mut canonical_values = BTreeMap::new();
+    let mut candidates = 0_usize;
+    let mut invalidations = 0_usize;
+    for block in &function.blocks {
+        if !ssa.cfg.reachable[block.id.as_usize()] {
+            continue;
+        }
+        let mut available = BTreeMap::new();
+        for (instruction_index, instruction) in block.instructions.iter().enumerate() {
+            let location = InstructionLocation {
+                block: block.id,
+                instruction: count_u32(instruction_index),
+            };
+            if barriers.contains(&location) {
+                available.clear();
+                invalidations = invalidations.saturating_add(1);
+                continue;
+            }
+            if instruction.semantics != fict_hir::InstructionSemantics::PURE_EAGER {
+                continue;
+            }
+            let Some(result) = instruction.result else {
+                continue;
+            };
+            let expression = match &instruction.kind {
+                HirInstructionKind::Unary { operator, argument } => {
+                    CseExpression::Unary(*operator, resolve_value(*argument, &canonical_values))
+                }
+                HirInstructionKind::Binary {
+                    operator,
+                    left,
+                    right,
+                } => CseExpression::Binary(
+                    *operator,
+                    resolve_value(*left, &canonical_values),
+                    resolve_value(*right, &canonical_values),
+                ),
+                HirInstructionKind::Read { .. } => {
+                    let Some(path) = reads.get(&location) else {
+                        continue;
+                    };
+                    CseExpression::Read(path.clone())
+                }
+                _ => continue,
+            };
+            candidates = candidates.saturating_add(1);
+            if let Some(canonical) = available.get(&expression).copied() {
+                replacements.push(CseReplacement {
+                    duplicate: result,
+                    canonical,
+                    location,
+                });
+                canonical_values.insert(result, canonical);
+            } else {
+                available.insert(expression, result);
+            }
+        }
+    }
+    replacements.sort_unstable();
+    let analysis = CseAnalysis {
+        stats: CseStats {
+            candidates: count_u32(candidates),
+            replacements: count_u32(replacements.len()),
+            invalidations: count_u32(invalidations),
+        },
+        replacements,
+    };
+    verify_cse(function, dependencies, &analysis)?;
+    Ok(analysis)
+}
+
+/// Redirect explicit HIR consumers to canonical CSE results and verify the full file.
+pub fn apply_cse_rewrites(
+    file: &HirFile,
+    function_id: FunctionId,
+    analysis: &CseAnalysis,
+) -> Result<HirFile, DiagnosticBundle> {
+    let replacements: BTreeMap<_, _> = analysis
+        .replacements
+        .iter()
+        .map(|replacement| (replacement.duplicate, replacement.canonical))
+        .collect();
+    let mut result = file.clone();
+    let Some(function) = result.functions.get_mut(function_id.as_usize()) else {
+        return Err(DiagnosticBundle::new(vec![optimizer_error(
+            "FICT-OPT-FUNCTION",
+            "CSE function is outside the HIR arena",
+        )]));
+    };
+    for block in &mut function.blocks {
+        for instruction in &mut block.instructions {
+            rewrite_instruction_values(instruction, &replacements);
+        }
+        rewrite_terminator_values(&mut block.terminator.kind, &replacements);
+    }
+    verify_hir(&result)?;
+    Ok(result)
+}
+
+/// Verify replacement uniqueness, dominance/order, barriers, and statistics.
+pub fn verify_cse(
+    function: &HirFunction,
+    dependencies: &DependencyAnalysis,
+    analysis: &CseAnalysis,
+) -> Result<(), DiagnosticBundle> {
+    let mut diagnostics = DiagnosticBundle::default();
+    let barriers: BTreeSet<_> = dependencies
+        .barriers
+        .iter()
+        .map(|barrier| barrier.location)
+        .collect();
+    if analysis
+        .replacements
+        .windows(2)
+        .any(|pair| pair[0] >= pair[1])
+    {
+        diagnostics.push(optimizer_error(
+            "FICT-OPT-CSE-ORDER",
+            "CSE replacements must be sorted and unique",
+        ));
+    }
+    let result_locations: BTreeMap<_, _> = function
+        .blocks
+        .iter()
+        .flat_map(|block| {
+            block
+                .instructions
+                .iter()
+                .enumerate()
+                .filter_map(move |(index, instruction)| {
+                    instruction.result.map(|result| {
+                        (
+                            result,
+                            InstructionLocation {
+                                block: block.id,
+                                instruction: count_u32(index),
+                            },
+                        )
+                    })
+                })
+        })
+        .collect();
+    for replacement in &analysis.replacements {
+        let canonical = result_locations.get(&replacement.canonical);
+        let duplicate = result_locations.get(&replacement.duplicate);
+        if duplicate != Some(&replacement.location)
+            || canonical.is_none_or(|canonical| {
+                canonical.block != replacement.location.block
+                    || canonical.instruction >= replacement.location.instruction
+            })
+            || barriers.contains(&replacement.location)
+        {
+            diagnostics.push(optimizer_error(
+                "FICT-OPT-CSE-DOMINANCE",
+                "CSE canonical result must precede its duplicate in one barrier-safe block",
+            ));
+        }
+    }
+    if analysis.stats.replacements != count_u32(analysis.replacements.len())
+        || analysis.stats.candidates < analysis.stats.replacements
+    {
+        diagnostics.push(optimizer_error(
+            "FICT-OPT-CSE-STATS",
+            "CSE stats do not match replacement results",
+        ));
+    }
+    if diagnostics.is_empty() {
+        Ok(())
+    } else {
+        Err(diagnostics)
+    }
 }
 
 /// Propagate exact primitive literals through pure operators, reads, assignments, and Phi joins.
@@ -509,6 +742,143 @@ fn to_uint32(value: f64) -> u32 {
 
 fn to_int32(value: f64) -> i32 {
     to_uint32(value) as i32
+}
+
+fn resolve_value(mut value: ValueId, replacements: &BTreeMap<ValueId, ValueId>) -> ValueId {
+    let mut remaining = replacements.len().saturating_add(1);
+    while remaining > 0 {
+        let Some(next) = replacements.get(&value).copied() else {
+            break;
+        };
+        if next == value {
+            break;
+        }
+        value = next;
+        remaining -= 1;
+    }
+    value
+}
+
+fn rewrite_value(value: &mut ValueId, replacements: &BTreeMap<ValueId, ValueId>) {
+    *value = resolve_value(*value, replacements);
+}
+
+fn rewrite_place(place: &mut Place, replacements: &BTreeMap<ValueId, ValueId>) {
+    if let PlaceBase::Value(value) = &mut place.base {
+        rewrite_value(value, replacements);
+    }
+    for projection in &mut place.projections {
+        if let Projection::ComputedProperty { key, .. } = projection {
+            rewrite_value(key, replacements);
+        }
+    }
+}
+
+fn rewrite_instruction_values(
+    instruction: &mut fict_hir::HirInstruction,
+    replacements: &BTreeMap<ValueId, ValueId>,
+) {
+    match &mut instruction.kind {
+        HirInstructionKind::Declare { initializer, .. } => {
+            if let Some(value) = initializer {
+                rewrite_value(value, replacements);
+            }
+        }
+        HirInstructionKind::Read { place } => rewrite_place(place, replacements),
+        HirInstructionKind::Write { place, value } => {
+            rewrite_place(place, replacements);
+            rewrite_value(value, replacements);
+        }
+        HirInstructionKind::ReadWrite { place, value, .. } => {
+            rewrite_place(place, replacements);
+            if let Some(value) = value {
+                rewrite_value(value, replacements);
+            }
+        }
+        HirInstructionKind::Unary { argument, .. } => rewrite_value(argument, replacements),
+        HirInstructionKind::Binary { left, right, .. } => {
+            rewrite_value(left, replacements);
+            rewrite_value(right, replacements);
+        }
+        HirInstructionKind::Call(call) => {
+            rewrite_value(&mut call.callee, replacements);
+            for argument in &mut call.arguments {
+                rewrite_value(&mut argument.value, replacements);
+            }
+        }
+        HirInstructionKind::New { callee, arguments } => {
+            rewrite_value(callee, replacements);
+            for argument in arguments {
+                rewrite_value(&mut argument.value, replacements);
+            }
+        }
+        HirInstructionKind::Array { elements } => {
+            for element in elements {
+                match element {
+                    ArrayElement::Hole(_) => {}
+                    ArrayElement::Value(value) | ArrayElement::Spread { value, .. } => {
+                        rewrite_value(value, replacements);
+                    }
+                }
+            }
+        }
+        HirInstructionKind::Object { entries } => {
+            for entry in entries {
+                match entry {
+                    ObjectEntry::Property { key, value, .. } => {
+                        if let PropertyKey::Computed(key) = key {
+                            rewrite_value(key, replacements);
+                        }
+                        rewrite_value(value, replacements);
+                    }
+                    ObjectEntry::Spread { value, .. } => rewrite_value(value, replacements),
+                }
+            }
+        }
+        HirInstructionKind::Await { value } => rewrite_value(value, replacements),
+        HirInstructionKind::Yield { value, .. } => {
+            if let Some(value) = value {
+                rewrite_value(value, replacements);
+            }
+        }
+        HirInstructionKind::SyntaxFragment { inputs, .. } => {
+            for value in inputs {
+                rewrite_value(value, replacements);
+            }
+        }
+        HirInstructionKind::Literal(_)
+        | HirInstructionKind::Function { .. }
+        | HirInstructionKind::Jsx { .. }
+        | HirInstructionKind::Phi { .. }
+        | HirInstructionKind::Debugger => {}
+    }
+}
+
+fn rewrite_terminator_values(
+    terminator: &mut TerminatorKind,
+    replacements: &BTreeMap<ValueId, ValueId>,
+) {
+    match terminator {
+        TerminatorKind::Return { value } => {
+            if let Some(value) = value {
+                rewrite_value(value, replacements);
+            }
+        }
+        TerminatorKind::Throw { value } => rewrite_value(value, replacements),
+        TerminatorKind::Branch { test, .. } => rewrite_value(test, replacements),
+        TerminatorKind::Switch {
+            discriminant,
+            cases,
+        } => {
+            rewrite_value(discriminant, replacements);
+            for case in cases {
+                if let Some(test) = &mut case.test {
+                    rewrite_value(test, replacements);
+                }
+            }
+        }
+        TerminatorKind::Goto { .. } | TerminatorKind::Try { .. } | TerminatorKind::Unreachable => {}
+    }
 }
 
 fn optimizer_error(code: &'static str, message: impl Into<String>) -> Diagnostic {

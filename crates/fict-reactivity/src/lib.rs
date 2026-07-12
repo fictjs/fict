@@ -28,8 +28,9 @@ pub use effects::{
     InstructionLocation, ReadFact, WriteFact, analyze_dependencies, verify_dependencies,
 };
 pub use optimize::{
-    ConstantPropagation, ConstantPropagationOptions, ConstantPropagationStats, SsaConstantFact,
-    ValueConstantFact, analyze_constants, apply_constant_folding, verify_constants,
+    ConstantPropagation, ConstantPropagationOptions, ConstantPropagationStats, CseAnalysis,
+    CseReplacement, CseStats, SsaConstantFact, ValueConstantFact, analyze_constants, analyze_cse,
+    apply_constant_folding, apply_cse_rewrites, verify_constants, verify_cse,
 };
 pub use regions::{
     ReactiveRegion, RegionAnalysis, RegionInstructionRange, RegionStats, analyze_regions,

@@ -1,12 +1,13 @@
 use fict_hir::{
-    BinaryOperator, BlockId, DeclarationKind, FileId, FunctionFlags, FunctionId, FunctionKind,
-    HirBlock, HirFile, HirFunction, HirInstruction, HirInstructionKind, HirLocal, HirScope,
-    HirTerminator, HirValue, InstructionSemantics, LiteralValue, LocalId, LocalKind, NumberLiteral,
-    Origin, Place, ScopeId, ScopeKind, SourceSpan, TerminatorKind, UnaryOperator, ValueId,
-    ValueKind, verify_hir,
+    BinaryOperator, BlockId, CallHost, CallInstruction, DeclarationKind, FileId, FunctionFlags,
+    FunctionId, FunctionKind, HirBlock, HirFile, HirFunction, HirInstruction, HirInstructionKind,
+    HirLocal, HirScope, HirTerminator, HirValue, InstructionSemantics, LiteralValue, LocalId,
+    LocalKind, NumberLiteral, Origin, Place, ScopeId, ScopeKind, SourceSpan, TerminatorKind,
+    UnaryOperator, ValueId, ValueKind, verify_hir,
 };
 use fict_reactivity::{
-    ConstantPropagationOptions, analyze_constants, analyze_ssa, apply_constant_folding,
+    ConstantPropagationOptions, analyze_constants, analyze_cse, analyze_dependencies, analyze_ssa,
+    apply_constant_folding, apply_cse_rewrites,
 };
 
 fn origin() -> Origin {
@@ -213,4 +214,89 @@ fn fails_closed_when_the_fixed_point_budget_is_exhausted() {
             .iter()
             .any(|diagnostic| diagnostic.code.as_str() == "FICT-OPT-NONCONVERGENCE")
     );
+}
+
+#[test]
+fn cse_reuses_pure_values_but_never_crosses_an_unknown_call_barrier() {
+    let mut file = file();
+    let zero = LiteralValue::Number(NumberLiteral::from_f64(0.0));
+    file.functions[0].locals.clear();
+    file.functions[0].values = (0..6)
+        .map(|id| HirValue {
+            id: ValueId::new(id),
+            kind: if id == 0 {
+                ValueKind::Literal(zero.clone())
+            } else {
+                ValueKind::InstructionResult
+            },
+            origin: origin(),
+        })
+        .collect();
+    file.functions[0].blocks[0].instructions = vec![
+        instruction(Some(0), HirInstructionKind::Literal(zero)),
+        instruction(
+            Some(1),
+            HirInstructionKind::Binary {
+                operator: BinaryOperator::Add,
+                left: ValueId::new(0),
+                right: ValueId::new(0),
+            },
+        ),
+        instruction(
+            Some(2),
+            HirInstructionKind::Binary {
+                operator: BinaryOperator::Add,
+                left: ValueId::new(0),
+                right: ValueId::new(0),
+            },
+        ),
+        HirInstruction {
+            result: Some(ValueId::new(3)),
+            kind: HirInstructionKind::Call(CallInstruction {
+                callee: ValueId::new(0),
+                arguments: Vec::new(),
+                host: CallHost::Unknown,
+                macro_kind: None,
+                optional: false,
+            }),
+            semantics: InstructionSemantics::CONSERVATIVE_EAGER,
+            origin: origin(),
+        },
+        instruction(
+            Some(4),
+            HirInstructionKind::Binary {
+                operator: BinaryOperator::Add,
+                left: ValueId::new(0),
+                right: ValueId::new(0),
+            },
+        ),
+        instruction(
+            Some(5),
+            HirInstructionKind::Unary {
+                operator: UnaryOperator::Minus,
+                argument: ValueId::new(2),
+            },
+        ),
+    ];
+    file.functions[0].blocks[0].terminator.kind = TerminatorKind::Return {
+        value: Some(ValueId::new(5)),
+    };
+    verify_hir(&file).expect("valid CSE fixture");
+    let ssa = analyze_ssa(&file.functions[0]).expect("SSA");
+    let dependencies = analyze_dependencies(&file, FunctionId::new(0), &ssa).expect("dependencies");
+    let analysis = analyze_cse(&file.functions[0], &ssa, &dependencies).expect("CSE");
+    assert_eq!(analysis.replacements.len(), 1);
+    assert_eq!(analysis.replacements[0].duplicate, ValueId::new(2));
+    assert_eq!(analysis.replacements[0].canonical, ValueId::new(1));
+    assert!(analysis.stats.invalidations >= 1);
+
+    let optimized =
+        apply_cse_rewrites(&file, FunctionId::new(0), &analysis).expect("verified CSE rewrite");
+    assert!(matches!(
+        optimized.functions[0].blocks[0].instructions[5].kind,
+        HirInstructionKind::Unary {
+            argument,
+            ..
+        } if argument == ValueId::new(1)
+    ));
 }
