@@ -194,7 +194,15 @@ pub enum EmitOperation {
     },
     CloneTemplate {
         template: TemplateId,
+        source_result: ValueId,
         target: EmitTemporaryId,
+        origin: Origin,
+    },
+    ResolveElement {
+        root: EmitTemporaryId,
+        path: Vec<u32>,
+        target: EmitTemporaryId,
+        helper: RuntimeHelper,
         origin: Origin,
     },
     CreateElement {
@@ -279,7 +287,8 @@ impl EmitOperation {
             | Self::BindRef { helper, .. }
             | Self::Insert { helper, .. }
             | Self::Conditional { helper, .. }
-            | Self::KeyedList { helper, .. } => Some(*helper),
+            | Self::KeyedList { helper, .. }
+            | Self::ResolveElement { helper, .. } => Some(*helper),
             Self::ReadReactive { helper, .. } => *helper,
             Self::PreserveHir { .. }
             | Self::WriteReactive { .. }
@@ -294,6 +303,7 @@ impl EmitOperation {
         match self {
             Self::ReadReactive { target, .. }
             | Self::CloneTemplate { target, .. }
+            | Self::ResolveElement { target, .. }
             | Self::CreateElement { target, .. }
             | Self::Conditional { target, .. }
             | Self::KeyedList { target, .. } => Some(*target),
@@ -329,7 +339,8 @@ impl EmitOperation {
             Self::PreserveHir { .. }
             | Self::ReadReactive { .. }
             | Self::DeclareTemplate { .. }
-            | Self::CloneTemplate { .. } => {}
+            | Self::CloneTemplate { .. }
+            | Self::ResolveElement { .. } => {}
         }
     }
 
@@ -339,6 +350,7 @@ impl EmitOperation {
             | Self::BindEvent { element, .. }
             | Self::BindRef { element, .. } => visit(*element),
             Self::ApplyProps { target, .. } => visit(*target),
+            Self::ResolveElement { root, .. } => visit(*root),
             Self::Insert { parent, before, .. } => {
                 visit(*parent);
                 before.iter().copied().for_each(visit);

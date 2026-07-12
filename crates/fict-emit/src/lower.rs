@@ -4,15 +4,16 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
 use fict_hir::{
-    FictMacroKind, FunctionId, FunctionKind, HirFile, HirInstructionKind, LocalId, PlaceBase,
-    TerminatorKind, ValueId,
+    FictMacroKind, FunctionId, FunctionKind, HirFile, HirInstructionKind, JsxAttribute,
+    JsxAttributeValue, JsxChild, JsxElementName, JsxNode, LocalId, PlaceBase, TemplateId,
+    TerminatorKind, ValueId, ValueKind,
 };
 use fict_reactivity::{ReactiveCycleAnalysis, RegionAnalysis};
 
 use crate::{
-    CleanupOwner, EmitFunction, EmitOperation, EmitProgram, EmitSlotId, EmitTemporary,
-    EmitTemporaryId, EmitValueRef, ReactiveSlot, ReactiveSlotKind, RuntimeFamily, RuntimeHelper,
-    RuntimeImportIntent, verify_emit_program,
+    CleanupOwner, DomBindingKind, DomNamespace, EmitFunction, EmitOperation, EmitProgram,
+    EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef, PropsOperation, ReactiveSlot,
+    ReactiveSlotKind, RuntimeFamily, RuntimeHelper, RuntimeImportIntent, verify_emit_program,
 };
 
 /// Phase-1 Core lowering configuration.
@@ -51,6 +52,26 @@ pub fn lower_no_jsx(
     cycles: &[ReactiveCycleAnalysis],
     options: NoJsxLoweringOptions,
 ) -> Result<EmitProgram, DiagnosticBundle> {
+    lower_program(hir, regions, cycles, options, false)
+}
+
+/// Lower Core intrinsic JSX in addition to no-JSX reactivity.
+pub fn lower_core(
+    hir: &HirFile,
+    regions: &[RegionAnalysis],
+    cycles: &[ReactiveCycleAnalysis],
+    options: NoJsxLoweringOptions,
+) -> Result<EmitProgram, DiagnosticBundle> {
+    lower_program(hir, regions, cycles, options, true)
+}
+
+fn lower_program(
+    hir: &HirFile,
+    regions: &[RegionAnalysis],
+    cycles: &[ReactiveCycleAnalysis],
+    options: NoJsxLoweringOptions,
+    allow_jsx: bool,
+) -> Result<EmitProgram, DiagnosticBundle> {
     if regions.len() != hir.functions.len() || cycles.len() != hir.functions.len() {
         return Err(DiagnosticBundle::new(vec![lower_error(
             "FICT-EMIT-ANALYSIS",
@@ -72,11 +93,12 @@ pub fn lower_no_jsx(
     }
     let mut functions = Vec::with_capacity(hir.functions.len());
     for (function_index, function) in hir.functions.iter().enumerate() {
-        if let Some(instruction) = function
-            .blocks
-            .iter()
-            .flat_map(|block| &block.instructions)
-            .find(|instruction| matches!(instruction.kind, HirInstructionKind::Jsx { .. }))
+        if !allow_jsx
+            && let Some(instruction) = function
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .find(|instruction| matches!(instruction.kind, HirInstructionKind::Jsx { .. }))
         {
             let mut diagnostic = lower_error(
                 "FICT-EMIT-JSX-STAGE",
@@ -90,6 +112,7 @@ pub fn lower_no_jsx(
             hir,
             FunctionId::new(count_u32(function_index)),
             &regions[function_index],
+            allow_jsx,
         )?);
     }
     let helpers: BTreeSet<_> = functions
@@ -118,6 +141,7 @@ fn lower_function(
     hir: &HirFile,
     function_id: FunctionId,
     regions: &RegionAnalysis,
+    allow_jsx: bool,
 ) -> Result<EmitFunction, DiagnosticBundle> {
     let function = &hir.functions[function_id.as_usize()];
     let declarations_by_value: BTreeMap<_, _> = function
@@ -182,6 +206,7 @@ fn lower_function(
     let mut temporaries = Vec::new();
     let mut value_temporaries = BTreeMap::new();
     let mut operations = Vec::new();
+    let mut declared_templates = BTreeSet::new();
     for block in &function.blocks {
         for (instruction_index, instruction) in block.instructions.iter().enumerate() {
             if let HirInstructionKind::Call(call) = &instruction.kind
@@ -309,6 +334,18 @@ fn lower_function(
                         origin: instruction.origin,
                     });
                 }
+                HirInstructionKind::Jsx { template } if allow_jsx => {
+                    lower_jsx_instruction(
+                        hir,
+                        function_id,
+                        *template,
+                        instruction,
+                        &mut declared_templates,
+                        &mut temporaries,
+                        &mut value_temporaries,
+                        &mut operations,
+                    )?;
+                }
                 _ => preserve(&mut operations, block.id, instruction_index, instruction),
             }
         }
@@ -332,6 +369,371 @@ fn lower_function(
         regions: regions.top_level_regions.clone(),
         operations,
     })
+}
+
+#[derive(Debug)]
+enum TemplateBinding {
+    Attribute {
+        path: Vec<u32>,
+        name: String,
+        value: ValueId,
+    },
+    Spread {
+        path: Vec<u32>,
+        value: ValueId,
+    },
+    Child {
+        parent_path: Vec<u32>,
+        value: ValueId,
+    },
+}
+
+struct SerializedTemplate {
+    html: String,
+    namespace: DomNamespace,
+    bindings: Vec<TemplateBinding>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_jsx_instruction(
+    hir: &HirFile,
+    function_id: FunctionId,
+    template_id: TemplateId,
+    instruction: &fict_hir::HirInstruction,
+    declared_templates: &mut BTreeSet<TemplateId>,
+    temporaries: &mut Vec<EmitTemporary>,
+    value_temporaries: &mut BTreeMap<ValueId, EmitTemporaryId>,
+    operations: &mut Vec<EmitOperation>,
+) -> Result<(), DiagnosticBundle> {
+    let Some(template) = hir.templates.get(template_id.as_usize()) else {
+        return Err(DiagnosticBundle::new(vec![lower_error(
+            "FICT-EMIT-TEMPLATE",
+            "JSX instruction references a missing template",
+            GuaranteeClass::Internal,
+        )]));
+    };
+    if template.owner != function_id {
+        return Err(DiagnosticBundle::new(vec![lower_error(
+            "FICT-EMIT-TEMPLATE-OWNER",
+            "JSX template belongs to another function value arena",
+            GuaranteeClass::Internal,
+        )]));
+    }
+    let serialized = serialize_template(&template.root)?;
+    if declared_templates.insert(template_id) {
+        operations.push(EmitOperation::DeclareTemplate {
+            template: template_id,
+            html: serialized.html,
+            namespace: serialized.namespace,
+            helper: RuntimeHelper::Template,
+            origin: template.origin,
+        });
+    }
+    let Some(result) = instruction.result else {
+        return Err(DiagnosticBundle::new(vec![lower_error(
+            "FICT-EMIT-JSX-RESULT",
+            "JSX instruction has no HIR result",
+            GuaranteeClass::Internal,
+        )]));
+    };
+    let root = allocate_temporary(
+        temporaries,
+        format!("__fict_jsx{}", result.index()),
+        instruction.origin,
+    );
+    value_temporaries.insert(result, root);
+    operations.push(EmitOperation::CloneTemplate {
+        template: template_id,
+        source_result: result,
+        target: root,
+        origin: instruction.origin,
+    });
+    let mut resolved = BTreeMap::new();
+    for binding in serialized.bindings {
+        match binding {
+            TemplateBinding::Attribute { path, name, value } => {
+                let element = resolved_element(
+                    root,
+                    path,
+                    &mut resolved,
+                    temporaries,
+                    operations,
+                    instruction.origin,
+                );
+                let reactive = !matches!(
+                    hir.functions[function_id.as_usize()].values[value.as_usize()].kind,
+                    ValueKind::Literal(_)
+                );
+                let kind = dom_binding_kind(&name);
+                let helper = dom_binding_helper(&kind, reactive);
+                operations.push(EmitOperation::BindDom {
+                    element,
+                    kind,
+                    value: lower_value(value, value_temporaries),
+                    reactive,
+                    helper,
+                    origin: instruction.origin,
+                });
+            }
+            TemplateBinding::Spread { path, value } => {
+                let element = resolved_element(
+                    root,
+                    path,
+                    &mut resolved,
+                    temporaries,
+                    operations,
+                    instruction.origin,
+                );
+                operations.push(EmitOperation::ApplyProps {
+                    target: element,
+                    operation: PropsOperation::Spread {
+                        source: lower_value(value, value_temporaries),
+                        namespace: serialized.namespace,
+                        skip_children: false,
+                        excluded: Vec::new(),
+                    },
+                    helper: RuntimeHelper::Spread,
+                    origin: instruction.origin,
+                });
+            }
+            TemplateBinding::Child { parent_path, value } => {
+                let parent = resolved_element(
+                    root,
+                    parent_path,
+                    &mut resolved,
+                    temporaries,
+                    operations,
+                    instruction.origin,
+                );
+                operations.push(EmitOperation::Insert {
+                    parent,
+                    value: lower_value(value, value_temporaries),
+                    before: None,
+                    helper: RuntimeHelper::Insert,
+                    origin: instruction.origin,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn serialize_template(root: &JsxNode) -> Result<SerializedTemplate, DiagnosticBundle> {
+    let namespace = match root {
+        JsxNode::Element(element) => match &element.name {
+            JsxElementName::Intrinsic(name) if name == "svg" => DomNamespace::Svg,
+            JsxElementName::Intrinsic(name) if name == "math" => DomNamespace::MathMl,
+            _ => DomNamespace::Html,
+        },
+        JsxNode::Fragment { .. } => DomNamespace::Html,
+    };
+    let mut html = String::new();
+    let mut bindings = Vec::new();
+    serialize_node(root, &mut Vec::new(), &mut html, &mut bindings)?;
+    if html.is_empty() {
+        html.push_str("<!---->");
+    }
+    Ok(SerializedTemplate {
+        html,
+        namespace,
+        bindings,
+    })
+}
+
+fn serialize_node(
+    node: &JsxNode,
+    path: &mut Vec<u32>,
+    html: &mut String,
+    bindings: &mut Vec<TemplateBinding>,
+) -> Result<(), DiagnosticBundle> {
+    match node {
+        JsxNode::Fragment { children, .. } => {
+            serialize_children(children, path, html, bindings)?;
+        }
+        JsxNode::Element(element) => {
+            let JsxElementName::Intrinsic(tag) = &element.name else {
+                return Err(DiagnosticBundle::new(vec![lower_error(
+                    "FICT-EMIT-COMPONENT-STAGE",
+                    "component/dynamic JSX requires the component lowering phase",
+                    GuaranteeClass::Unsupported,
+                )]));
+            };
+            if !valid_markup_name(tag) {
+                return Err(DiagnosticBundle::new(vec![lower_error(
+                    "FICT-EMIT-TAG",
+                    "intrinsic JSX tag contains unsafe markup characters",
+                    GuaranteeClass::Unsupported,
+                )]));
+            }
+            html.push('<');
+            html.push_str(tag);
+            for attribute in &element.attributes {
+                match attribute {
+                    JsxAttribute::Named { name, value, .. } => {
+                        if !valid_markup_name(name) {
+                            return Err(DiagnosticBundle::new(vec![lower_error(
+                                "FICT-EMIT-ATTRIBUTE",
+                                "JSX attribute contains unsafe markup characters",
+                                GuaranteeClass::Unsupported,
+                            )]));
+                        }
+                        match value {
+                            JsxAttributeValue::ImplicitTrue => {
+                                html.push(' ');
+                                html.push_str(name);
+                            }
+                            JsxAttributeValue::Text(value) => {
+                                html.push(' ');
+                                html.push_str(name);
+                                html.push_str("=\"");
+                                escape_attribute(value, html);
+                                html.push('"');
+                            }
+                            JsxAttributeValue::Expression(value) => {
+                                bindings.push(TemplateBinding::Attribute {
+                                    path: path.clone(),
+                                    name: name.clone(),
+                                    value: *value,
+                                });
+                            }
+                            JsxAttributeValue::Node(_) => {
+                                return Err(DiagnosticBundle::new(vec![lower_error(
+                                    "FICT-EMIT-ATTRIBUTE-NODE",
+                                    "JSX node-valued attributes require component lowering",
+                                    GuaranteeClass::Unsupported,
+                                )]));
+                            }
+                        }
+                    }
+                    JsxAttribute::Spread { value, .. } => bindings.push(TemplateBinding::Spread {
+                        path: path.clone(),
+                        value: *value,
+                    }),
+                }
+            }
+            html.push('>');
+            serialize_children(&element.children, path, html, bindings)?;
+            html.push_str("</");
+            html.push_str(tag);
+            html.push('>');
+        }
+    }
+    Ok(())
+}
+
+fn serialize_children(
+    children: &[JsxChild],
+    parent_path: &mut Vec<u32>,
+    html: &mut String,
+    bindings: &mut Vec<TemplateBinding>,
+) -> Result<(), DiagnosticBundle> {
+    for (index, child) in children.iter().enumerate() {
+        match child {
+            JsxChild::Text { value, .. } => escape_text(value, html),
+            JsxChild::Expression { value, .. } | JsxChild::Spread { value, .. } => {
+                html.push_str("<!---->");
+                bindings.push(TemplateBinding::Child {
+                    parent_path: parent_path.clone(),
+                    value: *value,
+                });
+            }
+            JsxChild::Node(node) => {
+                parent_path.push(count_u32(index));
+                serialize_node(node, parent_path, html, bindings)?;
+                parent_path.pop();
+            }
+        }
+    }
+    Ok(())
+}
+
+fn resolved_element(
+    root: EmitTemporaryId,
+    path: Vec<u32>,
+    resolved: &mut BTreeMap<Vec<u32>, EmitTemporaryId>,
+    temporaries: &mut Vec<EmitTemporary>,
+    operations: &mut Vec<EmitOperation>,
+    origin: fict_hir::Origin,
+) -> EmitTemporaryId {
+    if path.is_empty() {
+        return root;
+    }
+    if let Some(temporary) = resolved.get(&path) {
+        return *temporary;
+    }
+    let target = allocate_temporary(
+        temporaries,
+        format!("__fict_node{}", temporaries.len()),
+        origin,
+    );
+    operations.push(EmitOperation::ResolveElement {
+        root,
+        path: path.clone(),
+        target,
+        helper: RuntimeHelper::ResolvePath,
+        origin,
+    });
+    resolved.insert(path, target);
+    target
+}
+
+fn dom_binding_kind(name: &str) -> DomBindingKind {
+    match name {
+        "class" | "className" => DomBindingKind::Class,
+        "style" => DomBindingKind::Style,
+        "value" | "checked" | "selected" | "textContent" | "innerHTML" => {
+            DomBindingKind::Property(name.to_owned())
+        }
+        _ => DomBindingKind::Attribute(name.to_owned()),
+    }
+}
+
+fn dom_binding_helper(kind: &DomBindingKind, reactive: bool) -> RuntimeHelper {
+    match (kind, reactive) {
+        (DomBindingKind::Text, true) => RuntimeHelper::BindText,
+        (DomBindingKind::Text, false) => RuntimeHelper::SetText,
+        (DomBindingKind::TextContent, true) => RuntimeHelper::BindTextContent,
+        (DomBindingKind::TextContent, false) => RuntimeHelper::SetTextContent,
+        (DomBindingKind::Attribute(_), true) => RuntimeHelper::BindAttribute,
+        (DomBindingKind::Attribute(_), false) => RuntimeHelper::SetAttr,
+        (DomBindingKind::Property(_), true) => RuntimeHelper::BindProperty,
+        (DomBindingKind::Property(_), false) => RuntimeHelper::SetProp,
+        (DomBindingKind::Class, true) => RuntimeHelper::BindClass,
+        (DomBindingKind::Class, false) => RuntimeHelper::SetClass,
+        (DomBindingKind::Style, true) => RuntimeHelper::BindStyle,
+        (DomBindingKind::Style, false) => RuntimeHelper::SetStyle,
+        (DomBindingKind::Spread, _) => RuntimeHelper::Spread,
+    }
+}
+
+fn escape_text(value: &str, output: &mut String) {
+    for character in value.chars() {
+        match character {
+            '&' => output.push_str("&amp;"),
+            '<' => output.push_str("&lt;"),
+            '>' => output.push_str("&gt;"),
+            _ => output.push(character),
+        }
+    }
+}
+
+fn escape_attribute(value: &str, output: &mut String) {
+    for character in value.chars() {
+        match character {
+            '&' => output.push_str("&amp;"),
+            '"' => output.push_str("&quot;"),
+            '<' => output.push_str("&lt;"),
+            '>' => output.push_str("&gt;"),
+            _ => output.push(character),
+        }
+    }
+}
+
+fn valid_markup_name(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':' | b'.'))
 }
 
 fn creation_helper(kind: FunctionKind, macro_kind: FictMacroKind) -> RuntimeHelper {

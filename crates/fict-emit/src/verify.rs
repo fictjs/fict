@@ -263,7 +263,12 @@ fn verify_operations(
                     ));
                 }
             }
-            EmitOperation::CloneTemplate { template, .. } => {
+            EmitOperation::CloneTemplate {
+                template,
+                source_result,
+                ..
+            } => {
+                verify_source_result(hir_function, *source_result, diagnostics);
                 if !templates.contains(template) {
                     diagnostics.push(emit_error(
                         "FICT-EMIT-TEMPLATE-ORDER",
@@ -395,6 +400,9 @@ fn verify_helper_semantics(
         EmitOperation::KeyedList { helper, .. } => *helper == RuntimeHelper::KeyedList,
         EmitOperation::ReadReactive { helper, .. } => {
             helper.is_none_or(|helper| helper == RuntimeHelper::ReactiveGetter)
+        }
+        EmitOperation::ResolveElement { helper, path, .. } => {
+            *helper == RuntimeHelper::ResolvePath && !path.is_empty()
         }
         EmitOperation::PreserveHir { .. }
         | EmitOperation::WriteReactive { .. }

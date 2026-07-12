@@ -12,7 +12,7 @@ pub use ir::{
     EmitProgram, EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef, PropsOperation,
     ReactiveSlot, ReactiveSlotKind, RuntimeImportIntent,
 };
-pub use lower::{NoJsxLoweringOptions, lower_no_jsx};
+pub use lower::{NoJsxLoweringOptions, lower_core, lower_no_jsx};
 
 pub use runtime_abi::{
     ALL_RUNTIME_HELPERS, FICT_INTERNAL_MODULE, FICT_LIST_MODULE, RUNTIME_ABI_VERSION,

@@ -1,10 +1,15 @@
-use fict_emit::{EmitOperation, NoJsxLoweringOptions, RuntimeFamily, RuntimeHelper, lower_no_jsx};
+use fict_emit::{
+    DomNamespace, EmitOperation, NoJsxLoweringOptions, RuntimeFamily, RuntimeHelper, lower_core,
+    lower_no_jsx,
+};
 use fict_hir::{
     BlockId, CallArgument, CallHost, CallInstruction, DeclarationKind, FictMacroKind, FileId,
     FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction, HirInstruction,
     HirInstructionKind, HirLocal, HirScope, HirTerminator, HirValue, InstructionSemantics,
+    JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxNode, JsxTemplate,
     LiteralValue, LocalId, LocalKind, MutationEffect, NumberLiteral, Origin, Place, ScopeId,
-    ScopeKind, SourceSpan, TerminatorKind, UpdateOperator, ValueId, ValueKind, verify_hir,
+    ScopeKind, SourceSpan, TemplateId, TerminatorKind, UpdateOperator, ValueId, ValueKind,
+    verify_hir,
 };
 use fict_reactivity::{
     ReactiveCycleAnalysis, RegionAnalysis, analyze_aliases, analyze_dependencies,
@@ -264,5 +269,119 @@ fn selects_hook_context_helpers_inside_components() {
             .imports
             .iter()
             .any(|intent| intent.helper == RuntimeHelper::Signal)
+    );
+}
+
+#[test]
+fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
+    let mut hir = fixture(FunctionKind::Module);
+    hir.functions[0].locals.clear();
+    hir.functions[0].values = vec![
+        value(
+            0,
+            ValueKind::Literal(LiteralValue::String("dynamic".into())),
+        ),
+        value(1, ValueKind::InstructionResult),
+    ];
+    hir.functions[0].blocks[0].instructions = vec![
+        instruction(
+            Some(0),
+            HirInstructionKind::Literal(LiteralValue::String("dynamic".into())),
+        ),
+        instruction(
+            Some(1),
+            HirInstructionKind::Jsx {
+                template: TemplateId::new(0),
+            },
+        ),
+    ];
+    hir.functions[0].blocks[0].terminator.kind = TerminatorKind::Return {
+        value: Some(ValueId::new(1)),
+    };
+    hir.templates = vec![JsxTemplate {
+        id: TemplateId::new(0),
+        owner: FunctionId::new(0),
+        root: JsxNode::Element(JsxElement {
+            name: JsxElementName::Intrinsic("div".into()),
+            attributes: vec![
+                JsxAttribute::Named {
+                    name: "title".into(),
+                    value: JsxAttributeValue::Text("<&\"".into()),
+                    origin: origin(),
+                },
+                JsxAttribute::Named {
+                    name: "data-value".into(),
+                    value: JsxAttributeValue::Expression(ValueId::new(0)),
+                    origin: origin(),
+                },
+            ],
+            children: vec![
+                JsxChild::Text {
+                    value: "<hello>".into(),
+                    origin: origin(),
+                },
+                JsxChild::Node(Box::new(JsxNode::Element(JsxElement {
+                    name: JsxElementName::Intrinsic("span".into()),
+                    attributes: Vec::new(),
+                    children: vec![JsxChild::Expression {
+                        value: ValueId::new(0),
+                        origin: origin(),
+                    }],
+                    origin: origin(),
+                }))),
+            ],
+            origin: origin(),
+        }),
+        origin: origin(),
+    }];
+    verify_hir(&hir).expect("valid JSX fixture");
+    let (regions, cycles) = analyses(&hir);
+    let program = lower_core(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
+        .expect("intrinsic JSX lowering");
+    let declare = program.functions[0]
+        .operations
+        .iter()
+        .find_map(|operation| match operation {
+            EmitOperation::DeclareTemplate {
+                html, namespace, ..
+            } => Some((html, namespace)),
+            _ => None,
+        })
+        .expect("template declaration");
+    assert_eq!(*declare.1, DomNamespace::Html);
+    assert!(declare.0.contains("title=\"&lt;&amp;&quot;\""));
+    assert!(declare.0.contains("&lt;hello&gt;"));
+    assert!(program.functions[0].operations.iter().any(|operation| {
+        matches!(operation, EmitOperation::CloneTemplate { source_result, .. } if *source_result == ValueId::new(1))
+    }));
+    assert!(program.functions[0].operations.iter().any(|operation| {
+        matches!(operation, EmitOperation::ResolveElement { path, .. } if path == &[1])
+    }));
+    assert!(program.functions[0].operations.iter().any(|operation| {
+        matches!(
+            operation,
+            EmitOperation::BindDom {
+                helper: RuntimeHelper::SetAttr,
+                ..
+            }
+        )
+    }));
+    assert!(program.functions[0].operations.iter().any(|operation| {
+        matches!(
+            operation,
+            EmitOperation::Insert {
+                helper: RuntimeHelper::Insert,
+                ..
+            }
+        )
+    }));
+
+    let diagnostics = lower_no_jsx(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
+        .expect_err("no-JSX phase rejects JSX");
+    assert!(
+        diagnostics
+            .as_slice()
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "FICT-EMIT-JSX-STAGE")
     );
 }
