@@ -9,6 +9,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  NPM_VERSION: 12.0.1
+
 jobs:
   release:
     name: Release
@@ -32,11 +35,14 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org/
 
-      - name: Upgrade npm for trusted publishing
-        run: npm install -g npm@latest
+      - name: Install pinned npm for trusted publishing
+        run: npm install -g "npm@${NPM_VERSION}"
 
       - name: Verify trusted publishing toolchain
-        run: node --version && npm --version
+        run: |
+          node --version
+          npm --version
+          test "$(npm --version)" = "${NPM_VERSION}"
 
       - run: pnpm install
 
