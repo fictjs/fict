@@ -38,7 +38,14 @@ import type {
   HashRouterOptions,
   RouterOptions,
 } from './types'
-import { compileRoute, createBranches, hasPathPrefix, matchRoutes, resolvePath } from './utils'
+import {
+  compileRoute,
+  createBranches,
+  createMatcher,
+  hasPathPrefix,
+  matchRoutes,
+  resolvePath,
+} from './utils'
 
 // Use Fict's signal for reactive state
 
@@ -499,12 +506,69 @@ interface RedirectProps {
  */
 export function Redirect(props: RedirectProps): FictNode {
   const router = useRouter()
+  let cachedFrom: string | undefined
+  let fromMatcher: ReturnType<typeof createMatcher> | undefined
+  let lastRedirect:
+    | { target: string; to: To; state: unknown; push: boolean | undefined }
+    | undefined
 
-  // As with Navigate, only prop reads belong to this effect's dependency set.
   createEffect(() => {
     const to = props.to
+    const from = props.from
     const push = props.push
     const state = props.state
+
+    if (from !== undefined) {
+      const location = readAccessor(router.location)
+      const base = readAccessor(router.base)
+      const pathname = stripBaseOrWarn(location.pathname, base)
+
+      if (from !== cachedFrom) {
+        cachedFrom = from
+        fromMatcher = createMatcher(from)
+      }
+
+      if (pathname === null || !fromMatcher?.(pathname)) {
+        lastRedirect = undefined
+        return
+      }
+
+      let targetPathname = typeof to === 'string' ? to : to.pathname || ''
+      let targetSearch = typeof to === 'string' ? '' : to.search || ''
+      let targetHash = typeof to === 'string' ? '' : to.hash || ''
+      if (typeof to === 'string') {
+        const hashIndex = targetPathname.indexOf('#')
+        if (hashIndex >= 0) {
+          targetHash = targetPathname.slice(hashIndex)
+          targetPathname = targetPathname.slice(0, hashIndex)
+        }
+        const searchIndex = targetPathname.indexOf('?')
+        if (searchIndex >= 0) {
+          targetSearch = targetPathname.slice(searchIndex)
+          targetPathname = targetPathname.slice(0, searchIndex)
+        }
+      }
+
+      const resolvedTargetPath = targetPathname
+        ? untrack(() => router.resolvePath(targetPathname))
+        : pathname
+      const targetUrl = resolvedTargetPath + targetSearch + targetHash
+      const currentUrl = pathname + location.search + location.hash
+
+      // A catch-all `from` can also match its own target. Apply it once, then
+      // wait until the location leaves that target before redirecting again.
+      if (
+        currentUrl === targetUrl &&
+        lastRedirect?.target === targetUrl &&
+        lastRedirect.to === to &&
+        Object.is(lastRedirect.state, state) &&
+        lastRedirect.push === push
+      ) {
+        return
+      }
+      lastRedirect = { target: targetUrl, to, state, push }
+    }
+
     untrack(() => {
       router.navigate(to, {
         replace: push !== true, // Replace by default, push only if explicitly requested

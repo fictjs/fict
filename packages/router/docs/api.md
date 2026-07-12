@@ -214,8 +214,11 @@ Declarative redirect. Always replaces history by default.
 ```tsx
 import { Redirect } from '@fictjs/router'
 
-// Redirect old URLs to new ones
-<Route path="/old-page" element={<Redirect to="/new-page" />} />
+// Redirect only when the current path matches
+<Redirect from="/old-page" to="/new-page" />
+
+// Or place it inside an already matched route
+<Route path="/legacy/:id" element={<Redirect to="/new-page" />} />
 
 // Push instead of replace
 <Redirect to="/new-page" push />

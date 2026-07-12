@@ -4576,4 +4576,55 @@ describe('Router integration (MemoryRouter)', () => {
     expect(history.location.state).toEqual({ version: 2 })
     history.destroy?.()
   })
+
+  it('applies Redirect.from only when the current pathname matches', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/current'] })
+    render(() => (
+      <RouterProvider history={history} routes={[]}>
+        <Redirect from="/legacy/:id" to="/replacement" />
+      </RouterProvider>
+    ))
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(history.location.pathname).toBe('/current')
+
+    await act(async () => {
+      history.push('/legacy/42')
+    })
+    await vi.waitFor(() => expect(history.location.pathname).toBe('/replacement'))
+    expect(history.action).toBe('REPLACE')
+    history.destroy?.()
+  })
+
+  it('matches Redirect.from against the router path without its base', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/app/legacy/42'] })
+    render(() => (
+      <RouterProvider history={history} routes={[]} base="/app">
+        <Redirect from="/legacy/:id" to="/replacement" />
+      </RouterProvider>
+    ))
+
+    await vi.waitFor(() => expect(history.location.pathname).toBe('/app/replacement'))
+    history.destroy?.()
+  })
+
+  it('does not loop when a catch-all Redirect.from also matches its target', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/start'] })
+    render(() => (
+      <RouterProvider history={history} routes={[]}>
+        <Redirect from="*" to="/target" />
+      </RouterProvider>
+    ))
+
+    await vi.waitFor(() => expect(history.location.pathname).toBe('/target'))
+    const targetKey = history.location.key
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(history.location.key).toBe(targetKey)
+    history.destroy?.()
+  })
 })
