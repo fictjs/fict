@@ -803,6 +803,12 @@ export function __fictEnsureScope(
   return ctx
 }
 
+/**
+ * Read captured lexical values from a resumed scope.
+ *
+ * @experimental Part of the Preview resumability compiler ABI.
+ * @internal
+ */
 export function __fictUseLexicalScope(scopeId: string, names: string[]): unknown[] {
   const record = resumedScopes.get(scopeId)
   if (!record) {

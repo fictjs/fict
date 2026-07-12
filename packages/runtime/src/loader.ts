@@ -2331,5 +2331,10 @@ function getEventDocument(target: EventTarget | null): Document | undefined {
   return node.nodeType === 9 ? (node as Document) : (node.ownerDocument ?? undefined)
 }
 
-// Re-export for handler authors (optional)
+/**
+ * Read captured lexical values from a resumed Preview scope.
+ *
+ * @experimental Preview resumability compiler ABI; no stable application alternative.
+ * @internal Generated handler modules should normally import this through the compiler ABI.
+ */
 export { __fictUseLexicalScope } from './resume'

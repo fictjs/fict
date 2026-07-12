@@ -5,7 +5,10 @@ import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { hasLegacyLoaderReference } from './preview-boundary-helpers.mjs'
+import {
+  findUndocumentedExperimentalExports,
+  hasLegacyLoaderReference,
+} from './preview-boundary-helpers.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const failures = []
@@ -117,13 +120,11 @@ for (const packagePath of ['packages/fict/package.json', 'packages/runtime/packa
 }
 
 const runtimeLoader = readText('packages/runtime/src/loader.ts')
-const exportedDeclaration =
-  /^export (?:async )?(?:interface|type|const|function|class|enum)\s+([\w$]+)/gm
-let declaration
-while ((declaration = exportedDeclaration.exec(runtimeLoader))) {
-  if (!precedingJsdoc(runtimeLoader, declaration.index).includes('@experimental')) {
-    fail(`Preview loader export ${declaration[1]} must carry an @experimental JSDoc tag`)
-  }
+for (const name of findUndocumentedExperimentalExports(
+  runtimeLoader,
+  'packages/runtime/src/loader.ts',
+)) {
+  fail(`Preview loader export ${name} must carry an @experimental JSDoc tag`)
 }
 
 const ssrMain = readText('packages/ssr/src/index.ts')
