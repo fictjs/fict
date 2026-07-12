@@ -813,6 +813,17 @@ describe('Binding Edge Cases', () => {
       expect(Array.from(select.options, option => option.selected)).toEqual([false, false])
     })
 
+    it('keeps value assignments generic for foreign-namespace select elements', () => {
+      const select = document.createElementNS('http://www.w3.org/2000/svg', 'select') as Element & {
+        value?: string
+      }
+
+      setProp(select, 'value', 'foreign')
+
+      expect(select.namespaceURI).toBe('http://www.w3.org/2000/svg')
+      expect(select.value).toBe('foreign')
+    })
+
     it('repairs a duplicate select value when the cached text is unchanged', async () => {
       const select = document.createElement('select')
       const trigger = createSignal(0)

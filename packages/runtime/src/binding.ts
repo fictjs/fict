@@ -736,8 +736,8 @@ export function setProp(el: Element, key: string, value: unknown): void {
 }
 
 function isElementPropertyCurrent(el: Element, key: string, value: unknown): boolean {
-  if (key === 'value' && el.localName === 'select') {
-    const [options, matched] = resolveSelectValueAssignment(el, value)
+  if (key === 'value' && el.localName === 'select' && 'options' in el) {
+    const [options, matched] = resolveSelectValueAssignment(el as HTMLSelectElement, value)
     return options.every(option => option.selected === (option === matched))
   }
 
@@ -748,25 +748,23 @@ export function setElementProperty(el: Element, key: string, value: unknown): vo
   // linkedom exposes select.value as a getter, and some server DOMs select
   // every duplicate value. Apply the browser's first-match algorithm directly
   // so client and SSR output agree.
-  if (key === 'value' && el.localName === 'select') {
-    const [options, matched] = resolveSelectValueAssignment(el, value)
+  if (key === 'value' && el.localName === 'select' && 'options' in el) {
+    const select = el as HTMLSelectElement
+    const [options, matched] = resolveSelectValueAssignment(select, value)
     for (const option of options) option.selected = false
-    if (matched) {
-      matched.selected = true
-    } else {
-      ;(el as HTMLSelectElement).selectedIndex = -1
-    }
+    if (matched) matched.selected = true
+    else select.selectedIndex = -1
     return
   }
   ;(el as unknown as Record<string, unknown>)[key] = value
 }
 
 function resolveSelectValueAssignment(
-  el: Element,
+  el: HTMLSelectElement,
   value: unknown,
 ): [HTMLOptionElement[], HTMLOptionElement | undefined] {
   const expected = `${(value ?? '') as string}`
-  const options = Array.from(el.querySelectorAll('option')) as HTMLOptionElement[]
+  const options = Array.from(el.options)
   return [options, options.find(option => option.value === expected)]
 }
 
