@@ -15,12 +15,16 @@ use fict_hir::{
 };
 use oxc::{
     allocator::Allocator,
-    ast::ast::{
-        ArrowFunctionExpression, AssignmentPattern, BindingIdentifier, BindingPattern,
-        BindingRestElement, CallExpression, Expression, FormalParameters, Function,
-        JSXAttributeItem, JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue,
-        JSXChild as OxcJsxChild, JSXElement, JSXElementName as OxcJsxElementName, JSXExpression,
-        JSXFragment, JSXMemberExpression, JSXMemberExpressionObject, Program, VariableDeclarator,
+    ast::{
+        ast::{
+            ArrowFunctionExpression, AssignmentPattern, BindingIdentifier, BindingPattern,
+            BindingRestElement, CallExpression, Expression, FormalParameters, Function,
+            JSXAttributeItem, JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue,
+            JSXChild as OxcJsxChild, JSXElement, JSXElementName as OxcJsxElementName,
+            JSXExpression, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject, Program,
+            VariableDeclarator,
+        },
+        ast_kind::AstKind,
     },
     ast_visit::{
         Visit,
@@ -407,6 +411,7 @@ struct Builder<'source, 'semantic> {
     diagnostics: Vec<Diagnostic>,
     macro_bindings: BTreeMap<BindingId, FictMacroKind>,
     configured_bindings: BTreeSet<BindingId>,
+    reactive_functions: BTreeMap<FunctionId, ReactiveScopeKind>,
 }
 
 impl<'source, 'semantic> Builder<'source, 'semantic> {
@@ -463,6 +468,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             diagnostics: Vec::new(),
             macro_bindings,
             configured_bindings,
+            reactive_functions: BTreeMap::new(),
         }
     }
 
@@ -484,6 +490,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             stack: vec![FunctionId::new(0)],
             function_by_span: &function_by_span,
             symbol_to_binding: &symbol_to_binding,
+            context: PlacementContext::default(),
             calls: Vec::new(),
         };
         calls.visit_program(program);
@@ -502,6 +509,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             }
         }
         self.apply_call_classification(&calls.calls);
+        self.validate_macro_placement(&calls.calls);
         self.populate_function_bodies(&calls.calls, &jsx.roots);
     }
 
@@ -727,8 +735,142 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             };
             if let (Some(kind), Some(callback)) = (callback_kind, call.callback) {
                 self.functions[callback.as_usize()].kind = FunctionKind::ReactiveScope;
-                let _ = kind;
+                self.reactive_functions.insert(callback, kind);
             }
+        }
+    }
+
+    fn validate_macro_placement(&mut self, calls: &[CallFact]) {
+        for call in calls {
+            let Some(macro_kind) = call
+                .binding
+                .and_then(|binding| self.macro_bindings.get(&binding).copied())
+            else {
+                continue;
+            };
+            match macro_kind {
+                FictMacroKind::State => {
+                    match call.direct_variable {
+                        None => {
+                            self.diagnostics.push(
+                                error(
+                                    "FICT-PLACEMENT-STATE-TARGET",
+                                    "$state() must be assigned directly to a variable",
+                                    call.span,
+                                )
+                                .with_help("use `let value = $state(initialValue)`"),
+                            );
+                            continue;
+                        }
+                        Some(false) => {
+                            self.diagnostics.push(
+                                error(
+                                    "FICT-PLACEMENT-STATE-DESTRUCTURE",
+                                    "destructuring a $state() result is not supported",
+                                    call.span,
+                                )
+                                .with_help("assign the state to one identifier, then destructure a read-only alias"),
+                            );
+                            continue;
+                        }
+                        Some(true) => {}
+                    }
+                    if !self.is_reactive_owner(call.owner, false) {
+                        let nested = self.function_facts[call.owner.as_usize()].parent
+                            != FunctionId::new(0)
+                            && self.is_reactive_owner(
+                                self.function_facts[call.owner.as_usize()].parent,
+                                false,
+                            );
+                        self.diagnostics.push(if nested {
+                            error(
+                                "FICT-PLACEMENT-STATE-NESTED",
+                                "$state() cannot be declared inside nested functions",
+                                call.span,
+                            )
+                            .with_help("move the state declaration to the component top level or extract a hook")
+                        } else {
+                            error(
+                                "FICT-PLACEMENT-STATE-OWNER",
+                                "$state() must be declared inside a component or hook function body",
+                                call.span,
+                            )
+                            .with_help("use $store or createSignal for module-level shared state")
+                        });
+                        continue;
+                    }
+                    if !call.immediate_statement || call.conditional_or_loop {
+                        self.diagnostics.push(
+                            error(
+                                "FICT-PLACEMENT-STATE-CONTROL",
+                                "$state() cannot be declared inside loops, conditionals, or nested blocks",
+                                call.span,
+                            )
+                            .with_help("move the state declaration to the component or hook top level"),
+                        );
+                    }
+                }
+                FictMacroKind::Effect => {
+                    if !self.is_reactive_owner(call.owner, true) {
+                        let nested = self.function_facts[call.owner.as_usize()].parent
+                            != FunctionId::new(0)
+                            && self.is_reactive_owner(
+                                self.function_facts[call.owner.as_usize()].parent,
+                                true,
+                            );
+                        self.diagnostics.push(if nested {
+                            error(
+                                "FICT-PLACEMENT-EFFECT-NESTED",
+                                "$effect() cannot be called inside nested functions",
+                                call.span,
+                            )
+                            .with_help("move the effect to the component top level or extract a hook")
+                        } else {
+                            error(
+                                "FICT-PLACEMENT-EFFECT-OWNER",
+                                "$effect() must be called inside a component or hook, or at module top level",
+                                call.span,
+                            )
+                        });
+                        continue;
+                    }
+                    if call.conditional_or_loop
+                        || (!call.immediate_effect_statement && !call.immediate_default_export)
+                    {
+                        self.diagnostics.push(
+                            error(
+                                "FICT-PLACEMENT-EFFECT-CONTROL",
+                                "$effect() cannot be called inside loops, conditionals, or nested blocks",
+                                call.span,
+                            )
+                            .with_help("move the effect registration to the reactive owner top level"),
+                        );
+                    }
+                }
+                FictMacroKind::Memo => {
+                    if call.conditional_or_loop {
+                        self.diagnostics.push(
+                            error(
+                                "FICT-PLACEMENT-MEMO-CONTROL",
+                                "$memo() cannot be called inside loops, conditionals, or nested blocks",
+                                call.span,
+                            )
+                            .with_help("move the memo creation to the component or module top level"),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    fn is_reactive_owner(&self, function: FunctionId, allow_module: bool) -> bool {
+        match self.functions[function.as_usize()].kind {
+            FunctionKind::Module => allow_module,
+            FunctionKind::Component | FunctionKind::Hook => true,
+            FunctionKind::ReactiveScope => {
+                self.reactive_functions.get(&function) == Some(&ReactiveScopeKind::Configured)
+            }
+            FunctionKind::Plain => false,
         }
     }
 
@@ -1461,8 +1603,124 @@ struct CallFact {
     binding: Option<BindingId>,
     arguments: Vec<ArgumentFact>,
     callback: Option<FunctionId>,
+    direct_variable: Option<bool>,
+    immediate_statement: bool,
+    immediate_effect_statement: bool,
+    immediate_default_export: bool,
+    conditional_or_loop: bool,
     optional: bool,
     pure: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct VariableContext {
+    initializer: Option<SourceSpan>,
+    simple_identifier: bool,
+}
+
+#[derive(Debug, Default)]
+struct PlacementContext {
+    block_depth: u32,
+    control_depth: u32,
+    function_baselines: Vec<(u32, u32)>,
+    variables: Vec<VariableContext>,
+    expression_statements: Vec<SourceSpan>,
+    default_exports: Vec<SourceSpan>,
+}
+
+impl PlacementContext {
+    fn enter(&mut self, kind: AstKind<'_>) {
+        match kind {
+            AstKind::Function(_) | AstKind::ArrowFunctionExpression(_) => self
+                .function_baselines
+                .push((self.block_depth, self.control_depth)),
+            AstKind::BlockStatement(_) => self.block_depth = self.block_depth.saturating_add(1),
+            AstKind::VariableDeclarator(declarator) => {
+                self.variables.push(VariableContext {
+                    initializer: declarator
+                        .init
+                        .as_ref()
+                        .map(|init| source_span(init.span())),
+                    simple_identifier: matches!(
+                        declarator.id,
+                        BindingPattern::BindingIdentifier(_)
+                    ),
+                });
+            }
+            AstKind::ExpressionStatement(statement) => self
+                .expression_statements
+                .push(source_span(statement.expression.span())),
+            AstKind::ExportDefaultDeclaration(declaration) => {
+                self.default_exports
+                    .push(declaration.declaration.as_expression().map_or_else(
+                        || SourceSpan::empty(u32::MAX),
+                        |expression| source_span(expression.span()),
+                    ))
+            }
+            _ if is_control_context(kind) => {
+                self.control_depth = self.control_depth.saturating_add(1);
+            }
+            _ => {}
+        }
+    }
+
+    fn leave(&mut self, kind: AstKind<'_>) {
+        match kind {
+            AstKind::Function(_) | AstKind::ArrowFunctionExpression(_) => {
+                self.function_baselines.pop();
+            }
+            AstKind::BlockStatement(_) => self.block_depth = self.block_depth.saturating_sub(1),
+            AstKind::VariableDeclarator(_) => {
+                self.variables.pop();
+            }
+            AstKind::ExpressionStatement(_) => {
+                self.expression_statements.pop();
+            }
+            AstKind::ExportDefaultDeclaration(_) => {
+                self.default_exports.pop();
+            }
+            _ if is_control_context(kind) => {
+                self.control_depth = self.control_depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+
+    fn facts(&self, call: SourceSpan) -> (Option<bool>, bool, bool, bool, bool) {
+        let (block_baseline, control_baseline) =
+            self.function_baselines.last().copied().unwrap_or_default();
+        let conditional_or_loop = self.control_depth > control_baseline;
+        let immediate_statement = self.block_depth == block_baseline && !conditional_or_loop;
+        let direct_variable = self.variables.last().and_then(|variable| {
+            (variable.initializer == Some(call)).then_some(variable.simple_identifier)
+        });
+        let immediate_effect_statement =
+            immediate_statement && self.expression_statements.last().copied() == Some(call);
+        let immediate_default_export =
+            immediate_statement && self.default_exports.last().copied() == Some(call);
+        (
+            direct_variable,
+            immediate_statement,
+            immediate_effect_statement,
+            immediate_default_export,
+            conditional_or_loop,
+        )
+    }
+}
+
+fn is_control_context(kind: AstKind<'_>) -> bool {
+    matches!(
+        kind,
+        AstKind::IfStatement(_)
+            | AstKind::DoWhileStatement(_)
+            | AstKind::WhileStatement(_)
+            | AstKind::ForStatement(_)
+            | AstKind::ForInStatement(_)
+            | AstKind::ForOfStatement(_)
+            | AstKind::SwitchStatement(_)
+            | AstKind::ConditionalExpression(_)
+            | AstKind::LogicalExpression(_)
+    )
 }
 
 struct CallCollector<'facts, 'semantic> {
@@ -1470,6 +1728,7 @@ struct CallCollector<'facts, 'semantic> {
     stack: Vec<FunctionId>,
     function_by_span: &'facts BTreeMap<(u32, u32), FunctionId>,
     symbol_to_binding: &'facts BTreeMap<SymbolId, BindingId>,
+    context: PlacementContext,
     calls: Vec<CallFact>,
 }
 
@@ -1481,6 +1740,14 @@ impl CallCollector<'_, '_> {
 }
 
 impl<'a> Visit<'a> for CallCollector<'_, '_> {
+    fn enter_node(&mut self, kind: AstKind<'a>) {
+        self.context.enter(kind);
+    }
+
+    fn leave_node(&mut self, kind: AstKind<'a>) {
+        self.context.leave(kind);
+    }
+
     fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
         let Some(id) = self
             .function_by_span
@@ -1508,6 +1775,14 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
     }
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        let call_span = source_span(call.span);
+        let (
+            direct_variable,
+            immediate_statement,
+            immediate_effect_statement,
+            immediate_default_export,
+            conditional_or_loop,
+        ) = self.context.facts(call_span);
         let binding = resolved_callee_symbol(self.scoping, &call.callee)
             .and_then(|symbol| self.symbol_to_binding.get(&symbol).copied());
         let arguments: Vec<_> = call
@@ -1534,10 +1809,15 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             .collect();
         self.calls.push(CallFact {
             owner: *self.stack.last().expect("module call owner"),
-            span: source_span(call.span),
+            span: call_span,
             callee_span: source_span(call.callee.span()),
             binding,
             callback: arguments.first().and_then(|argument| argument.function),
+            direct_variable,
+            immediate_statement,
+            immediate_effect_statement,
+            immediate_default_export,
+            conditional_or_loop,
             arguments,
             optional: call.optional,
             pure: call.pure,

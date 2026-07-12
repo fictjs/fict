@@ -80,8 +80,11 @@ fn builds_verified_binding_aware_hir_for_tsx_components_and_macros() {
 fn alias_and_shadow_calls_keep_distinct_binding_identity() {
     let source = r#"
         import { $state as state } from 'fict';
-        const outer = state(1);
-        function inner(state) { return state(2); }
+        function App() {
+            const outer = state(1);
+            function inner(state) { return state(2); }
+            return outer;
+        }
     "#;
     let output = build_hir(
         source,
@@ -356,4 +359,135 @@ fn assigns_dense_function_local_storage_and_outer_captures_without_name_identity
             .iter()
             .all(|local| local.kind != fict_hir::LocalKind::Capture)
     );
+}
+
+#[test]
+fn enforces_state_owner_target_and_top_level_placement() {
+    let cases = [
+        (
+            "import { $state } from 'fict'; const value = $state(0);",
+            "FICT-PLACEMENT-STATE-OWNER",
+        ),
+        (
+            "import { $state } from 'fict'; function helper() { const value = $state(0); }",
+            "FICT-PLACEMENT-STATE-OWNER",
+        ),
+        (
+            "import { $state } from 'fict'; function App() { function nested() { const value = $state(0); } return null; }",
+            "FICT-PLACEMENT-STATE-NESTED",
+        ),
+        (
+            "import { $state } from 'fict'; function App() { if (ready) { const value = $state(0); } return null; }",
+            "FICT-PLACEMENT-STATE-CONTROL",
+        ),
+        (
+            "import { $state } from 'fict'; function App() { consume($state(0)); return null; }",
+            "FICT-PLACEMENT-STATE-TARGET",
+        ),
+        (
+            "import { $state } from 'fict'; function App() { const { value } = $state({ value: 0 }); return null; }",
+            "FICT-PLACEMENT-STATE-DESTRUCTURE",
+        ),
+    ];
+    for (source, expected) in cases {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{source}");
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == expected),
+            "{source}: {:?}",
+            output.diagnostics
+        );
+    }
+
+    for source in [
+        "import { $state } from 'fict'; function App() { const value = $state(0); return value; }",
+        "import { $state } from 'fict'; function useValue() { const value = $state(0); return value; }",
+    ] {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert!(output.hir.is_some());
+    }
+}
+
+#[test]
+fn enforces_effect_and_memo_control_flow_placement() {
+    let cases = [
+        (
+            "import { $effect } from 'fict'; function helper() { $effect(() => {}); }",
+            "FICT-PLACEMENT-EFFECT-OWNER",
+        ),
+        (
+            "import { $effect } from 'fict'; function App() { if (ready) $effect(() => {}); return null; }",
+            "FICT-PLACEMENT-EFFECT-CONTROL",
+        ),
+        (
+            "import { $effect } from 'fict'; function App() { function nested() { $effect(() => {}); } return null; }",
+            "FICT-PLACEMENT-EFFECT-NESTED",
+        ),
+        (
+            "import { $memo } from 'fict'; function App() { while (ready) { $memo(() => value); } return null; }",
+            "FICT-PLACEMENT-MEMO-CONTROL",
+        ),
+    ];
+    for (source, expected) in cases {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{source}");
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == expected),
+            "{source}: {:?}",
+            output.diagnostics
+        );
+    }
+
+    for source in [
+        "import { $effect } from 'fict'; $effect(() => {});",
+        "import { $memo } from 'fict'; { $memo(() => value); }",
+    ] {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert!(output.hir.is_some());
+    }
+}
+
+#[test]
+fn configured_reactive_scope_is_a_binding_resolved_state_owner() {
+    let source = r#"
+        import { renderHook as run } from './host';
+        import { $state } from 'fict';
+        run(() => {
+            const value = $state(0);
+            return value;
+        });
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions {
+            reactive_scopes: vec!["run".into()],
+        },
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert!(output.hir.is_some());
 }
