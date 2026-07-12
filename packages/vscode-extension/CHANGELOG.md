@@ -4,8 +4,10 @@
 
 ### Patch Changes
 
-- Package Marketplace-valid VSIX archives with all runtime dependencies bundled.
-- Compile preview TypeScript with the same lowering order as the supported Fict toolchain.
+- Package Marketplace-valid VSIX archives with all runtime dependencies bundled
+  and verify the final extension manifest.
+- Lower TypeScript-only compile-preview sources before Fict tooling analysis,
+  matching the supported compiler integration order.
 - Upgrade the bundled Babel and WebSocket dependencies to patched releases.
 
 ## 0.21.0

@@ -1,5 +1,37 @@
 # @fictjs/vite-plugin
 
+## 0.27.0
+
+### Minor Changes
+
+- Compile Fict macros in `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`,
+  `.cjs`, `.mts`, and `.cts` modules by default, with TypeScript lowering
+  before Fict analysis. Preserve import elision, CTS module syntax, decorators,
+  and downstream Vite transforms.
+- Honor project-root-anchored include/exclude globs and resource suffixes while
+  skipping declaration files, linked framework build artifacts, and opaque
+  resource queries. Invalidated dev requests and TypeScript project/config
+  changes now rebuild against the current generation.
+- Generate checkout-independent public module and split-handler identities,
+  retain variant/query distinctions and QRL flags, preserve logical symlink
+  ownership, and serve generation-scoped dev handler URLs. Resumable builds
+  without a serviceable project root now fail closed.
+- Prepare dependency metadata before clean importer transforms and keep library
+  metadata scoped to the correct public facade. Namespace exports, entry
+  aliases, wildcard exports, sibling handlers, pass-through modules, declared
+  sidecars, partial graphs, and authoritative empty metadata now publish and
+  invalidate consistently.
+- Contain metadata resolution misses and retired warmups, preserve compiler
+  callbacks and pre-transforms on reuse, and merge configuration arrays only
+  once.
+- Publish condition-specific `.d.cts` declarations and use patched Babel/Vite
+  dependency releases.
+
+### Patch Changes
+
+- Updated dependencies:
+  - @fictjs/compiler@0.27.0
+
 ## 0.26.0
 
 ### Minor Changes

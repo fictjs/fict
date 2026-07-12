@@ -1,5 +1,49 @@
 # @fictjs/runtime
 
+## 0.27.0
+
+### Breaking Changes
+
+- **Preview — resumable SSR snapshots:** current writers emit schema v2, and
+  `@fictjs/runtime/loader` now rejects missing-version and v1 snapshots by
+  default.
+  - Deploy and roll back the SSR writer, HTML/PPR caches, loader, manifest, QRL
+    chunks, and external stream runtime as one compatibility unit. Purge
+    derived HTML and document caches when switching builds.
+  - For known legacy output, explicitly select `raw-props` for unversioned
+    v0.5-v0.8 or v1 v0.9-v0.21 writers, and `encoded-props` for v1
+    v0.22-v0.26 writers. The correct dialect cannot be inferred from payload
+    bytes.
+  - `onSnapshotRejected` runs once after the loader removes its resumable
+    listeners, observers, and prefetch state; the application owns the CSR
+    mount. `onSnapshotIssue` only reports diagnostics.
+
+### Minor Changes
+
+- Preserve the full v2 value model across scope slots and props, including
+  shared and circular references, array holes, symbol keys, supported built-ins,
+  and literal marker-shaped objects. Malformed containers, slot maps, scope
+  maps, symbol references, and partial snapshots now fail closed.
+- Isolate loader installations, snapshot state, event work, and resume
+  deduplication per `Document`. Multiple initial or streamed snapshots,
+  nested scopes, shadow-root removals, canceled imports, and destroyed SSR
+  scopes now settle and clean up without leaking into sibling documents.
+- Preserve user edits to inputs, selects, and contenteditable nodes across
+  handler imports and resume failures; restore delegated event targets, canceled
+  control defaults, owner context, manifest URLs relative to the document base,
+  and cross-realm DOM/prefetch behavior.
+- Isolate child, conditional, portal, Suspense, and ErrorBoundary
+  materialization from parent effects while retaining the intended explicit
+  getter, assigned-child, and branch dependencies.
+- Make root/effect cleanup, scheduler flushing, guard queues, batches,
+  transitions, fallback replacement, memo disposal, mount callbacks, and
+  chained Suspense resolution deterministic under reentrancy and thrown or
+  undefined-valued failures. DevTools hook failures are contained.
+- Validate dynamic DOM names and preserve qualified namespace prefixes,
+  reserved-prefix rules, template-content ownership, a shared Fragment identity,
+  and the correct HTML/SVG/MathML context across deferred rendering.
+  Development-only DOM lookup tables are removed from production bundles.
+
 ## 0.26.0
 
 ### Minor Changes

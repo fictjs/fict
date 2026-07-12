@@ -1,5 +1,29 @@
 # @fictjs/compiler
 
+## 0.27.0
+
+### Minor Changes
+
+- Lower TypeScript before Fict analysis and support TypeScript enums,
+  namespaces, supported declare fields, TypeScript-only tooling inputs, and
+  CommonJS top-level returns. Reactive namespace exports retain their metadata
+  and runtime behavior across files.
+- Preserve namespace semantics through polymorphic and render-only JSX,
+  deferred branches, SVG/MathML/HTML transitions, and implicit table
+  colgroups. Qualified `xlink:`/`xml:` names and custom-event casing now
+  survive both static and dynamic code generation.
+- Keep JSX-valued component props and children as VNodes until the receiving
+  component materializes them, so provider, router, Suspense, and boundary
+  ownership is established before nested consumers execute.
+- Mark the built-in ErrorBoundary and Suspense reset getters as reactive
+  without changing ordinary callback-prop tracking.
+- Harden cross-module metadata generation and caching around missing files,
+  namespace wrappers, importer-first builds, disk markers, and package-facade
+  boundaries.
+- Publish condition-specific CommonJS declarations so Node16/NodeNext
+  TypeScript consumers resolve the compiler through generated `.d.cts`
+  output.
+
 ## 0.26.0
 
 ### Minor Changes

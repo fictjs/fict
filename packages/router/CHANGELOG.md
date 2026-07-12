@@ -1,5 +1,45 @@
 # @fictjs/router
 
+## 0.27.0
+
+### Minor Changes
+
+- Publish the router with runtime 0.27 so routed trees receive the current
+  ownership, resume, namespace, and deferred-rendering fixes.
+
+### Patch Changes
+
+- Match nested route branches deterministically, keep regular-expression
+  filters reusable, reject malformed encoded params safely, enforce base-path
+  segment boundaries, and replace stale match trees before rendering only the
+  committed route result.
+- Preserve programmatic navigation options, object targets, route-relative
+  defaults, case-sensitive active links, hash and pop transitions, numeric
+  history inputs, scroll state, and unindexed browser history rebasing.
+  External links, downloads, reserved targets, and external hook targets remain
+  under browser control.
+- Resolve `Form` actions against the owning route, forward route params,
+  encode action names, honor submitter overrides and index-route defaults, and
+  serialize GET form entries with browser-compatible line breaks. Registered
+  actions, route/path-relative basenames, external GET submissions, and
+  `preventScrollReset` now retain their documented behavior.
+- Track declarative, keyed, and GET fetcher submissions. Concurrent actions and
+  retries settle independently, keyed replacements suppress stale completions,
+  and fetcher leases and SSR submission stores are isolated per router
+  instance.
+- Isolate query caches per SSR request, include opaque arguments in cache
+  identity, cache `undefined` results and failures, deduplicate refreshes,
+  honor preload lifetimes, and avoid browser cleanup timers during SSR.
+  Synchronous load/preload failures are contained, and route component props
+  and preload state remain reactive.
+- Dispose owned history listeners, route contexts, and before-leave handlers
+  with their render roots. Navigation is blocked only by explicit prevention,
+  and retry/proceed paths now settle safely.
+- Remove the published bundle's undeclared optional `fict` runtime import.
+
+- Updated dependencies:
+  - @fictjs/runtime@0.27.0
+
 ## 0.26.0
 
 ### Minor Changes

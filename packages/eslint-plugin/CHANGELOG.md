@@ -1,5 +1,13 @@
 # @fictjs/eslint-plugin
 
+## 0.27.0
+
+### Minor Changes
+
+- Publish the ESLint plugin with the Core 0.27 release train so its diagnostics
+  remain version-aligned with the compiler. No lint rule, option, or diagnostic
+  behavior changed in this release.
+
 ## 0.26.0
 
 ### Minor Changes

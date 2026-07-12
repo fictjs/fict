@@ -1,5 +1,18 @@
 # @fictjs/testing-library
 
+## 0.27.0
+
+### Minor Changes
+
+- Publish the testing library with the 0.27 release train. No testing utility
+  runtime or API behavior changed.
+
+### Patch Changes
+
+- Publish condition-specific CommonJS declarations so TypeScript Node16/NodeNext
+  consumers resolve the testing library through `require.types` and generated
+  `.d.cts` output.
+
 ## 0.26.0
 
 ### Minor Changes

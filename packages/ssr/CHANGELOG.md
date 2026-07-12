@@ -1,5 +1,49 @@
 # @fictjs/ssr
 
+## 0.27.0
+
+### Breaking Changes
+
+- **Preview — resumable SSR snapshots:** SSR output now writes schema v2. The
+  matching client loader rejects missing-version and v1 snapshots by default.
+  - Treat the SSR server, cached HTML/PPR/ISR output, client loader, manifest,
+    QRL chunks, service-worker document caches, and external stream runtime as
+    one build for deploy and rollback, and purge derived documents when
+    switching versions.
+  - If legacy output must remain, configure the exact migration selected from
+    deployment history: `raw-props` for unversioned/v1 writers through v0.21,
+    or `encoded-props` for v1 writers from v0.22 through v0.26. Payload shape
+    cannot distinguish the formats safely.
+  - Use `onSnapshotRejected` for the application-owned CSR fallback after the
+    loader disengages.
+
+### Minor Changes
+
+- Escape and validate HTML according to text, attribute, raw-text, script,
+  comment, processing-instruction, doctype, and DOM-name context. Void elements,
+  plaintext/raw-text hosts, parser-sensitive resumable hosts, and final DOM
+  serialization now fail safely instead of producing ambiguous markup.
+- Preserve qualified namespace prefixes and HTML/SVG/MathML foreign-content
+  transitions in both complete and streamed output, including template content
+  and explicitly closed namespaced nodes.
+- Wait for asynchronous render work, retain request sessions across async
+  continuations, and make CommonJS abort, writer failure, readiness, application
+  error callbacks, and cleanup deterministic even when another cleanup path
+  throws.
+- Split streaming documents only at parser-safe structural boundaries. Patch
+  identities are isolated per stream, existing stream runtimes upgrade safely,
+  handled Suspense failures settle, and abandoned boundaries no longer retain
+  work.
+- Scope initial and incremental snapshots to visible patches, refresh scopes
+  before emission, preserve nested and dynamic component state, and isolate
+  resumable scope identities across renders and concurrent streams.
+- Supported SSR API signatures are unchanged.
+
+### Patch Changes
+
+- Updated dependencies:
+  - @fictjs/runtime@0.27.0
+
 ## 0.26.0
 
 ### Minor Changes

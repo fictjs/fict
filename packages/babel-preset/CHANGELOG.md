@@ -1,5 +1,34 @@
 # @fictjs/babel-preset
 
+## 0.27.0
+
+### Minor Changes
+
+- Lower TypeScript in an isolated prepass before Fict analysis. Filename-aware
+  `.ts`, `.tsx`, `.mts`, and `.cts` handling now supports enums,
+  namespaces, declare fields, and the documented TypeScript transform options
+  without allowing sibling Babel transforms to consume Fict macros or JSX
+  first.
+- Preserve native `.cts` CommonJS behavior for `import = require`,
+  `export =`, extension rewrites, and dynamic imports while exposing the
+  corresponding imports and exports to hook analysis. CommonJS top-level
+  returns are accepted as well.
+- Prepare local dependency hook metadata before compiling importers, isolate
+  metadata graph sessions between transforms, retain partial graph results, and
+  refresh changed or previously missing metadata without leaking it across
+  package facades.
+- Preserve JSX pragma side effects, source-map options, physical filename
+  delimiters, and standard or legacy-parameter decorator syntax. Late sibling
+  transforms that would invalidate analyzed import semantics now fail closed.
+- Resolve the bundled syntax/transform plugins without depending on undeclared
+  host paths, and publish condition-specific `.d.cts` declarations plus the
+  declaration shims required by CommonJS TypeScript consumers.
+
+### Patch Changes
+
+- Updated dependencies:
+  - @fictjs/compiler@0.27.0
+
 ## 0.26.0
 
 ### Minor Changes
