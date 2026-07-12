@@ -841,6 +841,23 @@ describe('Binding Edge Cases', () => {
       expect(select.selectedIndex).toBe(1)
     })
 
+    it('does not observe customized option getters when the native setter is conforming', () => {
+      const select = document.createElement('select')
+      select.innerHTML =
+        '<option value="first">First</option><option value="second">Second</option>'
+      const getter = vi.fn(() => {
+        throw new Error('custom option getter should not run')
+      })
+      Object.defineProperty(select.options[0], 'value', {
+        configurable: true,
+        get: getter,
+      })
+
+      expect(() => setProp(select, 'value', 'second')).not.toThrow()
+      expect(getter).not.toHaveBeenCalled()
+      expect(select.selectedIndex).toBe(1)
+    })
+
     it('repairs a duplicate select value when the cached text is unchanged', async () => {
       const select = document.createElement('select')
       const trigger = createSignal(0)

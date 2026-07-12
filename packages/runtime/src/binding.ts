@@ -746,11 +746,11 @@ export function setElementProperty(el: Element, key: string, value: unknown): vo
   if (key === 'value' && el.localName === 'select' && 'options' in el) {
     const select = el as HTMLSelectElement
     const expected = '' + ((value ?? '') as string)
-    const options = Array.from(select.options)
-    const matched = options.find(option => option.value === expected)
     // Trust a conforming platform setter, including for customized options.
     // Getter-only or duplicate-selecting server DOMs fall through to repair.
     if (Reflect.set(select, 'value', value) && !select.selectedOptions[1]) return
+    const options = Array.from(select.options)
+    const matched = options.find(option => option.value === expected)
     for (const option of options) option.selected = false
     if (matched) matched.selected = true
     else select.selectedIndex = -1
