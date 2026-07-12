@@ -38,16 +38,24 @@ To release packages to NPM:
 # Verify the full v1 release gate locally before tagging.
 # BENCH_OUTPUT captures the raw optimizer benchmark JSON used as release evidence.
 export BENCH_OUTPUT="${TMPDIR:-/tmp}/fict-optimizer-bench.json"
-pnpm release:verify
+pnpm release:verify:clean
 
 # Compare every allowlisted package version with the public registry. This must
 # report no `new-package` entries before a tag is pushed.
 pnpm release:plan --tag v0.27.0 --require-existing-packages
 ```
 
-Do not export `FICT_STRICT_GUARANTEE` around `release:verify`. The root release
-scripts scope it to the compiler contract, build, and bundler gates so
-behavior-first test suites keep their documented non-strict configuration.
+`release:verify:clean` refuses tracked or untracked changes, creates a detached
+temporary worktree at `HEAD`, installs the frozen lockfile, and runs the complete
+`release:verify` gate there. That gate includes the SSR runtime matrix, browser
+E2E, and install-and-consume checks for the actual package tarballs in ESM, CJS,
+and TypeScript projects. Only pnpm's content-addressed download store is shared;
+`node_modules`, build output, and Turbo output remain isolated. The temporary
+checkout is always removed.
+
+Do not export `FICT_STRICT_GUARANTEE` around either verification command. The
+root release scripts scope it to the compiler contract, build, and bundler gates
+so behavior-first test suites keep their documented non-strict configuration.
 
 #### Step 3: Create and Push a Tag
 

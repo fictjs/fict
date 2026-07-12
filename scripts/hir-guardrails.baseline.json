@@ -45,8 +45,8 @@
     "resumable-handler": {
       "helpers": 19,
       "regions": 0,
-      "sizeBytes": 2722,
-      "gzipBytes": 961
+      "sizeBytes": 2702,
+      "gzipBytes": 957
     }
   }
 }

@@ -18,6 +18,10 @@ const compilerDistPath = path.join(__dirname, '../packages/compiler/dist/index.c
 const baselinePath = path.join(__dirname, 'hir-guardrails.baseline.json')
 const updateBaseline = process.argv.includes('--update')
 
+export function guardrailSampleFilename(sampleName) {
+  return path.join(path.parse(__filename).root, 'virtual', 'fict-guardrails', `${sampleName}.tsx`)
+}
+
 const DEFAULT_BUDGETS = {
   sizeRegressionRatio: 0.02,
   sizeRegressionMinBytes: 16,
@@ -25,15 +29,15 @@ const DEFAULT_BUDGETS = {
   gzipRegressionMinBytes: 32,
 }
 
-if (!fs.existsSync(compilerDistPath)) {
-  console.error(`[guardrails] Missing compiler build artifact: ${compilerDistPath}`)
-  console.error(
-    '[guardrails] Run `pnpm --filter @fictjs/compiler build` before `pnpm guardrails:hir`.',
-  )
-  process.exit(1)
+function loadCompilerPlugin() {
+  if (!fs.existsSync(compilerDistPath)) {
+    throw new Error(
+      `Missing compiler build artifact: ${compilerDistPath}\n` +
+        'Run `pnpm --filter @fictjs/compiler build` before `pnpm guardrails:hir`.',
+    )
+  }
+  return require(compilerDistPath).default
 }
-
-const { default: createFictPlugin } = require(compilerDistPath)
 
 const samples = [
   {
@@ -148,9 +152,11 @@ const samples = [
   },
 ]
 
-function runSample(sample) {
+function runSample(sample, createFictPlugin) {
   const result = transformSync(sample.source, {
-    filename: `${sample.name}.tsx`,
+    // Resumable output embeds the source URL several times. A checkout-relative
+    // filename makes the measured output size depend on the worktree path.
+    filename: guardrailSampleFilename(sample.name),
     plugins: [[createFictPlugin, { dev: false, sourcemap: false, ...(sample.options ?? {}) }]],
     presets: [['@babel/preset-typescript', { isTSX: true, allExtensions: true }]],
     configFile: false,
@@ -181,7 +187,8 @@ function runSample(sample) {
 }
 
 function main() {
-  const rows = samples.map(runSample)
+  const createFictPlugin = loadCompilerPlugin()
+  const rows = samples.map(sample => runSample(sample, createFictPlugin))
   const baseline = fs.existsSync(baselinePath)
     ? JSON.parse(fs.readFileSync(baselinePath, 'utf8'))
     : null
@@ -274,9 +281,11 @@ function main() {
   console.table(reportRows)
 }
 
-try {
-  main()
-} catch (err) {
-  console.error('[guardrails] Failed:', err)
-  process.exitCode = 1
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  try {
+    main()
+  } catch (err) {
+    console.error('[guardrails] Failed:', err)
+    process.exitCode = 1
+  }
 }

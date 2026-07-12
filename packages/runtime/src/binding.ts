@@ -1625,8 +1625,6 @@ export function createChildBinding(
 declare global {
   interface Element {
     _$host?: Element
-    [key: `$$${string}`]: EventListener | [EventListener, unknown] | undefined
-    [key: `$$${string}Data`]: unknown
   }
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type
   interface Document extends Record<string, unknown> {}
@@ -1704,9 +1702,12 @@ function globalEventHandler(e: Event): void {
   // Handler for each node in the bubble path
   const handleNode = (): boolean => {
     if (!node) return false
-    const handler = node[key]
+    const handler = (node as unknown as Record<string, unknown>)[key] as
+      | EventListener
+      | EventHandlerTuple
+      | undefined
     if (handler && !(node as HTMLButtonElement).disabled) {
-      const rawData = (node as any)[dataKey] as unknown
+      const rawData = (node as unknown as Record<string, unknown>)[dataKey]
       const hasData = rawData !== undefined
       const resolvedNodeData = hasData ? resolveEventData(rawData, e) : undefined
       // Wrap event handler calls in batch for synchronous flush & reduced microtasks

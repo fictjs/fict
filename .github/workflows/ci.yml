@@ -48,7 +48,7 @@ jobs:
       - run: pnpm install
 
       - name: Verify NPM release configuration
-        run: pnpm test:release-publish-plan
+        run: pnpm test:release-publish-plan && pnpm test:release-verification
 
       - name: Audit production dependencies
         run: pnpm security:audit:prod
