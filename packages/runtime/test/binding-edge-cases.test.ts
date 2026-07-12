@@ -801,6 +801,18 @@ describe('Binding Edge Cases', () => {
       expect(Array.from(select.options, option => option.selected)).toEqual([true, false, false])
     })
 
+    it('clears a single select when no option matches the assigned value', () => {
+      const select = document.createElement('select')
+      select.innerHTML =
+        '<option value="first">First</option><option value="second">Second</option>'
+
+      setProp(select, 'value', 'missing')
+
+      expect(select.value).toBe('')
+      expect(select.selectedIndex).toBe(-1)
+      expect(Array.from(select.options, option => option.selected)).toEqual([false, false])
+    })
+
     it('repairs a duplicate select value when the cached text is unchanged', async () => {
       const select = document.createElement('select')
       const trigger = createSignal(0)

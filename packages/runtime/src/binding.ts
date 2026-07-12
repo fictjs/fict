@@ -751,7 +751,11 @@ export function setElementProperty(el: Element, key: string, value: unknown): vo
   if (key === 'value' && el.localName === 'select') {
     const [options, matched] = resolveSelectValueAssignment(el, value)
     for (const option of options) option.selected = false
-    if (matched) matched.selected = true
+    if (matched) {
+      matched.selected = true
+    } else {
+      ;(el as HTMLSelectElement).selectedIndex = -1
+    }
     return
   }
   ;(el as unknown as Record<string, unknown>)[key] = value
