@@ -4,14 +4,14 @@ import pluginTransformTypescript from '@babel/plugin-transform-typescript'
 
 import createFictPlugin, { type FictCompilerOptions } from '../src/index'
 
-function runTransform(
+export function runLegacyTransform(
   source: string,
   options: FictCompilerOptions = {},
   filename = 'module.tsx',
   extraPlugins: PluginItem[] = [],
   useCompilerDefaults = false,
   lowerTypeScript = true,
-): string {
+) {
   const mergedOptions: FictCompilerOptions = { ...options }
   if (mergedOptions.dev === undefined) {
     mergedOptions.dev = true
@@ -39,8 +39,11 @@ function runTransform(
   }
   plugins.push([createFictPlugin, mergedOptions], ...extraPlugins)
 
-  const result = transformSync(source, {
+  return transformSync(source, {
     filename,
+    ...(mergedOptions.sourcemap === undefined
+      ? {}
+      : { sourceMaps: mergedOptions.sourcemap, sourceFileName: filename }),
     configFile: false,
     babelrc: false,
     sourceType: 'module',
@@ -54,8 +57,26 @@ function runTransform(
       compact: false,
     },
   })
+}
 
-  return result?.code ?? ''
+function runTransform(
+  source: string,
+  options: FictCompilerOptions = {},
+  filename = 'module.tsx',
+  extraPlugins: PluginItem[] = [],
+  useCompilerDefaults = false,
+  lowerTypeScript = true,
+): string {
+  return (
+    runLegacyTransform(
+      source,
+      options,
+      filename,
+      extraPlugins,
+      useCompilerDefaults,
+      lowerTypeScript,
+    )?.code ?? ''
+  )
 }
 
 export function transformFineGrained(

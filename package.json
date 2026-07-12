@@ -30,6 +30,7 @@
     "test:real-apps:long": "FICT_REAL_APP_SOAK_MS=180000 pnpm test:real-apps",
     "test:ssr-matrix": "env -u FICT_STRICT_GUARANTEE pnpm --filter @fictjs/ssr test:matrix",
     "test:strict-guarantee": "FICT_STRICT_GUARANTEE=1 pnpm -C packages/compiler test -- reactivity-guarantee-contract.test.ts",
+    "test:compiler:differential": "pnpm -C packages/compiler test:differential",
     "test:runtime-package-smoke": "node scripts/runtime-package-smoke.mjs",
     "test:runtime-bundler-smoke": "node scripts/runtime-bundler-smoke.mjs",
     "test:bundlers": "pnpm -C examples/counter-webpack build && pnpm -C examples/counter-basic build && pnpm examples:verify",
