@@ -11,6 +11,7 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import { parse } from '@babel/parser'
 import { resolvePackageModuleMetadata } from '@fictjs/compiler'
@@ -2476,6 +2477,71 @@ describe('fict vite-plugin', () => {
 
       expect(code).not.toContain('@registered')
       expect(code).toMatch(/\(\)\s*=>\s*[A-Za-z_$][\w$]*\(\)\s*\*\s*2/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('builds executable handler chunks that depend on a named default function', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-named-default-handler-'))
+    const entry = path.join(root, 'App.tsx')
+    const outDir = path.join(root, 'dist')
+
+    try {
+      await writeFile(
+        path.join(root, 'package.json'),
+        JSON.stringify({ name: 'named-default-handler-fixture', private: true, type: 'module' }),
+      )
+      await writeFile(
+        entry,
+        `
+          function __fictQrl() {
+            return ''
+          }
+
+          export default function helper() {
+            return 'named-default-helper'
+          }
+
+          export const __fict_e0 = () => helper()
+          export const handlerUrl = __fictQrl(import.meta.url, '__fict_e0')
+        `,
+      )
+
+      const result = await build({
+        root,
+        logLevel: 'silent',
+        plugins: [
+          fict({
+            cache: false,
+            useTypeScriptProject: false,
+            functionSplitting: true,
+            resumable: true,
+          }),
+        ],
+        build: {
+          outDir,
+          lib: { entry, formats: ['es'], fileName: () => 'app.js' },
+          rollupOptions: {
+            external: id => id === 'fict' || id.startsWith('fict/'),
+          },
+        },
+      })
+      const outputs = Array.isArray(result) ? result : [result]
+      const chunks = outputs.flatMap(output => ('output' in output ? output.output : []))
+      const handlerChunk = chunks.find(
+        output => output.type === 'chunk' && output.facadeModuleId?.startsWith('\0fict-handler:'),
+      )
+
+      expect(handlerChunk?.type).toBe('chunk')
+      if (!handlerChunk || handlerChunk.type !== 'chunk') {
+        throw new Error('Expected Vite to emit a handler chunk')
+      }
+
+      const handlerModule = (await import(
+        pathToFileURL(path.join(outDir, handlerChunk.fileName)).href
+      )) as { default: (scopeId: string, event: unknown, element: unknown) => unknown }
+      expect(handlerModule.default('scope', { type: 'click' }, {})).toBe('named-default-helper')
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -5698,6 +5764,25 @@ function Counter() {
           statement.type === 'ImportDeclaration' && statement.source.value === sourceModule,
       )
       expect(dependencyImport).toBeDefined()
+    })
+
+    it('imports a named default function referenced by an extracted handler', async () => {
+      const sourceModule = '/project/src/NamedDefaultDependency.tsx'
+      const result = await splitHandlerExports(
+        `
+          export default function helper() {
+            return 'named-default-helper'
+          }
+
+          export const __fict_e0 = () => helper()
+        `,
+        sourceModule,
+      )
+
+      expect(result.code).toMatch(/export \{ helper as __fict_dep_[a-f0-9]{8}_helper \}/)
+      const handlerModule = result.load(handlerVirtualId(sourceModule))
+      expect(handlerModule).toMatch(/import \{ __fict_dep_[a-f0-9]{8}_helper as helper \} from/)
+      expect(handlerModule).toContain('() => helper()')
     })
 
     it('preserves fict/internal imports in extracted handler modules', async () => {

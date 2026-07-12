@@ -5237,6 +5237,19 @@ function extractAndRewriteHandlers(
       continue
     }
 
+    // Named default function and class declarations introduce module-local
+    // bindings even though their only public export name is `default`.
+    if (t.isExportDefaultDeclaration(node)) {
+      const declaration = node.declaration
+      if (t.isFunctionDeclaration(declaration) && declaration.id) {
+        topLevelDeclarations.add(declaration.id.name)
+        mutableTopLevelDeclarations.add(declaration.id.name)
+      } else if (t.isClassDeclaration(declaration) && declaration.id) {
+        topLevelDeclarations.add(declaration.id.name)
+      }
+      continue
+    }
+
     // Collect function declarations
     if (t.isFunctionDeclaration(node) && node.id) {
       topLevelDeclarations.add(node.id.name)
