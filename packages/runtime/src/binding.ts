@@ -751,7 +751,12 @@ export function setElementProperty(el: Element, key: string, value: unknown): vo
     const select = el
     // Trust a conforming platform setter, including for customized options.
     // Getter-only or duplicate-selecting server DOMs fall through to repair.
-    if (Reflect.set(select, 'value', value) && select.selectedOptions.length < 2) return
+    if (
+      Reflect.set(select, 'value', value) &&
+      (hasOwn.call(select, 'selectedOptions') || select.selectedOptions.length < 2)
+    ) {
+      return
+    }
     const expected = '' + ((value ?? '') as string)
     const options = Array.from(select.options)
     const matched = options.find(option => option.value === expected)

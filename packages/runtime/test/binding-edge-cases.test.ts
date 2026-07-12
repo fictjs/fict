@@ -860,6 +860,23 @@ describe('Binding Edge Cases', () => {
       expect(select.selectedIndex).toBe(1)
     })
 
+    it('does not observe a shadowed selectedOptions getter after a native assignment', () => {
+      const select = document.createElement('select')
+      select.innerHTML =
+        '<option value="first">First</option><option value="second">Second</option>'
+      const getter = vi.fn(() => {
+        throw new Error('custom selectedOptions getter should not run')
+      })
+      Object.defineProperty(select, 'selectedOptions', {
+        configurable: true,
+        get: getter,
+      })
+
+      expect(() => setProp(select, 'value', 'second')).not.toThrow()
+      expect(getter).not.toHaveBeenCalled()
+      expect(select.selectedIndex).toBe(1)
+    })
+
     it('coerces object select values only once like a native DOMString assignment', () => {
       const select = document.createElement('select')
       select.innerHTML =
