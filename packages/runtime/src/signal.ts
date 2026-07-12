@@ -2063,6 +2063,14 @@ if (
 // ============================================================================
 // Selector
 // ============================================================================
+const selectorStrictEquality = <T>(a: T, b: T): boolean => a === b
+
+interface SelectorObserver {
+  signal: SignalAccessor<boolean>
+  owners: Set<RootContext>
+  retainedWithoutOwner: boolean
+}
+
 /**
  * Create a selector signal that efficiently updates only when the selected key matches.
  * Useful for large lists where only one item is selected.
@@ -2073,20 +2081,32 @@ if (
  */
 export function createSelector<T>(
   source: () => T,
-  equalityFn: (a: T, b: T) => boolean = (a, b) => a === b,
+  equalityFn: (a: T, b: T) => boolean = selectorStrictEquality,
 ): (key: T) => boolean {
   let current = source()
-  const observers = new Map<T, SignalAccessor<boolean>>()
+  const observers = new Map<T, SelectorObserver>()
+  const usesStrictEquality = equalityFn === selectorStrictEquality
 
   const dispose = effect(() => {
     const next = source()
     if (equalityFn(current, next)) return
 
-    const prevSig = observers.get(current)
-    if (prevSig) prevSig(false)
-
-    const nextSig = observers.get(next)
-    if (nextSig) nextSig(true)
+    if (usesStrictEquality) {
+      observers.get(current)?.signal(false)
+      observers.get(next)?.signal(true)
+    } else {
+      const updates: [SignalAccessor<boolean>, boolean][] = []
+      for (const [key, observer] of observers) {
+        const wasSelected = equalityFn(key, current)
+        const isSelected = equalityFn(key, next)
+        if (wasSelected !== isSelected) {
+          updates.push([observer.signal, isSelected])
+        }
+      }
+      for (const [observer, isSelected] of updates) {
+        observer(isSelected)
+      }
+    }
 
     current = next
   })
@@ -2096,12 +2116,33 @@ export function createSelector<T>(
   })
 
   return (key: T) => {
-    let sig = observers.get(key)
-    if (!sig) {
-      sig = signal(equalityFn(key, current))
-      observers.set(key, sig)
-      registerRootCleanup(() => observers.delete(key))
+    let observer = observers.get(key)
+    if (!observer) {
+      observer = {
+        signal: signal(equalityFn(key, current)),
+        owners: new Set(),
+        retainedWithoutOwner: false,
+      }
+      observers.set(key, observer)
     }
-    return sig()
+
+    const owner = getCurrentRoot()
+    if (!owner) {
+      observer.retainedWithoutOwner = true
+    } else if (!observer.owners.has(owner)) {
+      observer.owners.add(owner)
+      const retainedObserver = observer
+      registerRootCleanup(() => {
+        retainedObserver.owners.delete(owner)
+        if (
+          retainedObserver.owners.size === 0 &&
+          !retainedObserver.retainedWithoutOwner &&
+          observers.get(key) === retainedObserver
+        ) {
+          observers.delete(key)
+        }
+      })
+    }
+    return observer.signal()
   }
 }

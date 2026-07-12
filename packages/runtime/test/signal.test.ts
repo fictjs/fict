@@ -706,6 +706,64 @@ describe('signal runtime robustness', () => {
     container.remove()
   })
 
+  it('updates every registered key with a custom selector equality', async () => {
+    const selected = createSignal('A')
+    let select: ((key: string) => boolean) | undefined
+    const owner = createRoot(() => {
+      select = createSelector(
+        () => selected(),
+        (left, right) => left.toLowerCase() === right.toLowerCase(),
+      )
+    })
+
+    expect(select!('a')).toBe(true)
+    expect(select!('b')).toBe(false)
+
+    selected('B')
+    await tick()
+
+    expect(select!('a')).toBe(false)
+    expect(select!('b')).toBe(true)
+    owner.dispose()
+  })
+
+  it('keeps a shared selector observer alive until its last root is disposed', async () => {
+    const selected = createSignal('a')
+    let select: ((key: string) => boolean) | undefined
+    const selectorOwner = createRoot(() => {
+      select = createSelector(() => selected())
+    })
+    let firstValue = false
+    let secondValue = false
+    let secondRuns = 0
+
+    const firstOwner = createRoot(() => {
+      createEffect(() => {
+        firstValue = select!('a')
+      })
+    })
+    const secondOwner = createRoot(() => {
+      createEffect(() => {
+        secondRuns++
+        secondValue = select!('a')
+      })
+    })
+
+    expect(firstValue).toBe(true)
+    expect(secondValue).toBe(true)
+    expect(secondRuns).toBe(1)
+
+    firstOwner.dispose()
+    selected('b')
+    await tick()
+
+    expect(secondValue).toBe(false)
+    expect(secondRuns).toBe(2)
+
+    secondOwner.dispose()
+    selectorOwner.dispose()
+  })
+
   it('removes stale dependencies when low-level effects throw during re-run', () => {
     const mode = rawSignal(false)
     const active = rawSignal(0)
