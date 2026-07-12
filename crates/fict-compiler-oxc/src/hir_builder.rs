@@ -21,8 +21,8 @@ use oxc::{
             BindingRestElement, CallExpression, Expression, FormalParameters, Function,
             JSXAttributeItem, JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue,
             JSXChild as OxcJsxChild, JSXElement, JSXElementName as OxcJsxElementName,
-            JSXExpression, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject, Program,
-            VariableDeclarator,
+            JSXExpression, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject,
+            MemberExpression, Program, VariableDeclarator,
         },
         ast_kind::AstKind,
     },
@@ -485,11 +485,36 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
 
         let function_by_span = self.function_by_span.clone();
         let symbol_to_binding = self.symbol_to_binding.clone();
+        let hook_bindings: BTreeSet<_> = self
+            .functions
+            .iter()
+            .filter(|function| function.kind == FunctionKind::Hook)
+            .filter_map(|function| function.binding)
+            .chain(self.frontend.bindings.iter().filter_map(|binding| {
+                (binding.kind == FrontendBindingKind::Import && is_hook_name(&binding.display_name))
+                    .then(|| self.old_to_new.get(&binding.id.index()).copied())
+                    .flatten()
+            }))
+            .collect();
+        let namespace_imports: BTreeSet<_> =
+            self.frontend
+                .bindings
+                .iter()
+                .filter(|binding| {
+                    binding.kind == FrontendBindingKind::Import
+                        && binding.import.as_ref().is_some_and(|import| {
+                            import.imported == fict_hir::ImportedName::Namespace
+                        })
+                })
+                .filter_map(|binding| self.old_to_new.get(&binding.id.index()).copied())
+                .collect();
         let mut calls = CallCollector {
             scoping: self.semantic.scoping(),
             stack: vec![FunctionId::new(0)],
             function_by_span: &function_by_span,
             symbol_to_binding: &symbol_to_binding,
+            hook_bindings: &hook_bindings,
+            namespace_imports: &namespace_imports,
             context: PlacementContext::default(),
             calls: Vec::new(),
         };
@@ -510,6 +535,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         }
         self.apply_call_classification(&calls.calls);
         self.validate_macro_placement(&calls.calls);
+        self.validate_hook_placement(&calls.calls);
         self.populate_function_bodies(&calls.calls, &jsx.roots);
     }
 
@@ -775,28 +801,26 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         }
                         Some(true) => {}
                     }
-                    if !self.is_reactive_owner(call.owner, false) {
-                        let nested = self.function_facts[call.owner.as_usize()].parent
-                            != FunctionId::new(0)
-                            && self.is_reactive_owner(
-                                self.function_facts[call.owner.as_usize()].parent,
-                                false,
-                            );
-                        self.diagnostics.push(if nested {
+                    if self.is_placement_nested(call.owner) {
+                        self.diagnostics.push(
                             error(
                                 "FICT-PLACEMENT-STATE-NESTED",
                                 "$state() cannot be declared inside nested functions",
                                 call.span,
                             )
-                            .with_help("move the state declaration to the component top level or extract a hook")
-                        } else {
+                            .with_help("move the state declaration to the component top level or extract a hook"),
+                        );
+                        continue;
+                    }
+                    if !self.is_reactive_owner(call.owner, false) {
+                        self.diagnostics.push(
                             error(
                                 "FICT-PLACEMENT-STATE-OWNER",
                                 "$state() must be declared inside a component or hook function body",
                                 call.span,
                             )
                             .with_help("use $store or createSignal for module-level shared state")
-                        });
+                        );
                         continue;
                     }
                     if !call.immediate_statement || call.conditional_or_loop {
@@ -811,27 +835,27 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     }
                 }
                 FictMacroKind::Effect => {
-                    if !self.is_reactive_owner(call.owner, true) {
-                        let nested = self.function_facts[call.owner.as_usize()].parent
-                            != FunctionId::new(0)
-                            && self.is_reactive_owner(
-                                self.function_facts[call.owner.as_usize()].parent,
-                                true,
-                            );
-                        self.diagnostics.push(if nested {
+                    if self.is_placement_nested(call.owner) {
+                        self.diagnostics.push(
                             error(
                                 "FICT-PLACEMENT-EFFECT-NESTED",
                                 "$effect() cannot be called inside nested functions",
                                 call.span,
                             )
-                            .with_help("move the effect to the component top level or extract a hook")
-                        } else {
+                            .with_help(
+                                "move the effect to the component top level or extract a hook",
+                            ),
+                        );
+                        continue;
+                    }
+                    if !self.is_reactive_owner(call.owner, true) {
+                        self.diagnostics.push(
                             error(
                                 "FICT-PLACEMENT-EFFECT-OWNER",
                                 "$effect() must be called inside a component or hook, or at module top level",
                                 call.span,
                             )
-                        });
+                        );
                         continue;
                     }
                     if call.conditional_or_loop
@@ -863,6 +887,65 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         }
     }
 
+    fn validate_hook_placement(&mut self, calls: &[CallFact]) {
+        for call in calls {
+            let Some(hook) = &call.hook else {
+                continue;
+            };
+            let nested = self.is_placement_nested(call.owner);
+            match hook {
+                HookCall::Direct { display_name } => {
+                    if !self.is_reactive_owner(call.owner, false) {
+                        self.diagnostics.push(
+                            error(
+                                "FICT-PLACEMENT-HOOK-OWNER",
+                                "hook calls must be made inside a component or hook",
+                                call.span,
+                            )
+                            .with_note(format!("resolved hook call: {display_name}()")),
+                        );
+                    } else if nested || call.conditional_or_loop {
+                        self.diagnostics.push(
+                            error(
+                                "FICT-PLACEMENT-HOOK-CONTROL",
+                                "hook calls must be made at the top level of a component or hook",
+                                call.span,
+                            )
+                            .with_note(format!("resolved hook call: {display_name}()")),
+                        );
+                    }
+                }
+                HookCall::Member {
+                    display_name,
+                    namespace_import,
+                } => {
+                    let placement_sensitive = nested || call.conditional_or_loop;
+                    if !namespace_import && !placement_sensitive {
+                        continue;
+                    }
+                    if self.reactive_ancestor(call.owner).is_none() {
+                        if *namespace_import {
+                            self.diagnostics.push(
+                                error(
+                                    "FICT-PLACEMENT-HOOK-OWNER",
+                                    "namespace hook calls must be made inside a component or hook",
+                                    call.span,
+                                )
+                                .with_note(format!("resolved hook call: {display_name}()")),
+                            );
+                        }
+                    } else if placement_sensitive {
+                        self.diagnostics.push(error(
+                            "FICT-PLACEMENT-HOOK-CONTROL",
+                            "member hook calls must be made at the top level of a component or hook",
+                            call.span,
+                        ).with_note(format!("resolved hook call: {display_name}()")));
+                    }
+                }
+            }
+        }
+    }
+
     fn is_reactive_owner(&self, function: FunctionId, allow_module: bool) -> bool {
         match self.functions[function.as_usize()].kind {
             FunctionKind::Module => allow_module,
@@ -871,6 +954,26 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 self.reactive_functions.get(&function) == Some(&ReactiveScopeKind::Configured)
             }
             FunctionKind::Plain => false,
+        }
+    }
+
+    fn is_placement_nested(&self, function: FunctionId) -> bool {
+        if self.reactive_functions.get(&function) == Some(&ReactiveScopeKind::Configured) {
+            return false;
+        }
+        function != FunctionId::new(0)
+            && self.function_facts[function.as_usize()].parent != FunctionId::new(0)
+    }
+
+    fn reactive_ancestor(&self, mut function: FunctionId) -> Option<FunctionId> {
+        loop {
+            if self.is_reactive_owner(function, false) {
+                return Some(function);
+            }
+            if function == FunctionId::new(0) {
+                return None;
+            }
+            function = self.function_facts[function.as_usize()].parent;
         }
     }
 
@@ -1608,8 +1711,20 @@ struct CallFact {
     immediate_effect_statement: bool,
     immediate_default_export: bool,
     conditional_or_loop: bool,
+    hook: Option<HookCall>,
     optional: bool,
     pure: bool,
+}
+
+#[derive(Debug, Clone)]
+enum HookCall {
+    Direct {
+        display_name: String,
+    },
+    Member {
+        display_name: String,
+        namespace_import: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1728,6 +1843,8 @@ struct CallCollector<'facts, 'semantic> {
     stack: Vec<FunctionId>,
     function_by_span: &'facts BTreeMap<(u32, u32), FunctionId>,
     symbol_to_binding: &'facts BTreeMap<SymbolId, BindingId>,
+    hook_bindings: &'facts BTreeSet<BindingId>,
+    namespace_imports: &'facts BTreeSet<BindingId>,
     context: PlacementContext,
     calls: Vec<CallFact>,
 }
@@ -1785,6 +1902,13 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
         ) = self.context.facts(call_span);
         let binding = resolved_callee_symbol(self.scoping, &call.callee)
             .and_then(|symbol| self.symbol_to_binding.get(&symbol).copied());
+        let hook = classify_hook_call(
+            self.scoping,
+            &call.callee,
+            self.symbol_to_binding,
+            self.hook_bindings,
+            self.namespace_imports,
+        );
         let arguments: Vec<_> = call
             .arguments
             .iter()
@@ -1818,6 +1942,7 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             immediate_effect_statement,
             immediate_default_export,
             conditional_or_loop,
+            hook,
             arguments,
             optional: call.optional,
             pure: call.pure,
@@ -1843,6 +1968,125 @@ fn resolved_callee_symbol(scoping: &Scoping, expression: &Expression<'_>) -> Opt
             _ => return None,
         };
     }
+}
+
+fn classify_hook_call(
+    scoping: &Scoping,
+    expression: &Expression<'_>,
+    symbol_to_binding: &BTreeMap<SymbolId, BindingId>,
+    hook_bindings: &BTreeSet<BindingId>,
+    namespace_imports: &BTreeSet<BindingId>,
+) -> Option<HookCall> {
+    let mut current = expression;
+    loop {
+        match current {
+            Expression::Identifier(identifier) => {
+                if !is_hook_name(identifier.name.as_str()) {
+                    return None;
+                }
+                let resolved = identifier.reference_id.get().and_then(|reference| {
+                    scoping
+                        .get_reference(reference)
+                        .symbol_id()
+                        .and_then(|symbol| symbol_to_binding.get(&symbol).copied())
+                });
+                if resolved.is_some_and(|binding| !hook_bindings.contains(&binding)) {
+                    return None;
+                }
+                return Some(HookCall::Direct {
+                    display_name: identifier.name.to_string(),
+                });
+            }
+            Expression::StaticMemberExpression(member) => {
+                return classify_member_hook(
+                    scoping,
+                    &member.object,
+                    member.property.name.as_str(),
+                    symbol_to_binding,
+                    namespace_imports,
+                );
+            }
+            Expression::ComputedMemberExpression(member) => {
+                let property = match &member.expression {
+                    Expression::StringLiteral(literal) => literal.value.to_string(),
+                    Expression::NumericLiteral(literal) => literal.value.to_string(),
+                    _ => return None,
+                };
+                return classify_member_hook(
+                    scoping,
+                    &member.object,
+                    &property,
+                    symbol_to_binding,
+                    namespace_imports,
+                );
+            }
+            Expression::ChainExpression(chain) => {
+                let member = chain.expression.as_member_expression()?;
+                return match member {
+                    MemberExpression::StaticMemberExpression(member) => classify_member_hook(
+                        scoping,
+                        &member.object,
+                        member.property.name.as_str(),
+                        symbol_to_binding,
+                        namespace_imports,
+                    ),
+                    MemberExpression::ComputedMemberExpression(member) => {
+                        let property = match &member.expression {
+                            Expression::StringLiteral(literal) => literal.value.to_string(),
+                            Expression::NumericLiteral(literal) => literal.value.to_string(),
+                            _ => return None,
+                        };
+                        classify_member_hook(
+                            scoping,
+                            &member.object,
+                            &property,
+                            symbol_to_binding,
+                            namespace_imports,
+                        )
+                    }
+                    MemberExpression::PrivateFieldExpression(_) => None,
+                };
+            }
+            Expression::ParenthesizedExpression(expression) => current = &expression.expression,
+            Expression::TSAsExpression(expression) => current = &expression.expression,
+            Expression::TSSatisfiesExpression(expression) => current = &expression.expression,
+            Expression::TSTypeAssertion(expression) => current = &expression.expression,
+            Expression::TSNonNullExpression(expression) => current = &expression.expression,
+            Expression::TSInstantiationExpression(expression) => current = &expression.expression,
+            _ => return None,
+        }
+    }
+}
+
+fn classify_member_hook(
+    scoping: &Scoping,
+    object: &Expression<'_>,
+    property: &str,
+    symbol_to_binding: &BTreeMap<SymbolId, BindingId>,
+    namespace_imports: &BTreeSet<BindingId>,
+) -> Option<HookCall> {
+    if !is_hook_name(property) {
+        return None;
+    }
+    let (object_name, object_binding) = if let Expression::Identifier(identifier) = object {
+        let binding = identifier.reference_id.get().and_then(|reference| {
+            scoping
+                .get_reference(reference)
+                .symbol_id()
+                .and_then(|symbol| symbol_to_binding.get(&symbol).copied())
+        });
+        (Some(identifier.name.as_str()), binding)
+    } else {
+        (None, None)
+    };
+    Some(HookCall::Member {
+        display_name: object_name.map_or_else(
+            || property.to_string(),
+            |object| format!("{object}.{property}"),
+        ),
+        namespace_import: object_binding
+            .is_some_and(|binding| namespace_imports.contains(&binding)),
+    })
 }
 
 fn build_hir_scopes(scoping: &Scoping, source_len: u32) -> Vec<HirScope> {

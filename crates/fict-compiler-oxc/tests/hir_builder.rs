@@ -377,6 +377,10 @@ fn enforces_state_owner_target_and_top_level_placement() {
             "FICT-PLACEMENT-STATE-NESTED",
         ),
         (
+            "import { $state } from 'fict'; function App() { function Child() { const value = $state(0); return value; } return null; }",
+            "FICT-PLACEMENT-STATE-NESTED",
+        ),
+        (
             "import { $state } from 'fict'; function App() { if (ready) { const value = $state(0); } return null; }",
             "FICT-PLACEMENT-STATE-CONTROL",
         ),
@@ -490,4 +494,105 @@ fn configured_reactive_scope_is_a_binding_resolved_state_owner() {
     );
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     assert!(output.hir.is_some());
+}
+
+#[test]
+fn enforces_direct_hook_owner_and_control_flow_placement_by_binding() {
+    let cases = [
+        (
+            "import { useCounter } from './hooks'; useCounter();",
+            "FICT-PLACEMENT-HOOK-OWNER",
+        ),
+        (
+            "import { useCounter } from './hooks'; function App() { if (ready) useCounter(); return null; }",
+            "FICT-PLACEMENT-HOOK-CONTROL",
+        ),
+        (
+            "import { useCounter } from './hooks'; function App() { ready && useCounter(); return null; }",
+            "FICT-PLACEMENT-HOOK-CONTROL",
+        ),
+        (
+            "import { useCounter } from './hooks'; function App() { function Child() { useCounter(); return null; } return null; }",
+            "FICT-PLACEMENT-HOOK-CONTROL",
+        ),
+    ];
+    for (source, expected) in cases {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{source}");
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == expected)
+        );
+    }
+
+    for source in [
+        "import { useCounter } from './hooks'; function App() { useCounter(); return null; }",
+        "function helper(useCounter) { return useCounter(); }",
+        "import { useCounter as counter } from './hooks'; counter();",
+    ] {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.diagnostics.is_empty(),
+            "{source}: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn enforces_namespace_and_member_hook_placement() {
+    let cases = [
+        (
+            "import * as hooks from './hooks'; hooks.useCounter();",
+            "FICT-PLACEMENT-HOOK-OWNER",
+        ),
+        (
+            "import * as hooks from './hooks'; function App() { if (ready) hooks.useCounter(); return null; }",
+            "FICT-PLACEMENT-HOOK-CONTROL",
+        ),
+        (
+            "const api = { useCounter() {} }; function App() { if (ready) api['useCounter'](); return null; }",
+            "FICT-PLACEMENT-HOOK-CONTROL",
+        ),
+    ];
+    for (source, expected) in cases {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none(), "{source}");
+        assert!(
+            output
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == expected)
+        );
+    }
+
+    for source in [
+        "import * as hooks from './hooks'; function App() { hooks.useCounter?.(); return null; }",
+        "const api = { useCounter() {} }; api.useCounter();",
+    ] {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            output.diagnostics.is_empty(),
+            "{source}: {:?}",
+            output.diagnostics
+        );
+    }
 }
