@@ -769,6 +769,46 @@ describe('$store', () => {
     expect(keys).toEqual([''])
   })
 
+  it('does not execute getters during presence and descriptor reflection', () => {
+    let getterCalls = 0
+    const getter = () => {
+      getterCalls += 1
+      return 1
+    }
+    const raw: { value?: number } = {}
+    Object.defineProperty(raw, 'value', {
+      get: getter,
+      enumerable: true,
+      configurable: true,
+    })
+    const state = $store(raw)
+
+    expect('value' in state).toBe(true)
+    expect(Object.hasOwn(state, 'value')).toBe(true)
+    expect(Object.getOwnPropertyDescriptor(state, 'value')?.get).toBe(getter)
+    expect(getterCalls).toBe(0)
+  })
+
+  it('installs throwing accessors without turning a committed definition into an error', () => {
+    const raw = { value: 1 }
+    const state = $store(raw)
+    const getter = () => {
+      throw new Error('getter failed')
+    }
+
+    // Allocate the value signal that defineProperty needs to invalidate.
+    expect(state.value).toBe(1)
+
+    expect(() => {
+      Object.defineProperty(state, 'value', {
+        get: getter,
+        enumerable: true,
+        configurable: true,
+      })
+    }).not.toThrow()
+    expect(Object.getOwnPropertyDescriptor(raw, 'value')?.get).toBe(getter)
+  })
+
   it('reacts to Object.defineProperty array length truncation', async () => {
     const state = $store({ items: [1, 2, 3] })
     const seen: string[] = []
@@ -786,6 +826,25 @@ describe('$store', () => {
     await tick()
 
     expect(seen).toEqual(['3:3', '1:undefined'])
+  })
+
+  it('reacts to array truncation when only reflection is subscribed', async () => {
+    const items = $store([1, 2, 3])
+    const presence: boolean[] = []
+    const descriptors: Array<number | undefined> = []
+
+    createEffect(() => {
+      presence.push(2 in items)
+    })
+    createEffect(() => {
+      descriptors.push(Object.getOwnPropertyDescriptor(items, '2')?.value)
+    })
+
+    items.length = 1
+    await tick()
+
+    expect(presence).toEqual([true, false])
+    expect(descriptors).toEqual([3, undefined])
   })
 
   it('returns frozen object-valued properties without deep wrapping', () => {
@@ -825,6 +884,51 @@ describe('$store', () => {
 
     expect(state.items).toBe(items)
     expect(state.items[0]).toBe(1)
+  })
+
+  it('leaves branded platform objects unproxied so internal slots remain valid', () => {
+    const date = new Date(123)
+    const map = new Map<string, number>([['answer', 42]])
+    const url = new URL('https://example.com/docs')
+    const state = $store({ date, map, url })
+
+    expect($store(date)).toBe(date)
+    expect($store(date).getTime()).toBe(123)
+    expect($store(map)).toBe(map)
+    expect($store(map).get('answer')).toBe(42)
+    expect($store(url)).toBe(url)
+    expect($store(url).pathname).toBe('/docs')
+
+    expect(state.date).toBe(date)
+    expect(state.date.getTime()).toBe(123)
+    expect(state.map).toBe(map)
+    expect(state.map.size).toBe(1)
+    expect(state.map.get('answer')).toBe(42)
+    expect(state.url).toBe(url)
+    expect(state.url.pathname).toBe('/docs')
+  })
+
+  it('leaves class instances unproxied so private fields retain their brand', () => {
+    class Box {
+      #value: number
+
+      constructor(value: number) {
+        this.#value = value
+      }
+
+      read() {
+        return this.#value
+      }
+    }
+
+    const box = new Box(42)
+    const root = $store(box)
+    const nested = $store({ box })
+
+    expect(root).toBe(box)
+    expect(root.read()).toBe(42)
+    expect(nested.box).toBe(box)
+    expect(nested.box.read()).toBe(42)
   })
 
   it('keeps mutable object-valued properties deeply reactive', async () => {

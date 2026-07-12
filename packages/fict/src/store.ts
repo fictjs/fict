@@ -62,12 +62,21 @@ const SKIP_MUTATION_WARNING_PROPS: (string | symbol)[] = [
 
 type SignalBucket = Record<string | symbol, Signal<unknown>>
 type PresenceSignalBucket = Record<string | symbol, Signal<boolean>>
+interface DescriptorSignalEntry {
+  signal: Signal<number>
+  version: number
+}
+
+type DescriptorSignalBucket = Record<string | symbol, DescriptorSignalEntry>
 
 /** Cache of signals per object property */
 const SIGNAL_CACHE = new WeakMap<object, SignalBucket>()
 
 /** Cache of property-presence signals used by the `in` operator. */
 const PRESENCE_SIGNAL_CACHE = new WeakMap<object, PresenceSignalBucket>()
+
+/** Cache of descriptor-version signals used by reflection APIs. */
+const DESCRIPTOR_SIGNAL_CACHE = new WeakMap<object, DescriptorSignalBucket>()
 
 /** Cache of bound methods to preserve function identity across reads */
 const BOUND_METHOD_CACHE = new WeakMap<object, Map<string | symbol, BoundMethodEntry>>()
@@ -77,6 +86,19 @@ const DEFINE_NOTIFICATION_SUPPRESSIONS = new WeakMap<object, Set<string | symbol
 
 /** Special key for tracking iteration (Object.keys, for-in, etc.) */
 const ITERATE_KEY = Symbol('iterate')
+
+/** Tokens used to invalidate a value signal without evaluating an accessor. */
+const ACCESSOR_INVALIDATIONS = new WeakSet<object>()
+
+function createAccessorInvalidation(): object {
+  const token = {}
+  ACCESSOR_INVALIDATIONS.add(token)
+  return token
+}
+
+function isAccessorInvalidation(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && ACCESSOR_INVALIDATIONS.has(value)
+}
 
 /**
  * Get or create a signal for a specific property on a target object.
@@ -136,6 +158,28 @@ function triggerPresence(target: object, prop: string | symbol): void {
   const signals = PRESENCE_SIGNAL_CACHE.get(target)
   if (!signals || !Object.prototype.hasOwnProperty.call(signals, prop)) return
   signals[prop]!(Reflect.has(target, prop))
+}
+
+/** Get or create a version signal for an own-property descriptor. */
+function getDescriptorSignal(target: object, prop: string | symbol): Signal<number> {
+  let signals = DESCRIPTOR_SIGNAL_CACHE.get(target)
+  if (!signals) {
+    signals = Object.create(null) as DescriptorSignalBucket
+    DESCRIPTOR_SIGNAL_CACHE.set(target, signals)
+  }
+  if (!Object.prototype.hasOwnProperty.call(signals, prop)) {
+    signals[prop] = { signal: createSignal(0), version: 0 }
+  }
+  return signals[prop]!.signal
+}
+
+/** Notify descriptor consumers without reading the property's value. */
+function triggerDescriptor(target: object, prop: string | symbol): void {
+  const signals = DESCRIPTOR_SIGNAL_CACHE.get(target)
+  if (!signals || !Object.prototype.hasOwnProperty.call(signals, prop)) return
+  const entry = signals[prop]!
+  entry.version += 1
+  entry.signal(entry.version)
 }
 
 /**
@@ -219,6 +263,30 @@ function descriptorShapeChanged(
   return before.get !== after.get || before.set !== after.set
 }
 
+function descriptorContentChanged(
+  before: PropertyDescriptor | undefined,
+  after: PropertyDescriptor | undefined,
+): boolean {
+  if (descriptorShapeChanged(before, after)) return true
+  if (!before || !after) return false
+  if ('value' in before && 'value' in after) return before.value !== after.value
+  return false
+}
+
+/**
+ * Only arrays and plain records support transparent deep proxying. Branded
+ * platform objects and class instances rely on their original receiver for
+ * internal slots/private fields and are therefore treated as opaque values.
+ */
+function isWrappableStoreObject(value: object): boolean {
+  if (Array.isArray(value)) return true
+  const prototype = Object.getPrototypeOf(value)
+  if (prototype === null || prototype === Object.prototype) return true
+
+  const constructor = Object.getOwnPropertyDescriptor(prototype, 'constructor')
+  return !constructor || constructor.value === Object
+}
+
 /**
  * Create a deep reactive store using Proxy.
  *
@@ -258,6 +326,10 @@ export function $store<T extends object>(initialValue: T): T {
     return initialValue
   }
 
+  if (!isWrappableStoreObject(initialValue)) {
+    return initialValue
+  }
+
   // Check if this object was already wrapped (reverse lookup)
   if (RAW_TO_PROXY.has(initialValue)) {
     return RAW_TO_PROXY.get(initialValue) as T
@@ -285,6 +357,7 @@ export function $store<T extends object>(initialValue: T): T {
       if (
         isDev &&
         currentValue !== trackedValue &&
+        !isAccessorInvalidation(trackedValue) &&
         !SKIP_MUTATION_WARNING_PROPS.includes(prop) &&
         !MUTATION_WARNED.has(target)
       ) {
@@ -335,8 +408,9 @@ export function $store<T extends object>(initialValue: T): T {
     },
 
     set(target, prop, newValue, receiver) {
-      const oldLength = Array.isArray(target) && prop === 'length' ? target.length : undefined
+      const oldLength = Array.isArray(target) ? target.length : undefined
       const hadKey = Object.prototype.hasOwnProperty.call(target, prop)
+      const oldOwnDescriptor = Reflect.getOwnPropertyDescriptor(target, prop)
       const descriptor = getPropertyDescriptor(target, prop)
 
       // Same-value assignment is only inert for own writable data properties.
@@ -382,6 +456,10 @@ export function $store<T extends object>(initialValue: T): T {
         signal(nextValue)
       }
       triggerPresence(target, prop)
+      const nextOwnDescriptor = Reflect.getOwnPropertyDescriptor(target, prop)
+      if (descriptorContentChanged(oldOwnDescriptor, nextOwnDescriptor)) {
+        triggerDescriptor(target, prop)
+      }
 
       // If new property, trigger iteration update
       if (!hadKey) {
@@ -395,21 +473,23 @@ export function $store<T extends object>(initialValue: T): T {
         if (lengthSignal) {
           lengthSignal(target.length)
         }
+        if (target.length !== oldLength) {
+          triggerDescriptor(target, 'length')
+        }
       }
 
       // If it's an array and length changed implicitly, we might need to handle it.
       if (Array.isArray(target) && prop === 'length') {
         const nextLength = target.length
         if (typeof oldLength === 'number' && nextLength < oldLength) {
-          if (signals) {
-            for (let i = nextLength; i < oldLength; i += 1) {
-              const key = String(i)
-              const signal = getCachedSignal(signals, key)
-              if (signal) {
-                signal(undefined)
-              }
-              triggerPresence(target, key)
+          for (let i = nextLength; i < oldLength; i += 1) {
+            const key = String(i)
+            const signal = getCachedSignal(signals, key)
+            if (signal) {
+              signal(undefined)
             }
+            triggerPresence(target, key)
+            triggerDescriptor(target, key)
           }
         }
         triggerIteration(target)
@@ -424,6 +504,9 @@ export function $store<T extends object>(initialValue: T): T {
 
       if (result) {
         triggerPresence(target, prop)
+        if (hadKey) {
+          triggerDescriptor(target, prop)
+        }
       }
 
       if (result && hadKey) {
@@ -459,7 +542,7 @@ export function $store<T extends object>(initialValue: T): T {
     },
 
     getOwnPropertyDescriptor(target, prop) {
-      getSignal(target, prop)()
+      getDescriptorSignal(target, prop)()
       getSignal(target, ITERATE_KEY)()
       return Reflect.getOwnPropertyDescriptor(target, prop)
     },
@@ -480,22 +563,28 @@ export function $store<T extends object>(initialValue: T): T {
       const signal = getCachedSignal(signals, prop)
       if (signal) {
         const nextValue =
-          nextDescriptor && !('value' in nextDescriptor)
-            ? Reflect.get(target, prop, proxy)
-            : (target as IndexableObject)[prop]
+          nextDescriptor && 'value' in nextDescriptor
+            ? nextDescriptor.value
+            : createAccessorInvalidation()
         signal(nextValue)
       }
       triggerPresence(target, prop)
 
       const shapeChanged = descriptorShapeChanged(oldDescriptor, nextDescriptor)
+      if (descriptorContentChanged(oldDescriptor, nextDescriptor)) {
+        triggerDescriptor(target, prop)
+      }
       if (hadKey !== hasKey || shapeChanged) {
         triggerIteration(target)
       }
 
       if (Array.isArray(target)) {
         const lengthSignal = getCachedSignal(signals, 'length')
-        if (lengthSignal && target.length !== oldLength) {
-          lengthSignal(target.length)
+        if (target.length !== oldLength) {
+          if (lengthSignal) {
+            lengthSignal(target.length)
+          }
+          triggerDescriptor(target, 'length')
         }
 
         if (prop === 'length' && typeof oldLength === 'number' && target.length < oldLength) {
@@ -505,6 +594,7 @@ export function $store<T extends object>(initialValue: T): T {
               indexSignal(undefined)
             }
             triggerPresence(target, String(i))
+            triggerDescriptor(target, String(i))
           }
           triggerIteration(target)
         }
