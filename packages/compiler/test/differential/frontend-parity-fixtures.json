@@ -1,0 +1,96 @@
+[
+  {
+    "name": "aliased state in tsx component",
+    "language": "tsx",
+    "source": "import { $state as state } from 'fict'; export function Counter(props: { initial: number }) { const count = state(props.initial); return <button>{count}</button>; }",
+    "accepted": true
+  },
+  {
+    "name": "shadowed macro spelling",
+    "language": "ts",
+    "source": "import { $state as state } from 'fict'; export function Counter() { const count = state(0); function read(state: (value: number) => number) { return state(1); } return count + read(value => value); }",
+    "accepted": true
+  },
+  {
+    "name": "function directives and type-only import",
+    "language": "ts",
+    "source": "import type { Shape } from './shape'; export function useShape(value: Shape) { 'use no memo'; 'use pure'; return value; }",
+    "accepted": true
+  },
+  {
+    "name": "configured reactive callback",
+    "language": "js",
+    "source": "import { renderHook } from './host'; import { $state } from 'fict'; renderHook(() => { const value = $state(0); return value; });",
+    "reactiveScopes": ["renderHook"],
+    "accepted": true
+  },
+  {
+    "name": "typescript enum and namespace",
+    "language": "ts",
+    "source": "enum Mode { Off, On = 4 } namespace Tools { export const mode = Mode.On; } export const value = Tools.mode;",
+    "accepted": true
+  },
+  {
+    "name": "module state owner",
+    "language": "js",
+    "source": "import { $state } from 'fict'; export const count = $state(0);",
+    "accepted": false,
+    "failureClass": "state-owner",
+    "legacyMessage": "must be declared inside a component or hook function body",
+    "rustCode": "FICT-PLACEMENT-STATE-OWNER"
+  },
+  {
+    "name": "nested state owner",
+    "language": "jsx",
+    "source": "import { $state } from 'fict'; export function App() { function Child() { const count = $state(0); return <span>{count}</span>; } return <Child />; }",
+    "accepted": false,
+    "failureClass": "state-nested",
+    "legacyMessage": "cannot be declared inside nested functions",
+    "rustCode": "FICT-PLACEMENT-STATE-NESTED"
+  },
+  {
+    "name": "conditional state",
+    "language": "js",
+    "source": "import { $state } from 'fict'; export function App() { if (ready) { const count = $state(0); } return null; }",
+    "accepted": false,
+    "failureClass": "state-control",
+    "legacyMessage": "cannot be declared inside loops or conditionals",
+    "rustCode": "FICT-PLACEMENT-STATE-CONTROL"
+  },
+  {
+    "name": "conditional effect",
+    "language": "js",
+    "source": "import { $effect } from 'fict'; export function App() { if (ready) $effect(() => work()); return null; }",
+    "accepted": false,
+    "failureClass": "effect-control",
+    "legacyMessage": "cannot be called inside loops or conditionals",
+    "rustCode": "FICT-PLACEMENT-EFFECT-CONTROL"
+  },
+  {
+    "name": "module direct hook",
+    "language": "js",
+    "source": "import { useCounter } from './hooks'; useCounter();",
+    "accepted": false,
+    "failureClass": "hook-owner",
+    "legacyMessage": "must be called inside a component or hook",
+    "rustCode": "FICT-PLACEMENT-HOOK-OWNER"
+  },
+  {
+    "name": "conditional namespace hook",
+    "language": "jsx",
+    "source": "import * as hooks from './hooks'; export function App() { if (ready) hooks.useCounter(); return <div />; }",
+    "accepted": false,
+    "failureClass": "hook-control",
+    "legacyMessage": "must be called at the top level of a component or hook",
+    "rustCode": "FICT-PLACEMENT-HOOK-CONTROL"
+  },
+  {
+    "name": "namespace macro call",
+    "language": "js",
+    "source": "import * as Fict from 'fict'; Fict.$state(0);",
+    "accepted": false,
+    "failureClass": "macro-namespace",
+    "legacyMessage": "cannot be called through a namespace import",
+    "rustCode": "FICT-HIR-MACRO-NAMESPACE"
+  }
+]
