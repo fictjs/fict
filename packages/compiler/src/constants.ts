@@ -1,8 +1,9 @@
 /**
  * @fileoverview Compiler Constants for Runtime Integration
  *
- * IMPORTANT: These constants define the contract between the compiler
- * and runtime. Any changes here must be synchronized with @fictjs/runtime.
+ * IMPORTANT: Runtime helper constants are generated from
+ * packages/runtime/runtime-abi.json. Edit the manifest and regenerate both
+ * compiler and Rust tables instead of changing helper names in this file.
  *
  * API Stability: Tier 2 (Internal Stable)
  * - RUNTIME_HELPERS names/signatures must remain stable for v1.x
@@ -11,6 +12,15 @@
  *
  * @see docs/api-freeze-v1.md for full API stability policy
  */
+
+import {
+  RUNTIME_ALIASES,
+  RUNTIME_HELPERS,
+  RUNTIME_HELPER_MODULES,
+  RUNTIME_MODULES,
+} from './runtime-abi.generated'
+
+export { RUNTIME_ABI_VERSION, RUNTIME_ALIASES, RUNTIME_HELPERS } from './runtime-abi.generated'
 
 const DelegatedEventNames = [
   'beforeinput',
@@ -115,151 +125,13 @@ export function isRuntimeImportModule(source: string): boolean {
  * Uses the internal subpath to access compiler-dependent APIs.
  */
 export function getRuntimeModule(family: RuntimeImportFamily): string {
-  return family === 'runtime' ? '@fictjs/runtime/internal' : 'fict/internal'
+  return RUNTIME_MODULES[family].internal
 }
 
 /**
  * Runtime helper function names used by compiler-generated code.
  * @internal These names are part of the compiler-runtime ABI contract.
  */
-export const RUNTIME_HELPERS = {
-  signal: 'createSignal',
-  createSelector: 'createSelector',
-  memo: 'createMemo',
-  effect: 'createEffect',
-  useContext: '__fictUseContext',
-  pushContext: '__fictPushContext',
-  popContext: '__fictPopContext',
-  useSignal: '__fictUseSignal',
-  useMemo: '__fictUseMemo',
-  useEffect: '__fictUseEffect',
-  render: '__fictRender',
-  fragment: 'Fragment',
-  propGetter: '__fictProp',
-  propsRest: '__fictPropsRest',
-  objectRest: '__fictObjectRest',
-  reactiveGetter: '__fictReactive',
-  mergeProps: 'mergeProps',
-  prop: 'prop',
-  keyed: 'keyed',
-  runInScope: 'runInScope',
-  createElement: 'createElement',
-  createElementInNamespace: 'createElementInNamespace',
-  createElementInParentNamespace: 'createElementInParentNamespace',
-  elementNamespaceMatches: '__fictElementNamespaceMatches',
-  conditional: 'createConditional',
-  keyedList: 'createKeyedList',
-  insert: 'insert',
-  insertBetween: 'insertBetween',
-  resolvePath: 'resolvePath',
-  getSlotEnd: 'getSlotEnd',
-  onDestroy: 'onDestroy',
-  bindText: 'bindText',
-  bindTextContent: 'bindTextContent',
-  bindAttribute: 'bindAttribute',
-  bindProperty: 'bindProperty',
-  bindClass: 'bindClass',
-  bindStyle: 'bindStyle',
-  setText: 'setText',
-  setTextContent: 'setTextContent',
-  setAttr: 'setAttr',
-  setProp: 'setProp',
-  setClass: 'setClass',
-  setStyle: 'setStyle',
-  renderEffect: 'createRenderEffect',
-  bindEvent: 'bindEvent',
-  addEventListener: 'addEventListener',
-  callEventHandler: 'callEventHandler',
-  bindRef: 'bindRef',
-  spread: 'spread',
-  nonReactive: 'nonReactive',
-  toNodeArray: 'toNodeArray',
-  template: 'template',
-  delegateEvents: 'delegateEvents',
-  useLexicalScope: '__fictUseLexicalScope',
-  getScopeProps: '__fictGetScopeProps',
-  setComponentMeta: '__fictSetComponentMeta',
-  getComponentMeta: '__fictGetComponentMeta',
-  qrl: '__fictQrl',
-  getSSRScope: '__fictGetSSRScope',
-  ensureScope: '__fictEnsureScope',
-  prepareContext: '__fictPrepareContext',
-  enterHydration: '__fictEnterHydration',
-  exitHydration: '__fictExitHydration',
-  domRender: 'render',
-  hydrateComponent: 'hydrateComponent',
-  registerResume: '__fictRegisterResume',
-} as const
-
-export const RUNTIME_ALIASES = {
-  signal: 'createSignal',
-  createSelector: 'createSelector',
-  memo: 'createMemo',
-  effect: 'createEffect',
-  useContext: '__fictUseContext',
-  pushContext: '__fictPushContext',
-  popContext: '__fictPopContext',
-  useSignal: '__fictUseSignal',
-  useMemo: '__fictUseMemo',
-  useEffect: '__fictUseEffect',
-  render: '__fictRender',
-  fragment: 'Fragment',
-  propGetter: '__fictProp',
-  propsRest: '__fictPropsRest',
-  objectRest: '__fictObjectRest',
-  reactiveGetter: '__fictReactive',
-  prop: 'prop',
-  keyed: 'keyed',
-  mergeProps: 'mergeProps',
-  runInScope: 'runInScope',
-  createElement: 'createElement',
-  createElementInNamespace: 'createElementInNamespace',
-  createElementInParentNamespace: 'createElementInParentNamespace',
-  elementNamespaceMatches: '__fictElementNamespaceMatches',
-  conditional: 'createConditional',
-  keyedList: 'createKeyedList',
-  insert: 'insert',
-  insertBetween: 'insertBetween',
-  resolvePath: 'resolvePath',
-  getSlotEnd: 'getSlotEnd',
-  onDestroy: 'onDestroy',
-  bindText: 'bindText',
-  bindTextContent: 'bindTextContent',
-  bindAttribute: 'bindAttribute',
-  bindProperty: 'bindProperty',
-  bindClass: 'bindClass',
-  bindStyle: 'bindStyle',
-  setText: 'setText',
-  setTextContent: 'setTextContent',
-  setAttr: 'setAttr',
-  setProp: 'setProp',
-  setClass: 'setClass',
-  setStyle: 'setStyle',
-  renderEffect: 'createRenderEffect',
-  bindEvent: 'bindEvent',
-  addEventListener: 'addEventListener',
-  callEventHandler: 'callEventHandler',
-  bindRef: 'bindRef',
-  spread: 'spread',
-  nonReactive: 'nonReactive',
-  toNodeArray: 'toNodeArray',
-  template: 'template',
-  delegateEvents: 'delegateEvents',
-  useLexicalScope: '__fictUseLexicalScope',
-  getScopeProps: '__fictGetScopeProps',
-  setComponentMeta: '__fictSetComponentMeta',
-  getComponentMeta: '__fictGetComponentMeta',
-  qrl: '__fictQrl',
-  getSSRScope: '__fictGetSSRScope',
-  ensureScope: '__fictEnsureScope',
-  prepareContext: '__fictPrepareContext',
-  enterHydration: '__fictEnterHydration',
-  exitHydration: '__fictExitHydration',
-  domRender: 'render',
-  hydrateComponent: 'hydrateComponent',
-  registerResume: '__fictRegisterResume',
-} as const
-
 export type RuntimeHelperName = keyof typeof RUNTIME_HELPERS
 
 /**
@@ -273,8 +145,8 @@ export function getRuntimeHelperModule(
   family: RuntimeImportFamily,
   helper: RuntimeHelperName,
 ): string {
-  if (helper === 'keyedList') {
-    return family === 'runtime' ? '@fictjs/runtime/internal/list' : 'fict/internal/list'
+  if (RUNTIME_HELPER_MODULES[helper] === 'list') {
+    return RUNTIME_MODULES[family].list
   }
 
   return getRuntimeModule(family)
