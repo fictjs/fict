@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   buildPublishPlan,
+  fetchRegistryDocument,
   getPublishedVersions,
   normalizeRegistryDocument,
   validateReleaseConfiguration,
@@ -46,6 +47,68 @@ test('distinguishes pending versions from first publications', () => {
 
   assert.equal(pending[0]?.status, 'pending')
   assert.equal(firstPublication[0]?.status, 'new-package')
+})
+
+test('retries a cached 404 with a cache-busting registry request', async () => {
+  const calls = []
+  const responses = [
+    { ok: false, status: 404, statusText: 'Not Found' },
+    {
+      ok: true,
+      status: 200,
+      async json() {
+        return { versions: { '0.26.0': {} } }
+      },
+    },
+  ]
+  const delays = []
+
+  const document = await fetchRegistryDocument(
+    'https://registry.npmjs.org',
+    '@fictjs/webpack-plugin',
+    {
+      fetchImpl: async (url, options) => {
+        calls.push({ url, options })
+        return responses.shift()
+      },
+      now: () => 1234,
+      onRetry: () => {},
+      retryDelaysMs: [250],
+      sleep: async delay => delays.push(delay),
+    },
+  )
+
+  assert.deepEqual(document, { versions: { '0.26.0': {} } })
+  assert.deepEqual(delays, [250])
+  assert.equal(calls[0]?.url, 'https://registry.npmjs.org/@fictjs%2fwebpack-plugin')
+  assert.deepEqual(calls[0]?.options.headers, {
+    accept: 'application/vnd.npm.install-v1+json',
+  })
+  assert.equal(
+    calls[1]?.url,
+    'https://registry.npmjs.org/@fictjs%2fwebpack-plugin?fict-release-check=1234-2',
+  )
+  assert.deepEqual(calls[1]?.options.headers, {
+    accept: 'application/vnd.npm.install-v1+json',
+    'cache-control': 'no-cache',
+  })
+})
+
+test('classifies a package as missing only after all 404 retries', async () => {
+  let requests = 0
+
+  const document = await fetchRegistryDocument('https://registry.npmjs.org', '@fictjs/missing', {
+    fetchImpl: async () => {
+      requests += 1
+      return { ok: false, status: 404, statusText: 'Not Found' }
+    },
+    onRetry: () => {},
+    retryDelaysMs: [0, 0],
+    sleep: async () => {},
+  })
+
+  assert.equal(document, null)
+  assert.equal(requests, 3)
 })
 
 test('requires every non-private workspace package to be allowlisted', () => {

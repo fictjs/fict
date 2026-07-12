@@ -156,5 +156,12 @@ Return to the repository root and rerun:
 pnpm release:plan --require-existing-packages
 ```
 
+The public registry may briefly serve a cached `404` after the first publish.
+The release planner retries missing packages with cache-busting requests before
+classifying them as `new-package`, but the local command above must still pass
+before a tag is pushed. If a tag was pushed during that visibility window, wait
+until the local plan reports the package as `pending` or `already-published`,
+then rerun the failed workflow.
+
 Do not push or move the release tag until the new package is no longer reported
 as `new-package` and its trusted publisher is configured.

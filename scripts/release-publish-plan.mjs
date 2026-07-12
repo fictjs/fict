@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 const repoRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const defaultConfigPath = path.join(repoRoot, '.github/npm-publish-packages.json')
 const workspaceRoots = ['packages', 'examples']
+const registryRetryDelaysMs = [1_000, 2_000, 4_000, 8_000, 15_000]
 
 function isRecord(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -155,26 +156,53 @@ function registryPackageUrl(registry, packageName) {
   return `${registry.replace(/\/$/, '')}/${encodedName}`
 }
 
-async function fetchRegistryDocument(registry, packageName) {
-  const url = registryPackageUrl(registry, packageName)
+export async function fetchRegistryDocument(
+  registry,
+  packageName,
+  {
+    fetchImpl = fetch,
+    now = Date.now,
+    onRetry = message => console.warn(message),
+    retryDelaysMs = registryRetryDelaysMs,
+    sleep = delay => new Promise(resolve => setTimeout(resolve, delay)),
+  } = {},
+) {
+  const baseUrl = registryPackageUrl(registry, packageName)
   let lastError
 
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  for (let attempt = 1; attempt <= retryDelaysMs.length + 1; attempt += 1) {
+    const isRetry = attempt > 1
+    const url = isRetry ? `${baseUrl}?fict-release-check=${now()}-${attempt}` : baseUrl
+
     try {
-      const response = await fetch(url, {
-        headers: { accept: 'application/vnd.npm.install-v1+json' },
+      const response = await fetchImpl(url, {
+        headers: {
+          accept: 'application/vnd.npm.install-v1+json',
+          ...(isRetry ? { 'cache-control': 'no-cache' } : {}),
+        },
       })
-      if (response.status === 404) return null
-      if (response.ok) return await response.json()
-      if (response.status < 500 && response.status !== 429) {
+      if (response.status === 404) {
+        if (attempt > retryDelaysMs.length) return null
+        lastError = new Error('registry returned 404 Not Found')
+      } else if (response.ok) {
+        return await response.json()
+      } else if (response.status < 500 && response.status !== 429) {
         throw new Error(`registry returned ${response.status} ${response.statusText}`)
+      } else {
+        lastError = new Error(`registry returned ${response.status} ${response.statusText}`)
       }
-      lastError = new Error(`registry returned ${response.status} ${response.statusText}`)
     } catch (error) {
       lastError = error
     }
 
-    if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 250))
+    if (attempt <= retryDelaysMs.length) {
+      const delay = retryDelaysMs[attempt - 1]
+      onRetry(
+        `Registry lookup for ${packageName} failed (${lastError?.message ?? lastError}); ` +
+          `retrying with cache bypass in ${delay}ms (${attempt + 1}/${retryDelaysMs.length + 1}).`,
+      )
+      await sleep(delay)
+    }
   }
 
   throw new Error(`failed to read ${packageName} from npm: ${lastError?.message ?? lastError}`)
