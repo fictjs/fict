@@ -4,6 +4,7 @@
 
 mod alias;
 mod cfg;
+mod cycles;
 mod effects;
 mod scopes;
 mod shapes;
@@ -14,6 +15,10 @@ pub use alias::{
     analyze_aliases, verify_aliases,
 };
 pub use cfg::{CfgAnalysis, analyze_cfg};
+pub use cycles::{
+    ReactiveCycle, ReactiveCycleAnalysis, ReactiveCycleKind, ReactiveCycleStats, ReactiveGraphEdge,
+    analyze_reactive_cycles, verify_reactive_cycles,
+};
 pub use effects::{
     BarrierFact, BarrierKind, CallbackDisposition, CallbackFact, DependencyAnalysis,
     DependencyBase, DependencyPath, DependencySegment, DependencyStats, EscapeFact, EscapeKind,
