@@ -5,6 +5,7 @@
 //! The crate coordinates Fict-owned passes and the OXC adapter without owning
 //! filesystem, network, Node, N-API, or bundler state.
 
+mod pass_manager;
 mod pipeline;
 mod request;
 mod result;
@@ -12,6 +13,10 @@ mod source_map;
 
 pub use fict_compiler_oxc::{OXC_VERSION, ParseProbe};
 pub use fict_metadata::MODULE_REACTIVE_METADATA_VERSION;
+pub use pass_manager::{
+    CompilerPass, CorePassBudgets, CorePassOptions, CorePassOutput, CorePassStats,
+    FunctionPassAnalysis, PassContext, run_core_passes,
+};
 pub use pipeline::{compile, internal_error_result, invalid_request_result};
 pub use request::{
     CompileRequest, CompileRequestError, CompilerOptions, CompilerPreviewOptions,
