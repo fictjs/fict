@@ -1,5 +1,13 @@
 # @fictjs/testing-library
 
+## 0.28.0
+
+### Minor Changes
+
+- Make `waitForCondition` reject with an error thrown by any polling attempt,
+  not only the initial synchronous check, and cancel the remaining timer after
+  resolve, timeout, or failure so a settled wait cannot keep polling.
+
 ## 0.27.0
 
 ### Minor Changes

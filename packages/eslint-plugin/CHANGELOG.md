@@ -1,5 +1,23 @@
 # @fictjs/eslint-plugin
 
+## 0.28.0
+
+### Breaking Changes
+
+- `configs.recommended` is now an ESLint flat-config object. Import the plugin
+  and use `fict.configs.recommended` directly in `eslint.config.js`; consumers
+  using legacy `.eslintrc` `extends` must migrate before upgrading.
+
+### Minor Changes
+
+- Register the Fict plugin, JSX parser options, and recommended rules from the
+  flat config so it works without a separate `plugins` declaration on ESLint
+  9 and newer.
+- Resolve state and props references by lexical binding rather than identifier
+  text. Shadowed variables no longer inherit diagnostics from an outer Fict
+  binding, while direct assignments, updates, deletes, nested/default
+  destructuring writes, and unsafe props spreads are checked consistently.
+
 ## 0.27.0
 
 ### Minor Changes

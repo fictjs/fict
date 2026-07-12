@@ -1,5 +1,30 @@
 # @fictjs/vite-plugin
 
+## 0.28.0
+
+### Breaking Changes
+
+- **Preview resumability:** update loader imports to
+  `fict/experimental/loader` or `@fictjs/runtime/experimental/loader`. Runtime
+  family detection and dependency optimization now use and exclude only these
+  experimental loader entrypoints.
+
+### Minor Changes
+
+- Preserve named default function and class declarations referenced by
+  extracted handlers. Function-splitting builds now emit the required bridge
+  export/import instead of producing a handler chunk with a missing local
+  dependency.
+- Mark function splitting and public resumable identity options as experimental
+  when they participate in the Preview resumability pipeline. Normal Vite
+  transforms remain unchanged when resumability is disabled.
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies [1d8200a]
+  - @fictjs/compiler@0.28.0
+
 ## 0.27.0
 
 ### Minor Changes

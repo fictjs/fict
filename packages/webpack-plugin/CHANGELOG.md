@@ -1,5 +1,20 @@
 # @fictjs/webpack-plugin
 
+## 0.28.0
+
+### Minor Changes
+
+- Accept Babel's valid empty-string transform result for empty source modules.
+  Empty Webpack entries now compile successfully instead of being reported as
+  missing compiler output.
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies [1d8200a]
+  - @fictjs/babel-preset@0.28.0
+  - @fictjs/compiler@0.28.0
+
 ## 0.27.0
 
 ### Minor Changes

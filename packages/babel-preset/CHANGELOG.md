@@ -1,5 +1,26 @@
 # @fictjs/babel-preset
 
+## 0.28.0
+
+### Breaking Changes
+
+- **Preview resumability:** update loader imports from `fict/loader` and
+  `@fictjs/runtime/loader` to `fict/experimental/loader` and
+  `@fictjs/runtime/experimental/loader`. The preset now classifies only the new
+  experimental entrypoints as Fict runtime sources.
+
+### Minor Changes
+
+- Align runtime-import analysis with the 0.28 compiler and Preview boundary so
+  TypeScript/JSX transforms and cross-module metadata follow the experimental
+  loader entrypoint. Ordinary non-resumable compilation is unchanged.
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies [1d8200a]
+  - @fictjs/compiler@0.28.0
+
 ## 0.27.0
 
 ### Minor Changes

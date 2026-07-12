@@ -1,5 +1,35 @@
 # @fictjs/router
 
+## 0.28.0
+
+### Minor Changes
+
+- Rank nested branches by their complete compiled pattern so a static route
+  such as `/users/new` wins over an equally deep dynamic branch such as
+  `/users/:id`.
+- Make `Redirect from="..."` conditional on the current router-relative path,
+  honor router bases, and prevent catch-all redirects from looping after they
+  reach their target.
+- Add `createResource(..., { suspense: true })`. Suspense mode throws a request
+  token until the active load settles; non-Suspense mode returns `undefined`
+  while loading. Refreshes clear current data while `latest()` retains the last
+  successful value, including after a failed refresh.
+- Follow both explicit `Location`/`X-Redirect` response headers and the final
+  URL exposed after `fetch` follows a 302 or 303 form response. Same-origin
+  destinations stay in the SPA router, while cross-origin destinations use a
+  full-page navigation.
+- Preserve the host's preceding `history.scrollRestoration` value. Disabled
+  custom restoration no longer forces manual mode, and replacing or resetting
+  an enabled manager restores the native setting it took over.
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies [1d8200a]
+- Updated dependencies [e870ecd]
+- Updated dependencies [d5ad9eb]
+  - @fictjs/runtime@0.28.0
+
 ## 0.27.0
 
 ### Minor Changes

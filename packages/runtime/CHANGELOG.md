@@ -1,5 +1,34 @@
 # @fictjs/runtime
 
+## 0.28.0
+
+### Breaking Changes
+
+- **Preview resumability:** replace imports from `@fictjs/runtime/loader` with
+  `@fictjs/runtime/experimental/loader`. The former subpath is no longer
+  exported; loader options, migrations, diagnostics, and test helpers are now
+  explicitly marked experimental.
+
+### Minor Changes
+
+- Fix `createSelector` with custom equality functions so every registered key
+  whose selected state changes is notified. Shared key observers remain alive
+  until their last owning root is disposed.
+- Make compiler/resume store proxies track property presence independently from
+  value reads, so deleting and recreating an own `undefined` key updates `in`
+  subscribers without spuriously rerunning value-only subscribers.
+
+### Patch Changes
+
+- Apply reactive HTML `select.value` updates with native DOM string semantics:
+  coerce once, preserve customized setters, select only the first duplicate,
+  clear unmatched values, and repair externally changed duplicate/multiple
+  selection even when the cached text is unchanged. Read-only server DOMs use
+  the same first-match behavior for consistent SSR output.
+- Stop adding overlapping delegated-event index signatures to the global DOM
+  `Element` type, allowing strict external TypeScript consumers to check the
+  published declarations with `skipLibCheck: false`.
+
 ## 0.27.0
 
 ### Breaking Changes

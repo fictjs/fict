@@ -1,5 +1,21 @@
 # @fictjs/compiler
 
+## 0.28.0
+
+### Breaking Changes
+
+- **Preview resumability:** runtime-source detection now recognizes
+  `fict/experimental/loader` and `@fictjs/runtime/experimental/loader` instead
+  of the former `/loader` subpaths. Update loader imports before compiling
+  resumable applications with 0.28.
+
+### Minor Changes
+
+- Mark `resumable`, `autoExtractHandlers`, and `autoExtractThreshold` as
+  experimental compiler options. Their generated ABI remains outside the Core
+  1.0 compatibility promise; supported non-resumable code generation keeps its
+  existing defaults.
+
 ## 0.27.0
 
 ### Minor Changes

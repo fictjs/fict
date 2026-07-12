@@ -1,5 +1,38 @@
 # fict
 
+## 0.28.0
+
+### Breaking Changes
+
+- **Preview resumability:** replace imports from `fict/loader` with
+  `fict/experimental/loader`. The former subpath is no longer exported, and the
+  new entrypoint remains experimental with no Core 1.0 semver guarantee.
+- `$store` now deep-proxies only arrays and plain records. Class instances and
+  branded platform objects such as `Date`, `Map`, and `URL` remain opaque so
+  private fields and internal slots keep their native receiver. Keep reactive
+  mutable fields in plain objects or arrays when deep tracking is required.
+
+### Minor Changes
+
+- Make `$store` reflection reactive without invoking getters. The `in`
+  operator now distinguishes a missing key from an own key whose value is
+  `undefined`, and descriptor subscribers update correctly after definitions,
+  deletions, and array truncation.
+- Clear `resource(...).read(...).data` reactively when the current fetch or
+  refresh fails instead of exposing the previous successful value as current
+  data after an error.
+- Fix the re-exported `createSelector` for custom equality functions and shared
+  observers so every equivalent key updates and disposing one root does not
+  detach subscribers owned by another root.
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies [1d8200a]
+- Updated dependencies [e870ecd]
+- Updated dependencies [d5ad9eb]
+  - @fictjs/runtime@0.28.0
+
 ## 0.27.0
 
 ### Breaking Changes

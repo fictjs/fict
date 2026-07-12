@@ -1,5 +1,41 @@
 # @fictjs/ssr
 
+## 0.28.0
+
+### Breaking Changes
+
+- **Preview resumability:** snapshots are now opt-in. Pass
+  `includeSnapshot: true`, compile with `resumable: true`, and install the
+  loader from `fict/experimental/loader` or
+  `@fictjs/runtime/experimental/loader`. Resumability, snapshot schema v2, and
+  partial prerendering remain Preview and outside the Core 1.0 semver promise;
+  supported string and streaming SSR no longer emit Preview state by default.
+
+### Minor Changes
+
+- Make legacy `exposeGlobals: true` rendering exclusive from every other SSR
+  render, including across loaded package copies. Global descriptors are
+  installed and restored transactionally without invoking accessors; ordinary
+  render-local SSR still works on a non-extensible process global, while
+  compatibility mode fails closed there.
+- Reject nonce-free external-runtime shell streams that place incremental
+  Preview snapshots in `head`, where an executable mover is required. Strict
+  CSP deployments can use `container`/`body` placement or provide a nonce.
+
+### Patch Changes
+
+- Keep overlapping hyphen runs inside serialized comments inert so values such
+  as `--->` cannot expose following markup when browser-parsed.
+- Serialize reactive HTML selects with browser-compatible first-match,
+  unmatched-value, and DOM string semantics, including on server DOMs whose
+  `select.value` getter is read-only or whose duplicate selection behavior is
+  non-conforming.
+- Updated dependencies
+- Updated dependencies [1d8200a]
+- Updated dependencies [e870ecd]
+- Updated dependencies [d5ad9eb]
+  - @fictjs/runtime@0.28.0
+
 ## 0.27.0
 
 ### Breaking Changes
