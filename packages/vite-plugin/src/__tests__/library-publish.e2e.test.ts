@@ -12,6 +12,38 @@ import fict from '..'
 
 const execFileAsync = promisify(execFile)
 
+interface NpmPackEntry {
+  filename: string
+  files: { path: string }[]
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function parseNpmPackEntry(stdout: string): NpmPackEntry {
+  const output: unknown = JSON.parse(stdout)
+  const entries = Array.isArray(output) ? output : isRecord(output) ? Object.values(output) : []
+
+  if (entries.length !== 1) {
+    throw new Error(`Expected npm pack to return exactly one package, received ${entries.length}`)
+  }
+
+  const [entry] = entries
+  if (!isRecord(entry) || typeof entry.filename !== 'string' || !Array.isArray(entry.files)) {
+    throw new Error('Unexpected npm pack JSON output')
+  }
+
+  const files = entry.files.map(file => {
+    if (!isRecord(file) || typeof file.path !== 'string') {
+      throw new Error('Unexpected npm pack file entry')
+    }
+    return { path: file.path }
+  })
+
+  return { filename: entry.filename, files }
+}
+
 const mockBuildConfig = {
   command: 'build',
   mode: 'production',
@@ -20,6 +52,26 @@ const mockBuildConfig = {
   build: { ssr: false },
   resolve: { alias: [] },
 } as ResolvedConfig
+
+describe('npm pack JSON compatibility', () => {
+  const entry: NpmPackEntry = {
+    filename: 'fict-hook-lib-0.0.0-e2e.tgz',
+    files: [{ path: 'dist/index.js' }, { path: 'package.json' }],
+  }
+
+  it.each([
+    ['npm 11 array output', [entry]],
+    ['npm 12 package-keyed output', { 'fict-hook-lib': entry }],
+  ])('reads %s', (_label, output) => {
+    expect(parseNpmPackEntry(JSON.stringify(output))).toEqual(entry)
+  })
+
+  it('rejects output that does not describe exactly one package', () => {
+    expect(() => parseNpmPackEntry('{}')).toThrow(
+      'Expected npm pack to return exactly one package, received 0',
+    )
+  })
+})
 
 describe('vite-plugin library publishing e2e', () => {
   it('packs generated metadata and lets an installed consumer recover hook reactivity', async () => {
@@ -89,12 +141,8 @@ describe('vite-plugin library publishing e2e', () => {
         '--pack-destination',
         packDir,
       ])
-      const packed = JSON.parse(packResult.stdout) as {
-        filename: string
-        files: { path: string }[]
-      }[]
-      const packedPackage = packed[0]
-      expect(packedPackage?.files.map(file => file.path).sort()).toEqual(
+      const packedPackage = parseNpmPackEntry(packResult.stdout)
+      expect(packedPackage.files.map(file => file.path).sort()).toEqual(
         expect.arrayContaining([
           'dist/index.cjs',
           'dist/index.fict.meta.json',
@@ -103,7 +151,7 @@ describe('vite-plugin library publishing e2e', () => {
         ]),
       )
 
-      const tarballPath = path.join(packDir, packedPackage?.filename ?? '')
+      const tarballPath = path.join(packDir, packedPackage.filename)
       await writeFile(
         path.join(consumerRoot, 'package.json'),
         JSON.stringify({
