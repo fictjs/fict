@@ -27,6 +27,16 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./native": {
+      "import": {
+        "types": "./dist/native-loader.d.ts",
+        "default": "./dist/native-loader.js"
+      },
+      "require": {
+        "types": "./dist/native-loader.d.cts",
+        "default": "./dist/native-loader.cjs"
+      }
     }
   },
   "files": [
