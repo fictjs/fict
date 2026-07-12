@@ -525,6 +525,8 @@ export function resource<T, Args = void>(
       })
       .catch(err => {
         if (controller.signal.aborted || entry.generation !== currentGen) return
+        entry.hasValue = false
+        entry.data(undefined)
         entry.error(err)
         entry.status = 'error'
         entry.loading(false)
@@ -532,7 +534,6 @@ export function resource<T, Args = void>(
           markExpiry(entry)
         } else {
           entry.expiresAt = Date.now() - 1
-          entry.hasValue = false
         }
         if (entry.pendingToken) {
           entry.pendingToken.reject(err)
@@ -713,7 +714,8 @@ export function resource<T, Args = void>(
           if (useSuspense && entry.pendingToken) {
             throw entry.pendingToken.token
           }
-          return entry.data()
+          const data = entry.data()
+          return entry.hasValue ? data : undefined
         },
         get loading() {
           const entry = entryRef()

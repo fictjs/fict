@@ -1,4 +1,4 @@
-import { ErrorBoundary, Suspense, createRoot, render } from '@fictjs/runtime'
+import { ErrorBoundary, Suspense, createEffect, createRoot, render } from '@fictjs/runtime'
 import { createSignal, reactive } from '@fictjs/runtime/advanced'
 import {
   __fictCreateSSRSession,
@@ -1042,6 +1042,34 @@ describe('resource', () => {
     await tick()
     expect(result.data).toBe('second')
     expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
+  it('clears data reactively when a refresh fails after a successful fetch', async () => {
+    const error = new Error('refresh failed')
+    const fetcher = vi.fn().mockResolvedValueOnce('first').mockRejectedValueOnce(error)
+    const r = resource<string, void>(fetcher)
+    const observed: (string | undefined)[] = []
+    let result: ReturnType<typeof r.read>
+    const owner = createRoot(() => {
+      result = r.read(undefined)
+      createEffect(() => {
+        observed.push(result.data)
+      })
+    })
+
+    await vi.runAllTimersAsync()
+    await tick()
+    expect(result!.data).toBe('first')
+
+    result!.refresh()
+    await vi.runAllTimersAsync()
+    await tick()
+
+    expect(result!.data).toBeUndefined()
+    expect(result!.loading).toBe(false)
+    expect(result!.error).toBe(error)
+    expect(observed).toEqual([undefined, 'first', undefined])
+    owner.dispose()
   })
 
   it('dedupes prefetch calls for the same key', async () => {
