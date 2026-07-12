@@ -256,6 +256,11 @@ Reviewers MUST examine:
 - native platform coverage and atomic package release;
 - Babel preset deprecation and Preview isolation.
 
+The release-blocking target and Node runtime requirements are fixed by
+[ADR-0002](../adr/0002-native-compiler-support-matrix.md). Platform package
+availability is part of compiler correctness, not a best-effort distribution
+concern.
+
 ## Verification
 
 Existing contract evidence:
