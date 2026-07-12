@@ -33,7 +33,11 @@ fn hir() -> HirFile {
             flags: FunctionFlags::default(),
             parameters: Vec::new(),
             locals: Vec::new(),
-            values: Vec::new(),
+            values: vec![fict_hir::HirValue {
+                id: fict_hir::ValueId::new(0),
+                kind: fict_hir::ValueKind::Literal(LiteralValue::Undefined),
+                origin: origin(),
+            }],
             blocks: vec![HirBlock {
                 id: BlockId::new(0),
                 scope: ScopeId::new(0),
@@ -100,6 +104,8 @@ fn program() -> EmitProgram {
             operations: vec![
                 EmitOperation::CreateReactive {
                     slot: EmitSlotId::new(0),
+                    source_result: fict_hir::ValueId::new(0),
+                    local: None,
                     initializer: Some(EmitValueRef::Literal(LiteralValue::Undefined)),
                     helper: RuntimeHelper::Signal,
                     origin: origin(),

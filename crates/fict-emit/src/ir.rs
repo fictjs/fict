@@ -1,5 +1,6 @@
 use fict_hir::{
-    BindingId, BlockId, FunctionId, LiteralValue, Origin, RegionId, SsaName, TemplateId, ValueId,
+    BindingId, BlockId, CompoundAssignmentOperator, FunctionId, LiteralValue, LocalId, Origin,
+    Projection, RegionId, SsaName, TemplateId, UpdateOperator, ValueId,
 };
 
 use crate::{RuntimeFamily, RuntimeHelper};
@@ -145,21 +146,43 @@ pub enum EmitOperation {
     },
     CreateReactive {
         slot: EmitSlotId,
+        source_result: ValueId,
+        local: Option<LocalId>,
         initializer: Option<EmitValueRef>,
         helper: RuntimeHelper,
         origin: Origin,
     },
     ReadReactive {
         slot: EmitSlotId,
+        source_result: ValueId,
+        projections: Vec<Projection>,
         target: EmitTemporaryId,
         helper: Option<RuntimeHelper>,
         origin: Origin,
     },
     RegisterEffect {
         slot: EmitSlotId,
+        source_result: Option<ValueId>,
         callback: EmitValueRef,
         helper: RuntimeHelper,
         cleanup: CleanupOwner,
+        origin: Origin,
+    },
+    WriteReactive {
+        slot: EmitSlotId,
+        projections: Vec<Projection>,
+        value: EmitValueRef,
+        origin: Origin,
+    },
+    UpdateReactive {
+        slot: EmitSlotId,
+        source_result: Option<ValueId>,
+        projections: Vec<Projection>,
+        compound: Option<CompoundAssignmentOperator>,
+        value: Option<EmitValueRef>,
+        update: Option<UpdateOperator>,
+        prefix: bool,
+        target: Option<EmitTemporaryId>,
         origin: Origin,
     },
     DeclareTemplate {
@@ -258,7 +281,11 @@ impl EmitOperation {
             | Self::Conditional { helper, .. }
             | Self::KeyedList { helper, .. } => Some(*helper),
             Self::ReadReactive { helper, .. } => *helper,
-            Self::PreserveHir { .. } | Self::CloneTemplate { .. } | Self::Return { .. } => None,
+            Self::PreserveHir { .. }
+            | Self::WriteReactive { .. }
+            | Self::UpdateReactive { .. }
+            | Self::CloneTemplate { .. }
+            | Self::Return { .. } => None,
         }
     }
 
@@ -270,6 +297,10 @@ impl EmitOperation {
             | Self::CreateElement { target, .. }
             | Self::Conditional { target, .. }
             | Self::KeyedList { target, .. } => Some(*target),
+            Self::UpdateReactive {
+                target: Some(target),
+                ..
+            } => Some(*target),
             _ => None,
         }
     }
@@ -278,6 +309,8 @@ impl EmitOperation {
         match self {
             Self::CreateReactive { initializer, .. } => initializer.iter().for_each(&mut visit),
             Self::RegisterEffect { callback, .. } => visit(callback),
+            Self::WriteReactive { value, .. } => visit(value),
+            Self::UpdateReactive { value, .. } => value.iter().for_each(visit),
             Self::CreateElement { tag, .. }
             | Self::BindDom { value: tag, .. }
             | Self::BindRef { reference: tag, .. }

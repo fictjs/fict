@@ -202,10 +202,45 @@ fn verify_operations(
                     ));
                 }
             }
-            EmitOperation::CreateReactive { slot, .. }
-            | EmitOperation::ReadReactive { slot, .. } => verify_slot(function, *slot, diagnostics),
-            EmitOperation::RegisterEffect { slot, cleanup, .. } => {
+            EmitOperation::CreateReactive {
+                slot,
+                source_result,
+                ..
+            }
+            | EmitOperation::ReadReactive {
+                slot,
+                source_result,
+                ..
+            } => {
                 verify_slot(function, *slot, diagnostics);
+                verify_source_result(hir_function, *source_result, diagnostics);
+            }
+            EmitOperation::WriteReactive { slot, .. }
+            | EmitOperation::UpdateReactive {
+                slot,
+                source_result: None,
+                ..
+            } => {
+                verify_slot(function, *slot, diagnostics);
+            }
+            EmitOperation::UpdateReactive {
+                slot,
+                source_result: Some(source_result),
+                ..
+            } => {
+                verify_slot(function, *slot, diagnostics);
+                verify_source_result(hir_function, *source_result, diagnostics);
+            }
+            EmitOperation::RegisterEffect {
+                slot,
+                source_result,
+                cleanup,
+                ..
+            } => {
+                verify_slot(function, *slot, diagnostics);
+                if let Some(source_result) = source_result {
+                    verify_source_result(hir_function, *source_result, diagnostics);
+                }
                 verify_cleanup(function, analysis, *cleanup, diagnostics);
             }
             EmitOperation::DeclareTemplate {
@@ -254,6 +289,19 @@ fn verify_operations(
             }
             _ => {}
         }
+    }
+}
+
+fn verify_source_result(
+    function: &fict_hir::HirFunction,
+    value: fict_hir::ValueId,
+    diagnostics: &mut DiagnosticBundle,
+) {
+    if function.values.get(value.as_usize()).is_none() {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-SOURCE-RESULT",
+            "lowered operation references a missing source HIR result",
+        ));
     }
 }
 
@@ -349,6 +397,8 @@ fn verify_helper_semantics(
             helper.is_none_or(|helper| helper == RuntimeHelper::ReactiveGetter)
         }
         EmitOperation::PreserveHir { .. }
+        | EmitOperation::WriteReactive { .. }
+        | EmitOperation::UpdateReactive { .. }
         | EmitOperation::CloneTemplate { .. }
         | EmitOperation::Return { .. } => true,
     };
