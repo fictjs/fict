@@ -17,7 +17,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:api-boundaries": "node scripts/check-api-boundaries.mjs",
-    "test:preview-boundaries": "node scripts/check-preview-boundaries.mjs",
+    "test:preview-boundaries": "node --test scripts/preview-boundary-helpers.test.mjs && node scripts/check-preview-boundaries.mjs",
     "test:review-regressions": "node scripts/review-regression-suite.mjs",
     "test:release-publish-plan": "node --test scripts/release-publish-plan.test.mjs && node scripts/release-publish-plan.mjs --offline",
     "test:release-verification": "node --test scripts/release-verification.test.mjs",

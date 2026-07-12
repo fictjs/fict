@@ -29,7 +29,7 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'src/jsx-dev-runtime.ts'),
       },
       {
-        find: /^@fictjs\/runtime\/loader$/,
+        find: /^@fictjs\/runtime\/experimental\/loader$/,
         replacement: path.resolve(__dirname, 'src/loader.ts'),
       },
       {

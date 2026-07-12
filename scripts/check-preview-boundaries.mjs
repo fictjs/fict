@@ -5,6 +5,8 @@ import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { hasLegacyLoaderReference } from './preview-boundary-helpers.mjs'
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const failures = []
 
@@ -159,7 +161,7 @@ const trackedFiles = execFileSync('git', ['ls-files'], { cwd: root, encoding: 'u
   .filter(path => /\.(?:[cm]?[jt]sx?|mdx?|json|ya?ml)$/.test(path))
 for (const path of trackedFiles) {
   const source = readText(path)
-  if (source.includes('fict/loader') || source.includes('@fictjs/runtime/loader')) {
+  if (hasLegacyLoaderReference(source)) {
     fail(`${path} references a stable-looking legacy resumability entrypoint`)
   }
 }

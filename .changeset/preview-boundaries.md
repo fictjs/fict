@@ -15,4 +15,5 @@ supported SSR no longer emits the Preview snapshot protocol by default.
 
 The repository now release-gates a machine-readable maturity registry against
 the Core fixed group, experimental entrypoints, default-off opt-ins, and
-`@experimental` type documentation.
+`@experimental` type documentation. The boundary scanner also recognizes
+escaped module specifiers in regular expressions and configuration aliases.
