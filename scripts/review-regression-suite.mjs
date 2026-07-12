@@ -23,9 +23,9 @@ const suites = [
     files: ['src/__tests__/index.test.ts'],
   },
   {
-    name: 'Runtime selector and store ownership',
+    name: 'Runtime DOM binding, selector, and store ownership',
     packageDir: 'packages/runtime',
-    files: ['test/signal.test.ts', 'test/store.test.ts'],
+    files: ['test/binding-edge-cases.test.ts', 'test/signal.test.ts', 'test/store.test.ts'],
   },
   {
     name: 'Runtime snapshot, prototype, Proxy, and SSR session security',

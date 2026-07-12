@@ -322,7 +322,12 @@ function consumerDependencies(rootDir, sourcePackages, packedPackages, tarballPa
 
 export function verifyReleaseContract(rootPackage, releaseWorkflow) {
   const releaseVerify = rootPackage.scripts?.['release:verify'] ?? ''
-  const requiredGates = ['pnpm test:package-tarballs', 'pnpm test:ssr-matrix', 'pnpm test:e2e']
+  const requiredGates = [
+    'pnpm test:review-regressions',
+    'pnpm test:package-tarballs',
+    'pnpm test:ssr-matrix',
+    'pnpm test:e2e',
+  ]
   const missing = requiredGates.filter(gate => !releaseVerify.split(' && ').includes(gate))
   if (rootPackage.scripts?.['release:verify:clean'] !== 'node scripts/release-verify-clean.mjs') {
     missing.push('release:verify:clean script')

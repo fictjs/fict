@@ -208,6 +208,8 @@ jobs:
 
       - run: pnpm install
       - run: FICT_STRICT_GUARANTEE=1 pnpm build
+      - name: Run focused review regressions
+        run: pnpm test:review-regressions
       - run: pnpm test:coverage
 
       - name: Merge package coverage reports

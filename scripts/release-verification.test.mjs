@@ -28,13 +28,19 @@ const ssrPackage = JSON.parse(
   readFileSync(new URL('../packages/ssr/package.json', import.meta.url), 'utf8'),
 )
 
-test('release verification retains tarball, SSR matrix, browser E2E, and clean-checkout gates', () => {
+test('release verification retains regression, tarball, SSR, browser, and clean-checkout gates', () => {
   assert.deepEqual(verifyReleaseContract(rootPackage, releaseWorkflow), [])
 })
 
 test('precommit and release verification retain the Preview maturity boundary gate', () => {
   assert.match(rootPackage.scripts.precommit, /pnpm test:preview-boundaries/)
   assert.match(rootPackage.scripts['release:verify'], /pnpm test:preview-boundaries/)
+})
+
+test('precommit, release verification, and CI enforce the review regression suite', () => {
+  assert.match(rootPackage.scripts.precommit, /pnpm test:review-regressions/)
+  assert.match(rootPackage.scripts['release:verify'], /pnpm test:review-regressions/)
+  assert.match(ciWorkflow, /run: pnpm test:review-regressions/)
 })
 
 test('browser E2E continuously includes production-shaped real applications and scheduled soak', () => {
