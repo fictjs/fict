@@ -52,22 +52,25 @@ export default defineConfig({
       ],
       '/api/': [
         {
-          text: 'Core',
+          text: 'Core (fict)',
           items: [
             { text: '$state', link: '/api/state' },
             { text: '$effect', link: '/api/effect' },
             { text: 'onMount', link: '/api/on-mount' },
             { text: 'onDestroy', link: '/api/on-destroy' },
+            { text: '$store', link: '/api/store' },
+            { text: 'Transitions', link: '/api/transition' },
           ],
+        },
+        {
+          text: 'Async (fict/plus)',
+          items: [{ text: 'resource', link: '/api/resource' }],
         },
         {
           text: 'Advanced (fict/advanced)',
           items: [
-            { text: '$store', link: '/api/store' },
             { text: 'createSignal', link: '/api/signal' },
             { text: 'Context', link: '/api/context' },
-            { text: 'resource', link: '/api/resource' },
-            { text: 'transition', link: '/api/transition' },
           ],
         },
       ],

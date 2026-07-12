@@ -1,227 +1,111 @@
-# createSignal (Advanced)
+---
+type: contract
+title: createSignal
+description: Advanced shared-scalar and library-level reactive primitive contract.
+owner: NEEDS_OWNER
+status: proposed
+tags: [api, advanced, signal]
+---
 
-`createSignal` is an **advanced/escape-hatch** API for creating reactive primitives. For most use cases, prefer the higher-level APIs.
+# `createSignal` (Advanced)
 
-## When to Use What
+Creates a reactive cell whose callable accessor combines reads and writes.
 
-| Use Case                                            | Recommended API                    |
-| --------------------------------------------------- | ---------------------------------- |
-| Component-local state                               | `$state` (compiler-transformed)    |
-| Derived values                                      | `$derived` or plain JS expressions |
-| Cross-component (large objects, deep mutation)      | `$store`                           |
-| Cross-component (scalar/lightweight, library-level) | `createSignal`                     |
-| Cross-component (subtree scope, SSR isolation)      | `Context`                          |
+```ts
+function createSignal<T>(initialValue: T): Signal<T>
 
-## API Reference
-
-### `createSignal<T>(initialValue: T): Signal<T>`
-
-Creates a reactive signal with getter/setter combined in one function.
+interface Signal<T> {
+  (): T
+  (value: T): void
+}
+```
 
 ```tsx
 import { createSignal } from 'fict/advanced'
 
 const count = createSignal(0)
 
-// Read value
-console.log(count()) // 0
-
-// Write value
-count(5)
-console.log(count()) // 5
+count() // read: 0
+count(5) // write
+count() // read: 5
 ```
 
-**Parameters:**
+## Choosing the API
 
-- `initialValue: T` - The initial value of the signal
+| Use case                           | Recommended API                                               |
+| ---------------------------------- | ------------------------------------------------------------- |
+| Component-local state              | `$state`                                                      |
+| Derived component value            | Plain JavaScript expression; `$memo` for an explicit accessor |
+| Shared object with deep mutation   | `$store`                                                      |
+| Shared scalar or library primitive | `createSignal`                                                |
+| Subtree scope and SSR isolation    | Context                                                       |
 
-**Returns:** A `Signal<T>` function that:
+`createSignal` is an escape hatch because application components normally benefit from compiler-managed `$state` syntax and ownership.
 
-- When called with no arguments: returns the current value
-- When called with an argument: sets the new value
-
-## Use Cases
-
-### 1. Global/Shared State
-
-When you need a simple value shared across components without prop drilling:
+## Shared scalar
 
 ```tsx
-// stores/counter.ts
+// counter.ts
 import { createSignal } from 'fict/advanced'
 
-export const globalCount = createSignal(0)
-export const increment = () => globalCount(globalCount() + 1)
-export const decrement = () => globalCount(globalCount() - 1)
+export const count = createSignal(0)
+export const increment = () => count(count() + 1)
 ```
 
+Consumers call the accessor explicitly:
+
 ```tsx
-// components/Counter.tsx
-import { globalCount, increment, decrement } from '../stores/counter'
+import { count, increment } from './counter'
 
 function Counter() {
-  return (
-    <div>
-      <button onClick={decrement}>-</button>
-      <span>{globalCount()}</span>
-      <button onClick={increment}>+</button>
-    </div>
-  )
+  return <button onClick={increment}>{count()}</button>
 }
 ```
 
-### 2. Library-Level Primitives
+## Library wrapper
 
-When building reusable reactive utilities:
+Use argument count—not the truthiness of the value—to distinguish a read from a write. A rest parameter works inside an arrow function and does not accidentally capture an outer `arguments` object:
 
-```tsx
-import { createSignal, createEffect } from 'fict/advanced'
-
-// A reactive timer utility
-export function createTimer(intervalMs: number) {
-  const elapsed = createSignal(0)
-  let intervalId: number | null = null
-
-  const start = () => {
-    if (intervalId) return
-    intervalId = setInterval(() => {
-      elapsed(elapsed() + intervalMs)
-    }, intervalMs)
-  }
-
-  const stop = () => {
-    if (intervalId) {
-      clearInterval(intervalId)
-      intervalId = null
-    }
-  }
-
-  const reset = () => {
-    elapsed(0)
-  }
-
-  return { elapsed, start, stop, reset }
-}
-```
-
-### 3. Integration with External Systems
-
-When bridging reactive state with external APIs:
-
-```tsx
-import { createSignal } from 'fict/advanced'
-
-// Reactive wrapper for localStorage
-export function createPersistedSignal<T>(key: string, defaultValue: T) {
-  const stored = localStorage.getItem(key)
-  const initial = stored ? JSON.parse(stored) : defaultValue
-  const signal = createSignal<T>(initial)
-
-  // Original setter
-  const originalSet = signal
-
-  // Wrapped setter that also persists
-  const persistedSignal = ((value?: T) => {
-    if (arguments.length === 0) {
-      return signal()
-    }
-    localStorage.setItem(key, JSON.stringify(value))
-    return originalSet(value!)
-  }) as typeof signal
-
-  return persistedSignal
-}
-```
-
-## Why Advanced?
-
-`createSignal` is marked as advanced because:
-
-1. **$state is safer** - Compiler-transformed `$state` ensures proper scoping and prevents common mistakes
-2. **$store is more ergonomic** - For objects/arrays, `$store` allows direct mutation syntax
-3. **Signals are lower-level** - They require manual getter/setter calls (`count()` vs `count`)
-
-## Comparison with $state
-
-```tsx
-// Using $state (recommended for component-local state)
-function Counter() {
-  let count = $state(0) // Compiler transforms this
-
-  return (
-    <div>
-      <span>{count}</span> {/* Direct access */}
-      <button onClick={() => count++}>+</button> {/* Direct mutation */}
-    </div>
-  )
-}
-
-// Using createSignal (for cross-component sharing)
-import { createSignal } from 'fict/advanced'
-
-const count = createSignal(0)
-
-function Counter() {
-  return (
-    <div>
-      <span>{count()}</span> {/* Getter call required */}
-      <button onClick={() => count(count() + 1)}>+</button> {/* Setter call required */}
-    </div>
-  )
-}
-```
-
-## Comparison with $store
-
-```tsx
-// Using $store (recommended for shared objects)
-import { $store } from 'fict'
-
-const user = $store({ name: 'Alice', age: 25 })
-
-// Direct mutation
-user.name = 'Bob'
-user.age++
-
-// Using createSignal (more verbose for objects)
-import { createSignal } from 'fict/advanced'
-
-const user = createSignal({ name: 'Alice', age: 25 })
-
-// Must replace entire object
-user({ ...user(), name: 'Bob' })
-user({ ...user(), age: user().age + 1 })
-```
-
-## TypeScript
-
-Full TypeScript support with type inference:
-
-```tsx
+```ts
 import { createSignal, type Signal } from 'fict/advanced'
 
-// Type is inferred
-const count = createSignal(0) // Signal<number>
+export function createPersistedSignal<T>(key: string, defaultValue: T): Signal<T> {
+  const stored = localStorage.getItem(key)
+  let initial = defaultValue
 
-// Explicit type
-const user = createSignal<User | null>(null) // Signal<User | null>
-
-// In function signatures
-function useCounter(initial: number): {
-  count: Signal<number>
-  increment: () => void
-} {
-  const count = createSignal(initial)
-  return {
-    count,
-    increment: () => count(count() + 1),
+  if (stored !== null) {
+    try {
+      initial = JSON.parse(stored) as T
+    } catch {
+      localStorage.removeItem(key)
+    }
   }
+
+  const source = createSignal(initial)
+
+  return ((...args: [] | [T]) => {
+    if (args.length === 0) return source()
+
+    const value = args[0]
+    const encoded = JSON.stringify(value)
+    if (encoded === undefined) {
+      throw new TypeError('Persisted signals require a JSON-serializable value')
+    }
+    localStorage.setItem(key, encoded)
+    source(value)
+  }) as Signal<T>
 }
 ```
 
-## Import Paths
+This supports falsy values because the overload is selected by argument presence. The utility intentionally rejects values that JSON cannot serialize.
 
-```tsx
-// Import from advanced (createSignal is an escape hatch API)
-import { createSignal } from 'fict/advanced'
-```
+## Effects and equality
+
+Reading a signal inside `createEffect`, `$memo`, or another tracked runtime computation subscribes that consumer. Writing a strictly equal value does not schedule redundant work; as with JavaScript `!==`, `NaN` is treated as changed.
+
+## Verification
+
+- Public advanced export: `packages/fict/src/advanced.ts`.
+- Runtime types and implementation: `packages/runtime/src/signal.ts` and `packages/runtime/src/advanced.ts`.
+- Behavioral coverage: `packages/runtime/test` signal and effect suites.
+- Repository check: `pnpm --filter @fictjs/runtime test && pnpm --filter fict-docs-site build`.

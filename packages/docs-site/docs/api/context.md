@@ -1,301 +1,99 @@
+---
+type: contract
+title: Context API
+description: Scoped dependency contract for subtree overrides and SSR-safe application state.
+owner: NEEDS_OWNER
+status: proposed
+tags: [api, advanced, context, ssr]
+---
+
 # Context API
 
-Context provides a way to pass data through the component tree without having to pass props down manually at every level.
+Context passes a value through a component subtree without forwarding it through every intermediate prop. Each provider creates an owned child root, so nested providers override their ancestors and separate application/SSR roots remain isolated.
 
-## Overview
-
-Context is designed for:
-
-- **SSR isolation**: Different requests get different context values
-- **Multi-instance support**: Multiple app roots can have different values
-- **Subtree scoping**: Override values in specific parts of the tree
-
-## API Reference
-
-### `createContext<T>(defaultValue: T): Context<T>`
-
-Creates a new context with the given default value.
+Context is an advanced API:
 
 ```tsx
-import { createContext } from 'fict'
-
-const ThemeContext = createContext<'light' | 'dark'>('light')
+import { createContext, hasContext, useContext } from 'fict/advanced'
 ```
 
-**Parameters:**
+## `createContext`
 
-- `defaultValue`: The value to use when no Provider is found in the tree
-
-**Returns:** A context object with a `Provider` component
-
-### `useContext<T>(context: Context<T>): T`
-
-Reads the current value of a context.
+```ts
+function createContext<T>(defaultValue: T): Context<T>
+```
 
 ```tsx
-import { useContext } from 'fict'
+const ThemeContext = createContext<'light' | 'dark'>('light')
+ThemeContext.displayName = 'Theme'
+```
 
-function ThemedButton() {
-  const theme = useContext(ThemeContext)
-  return <button class={theme === 'dark' ? 'btn-dark' : 'btn-light'}>Click</button>
+The returned object exposes a stable identity, `defaultValue`, optional `displayName`, and a `Provider` component.
+
+## `Context.Provider`
+
+```tsx
+function App() {
+  return (
+    <ThemeContext.Provider value="dark">
+      <Dashboard />
+    </ThemeContext.Provider>
+  )
 }
 ```
 
-**Parameters:**
-
-- `context`: The context object created by `createContext`
-
-**Returns:** The current context value (from nearest Provider or default value)
-
-### `hasContext<T>(context: Context<T>): boolean`
-
-Checks if a context value is currently provided in the tree.
+The nearest provider wins. Updating the provider's `value` causes its owned subtree to be recreated with the new context value. For frequently changing data, provide a stable signal or store and update that value in place.
 
 ```tsx
-import { hasContext } from 'fict'
+import { $store, type PropsWithChildren } from 'fict'
+import { createContext, useContext } from 'fict/advanced'
 
+interface Session {
+  user: { name: string } | null
+}
+
+const SessionContext = createContext<Session | null>(null)
+
+function SessionProvider({ children }: PropsWithChildren) {
+  const session = $store<Session>({ user: null })
+  return <SessionContext.Provider value={session}>{children}</SessionContext.Provider>
+}
+
+function AccountName() {
+  const session = useContext(SessionContext)
+  if (!session) throw new Error('AccountName requires SessionProvider')
+  return <span>{session.user?.name ?? 'Signed out'}</span>
+}
+```
+
+Create request-specific stores inside a provider or request factory rather than exporting one process-wide store from a server module.
+
+## `useContext`
+
+```ts
+function useContext<T>(context: Context<T>): T
+```
+
+`useContext` walks the current root's parent chain and returns the nearest provided value. If no provider exists, it returns `defaultValue`.
+
+## `hasContext`
+
+```ts
+function hasContext<T>(context: Context<T>): boolean
+```
+
+`hasContext` reports whether a provider exists; it does not report whether a default value is available.
+
+```tsx
 function OptionalTheme() {
-  if (hasContext(ThemeContext)) {
-    const theme = useContext(ThemeContext)
-    return <div class={theme}>Themed content</div>
-  }
-  return <div>Default content</div>
+  if (!hasContext(ThemeContext)) return <p>No theme provider</p>
+  return <p class={useContext(ThemeContext)}>Themed</p>
 }
 ```
 
-### `Context.Provider`
+## Verification
 
-The Provider component supplies a context value to its children.
-
-```tsx
-<ThemeContext.Provider value="dark">
-  <App />
-</ThemeContext.Provider>
-```
-
-**Props:**
-
-- `value: T` - The value to provide to the subtree
-- `children` - Child components that can consume this context
-
-## Usage Examples
-
-### Basic Usage
-
-```tsx
-import { createContext, useContext, render } from 'fict'
-
-// 1. Create a context with a default value
-const ThemeContext = createContext<'light' | 'dark'>('light')
-
-// 2. Create a component that consumes the context
-function ThemedCard() {
-  const theme = useContext(ThemeContext)
-  return (
-    <div class={`card ${theme}`}>
-      <h2>Themed Card</h2>
-      <p>Current theme: {theme}</p>
-    </div>
-  )
-}
-
-// 3. Wrap your app with the Provider
-function App() {
-  return (
-    <ThemeContext.Provider value="dark">
-      <ThemedCard />
-    </ThemeContext.Provider>
-  )
-}
-
-render(() => <App />, document.getElementById('app')!)
-```
-
-### Nested Providers
-
-You can nest Providers to override values for specific subtrees:
-
-```tsx
-const ThemeContext = createContext('light')
-
-function App() {
-  return (
-    <ThemeContext.Provider value="light">
-      <Header /> {/* Uses 'light' */}
-      <ThemeContext.Provider value="dark">
-        <Sidebar /> {/* Uses 'dark' */}
-      </ThemeContext.Provider>
-      <Footer /> {/* Uses 'light' */}
-    </ThemeContext.Provider>
-  )
-}
-```
-
-### Multiple Contexts
-
-You can use multiple contexts in the same component tree:
-
-```tsx
-const ThemeContext = createContext('light')
-const LanguageContext = createContext('en')
-const UserContext = createContext({ name: 'Guest' })
-
-function App() {
-  return (
-    <ThemeContext.Provider value="dark">
-      <LanguageContext.Provider value="zh">
-        <UserContext.Provider value={{ name: 'Alice' }}>
-          <Dashboard />
-        </UserContext.Provider>
-      </LanguageContext.Provider>
-    </ThemeContext.Provider>
-  )
-}
-
-function Dashboard() {
-  const theme = useContext(ThemeContext)
-  const lang = useContext(LanguageContext)
-  const user = useContext(UserContext)
-
-  return (
-    <div class={theme}>
-      <p>Hello, {user.name}!</p>
-      <p>Language: {lang}</p>
-    </div>
-  )
-}
-```
-
-### Reactive Context Values
-
-In Fict's fine-grained model, component functions execute only once, so Provider's value is captured at mount time. For reactive context values, pass a signal or store as the value:
-
-```tsx
-import { createContext, useContext, createSignal } from 'fict/advanced'
-
-// Create context that holds a signal
-const CounterContext = createContext({
-  count: () => 0,
-  increment: () => {},
-})
-
-function CounterProvider(props) {
-  const count = createSignal(0)
-
-  const value = {
-    count, // Pass the signal directly
-    increment: () => count(count() + 1),
-  }
-
-  return <CounterContext.Provider value={value}>{props.children}</CounterContext.Provider>
-}
-
-function Counter() {
-  const { count, increment } = useContext(CounterContext)
-
-  return (
-    <div>
-      {/* count is a signal, so we call it to get the value */}
-      <p>Count: {count()}</p>
-      <button onClick={increment}>+1</button>
-    </div>
-  )
-}
-
-function App() {
-  return (
-    <CounterProvider>
-      <Counter />
-    </CounterProvider>
-  )
-}
-```
-
-## Best Practices
-
-### 1. Keep Context Values Simple
-
-Context works best with simple, infrequently changing values:
-
-```tsx
-// Good - simple value
-const ThemeContext = createContext('light')
-
-// Good - object with signals for reactivity
-const AuthContext = createContext({
-  user: createSignal(null),
-  login: () => {},
-  logout: () => {},
-})
-```
-
-### 2. Create Custom Hooks
-
-Wrap `useContext` in a custom hook for better ergonomics:
-
-```tsx
-const ThemeContext = createContext<'light' | 'dark'>('light')
-
-export function useTheme() {
-  return useContext(ThemeContext)
-}
-
-// Usage
-function Button() {
-  const theme = useTheme()
-  return <button class={theme}>Click</button>
-}
-```
-
-### 3. Use `hasContext` for Optional Providers
-
-When a Provider might not exist, use `hasContext` to check:
-
-```tsx
-function ThemeAwareComponent() {
-  if (hasContext(ThemeContext)) {
-    const theme = useContext(ThemeContext)
-    return <div class={theme}>Themed</div>
-  }
-  return <div>Default styling</div>
-}
-```
-
-## How It Works
-
-Context in Fict leverages the existing `RootContext` hierarchy:
-
-1. **Provider** creates a child `RootContext` for its subtree
-2. **Context value** is stored on that root
-3. **useContext** walks up the parent chain to find the nearest value
-4. This aligns perfectly with Fict's `insert`, `Suspense`, and other boundaries
-
-This design means:
-
-- Zero extra root creation overhead for lookups
-- Automatic alignment with component boundaries
-- Proper cleanup when components unmount
-
-## TypeScript
-
-Context is fully typed:
-
-```tsx
-interface User {
-  id: string
-  name: string
-  email: string
-}
-
-const UserContext = createContext<User | null>(null)
-
-function Profile() {
-  const user = useContext(UserContext) // Type: User | null
-
-  if (!user) {
-    return <p>Not logged in</p>
-  }
-
-  return <p>Welcome, {user.name}</p> // user is narrowed to User
-}
-```
+- Public advanced exports: `packages/fict/src/advanced.ts`.
+- Provider and lookup implementation: `packages/runtime/src/context.ts`.
+- Isolation and nesting coverage: `packages/runtime/test/context.test.ts`.
+- Repository check: `pnpm --filter @fictjs/runtime test && pnpm --filter fict-docs-site build`.

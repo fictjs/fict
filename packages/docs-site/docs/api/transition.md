@@ -1,105 +1,96 @@
+---
+type: contract
+title: Transition API
+description: Low-priority scheduling contract for responsive reactive updates.
+owner: NEEDS_OWNER
+status: proposed
+tags: [api, scheduler, transition]
+---
+
 # Transition API
 
-> Priority scheduling for smooth UI updates
+Transitions mark reactive writes as low priority so normal input and event updates are drained first. They change scheduler priority; they do not move synchronous computation to another thread or provide time slicing.
 
-Fict provides transition APIs to mark certain updates as lower priority, keeping the UI responsive during expensive operations.
+All transition APIs are exported from `fict`.
 
-## startTransition
+## `startTransition`
 
-Marks updates as low priority. High-priority updates (like user input) will execute first.
+```ts
+function startTransition(fn: () => void): void
+```
+
+Updates performed synchronously inside `fn` enter the low-priority queue. The previous transition context is restored even if the callback throws, and the error is rethrown after flush scheduling is requested.
 
 ```tsx
-import { startTransition } from 'fict'
+import { $state, startTransition } from 'fict'
 
-function SearchComponent() {
+function Search() {
   let query = $state('')
-  let results = $state([])
+  let results = $state<Result[]>([])
 
-  const handleInput = e => {
-    // High priority: updates input immediately
-    query = e.target.value
-
-    // Low priority: filtering can be interrupted
+  const update = (value: string) => {
+    query = value
     startTransition(() => {
-      results = expensiveFilter(allData, query)
+      results = searchIndex(value)
     })
   }
 
-  return (
-    <>
-      <input value={query} onInput={handleInput} />
-      <ResultList items={results} />
-    </>
-  )
+  return <SearchView query={query} results={results} onInput={update} />
 }
 ```
 
-## useTransition
+## `useTransition`
 
-Returns a pending signal and a start function. Useful for showing loading indicators during transitions.
+```ts
+function useTransition(): [
+  isPending: () => boolean,
+  start: (fn: () => void | PromiseLike<unknown>) => void,
+]
+```
 
 ```tsx
-import { useTransition } from 'fict'
+const [isPending, start] = useTransition()
 
-function SearchComponent() {
-  let query = $state('')
-  let results = $state([])
-  const [isPending, start] = useTransition()
-
-  const handleInput = e => {
-    query = e.target.value
-
-    start(() => {
-      results = expensiveFilter(allData, query)
-    })
-  }
-
-  return (
-    <>
-      <input value={query} onInput={handleInput} />
-      {isPending() && <Spinner />}
-      <ResultList items={results} />
-    </>
-  )
+const applyFilter = (filter: Filter) => {
+  start(() => {
+    activeFilter = filter
+  })
 }
+
+return (
+  <button disabled={isPending()} onClick={() => applyFilter(next)}>
+    Apply
+  </button>
+)
 ```
 
-## useDeferredValue
+For synchronous callbacks, `isPending()` remains true for at least one microtask so UI can observe it. When the callback returns a PromiseLike, pending remains true until it settles. Only writes in the synchronous portion of the callback inherit transition priority; writes after an `await` occur after that transition context has exited.
 
-Creates a deferred version of a value that updates with low priority. The deferred value will lag behind during rapid updates.
+Synchronous exceptions are rethrown. Rejected asynchronous transition results are reported to `console.error`, and pending state is still cleared.
+
+## `useDeferredValue`
+
+```ts
+function useDeferredValue<T>(getValue: () => T): () => T
+```
+
+Returns an accessor whose updates are scheduled at low priority:
 
 ```tsx
 import { useDeferredValue } from 'fict'
 
-function SearchResults({ query }) {
-  // deferredQuery lags behind query during rapid typing
+function Results({ query }: { query: string }) {
   const deferredQuery = useDeferredValue(() => query)
-
-  // Expensive computation uses deferred value
-  const results = expensiveSearch(deferredQuery())
-
-  return <ResultList items={results} />
+  const matches = searchIndex(deferredQuery())
+  return <ResultList items={matches} />
 }
 ```
 
-## How It Works
+The initial source value is read immediately. Later source changes are tracked by an owned effect and copied to the deferred signal inside `startTransition`.
 
-Fict uses a dual-priority queue system:
+## Verification
 
-1. **High Priority Queue**: Normal updates (user input, events)
-2. **Low Priority Queue**: Updates marked via transition APIs
-
-During flush:
-
-- High priority effects run first
-- Low priority effects can be interrupted if new high priority work arrives
-
-This keeps the main thread responsive without requiring manual optimization.
-
-## API Reference
-
-| Function           | Signature                                                           | Description                          |
-| ------------------ | ------------------------------------------------------------------- | ------------------------------------ |
-| `startTransition`  | `(fn: () => void) => void`                                          | Execute function with low priority   |
-| `useTransition`    | `() => [isPending: () => boolean, start: (fn: () => void) => void]` | Get pending state and start function |
-| `useDeferredValue` | `<T>(getValue: () => T) => () => T`                                 | Create deferred value accessor       |
+- Public implementation: `packages/runtime/src/transition.ts`.
+- Priority queues: `packages/runtime/src/signal.ts`.
+- Scheduler coverage: transition tests under `packages/runtime/test`.
+- Repository check: `pnpm --filter @fictjs/runtime test && pnpm --filter fict-docs-site build`.
