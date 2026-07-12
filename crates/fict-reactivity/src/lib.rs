@@ -5,6 +5,7 @@
 mod alias;
 mod cfg;
 mod effects;
+mod shapes;
 mod ssa;
 
 pub use alias::{
@@ -16,6 +17,10 @@ pub use effects::{
     BarrierFact, BarrierKind, CallbackDisposition, CallbackFact, DependencyAnalysis,
     DependencyBase, DependencyPath, DependencySegment, DependencyStats, EscapeFact, EscapeKind,
     InstructionLocation, ReadFact, WriteFact, analyze_dependencies, verify_dependencies,
+};
+pub use shapes::{
+    PropertyAccessFact, PropertyAccessKind, ShapeAnalysis, ShapeFact, ShapeKey, ShapeKind,
+    ShapeSource, ShapeStats, ValueShape, analyze_shapes, verify_shapes,
 };
 pub use ssa::{
     SsaAnalysis, SsaDefinition, SsaDefinitionKind, SsaDefinitionLocation, SsaPhi, SsaStats, SsaUse,
