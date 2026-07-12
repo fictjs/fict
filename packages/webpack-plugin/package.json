@@ -60,8 +60,8 @@
   },
   "devDependencies": {
     "fict": "workspace:*",
-    "tsdown": "^0.22.3",
-    "webpack": "^5.105.2"
+    "tsdown": "^0.22.5",
+    "webpack": "^5.108.4"
   },
   "keywords": [
     "fict",
