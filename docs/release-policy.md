@@ -67,7 +67,7 @@ Before publishing:
 The release PR should include the verification command output or CI link for:
 
 - `pnpm security:audit:prod` with zero known production vulnerabilities
-- `pnpm release:verify`
+- `pnpm release:verify:clean`
 - `pnpm release:compiler:verify` when compiler output, diagnostics, metadata,
   or optimizer behavior changed
 - `pnpm size` when runtime or public entrypoints changed

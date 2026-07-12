@@ -57,7 +57,7 @@ pnpm bench:optimizer:guard
 pnpm guardrails:hir
 ```
 
-For release candidates, `pnpm release:verify` runs the complexity report as part
+For release candidates, `pnpm release:verify:clean` runs the complexity report as part
 of the top-level gate. `pnpm release:compiler:verify` also runs compiler lint,
 typecheck, tests, HIR guardrails, optimizer guardrails, and the complexity
 report for compiler-focused changes.

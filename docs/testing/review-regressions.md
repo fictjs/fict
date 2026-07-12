@@ -13,7 +13,7 @@ tags: [regression, release-gate, review]
 
 Every high- or medium-risk defect confirmed by the repository review MUST retain a focused behavioral test. The aggregate command exists so these tests remain runnable as one gate even if package scripts or the Turbo graph change.
 
-This suite is not a substitute for package test suites or `release:verify`. It is the shortest executable path from the review findings to their regression evidence.
+This suite is not a substitute for package test suites or `release:verify:clean`. It is the shortest executable path from the review findings to their regression evidence.
 
 ## Coverage contract
 
@@ -50,5 +50,5 @@ pnpm test:review-regressions
 
 The executable source of truth for package selection is
 `scripts/review-regression-suite.mjs`. Full release evidence remains
-`pnpm release:verify`, which invokes this focused gate before the complete test
-matrix.
+`pnpm release:verify:clean`, whose isolated checkout invokes this focused gate
+through the complete `release:verify` test matrix.
