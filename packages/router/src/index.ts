@@ -214,4 +214,4 @@ export type {
 } from './types'
 
 export type { LinkProps, NavLinkProps, NavLinkRenderProps, FormProps } from './link'
-export type { Resource } from './data'
+export type { Resource, ResourceOptions } from './data'

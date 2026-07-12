@@ -5,7 +5,7 @@
  * including query caching, actions, and preloading.
  */
 
-import { createEffect, batch } from '@fictjs/runtime'
+import { createEffect, batch, createSuspenseToken } from '@fictjs/runtime'
 import { createSignal, type Signal } from '@fictjs/runtime/advanced'
 import { __fictGetCurrentSSRSession, __fictIsSSRSessionActive } from '@fictjs/runtime/internal'
 
@@ -655,6 +655,12 @@ export interface Resource<T> {
   refetch: () => Promise<T | undefined>
 }
 
+/** Resource behavior options. */
+export interface ResourceOptions {
+  /** Throw a Suspense token while the current request is loading. */
+  suspense?: boolean
+}
+
 /**
  * Create a resource for async data loading
  * Integrates with Suspense for loading states
@@ -663,7 +669,8 @@ export interface Resource<T> {
  * ```tsx
  * const userResource = createResource(
  *   () => userId,
- *   async (id) => fetch(`/api/users/${id}`).then(r => r.json())
+ *   async (id) => fetch(`/api/users/${id}`).then(r => r.json()),
+ *   { suspense: true }
  * )
  *
  * function UserProfile() {
@@ -675,6 +682,7 @@ export interface Resource<T> {
 export function createResource<T, S = unknown>(
   source: () => S,
   fetcher: (source: S) => T | Promise<T>,
+  options: ResourceOptions = {},
 ): Resource<T> {
   const dataSignal = createSignal<T | undefined>(undefined)
   const loadingSignal = createSignal<boolean>(true)
@@ -684,14 +692,27 @@ export function createResource<T, S = unknown>(
   let currentSource: S
   let hasCurrentSource = false
   let fetchId = 0 // Used to prevent race conditions
+  let pendingToken: ReturnType<typeof createSuspenseToken> | null = null
+
+  const resolvePendingToken = () => {
+    const token = pendingToken
+    pendingToken = null
+    token?.resolve()
+  }
 
   /**
    * Internal fetch function with race condition protection
    * Returns T on success, undefined on error (error is stored in errorSignal)
    */
   const doFetch = async (s: S, id: number): Promise<T | undefined> => {
-    loadingSignal(true)
-    errorSignal(undefined)
+    // Wake a boundary waiting on the superseded request. Its retry will attach
+    // to this request's token if the new request is still loading.
+    resolvePendingToken()
+    batch(() => {
+      dataSignal(undefined)
+      loadingSignal(true)
+      errorSignal(undefined)
+    })
 
     try {
       const result = await fetcher(s)
@@ -704,6 +725,7 @@ export function createResource<T, S = unknown>(
           latestSignal(result)
           loadingSignal(false)
         })
+        resolvePendingToken()
         return result
       }
 
@@ -713,9 +735,13 @@ export function createResource<T, S = unknown>(
       // Only apply error if this fetch is still current
       if (id === fetchId) {
         batch(() => {
+          dataSignal(undefined)
           errorSignal(err)
           loadingSignal(false)
         })
+        const token = pendingToken
+        pendingToken = null
+        token?.reject(err)
       }
 
       // Return undefined on error - error is accessible via resource.error()
@@ -737,7 +763,15 @@ export function createResource<T, S = unknown>(
     }
   })
 
-  const resource = (() => dataSignal()) as Resource<T>
+  const resource = (() => {
+    const loading = loadingSignal()
+    const data = dataSignal()
+    if (options.suspense && loading) {
+      pendingToken ??= createSuspenseToken()
+      throw pendingToken.token
+    }
+    return data
+  }) as Resource<T>
 
   resource.loading = () => loadingSignal()
   resource.error = () => errorSignal()

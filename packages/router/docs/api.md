@@ -899,6 +899,7 @@ import { createResource } from '@fictjs/router'
 const userResource = createResource(
   () => userId, // Source signal
   async id => fetch(`/api/users/${id}`).then(r => r.json()),
+  { suspense: true },
 )
 
 function UserProfile() {
@@ -914,9 +915,14 @@ interface Resource<T> {
   loading: () => boolean
   error: () => unknown
   latest: () => T | undefined // Last successful value
-  refetch: () => Promise<T>
+  refetch: () => Promise<T | undefined>
 }
 ```
+
+Pass `{ suspense: true }` to throw a request token while loading so the nearest
+`Suspense` boundary can render its fallback. Without this option, the main
+accessor returns `undefined` while loading. In both modes, `latest()` retains
+the last successful value during refreshes.
 
 ---
 

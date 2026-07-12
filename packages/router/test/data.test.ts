@@ -1335,4 +1335,56 @@ describe('createResource', () => {
     expect(resource.loading()).toBe(false)
     expect(resource.error()).toBeInstanceOf(Error)
   })
+
+  it('clears current data while preserving latest through a failed refresh', async () => {
+    const refreshError = new Error('refresh failed')
+    const fetcher = vi
+      .fn<(source: string) => Promise<string>>()
+      .mockResolvedValueOnce('first')
+      .mockRejectedValueOnce(refreshError)
+    const resource = createResource(() => 'key', fetcher)
+
+    await vi.waitFor(() => expect(resource()).toBe('first'))
+    expect(resource.latest()).toBe('first')
+
+    const refresh = resource.refetch()
+    expect(resource.loading()).toBe(true)
+    expect(resource()).toBeUndefined()
+    expect(resource.latest()).toBe('first')
+
+    await expect(refresh).resolves.toBeUndefined()
+    expect(resource.loading()).toBe(false)
+    expect(resource()).toBeUndefined()
+    expect(resource.latest()).toBe('first')
+    expect(resource.error()).toBe(refreshError)
+  })
+
+  it('throws a request token while suspense mode is loading', async () => {
+    let resolveRequest!: (value: string) => void
+    const request = new Promise<string>(resolve => {
+      resolveRequest = resolve
+    })
+    const resource = createResource(
+      () => 'key',
+      () => request,
+      { suspense: true },
+    )
+
+    let token: PromiseLike<unknown> | undefined
+    try {
+      resource()
+    } catch (error) {
+      token = error as PromiseLike<unknown>
+    }
+
+    expect(token).toBeDefined()
+    expect(typeof token?.then).toBe('function')
+
+    const settled = Promise.resolve(token)
+    resolveRequest('ready')
+    await settled
+
+    expect(resource()).toBe('ready')
+    expect(resource.latest()).toBe('ready')
+  })
 })
