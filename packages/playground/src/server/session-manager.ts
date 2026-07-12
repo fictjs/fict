@@ -148,43 +148,68 @@ export class PlaygroundSessionManager {
     const template = getPlaygroundTemplate(templateId)
     const sessionId = createSessionId()
     const sessionRoot = path.join(this.sessionsRoot, sessionId)
+    let preview: { server: ViteDevServerLike; previewUrl: string } | undefined
+    let record: SessionRecord | undefined
 
-    await fs.rm(sessionRoot, { recursive: true, force: true })
-    await ensureDir(sessionRoot)
+    try {
+      await fs.rm(sessionRoot, { recursive: true, force: true })
+      await ensureDir(sessionRoot)
 
-    const configOverrides = normalizeConfigPatch(providedConfigOverrides ?? input.config)
-    const config = resolveConfig(template, configOverrides)
-    const initialFiles = {
-      ...createTemplateFiles(template.id),
-      ...(input.files ?? {}),
+      const configOverrides = normalizeConfigPatch(providedConfigOverrides ?? input.config)
+      const config = resolveConfig(template, configOverrides)
+      const initialFiles = {
+        ...createTemplateFiles(template.id),
+        ...(input.files ?? {}),
+      }
+
+      await writeProjectFiles(sessionRoot, initialFiles)
+
+      preview = await this.startPreviewServer(sessionRoot, config)
+      const now = Date.now()
+
+      const summary: PlaygroundSessionSummary = {
+        id: sessionId,
+        templateId: template.id,
+        rootDir: sessionRoot,
+        previewUrl: preview.previewUrl,
+        tenantId: access.tenantId,
+        ownerUserId: access.userId,
+        config,
+        entryFile: template.entryFile,
+        createdAt: now,
+        updatedAt: now,
+      }
+
+      record = {
+        summary,
+        viteServer: preview.server,
+        configOverrides,
+        disposing: false,
+      }
+      this.sessions.set(sessionId, record)
+
+      return await this.getSessionState(sessionId, access)
+    } catch (error) {
+      if (record && this.sessions.get(sessionId) === record) {
+        this.sessions.delete(sessionId)
+      }
+
+      const cleanupErrors: unknown[] = []
+      if (preview) {
+        try {
+          await preview.server.close()
+        } catch (cleanupError) {
+          cleanupErrors.push(cleanupError)
+        }
+      }
+      try {
+        await fs.rm(sessionRoot, { recursive: true, force: true })
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError)
+      }
+      attachCleanupErrors(error, cleanupErrors)
+      throw error
     }
-
-    await writeProjectFiles(sessionRoot, initialFiles)
-
-    const preview = await this.startPreviewServer(sessionRoot, config)
-    const now = Date.now()
-
-    const summary: PlaygroundSessionSummary = {
-      id: sessionId,
-      templateId: template.id,
-      rootDir: sessionRoot,
-      previewUrl: preview.previewUrl,
-      tenantId: access.tenantId,
-      ownerUserId: access.userId,
-      config,
-      entryFile: template.entryFile,
-      createdAt: now,
-      updatedAt: now,
-    }
-
-    this.sessions.set(sessionId, {
-      summary,
-      viteServer: preview.server,
-      configOverrides,
-      disposing: false,
-    })
-
-    return this.getSessionState(sessionId, access)
   }
 
   async importSnapshot(
@@ -583,22 +608,33 @@ export class PlaygroundSessionManager {
       plugins,
     })
 
-    await server.listen()
+    try {
+      await server.listen()
 
-    const previewUrl =
-      server.resolvedUrls?.local?.[0] ??
-      server.resolvedUrls?.network?.[0] ??
-      (() => {
-        const address = server.httpServer?.address()
-        if (!address || typeof address === 'string') {
-          throw new Error('Failed to resolve Vite preview server URL')
-        }
-        return `http://${this.previewHost}:${address.port}/`
-      })()
+      const previewUrl =
+        server.resolvedUrls?.local?.[0] ??
+        server.resolvedUrls?.network?.[0] ??
+        (() => {
+          const address = server.httpServer?.address()
+          if (!address || typeof address === 'string') {
+            throw new Error('Failed to resolve Vite preview server URL')
+          }
+          return `http://${this.previewHost}:${address.port}/`
+        })()
 
-    return {
-      server,
-      previewUrl,
+      return {
+        server,
+        previewUrl,
+      }
+    } catch (error) {
+      const cleanupErrors: unknown[] = []
+      try {
+        await server.close()
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError)
+      }
+      attachCleanupErrors(error, cleanupErrors)
+      throw error
     }
   }
 
@@ -883,6 +919,28 @@ function uniqueMessages(messages: string[]): string[] {
     .filter(Boolean)
     .filter(message => !message.startsWith('(!)'))
   return Array.from(new Set(deduped))
+}
+
+function attachCleanupErrors(error: unknown, cleanupErrors: unknown[]): void {
+  if (
+    cleanupErrors.length === 0 ||
+    (typeof error !== 'object' && typeof error !== 'function') ||
+    error === null
+  ) {
+    return
+  }
+
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(error, 'cleanupErrors')
+    const existing =
+      descriptor && 'value' in descriptor && Array.isArray(descriptor.value) ? descriptor.value : []
+    Object.defineProperty(error, 'cleanupErrors', {
+      configurable: true,
+      value: [...existing, ...cleanupErrors],
+    })
+  } catch {
+    // Cleanup diagnostics must not replace the original creation failure.
+  }
 }
 
 function formatUnknownError(error: unknown): string {
