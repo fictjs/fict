@@ -36,6 +36,25 @@ export default defineConfig({
 })
 ```
 
+The plugin serves the panel on the Vite origin and starts a launcher at
+`http://127.0.0.1:5175/`; its embedded panel remains on the Vite origin so the
+runtime transport keeps working. Public Vite options are applied as follows:
+
+```ts
+fictDevTools({
+  port: 5180,
+  openInBrowser: true,
+  componentNameTransformer: name => `MyApp/${name}`,
+})
+```
+
+- `port` selects the standalone launcher port (`0` requests an available port).
+- `openInBrowser` opens the launcher and reports launch failures through the
+  Vite logger.
+- `componentNameTransformer` runs inside the browser before the debugger is
+  attached. It must be a synchronous, self-contained function and cannot
+  capture variables from `vite.config.ts`.
+
 ## VS Code live trace
 
 The Vite plugin writes an ephemeral bearer token to

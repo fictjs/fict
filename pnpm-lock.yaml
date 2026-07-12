@@ -402,6 +402,9 @@ importers:
       '@fictjs/runtime':
         specifier: workspace:*
         version: link:../runtime
+      open:
+        specifier: ^11.0.0
+        version: 11.0.0
       ws:
         specifier: ^8.21.0
         version: 8.21.0

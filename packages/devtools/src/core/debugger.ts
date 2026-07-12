@@ -35,6 +35,7 @@ const signals = new Map<number, SignalState>()
 const computeds = new Map<number, ComputedState>()
 const effects = new Map<number, EffectState>()
 const components = new Map<number, ComponentState>()
+const componentRuntimeNames = new Map<number, string>()
 const roots = new Map<number, RootState>()
 const timeline: TimelineEvent[] = []
 
@@ -154,10 +155,12 @@ export interface DevToolsLiveTraceUpdate {
 }
 
 export type DevToolsLiveTraceListener = (update: DevToolsLiveTraceUpdate) => void
+export type ComponentNameTransformer = (name: string) => string
 
 const sourceFileCache = new Map<string, Promise<string | null>>()
 const traceRegexEscapes = /[.*+?^${}()|[\]\\]/g
 const LIVE_TRACE_LISTENERS_KEY = '__FICT_DEVTOOLS_LIVE_TRACE_LISTENERS__'
+const COMPONENT_NAME_TRANSFORMER_KEY = '__FICT_DEVTOOLS_COMPONENT_NAME_TRANSFORMER__'
 const fallbackLiveTraceListeners = new Set<DevToolsLiveTraceListener>()
 
 function getLiveTraceListeners(): Set<DevToolsLiveTraceListener> {
@@ -182,6 +185,73 @@ export function subscribeToLiveTrace(listener: DevToolsLiveTraceListener): () =>
   listeners.add(listener)
   return () => {
     listeners.delete(listener)
+  }
+}
+
+function getComponentNameTransformer(): ComponentNameTransformer | undefined {
+  try {
+    const transformer = (
+      globalThis as typeof globalThis & {
+        __FICT_DEVTOOLS_COMPONENT_NAME_TRANSFORMER__?: unknown
+      }
+    )[COMPONENT_NAME_TRANSFORMER_KEY]
+    return typeof transformer === 'function' ? (transformer as ComponentNameTransformer) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export function setComponentNameTransformer(
+  transformer: ComponentNameTransformer | undefined,
+): () => void {
+  const global = globalThis as typeof globalThis & {
+    __FICT_DEVTOOLS_COMPONENT_NAME_TRANSFORMER__?: ComponentNameTransformer
+  }
+  let previous: ComponentNameTransformer | undefined
+  try {
+    previous = getComponentNameTransformer()
+    if (transformer) {
+      Object.defineProperty(global, COMPONENT_NAME_TRANSFORMER_KEY, {
+        configurable: true,
+        value: transformer,
+        writable: true,
+      })
+    } else {
+      delete global[COMPONENT_NAME_TRANSFORMER_KEY]
+    }
+    refreshComponentDisplayNames()
+  } catch {
+    return () => {}
+  }
+
+  return () => {
+    try {
+      if (getComponentNameTransformer() !== transformer) return
+      if (previous) global[COMPONENT_NAME_TRANSFORMER_KEY] = previous
+      else delete global[COMPONENT_NAME_TRANSFORMER_KEY]
+      refreshComponentDisplayNames()
+    } catch {
+      // A hostile global must not affect the application runtime.
+    }
+  }
+}
+
+function transformComponentName(name: string): string {
+  const transformer = getComponentNameTransformer()
+  if (!transformer) return name
+  try {
+    const transformed = transformer(name)
+    return typeof transformed === 'string' && transformed.length > 0 && transformed.length <= 1024
+      ? transformed
+      : name
+  } catch {
+    return name
+  }
+}
+
+function refreshComponentDisplayNames(): void {
+  for (const [id, component] of components) {
+    component.name = transformComponentName(componentRuntimeNames.get(id) ?? component.name)
   }
 }
 
@@ -845,7 +915,8 @@ async function buildComponentTrace(componentId: number): Promise<ComponentTraceP
 
   const sourceLines = sourceText.split(/\r?\n/)
   const lineOffsets = getLineOffsets(sourceText)
-  const startLine = findMatchingFunctionStartLine(sourceLines, component.name, anchor)
+  const runtimeName = componentRuntimeNames.get(componentId) ?? component.name
+  const startLine = findMatchingFunctionStartLine(sourceLines, runtimeName, anchor)
   const inferredEndLine = findFunctionEndLine(sourceText, startLine, lineOffsets)
   const boundedEndLine = Math.min(sourceLines.length, Math.max(startLine, inferredEndLine))
   const endLine = Math.min(boundedEndLine, startLine + 220)
@@ -2042,10 +2113,12 @@ const hook: FictDevtoolsHookEnhanced = {
   registerComponent(id: number, name: string, parentId?: number, source?: SourceLocation): void {
     markRuntimeDetected()
     const parsedSource = parseSourceLocation(source)
+    const displayName = transformComponentName(name)
+    componentRuntimeNames.set(id, name)
     const state: ComponentState = {
       id,
       type: NodeType.Component,
-      name,
+      name: displayName,
       parentId,
       children: [],
       signals: [],

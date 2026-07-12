@@ -45,6 +45,7 @@
   },
   "dependencies": {
     "@fictjs/runtime": "workspace:*",
+    "open": "^11.0.0",
     "ws": "^8.21.0"
   },
   "devDependencies": {

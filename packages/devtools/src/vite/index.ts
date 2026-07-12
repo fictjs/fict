@@ -11,7 +11,13 @@ import { fileURLToPath } from 'node:url'
 
 import type { Plugin, ViteDevServer } from 'vite'
 
+import { serializeComponentNameTransformer } from './component-name-transformer'
 import { installLiveTraceBridge, LIVE_TRACE_EVENT } from './live-trace-bridge'
+import {
+  startStandaloneDevToolsServer,
+  type StandaloneDevToolsServer,
+  validateStandalonePort,
+} from './standalone-server'
 
 /**
  * Configuration options for the Fict DevTools Vite plugin.
@@ -67,7 +73,8 @@ export interface FictDevToolsOptions {
   launchEditor?: 'code' | 'code-insiders' | 'webstorm' | 'atom' | string
 
   /**
-   * Component name transformer for display
+   * Component name transformer for display. The function runs in the browser
+   * and must be synchronous and self-contained (it cannot capture Vite config locals).
    */
   componentNameTransformer?: (name: string) => string
 
@@ -153,14 +160,21 @@ export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[
   const {
     enabled,
     openInBrowser = false,
-    port: _port = 5175,
+    port = 5175,
     launchEditor = 'code',
+    componentNameTransformer,
     liveTrace = true,
   } = options
+  const standalonePort = validateStandalonePort(port)
+  const serializedComponentNameTransformer =
+    serializeComponentNameTransformer(componentNameTransformer)
 
   let server: ViteDevServer
   let resolvedEnabled = enabled
   let disposeLiveTraceBridge: (() => void) | undefined
+  let standaloneServer: StandaloneDevToolsServer | undefined
+  let standaloneStart: Promise<void> | undefined
+  let serverGeneration = 0
 
   const virtualModuleId = 'virtual:fict-devtools'
   const resolvedVirtualModuleId = '\0' + virtualModuleId
@@ -192,6 +206,11 @@ export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[
         if (!resolvedEnabled) return
 
         server = _server
+        const generation = ++serverGeneration
+        if (standaloneServer) {
+          void standaloneServer.close()
+          standaloneServer = undefined
+        }
         disposeLiveTraceBridge?.()
         const liveTraceOptions = typeof liveTrace === 'object' ? liveTrace : undefined
         if (liveTrace !== false && liveTraceOptions?.enabled !== false) {
@@ -270,26 +289,35 @@ export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[
 
         // Print DevTools URL when server starts
         server.httpServer?.once('listening', () => {
-          const protocol = server.config.server.https ? 'https' : 'http'
-          const host = server.config.server.host || 'localhost'
-          const serverPort = server.config.server.port || 5173
-          const devtoolsUrl = `${protocol}://${host}:${serverPort}/__fict-devtools__/`
+          const devtoolsUrl = resolveDevToolsUrl(server)
+          server.config.logger.info('')
+          server.config.logger.info(
+            `  \x1b[32m➜\x1b[0m  \x1b[1mFict DevTools:\x1b[0m \x1b[36m${devtoolsUrl}\x1b[0m`,
+          )
 
-          setTimeout(() => {
-            server.config.logger.info('')
-            server.config.logger.info(
-              `  \x1b[32m➜\x1b[0m  \x1b[1mFict DevTools:\x1b[0m \x1b[36m${devtoolsUrl}\x1b[0m`,
-            )
-          }, 100)
-
-          if (openInBrowser) {
-            const openPackage = 'open'
-            import(/* @vite-ignore */ openPackage)
-              .then((mod: { default: (url: string) => Promise<unknown> }) => {
-                mod.default(devtoolsUrl)
-              })
-              .catch(() => {})
-          }
+          const start = startStandaloneLauncher(standalonePort, devtoolsUrl)
+            .then(async launcher => {
+              if (generation !== serverGeneration) {
+                await launcher.close()
+                return
+              }
+              standaloneServer = launcher
+              server.config.logger.info(
+                `  \x1b[32m➜\x1b[0m  \x1b[1mFict DevTools standalone:\x1b[0m \x1b[36m${launcher.url}\x1b[0m`,
+              )
+              if (openInBrowser) await openDevToolsInBrowser(launcher.url, server)
+            })
+            .catch(async error => {
+              if (generation !== serverGeneration) return
+              server.config.logger.warn(
+                `[fict-devtools] Failed to start standalone DevTools on port ${standalonePort}: ${formatError(error)}`,
+              )
+              if (openInBrowser) await openDevToolsInBrowser(devtoolsUrl, server)
+            })
+          const trackedStart = start.finally(() => {
+            if (standaloneStart === trackedStart) standaloneStart = undefined
+          })
+          standaloneStart = trackedStart
         })
       },
 
@@ -308,12 +336,27 @@ export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[
           }
 
           return `
-            import { attachDebugger, subscribeToLiveTrace } from '@fictjs/devtools/core'
+            import {
+              attachDebugger,
+              setComponentNameTransformer,
+              subscribeToLiveTrace
+            } from '@fictjs/devtools/core'
 
             let stopLiveTrace
+            let resetComponentNameTransformer
 
             export function attachDevTools() {
               if (typeof window === 'undefined') return
+
+              const configuredComponentNameTransformer = ${serializedComponentNameTransformer}
+              if (
+                typeof configuredComponentNameTransformer === 'function' &&
+                !resetComponentNameTransformer
+              ) {
+                resetComponentNameTransformer = setComponentNameTransformer(
+                  configuredComponentNameTransformer
+                )
+              }
 
               // Attach debugger hook
               attachDebugger()
@@ -325,6 +368,8 @@ export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[
                 import.meta.hot.dispose(() => {
                   stopLiveTrace?.()
                   stopLiveTrace = undefined
+                  resetComponentNameTransformer?.()
+                  resetComponentNameTransformer = undefined
                 })
               }
 
@@ -349,9 +394,13 @@ export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[
         return undefined
       },
 
-      closeBundle() {
+      async closeBundle() {
+        serverGeneration += 1
         disposeLiveTraceBridge?.()
         disposeLiveTraceBridge = undefined
+        await standaloneStart?.catch(() => {})
+        await standaloneServer?.close()
+        standaloneServer = undefined
       },
 
       // Track which files have been injected to avoid duplicate imports
@@ -468,6 +517,53 @@ export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[
       },
     },
   ]
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function formatHostForUrl(host: string): string {
+  if (host === '::' || host === '0.0.0.0') return '127.0.0.1'
+  return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
+}
+
+function resolveDevToolsUrl(server: ViteDevServer): string {
+  const address = server.httpServer?.address()
+  if (!address || typeof address === 'string') {
+    throw new Error('[fict-devtools] Failed to resolve the Vite DevTools address.')
+  }
+  const protocol = server.config.server.https ? 'https' : 'http'
+  const origin = `${protocol}://${formatHostForUrl(address.address)}:${address.port}/`
+  const baseUrl = new URL(server.config.base, origin)
+  return new URL('__fict-devtools__/', baseUrl).toString()
+}
+
+async function startStandaloneLauncher(
+  port: number,
+  devtoolsUrl: string,
+): Promise<StandaloneDevToolsServer> {
+  const target = new URL(devtoolsUrl)
+  const targetPort = Number.parseInt(
+    target.port || (target.protocol === 'https:' ? '443' : '80'),
+    10,
+  )
+  if (port === targetPort) {
+    return { url: devtoolsUrl, close: async () => {} }
+  }
+
+  return startStandaloneDevToolsServer(port, devtoolsUrl)
+}
+
+async function openDevToolsInBrowser(url: string, server: ViteDevServer): Promise<void> {
+  try {
+    const { default: open } = await import('open')
+    await open(url)
+  } catch (error) {
+    server.config.logger.warn(
+      `[fict-devtools] Failed to open DevTools in the browser: ${formatError(error)}`,
+    )
+  }
 }
 
 /**
