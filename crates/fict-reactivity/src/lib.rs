@@ -10,6 +10,7 @@ mod regions;
 mod scopes;
 mod shapes;
 mod ssa;
+mod structurize;
 
 pub use alias::{
     AliasAnalysis, AliasClass, AliasEdge, AliasInvalidation, AliasInvalidationReason, AliasStats,
@@ -40,4 +41,9 @@ pub use shapes::{
 pub use ssa::{
     SsaAnalysis, SsaDefinition, SsaDefinitionKind, SsaDefinitionLocation, SsaPhi, SsaStats, SsaUse,
     SsaUseKind, SsaUseLocation, analyze_ssa, materialize_ssa, print_ssa, verify_ssa,
+};
+pub use structurize::{
+    StateMachineFallback, StructuredConstruct, StructuredConstructKind, StructuredLoopKind,
+    StructuredSwitchArm, StructurizeAnalysis, StructurizeFallbackReason, StructurizeStats,
+    structurize_cfg, verify_structurized_cfg,
 };
