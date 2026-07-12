@@ -1,5 +1,15 @@
 [workspace]
-members = ["crates/fict-compiler-napi", "crates/fict-compiler-oxc"]
+members = [
+  "crates/fict-compiler",
+  "crates/fict-compiler-napi",
+  "crates/fict-compiler-oxc",
+  "crates/fict-compiler-preview",
+  "crates/fict-diagnostics",
+  "crates/fict-emit",
+  "crates/fict-hir",
+  "crates/fict-metadata",
+  "crates/fict-reactivity",
+]
 resolver = "3"
 
 [workspace.package]
@@ -9,6 +19,14 @@ repository = "https://github.com/fictjs/fict"
 rust-version = "1.97.0"
 
 [workspace.dependencies]
+fict-compiler = { path = "crates/fict-compiler" }
+fict-compiler-oxc = { path = "crates/fict-compiler-oxc" }
+fict-compiler-preview = { path = "crates/fict-compiler-preview" }
+fict-diagnostics = { path = "crates/fict-diagnostics" }
+fict-emit = { path = "crates/fict-emit" }
+fict-hir = { path = "crates/fict-hir" }
+fict-metadata = { path = "crates/fict-metadata" }
+fict-reactivity = { path = "crates/fict-reactivity" }
 napi = { version = "=3.10.4", default-features = false, features = ["napi10"] }
 napi-build = { version = "=2.3.2" }
 napi-derive = { version = "=3.5.10" }

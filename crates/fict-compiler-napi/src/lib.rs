@@ -2,7 +2,7 @@
 
 //! Minimal N-API boundary for proving native Fict compiler integration.
 
-use fict_compiler_oxc::{ParseProbe, parse_tsx_probe};
+use fict_compiler::{ParseProbe, parse_tsx_probe};
 use napi::{Env, Result, Task, bindgen_prelude::AsyncTask};
 use napi_derive::napi;
 

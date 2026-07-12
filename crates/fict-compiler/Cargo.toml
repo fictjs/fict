@@ -1,5 +1,5 @@
 [package]
-name = "fict-compiler-oxc"
+name = "fict-compiler"
 version = "0.0.0"
 edition.workspace = true
 license.workspace = true
@@ -7,9 +7,15 @@ publish = false
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+preview = ["dep:fict-compiler-preview"]
+
 [dependencies]
+fict-compiler-oxc.workspace = true
+fict-compiler-preview = { workspace = true, optional = true }
 fict-diagnostics.workspace = true
 fict-emit.workspace = true
 fict-hir.workspace = true
 fict-metadata.workspace = true
-oxc.workspace = true
+fict-reactivity.workspace = true

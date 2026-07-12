@@ -138,10 +138,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
-name = "fict-compiler-napi"
+name = "fict-compiler"
 version = "0.0.0"
 dependencies = [
  "fict-compiler-oxc",
+ "fict-compiler-preview",
+ "fict-diagnostics",
+ "fict-emit",
+ "fict-hir",
+ "fict-metadata",
+ "fict-reactivity",
+]
+
+[[package]]
+name = "fict-compiler-napi"
+version = "0.0.0"
+dependencies = [
+ "fict-compiler",
  "napi",
  "napi-build",
  "napi-derive",
@@ -151,7 +164,58 @@ dependencies = [
 name = "fict-compiler-oxc"
 version = "0.0.0"
 dependencies = [
+ "fict-diagnostics",
+ "fict-emit",
+ "fict-hir",
+ "fict-metadata",
  "oxc",
+]
+
+[[package]]
+name = "fict-compiler-preview"
+version = "0.0.0"
+dependencies = [
+ "fict-diagnostics",
+ "fict-emit",
+ "fict-hir",
+ "fict-metadata",
+]
+
+[[package]]
+name = "fict-diagnostics"
+version = "0.0.0"
+
+[[package]]
+name = "fict-emit"
+version = "0.0.0"
+dependencies = [
+ "fict-diagnostics",
+ "fict-hir",
+ "fict-metadata",
+ "fict-reactivity",
+]
+
+[[package]]
+name = "fict-hir"
+version = "0.0.0"
+dependencies = [
+ "fict-diagnostics",
+]
+
+[[package]]
+name = "fict-metadata"
+version = "0.0.0"
+dependencies = [
+ "fict-diagnostics",
+ "fict-hir",
+]
+
+[[package]]
+name = "fict-reactivity"
+version = "0.0.0"
+dependencies = [
+ "fict-diagnostics",
+ "fict-hir",
 ]
 
 [[package]]

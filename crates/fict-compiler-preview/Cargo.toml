@@ -1,5 +1,5 @@
 [package]
-name = "fict-compiler-oxc"
+name = "fict-compiler-preview"
 version = "0.0.0"
 edition.workspace = true
 license.workspace = true
@@ -12,4 +12,3 @@ fict-diagnostics.workspace = true
 fict-emit.workspace = true
 fict-hir.workspace = true
 fict-metadata.workspace = true
-oxc.workspace = true
