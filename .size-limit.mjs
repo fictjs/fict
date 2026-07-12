@@ -12,14 +12,15 @@ export default [
     name: 'Fict (ESM)',
     path: 'packages/fict/dist/index.js',
     // Approved production baseline after cross-module correctness, resumability,
-    // hydration repair, and full HTML/SVG/MathML namespace semantics.
-    limit: '20.5 KB',
+    // hydration repair, full namespace semantics, selector ownership, and
+    // reflection-safe deep-store tracking.
+    limit: '20.7 KB',
     modifyEsbuildConfig: production,
   },
   {
     name: 'Fict (CJS)',
     path: 'packages/fict/dist/index.cjs',
-    limit: '22.4 KB',
+    limit: '22.6 KB',
     modifyEsbuildConfig: production,
   },
 ]
