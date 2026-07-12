@@ -1,6 +1,7 @@
 {
   "name": "@fictjs/playground",
   "version": "0.9.0",
+  "private": true,
   "description": "Full-featured local playground for Fict compiler/runtime workflows",
   "type": "module",
   "main": "dist/index.js",
@@ -24,10 +25,6 @@
     "src",
     "README.md"
   ],
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
-  },
   "repository": {
     "type": "git",
     "url": "https://github.com/fictjs/fict.git",

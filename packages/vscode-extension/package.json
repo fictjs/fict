@@ -1,11 +1,8 @@
 {
   "name": "@fictjs/vscode-extension",
   "version": "0.21.1",
+  "private": true,
   "description": "VSCode extension for Fict",
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
-  },
   "repository": {
     "type": "git",
     "url": "https://github.com/fictjs/fict.git",

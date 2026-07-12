@@ -1,0 +1,15 @@
+{
+  "registry": "https://registry.npmjs.org",
+  "packages": [
+    "@fictjs/babel-preset",
+    "@fictjs/compiler",
+    "@fictjs/eslint-plugin",
+    "@fictjs/router",
+    "@fictjs/runtime",
+    "@fictjs/ssr",
+    "@fictjs/testing-library",
+    "@fictjs/vite-plugin",
+    "@fictjs/webpack-plugin",
+    "fict"
+  ]
+}

@@ -50,6 +50,7 @@ describe('release strict guarantee scope', () => {
     expect(releaseVerify).not.toContain('FICT_STRICT_GUARANTEE')
     expect(releaseVerify.split(' && ')).toEqual(
       expect.arrayContaining([
+        'pnpm test:release-publish-plan',
         'pnpm test:strict-guarantee',
         'pnpm build:strict-guarantee',
         'pnpm test:bundlers:strict-guarantee',
@@ -63,9 +64,13 @@ describe('release strict guarantee scope', () => {
   it('keeps workflow-level release and CI scope aligned with root scripts', () => {
     const releaseWorkflow = readProjectFile('.github/workflows/release.yml')
     expect(releaseWorkflow).toContain('pnpm release:verify')
+    expect(releaseWorkflow).toContain('NPM_VERSION: 11.18.0')
+    expect(releaseWorkflow.match(/pnpm release:plan/g)).toHaveLength(2)
+    expect(releaseWorkflow).toContain('--require-existing-packages')
     expect(releaseWorkflow).not.toContain('FICT_STRICT_GUARANTEE')
 
     const ciWorkflow = readProjectFile('.github/workflows/ci.yml')
+    expect(ciWorkflow).toContain('pnpm test:release-publish-plan')
     const strictJob = workflowJob(ciWorkflow, 'strict-guarantee')
     expect(strictJob).toContain('pnpm test:strict-guarantee')
     expect(strictJob).toContain('pnpm build:strict-guarantee')

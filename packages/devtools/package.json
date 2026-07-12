@@ -1,11 +1,8 @@
 {
   "name": "@fictjs/devtools",
   "version": "0.3.0",
+  "private": true,
   "description": "Developer tools for Fict applications",
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/fictjs/fict.git",

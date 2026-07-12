@@ -39,6 +39,10 @@ To release packages to NPM:
 # BENCH_OUTPUT captures the raw optimizer benchmark JSON used as release evidence.
 export BENCH_OUTPUT="${TMPDIR:-/tmp}/fict-optimizer-bench.json"
 pnpm release:verify
+
+# Compare every allowlisted package version with the public registry. This must
+# report no `new-package` entries before a tag is pushed.
+pnpm release:plan --tag v0.27.0 --require-existing-packages
 ```
 
 Do not export `FICT_STRICT_GUARANTEE` around `release:verify`. The root release
@@ -92,6 +96,19 @@ pnpm changeset version
 NPM publishing uses Trusted Publishing through GitHub Actions OIDC. Do not add a
 long-lived NPM publishing token to the workflow.
 
+The release workflow pins npm `11.18.0`. Changesets 2.x reads
+`npm info --json` as an object, while npm 12 returns an array and causes already
+published versions to be misclassified as pending. Do not upgrade the release
+npm major until the publish-plan regression test and Changesets both support the
+new output contract.
+
+The authoritative public-package allowlist is
+`.github/npm-publish-packages.json`. Every workspace package outside that list
+must set `private: true` and must not define `publishConfig`. The release plan
+queries the registry directly, records `already-published`, `pending`, and
+`new-package` states, and runs both before and immediately after the full release
+gate.
+
 Before tagging a release, make sure each publishable NPM package is configured
 on npmjs.com with:
 
@@ -105,3 +122,39 @@ on npmjs.com with:
 The Release workflow grants `id-token: write` so npm can exchange the GitHub OIDC
 identity for short-lived publish credentials. Package provenance is enabled by
 the workflow and each package's `publishConfig.provenance`.
+
+### First publication of a new package
+
+Trusted publishing cannot create a package: npm requires the package to exist
+before a trusted publisher can be configured. Bootstrap a new allowlisted
+package once with an authenticated maintainer account before pushing the release
+tag:
+
+```bash
+# npm trust requires npm 11.15 or newer; use the same pinned toolchain as CI.
+npm install -g npm@11.18.0
+
+# Build the package and all local workspace dependencies.
+pnpm --filter @fictjs/webpack-plugin... build
+
+# Run from the package directory while logged in to npm with 2FA. The one-time
+# bootstrap cannot carry CI provenance, so override the manifest setting only
+# for this first publish.
+cd packages/webpack-plugin
+npm publish --access public --provenance=false
+
+# After the package exists, configure the normal tokenless release workflow.
+npm trust github @fictjs/webpack-plugin \
+  --file release.yml \
+  --repo fictjs/fict \
+  --allow-publish
+```
+
+Return to the repository root and rerun:
+
+```bash
+pnpm release:plan --require-existing-packages
+```
+
+Do not push or move the release tag until the new package is no longer reported
+as `new-package` and its trusted publisher is configured.

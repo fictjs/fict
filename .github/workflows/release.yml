@@ -10,7 +10,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NPM_VERSION: 12.0.1
+  # Changesets 2.x expects the npm 11 `npm info --json` object shape.
+  NPM_VERSION: 11.18.0
 
 jobs:
   release:
@@ -46,6 +47,22 @@ jobs:
 
       - run: pnpm install
 
+      - name: Verify NPM release plan
+        run: |
+          pnpm release:plan \
+            --tag "${GITHUB_REF_NAME}" \
+            --require-existing-packages \
+            --output "${RUNNER_TEMP}/npm-publish-plan.json"
+
+      - name: Upload NPM release plan
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-publish-plan-${{ github.ref_name }}
+          path: ${{ runner.temp }}/npm-publish-plan.json
+          if-no-files-found: warn
+          retention-days: 90
+
       - name: Install Playwright browser for release e2e
         run: pnpm exec playwright install --with-deps chromium
 
@@ -60,6 +77,9 @@ jobs:
           path: ${{ runner.temp }}/optimizer-bench.json
           if-no-files-found: warn
           retention-days: 90
+
+      - name: Recheck NPM release plan
+        run: pnpm release:plan --tag "${GITHUB_REF_NAME}" --require-existing-packages
 
       - name: Publish to NPM
         run: pnpm exec changeset publish
