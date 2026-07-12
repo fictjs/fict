@@ -332,6 +332,25 @@ describe('matchRoutes', () => {
     expect(matches2?.[0]?.params.id).toBe('123')
   })
 
+  it('prefers a static route over a nested dynamic branch with the same pathname depth', () => {
+    const routes = [
+      compileRoute({
+        path: '/users',
+        component: () => null,
+        children: [{ path: ':id', component: () => null }],
+      }),
+      compileRoute({ path: '/users/new', component: () => null }),
+    ]
+    const branches = createBranches(routes)
+
+    expect(branches.map(branch => branch.score)).toEqual([6, 5])
+    const matches = matchRoutes(branches, '/users/new')
+
+    expect(matches).toHaveLength(1)
+    expect(matches?.[0]?.pattern).toBe('/users/new')
+    expect(matches?.[0]?.params).toEqual({})
+  })
+
   it('should match nested branches against the complete pathname', () => {
     const routes = [
       compileRoute({

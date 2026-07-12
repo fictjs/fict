@@ -434,7 +434,11 @@ export function createBranches(routes: CompiledRoute[]): RouteBranch[] {
       }
     } else {
       // Leaf route - create a branch
-      const score = currentRoutes.reduce((sum, r) => sum + r.score, 0)
+      // Compiled child patterns already include every ancestor segment, so the
+      // leaf score represents the complete branch. Summing every cumulative
+      // score would count parent segments repeatedly and let nested dynamic
+      // routes outrank equally deep static routes.
+      const score = route.score
 
       const branchMatcher = (pathname: string): RouteMatch[] | null => {
         const matches: RouteMatch[] = []
