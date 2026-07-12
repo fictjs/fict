@@ -3641,6 +3641,35 @@ describe('Router integration (MemoryRouter)', () => {
     }
   })
 
+  it('navigates to the final URL after fetch follows a 302 or 303 response', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/form'] })
+    const response = new Response(null, { status: 200 })
+    Object.defineProperties(response, {
+      redirected: { value: true },
+      url: { value: `${window.location.origin}/submitted?from=redirect#complete` },
+    })
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(response)
+
+    try {
+      render(() => (
+        <RouterProvider history={history} routes={[]}>
+          <Form action="/submit" method="post" data-testid="followed-redirect-form" />
+        </RouterProvider>
+      ))
+
+      const form = screen.getByTestId('followed-redirect-form') as HTMLFormElement
+      form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+      await vi.waitFor(() => expect(history.location.pathname).toBe('/submitted'))
+      expect(history.location.search).toBe('?from=redirect')
+      expect(history.location.hash).toBe('#complete')
+      expect(response.headers.get('Location')).toBeNull()
+    } finally {
+      fetchMock.mockRestore()
+      history.destroy?.()
+    }
+  })
+
   it('leaves current external GET actions to native form submission', async () => {
     reactiveExternalFormSubmit.mockClear()
     const history = createMemoryHistory({ initialEntries: ['/form'] })

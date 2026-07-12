@@ -676,6 +676,58 @@ function serializeGetFormData(formData: FormData): string {
   return search ? `?${search}` : ''
 }
 
+interface FormRedirectDestination {
+  href: string
+  external: boolean
+}
+
+function getFormRedirectDestination(response: Response): FormRedirectDestination | undefined {
+  const headerRedirect = response.headers.get('X-Redirect') || response.headers.get('Location')
+  const followedRedirect = !headerRedirect && response.redirected ? response.url : ''
+  const redirect = headerRedirect || followedRedirect
+  if (!redirect) return undefined
+
+  if (typeof window === 'undefined') {
+    return { href: redirect, external: false }
+  }
+
+  try {
+    const target = new URL(redirect, window.location.href)
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') return undefined
+    if (target.origin !== window.location.origin) {
+      return { href: target.href, external: true }
+    }
+
+    // A followed redirect exposes an absolute final response URL. Feed only
+    // its route portion to the SPA router; absolute header redirects are
+    // normalized for the same reason. Preserve relative custom headers.
+    const isAbsolute = /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(redirect) || redirect.startsWith('//')
+    return {
+      href:
+        followedRedirect || isAbsolute ? target.pathname + target.search + target.hash : redirect,
+      external: false,
+    }
+  } catch {
+    return { href: redirect, external: false }
+  }
+}
+
+function followFormRedirect(
+  response: Response,
+  router: RouterContextValue,
+  options: { replace: boolean; scroll: boolean | undefined },
+): void {
+  const destination = getFormRedirectDestination(response)
+  if (!destination) return
+
+  if (destination.external && typeof window !== 'undefined') {
+    window.location.assign(destination.href)
+    return
+  }
+
+  router.navigate(destination.href, options)
+}
+
 /**
  * Form component for action submissions
  *
@@ -919,10 +971,8 @@ export function Form(props: FormProps): FictNode {
       )
       if (!options.submissionLease.isCurrent()) return { data, response: null }
       const response = data instanceof Response ? data : null
-      const redirectUrl =
-        response?.headers.get('X-Redirect') || response?.headers.get('Location') || undefined
-      if (options.navigate && redirectUrl) {
-        options.router.navigate(redirectUrl, {
+      if (options.navigate && response) {
+        followFormRedirect(response, options.router, {
           replace: options.replace,
           scroll: options.scroll,
         })
@@ -1011,11 +1061,10 @@ export function Form(props: FormProps): FictNode {
         return { data, response: completedResponse }
       }
 
-      // If navigate is enabled and response includes a redirect location
-      const redirectUrl =
-        completedResponse.headers.get('X-Redirect') || completedResponse.headers.get('Location')
-      if (options.navigate && redirectUrl) {
-        options.router.navigate(redirectUrl, {
+      // Fetch follows HTTP redirects by default. Handle either an explicit
+      // redirect header or the final URL exposed by a followed 302/303.
+      if (options.navigate) {
+        followFormRedirect(completedResponse, options.router, {
           replace: options.replace,
           scroll: options.scroll,
         })
