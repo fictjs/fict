@@ -54,6 +54,52 @@ describe('scroll position storage', () => {
 })
 
 describe('createScrollRestoration', () => {
+  it('leaves native restoration enabled when custom restoration is disabled', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(history, 'scrollRestoration')
+    Object.defineProperty(history, 'scrollRestoration', {
+      configurable: true,
+      writable: true,
+      value: 'auto',
+    })
+
+    try {
+      const manager = createScrollRestoration({ enabled: false })
+
+      expect(history.scrollRestoration).toBe('auto')
+      manager.reset()
+      expect(history.scrollRestoration).toBe('auto')
+    } finally {
+      if (descriptor) {
+        Object.defineProperty(history, 'scrollRestoration', descriptor)
+      } else {
+        Reflect.deleteProperty(history, 'scrollRestoration')
+      }
+    }
+  })
+
+  it('restores the preceding native setting when an enabled manager resets', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(history, 'scrollRestoration')
+    Object.defineProperty(history, 'scrollRestoration', {
+      configurable: true,
+      writable: true,
+      value: 'auto',
+    })
+
+    try {
+      const manager = createScrollRestoration()
+
+      expect(history.scrollRestoration).toBe('manual')
+      manager.reset()
+      expect(history.scrollRestoration).toBe('auto')
+    } finally {
+      if (descriptor) {
+        Object.defineProperty(history, 'scrollRestoration', descriptor)
+      } else {
+        Reflect.deleteProperty(history, 'scrollRestoration')
+      }
+    }
+  })
+
   it('should create a scroll restoration manager with expected methods', () => {
     const manager = createScrollRestoration()
 

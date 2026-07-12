@@ -151,10 +151,19 @@ const defaultOptions: Required<ScrollRestorationOptions> = {
  */
 export function createScrollRestoration(options: ScrollRestorationOptions = {}) {
   const config = { ...defaultOptions, ...options }
+  let restoreNativeScrollRestoration: (() => void) | undefined
 
-  // Disable browser's native scroll restoration
-  if (isBrowser() && 'scrollRestoration' in history) {
+  // Take over only while custom restoration is enabled. Preserve the value a
+  // host application configured before the router manager was created.
+  if (config.enabled && isBrowser() && 'scrollRestoration' in history) {
+    const previous = history.scrollRestoration
     history.scrollRestoration = 'manual'
+    let ownsSetting = true
+    restoreNativeScrollRestoration = () => {
+      if (!ownsSetting) return
+      ownsSetting = false
+      history.scrollRestoration = previous
+    }
   }
 
   /**
@@ -210,9 +219,7 @@ export function createScrollRestoration(options: ScrollRestorationOptions = {}) 
    * Reset scroll restoration to browser defaults
    */
   function reset(): void {
-    if (isBrowser() && 'scrollRestoration' in history) {
-      history.scrollRestoration = 'auto'
-    }
+    restoreNativeScrollRestoration?.()
     clearAllScrollPositions()
   }
 
@@ -246,5 +253,6 @@ export function getScrollRestoration(): ReturnType<typeof createScrollRestoratio
  * Configure the default scroll restoration
  */
 export function configureScrollRestoration(options: ScrollRestorationOptions): void {
+  defaultScrollRestoration?.reset()
   defaultScrollRestoration = createScrollRestoration(options)
 }
