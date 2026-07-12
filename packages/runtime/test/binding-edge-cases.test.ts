@@ -858,6 +858,18 @@ describe('Binding Edge Cases', () => {
       expect(select.selectedIndex).toBe(1)
     })
 
+    it('coerces object select values only once like a native DOMString assignment', () => {
+      const select = document.createElement('select')
+      select.innerHTML =
+        '<option value="first">First</option><option value="second">Second</option>'
+      const toString = vi.fn(() => 'first')
+
+      setProp(select, 'value', { toString })
+
+      expect(toString).toHaveBeenCalledTimes(1)
+      expect(select.selectedIndex).toBe(0)
+    })
+
     it('repairs a duplicate select value when the cached text is unchanged', async () => {
       const select = document.createElement('select')
       const trigger = createSignal(0)
