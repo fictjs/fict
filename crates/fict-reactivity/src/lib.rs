@@ -6,6 +6,7 @@ mod alias;
 mod cfg;
 mod cycles;
 mod effects;
+mod regions;
 mod scopes;
 mod shapes;
 mod ssa;
@@ -23,6 +24,10 @@ pub use effects::{
     BarrierFact, BarrierKind, CallbackDisposition, CallbackFact, DependencyAnalysis,
     DependencyBase, DependencyPath, DependencySegment, DependencyStats, EscapeFact, EscapeKind,
     InstructionLocation, ReadFact, WriteFact, analyze_dependencies, verify_dependencies,
+};
+pub use regions::{
+    ReactiveRegion, RegionAnalysis, RegionInstructionRange, RegionStats, analyze_regions,
+    materialize_regions, verify_regions,
 };
 pub use scopes::{
     ReactiveBindingFact, ReactiveBindingKind, ReactiveBlockFact, ReactiveScopeAnalysis,
