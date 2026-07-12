@@ -3,6 +3,9 @@
 - [Fict Rust Compiler Architecture](rust-compiler.md) - Stable ownership,
   dependency, compatibility, and rollout boundaries for the OXC-native Rust
   compiler migration.
+- [OXC Compiler Feasibility Matrix](oxc-feasibility.md) - Executable M0
+  findings for namespaces, CTS, decorators, comments, source maps, and
+  CommonJS syntax.
 - [Security Boundaries and 1.0 Review](security-boundaries.md) - Threat model,
   findings, non-goals, and executable evidence for HTML, snapshots, CSP, Proxy
   behavior, and SSR isolation.
