@@ -308,8 +308,8 @@ By default SSR does not write `window`, `document`, `Node`, or related DOM const
 `globalThis`. This keeps concurrent renders from racing over process-global DOM state. Components
 should use Fict's render-provided document/ownerDocument paths; set `exposeGlobals: true` only for
 legacy code that still reads DOM globals during server render. That compatibility mode is restored
-on `dispose()`. Nested or overlapping compatibility renders are rejected before they can replace
-the active render's globals.
+on `dispose()`. Default renders may overlap each other, but a compatibility render is exclusive
+with every other SSR render so no request can observe another request's process-global DOM.
 
 ### renderToStringAsync
 

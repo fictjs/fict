@@ -16,7 +16,7 @@ import {
 } from '@fictjs/runtime/internal'
 import { parseHTML } from 'linkedom'
 
-import { installGlobals, installManifest } from './globals'
+import { acquireSharedGlobalTarget, installGlobals, installManifest } from './globals'
 import { serializeHtmlChildren, serializeHtmlNode, serializeHtmlNodes } from './html-serializer'
 import { createPipeBridge, createQueuedTextStream, type StreamWriter } from './stream-bridge'
 import { createStreamRuntimeCode } from './stream-runtime'
@@ -88,8 +88,8 @@ export interface RenderToStringOptions {
    * Expose DOM globals (window/document/Node/Element/etc) during render.
    * Defaults to false. Set to true only for compatibility with components
    * that still read process-global DOM objects during server rendering.
-   * Nested or overlapping exposed-global renders are rejected. A
-   * renderToDocument lease remains active until dispose().
+   * An exposed-global render is exclusive with every other SSR render. A
+   * renderToDocument reservation remains active until dispose().
    */
   exposeGlobals?: boolean
   /**
@@ -262,14 +262,16 @@ function renderToDocumentInSession(
   let dom: SSRDom
   let restoreGlobals = () => {}
   let restoreManifest = () => {}
+  let releaseRenderLease = () => {}
   let container: HTMLElement
   let teardown = () => {}
 
   try {
+    const shouldExpose = options.exposeGlobals === true
+    releaseRenderLease = shouldExpose ? () => {} : acquireSharedGlobalTarget()
     dom = resolveDom(options)
     const { document, window } = dom
 
-    const shouldExpose = options.exposeGlobals === true
     restoreGlobals = shouldExpose ? installGlobals(window, document) : () => {}
     restoreManifest = installManifest(options.manifest)
 
@@ -283,7 +285,7 @@ function renderToDocumentInSession(
   } catch (error) {
     // Clean up SSR state and globals on any error
     __fictDisableSSR()
-    cleanupRenderResources(teardown, restoreGlobals, restoreManifest, true)
+    cleanupRenderResources(teardown, restoreGlobals, restoreManifest, releaseRenderLease, true)
     throw error
   }
 
@@ -294,11 +296,12 @@ function renderToDocumentInSession(
   try {
     html = serializeOutput(dom.document, container!, options)
   } catch (error) {
-    cleanupRenderResources(teardown, restoreGlobals, restoreManifest, true)
+    cleanupRenderResources(teardown, restoreGlobals, restoreManifest, releaseRenderLease, true)
     throw error
   }
 
-  const dispose = () => cleanupRenderResources(teardown, restoreGlobals, restoreManifest, false)
+  const dispose = () =>
+    cleanupRenderResources(teardown, restoreGlobals, restoreManifest, releaseRenderLease, false)
 
   return { html, document: dom.document, window: dom.window, container: container!, dispose }
 }
@@ -557,11 +560,12 @@ function cleanupRenderResources(
   teardown: () => void,
   restoreGlobals: () => void,
   restoreManifest: () => void,
+  releaseRenderLease: () => void,
   suppressErrors: boolean,
 ): void {
   let failed = false
   let firstError: unknown
-  for (const cleanup of [teardown, restoreGlobals, restoreManifest]) {
+  for (const cleanup of [teardown, restoreGlobals, restoreManifest, releaseRenderLease]) {
     try {
       cleanup()
     } catch (error) {
@@ -635,6 +639,7 @@ function startStreamingRenderInSession(
   let dom: SSRDom | null = null
   let restoreGlobals = () => {}
   let restoreManifest = () => {}
+  let releaseRenderLease = () => {}
   let teardown = () => {}
   let container: HTMLElement | null = null
   let closed = false
@@ -801,7 +806,7 @@ function startStreamingRenderInSession(
       // Continue with owner/global cleanup even if session reset fails.
     }
     try {
-      cleanupRenderResources(teardown, restoreGlobals, restoreManifest, true)
+      cleanupRenderResources(teardown, restoreGlobals, restoreManifest, releaseRenderLease, true)
     } finally {
       releaseSession()
     }
@@ -983,9 +988,10 @@ function startStreamingRenderInSession(
     __fictSetSSRScopeIdentifierPrefix(scopeIdentifierPrefix)
     __fictSetSSRStreamHooks(hooks)
 
+    const shouldExpose = resolvedOptions.exposeGlobals === true
+    releaseRenderLease = shouldExpose ? () => {} : acquireSharedGlobalTarget()
     dom = resolveDom(resolvedOptions)
-    restoreGlobals =
-      resolvedOptions.exposeGlobals === true ? installGlobals(dom.window, dom.document) : () => {}
+    restoreGlobals = shouldExpose ? installGlobals(dom.window, dom.document) : () => {}
     restoreManifest = installManifest(resolvedOptions.manifest)
 
     container = resolveContainer(dom.document, resolvedOptions)

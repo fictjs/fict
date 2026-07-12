@@ -112,10 +112,15 @@ describe('@fictjs/ssr streaming', () => {
     expect(shell.done).toBe(false)
     expect(shell.value ? decoder.decode(shell.value) : '').toContain('active-global-shell')
 
-    const overlappingStream = renderToStream(() => 'overlap', {
+    const ordinaryOverlappingStream = renderToStream(() => 'ordinary-overlap')
+    await expect(readReadableStream(ordinaryOverlappingStream)).rejects.toThrowError(
+      /including renders that do not expose globals/,
+    )
+
+    const exposedOverlappingStream = renderToStream(() => 'exposed-overlap', {
       exposeGlobals: true,
     })
-    await expect(readReadableStream(overlappingStream)).rejects.toThrowError(
+    await expect(readReadableStream(exposedOverlappingStream)).rejects.toThrowError(
       /cannot be used by overlapping or nested renders/,
     )
 
@@ -124,6 +129,41 @@ describe('@fictjs/ssr streaming', () => {
     await expect(
       readReadableStream(renderToStream(() => 'after-cleanup', { exposeGlobals: true })),
     ).resolves.toContain('after-cleanup')
+    pending.resolve()
+  })
+
+  it('rejects compatibility-global exposure while an ordinary stream is pending', async () => {
+    const pending = createSuspenseToken()
+
+    function PendingChild(): FictNode {
+      throw pending.token
+    }
+
+    const activeStream = renderToStream(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: { type: 'span', props: { children: 'ordinary-shell' } },
+          children: { type: PendingChild, props: {} },
+        },
+      }),
+      { mode: 'shell' },
+    )
+    const activeReader = activeStream.getReader()
+    const shell = await activeReader.read()
+    expect(shell.value ? decoder.decode(shell.value) : '').toContain('ordinary-shell')
+
+    const exposedOverlappingStream = renderToStream(() => 'exposed-overlap', {
+      exposeGlobals: true,
+    })
+    await expect(readReadableStream(exposedOverlappingStream)).rejects.toThrowError(
+      /including renders that do not expose globals/,
+    )
+
+    await activeReader.cancel(new Error('release ordinary render'))
+    await expect(
+      readReadableStream(renderToStream(() => 'exposed-after-cleanup', { exposeGlobals: true })),
+    ).resolves.toContain('exposed-after-cleanup')
     pending.resolve()
   })
 

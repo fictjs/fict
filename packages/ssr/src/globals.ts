@@ -8,7 +8,67 @@ interface GlobalSnapshot {
 }
 
 const activeGlobalTargets = new WeakSet<object>()
+const activeSharedGlobalTargets = new WeakMap<
+  object,
+  { state: SharedGlobalTargetLease; count: number }
+>()
 const GLOBALS_LEASE = Symbol.for('@fictjs/ssr.exposeGlobalsLease')
+const SHARED_RENDER_LEASE = Symbol.for('@fictjs/ssr.sharedRenderLease')
+
+interface SharedGlobalTargetLease {
+  count: number
+  [SHARED_RENDER_LEASE]: true
+}
+
+/**
+ * Reserve the process-global target for an SSR render that does not expose DOM
+ * globals. Shared reservations may overlap each other, but they prevent a
+ * compatibility-global render from starting until every owner has cleaned up.
+ */
+export function acquireSharedGlobalTarget(target: object = globalThis): () => void {
+  const local = activeSharedGlobalTargets.get(target)
+  if (local) {
+    const descriptor = Object.getOwnPropertyDescriptor(target, GLOBALS_LEASE)
+    if (!descriptor || !('value' in descriptor) || descriptor.value !== local.state) {
+      throw poisonedSharedLeaseError()
+    }
+    setSharedLeaseCount(local.state, readSharedLeaseCount(local.state) + 1)
+    local.count += 1
+    return createSharedLeaseRelease(target, local)
+  }
+
+  if (activeGlobalTargets.has(target)) throw renderOverlapError()
+
+  const descriptor = Object.getOwnPropertyDescriptor(target, GLOBALS_LEASE)
+  let state: SharedGlobalTargetLease
+  if (descriptor === undefined) {
+    state = createSharedLeaseState()
+    try {
+      Object.defineProperty(target, GLOBALS_LEASE, {
+        configurable: true,
+        enumerable: false,
+        value: state,
+        writable: false,
+      })
+    } catch (error) {
+      const failure = new Error(
+        `[fict/ssr] Failed to acquire the shared SSR render lease: ${formatError(error)}`,
+      )
+      ;(failure as Error & { cause?: unknown }).cause = error
+      throw failure
+    }
+  } else {
+    if (!('value' in descriptor) || !isSharedLeaseState(descriptor.value)) {
+      throw renderOverlapError()
+    }
+    state = descriptor.value
+    setSharedLeaseCount(state, readSharedLeaseCount(state) + 1)
+  }
+
+  const localLease = { state, count: 1 }
+  activeSharedGlobalTargets.set(target, localLease)
+  return createSharedLeaseRelease(target, localLease)
+}
 
 export function installGlobals(
   window: Window,
@@ -178,12 +238,10 @@ function restoreGlobals(target: object, snapshot: GlobalSnapshot[]): void {
 function acquireGlobalTarget(target: object): object {
   if (
     activeGlobalTargets.has(target) ||
+    activeSharedGlobalTargets.has(target) ||
     Object.getOwnPropertyDescriptor(target, GLOBALS_LEASE) !== undefined
   ) {
-    throw new Error(
-      '[fict/ssr] `exposeGlobals: true` cannot be used by overlapping or nested renders. ' +
-        'Keep DOM access render-local, or wait for the active compatibility render to dispose.',
-    )
+    throw renderOverlapError()
   }
 
   const lease = {}
@@ -219,6 +277,102 @@ function releaseGlobalTarget(target: object, lease: object): void {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function createSharedLeaseState(): SharedGlobalTargetLease {
+  const state = {} as SharedGlobalTargetLease
+  Object.defineProperties(state, {
+    [SHARED_RENDER_LEASE]: {
+      configurable: false,
+      enumerable: false,
+      value: true,
+      writable: false,
+    },
+    count: {
+      configurable: false,
+      enumerable: false,
+      value: 1,
+      writable: true,
+    },
+  })
+  return state
+}
+
+function isSharedLeaseState(value: unknown): value is SharedGlobalTargetLease {
+  if (typeof value !== 'object' || value === null) return false
+  const marker = Object.getOwnPropertyDescriptor(value, SHARED_RENDER_LEASE)
+  const count = Object.getOwnPropertyDescriptor(value, 'count')
+  return (
+    marker !== undefined &&
+    'value' in marker &&
+    marker.value === true &&
+    count !== undefined &&
+    'value' in count &&
+    Number.isSafeInteger(count.value) &&
+    count.value > 0 &&
+    count.writable === true
+  )
+}
+
+function readSharedLeaseCount(state: SharedGlobalTargetLease): number {
+  const descriptor = Object.getOwnPropertyDescriptor(state, 'count')
+  if (
+    !descriptor ||
+    !('value' in descriptor) ||
+    !Number.isSafeInteger(descriptor.value) ||
+    descriptor.value <= 0 ||
+    descriptor.writable !== true
+  ) {
+    throw poisonedSharedLeaseError()
+  }
+  return descriptor.value as number
+}
+
+function setSharedLeaseCount(state: SharedGlobalTargetLease, count: number): void {
+  try {
+    Object.defineProperty(state, 'count', { value: count })
+  } catch (error) {
+    const failure = poisonedSharedLeaseError()
+    ;(failure as Error & { cause?: unknown }).cause = error
+    throw failure
+  }
+}
+
+function createSharedLeaseRelease(
+  target: object,
+  local: { state: SharedGlobalTargetLease; count: number },
+): () => void {
+  let active = true
+  return () => {
+    if (!active) return
+    const descriptor = Object.getOwnPropertyDescriptor(target, GLOBALS_LEASE)
+    if (!descriptor || !('value' in descriptor) || descriptor.value !== local.state) {
+      throw poisonedSharedLeaseError()
+    }
+
+    const count = readSharedLeaseCount(local.state)
+    if (count > 1) {
+      setSharedLeaseCount(local.state, count - 1)
+    } else if (!Reflect.deleteProperty(target, GLOBALS_LEASE)) {
+      throw new Error('[fict/ssr] Could not release the shared SSR render lease.')
+    }
+
+    local.count -= 1
+    if (local.count === 0) activeSharedGlobalTargets.delete(target)
+    active = false
+  }
+}
+
+function renderOverlapError(): Error {
+  return new Error(
+    '[fict/ssr] `exposeGlobals: true` cannot be used by overlapping or nested renders, ' +
+      'including renders that do not expose globals. Keep DOM access render-local, or wait ' +
+      'for every active render to clean up.',
+  )
+}
+
+function poisonedSharedLeaseError(): Error {
+  return new Error('[fict/ssr] The shared SSR render lease changed before cleanup.')
 }
 
 function readTextFileFromPath(path: string): string {

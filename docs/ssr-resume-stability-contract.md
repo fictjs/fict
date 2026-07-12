@@ -163,7 +163,7 @@ Operational behavior:
 ## Streaming & Hydration Diagnostics
 
 1. SSR tracking state, stream hooks, and boundary scope registries are isolated per render.
-2. SSR does not expose DOM globals by default. `exposeGlobals: true` is a legacy compatibility lease for code that reads process-global `document/window`; nested or overlapping leases are rejected, and installation restores exact descriptors or rolls back before rendering continues.
+2. SSR does not expose DOM globals by default. Ordinary renders use shared process reservations; `exposeGlobals: true` is a legacy exclusive lease for code that reads process-global `document/window`. Mixed or compatibility-mode overlap is rejected, and installation restores exact descriptors or rolls back before rendering continues.
 3. Web Streams and Node pipeable streams must respect downstream pull/drain backpressure before continuing queued chunks.
 4. Hydration mismatches can be observed with `onHydrationIssue` and include node-missing, node-type, and text mismatch codes.
 5. `strictHydration: true` turns mismatches into thrown errors after reporting the issue, for tests and deployments that prefer fail-fast hydration.

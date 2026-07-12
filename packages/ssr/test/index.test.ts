@@ -485,6 +485,15 @@ describe('@fictjs/ssr', () => {
     })
 
     try {
+      let defaultRenderCalled = false
+      expect(() =>
+        renderToString(() => {
+          defaultRenderCalled = true
+          return globalThis.document?.body?.textContent ?? 'no-global-document'
+        }),
+      ).toThrowError(/including renders that do not expose globals/)
+      expect(defaultRenderCalled).toBe(false)
+
       expect(() =>
         renderToDocument(() => 'overlap', {
           exposeGlobals: true,
@@ -497,6 +506,33 @@ describe('@fictjs/ssr', () => {
 
     expect(() =>
       renderToString(() => 'after-dispose', {
+        exposeGlobals: true,
+        includeSnapshot: false,
+      }),
+    ).not.toThrow()
+  })
+
+  it('prevents compatibility globals from starting during an ordinary document render', () => {
+    const result = renderToDocument(() => 'ordinary-render', { includeSnapshot: false })
+
+    try {
+      let compatibilityRenderCalled = false
+      expect(() =>
+        renderToString(
+          () => {
+            compatibilityRenderCalled = true
+            return 'compatibility-overlap'
+          },
+          { exposeGlobals: true, includeSnapshot: false },
+        ),
+      ).toThrowError(/including renders that do not expose globals/)
+      expect(compatibilityRenderCalled).toBe(false)
+    } finally {
+      result.dispose()
+    }
+
+    expect(() =>
+      renderToString(() => 'compatibility-after-dispose', {
         exposeGlobals: true,
         includeSnapshot: false,
       }),

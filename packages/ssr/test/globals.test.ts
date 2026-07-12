@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { createSSRDocument } from '../src/index'
-import { installGlobals } from '../src/globals'
+import { acquireSharedGlobalTarget, installGlobals } from '../src/globals'
 
 describe('SSR compatibility DOM globals', () => {
   it('installs without invoking accessors and restores the exact descriptor', () => {
@@ -90,6 +90,25 @@ describe('SSR compatibility DOM globals', () => {
     restoreAgain()
   })
 
+  it('shares ordinary render leases and blocks global exposure until the last cleanup', () => {
+    const dom = createSSRDocument()
+    const target = {}
+    const releaseFirst = acquireSharedGlobalTarget(target)
+    const releaseSecond = acquireSharedGlobalTarget(target)
+
+    expect(() => installGlobals(dom.window, dom.document, target)).toThrowError(
+      /including renders that do not expose globals/,
+    )
+    releaseFirst()
+    expect(() => installGlobals(dom.window, dom.document, target)).toThrowError(
+      /including renders that do not expose globals/,
+    )
+
+    releaseSecond()
+    const restore = installGlobals(dom.window, dom.document, target)
+    restore()
+  })
+
   it('honors the process-wide lease marker from another module instance', () => {
     const dom = createSSRDocument()
     const target = {}
@@ -101,7 +120,53 @@ describe('SSR compatibility DOM globals', () => {
     expect(() => installGlobals(dom.window, dom.document, target)).toThrowError(
       /cannot be used by overlapping or nested renders/,
     )
+    expect(() => acquireSharedGlobalTarget(target)).toThrowError(
+      /cannot be used by overlapping or nested renders/,
+    )
     expect(Object.getOwnPropertyNames(target)).toEqual([])
+  })
+
+  it('joins an ordinary-render reservation created by another module instance', () => {
+    const dom = createSSRDocument()
+    const target = {}
+    const leaseKey = Symbol.for('@fictjs/ssr.exposeGlobalsLease')
+    const sharedKey = Symbol.for('@fictjs/ssr.sharedRenderLease')
+    const foreignState = {}
+    Object.defineProperties(foreignState, {
+      [sharedKey]: { value: true },
+      count: { value: 1, writable: true },
+    })
+    Object.defineProperty(target, leaseKey, {
+      configurable: true,
+      value: foreignState,
+    })
+
+    const release = acquireSharedGlobalTarget(target)
+    expect(Object.getOwnPropertyDescriptor(foreignState, 'count')?.value).toBe(2)
+    expect(() => installGlobals(dom.window, dom.document, target)).toThrowError(
+      /including renders that do not expose globals/,
+    )
+
+    release()
+    expect(Object.getOwnPropertyDescriptor(foreignState, 'count')?.value).toBe(1)
+    expect(Reflect.deleteProperty(target, leaseKey)).toBe(true)
+
+    const restore = installGlobals(dom.window, dom.document, target)
+    restore()
+  })
+
+  it('keeps an ordinary-render target locked when its shared marker changes', () => {
+    const target = {}
+    const release = acquireSharedGlobalTarget(target)
+    Object.defineProperty(target, Symbol.for('@fictjs/ssr.exposeGlobalsLease'), {
+      configurable: true,
+      value: { replaced: true },
+    })
+
+    expect(release).toThrowError(/shared SSR render lease changed before cleanup/)
+    expect(() => acquireSharedGlobalTarget(target)).toThrowError(
+      /shared SSR render lease changed before cleanup/,
+    )
   })
 
   it('keeps a poisoned Proxy target locked when transactional rollback is trapped', () => {

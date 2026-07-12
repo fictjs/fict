@@ -69,7 +69,7 @@ Preview graduation still follows [PREVIEW.md](./PREVIEW.md).
      routing is claimed.
 5. Concurrency:
    - SSR scope state and stream hooks are per render.
-   - DOM globals are not exposed by default; `exposeGlobals: true` is a legacy compatibility lease whose exact descriptors are restored, and nested or overlapping leases fail closed.
+   - DOM globals are not exposed by default; ordinary renders use shared reservations, while `exposeGlobals: true` requires an exclusive compatibility lease whose exact descriptors are restored. Mixed or exposed-global overlap fails closed.
 6. Streaming:
    - Web and Node writers respect pull/drain backpressure before continuing queued chunks.
    - `pnpm examples:verify` proves the built streaming example serves shell and
@@ -98,7 +98,7 @@ Preview graduation still follows [PREVIEW.md](./PREVIEW.md).
 - `packages/ssr/test/streaming.test.ts`: streaming, CSP, Trusted Types,
   backpressure, and downstream failure.
 - `packages/ssr/test/globals.test.ts`: descriptor-safe compatibility-global
-  installation, transactional rollback, overlap rejection, and hostile Proxy
-  rollback behavior.
+  installation, transactional rollback, shared/exclusive overlap rejection,
+  and hostile Proxy rollback behavior.
 - `docs/architecture/security-boundaries.md`: threat model, security findings,
   explicit non-goals, and the complete focused verification command.
