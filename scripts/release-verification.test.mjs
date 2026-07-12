@@ -6,6 +6,7 @@ import test from 'node:test'
 import {
   buildConsumerPnpmConfig,
   buildConsumerEntries,
+  collectNonNodeImportTargets,
   collectExportTargets,
   findWorkspaceProtocols,
   verifyReleaseContract,
@@ -23,6 +24,9 @@ const releaseWorkflow = readFileSync(
   'utf8',
 )
 const ciWorkflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
+const ssrPackage = JSON.parse(
+  readFileSync(new URL('../packages/ssr/package.json', import.meta.url), 'utf8'),
+)
 
 test('release verification retains tarball, SSR matrix, browser E2E, and clean-checkout gates', () => {
   assert.deepEqual(verifyReleaseContract(rootPackage, releaseWorkflow), [])
@@ -84,6 +88,21 @@ test('consumer plan covers explicit ESM, CJS, and condition-specific declaration
       cjsTypes: ['@fictjs/example'],
     },
   )
+})
+
+test('tarball consumers exercise SSR imports shadowed by Node export conditions', () => {
+  assert.deepEqual(collectNonNodeImportTargets([ssrPackage]), [
+    {
+      packageName: '@fictjs/ssr',
+      subpath: '.',
+      target: 'dist/index.js',
+    },
+    {
+      packageName: '@fictjs/ssr',
+      subpath: './experimental',
+      target: 'dist/experimental.js',
+    },
+  ])
 })
 
 test('consumer overrides force transitive workspace dependencies to local tarballs', () => {

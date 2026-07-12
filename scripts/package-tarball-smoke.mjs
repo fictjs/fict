@@ -12,7 +12,7 @@ import {
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const scriptPath = fileURLToPath(import.meta.url)
 const repoRoot = path.resolve(path.dirname(scriptPath), '..')
@@ -159,6 +159,41 @@ export function buildConsumerEntries(manifests) {
   return entries
 }
 
+function runtimeTarget(value) {
+  if (typeof value === 'string') {
+    return value.startsWith('./') && !value.includes('*') ? value.slice(2) : null
+  }
+  if (Array.isArray(value)) {
+    for (const candidate of value) {
+      const target = runtimeTarget(candidate)
+      if (target) return target
+    }
+    return null
+  }
+  if (!value || typeof value !== 'object' || !('default' in value)) return null
+  return runtimeTarget(value.default)
+}
+
+export function collectNonNodeImportTargets(manifests) {
+  const entries = []
+  for (const manifest of manifests) {
+    for (const [subpath, definition] of Object.entries(manifest.exports ?? {})) {
+      if (!definition || typeof definition !== 'object' || Array.isArray(definition)) continue
+      const genericTarget = runtimeTarget(definition.import)
+      const nodeTarget = runtimeTarget(
+        definition.node && typeof definition.node === 'object'
+          ? definition.node.import
+          : definition.node,
+      )
+      if (!genericTarget || !nodeTarget || genericTarget === nodeTarget) continue
+      entries.push({ packageName: manifest.name, subpath, target: genericTarget })
+    }
+  }
+  return entries.sort((left, right) =>
+    `${left.packageName}:${left.subpath}`.localeCompare(`${right.packageName}:${right.subpath}`),
+  )
+}
+
 function archiveManifest(tarballPath) {
   const source = run('tar', ['-xOf', tarballPath, 'package/package.json'], { capture: true })
   return JSON.parse(source)
@@ -231,6 +266,22 @@ function writeTypeConsumer(filePath, mode, specifiers) {
   )
   const values = specifiers.map((_, index) => `value${index}`).join(', ')
   writeFileSync(filePath, `${imports.join('\n')}\nvoid [${values}]\n`)
+}
+
+function installedTargetUrl(consumerDir, entry) {
+  const packageDir = path.resolve(consumerDir, 'node_modules', ...entry.packageName.split('/'))
+  const targetPath = path.resolve(packageDir, entry.target)
+  const relativeTarget = path.relative(packageDir, targetPath)
+  if (
+    relativeTarget === '..' ||
+    relativeTarget.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativeTarget)
+  ) {
+    throw new Error(
+      `${entry.packageName}${entry.subpath === '.' ? '' : entry.subpath.slice(1)} resolves outside its installed package: ${entry.target}`,
+    )
+  }
+  return pathToFileURL(targetPath).href
 }
 
 function consumerDependencies(rootDir, sourcePackages, packedPackages, tarballPaths, resolutions) {
@@ -382,13 +433,21 @@ async function main() {
     const cjsPath = path.join(consumerDir, 'consumer.cjs')
     const esmTypesPath = path.join(consumerDir, 'consumer.mts')
     const cjsTypesPath = path.join(consumerDir, 'consumer.cts')
+    const nonNodeEsmPath = path.join(consumerDir, 'consumer-non-node.mjs')
+    const nonNodeImports = collectNonNodeImportTargets(packedPackages)
     writeRuntimeConsumer(esmPath, 'esm', entries.esm)
     writeRuntimeConsumer(cjsPath, 'cjs', entries.cjs)
+    writeRuntimeConsumer(
+      nonNodeEsmPath,
+      'esm',
+      nonNodeImports.map(entry => installedTargetUrl(consumerDir, entry)),
+    )
     writeTypeConsumer(esmTypesPath, 'esm', entries.esmTypes)
     writeTypeConsumer(cjsTypesPath, 'cjs', entries.cjsTypes)
 
     run(process.execPath, [esmPath], { cwd: consumerDir })
     run(process.execPath, [cjsPath], { cwd: consumerDir })
+    if (nonNodeImports.length > 0) run(process.execPath, [nonNodeEsmPath], { cwd: consumerDir })
     const typeScriptBin = path.join(
       consumerDir,
       'node_modules',
@@ -415,7 +474,7 @@ async function main() {
     )
 
     console.log(
-      `[package-tarball-smoke] Verified ${packedPackages.length} package tarballs across ESM, CJS, and TypeScript consumers.`,
+      `[package-tarball-smoke] Verified ${packedPackages.length} package tarballs across Node ESM, ${nonNodeImports.length} generic ESM targets shadowed by node conditions, CJS, and TypeScript consumers.`,
     )
   } finally {
     rmSync(tempRoot, { recursive: true, force: true })
