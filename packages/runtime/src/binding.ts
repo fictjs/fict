@@ -737,7 +737,7 @@ export function setProp(el: Element, key: string, value: unknown): void {
 
 function isElementPropertyCurrent(el: Element, key: string, value: unknown): boolean {
   if (key === 'value' && el.localName === 'select') {
-    const { options, matched } = resolveSelectValueAssignment(el, value)
+    const [options, matched] = resolveSelectValueAssignment(el, value)
     return options.every(option => option.selected === (option === matched))
   }
 
@@ -749,7 +749,7 @@ export function setElementProperty(el: Element, key: string, value: unknown): vo
   // every duplicate value. Apply the browser's first-match algorithm directly
   // so client and SSR output agree.
   if (key === 'value' && el.localName === 'select') {
-    const { options, matched } = resolveSelectValueAssignment(el, value)
+    const [options, matched] = resolveSelectValueAssignment(el, value)
     for (const option of options) option.selected = false
     if (matched) matched.selected = true
     return
@@ -760,20 +760,10 @@ export function setElementProperty(el: Element, key: string, value: unknown): vo
 function resolveSelectValueAssignment(
   el: Element,
   value: unknown,
-): { options: HTMLOptionElement[]; matched: HTMLOptionElement | undefined } {
-  const expected = toDOMString(value ?? '')
+): [HTMLOptionElement[], HTMLOptionElement | undefined] {
+  const expected = `${(value ?? '') as string}`
   const options = Array.from(el.querySelectorAll('option')) as HTMLOptionElement[]
-  return {
-    options,
-    matched: options.find(option => option.value === expected),
-  }
-}
-
-function toDOMString(value: unknown): string {
-  if (typeof value === 'symbol') {
-    throw new TypeError('Cannot convert a Symbol value to a string')
-  }
-  return String(value)
+  return [options, options.find(option => option.value === expected)]
 }
 
 function normalizePropertyValue(key: string, value: unknown): unknown {
