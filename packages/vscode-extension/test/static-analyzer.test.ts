@@ -24,6 +24,34 @@ export function Counter() {
 describe('static analyzer', () => {
   it('detects likely Fict source', () => {
     expect(isLikelyFictSource(SOURCE)).toBe(true)
+    expect(isLikelyFictSource("import { resource } from 'fict/plus'\nresource(() => 1)")).toBe(true)
+    expect(
+      isLikelyFictSource('/** @jsxImportSource fict */\nexport const View = () => <div />'),
+    ).toBe(true)
+  })
+
+  it.each([
+    [
+      'React',
+      `
+        import React from 'react'
+        export function App() { return <div>Hello</div> }
+      `,
+    ],
+    [
+      'Preact',
+      `
+        import { h } from 'preact'
+        export const App = () => <main>Hello</main>
+      `,
+    ],
+    ['plain JSX', 'export function App() { return <section /> }'],
+  ])('does not classify %s source as Fict based on JSX alone', (_label, source) => {
+    expect(isLikelyFictSource(source)).toBe(false)
+
+    const analysis = analyzeStaticFictSource(source, 'app.tsx', 'verbose')
+    expect(analysis.isFictFile).toBe(false)
+    expect(analysis.components).toEqual([])
   })
 
   it('produces component and trace markers', () => {

@@ -12,9 +12,10 @@ const TRACE_REGEX_ESCAPES = /[.*+?^${}()|[\]\\]/g
 const FUNCTION_DECLARATION = /\bfunction\s+([A-Za-z_$][\w$]*)\s*\(/
 const FUNCTION_EXPRESSION =
   /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?\([^)]*\)\s*=>/
-const FICT_IMPORT_RE = /from\s+['"](?:fict|fict\/slim|@fictjs\/runtime)['"]/m
+const FICT_IMPORT_RE =
+  /(?:\bfrom\s*|\bimport\s*(?:\(\s*)?|\brequire\s*\(\s*)['"](?:fict(?:\/[^'"]+)?|@fictjs\/runtime(?:\/[^'"]+)?)['"]/m
+const FICT_JSX_IMPORT_SOURCE_RE = /@jsxImportSource\s+(?:fict|@fictjs\/runtime)(?:\/[^\s*]+)?\b/m
 const MACRO_RE = /\$(?:state|effect)\s*\(/
-const JSX_RE = /<\s*[A-Za-z]/
 
 interface StaticComponentCandidate {
   name: string
@@ -42,7 +43,9 @@ export function isSupportedLanguageId(languageId: string): boolean {
 }
 
 export function isLikelyFictSource(source: string): boolean {
-  return FICT_IMPORT_RE.test(source) || MACRO_RE.test(source) || JSX_RE.test(source)
+  return (
+    FICT_IMPORT_RE.test(source) || FICT_JSX_IMPORT_SOURCE_RE.test(source) || MACRO_RE.test(source)
+  )
 }
 
 function isIdentifierName(name: string): boolean {
@@ -325,14 +328,15 @@ export function analyzeStaticFictSource(
   verbosity: 'minimal' | 'verbose',
 ): FictDocumentAnalysis {
   const lines = source.split(/\r?\n/)
-  const candidates = findComponentCandidates(lines)
+  const isFictFile = isLikelyFictSource(source)
+  const candidates = isFictFile ? findComponentCandidates(lines) : []
   const components = buildComponentsFromStatic(lines, candidates, verbosity)
 
   return {
     fileName,
     components,
     diagnostics: [],
-    isFictFile: isLikelyFictSource(source),
+    isFictFile,
     generatedAt: Date.now(),
     mode: 'static',
   }

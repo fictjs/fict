@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import { analyzeDocument, extractLocationFromCompilerMessage } from '../src/analysis/analyzerClient'
 
 const UNSUPPORTED_HIR_SOURCE = `
+import { render } from 'fict'
+
 export function App(props) {
   return <div>{...props.children}</div>
 }
