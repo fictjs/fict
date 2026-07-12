@@ -730,8 +730,8 @@ export function setProp(el: Element, key: string, value: unknown): void {
   const next = normalizePropertyValue(key, value)
   if (
     propCache[key] === value &&
-    (el as unknown as Record<string, unknown>)[key] === next &&
-    (key !== 'value' || el.localName !== 'select' || !('options' in el))
+    (key !== 'value' || el.localName !== 'select' || !('options' in el)) &&
+    (el as unknown as Record<string, unknown>)[key] === next
   ) {
     return
   }
