@@ -6,8 +6,8 @@ use fict_hir::{
     UnaryOperator, ValueId, ValueKind, verify_hir,
 };
 use fict_reactivity::{
-    ConstantPropagationOptions, analyze_constants, analyze_cse, analyze_dependencies, analyze_ssa,
-    apply_constant_folding, apply_cse_rewrites,
+    ConstantPropagationOptions, analyze_aliases, analyze_constants, analyze_cse, analyze_dce,
+    analyze_dependencies, analyze_ssa, apply_constant_folding, apply_cse_rewrites, apply_dce,
 };
 
 fn origin() -> Origin {
@@ -298,5 +298,39 @@ fn cse_reuses_pure_values_but_never_crosses_an_unknown_call_barrier() {
             argument,
             ..
         } if argument == ValueId::new(1)
+    ));
+
+    let optimized_ssa = analyze_ssa(&optimized.functions[0]).expect("rewritten SSA");
+    let optimized_dependencies =
+        analyze_dependencies(&optimized, FunctionId::new(0), &optimized_ssa)
+            .expect("rewritten dependencies");
+    let aliases = analyze_aliases(
+        &optimized,
+        FunctionId::new(0),
+        &optimized_ssa,
+        &optimized_dependencies,
+    )
+    .expect("rewritten aliases");
+    let dce = analyze_dce(
+        &optimized,
+        FunctionId::new(0),
+        &optimized_ssa,
+        &optimized_dependencies,
+        &aliases,
+    )
+    .expect("DCE");
+    assert_eq!(dce.dead_values, [ValueId::new(2), ValueId::new(4)]);
+    assert_eq!(dce.inline_candidates.len(), 1);
+    assert_eq!(dce.inline_candidates[0].value, ValueId::new(5));
+
+    let compacted =
+        apply_dce(&optimized, FunctionId::new(0), &dce).expect("verified compact DCE result");
+    assert_eq!(compacted.functions[0].values.len(), 4);
+    assert_eq!(compacted.functions[0].blocks[0].instructions.len(), 4);
+    assert!(matches!(
+        compacted.functions[0].blocks[0].terminator.kind,
+        TerminatorKind::Return {
+            value: Some(value)
+        } if value == ValueId::new(3)
     ));
 }

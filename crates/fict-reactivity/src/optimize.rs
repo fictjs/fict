@@ -5,13 +5,14 @@ use fict_diagnostics::{
 };
 use fict_hir::{
     ArrayElement, BinaryOperator, FunctionId, HirFile, HirFunction, HirInstructionKind,
-    LiteralValue, NumberLiteral, ObjectEntry, Place, PlaceBase, Projection, PropertyKey, SsaName,
-    TerminatorKind, UnaryOperator, ValueId, ValueKind, verify_hir,
+    JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName, JsxNode, LiteralValue,
+    NumberLiteral, ObjectEntry, Place, PlaceBase, Projection, PropertyKey, SsaName, TerminatorKind,
+    UnaryOperator, ValueId, ValueKind, verify_hir,
 };
 
 use crate::{
-    DependencyAnalysis, DependencyPath, InstructionLocation, SsaAnalysis, SsaDefinitionLocation,
-    SsaUseKind, SsaUseLocation, verify_ssa,
+    AliasAnalysis, DependencyAnalysis, DependencyPath, InstructionLocation, SsaAnalysis,
+    SsaDefinitionLocation, SsaUseKind, SsaUseLocation, verify_ssa,
 };
 
 /// Explicit fixed-point budget for constant propagation.
@@ -102,6 +103,56 @@ pub struct CseAnalysis {
     pub replacements: Vec<CseReplacement>,
     /// Deterministic statistics.
     pub stats: CseStats,
+}
+
+/// Pure single-use value that an emitter may inline without changing evaluation count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct InlineCandidate {
+    /// Candidate result.
+    pub value: ValueId,
+    /// Defining instruction.
+    pub definition: InstructionLocation,
+    /// Sole explicit use.
+    pub use_location: InstructionLocation,
+}
+
+/// Trivial structural Phi replacement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TrivialPhi {
+    /// Redundant Phi target.
+    pub target: SsaName,
+    /// Identical incoming definition.
+    pub source: SsaName,
+}
+
+/// Liveness/DCE statistics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DceStats {
+    /// Values in the live closure.
+    pub live_values: u32,
+    /// Removable dead result instructions.
+    pub dead_instructions: u32,
+    /// Single-use pure values.
+    pub inline_candidates: u32,
+    /// Trivial Phi nodes.
+    pub trivial_phis: u32,
+}
+
+/// Conservative dead-code and inline/Phi plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DceAnalysis {
+    /// Live value closure.
+    pub live_values: Vec<ValueId>,
+    /// Pure unused result instructions safe to remove.
+    pub dead_instructions: Vec<InstructionLocation>,
+    /// Their result values.
+    pub dead_values: Vec<ValueId>,
+    /// Pure single-use values safe for emitter inlining.
+    pub inline_candidates: Vec<InlineCandidate>,
+    /// Phi nodes whose incoming sources are identical.
+    pub trivial_phis: Vec<TrivialPhi>,
+    /// Deterministic statistics.
+    pub stats: DceStats,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -293,6 +344,322 @@ pub fn verify_cse(
         diagnostics.push(optimizer_error(
             "FICT-OPT-CSE-STATS",
             "CSE stats do not match replacement results",
+        ));
+    }
+    if diagnostics.is_empty() {
+        Ok(())
+    } else {
+        Err(diagnostics)
+    }
+}
+
+/// Compute conservative value liveness, dead pure results, single-use candidates, and trivial Phi.
+pub fn analyze_dce(
+    file: &HirFile,
+    function_id: FunctionId,
+    ssa: &SsaAnalysis,
+    dependencies: &DependencyAnalysis,
+    aliases: &AliasAnalysis,
+) -> Result<DceAnalysis, DiagnosticBundle> {
+    let Some(function) = file.functions.get(function_id.as_usize()) else {
+        return Err(DiagnosticBundle::new(vec![optimizer_error(
+            "FICT-OPT-FUNCTION",
+            "DCE function is outside the HIR arena",
+        )]));
+    };
+    verify_ssa(function, ssa)?;
+    let barriers: BTreeSet<_> = dependencies
+        .barriers
+        .iter()
+        .map(|barrier| barrier.location)
+        .collect();
+    let mut producers = BTreeMap::new();
+    let mut roots = BTreeSet::new();
+    let mut uses: BTreeMap<ValueId, Vec<InstructionLocation>> = BTreeMap::new();
+    for block in &function.blocks {
+        if !ssa.cfg.reachable[block.id.as_usize()] {
+            continue;
+        }
+        for (index, instruction) in block.instructions.iter().enumerate() {
+            let location = InstructionLocation {
+                block: block.id,
+                instruction: count_u32(index),
+            };
+            let inputs = instruction_value_inputs(file, function_id, instruction);
+            for input in &inputs {
+                uses.entry(*input).or_default().push(location);
+            }
+            let removable = instruction.result.is_some()
+                && instruction.semantics == fict_hir::InstructionSemantics::PURE_EAGER
+                && !matches!(
+                    &instruction.kind,
+                    HirInstructionKind::Call(call) if call.macro_kind.is_some()
+                );
+            if let Some(result) = instruction.result {
+                producers.insert(result, (location, inputs.clone(), removable));
+            }
+            if !removable {
+                roots.extend(inputs);
+            }
+        }
+        let terminator_location = InstructionLocation {
+            block: block.id,
+            instruction: count_u32(block.instructions.len()),
+        };
+        for value in terminator_value_inputs(&block.terminator.kind) {
+            roots.insert(value);
+            uses.entry(value).or_default().push(terminator_location);
+        }
+    }
+    let mut live = roots;
+    let mut stack: Vec<_> = live.iter().copied().collect();
+    while let Some(value) = stack.pop() {
+        let Some((_, inputs, _)) = producers.get(&value) else {
+            continue;
+        };
+        for input in inputs {
+            if live.insert(*input) {
+                stack.push(*input);
+            }
+        }
+    }
+    let mut dead = Vec::new();
+    let mut dead_values = Vec::new();
+    for (value, (location, _, removable)) in &producers {
+        if *removable && !live.contains(value) {
+            dead.push(*location);
+            dead_values.push(*value);
+        }
+    }
+    dead.sort_unstable();
+    dead_values.sort_unstable();
+    let dead_set: BTreeSet<_> = dead_values.iter().copied().collect();
+    let mut inline_candidates = Vec::new();
+    for (value, (definition, _, removable)) in &producers {
+        if !*removable || dead_set.contains(value) {
+            continue;
+        }
+        let Some([use_location]) = uses.get(value).map(Vec::as_slice) else {
+            continue;
+        };
+        if use_location.block != definition.block
+            || use_location.instruction <= definition.instruction
+        {
+            continue;
+        }
+        let crosses_barrier = (definition.instruction.saturating_add(1)..use_location.instruction)
+            .any(|instruction| {
+                barriers.contains(&InstructionLocation {
+                    block: definition.block,
+                    instruction,
+                })
+            });
+        let instruction = &function.blocks[definition.block.as_usize()].instructions
+            [definition.instruction as usize];
+        if !crosses_barrier
+            && matches!(
+                instruction.kind,
+                HirInstructionKind::Unary { .. }
+                    | HirInstructionKind::Binary { .. }
+                    | HirInstructionKind::Read { .. }
+            )
+        {
+            inline_candidates.push(InlineCandidate {
+                value: *value,
+                definition: *definition,
+                use_location: *use_location,
+            });
+        }
+    }
+    inline_candidates.sort_unstable();
+    let alias_roots: BTreeMap<_, _> = aliases
+        .classes
+        .iter()
+        .flat_map(|class| {
+            class
+                .members
+                .iter()
+                .copied()
+                .map(move |member| (member, class.root))
+        })
+        .collect();
+    let mut trivial_phis = Vec::new();
+    for phi in &ssa.phis {
+        let sources: BTreeSet<_> = phi
+            .sources
+            .iter()
+            .map(|(_, source)| alias_roots.get(source).copied().unwrap_or(*source))
+            .collect();
+        if sources.len() == 1 {
+            trivial_phis.push(TrivialPhi {
+                target: phi.target,
+                source: *sources.first().expect("one trivial Phi source"),
+            });
+        }
+    }
+    trivial_phis.sort_unstable();
+    let live_values = live.into_iter().collect::<Vec<_>>();
+    let analysis = DceAnalysis {
+        stats: DceStats {
+            live_values: count_u32(live_values.len()),
+            dead_instructions: count_u32(dead.len()),
+            inline_candidates: count_u32(inline_candidates.len()),
+            trivial_phis: count_u32(trivial_phis.len()),
+        },
+        live_values,
+        dead_instructions: dead,
+        dead_values,
+        inline_candidates,
+        trivial_phis,
+    };
+    verify_dce(function, ssa, &analysis)?;
+    Ok(analysis)
+}
+
+/// Remove dead instructions, compact function-local ValueIds, rewrite owned templates, and verify.
+pub fn apply_dce(
+    file: &HirFile,
+    function_id: FunctionId,
+    analysis: &DceAnalysis,
+) -> Result<HirFile, DiagnosticBundle> {
+    let dead_locations: BTreeSet<_> = analysis.dead_instructions.iter().copied().collect();
+    let dead_values: BTreeSet<_> = analysis.dead_values.iter().copied().collect();
+    let Some(source_function) = file.functions.get(function_id.as_usize()) else {
+        return Err(DiagnosticBundle::new(vec![optimizer_error(
+            "FICT-OPT-FUNCTION",
+            "DCE function is outside the HIR arena",
+        )]));
+    };
+    let mut remap = BTreeMap::new();
+    let mut next = 0_u32;
+    for value in &source_function.values {
+        if !dead_values.contains(&value.id) {
+            remap.insert(value.id, ValueId::new(next));
+            next = next.saturating_add(1);
+        }
+    }
+    let mut result = file.clone();
+    let function = &mut result.functions[function_id.as_usize()];
+    for block in &mut function.blocks {
+        let block_id = block.id;
+        let mut instruction_index = 0_u32;
+        block.instructions.retain(|_| {
+            let keep = !dead_locations.contains(&InstructionLocation {
+                block: block_id,
+                instruction: instruction_index,
+            });
+            instruction_index = instruction_index.saturating_add(1);
+            keep
+        });
+        for instruction in &mut block.instructions {
+            if let Some(value) = &mut instruction.result {
+                *value = remap[value];
+            }
+            remap_instruction_values(instruction, &remap)?;
+        }
+        remap_terminator_values(&mut block.terminator.kind, &remap)?;
+    }
+    function
+        .values
+        .retain(|value| !dead_values.contains(&value.id));
+    for (index, value) in function.values.iter_mut().enumerate() {
+        value.id = ValueId::new(count_u32(index));
+    }
+    for template in result
+        .templates
+        .iter_mut()
+        .filter(|template| template.owner == function_id)
+    {
+        remap_jsx_node(&mut template.root, &remap)?;
+    }
+    verify_hir(&result)?;
+    Ok(result)
+}
+
+/// Verify DCE partitions, locations, inline safety shape, Phi replacements, and statistics.
+pub fn verify_dce(
+    function: &HirFunction,
+    ssa: &SsaAnalysis,
+    analysis: &DceAnalysis,
+) -> Result<(), DiagnosticBundle> {
+    let mut diagnostics = DiagnosticBundle::default();
+    let valid_values: BTreeSet<_> = function.values.iter().map(|value| value.id).collect();
+    let live: BTreeSet<_> = analysis.live_values.iter().copied().collect();
+    let dead: BTreeSet<_> = analysis.dead_values.iter().copied().collect();
+    if live.len() != analysis.live_values.len()
+        || dead.len() != analysis.dead_values.len()
+        || !live.is_disjoint(&dead)
+        || live
+            .iter()
+            .chain(&dead)
+            .any(|value| !valid_values.contains(value))
+        || analysis.dead_instructions.len() != analysis.dead_values.len()
+    {
+        diagnostics.push(optimizer_error(
+            "FICT-OPT-DCE-PARTITION",
+            "DCE live/dead values must be unique, disjoint, and reference the value arena",
+        ));
+    }
+    for location in &analysis.dead_instructions {
+        if function
+            .blocks
+            .get(location.block.as_usize())
+            .and_then(|block| block.instructions.get(location.instruction as usize))
+            .is_none_or(|instruction| {
+                instruction.result.is_none()
+                    || instruction.semantics != fict_hir::InstructionSemantics::PURE_EAGER
+            })
+        {
+            diagnostics.push(optimizer_error(
+                "FICT-OPT-DCE-INSTRUCTION",
+                "dead instructions must reference pure result operations",
+            ));
+        }
+    }
+    if analysis
+        .inline_candidates
+        .windows(2)
+        .any(|pair| pair[0] >= pair[1])
+        || analysis.inline_candidates.iter().any(|candidate| {
+            candidate.definition.block != candidate.use_location.block
+                || candidate.definition.instruction >= candidate.use_location.instruction
+                || dead.contains(&candidate.value)
+        })
+    {
+        diagnostics.push(optimizer_error(
+            "FICT-OPT-INLINE",
+            "inline candidates must have one later same-block use and remain live",
+        ));
+    }
+    let phis: BTreeSet<_> = ssa.phis.iter().map(|phi| phi.target).collect();
+    let definitions: BTreeSet<_> = ssa
+        .definitions
+        .iter()
+        .map(|definition| definition.name)
+        .collect();
+    if analysis
+        .trivial_phis
+        .windows(2)
+        .any(|pair| pair[0] >= pair[1])
+        || analysis.trivial_phis.iter().any(|phi| {
+            !phis.contains(&phi.target)
+                || !definitions.contains(&phi.source)
+                || phi.target == phi.source
+        })
+    {
+        diagnostics.push(optimizer_error(
+            "FICT-OPT-PHI",
+            "trivial Phi replacements must reference distinct known SSA definitions",
+        ));
+    }
+    if analysis.stats.live_values != count_u32(analysis.live_values.len())
+        || analysis.stats.dead_instructions != count_u32(analysis.dead_instructions.len())
+        || analysis.stats.inline_candidates != count_u32(analysis.inline_candidates.len())
+        || analysis.stats.trivial_phis != count_u32(analysis.trivial_phis.len())
+    {
+        diagnostics.push(optimizer_error(
+            "FICT-OPT-DCE-STATS",
+            "DCE stats do not match result arenas",
         ));
     }
     if diagnostics.is_empty() {
@@ -879,6 +1246,325 @@ fn rewrite_terminator_values(
         }
         TerminatorKind::Goto { .. } | TerminatorKind::Try { .. } | TerminatorKind::Unreachable => {}
     }
+}
+
+fn instruction_value_inputs(
+    file: &HirFile,
+    function_id: FunctionId,
+    instruction: &fict_hir::HirInstruction,
+) -> Vec<ValueId> {
+    match &instruction.kind {
+        HirInstructionKind::Declare { initializer, .. } => initializer.iter().copied().collect(),
+        HirInstructionKind::Read { place } => place_value_inputs(place),
+        HirInstructionKind::Write { place, value } => {
+            let mut values = place_value_inputs(place);
+            values.push(*value);
+            values
+        }
+        HirInstructionKind::ReadWrite { place, value, .. } => {
+            let mut values = place_value_inputs(place);
+            values.extend(*value);
+            values
+        }
+        HirInstructionKind::Literal(_)
+        | HirInstructionKind::Function { .. }
+        | HirInstructionKind::Phi { .. }
+        | HirInstructionKind::Debugger => Vec::new(),
+        HirInstructionKind::Unary { argument, .. } => vec![*argument],
+        HirInstructionKind::Binary { left, right, .. } => vec![*left, *right],
+        HirInstructionKind::Call(call) => std::iter::once(call.callee)
+            .chain(call.arguments.iter().map(|argument| argument.value))
+            .collect(),
+        HirInstructionKind::New { callee, arguments } => std::iter::once(*callee)
+            .chain(arguments.iter().map(|argument| argument.value))
+            .collect(),
+        HirInstructionKind::Array { elements } => elements
+            .iter()
+            .filter_map(|element| match element {
+                ArrayElement::Hole(_) => None,
+                ArrayElement::Value(value) | ArrayElement::Spread { value, .. } => Some(*value),
+            })
+            .collect(),
+        HirInstructionKind::Object { entries } => entries
+            .iter()
+            .flat_map(|entry| match entry {
+                ObjectEntry::Property { key, value, .. } => {
+                    let key = match key {
+                        PropertyKey::Computed(key) => Some(*key),
+                        PropertyKey::Static(_) | PropertyKey::Index(_) => None,
+                    };
+                    key.into_iter()
+                        .chain(std::iter::once(*value))
+                        .collect::<Vec<_>>()
+                }
+                ObjectEntry::Spread { value, .. } => vec![*value],
+            })
+            .collect(),
+        HirInstructionKind::Jsx { template } => file
+            .templates
+            .get(template.as_usize())
+            .filter(|template| template.owner == function_id)
+            .map_or_else(Vec::new, |template| jsx_value_inputs(&template.root)),
+        HirInstructionKind::Await { value } => vec![*value],
+        HirInstructionKind::Yield { value, .. } => value.iter().copied().collect(),
+        HirInstructionKind::SyntaxFragment { inputs, .. } => inputs.clone(),
+    }
+}
+
+fn place_value_inputs(place: &Place) -> Vec<ValueId> {
+    let mut values = Vec::new();
+    if let PlaceBase::Value(value) = place.base {
+        values.push(value);
+    }
+    values.extend(place.projections.iter().filter_map(|projection| {
+        if let Projection::ComputedProperty { key, .. } = projection {
+            Some(*key)
+        } else {
+            None
+        }
+    }));
+    values
+}
+
+fn terminator_value_inputs(terminator: &TerminatorKind) -> Vec<ValueId> {
+    match terminator {
+        TerminatorKind::Return { value } => value.iter().copied().collect(),
+        TerminatorKind::Throw { value } => vec![*value],
+        TerminatorKind::Branch { test, .. } => vec![*test],
+        TerminatorKind::Switch {
+            discriminant,
+            cases,
+        } => std::iter::once(*discriminant)
+            .chain(cases.iter().filter_map(|case| case.test))
+            .collect(),
+        TerminatorKind::Goto { .. } | TerminatorKind::Try { .. } | TerminatorKind::Unreachable => {
+            Vec::new()
+        }
+    }
+}
+
+fn jsx_value_inputs(root: &JsxNode) -> Vec<ValueId> {
+    enum Item<'a> {
+        Node(&'a JsxNode),
+        Child(&'a JsxChild),
+    }
+    let mut values = Vec::new();
+    let mut stack = vec![Item::Node(root)];
+    while let Some(item) = stack.pop() {
+        match item {
+            Item::Node(JsxNode::Element(element)) => {
+                if let JsxElementName::Dynamic(value) = element.name {
+                    values.push(value);
+                }
+                for attribute in &element.attributes {
+                    match attribute {
+                        JsxAttribute::Named { value, .. } => match value {
+                            JsxAttributeValue::Expression(value) => values.push(*value),
+                            JsxAttributeValue::Node(node) => stack.push(Item::Node(node)),
+                            JsxAttributeValue::ImplicitTrue | JsxAttributeValue::Text(_) => {}
+                        },
+                        JsxAttribute::Spread { value, .. } => values.push(*value),
+                    }
+                }
+                for child in element.children.iter().rev() {
+                    stack.push(Item::Child(child));
+                }
+            }
+            Item::Node(JsxNode::Fragment { children, .. }) => {
+                for child in children.iter().rev() {
+                    stack.push(Item::Child(child));
+                }
+            }
+            Item::Child(JsxChild::Expression { value, .. })
+            | Item::Child(JsxChild::Spread { value, .. }) => values.push(*value),
+            Item::Child(JsxChild::Node(node)) => stack.push(Item::Node(node)),
+            Item::Child(JsxChild::Text { .. }) => {}
+        }
+    }
+    values
+}
+
+fn remap_value_id(
+    value: &mut ValueId,
+    remap: &BTreeMap<ValueId, ValueId>,
+) -> Result<(), DiagnosticBundle> {
+    let Some(mapped) = remap.get(value).copied() else {
+        return Err(DiagnosticBundle::new(vec![optimizer_error(
+            "FICT-OPT-DCE-DANGLING",
+            "DCE attempted to remove a value that still has an explicit consumer",
+        )]));
+    };
+    *value = mapped;
+    Ok(())
+}
+
+fn remap_place_values(
+    place: &mut Place,
+    remap: &BTreeMap<ValueId, ValueId>,
+) -> Result<(), DiagnosticBundle> {
+    if let PlaceBase::Value(value) = &mut place.base {
+        remap_value_id(value, remap)?;
+    }
+    for projection in &mut place.projections {
+        if let Projection::ComputedProperty { key, .. } = projection {
+            remap_value_id(key, remap)?;
+        }
+    }
+    Ok(())
+}
+
+fn remap_instruction_values(
+    instruction: &mut fict_hir::HirInstruction,
+    remap: &BTreeMap<ValueId, ValueId>,
+) -> Result<(), DiagnosticBundle> {
+    match &mut instruction.kind {
+        HirInstructionKind::Declare { initializer, .. } => {
+            if let Some(value) = initializer {
+                remap_value_id(value, remap)?;
+            }
+        }
+        HirInstructionKind::Read { place } => remap_place_values(place, remap)?,
+        HirInstructionKind::Write { place, value } => {
+            remap_place_values(place, remap)?;
+            remap_value_id(value, remap)?;
+        }
+        HirInstructionKind::ReadWrite { place, value, .. } => {
+            remap_place_values(place, remap)?;
+            if let Some(value) = value {
+                remap_value_id(value, remap)?;
+            }
+        }
+        HirInstructionKind::Unary { argument, .. } => remap_value_id(argument, remap)?,
+        HirInstructionKind::Binary { left, right, .. } => {
+            remap_value_id(left, remap)?;
+            remap_value_id(right, remap)?;
+        }
+        HirInstructionKind::Call(call) => {
+            remap_value_id(&mut call.callee, remap)?;
+            for argument in &mut call.arguments {
+                remap_value_id(&mut argument.value, remap)?;
+            }
+        }
+        HirInstructionKind::New { callee, arguments } => {
+            remap_value_id(callee, remap)?;
+            for argument in arguments {
+                remap_value_id(&mut argument.value, remap)?;
+            }
+        }
+        HirInstructionKind::Array { elements } => {
+            for element in elements {
+                match element {
+                    ArrayElement::Hole(_) => {}
+                    ArrayElement::Value(value) | ArrayElement::Spread { value, .. } => {
+                        remap_value_id(value, remap)?;
+                    }
+                }
+            }
+        }
+        HirInstructionKind::Object { entries } => {
+            for entry in entries {
+                match entry {
+                    ObjectEntry::Property { key, value, .. } => {
+                        if let PropertyKey::Computed(key) = key {
+                            remap_value_id(key, remap)?;
+                        }
+                        remap_value_id(value, remap)?;
+                    }
+                    ObjectEntry::Spread { value, .. } => remap_value_id(value, remap)?,
+                }
+            }
+        }
+        HirInstructionKind::Await { value } => remap_value_id(value, remap)?,
+        HirInstructionKind::Yield { value, .. } => {
+            if let Some(value) = value {
+                remap_value_id(value, remap)?;
+            }
+        }
+        HirInstructionKind::SyntaxFragment { inputs, .. } => {
+            for value in inputs {
+                remap_value_id(value, remap)?;
+            }
+        }
+        HirInstructionKind::Literal(_)
+        | HirInstructionKind::Function { .. }
+        | HirInstructionKind::Jsx { .. }
+        | HirInstructionKind::Phi { .. }
+        | HirInstructionKind::Debugger => {}
+    }
+    Ok(())
+}
+
+fn remap_terminator_values(
+    terminator: &mut TerminatorKind,
+    remap: &BTreeMap<ValueId, ValueId>,
+) -> Result<(), DiagnosticBundle> {
+    match terminator {
+        TerminatorKind::Return { value } => {
+            if let Some(value) = value {
+                remap_value_id(value, remap)?;
+            }
+        }
+        TerminatorKind::Throw { value } => remap_value_id(value, remap)?,
+        TerminatorKind::Branch { test, .. } => remap_value_id(test, remap)?,
+        TerminatorKind::Switch {
+            discriminant,
+            cases,
+        } => {
+            remap_value_id(discriminant, remap)?;
+            for case in cases {
+                if let Some(test) = &mut case.test {
+                    remap_value_id(test, remap)?;
+                }
+            }
+        }
+        TerminatorKind::Goto { .. } | TerminatorKind::Try { .. } | TerminatorKind::Unreachable => {}
+    }
+    Ok(())
+}
+
+fn remap_jsx_node(
+    root: &mut JsxNode,
+    remap: &BTreeMap<ValueId, ValueId>,
+) -> Result<(), DiagnosticBundle> {
+    enum Item<'a> {
+        Node(&'a mut JsxNode),
+        Child(&'a mut JsxChild),
+    }
+    let mut stack = vec![Item::Node(root)];
+    while let Some(item) = stack.pop() {
+        match item {
+            Item::Node(JsxNode::Element(element)) => {
+                if let JsxElementName::Dynamic(value) = &mut element.name {
+                    remap_value_id(value, remap)?;
+                }
+                for attribute in &mut element.attributes {
+                    match attribute {
+                        JsxAttribute::Named { value, .. } => match value {
+                            JsxAttributeValue::Expression(value) => {
+                                remap_value_id(value, remap)?;
+                            }
+                            JsxAttributeValue::Node(node) => stack.push(Item::Node(node)),
+                            JsxAttributeValue::ImplicitTrue | JsxAttributeValue::Text(_) => {}
+                        },
+                        JsxAttribute::Spread { value, .. } => remap_value_id(value, remap)?,
+                    }
+                }
+                for child in &mut element.children {
+                    stack.push(Item::Child(child));
+                }
+            }
+            Item::Node(JsxNode::Fragment { children, .. }) => {
+                for child in children {
+                    stack.push(Item::Child(child));
+                }
+            }
+            Item::Child(JsxChild::Expression { value, .. })
+            | Item::Child(JsxChild::Spread { value, .. }) => remap_value_id(value, remap)?,
+            Item::Child(JsxChild::Node(node)) => stack.push(Item::Node(node)),
+            Item::Child(JsxChild::Text { .. }) => {}
+        }
+    }
+    Ok(())
 }
 
 fn optimizer_error(code: &'static str, message: impl Into<String>) -> Diagnostic {

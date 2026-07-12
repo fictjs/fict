@@ -29,8 +29,9 @@ pub use effects::{
 };
 pub use optimize::{
     ConstantPropagation, ConstantPropagationOptions, ConstantPropagationStats, CseAnalysis,
-    CseReplacement, CseStats, SsaConstantFact, ValueConstantFact, analyze_constants, analyze_cse,
-    apply_constant_folding, apply_cse_rewrites, verify_constants, verify_cse,
+    CseReplacement, CseStats, DceAnalysis, DceStats, InlineCandidate, SsaConstantFact, TrivialPhi,
+    ValueConstantFact, analyze_constants, analyze_cse, analyze_dce, apply_constant_folding,
+    apply_cse_rewrites, apply_dce, verify_constants, verify_cse, verify_dce,
 };
 pub use regions::{
     ReactiveRegion, RegionAnalysis, RegionInstructionRange, RegionStats, analyze_regions,
