@@ -33,7 +33,7 @@ export default defineConfig({
     exclude: [
       'fict/internal',
       'fict/internal/list',
-      'fict/loader',
+      'fict/experimental/loader',
       '@fictjs/runtime',
       '@fictjs/runtime/internal',
       '@fictjs/runtime/internal/list',
@@ -46,7 +46,10 @@ export default defineConfig({
     alias: [
       { find: 'fict/plus', replacement: path.resolve(__dirname, '../src/plus.ts') },
       { find: 'fict/advanced', replacement: path.resolve(__dirname, '../src/advanced.ts') },
-      { find: 'fict/loader', replacement: path.resolve(__dirname, '../src/loader.ts') },
+      {
+        find: 'fict/experimental/loader',
+        replacement: path.resolve(__dirname, '../src/loader.ts'),
+      },
       {
         find: 'fict/internal/list',
         replacement: path.resolve(__dirname, '../src/internal-list.ts'),

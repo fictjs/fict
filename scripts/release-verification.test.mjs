@@ -28,6 +28,11 @@ test('release verification retains tarball, SSR matrix, browser E2E, and clean-c
   assert.deepEqual(verifyReleaseContract(rootPackage, releaseWorkflow), [])
 })
 
+test('precommit and release verification retain the Preview maturity boundary gate', () => {
+  assert.match(rootPackage.scripts.precommit, /pnpm test:preview-boundaries/)
+  assert.match(rootPackage.scripts['release:verify'], /pnpm test:preview-boundaries/)
+})
+
 test('browser E2E continuously includes production-shaped real applications and scheduled soak', () => {
   assert.match(rootPackage.scripts['test:e2e'], /pnpm test:real-apps/)
   assert.match(rootPackage.scripts['test:real-apps'], /examples:build-real-apps/)

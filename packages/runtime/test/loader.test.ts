@@ -445,7 +445,7 @@ describe('resumable loader snapshot validation', () => {
     vi.stubGlobal('window', undefined)
     try {
       expect(() => installResumableLoader({ events: [], prefetch: false })).toThrow(
-        '[fict/loader] installResumableLoader requires a browser document.',
+        '[fict/experimental/loader] installResumableLoader requires a browser document.',
       )
     } finally {
       vi.unstubAllGlobals()
@@ -773,7 +773,7 @@ describe('resumable loader snapshot validation', () => {
       expect.objectContaining({ code: 'snapshot_fallback_failed', error }),
     )
     expect(errorSpy).toHaveBeenCalledWith(
-      '[fict/loader] Client-render fallback failed: fallback then getter boom',
+      '[fict/experimental/loader] Client-render fallback failed: fallback then getter boom',
     )
     errorSpy.mockRestore()
   })

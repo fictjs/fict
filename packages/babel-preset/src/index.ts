@@ -474,7 +474,7 @@ const FICT_RUNTIME_SOURCES = new Set([
   'fict/internal/list',
   'fict/jsx-runtime',
   'fict/jsx-dev-runtime',
-  'fict/loader',
+  'fict/experimental/loader',
   'fict/plus',
   'fict/slim',
   '@fictjs/runtime',
@@ -483,7 +483,7 @@ const FICT_RUNTIME_SOURCES = new Set([
   '@fictjs/runtime/internal/list',
   '@fictjs/runtime/jsx-runtime',
   '@fictjs/runtime/jsx-dev-runtime',
-  '@fictjs/runtime/loader',
+  '@fictjs/runtime/experimental/loader',
 ])
 
 const isHookName = (name: string | undefined): boolean => !!name && HOOK_NAME_RE.test(name)

@@ -1,7 +1,7 @@
 import { parentPort } from 'node:worker_threads'
 
 import { parseHTML } from 'linkedom'
-import { installResumableLoader, waitForPendingHandlers } from '@fictjs/runtime/loader'
+import { installResumableLoader, waitForPendingHandlers } from '@fictjs/runtime/experimental/loader'
 
 const decoder = new TextDecoder()
 

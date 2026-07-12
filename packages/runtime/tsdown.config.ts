@@ -16,7 +16,7 @@ export default defineConfig([
       internal: 'src/internal.ts',
       'internal-list': 'src/internal/list.ts',
       advanced: 'src/advanced.ts',
-      loader: 'src/loader.ts',
+      'experimental/loader': 'src/loader.ts',
     },
     format: ['cjs', 'esm'],
     dts: true,

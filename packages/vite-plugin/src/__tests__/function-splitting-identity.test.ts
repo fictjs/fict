@@ -511,6 +511,7 @@ describe('function splitting build identity', () => {
         Counter: (props?: Record<string, unknown>) => FictNode
       }
       const mappedHtml = renderToString(() => ({ type: mappedModule.Counter, props: {} }), {
+        includeSnapshot: true,
         manifest,
       })
       const snapshot = mappedHtml.match(

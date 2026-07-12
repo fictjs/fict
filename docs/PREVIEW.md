@@ -23,13 +23,24 @@ Internal tiers. For the current coverage of the degradation contract below
 - **Not under the guarantee bar.** `strictGuarantee` and the
   [reactivity-guarantee-matrix](./reactivity-guarantee-matrix.md) do not promise
   anything about Preview behavior beyond "correctness-first, may be coarse."
-- **Opt-in to reach.** Preview APIs are not exported from a package's main
-  entrypoint.
+- **Opt-in to reach.** Preview callables are exported only from an
+  `experimental` entrypoint. Cross-cutting Preview options on a supported host
+  API are allowed only when tagged `@experimental`, default-off, and unable to
+  emit or consume the Preview protocol unless explicitly enabled.
+
+## Relationship to Core 1.0
+
+Preview does not block Core 1.0. A Core 1.0 release may include Preview code,
+but the Core compatibility promise, API freeze, and semver guarantee exclude
+every surface registered as Preview in [maturity.json](../maturity.json).
+Passing Preview degradation tests proves fail-safe behavior; it does not turn a
+Preview capability into a stable Core promise.
 
 ## How Preview is marked (three required signals)
 
-1. **`@experimental` JSDoc** on every Preview export, with a one-line reason and
-   the closest stable alternative. Example:
+1. **`@experimental` JSDoc** on every Preview export and every default-off
+   Preview option, with a one-line reason and the closest stable alternative.
+   Example:
 
    ```ts
    /**
@@ -39,25 +50,33 @@ Internal tiers. For the current coverage of the degradation contract below
    export function renderToPartial(/* … */) {}
    ```
 
-2. **Reachable only via an `experimental` entrypoint**, never the main export:
-   - Framework-level previews → `fict/experimental` (export subpath; see
-     SCOPE.md migration step 3).
+2. **Callable APIs are reachable only via an `experimental` entrypoint**, never
+   a stable-looking export:
+   - Framework resumability → `fict/experimental/loader`.
+   - Low-level runtime resumability →
+     `@fictjs/runtime/experimental/loader`.
    - **SSR previews** → `@fictjs/ssr/experimental` (`renderToPartial`).
      **Resolved:** `renderToPartial` is no longer on the `@fictjs/ssr` main
      export. The engine lives in the internal `render-core` module (not in
      `package.json#exports`); `.` re-exports only the supported surface, and
      `./experimental` re-exports the Preview surface.
 
+   Cross-cutting opt-ins remain properties of their host configuration types:
+   `FictCompilerOptions.resumable` and `RenderToStringOptions.includeSnapshot`.
+   Both are tagged `@experimental`; both default to false. Resumable SSR must
+   therefore say both `resumable: true` at compile time and
+   `includeSnapshot: true` at render time.
+
 3. **A `> **Preview**` callout** at the top of any doc page that teaches a
    Preview API.
 
 ## Current Preview surface
 
-| API / capability                           | Host package                       | Why still Preview                                                                                                                                    |
-| ------------------------------------------ | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `renderToPartial` (partial prerendering)   | `@fictjs/ssr/experimental`         | Return shape (`{ shell, stream, … }`) not frozen.                                                                                                    |
-| Resumable handlers / QRL extraction        | `@fictjs/compiler` + `@fictjs/ssr` | Not a stable Qwik-compatible contract.                                                                                                               |
-| SSR snapshot schema (`data-fict-snapshot`) | `@fictjs/runtime` + `@fictjs/ssr`  | The v2 writer, explicit legacy migrations, and application-owned rejection callback exist; the long-term cross-version support window is not frozen. |
+| API / capability                           | Host package                                       | Why still Preview                                                                                                                                    |
+| ------------------------------------------ | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `renderToPartial` (partial prerendering)   | `@fictjs/ssr/experimental`                         | Return shape (`{ shell, stream, … }`) not frozen.                                                                                                    |
+| Resumable handlers / QRL extraction        | compiler opt-in + `fict/experimental/loader`       | Generated ABI and loader API are not frozen.                                                                                                         |
+| SSR snapshot schema (`data-fict-snapshot`) | SSR opt-in + `@fictjs/runtime/experimental/loader` | The v2 writer, explicit legacy migrations, and application-owned rejection callback exist; the long-term cross-version support window is not frozen. |
 
 ## Graduation gate (Preview → Stable)
 
@@ -65,7 +84,7 @@ A Preview API may graduate only when **all** of the following hold. This is the
 exit criterion that keeps Preview from becoming a permanent limbo.
 
 - [ ] **Frozen shape**: inputs/outputs documented and covered by API-freeze.
-- [ ] **Degradation contract** (below) implemented and tested.
+- [x] **Degradation contract** (below) implemented and tested.
 - [ ] **Release-gate coverage**: the relevant rows of
       [ssr-runtime-matrix](./ssr-runtime-matrix.md) /
       [tooling-runtime-matrix](./tooling-runtime-matrix.md) pass — including
@@ -73,7 +92,7 @@ exit criterion that keeps Preview from becoming a permanent limbo.
 - [ ] **Snapshot schema commitment frozen** (for resume/SSR): v2, explicit
       `snapshotMigrations`, and invalidation behavior are documented; a
       long-term back-compat support window still needs to be frozen.
-- [ ] At least one maintained example exercises the happy path **and** one
+- [x] At least one maintained example exercises the happy path **and** one
       failure path.
 
 ---

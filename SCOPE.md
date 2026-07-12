@@ -30,31 +30,31 @@ Fail any of the three → it is **not Core**. It is demoted, not deleted.
 
 ## Tiers
 
-| Tier          | Held to guarantee bar? | Versioning              | Published?                                   | Meaning                                                                                              |
-| ------------- | ---------------------- | ----------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| **Core**      | ✅ yes                 | Lockstep (`fixed`)      | ✅ public                                    | The thesis. `npm i fict @fictjs/vite-plugin` is exactly this set.                                    |
-| **Satellite** | ❌ no (own contract)   | Independent (`0.x` ok)  | ✅ public                                    | Real product, but allowed to lag/iterate without dragging Core.                                      |
-| **Preview**   | ❌ no — _no semver_    | Rides host package      | ⚠️ behind `experimental` export              | Aspirational surface. May change or be removed at any time.                                          |
-| **Internal**  | ❌ no                  | Not released (`ignore`) | 🚫 `private`, or store-distributed (not npm) | Dev scaffolding **and** store/marketplace-distributed tooling. Not a changeset-released npm library. |
+| Tier          | Held to guarantee bar? | Versioning              | Published?                                             | Meaning                                                                                              |
+| ------------- | ---------------------- | ----------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| **Core**      | ✅ yes                 | Lockstep (`fixed`)      | ✅ public                                              | The thesis. `npm i fict @fictjs/vite-plugin` is exactly this set.                                    |
+| **Satellite** | ❌ no (own contract)   | Independent (`0.x` ok)  | ✅ public                                              | Real product, but allowed to lag/iterate without dragging Core.                                      |
+| **Preview**   | ❌ no — _no semver_    | Rides host package      | ⚠️ explicit `experimental` entry or default-off option | Aspirational surface. May change or be removed at any time.                                          |
+| **Internal**  | ❌ no                  | Not released (`ignore`) | 🚫 `private`, or store-distributed (not npm)           | Dev scaffolding **and** store/marketplace-distributed tooling. Not a changeset-released npm library. |
 
 ## The map
 
-| Package                    | Tier          | Notes                                                                                                                                  |
-| -------------------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `fict`                     | **Core**      | Public API surface. Only `.`, `/jsx-runtime`, `/jsx-dev-runtime`, `/plus`, `/advanced` are guaranteed.                                 |
-| `@fictjs/runtime`          | **Core**      | Reactive graph + fine-grained DOM.                                                                                                     |
-| `@fictjs/compiler`         | **Core**      | HIR/SSA/region lowering. The thesis lives here.                                                                                        |
-| `@fictjs/babel-preset`     | **Core**      | Compiler plumbing; versions with the compiler.                                                                                         |
-| `@fictjs/vite-plugin`      | **Core**      | The delivery mechanism. Without it nobody can use Fict.                                                                                |
-| `@fictjs/eslint-plugin`    | **Core**      | Mirrors compiler diagnostics — part of the fail-closed DX, not an add-on.                                                              |
-| `@fictjs/ssr`              | **Satellite** | `renderToString`/`renderToStream`/`renderToPipeableStream` are the supported surface. Streaming/resume/PPR is **Preview** (see below). |
-| `@fictjs/router`           | **Satellite** | A router may lag Core. Best candidate to invite a second maintainer (reduces truck factor).                                            |
-| `@fictjs/testing-library`  | **Satellite** | Adoption-enabling; frozen API, downstream of runtime stability.                                                                        |
-| `@fictjs/webpack-plugin`   | **Satellite** | Official Webpack 5 compiler adapter; independently versioned so it does not expand the Core lockstep train.                            |
-| `@fictjs/devtools`         | **Internal**  | Browser extension / Vite auto-inject — a **private distribution artifact**, not an npm library. Feature-frozen.                        |
-| `@fictjs/vscode-extension` | **Internal**  | Private editor extension distributed through the VS Code Marketplace, not npm. Feature-frozen.                                         |
-| `@fictjs/playground`       | **Internal**  | Private dev/demo tool.                                                                                                                 |
-| `fict-docs-site`           | **Internal**  | Already private.                                                                                                                       |
+| Package                    | Tier          | Notes                                                                                                                                     |
+| -------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `fict`                     | **Core**      | Public API surface. Only `.`, `/jsx-runtime`, `/jsx-dev-runtime`, `/plus`, `/advanced` are guaranteed; `/experimental/loader` is Preview. |
+| `@fictjs/runtime`          | **Core**      | Reactive graph + fine-grained DOM.                                                                                                        |
+| `@fictjs/compiler`         | **Core**      | HIR/SSA/region lowering. The thesis lives here.                                                                                           |
+| `@fictjs/babel-preset`     | **Core**      | Compiler plumbing; versions with the compiler.                                                                                            |
+| `@fictjs/vite-plugin`      | **Core**      | The delivery mechanism. Without it nobody can use Fict.                                                                                   |
+| `@fictjs/eslint-plugin`    | **Core**      | Mirrors compiler diagnostics — part of the fail-closed DX, not an add-on.                                                                 |
+| `@fictjs/ssr`              | **Satellite** | `renderToString`/`renderToStream`/`renderToPipeableStream` are supported. Snapshot/resume/PPR behavior is **Preview** (see below).        |
+| `@fictjs/router`           | **Satellite** | A router may lag Core. Best candidate to invite a second maintainer (reduces truck factor).                                               |
+| `@fictjs/testing-library`  | **Satellite** | Adoption-enabling; frozen API, downstream of runtime stability.                                                                           |
+| `@fictjs/webpack-plugin`   | **Satellite** | Official Webpack 5 compiler adapter; independently versioned so it does not expand the Core lockstep train.                               |
+| `@fictjs/devtools`         | **Internal**  | Browser extension / Vite auto-inject — a **private distribution artifact**, not an npm library. Feature-frozen.                           |
+| `@fictjs/vscode-extension` | **Internal**  | Private editor extension distributed through the VS Code Marketplace, not npm. Feature-frozen.                                            |
+| `@fictjs/playground`       | **Internal**  | Private dev/demo tool.                                                                                                                    |
+| `fict-docs-site`           | **Internal**  | Already private.                                                                                                                          |
 
 ### Preview surface (lives inside Core/Satellite packages, but NOT guaranteed)
 
@@ -62,11 +62,16 @@ These are explicitly **not** under semver and **not** under the guarantee bar.
 See [docs/PREVIEW.md](./docs/PREVIEW.md) for the policy and the required
 degradation contract.
 
-- `@fictjs/ssr/experimental`: `renderToPartial` (partial prerendering) — now
-  off the `@fictjs/ssr` main export. The resumability / QRL handler extraction
-  path and the SSR snapshot schema remain Preview too.
-- `fict/experimental`: not created yet — there is no framework-level Preview API
-  to put there. Add the subpath when one exists (deferred part of step 3).
+- `@fictjs/ssr/experimental`: `renderToPartial` (partial prerendering), off the
+  `@fictjs/ssr` main export.
+- `fict/experimental/loader` and `@fictjs/runtime/experimental/loader`: the
+  resumable loader, QRL handler extraction, and SSR snapshot schema. SSR and
+  compiler participation is enabled only by default-off Preview options such as
+  `includeSnapshot: true` and `resumable: true`.
+
+Preview graduation does not block Core 1.0. Core can reach 1.0 while these
+surfaces remain Preview, and the Core compatibility promise excludes them. The
+machine-readable boundary is [maturity.json](./maturity.json).
 
 ## Enforcement (how the rule is encoded, not just written)
 
@@ -77,8 +82,14 @@ degradation contract.
 2. **Guarantee bar applies to Core only.** `strictGuarantee`, the guarantee
    matrix, and API-freeze cover Core packages. Satellites/Preview document their
    own, weaker, contract.
-3. **Preview is reachable only through an `experimental` entrypoint** + an
-   `@experimental` JSDoc tag, never from a package's main export.
+3. **Preview callables are reachable only through an `experimental` entrypoint**
+   plus an `@experimental` JSDoc tag, never from a package's main export.
+   Cross-cutting Preview behavior may use default-off Preview options on a
+   supported host API only when each option is tagged `@experimental` and the
+   stable default does not emit or consume the Preview protocol.
+4. **Core and Preview release independently.** [maturity.json](./maturity.json)
+   must match the Changesets Core fixed group, and every Preview surface must
+   declare `core1ReleaseBlocking: false`.
 
 ## The two-thesis trap
 
@@ -123,13 +134,13 @@ of independent satellites + ignored internal tooling."
       packages; `ssr`/`router`/`testing-library` moved to independent versioning;
       then-internal `mcp`/`skill` were temporarily added to `ignore` before their
       standalone repo split. (See `.changeset/config.json`.)
-- [x] **Step 3 — Move Preview off main exports.** Added the
+- [x] **Step 3 — Move Preview off stable-looking exports.** Added the
       `@fictjs/ssr/experimental` entrypoint and moved `renderToPartial` there,
       off the `@fictjs/ssr` main export (engine extracted to the internal
-      `render-core` module; `.` re-exports only the supported surface). Verified:
-      ssr build + SSR test suite + edge smoke + typecheck green. `fict/experimental`
-      is intentionally not created — no framework-level Preview API exists to put
-      there yet; add the subpath when one does.
+      `render-core` module; `.` re-exports only the supported surface). The
+      resumable loader moved from stable-looking `/loader` subpaths to
+      `fict/experimental/loader` and `@fictjs/runtime/experimental/loader`;
+      snapshot emission is now explicit (`includeSnapshot: true`).
 - [x] **Step 4 — Move agent tooling out of the monorepo.** `@fictjs/mcp` and
       `@fictjs/skill` were first privatized, then migrated into standalone repos
       (`mcp/` and `skill/`). They no longer participate in this monorepo's
@@ -147,8 +158,8 @@ of independent satellites + ignored internal tooling."
       and resume/PPR are Preview. Tier-0 docs (semantics, diagnostics, guarantee
       matrix, compiler spec) remain Core (unchanged).
 
-> **Remaining:** the Preview degradation-contract migration work is complete.
-> Graduation still requires the other [docs/PREVIEW.md](./docs/PREVIEW.md) gates
-> (frozen API shape, release-gate matrix rows, and frozen snapshot-schema
-> commitment). When those land, collapse this block to the map + rule as the
-> standing contract.
+> **Remaining for Preview graduation, not Core 1.0:** the degradation-contract
+> migration work is complete. Graduation still requires the other
+> [docs/PREVIEW.md](./docs/PREVIEW.md) gates (frozen API shape and a frozen
+> snapshot-schema compatibility window). When those land, collapse this block
+> to the map + rule as the standing contract.

@@ -80,11 +80,11 @@ function packageExports(path) {
 assertEqualSet('fict package exports', packageExports('packages/fict/package.json'), [
   '.',
   './advanced',
+  './experimental/loader',
   './internal',
   './internal/list',
   './jsx-dev-runtime',
   './jsx-runtime',
-  './loader',
   './plus',
   './slim',
 ])
@@ -92,11 +92,11 @@ assertEqualSet('fict package exports', packageExports('packages/fict/package.jso
 assertEqualSet('runtime package exports', packageExports('packages/runtime/package.json'), [
   '.',
   './advanced',
+  './experimental/loader',
   './internal',
   './internal/list',
   './jsx-dev-runtime',
   './jsx-runtime',
-  './loader',
 ])
 
 const ssrPackage = readJson('packages/ssr/package.json')

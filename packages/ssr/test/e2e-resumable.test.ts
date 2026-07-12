@@ -25,7 +25,7 @@ import {
   resetPrefetchedUrls,
   cleanupEventListeners,
   waitForPendingHandlers,
-} from '@fictjs/runtime/loader'
+} from '@fictjs/runtime/experimental/loader'
 import {
   FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
   __fictSetSSRState,
@@ -39,7 +39,21 @@ import {
 import createFictPlugin, { type FictCompilerOptions } from '../../compiler/src/index'
 import { parseHTML } from 'linkedom'
 
-import { renderToString, renderToDocument, renderToStream } from '../src/index'
+import {
+  renderToDocument as renderToDocumentBase,
+  renderToStream as renderToStreamBase,
+  renderToString as renderToStringBase,
+} from '../src/index'
+
+// This entire file verifies the Preview compatibility unit, so make its two
+// required opt-ins explicit once: compiler `resumable: true` above and SSR
+// `includeSnapshot: true` here.
+const renderToString: typeof renderToStringBase = (view, options = {}) =>
+  renderToStringBase(view, { includeSnapshot: true, ...options })
+const renderToDocument: typeof renderToDocumentBase = (view, options = {}) =>
+  renderToDocumentBase(view, { includeSnapshot: true, ...options })
+const renderToStream: typeof renderToStreamBase = (view, options = {}) =>
+  renderToStreamBase(view, { includeSnapshot: true, ...options })
 
 const WORKSPACE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
 const FICT_PACKAGE_DIR = path.join(WORKSPACE_ROOT, 'packages/fict')

@@ -1,6 +1,8 @@
 # SSR Runtime Matrix
 
-This matrix is the release gate for production SSR, streaming, and resumability.
+This matrix is the release gate for supported production SSR/streaming and for
+the documented degradation behavior of Preview resumability. A green Preview
+row does not graduate the feature and does not block Core 1.0.
 The local automated gate is `pnpm test:ssr-matrix`; hosted platform rows track
 external certification that release owners should record when publishing a
 platform-specific deployment recipe.

@@ -9,6 +9,8 @@ export function render(html: string, options: RenderToStreamOptions = {}) {
     html,
     containerId: 'app',
     includeContainer: true,
-    includeSnapshot: true,
+    // Keep this fixture on the supported streaming contract; resumability is
+    // validated separately by examples/ssr-basic.
+    includeSnapshot: false,
   })
 }

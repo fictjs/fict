@@ -5,10 +5,11 @@ non-goals for Fict SSR, streaming, hydration, and resumability. Stable guarantee
 apply only to the supported `@fictjs/ssr` surface; Preview entries document
 required failure behavior, not semver stability.
 
-> **Maturity:** streaming patch, resumability, and partial prerendering are
-> **Preview** — no semver guarantee yet. The required failure/degradation
-> behavior is tracked in [PREVIEW.md](./PREVIEW.md); `@fictjs/ssr` is a Satellite
-> package, see [SCOPE.md](../SCOPE.md).
+> **Preview** — resumability, its snapshot schema, and partial prerendering have
+> no semver guarantee and do not block Core 1.0. Supported SSR streaming remains
+> a Satellite contract. Preview failure/degradation behavior is tracked in
+> [PREVIEW.md](./PREVIEW.md); package tiers are defined in
+> [SCOPE.md](../SCOPE.md).
 
 ## Scope
 
@@ -16,7 +17,7 @@ Covered:
 
 - supported `@fictjs/ssr` rendering (`renderToString`, `renderToStream`, `renderToPipeableStream`)
 - Preview `@fictjs/ssr/experimental` rendering (`renderToPartial`)
-- runtime resumable loader (`@fictjs/runtime/loader`)
+- runtime resumable loader (`@fictjs/runtime/experimental/loader`)
 - server snapshot payload emitted by SSR and consumed by loader
 
 Out of scope:
@@ -29,10 +30,12 @@ Out of scope:
 
 1. `renderToString` / `renderToDocument`:
    - produce deterministic SSR markup for the same input tree + props + environment.
-   - include snapshot script by default (`includeSnapshot !== false`).
+   - do not emit a Preview snapshot by default; resumability requires the
+     explicit `includeSnapshot: true` opt-in.
 2. `renderToStream` shell mode:
    - emits shell first, then boundary patches in resolve order.
-   - emits incremental `data-fict-snapshot` chunks for new scopes.
+   - emits incremental `data-fict-snapshot` chunks for new scopes only when
+     `includeSnapshot: true` is set.
 3. `renderToStream` all-ready mode:
    - emits full resolved HTML once all boundaries settle.
 4. Loader:
@@ -84,7 +87,7 @@ Historical writer map:
 For example, a known v0.22-v0.26 deployment can opt in to its v1 dialect:
 
 ```ts
-import { createLegacySnapshotMigration, installResumableLoader } from 'fict/loader'
+import { createLegacySnapshotMigration, installResumableLoader } from 'fict/experimental/loader'
 
 installResumableLoader({
   snapshotMigrations: {
@@ -101,7 +104,7 @@ import {
   UNVERSIONED_SNAPSHOT_MIGRATION_KEY,
   createLegacySnapshotMigration,
   installResumableLoader,
-} from 'fict/loader'
+} from 'fict/experimental/loader'
 
 installResumableLoader({
   snapshotMigrations: {

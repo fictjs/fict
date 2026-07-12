@@ -212,7 +212,7 @@ import './styles.css'
 render(() => <App />, document.getElementById('app')!)
 `
 
-const resumableMain = `import { installResumableLoader } from 'fict/loader'
+const resumableMain = `import { installResumableLoader } from 'fict/experimental/loader'
 import { render } from 'fict'
 
 import { App } from './App'

@@ -53,6 +53,7 @@ async function readPipeableStream(prefix: string): Promise<string> {
   const stream = renderToPipeableStream(view, {
     mode: 'shell',
     fullDocument: false,
+    includeSnapshot: true,
     scopeIdentifierPrefix: prefix,
   })
   const sink = new PassThrough()
@@ -74,9 +75,15 @@ describe('@fictjs/ssr resumable scope identity', () => {
   it('uses a stable explicit namespace across every render entry point', async () => {
     const prefix = 'account_scope'
 
-    expectScopeIdentity(renderToString(view, { scopeIdentifierPrefix: prefix }), `${prefix}:s1`)
+    expectScopeIdentity(
+      renderToString(view, { includeSnapshot: true, scopeIdentifierPrefix: prefix }),
+      `${prefix}:s1`,
+    )
 
-    const documentResult = renderToDocument(view, { scopeIdentifierPrefix: prefix })
+    const documentResult = renderToDocument(view, {
+      includeSnapshot: true,
+      scopeIdentifierPrefix: prefix,
+    })
     try {
       expectScopeIdentity(documentResult.html, `${prefix}:s1`)
     } finally {
@@ -84,7 +91,10 @@ describe('@fictjs/ssr resumable scope identity', () => {
     }
 
     expectScopeIdentity(
-      await renderToStringAsync(view, { scopeIdentifierPrefix: prefix }),
+      await renderToStringAsync(view, {
+        includeSnapshot: true,
+        scopeIdentifierPrefix: prefix,
+      }),
       `${prefix}:s1`,
     )
 
@@ -93,6 +103,7 @@ describe('@fictjs/ssr resumable scope identity', () => {
         renderToStream(view, {
           mode: 'shell',
           fullDocument: false,
+          includeSnapshot: true,
           scopeIdentifierPrefix: prefix,
         }),
       ),
@@ -103,6 +114,7 @@ describe('@fictjs/ssr resumable scope identity', () => {
 
     const partial = renderToPartial(view, {
       fullDocument: false,
+      includeSnapshot: true,
       scopeIdentifierPrefix: prefix,
     })
     await Promise.all([partial.shellReady, partial.allReady])

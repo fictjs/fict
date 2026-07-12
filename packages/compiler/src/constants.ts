@@ -50,7 +50,7 @@ const FICT_RUNTIME_IMPORT_MODULES = new Set([
   'fict/internal/list',
   'fict/jsx-runtime',
   'fict/jsx-dev-runtime',
-  'fict/loader',
+  'fict/experimental/loader',
   'fict/plus',
   'fict/slim',
 ])
@@ -62,7 +62,7 @@ const STANDALONE_RUNTIME_IMPORT_MODULES = new Set([
   '@fictjs/runtime/internal/list',
   '@fictjs/runtime/jsx-runtime',
   '@fictjs/runtime/jsx-dev-runtime',
-  '@fictjs/runtime/loader',
+  '@fictjs/runtime/experimental/loader',
 ])
 
 /**

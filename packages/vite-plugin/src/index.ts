@@ -99,12 +99,14 @@ export interface FictPluginOptions extends FictCompilerOptions {
    * When enabled, event handlers and resume functions are extracted
    * to separate chunks for optimal lazy loading.
    * @default false for dev, true for production build
+   * @experimental Part of the Preview resumability pipeline when `resumable` is enabled.
    */
   functionSplitting?: boolean
   /**
    * Stable application namespace for public resumable identities.
    * By default the plugin uses the owning package name, version, and Vite-root
    * subpath. Set this when the Vite root has no named package.json boundary.
+   * @experimental Part of the Preview resumability identity contract.
    */
   publicIdentityNamespace?: string
   /**
@@ -1807,7 +1809,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         'fict/advanced',
         'fict/internal',
         'fict/internal/list',
-        'fict/loader',
+        'fict/experimental/loader',
         'fict/slim',
         'fict/jsx-runtime',
         'fict/jsx-dev-runtime',
@@ -4635,7 +4637,7 @@ function detectRuntimeImportFamilyFromCode(body: readonly unknown[]): 'fict' | '
       source === 'fict/internal/list' ||
       source === 'fict/jsx-runtime' ||
       source === 'fict/jsx-dev-runtime' ||
-      source === 'fict/loader' ||
+      source === 'fict/experimental/loader' ||
       source === 'fict/plus' ||
       source === 'fict/slim'
     ) {
@@ -4650,7 +4652,7 @@ function detectRuntimeImportFamilyFromCode(body: readonly unknown[]): 'fict' | '
       source === '@fictjs/runtime/internal/list' ||
       source === '@fictjs/runtime/jsx-runtime' ||
       source === '@fictjs/runtime/jsx-dev-runtime' ||
-      source === '@fictjs/runtime/loader'
+      source === '@fictjs/runtime/experimental/loader'
     ) {
       sawStandaloneRuntimeFamily = true
     }

@@ -57,10 +57,10 @@
       "import": "./dist/internal-list.js",
       "require": "./dist/internal-list.cjs"
     },
-    "./loader": {
-      "types": "./dist/loader.d.ts",
-      "import": "./dist/loader.js",
-      "require": "./dist/loader.cjs"
+    "./experimental/loader": {
+      "types": "./dist/experimental/loader.d.ts",
+      "import": "./dist/experimental/loader.js",
+      "require": "./dist/experimental/loader.cjs"
     },
     "./slim": {
       "types": "./dist/slim.d.ts",

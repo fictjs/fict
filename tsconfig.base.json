@@ -28,8 +28,10 @@
     "rootDir": ".",
     "paths": {
       "fict": ["packages/fict/src"],
+      "fict/experimental/loader": ["packages/fict/src/loader.ts"],
       "fict/*": ["packages/fict/src/*"],
       "@fictjs/runtime": ["packages/runtime/src"],
+      "@fictjs/runtime/experimental/loader": ["packages/runtime/src/loader.ts"],
       "@fictjs/runtime/*": ["packages/runtime/src/*"],
       "@fictjs/compiler": ["packages/compiler/src"],
       "@fictjs/compiler/*": ["packages/compiler/src/*"],

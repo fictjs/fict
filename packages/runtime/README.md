@@ -20,10 +20,14 @@ You can visit [Fict](https://github.com/fictjs/fict) for more documentation.
 
 - `@fictjs/runtime`: low-level public runtime API. It does not export compiler macros.
 - `@fictjs/runtime/advanced`: advanced reactive primitives and escape hatches.
-- `@fictjs/runtime/loader`: SSR/resume loader entrypoint.
+- `@fictjs/runtime/experimental/loader`: Preview SSR/resume loader entrypoint
+  (no semver guarantee; excluded from Core 1.0).
 - `@fictjs/runtime/internal`: compiler ABI for generated code only; do not import by hand.
 
-## Resumable Snapshot Loader
+## Preview: Resumable Snapshot Loader
+
+This entrypoint has no semver guarantee and is not part of Core 1.0. SSR does
+not emit its snapshot protocol unless `includeSnapshot: true` is set explicitly.
 
 The current SSR writer emits snapshot schema v2. The loader rejects missing
 versions, v1, and other unsupported versions by default; it never guesses which
@@ -37,7 +41,7 @@ import {
   UNVERSIONED_SNAPSHOT_MIGRATION_KEY,
   createLegacySnapshotMigration,
   installResumableLoader,
-} from '@fictjs/runtime/loader'
+} from '@fictjs/runtime/experimental/loader'
 
 installResumableLoader({
   snapshotMigrations: {

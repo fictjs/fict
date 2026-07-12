@@ -740,9 +740,9 @@ export function setElementProperty(el: Element, key: string, value: unknown): vo
   // matching option is browser-equivalent and serializes correctly for SSR.
   if (key === 'value' && el.localName === 'select') {
     const expected = String(value ?? '')
-    for (const option of el.querySelectorAll('option')) {
+    el.querySelectorAll('option').forEach(option => {
       ;(option as HTMLOptionElement).selected = (option as HTMLOptionElement).value === expected
-    }
+    })
     return
   }
   ;(el as unknown as Record<string, unknown>)[key] = value

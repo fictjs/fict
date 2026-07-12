@@ -2,10 +2,11 @@
 
 This guide shows practical deployment patterns for Fict SSR.
 
-> **Maturity:** `@fictjs/ssr` is a **Satellite** package (independent versioning,
-> not Core) — see [SCOPE.md](../SCOPE.md). `renderToString` / `renderToStream` /
-> `renderToPipeableStream` are supported; **`renderToPartial`, resumability, and
-> partial prerendering are Preview** (no semver) — see [PREVIEW.md](./PREVIEW.md).
+> **Preview** — `@fictjs/ssr` is a **Satellite** package (independent versioning,
+> not Core). `renderToString` / `renderToStream` / `renderToPipeableStream` are
+> supported; **`renderToPartial`, resumability, and partial prerendering are
+> Preview** (no semver, non-blocking for Core 1.0). See
+> [SCOPE.md](../SCOPE.md) and [PREVIEW.md](./PREVIEW.md).
 
 ## 1) Runtime Selection Matrix
 
@@ -154,6 +155,10 @@ installResumableLoader({
 })
 ```
 
+This supported path does not emit resumability snapshots. Add
+`includeSnapshot: true` only when deliberately adopting the Preview loader and
+snapshot contract.
+
 `onSnapshotRejected` runs after the loader disengages; the application owns the
 CSR mount. Monitor issue code, build ID, schema version, route, and the server
 build that produced the HTML. Alert separately on
@@ -184,6 +189,8 @@ build that produced the HTML. Alert separately on
 - Manifest loading strategy matches runtime constraints.
 - SSR error logging wired (`onError`, promise catches).
 - Snapshot inclusion reviewed (`includeSnapshot` true/false by route needs).
+- Preview clients import `fict/experimental/loader`; no stable-looking loader
+  subpath is deployed.
 - Personalized snapshot HTML is `private, no-store`; any public cache key pins build/schema/route.
 - Server, HTML, loader, manifest, QRL chunks, and stream runtime share one build ID.
 - Schema rollout and rollback purge CDN, PPR/ISR, KV/pre-rendered, and service-worker caches.

@@ -2,7 +2,7 @@
 
 This guide covers practical SEO patterns for Fict SSR apps.
 
-> **Maturity:** `@fictjs/ssr` is a **Satellite** package (see [SCOPE.md](../SCOPE.md)).
+> **Preview** — `@fictjs/ssr` is a **Satellite** package (see [SCOPE.md](../SCOPE.md)).
 > SEO via `renderToString` / shell streaming is supported; resume and partial
 > prerendering are **Preview** ([PREVIEW.md](./PREVIEW.md)).
 

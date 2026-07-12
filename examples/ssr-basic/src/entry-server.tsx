@@ -11,6 +11,7 @@ const projectRoot = resolve(__dirname, '..')
 
 export function render() {
   const html = renderToString(() => <App />, {
+    // Preview opt-in: supported SSR does not emit snapshots by default.
     includeSnapshot: true,
     includeContainer: true,
     containerId: 'app',

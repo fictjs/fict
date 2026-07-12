@@ -182,6 +182,7 @@ describe('@fictjs/ssr streaming', () => {
     const stream = renderToStream(() => ({ type: Counter, props: {} }), {
       mode: 'shell',
       fullDocument: true,
+      includeSnapshot: true,
     })
     const html = await readReadableStream(stream)
 
@@ -211,7 +212,10 @@ describe('@fictjs/ssr streaming', () => {
       }
     }
 
-    const stream = renderToStream(() => ({ type: App, props: {} }), { mode: 'shell' })
+    const stream = renderToStream(() => ({ type: App, props: {} }), {
+      mode: 'shell',
+      includeSnapshot: true,
+    })
     const readAll = readReadableStream(stream)
 
     // Resolve after microtask to ensure shell is emitted first.
@@ -257,7 +261,10 @@ describe('@fictjs/ssr streaming', () => {
       resume: 'app#resume',
     }
 
-    const stream = renderToStream(() => ({ type: App, props: {} }), { mode: 'shell' })
+    const stream = renderToStream(() => ({ type: App, props: {} }), {
+      mode: 'shell',
+      includeSnapshot: true,
+    })
     const reader = stream.getReader()
     const shell = await reader.read()
     expect(shell.done).toBe(false)
@@ -398,7 +405,7 @@ describe('@fictjs/ssr streaming', () => {
           },
         },
       ],
-      { mode: 'shell' },
+      { mode: 'shell', includeSnapshot: true },
     )
     const readAll = readReadableStream(stream)
 
@@ -695,6 +702,7 @@ describe('@fictjs/ssr streaming', () => {
     const stream = renderToStream(() => ({ type: App, props: {} }), {
       mode: 'shell',
       fullDocument: false,
+      includeSnapshot: true,
       onError: error => errors.push(error),
     })
     const readAll = readReadableStream(stream)
@@ -782,6 +790,7 @@ describe('@fictjs/ssr streaming', () => {
 
     const stream = renderToStream(() => ({ type: App, props: {} }), {
       mode: 'shell',
+      includeSnapshot: true,
       scriptNonce: 'nonce-&-"',
       streamIdentifierPrefix: 'nonce_test',
     })
@@ -917,6 +926,7 @@ describe('@fictjs/ssr streaming', () => {
 
     const { pipe, allReady } = renderToPipeableStream(() => ({ type: App, props: {} }), {
       mode: 'shell',
+      includeSnapshot: true,
     })
 
     const chunks: Buffer[] = []
@@ -1037,7 +1047,7 @@ describe('@fictjs/ssr streaming', () => {
           children: { type: OuterContent, props: {} },
         },
       }),
-      { mode: 'shell' },
+      { mode: 'shell', includeSnapshot: true },
     )
     const chunks: Buffer[] = []
     const writable = new PassThrough()
@@ -1225,6 +1235,7 @@ describe('@fictjs/ssr streaming', () => {
     const stream = renderToStream(() => ({ type: App, props: {} }), {
       mode: 'all',
       fullDocument: true,
+      includeSnapshot: true,
     })
 
     const readAll = readReadableStream(stream)
@@ -1260,6 +1271,7 @@ describe('@fictjs/ssr streaming', () => {
     const stream = renderToStream(() => ({ type: App, props: {} }), {
       mode: 'shell',
       fullDocument: true,
+      includeSnapshot: true,
       snapshotTarget: 'head',
     })
 
@@ -1295,6 +1307,7 @@ describe('@fictjs/ssr streaming', () => {
     const stream = renderToStream(() => ({ type: App, props: {} }), {
       mode: 'shell',
       fullDocument: true,
+      includeSnapshot: true,
       snapshotTarget: 'head',
       scriptNonce: '</script><script>globalThis.__fict_nonce_xss=1</script>',
     })
@@ -1335,6 +1348,7 @@ describe('@fictjs/ssr streaming', () => {
     const stream = renderToStream(() => ({ type: App, props: {} }), {
       mode: 'all',
       fullDocument: true,
+      includeSnapshot: true,
       snapshotTarget: 'head',
     })
 
@@ -1635,6 +1649,7 @@ describe('@fictjs/ssr streaming', () => {
     const partial = renderToPartial(() => ({ type: App, props: {} }), {
       fullDocument: true,
       mode: 'shell',
+      includeSnapshot: true,
     })
 
     expect(partial.shell).toContain('<!DOCTYPE html')

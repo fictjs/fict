@@ -10,7 +10,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 
 import type { FictNode } from '@fictjs/runtime'
 import { ErrorBoundary } from '@fictjs/runtime'
-import { installResumableLoader } from '@fictjs/runtime/loader'
+import { installResumableLoader } from '@fictjs/runtime/experimental/loader'
 import {
   __fictUseContext,
   __fictUseSignal,
@@ -25,7 +25,17 @@ import {
 import createFictPlugin, { type FictCompilerOptions } from '../../compiler/src/index'
 import { parseHTML } from 'linkedom'
 
-import { renderToDocument, renderToString } from '../src/index'
+import {
+  renderToDocument as renderToDocumentBase,
+  renderToString as renderToStringBase,
+} from '../src/index'
+
+// This suite validates the Preview snapshot/resume contract. Individual tests
+// can still override with `includeSnapshot: false` to verify supported SSR.
+const renderToString: typeof renderToStringBase = (view, options = {}) =>
+  renderToStringBase(view, { includeSnapshot: true, ...options })
+const renderToDocument: typeof renderToDocumentBase = (view, options = {}) =>
+  renderToDocumentBase(view, { includeSnapshot: true, ...options })
 
 const WORKSPACE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
 const FICT_PACKAGE_DIR = path.join(WORKSPACE_ROOT, 'packages/fict')

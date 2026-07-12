@@ -2,7 +2,7 @@
 
 This guide focuses on practical SSR tuning for Fict apps.
 
-> **Maturity:** `@fictjs/ssr` is a **Satellite** package (see [SCOPE.md](../SCOPE.md)).
+> **Preview** — `@fictjs/ssr` is a **Satellite** package (see [SCOPE.md](../SCOPE.md)).
 > `renderToString` / `renderToStream` / `renderToPipeableStream` are supported;
 > **`renderToPartial` / partial prerendering are Preview** ([PREVIEW.md](./PREVIEW.md)).
 
@@ -37,11 +37,14 @@ let productIds = $state(serverPayload.map(p => p.id))
 - avoid storing large transient arrays/maps in top-level reactive state
 - compute on server and serialize only what client must resume
 
-### Disable snapshot when resumability is unnecessary
+### Enable snapshots only for Preview resumability
 
 ```ts
-renderToString(view, { includeSnapshot: false })
+renderToString(view, { includeSnapshot: true })
 ```
+
+Snapshots are disabled by default. Enabling them opts the route into the
+Preview snapshot/loader compatibility unit and its cache-purge requirements.
 
 ## 3) Shape Suspense Boundaries Deliberately
 

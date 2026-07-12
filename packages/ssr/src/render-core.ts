@@ -99,17 +99,22 @@ export interface RenderToStringOptions {
    */
   manifest?: Record<string, string> | string
   /**
-   * Include the SSR snapshot script for resumability.
-   * Defaults to true.
+   * Include the Preview SSR snapshot script for resumability.
+   * Defaults to false so supported SSR rendering never opts into Preview output
+   * implicitly.
+   *
+   * @experimental The snapshot schema is not part of the Satellite or Core 1.0 promise.
    */
   includeSnapshot?: boolean
   /**
    * Script element id for the snapshot.
+   * @experimental Part of the Preview resumability snapshot contract.
    */
   snapshotScriptId?: string
   /**
    * Where to append the snapshot script when not returning full document.
    * Defaults to 'container'.
+   * @experimental Part of the Preview resumability snapshot contract.
    */
   snapshotTarget?: 'container' | 'body' | 'head'
   /**
@@ -125,6 +130,8 @@ export interface RenderToStringOptions {
    * Values must contain 1-128 ASCII letters, digits, `_`, `.`, `:`, or `-`, and
    * must not contain `--`. When omitted, each render gets an automatic edge-safe
    * namespace.
+   *
+   * @experimental Part of the Preview resumability identity contract.
    */
   scopeIdentifierPrefix?: string
 }
@@ -185,6 +192,10 @@ export interface PipeableStream {
   allReady: Promise<void>
 }
 
+/**
+ * @experimental Preview PPR result; its fields and delivery model may change
+ * before graduation. Use `renderToStream` for supported streaming SSR.
+ */
 export interface PartialPrerenderResult {
   /**
    * Complete shell HTML (fallbacks + markers + initial snapshot scripts).
@@ -236,7 +247,7 @@ function renderToDocumentInSession(
 ): RenderToDocumentResult {
   validateScopeIdentifierPrefix(options.scopeIdentifierPrefix)
   const scopeIdentifierPrefix = resolveScopeIdentifierPrefix(options.scopeIdentifierPrefix)
-  const includeSnapshot = options.includeSnapshot !== false
+  const includeSnapshot = options.includeSnapshot === true
 
   // Always enable SSR mode during server rendering.
   // This ensures SSR-specific code paths (list rendering, etc.) work correctly
@@ -639,7 +650,7 @@ function startStreamingRenderInSession(
   const scopeIdentifierPrefix = resolveScopeIdentifierPrefix(options.scopeIdentifierPrefix)
   const streamIdentifierPrefix =
     mode === 'shell' ? resolveStreamIdentifierPrefix(options.streamIdentifierPrefix) : null
-  const includeSnapshot = options.includeSnapshot !== false
+  const includeSnapshot = options.includeSnapshot === true
   const sentScopeSnapshots = new Map<string, string>()
 
   const boundaryMap = new Map<string, { start: Comment; end: Comment; pending: boolean }>()

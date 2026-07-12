@@ -17,9 +17,11 @@ Starting with `1.0.0`, Fict follows SemVer:
 - Major: public API breaks, compiler output ABI breaks, or changed default
   semantics for stable APIs.
 
-Preview APIs such as `renderToPartial` are not frozen. They must stay marked as
-Preview/experimental in docs and changelogs until the API freeze document moves
-them to a stable tier.
+Preview APIs such as `renderToPartial` and resumability are not frozen. They
+must stay marked as Preview/experimental in docs and changelogs until the API
+freeze document moves them to a stable tier. Preview does not block Core 1.0;
+passing Preview verification proves its documented degradation behavior, not
+Core semver stability. `maturity.json` is the release-readable registry.
 
 ## Changesets
 

@@ -13,7 +13,7 @@ export default defineConfig({
         replacement: fileURLToPath(new URL('../fict/src/plus.ts', import.meta.url)),
       },
       {
-        find: '@fictjs/runtime/loader',
+        find: '@fictjs/runtime/experimental/loader',
         replacement: fileURLToPath(new URL('../runtime/src/loader.ts', import.meta.url)),
       },
       {

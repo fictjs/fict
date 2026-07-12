@@ -1876,6 +1876,10 @@ import { renderToString } from '@fictjs/ssr'
 function renderToString(view: () => FictNode, options?: RenderToStringOptions): string
 ```
 
+Supported SSR does not emit the Preview snapshot protocol by default. Setting
+`includeSnapshot: true` opts into resumability and must be paired with the
+experimental loader and a resumable compiler build.
+
 `scopeIdentifierPrefix` supplies a stable namespace for resumable
 `data-fict-s` and snapshot scope IDs. Every render gets an automatic unique
 namespace when it is omitted. Explicit prefixes must be unique among outputs
@@ -1897,7 +1901,8 @@ function renderToStream(
 Key options:
 
 - `mode: 'shell' | 'all'` — shell-first streaming vs all-ready
-- `snapshotTarget: 'head' | 'body' | 'container'`
+- `includeSnapshot: true` — explicit Preview resumability opt-in; default false
+- `snapshotTarget: 'head' | 'body' | 'container'` — Preview snapshot placement
 - `scriptNonce` — nonce for generated scripts
 - `scopeIdentifierPrefix` — stable resumable scope namespace shared by all SSR
   render entry points; it must be unique within a composed document
@@ -1918,8 +1923,12 @@ strict CSP streaming routes.
 
 ### renderToPartial
 
-Partial prerendering API: returns a complete shell HTML plus a deferred patch stream.
-Status: **Advanced / Experimental Preview** for v1.0; the return shape is not part of the stable v1 API freeze yet.
+> **Preview** — partial prerendering has no semver guarantee and does not block
+> Core 1.0. Use supported `renderToStream` when the PPR return shape is not
+> acceptable as an experimental dependency.
+
+Partial prerendering returns a complete shell HTML plus a deferred patch
+stream. The return shape is not part of the stable v1 API freeze.
 
 ```typescript
 import { renderToPartial } from '@fictjs/ssr/experimental'
@@ -1959,10 +1968,15 @@ For Edge runtimes, prefer `renderToStream()`. Use `renderToPartial()` from
 
 ### installResumableLoader
 
-The client loader is exported from both `fict/loader` and
-`@fictjs/runtime/loader`:
+> **Preview** — the client loader has no semver guarantee, is excluded from the
+> Core 1.0 promise, and requires explicit compiler and SSR snapshot opt-ins.
+
+The client loader is exported from `fict/experimental/loader` and
+`@fictjs/runtime/experimental/loader`:
 
 ```typescript
+import { installResumableLoader } from 'fict/experimental/loader'
+
 function installResumableLoader(options?: ResumableLoaderOptions): void
 
 interface ResumableLoaderOptions {

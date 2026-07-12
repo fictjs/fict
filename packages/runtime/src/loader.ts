@@ -546,6 +546,10 @@ function preemptivelyPreventDefault(
 // Types
 // ============================================================================
 
+/**
+ * @experimental Preview resumability API. Use ordinary application loading for
+ * a stable alternative.
+ */
 export interface PrefetchStrategy {
   /**
    * Enable visibility-based prefetch using IntersectionObserver.
@@ -571,6 +575,10 @@ export interface PrefetchStrategy {
   hoverDelay?: number
 }
 
+/**
+ * @experimental Preview resumability API. Use client rendering or hydration
+ * for a stable application startup contract.
+ */
 export interface ResumableLoaderOptions {
   document?: Document
   snapshotScriptId?: string
@@ -599,6 +607,9 @@ export interface ResumableLoaderOptions {
   prefetch?: PrefetchStrategy | false
 }
 
+/**
+ * @experimental Preview snapshot compatibility API. The snapshot schema is not frozen.
+ */
 export type SnapshotMigration = (
   snapshot: Record<string, unknown>,
   context: SnapshotMigrationContext,
@@ -607,6 +618,8 @@ export type SnapshotMigration = (
 /**
  * Sentinel key for opting an unversioned pre-v1 snapshot into migration.
  * Unversioned payloads are rejected unless this migration is provided.
+ *
+ * @experimental Preview snapshot compatibility API. The snapshot schema is not frozen.
  */
 export const UNVERSIONED_SNAPSHOT_MIGRATION_KEY = 0
 
@@ -614,6 +627,8 @@ export const UNVERSIONED_SNAPSHOT_MIGRATION_KEY = 0
  * Historical v1 snapshots used two incompatible props encodings. Applications
  * must select the format that matches the cached/deployed writer; the loader
  * cannot infer it from the payload bytes.
+ *
+ * @experimental Preview snapshot compatibility API. The snapshot schema is not frozen.
  */
 export type LegacySnapshotFormat = 'raw-props' | 'encoded-props'
 
@@ -624,10 +639,12 @@ export type LegacySnapshotFormat = 'raw-props' | 'encoded-props'
  * were handed directly to JSON.stringify. `encoded-props` covers the later v1
  * contract where props already use Fict serialization markers. This helper
  * deliberately does not attempt heuristic format detection.
+ *
+ * @experimental Preview snapshot compatibility API. The snapshot schema is not frozen.
  */
 export function createLegacySnapshotMigration(format: LegacySnapshotFormat): SnapshotMigration {
   if (format !== 'raw-props' && format !== 'encoded-props') {
-    throw new Error(`[fict/loader] Unknown legacy snapshot format: ${String(format)}.`)
+    throw new Error(`[fict/experimental/loader] Unknown legacy snapshot format: ${String(format)}.`)
   }
 
   return (snapshot, context) => {
@@ -640,12 +657,18 @@ export function createLegacySnapshotMigration(format: LegacySnapshotFormat): Sna
   }
 }
 
+/**
+ * @experimental Preview snapshot compatibility API. The snapshot schema is not frozen.
+ */
 export interface SnapshotMigrationContext {
   fromVersion: number
   toVersion: number
   source: string
 }
 
+/**
+ * @experimental Preview loader diagnostics. Codes may change before graduation.
+ */
 export type SnapshotIssueCode =
   | 'snapshot_parse_error'
   | 'snapshot_invalid_shape'
@@ -661,6 +684,10 @@ export type SnapshotIssueCode =
   | 'handler_missing'
   | 'handler_failed'
 
+/**
+ * @experimental Preview loader diagnostics. Use client rendering or hydration
+ * for a stable application startup contract.
+ */
 export interface SnapshotIssue {
   code: SnapshotIssueCode
   message: string
@@ -755,6 +782,9 @@ async function waitForActiveInstallation<T>(
 
 /**
  * Reset the hydrated scopes set. Useful for testing.
+ *
+ * @experimental Preview resumability test helper; no stable application alternative.
+ * @internal
  */
 export function resetHydratedScopes(): void {
   for (const installation of loaderInstallations.values()) {
@@ -766,6 +796,9 @@ export function resetHydratedScopes(): void {
 
 /**
  * Reset the prefetched URLs set. Useful for testing.
+ *
+ * @experimental Preview resumability test helper; no stable application alternative.
+ * @internal
  */
 export function resetPrefetchedUrls(): void {
   for (const installation of loaderInstallations.values()) {
@@ -780,13 +813,21 @@ const pendingHandlers = new Set<Promise<void>>()
 
 /**
  * Wait for all pending event handlers to complete. Useful for testing.
+ *
+ * @experimental Preview resumability test helper; no stable application alternative.
+ * @internal
  */
 export async function waitForPendingHandlers(): Promise<void> {
   if (pendingHandlers.size === 0) return
   await Promise.allSettled([...pendingHandlers])
 }
 
-/** Return active cancellation waiters for leak regression tests. */
+/**
+ * Return active cancellation waiters for leak regression tests.
+ *
+ * @experimental Preview resumability test helper; no stable application alternative.
+ * @internal
+ */
 export function getPendingLoaderWaiterCountForTests(): number {
   let count = 0
   for (const installation of loaderInstallations.values()) {
@@ -797,6 +838,9 @@ export function getPendingLoaderWaiterCountForTests(): number {
 
 /**
  * Clean up all registered event listeners. Useful for testing.
+ *
+ * @experimental Preview resumability test helper; no stable application alternative.
+ * @internal
  */
 export function cleanupEventListeners(): void {
   let firstError: unknown
@@ -824,6 +868,12 @@ export function cleanupEventListeners(): void {
 // Main Entry Point
 // ============================================================================
 
+/**
+ * Install the Preview event-resume loader for an explicitly snapshot-enabled
+ * document. Use client rendering or hydration for a stable startup contract.
+ *
+ * @experimental Resumability and the snapshot ABI may change in any release.
+ */
 export function installResumableLoader(options: ResumableLoaderOptions = {}): void {
   const doc = resolveLoaderDocument(options.document)
   const scriptId = options.snapshotScriptId ?? '__FICT_SNAPSHOT__'
@@ -1135,7 +1185,9 @@ function cleanupLoaderInstallation(
 function resolveLoaderDocument(doc: Document | undefined): Document {
   if (doc) return doc
   if (typeof window === 'undefined' || !window.document) {
-    throw new Error('[fict/loader] installResumableLoader requires a browser document.')
+    throw new Error(
+      '[fict/experimental/loader] installResumableLoader requires a browser document.',
+    )
   }
   return window.document
 }
@@ -1209,7 +1261,7 @@ function applySnapshotState(
       installation.scopeIds = nextScopeIds
       emitSnapshotIssue(installation, {
         code: 'snapshot_effect_failed',
-        message: `[fict/loader] Snapshot state was committed, but a reactive effect failed: ${formatImportError(error.cause)}`,
+        message: `[fict/experimental/loader] Snapshot state was committed, but a reactive effect failed: ${formatImportError(error.cause)}`,
         source,
         expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
         error: error.cause,
@@ -1218,7 +1270,7 @@ function applySnapshotState(
     }
     emitSnapshotIssue(installation, {
       code: 'snapshot_invalid_shape',
-      message: `[fict/loader] Snapshot payload contains invalid scope data: ${formatImportError(error)}`,
+      message: `[fict/experimental/loader] Snapshot payload contains invalid scope data: ${formatImportError(error)}`,
       source,
       expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
       error,
@@ -1280,7 +1332,7 @@ function parseSnapshotText(
   } catch {
     emitSnapshotIssue(installation, {
       code: 'snapshot_parse_error',
-      message: '[fict/loader] Failed to parse SSR snapshot JSON.',
+      message: '[fict/experimental/loader] Failed to parse SSR snapshot JSON.',
       source,
       expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
     })
@@ -1298,7 +1350,7 @@ function normalizeSnapshotState(
   if (!isRecord(value)) {
     emitSnapshotIssue(installation, {
       code: 'snapshot_invalid_shape',
-      message: '[fict/loader] Snapshot payload must be an object.',
+      message: '[fict/experimental/loader] Snapshot payload must be an object.',
       source,
       expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
     })
@@ -1322,7 +1374,7 @@ function normalizeSnapshotState(
     }
     const versionIssue: SnapshotIssue = {
       code: 'snapshot_unsupported_version',
-      message: `[fict/loader] Snapshot schema version ${String(version)} is not supported by this runtime.`,
+      message: `[fict/experimental/loader] Snapshot schema version ${String(version)} is not supported by this runtime.`,
       source,
       expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
     }
@@ -1339,7 +1391,7 @@ function normalizeSnapshotState(
   if (!isRecord(scopes)) {
     emitSnapshotIssue(installation, {
       code: 'snapshot_invalid_shape',
-      message: '[fict/loader] Snapshot payload is missing a valid `scopes` object.',
+      message: '[fict/experimental/loader] Snapshot payload is missing a valid `scopes` object.',
       source,
       expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
     })
@@ -1447,7 +1499,7 @@ function emitSnapshotMigrationFailed(
 ): void {
   emitSnapshotIssue(installation, {
     code: 'snapshot_migration_failed',
-    message: `[fict/loader] Failed to migrate snapshot schema from version ${originalVersion} at step ${failedVersion}: ${reason}`,
+    message: `[fict/experimental/loader] Failed to migrate snapshot schema from version ${originalVersion} at step ${failedVersion}: ${reason}`,
     source,
     expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
     actualVersion: originalVersion,
@@ -1514,7 +1566,7 @@ function notifySnapshotIssueHandler(installation: LoaderInstallation, issue: Sna
     installation.snapshotIssueHandler?.(issue)
   } catch (error) {
     if (typeof console !== 'undefined' && typeof console.error === 'function') {
-      console.error('[fict/loader] onSnapshotIssue callback failed.', error)
+      console.error('[fict/experimental/loader] onSnapshotIssue callback failed.', error)
     }
   }
 }
@@ -1571,7 +1623,7 @@ function reportSnapshotFallbackFailure(
 ): void {
   const issue: SnapshotIssue = {
     code: 'snapshot_fallback_failed',
-    message: `[fict/loader] Client-render fallback failed: ${formatImportError(error)}`,
+    message: `[fict/experimental/loader] Client-render fallback failed: ${formatImportError(error)}`,
     source: rejectedIssue.source,
     expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
     error,
@@ -1779,7 +1831,7 @@ function handleResumableEvent(installation: LoaderInstallation, event: Event): v
   void promise
     .catch(error => {
       if (typeof console !== 'undefined' && typeof console.error === 'function') {
-        console.error('[fict/loader] Failed to handle resumable event.', error)
+        console.error('[fict/experimental/loader] Failed to handle resumable event.', error)
       }
     })
     .finally(() => {
@@ -1870,7 +1922,7 @@ async function resumeScope(
   } catch (error) {
     emitSnapshotIssue(installation, {
       code: 'resume_import_failed',
-      message: `[fict/loader] Failed to import resume module ${resolvedResumeUrl}: ${formatImportError(error)}`,
+      message: `[fict/experimental/loader] Failed to import resume module ${resolvedResumeUrl}: ${formatImportError(error)}`,
       source: 'event',
       expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
       scopeId,
@@ -1891,7 +1943,7 @@ async function resumeScope(
   if (typeof resumeFn !== 'function') {
     emitSnapshotIssue(installation, {
       code: 'resume_function_missing',
-      message: `[fict/loader] Resume function ${resumeExport} was not registered for scope ${scopeId}.`,
+      message: `[fict/experimental/loader] Resume function ${resumeExport} was not registered for scope ${scopeId}.`,
       source: 'event',
       expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
       scopeId,
@@ -1918,7 +1970,7 @@ async function resumeScope(
   } catch (error) {
     emitSnapshotIssue(installation, {
       code: 'resume_failed',
-      message: `[fict/loader] Resume function ${resumeExport} failed for scope ${scopeId}: ${formatImportError(error)}`,
+      message: `[fict/experimental/loader] Resume function ${resumeExport} failed for scope ${scopeId}: ${formatImportError(error)}`,
       source: 'event',
       expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
       scopeId,
@@ -2022,7 +2074,7 @@ async function runScopeHandler(
       restoreLatestEventControlState(installation, preservedControl)
       emitSnapshotIssue(installation, {
         code: 'handler_import_failed',
-        message: `[fict/loader] Failed to import handler module ${resolvedUrl}: ${formatImportError(error)}`,
+        message: `[fict/experimental/loader] Failed to import handler module ${resolvedUrl}: ${formatImportError(error)}`,
         source: 'event',
         expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
         scopeId,
@@ -2040,7 +2092,7 @@ async function runScopeHandler(
       restoreLatestEventControlState(installation, preservedControl)
       emitSnapshotIssue(installation, {
         code: 'handler_missing',
-        message: `[fict/loader] Resumable handler export ${exportName} was not found in ${resolvedUrl}.`,
+        message: `[fict/experimental/loader] Resumable handler export ${exportName} was not found in ${resolvedUrl}.`,
         source: 'event',
         expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
         scopeId,
@@ -2127,7 +2179,7 @@ async function runScopeHandler(
     if (handlerFailed) {
       emitSnapshotIssue(installation, {
         code: 'handler_failed',
-        message: `[fict/loader] Resumable handler ${exportName} failed for scope ${scopeId}: ${formatImportError(handlerError)}`,
+        message: `[fict/experimental/loader] Resumable handler ${exportName} failed for scope ${scopeId}: ${formatImportError(handlerError)}`,
         source: 'event',
         expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
         scopeId,
@@ -2177,7 +2229,7 @@ async function handleResumableEventAsync(
     if (!snapshot) {
       emitSnapshotIssue(installation, {
         code: 'scope_snapshot_missing',
-        message: `[fict/loader] Missing scope snapshot for ${sourceScopeId}; skipping resumable handler execution.`,
+        message: `[fict/experimental/loader] Missing scope snapshot for ${sourceScopeId}; skipping resumable handler execution.`,
         source: 'event',
         expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
         scopeId: sourceScopeId,
@@ -2191,7 +2243,7 @@ async function handleResumableEventAsync(
     } catch (error) {
       emitSnapshotIssue(installation, {
         code: 'snapshot_invalid_shape',
-        message: `[fict/loader] Invalid serialized state for scope ${sourceScopeId}; skipping resumable handler execution: ${formatImportError(error)}`,
+        message: `[fict/experimental/loader] Invalid serialized state for scope ${sourceScopeId}; skipping resumable handler execution: ${formatImportError(error)}`,
         source: 'event',
         expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
         scopeId: sourceScopeId,

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-import * as runtimeLoader from '@fictjs/runtime/loader'
+import * as runtimeLoader from '@fictjs/runtime/experimental/loader'
 import * as runtimeAdvanced from '@fictjs/runtime/advanced'
 import * as runtimeInternal from '@fictjs/runtime/internal'
 import * as runtimeInternalList from '@fictjs/runtime/internal/list'
@@ -25,7 +25,7 @@ describe('fict runtime bridge entrypoints', () => {
     expect(internalList.createKeyedList).toBe(runtimeInternalList.createKeyedList)
   })
 
-  it('re-exports the resumable loader through fict/loader', () => {
+  it('re-exports the resumable loader through fict/experimental/loader', () => {
     expect(loader.installResumableLoader).toBe(runtimeLoader.installResumableLoader)
   })
 
@@ -49,7 +49,7 @@ describe('fict runtime bridge entrypoints', () => {
     expect('getDevtoolsHook' in publicMain).toBe(false)
   })
 
-  it('declares internal and loader subpath exports in package.json', () => {
+  it('declares internal and experimental loader subpath exports in package.json', () => {
     const packageJsonPath = path.resolve(
       path.dirname(fileURLToPath(import.meta.url)),
       '../package.json',
@@ -60,6 +60,7 @@ describe('fict runtime bridge entrypoints', () => {
 
     expect(pkg.exports?.['./internal']).toBeTruthy()
     expect(pkg.exports?.['./internal/list']).toBeTruthy()
-    expect(pkg.exports?.['./loader']).toBeTruthy()
+    expect(pkg.exports?.['./experimental/loader']).toBeTruthy()
+    expect(pkg.exports?.['./loader']).toBeUndefined()
   })
 })

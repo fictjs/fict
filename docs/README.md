@@ -48,7 +48,7 @@ boundary lives in [SCOPE.md](../SCOPE.md); Preview policy lives in
 - `ssr-deployment.md` — Deployment guides for Node, Vercel, Cloudflare Workers, and edge runtimes
 - `ssr-performance.md` — SSR performance tuning and snapshot-size optimization
 - `ssr-seo.md` — SEO best practices for SSR/streaming apps
-- `ssr-resume-stability-contract.md` — Supported SSR behavior plus Preview contracts for streaming patch, resume, and PPR
+- `ssr-resume-stability-contract.md` — Supported SSR streaming behavior plus Preview contracts for resume and PPR
 - `ssr-runtime-matrix.md` — Release-gate matrix for SSR runtime, CSP, hydration, resumability, and streaming checks
 - `preview-degradation-audit.md` — Current coverage audit for Preview degradation behavior
 

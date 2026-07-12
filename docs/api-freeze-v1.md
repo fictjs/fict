@@ -37,7 +37,7 @@ separate surfaces:
 | `fict`                                                               | Application authors             | Tier 1 public API                                 |
 | `fict/plus`                                                          | Application authors             | Tier 1 extended API                               |
 | `fict/advanced`                                                      | Power users and library authors | Tier 3 advanced API                               |
-| `fict/loader`                                                        | SSR/resume app entrypoints      | Tier 3/Preview where noted                        |
+| `fict/experimental/loader`                                           | SSR/resume Preview adopters     | Tier 4 Preview; excluded from the v1 freeze       |
 | `fict/jsx-runtime`, `fict/jsx-dev-runtime`                           | JSX transform                   | Tier 1 JSX ABI                                    |
 | `fict/internal`, `fict/internal/list`                                | Compiler-generated code         | Tier 2 compiler ABI, not user API                 |
 | `@fictjs/runtime`                                                    | Low-level runtime integrators   | Tier 1 runtime API, no compiler macro             |
@@ -60,6 +60,8 @@ Rules:
 5. DevTools paths are listed only to document protocol compatibility. Per
    [SCOPE.md](../SCOPE.md), `@fictjs/devtools` is a Changesets-ignored Internal
    distribution artifact, not part of the v1 public API freeze.
+6. `fict/experimental/loader`, resumable compiler output, SSR snapshots, and
+   `@fictjs/ssr/experimental` are outside this freeze and do not block Core 1.0.
 
 ---
 

@@ -36,5 +36,6 @@ You can visit [Fict](https://github.com/fictjs/fict) for more documentation.
 - `fict`: application-facing API and compiler macros (`$state`, `$effect`).
 - `fict/plus`: async resource and lazy component helpers.
 - `fict/advanced`: escape hatches for library authors and low-level reactive integration.
-- `fict/loader`: SSR/resume loader entrypoint.
+- `fict/experimental/loader`: Preview SSR/resume loader entrypoint (no semver
+  guarantee; excluded from Core 1.0).
 - `fict/internal`: compiler ABI for generated code only; do not import by hand.

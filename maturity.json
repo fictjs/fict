@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "sourceOfTruth": "SCOPE.md",
+  "core1Release": {
+    "packages": [
+      "fict",
+      "@fictjs/runtime",
+      "@fictjs/compiler",
+      "@fictjs/babel-preset",
+      "@fictjs/vite-plugin",
+      "@fictjs/eslint-plugin"
+    ],
+    "previewBlocksRelease": false,
+    "stablePromiseExcludesPreview": true
+  },
+  "previewSurfaces": [
+    {
+      "id": "resumability",
+      "status": "preview",
+      "semverGuaranteed": false,
+      "core1ReleaseBlocking": false,
+      "entrypoints": [
+        {
+          "packageJson": "packages/fict/package.json",
+          "subpath": "./experimental/loader"
+        },
+        {
+          "packageJson": "packages/runtime/package.json",
+          "subpath": "./experimental/loader"
+        }
+      ],
+      "optIns": [
+        "FictCompilerOptions.resumable=true",
+        "RenderToStringOptions.includeSnapshot=true"
+      ],
+      "stableAlternative": "Use client rendering or hydration, and use @fictjs/ssr without includeSnapshot for supported SSR output.",
+      "graduation": {
+        "apiShapeFrozen": false,
+        "snapshotCompatibilityWindowFrozen": false,
+        "degradationContractVerified": true
+      }
+    },
+    {
+      "id": "partial-prerendering",
+      "status": "preview",
+      "semverGuaranteed": false,
+      "core1ReleaseBlocking": false,
+      "entrypoints": [
+        {
+          "packageJson": "packages/ssr/package.json",
+          "subpath": "./experimental"
+        }
+      ],
+      "optIns": ["import { renderToPartial } from '@fictjs/ssr/experimental'"],
+      "stableAlternative": "Use renderToStream or renderToPipeableStream from @fictjs/ssr.",
+      "graduation": {
+        "apiShapeFrozen": false,
+        "snapshotCompatibilityWindowFrozen": false,
+        "degradationContractVerified": true
+      }
+    }
+  ]
+}

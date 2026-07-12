@@ -18,6 +18,13 @@ import {
 } from '../src/index'
 
 describe('@fictjs/ssr', () => {
+  it('keeps Preview snapshots default-off and requires an explicit opt-in', () => {
+    const view = (): FictNode => ({ type: 'div', props: { children: 'supported SSR' } })
+
+    expect(renderToString(view)).not.toContain('__FICT_SNAPSHOT__')
+    expect(renderToString(view, { includeSnapshot: true })).toContain('__FICT_SNAPSHOT__')
+  })
+
   describe('form property bindings', () => {
     it('serializes a select property binding when the SSR DOM exposes a read-only getter', () => {
       const { document } = createSSRDocument()
@@ -232,9 +239,11 @@ describe('@fictjs/ssr', () => {
         resume: 'invalid-snapshot#resume',
       }
 
-      expect(() => renderToString(() => ({ type: InvalidSnapshot, props: {} }))).toThrowError(
-        /Cannot serialize function/,
-      )
+      expect(() =>
+        renderToString(() => ({ type: InvalidSnapshot, props: {} }), {
+          includeSnapshot: true,
+        }),
+      ).toThrowError(/Cannot serialize function/)
       expect(destroyed).toBe(true)
     })
 
@@ -520,7 +529,9 @@ describe('@fictjs/ssr', () => {
 
     ;(Counter as any).__fictMeta = { id: 'Counter@test', resume: 'counter#resume' }
 
-    const html = renderToString(() => ({ type: Counter as any, props: { initial: 5 } }))
+    const html = renderToString(() => ({ type: Counter as any, props: { initial: 5 } }), {
+      includeSnapshot: true,
+    })
 
     expect(html).toContain('<fict-host')
     expect(html).toContain('data-fict-s=')
@@ -557,7 +568,9 @@ describe('@fictjs/ssr', () => {
 
     ;(Counter as any).__fictMeta = { id: 'Counter@xss', resume: 'counter#resume' }
 
-    const html = renderToString(() => ({ type: Counter, props: {} }))
+    const html = renderToString(() => ({ type: Counter, props: {} }), {
+      includeSnapshot: true,
+    })
     expect(html).not.toContain('</script><script>globalThis.__fictXss=1</script>')
     expect(html).toContain('\\u003c/script\\u003e\\u003cscript\\u003eglobalThis.__fictXss=1')
 

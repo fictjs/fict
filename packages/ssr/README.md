@@ -1,6 +1,13 @@
 # @fictjs/ssr
 
-Fict's Server-Side Rendering (SSR) package, providing high-performance server-side rendering and client-side resumability capabilities.
+Fict's Satellite Server-Side Rendering (SSR) package, providing supported
+string and streaming rendering plus opt-in client resumability.
+
+> **Preview** — resumability, snapshot schema v2, and partial prerendering have no
+> semver guarantee and are excluded from Core 1.0. They require
+> `includeSnapshot: true`, compiler `resumable: true`, and the
+> `fict/experimental/loader` entrypoint. Basic string and streaming SSR does not
+> enable them by default.
 
 ## Table of Contents
 
@@ -20,7 +27,9 @@ Fict's Server-Side Rendering (SSR) package, providing high-performance server-si
 
 ## Overview
 
-Fict SSR adopts a **Resumability** architecture, which is fundamentally different from traditional Hydration:
+Supported SSR produces HTML without a resumability snapshot by default. The
+optional **Preview Resumability** architecture is fundamentally different from
+traditional hydration:
 
 | Feature                   | Traditional Hydration             | Fict Resumability                 |
 | ------------------------- | --------------------------------- | --------------------------------- |
@@ -29,7 +38,7 @@ Fict SSR adopts a **Resumability** architecture, which is fundamentally differen
 | Handler Loading           | All preloaded                     | Lazy loaded on demand             |
 | State Restoration         | Re-calculated                     | Restored from serialized snapshot |
 
-### How it Works
+### How Preview Resumability Works
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -79,7 +88,7 @@ import { renderToString } from '@fictjs/ssr'
 import { App } from './App'
 
 const html = renderToString(() => <App />, {
-  includeSnapshot: true,  // Include state snapshot (default true)
+  includeSnapshot: true, // Explicit Preview snapshot opt-in (default false)
   containerId: 'app',
   manifest: './dist/client/fict.manifest.json',
 })
@@ -90,7 +99,7 @@ const html = renderToString(() => <App />, {
 ```typescript
 // entry-client.tsx
 import { render } from 'fict'
-import { installResumableLoader } from 'fict/loader'
+import { installResumableLoader } from 'fict/experimental/loader'
 import { App } from './App'
 
 // Load manifest (production)
@@ -285,7 +294,7 @@ interface RenderToStringOptions {
   doctype?: string | null
 
   // Resumability Configuration
-  includeSnapshot?: boolean // Default: true
+  includeSnapshot?: boolean // Preview opt-in; default: false
   snapshotScriptId?: string // Default: '__FICT_SNAPSHOT__'
   snapshotTarget?: 'container' | 'body' | 'head'
 

@@ -38,6 +38,7 @@ async function readReadableStream(stream: ReadableStream<Uint8Array>): Promise<s
 async function renderBoundary(
   label: string,
   streamIdentifierPrefix?: string,
+  includeSnapshot = false,
 ): Promise<RenderedBoundary> {
   const token = createSuspenseToken()
   let ready = false
@@ -72,6 +73,7 @@ async function renderBoundary(
   const readAll = readReadableStream(
     renderToStream(() => ({ type: App, props: {} }), {
       mode: 'shell',
+      includeSnapshot,
       streamIdentifierPrefix,
     }),
   )
@@ -127,7 +129,7 @@ describe('@fictjs/ssr stream boundary identity', () => {
   })
 
   it('uses a caller-provided stable patch namespace', async () => {
-    const rendered = await renderBoundary('configured', 'account_shell')
+    const rendered = await renderBoundary('configured', 'account_shell', true)
     const document = parseHTML(rendered.outputHtml).document
     const scopeIds = Array.from(document.querySelectorAll('script[data-fict-snapshot]'), script =>
       Object.keys(JSON.parse(script.textContent ?? '{}').scopes ?? {}),
