@@ -148,6 +148,8 @@ dependencies = [
  "fict-hir",
  "fict-metadata",
  "fict-reactivity",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

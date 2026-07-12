@@ -4960,14 +4960,29 @@ export type {
   CompilerExplainArtifact,
   CompilerExplainEvent,
   CompilerExplainEventKind,
+  CompilerArtifact,
+  CompilerArtifactKind,
+  CompilerPreviewOptions,
+  CompilerProtocolVersion,
+  CompilerStats,
+  CompileRequest,
+  CompileResult,
   HookReturnInfoSerializable,
+  ModuleKind,
   ModuleReactiveMetadata,
   ModuleReactiveMetadataVersion,
   MetadataResolutionStatus,
+  NativeCompilerExplainArtifact,
+  NativeCompilerExplainEvent,
+  NativeCompilerOptions,
+  NativeOptimizeLevel,
+  NativeWarningLevel,
+  RawSourceMap,
   ReactiveExportKind,
   ResolvedMetadataInput,
+  SourceLanguage,
 } from './types'
-export { MODULE_REACTIVE_METADATA_VERSION } from './types'
+export { COMPILER_PROTOCOL_VERSION, MODULE_REACTIVE_METADATA_VERSION } from './types'
 export { DiagnosticCode } from './validation'
 export { analyzeFictFile, inferTraceMarkersForComponent, minimizeSourceByLines } from './tooling'
 export type {

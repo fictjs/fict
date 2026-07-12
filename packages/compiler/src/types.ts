@@ -161,6 +161,111 @@ export interface ResolvedMetadataInput {
   fingerprint: string
 }
 
+export const COMPILER_PROTOCOL_VERSION = 1
+
+export type CompilerProtocolVersion = typeof COMPILER_PROTOCOL_VERSION
+
+export type SourceLanguage = 'js' | 'jsx' | 'ts' | 'tsx'
+
+export type ModuleKind = 'module' | 'script' | 'commonjs' | 'unambiguous'
+
+export type NativeOptimizeLevel = 'safe' | 'full'
+
+export type NativeWarningLevel = 'off' | 'warn' | 'error'
+
+export interface CompilerPreviewOptions {
+  resumable?: boolean
+  autoExtractHandlers?: boolean
+  autoExtractThreshold?: number
+}
+
+/** Serializable options accepted by the native core; callbacks and host I/O are excluded. */
+export interface NativeCompilerOptions {
+  dev?: boolean
+  sourcemap?: boolean
+  lazyConditional?: boolean
+  getterCache?: boolean
+  fineGrainedDom?: boolean
+  optimize?: boolean
+  optimizeLevel?: NativeOptimizeLevel
+  inlineDerivedMemos?: boolean
+  strictReactivity?: boolean
+  strictGuarantee?: boolean
+  warningsAsErrors?: boolean | string[]
+  warningLevels?: Record<string, NativeWarningLevel>
+  reactiveScopes?: string[]
+  preview?: CompilerPreviewOptions | null
+}
+
+export interface RawSourceMap {
+  version: 3
+  file?: string
+  sourceRoot?: string
+  sources: string[]
+  sourcesContent?: Array<string | null>
+  names?: string[]
+  mappings: string
+  x_google_ignoreList?: number[]
+}
+
+export interface CompileRequest {
+  protocolVersion?: CompilerProtocolVersion
+  code: string
+  filename: string
+  moduleId?: string | null
+  language?: SourceLanguage | null
+  moduleKind?: ModuleKind | null
+  inputSourceMap?: RawSourceMap | null
+  options?: NativeCompilerOptions
+  metadata?: ResolvedMetadataInput[]
+  integrationDiagnostics?: FictDiagnostic[]
+}
+
+export type CompilerArtifactKind = 'handlerModule' | 'auxiliaryModule'
+
+export interface CompilerArtifact {
+  id: string
+  kind: CompilerArtifactKind
+  code: string
+  map: RawSourceMap | null
+}
+
+export interface NativeCompilerExplainEvent {
+  kind: CompilerExplainEventKind
+  message: string
+  name: string | null
+  code: string | null
+  span: FictSourceSpan | null
+}
+
+export interface NativeCompilerExplainArtifact {
+  version: number
+  fileName: string
+  helpers: string[]
+  diagnostics: FictDiagnostic[]
+  events: NativeCompilerExplainEvent[]
+}
+
+export interface CompilerStats {
+  stageDurationsNs: Record<string, number>
+  counters: Record<string, number>
+}
+
+export interface CompileResult {
+  protocolVersion: CompilerProtocolVersion
+  code: string
+  map: RawSourceMap | null
+  diagnostics: FictDiagnostic[]
+  moduleMetadata: ModuleReactiveMetadata
+  metadataDependencies: string[]
+  unresolvedMetadataRequests: string[]
+  metadataIncomplete: boolean
+  explain: NativeCompilerExplainArtifact | null
+  artifacts: CompilerArtifact[]
+  stats: CompilerStats | null
+  compilerBuildId: string
+}
+
 export interface FictCompilerOptions {
   dev?: boolean
   sourcemap?: boolean
