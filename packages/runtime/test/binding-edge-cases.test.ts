@@ -18,6 +18,7 @@ import {
   bindTextContent,
   bindAttribute,
   bindProperty,
+  setProp,
   bindStyle,
   setStyle,
   bindClass,
@@ -798,6 +799,53 @@ describe('Binding Edge Cases', () => {
 
       expect(select.selectedIndex).toBe(0)
       expect(Array.from(select.options, option => option.selected)).toEqual([true, false, false])
+    })
+
+    it('repairs a duplicate select value when the cached text is unchanged', async () => {
+      const select = document.createElement('select')
+      const trigger = createSignal(0)
+      select.innerHTML =
+        '<option value="duplicate">First</option><option value="duplicate">Second</option><option value="other">Other</option>'
+
+      bindProperty(select, 'value', () => {
+        trigger()
+        return 'duplicate'
+      })
+      select.options[1]!.selected = true
+      expect(select.value).toBe('duplicate')
+
+      trigger(1)
+      await tick()
+
+      expect(select.selectedIndex).toBe(0)
+      expect(Array.from(select.options, option => option.selected)).toEqual([true, false, false])
+    })
+
+    it('repairs extra multiple selections when the cached text is unchanged', async () => {
+      const select = document.createElement('select')
+      const trigger = createSignal(0)
+      select.multiple = true
+      select.innerHTML =
+        '<option value="duplicate">First</option><option value="duplicate">Second</option><option value="other">Other</option>'
+
+      bindProperty(select, 'value', () => {
+        trigger()
+        return 'duplicate'
+      })
+      select.options[2]!.selected = true
+      expect(select.value).toBe('duplicate')
+
+      trigger(1)
+      await tick()
+
+      expect(select.selectedIndex).toBe(0)
+      expect(Array.from(select.options, option => option.selected)).toEqual([true, false, false])
+    })
+
+    it('rejects Symbol select values like a native DOMString assignment', () => {
+      const select = document.createElement('select')
+
+      expect(() => setProp(select, 'value', Symbol('value'))).toThrow(TypeError)
     })
 
     it('clears value property with empty string for undefined', async () => {

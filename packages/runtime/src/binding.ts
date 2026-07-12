@@ -728,11 +728,20 @@ export function setProp(el: Element, key: string, value: unknown): void {
     (cacheTarget[PROP_CACHE] as Record<string, unknown> | undefined) ??
     (cacheTarget[PROP_CACHE] = Object.create(null))
   const next = normalizePropertyValue(key, value)
-  if (propCache[key] === value && (el as unknown as Record<string, unknown>)[key] === next) {
+  if (propCache[key] === value && isElementPropertyCurrent(el, key, next)) {
     return
   }
   setElementProperty(el, key, next)
   propCache[key] = value
+}
+
+function isElementPropertyCurrent(el: Element, key: string, value: unknown): boolean {
+  if (key === 'value' && el.localName === 'select') {
+    const { options, matched } = resolveSelectValueAssignment(el, value)
+    return options.every(option => option.selected === (option === matched))
+  }
+
+  return (el as unknown as Record<string, unknown>)[key] === value
 }
 
 export function setElementProperty(el: Element, key: string, value: unknown): void {
@@ -740,14 +749,31 @@ export function setElementProperty(el: Element, key: string, value: unknown): vo
   // every duplicate value. Apply the browser's first-match algorithm directly
   // so client and SSR output agree.
   if (key === 'value' && el.localName === 'select') {
-    const expected = String(value ?? '')
-    const options = Array.from(el.querySelectorAll('option')) as HTMLOptionElement[]
-    const matched = options.find(option => option.value === expected)
+    const { options, matched } = resolveSelectValueAssignment(el, value)
     for (const option of options) option.selected = false
     if (matched) matched.selected = true
     return
   }
   ;(el as unknown as Record<string, unknown>)[key] = value
+}
+
+function resolveSelectValueAssignment(
+  el: Element,
+  value: unknown,
+): { options: HTMLOptionElement[]; matched: HTMLOptionElement | undefined } {
+  const expected = toDOMString(value ?? '')
+  const options = Array.from(el.querySelectorAll('option')) as HTMLOptionElement[]
+  return {
+    options,
+    matched: options.find(option => option.value === expected),
+  }
+}
+
+function toDOMString(value: unknown): string {
+  if (typeof value === 'symbol') {
+    throw new TypeError('Cannot convert a Symbol value to a string')
+  }
+  return String(value)
 }
 
 function normalizePropertyValue(key: string, value: unknown): unknown {
