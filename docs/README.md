@@ -25,6 +25,10 @@ boundary lives in [SCOPE.md](../SCOPE.md); Preview policy lives in
 ## Architecture And Internals
 
 - `architecture.md` — Runtime and compiler architecture notes
+- `architecture/rust-compiler.md` — Accepted Rust/OXC compiler ownership,
+  dependency, compatibility, and rollout architecture
+- `adr/0001-adopt-oxc-rust-compiler.md` — Decision and trade-offs for replacing
+  the Babel compiler with an OXC-native Rust compiler
 - `architecture/security-boundaries.md` — Security threat model, findings,
   non-goals, and executable evidence for HTML, snapshots, CSP, Proxy behavior,
   and SSR isolation
