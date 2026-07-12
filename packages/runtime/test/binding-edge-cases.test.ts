@@ -870,6 +870,22 @@ describe('Binding Edge Cases', () => {
       expect(select.selectedIndex).toBe(0)
     })
 
+    it('passes the original value to a customized select setter', () => {
+      const select = document.createElement('select')
+      select.innerHTML = '<option value="first">First</option>'
+      const assigned: unknown[] = []
+      Object.defineProperty(select, 'value', {
+        configurable: true,
+        get: () => 'custom',
+        set: value => assigned.push(value),
+      })
+      const value = { id: 'opaque-select-value' }
+
+      setProp(select, 'value', value)
+
+      expect(assigned).toEqual([value])
+    })
+
     it('repairs a duplicate select value when the cached text is unchanged', async () => {
       const select = document.createElement('select')
       const trigger = createSignal(0)
@@ -913,8 +929,17 @@ describe('Binding Edge Cases', () => {
 
     it('rejects Symbol select values like a native DOMString assignment', () => {
       const select = document.createElement('select')
+      let thrown: unknown
 
-      expect(() => setProp(select, 'value', Symbol('value'))).toThrow(TypeError)
+      try {
+        setProp(select, 'value', Symbol('value'))
+      } catch (error) {
+        thrown = error
+      }
+
+      // Web IDL creates the TypeError in the element's realm, which can differ
+      // from the runtime/test realm.
+      expect(thrown).toMatchObject({ name: 'TypeError' })
     })
 
     it('clears value property with empty string for undefined', async () => {
