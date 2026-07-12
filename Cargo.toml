@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/fict-compiler-oxc"]
+members = ["crates/fict-compiler-napi", "crates/fict-compiler-oxc"]
 resolver = "3"
 
 [workspace.package]
@@ -9,6 +9,9 @@ repository = "https://github.com/fictjs/fict"
 rust-version = "1.97.0"
 
 [workspace.dependencies]
+napi = { version = "=3.10.4", default-features = false, features = ["napi10"] }
+napi-build = { version = "=2.3.2" }
+napi-derive = { version = "=3.5.10" }
 oxc = { version = "=0.139.0", default-features = false, features = [
   "ast_visit",
   "cfg",
