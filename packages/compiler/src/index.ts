@@ -4963,7 +4963,9 @@ export type {
   HookReturnInfoSerializable,
   ModuleReactiveMetadata,
   ModuleReactiveMetadataVersion,
+  MetadataResolutionStatus,
   ReactiveExportKind,
+  ResolvedMetadataInput,
 } from './types'
 export { MODULE_REACTIVE_METADATA_VERSION } from './types'
 export { DiagnosticCode } from './validation'

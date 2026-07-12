@@ -150,6 +150,17 @@ export interface ModuleReactiveMetadata {
   namespaces?: Record<string, ModuleReactiveMetadata>
 }
 
+export type MetadataResolutionStatus = 'resolved' | 'opaque' | 'missing' | 'incompleteCycle'
+
+/** Bundler-authoritative metadata snapshot; callbacks never cross the native boundary. */
+export interface ResolvedMetadataInput {
+  request: string
+  resolvedId: string | null
+  status: MetadataResolutionStatus
+  metadata: ModuleReactiveMetadata | null
+  fingerprint: string
+}
+
 export interface FictCompilerOptions {
   dev?: boolean
   sourcemap?: boolean

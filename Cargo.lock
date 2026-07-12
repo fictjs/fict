@@ -212,6 +212,8 @@ version = "0.0.0"
 dependencies = [
  "fict-diagnostics",
  "fict-hir",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
