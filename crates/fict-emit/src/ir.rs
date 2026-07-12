@@ -136,6 +136,28 @@ pub enum PropsOperation {
     Keyed(EmitValueRef),
 }
 
+/// Binding-aware component callee.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComponentTarget {
+    Binding(BindingId),
+    Member {
+        root: BindingId,
+        properties: Vec<String>,
+    },
+    Dynamic(EmitValueRef),
+}
+
+/// Named or spread component prop in source order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComponentProp {
+    Named {
+        name: String,
+        value: EmitValueRef,
+        getter: bool,
+    },
+    Spread(EmitValueRef),
+}
+
 /// Verified operation between HIR analysis and output AST construction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EmitOperation {
@@ -203,6 +225,13 @@ pub enum EmitOperation {
         path: Vec<u32>,
         target: EmitTemporaryId,
         helper: RuntimeHelper,
+        origin: Origin,
+    },
+    InvokeComponent {
+        target: EmitTemporaryId,
+        component: ComponentTarget,
+        props: Vec<ComponentProp>,
+        children: Vec<EmitValueRef>,
         origin: Origin,
     },
     CreateElement {
@@ -294,6 +323,7 @@ impl EmitOperation {
             | Self::WriteReactive { .. }
             | Self::UpdateReactive { .. }
             | Self::CloneTemplate { .. }
+            | Self::InvokeComponent { .. }
             | Self::Return { .. } => None,
         }
     }
@@ -304,6 +334,7 @@ impl EmitOperation {
             Self::ReadReactive { target, .. }
             | Self::CloneTemplate { target, .. }
             | Self::ResolveElement { target, .. }
+            | Self::InvokeComponent { target, .. }
             | Self::CreateElement { target, .. }
             | Self::Conditional { target, .. }
             | Self::KeyedList { target, .. } => Some(*target),
@@ -335,6 +366,24 @@ impl EmitOperation {
                 PropsOperation::Merge(values) => values.iter().for_each(visit),
             },
             Self::BindEvent { handler, .. } => visit(handler),
+            Self::InvokeComponent {
+                component,
+                props,
+                children,
+                ..
+            } => {
+                if let ComponentTarget::Dynamic(value) = component {
+                    visit(value);
+                }
+                for prop in props {
+                    match prop {
+                        ComponentProp::Named { value, .. } | ComponentProp::Spread(value) => {
+                            visit(value);
+                        }
+                    }
+                }
+                children.iter().for_each(visit);
+            }
             Self::Return { value, .. } => value.iter().for_each(visit),
             Self::PreserveHir { .. }
             | Self::ReadReactive { .. }

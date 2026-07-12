@@ -286,6 +286,31 @@ fn verify_operations(
                     "parent-derived namespace requires its dedicated helper",
                 ));
             }
+            EmitOperation::InvokeComponent {
+                component, props, ..
+            } => {
+                let target_valid = match component {
+                    crate::ComponentTarget::Binding(binding) => {
+                        hir.bindings.get(binding.as_usize()).is_some()
+                    }
+                    crate::ComponentTarget::Member { root, properties } => {
+                        hir.bindings.get(root.as_usize()).is_some()
+                            && !properties.is_empty()
+                            && properties.iter().all(|property| !property.is_empty())
+                    }
+                    crate::ComponentTarget::Dynamic(_) => true,
+                };
+                if !target_valid
+                    || props.iter().any(|prop| {
+                        matches!(prop, crate::ComponentProp::Named { name, .. } if name.is_empty())
+                    })
+                {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-COMPONENT",
+                        "component target and prop names must retain valid semantic identity",
+                    ));
+                }
+            }
             EmitOperation::BindEvent { cleanup, .. }
             | EmitOperation::BindRef { cleanup, .. }
             | EmitOperation::Conditional { cleanup, .. }
@@ -408,6 +433,7 @@ fn verify_helper_semantics(
         | EmitOperation::WriteReactive { .. }
         | EmitOperation::UpdateReactive { .. }
         | EmitOperation::CloneTemplate { .. }
+        | EmitOperation::InvokeComponent { .. }
         | EmitOperation::Return { .. } => true,
     };
     if !valid {

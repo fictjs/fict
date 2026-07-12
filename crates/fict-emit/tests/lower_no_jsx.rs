@@ -3,13 +3,13 @@ use fict_emit::{
     lower_no_jsx,
 };
 use fict_hir::{
-    BlockId, CallArgument, CallHost, CallInstruction, DeclarationKind, FictMacroKind, FileId,
-    FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction, HirInstruction,
-    HirInstructionKind, HirLocal, HirScope, HirTerminator, HirValue, InstructionSemantics,
-    JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxNode, JsxTemplate,
-    LiteralValue, LocalId, LocalKind, MutationEffect, NumberLiteral, Origin, Place, ScopeId,
-    ScopeKind, SourceSpan, TemplateId, TerminatorKind, UpdateOperator, ValueId, ValueKind,
-    verify_hir,
+    Binding, BindingId, BindingKind, BlockId, CallArgument, CallHost, CallInstruction,
+    DeclarationKind, FictMacroKind, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock,
+    HirFile, HirFunction, HirInstruction, HirInstructionKind, HirLocal, HirScope, HirTerminator,
+    HirValue, InstructionSemantics, JsxAttribute, JsxAttributeValue, JsxChild, JsxElement,
+    JsxElementName, JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind, MutationEffect,
+    NumberLiteral, Origin, Place, ScopeId, ScopeKind, SourceSpan, TemplateId, TerminatorKind,
+    UpdateOperator, ValueId, ValueKind, verify_hir,
 };
 use fict_reactivity::{
     ReactiveCycleAnalysis, RegionAnalysis, analyze_aliases, analyze_dependencies,
@@ -384,4 +384,91 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
             .iter()
             .any(|diagnostic| diagnostic.code.as_str() == "FICT-EMIT-JSX-STAGE")
     );
+}
+
+#[test]
+fn lowers_binding_aware_component_props_spreads_and_children_in_source_order() {
+    let mut hir = fixture(FunctionKind::Module);
+    hir.functions[0].locals.clear();
+    hir.functions[0].values = vec![
+        value(0, ValueKind::Literal(LiteralValue::String("value".into()))),
+        value(1, ValueKind::InstructionResult),
+    ];
+    hir.functions[0].blocks[0].instructions = vec![
+        instruction(
+            Some(0),
+            HirInstructionKind::Literal(LiteralValue::String("value".into())),
+        ),
+        instruction(
+            Some(1),
+            HirInstructionKind::Jsx {
+                template: TemplateId::new(0),
+            },
+        ),
+    ];
+    hir.functions[0].blocks[0].terminator.kind = TerminatorKind::Return {
+        value: Some(ValueId::new(1)),
+    };
+    hir.bindings = vec![Binding {
+        id: BindingId::new(0),
+        scope: ScopeId::new(0),
+        kind: BindingKind::Function,
+        display_name: "Card".into(),
+        import: None,
+        origin: origin(),
+    }];
+    hir.templates = vec![JsxTemplate {
+        id: TemplateId::new(0),
+        owner: FunctionId::new(0),
+        root: JsxNode::Element(JsxElement {
+            name: JsxElementName::Component(BindingId::new(0)),
+            attributes: vec![
+                JsxAttribute::Named {
+                    name: "title".into(),
+                    value: JsxAttributeValue::Text("hello".into()),
+                    origin: origin(),
+                },
+                JsxAttribute::Spread {
+                    value: ValueId::new(0),
+                    origin: origin(),
+                },
+                JsxAttribute::Named {
+                    name: "value".into(),
+                    value: JsxAttributeValue::Expression(ValueId::new(0)),
+                    origin: origin(),
+                },
+            ],
+            children: vec![JsxChild::Text {
+                value: "child".into(),
+                origin: origin(),
+            }],
+            origin: origin(),
+        }),
+        origin: origin(),
+    }];
+    verify_hir(&hir).expect("valid component JSX fixture");
+    let (regions, cycles) = analyses(&hir);
+    let program = lower_core(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
+        .expect("component JSX lowering");
+    let operation = program.functions[0]
+        .operations
+        .iter()
+        .find(|operation| matches!(operation, EmitOperation::InvokeComponent { .. }))
+        .expect("component invocation");
+    let EmitOperation::InvokeComponent {
+        component,
+        props,
+        children,
+        ..
+    } = operation
+    else {
+        unreachable!()
+    };
+    assert!(matches!(
+        component,
+        fict_emit::ComponentTarget::Binding(binding) if *binding == BindingId::new(0)
+    ));
+    assert_eq!(props.len(), 3);
+    assert!(matches!(props[1], fict_emit::ComponentProp::Spread(_)));
+    assert_eq!(children.len(), 1);
 }

@@ -11,9 +11,10 @@ use fict_hir::{
 use fict_reactivity::{ReactiveCycleAnalysis, RegionAnalysis};
 
 use crate::{
-    CleanupOwner, DomBindingKind, DomNamespace, EmitFunction, EmitOperation, EmitProgram,
-    EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef, PropsOperation, ReactiveSlot,
-    ReactiveSlotKind, RuntimeFamily, RuntimeHelper, RuntimeImportIntent, verify_emit_program,
+    CleanupOwner, ComponentProp, ComponentTarget, DomBindingKind, DomNamespace, EmitFunction,
+    EmitOperation, EmitProgram, EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef,
+    PropsOperation, ReactiveSlot, ReactiveSlotKind, RuntimeFamily, RuntimeHelper,
+    RuntimeImportIntent, verify_emit_program,
 };
 
 /// Phase-1 Core lowering configuration.
@@ -419,6 +420,19 @@ fn lower_jsx_instruction(
             GuaranteeClass::Internal,
         )]));
     }
+    if let JsxNode::Element(element) = &template.root
+        && !matches!(element.name, JsxElementName::Intrinsic(_))
+    {
+        return lower_component_jsx(
+            hir,
+            function_id,
+            element,
+            instruction,
+            temporaries,
+            value_temporaries,
+            operations,
+        );
+    }
     let serialized = serialize_template(&template.root)?;
     if declared_templates.insert(template_id) {
         operations.push(EmitOperation::DeclareTemplate {
@@ -515,6 +529,109 @@ fn lower_jsx_instruction(
             }
         }
     }
+    Ok(())
+}
+
+fn lower_component_jsx(
+    hir: &HirFile,
+    function_id: FunctionId,
+    element: &fict_hir::JsxElement,
+    instruction: &fict_hir::HirInstruction,
+    temporaries: &mut Vec<EmitTemporary>,
+    value_temporaries: &mut BTreeMap<ValueId, EmitTemporaryId>,
+    operations: &mut Vec<EmitOperation>,
+) -> Result<(), DiagnosticBundle> {
+    let component = match &element.name {
+        JsxElementName::Component(binding) => ComponentTarget::Binding(*binding),
+        JsxElementName::Member { root, properties } => ComponentTarget::Member {
+            root: *root,
+            properties: properties.clone(),
+        },
+        JsxElementName::Dynamic(value) => {
+            ComponentTarget::Dynamic(lower_value(*value, value_temporaries))
+        }
+        JsxElementName::Intrinsic(_) => unreachable!("intrinsic handled by template lowering"),
+    };
+    let mut props = Vec::new();
+    for attribute in &element.attributes {
+        match attribute {
+            JsxAttribute::Named { name, value, .. } => {
+                let (value, getter) = match value {
+                    JsxAttributeValue::ImplicitTrue => (
+                        EmitValueRef::Literal(fict_hir::LiteralValue::Boolean(true)),
+                        false,
+                    ),
+                    JsxAttributeValue::Text(value) => (
+                        EmitValueRef::Literal(fict_hir::LiteralValue::String(value.clone())),
+                        false,
+                    ),
+                    JsxAttributeValue::Expression(value) => (
+                        lower_value(*value, value_temporaries),
+                        !matches!(
+                            hir.functions[function_id.as_usize()].values[value.as_usize()].kind,
+                            ValueKind::Literal(_)
+                        ),
+                    ),
+                    JsxAttributeValue::Node(_) => {
+                        return Err(DiagnosticBundle::new(vec![lower_error(
+                            "FICT-EMIT-COMPONENT-PROP-NODE",
+                            "node-valued component props require nested JSX lowering",
+                            GuaranteeClass::Unsupported,
+                        )]));
+                    }
+                };
+                props.push(ComponentProp::Named {
+                    name: name.clone(),
+                    value,
+                    getter,
+                });
+            }
+            JsxAttribute::Spread { value, .. } => {
+                props.push(ComponentProp::Spread(lower_value(
+                    *value,
+                    value_temporaries,
+                )));
+            }
+        }
+    }
+    let mut children = Vec::new();
+    for child in &element.children {
+        match child {
+            JsxChild::Text { value, .. } => children.push(EmitValueRef::Literal(
+                fict_hir::LiteralValue::String(value.clone()),
+            )),
+            JsxChild::Expression { value, .. } | JsxChild::Spread { value, .. } => {
+                children.push(lower_value(*value, value_temporaries));
+            }
+            JsxChild::Node(_) => {
+                return Err(DiagnosticBundle::new(vec![lower_error(
+                    "FICT-EMIT-COMPONENT-CHILD",
+                    "nested component JSX children require recursive component lowering",
+                    GuaranteeClass::Unsupported,
+                )]));
+            }
+        }
+    }
+    let Some(result) = instruction.result else {
+        return Err(DiagnosticBundle::new(vec![lower_error(
+            "FICT-EMIT-JSX-RESULT",
+            "component JSX instruction has no HIR result",
+            GuaranteeClass::Internal,
+        )]));
+    };
+    let target = allocate_temporary(
+        temporaries,
+        format!("__fict_component{}", result.index()),
+        instruction.origin,
+    );
+    value_temporaries.insert(result, target);
+    operations.push(EmitOperation::InvokeComponent {
+        target,
+        component,
+        props,
+        children,
+        origin: instruction.origin,
+    });
     Ok(())
 }
 
