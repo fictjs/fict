@@ -17,6 +17,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:api-boundaries": "node scripts/check-api-boundaries.mjs",
+    "test:review-regressions": "node scripts/review-regression-suite.mjs",
     "test:release-publish-plan": "node --test scripts/release-publish-plan.test.mjs && node scripts/release-publish-plan.mjs --offline",
     "test": "env -u FICT_STRICT_GUARANTEE turbo run test --concurrency=1",
     "test:watch": "turbo run test:watch",

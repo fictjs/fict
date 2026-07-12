@@ -57,6 +57,10 @@ boundary lives in [SCOPE.md](../SCOPE.md); Preview policy lives in
 - `eslint-rules.md` — ESLint plugin rules
 - `tooling-runtime-matrix.md` — Release-gate matrix for Vite, bundler examples, HMR, sourcemaps, CSP, and Trusted Types
 
+## Testing
+
+- `testing/review-regressions.md` — Focused regression gate for confirmed high- and medium-risk review findings
+
 ## Roadmap And Essays
 
 - `post-v1-roadmap.md` — Post-v1 roadmap and deferred work
