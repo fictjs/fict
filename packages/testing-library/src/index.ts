@@ -559,19 +559,42 @@ export function waitForCondition(
 
   return new Promise((resolve, reject) => {
     const startTime = Date.now()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let settled = false
+
+    const settle = (complete: () => void) => {
+      if (settled) return
+      settled = true
+      if (timer !== undefined) {
+        clearTimeout(timer)
+        timer = undefined
+      }
+      complete()
+    }
 
     const check = () => {
-      if (condition()) {
-        resolve()
+      timer = undefined
+      if (settled) return
+
+      let matched: boolean
+      try {
+        matched = condition()
+      } catch (error) {
+        settle(() => reject(error))
+        return
+      }
+
+      if (matched) {
+        settle(() => resolve())
         return
       }
 
       if (Date.now() - startTime >= timeout) {
-        reject(new Error(`waitForCondition timed out after ${timeout}ms`))
+        settle(() => reject(new Error(`waitForCondition timed out after ${timeout}ms`)))
         return
       }
 
-      setTimeout(check, interval)
+      timer = setTimeout(check, interval)
     }
 
     check()

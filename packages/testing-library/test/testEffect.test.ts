@@ -306,4 +306,22 @@ describe('waitForCondition', () => {
     const elapsed = Date.now() - startTime
     expect(elapsed).toBeLessThan(50)
   })
+
+  it('rejects when a later condition check throws and stops polling', async () => {
+    const error = new Error('delayed condition failed')
+    let checkCount = 0
+    const promise = waitForCondition(
+      () => {
+        checkCount += 1
+        if (checkCount === 2) throw error
+        return false
+      },
+      { timeout: 200, interval: 5 },
+    )
+
+    await expect(promise).rejects.toBe(error)
+    await new Promise(resolve => setTimeout(resolve, 15))
+
+    expect(checkCount).toBe(2)
+  })
 })
