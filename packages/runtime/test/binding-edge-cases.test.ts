@@ -777,6 +777,29 @@ describe('Binding Edge Cases', () => {
   })
 
   describe('bindProperty', () => {
+    it('selects only the first duplicate value in a single select', () => {
+      const select = document.createElement('select')
+      select.innerHTML =
+        '<option value="duplicate">First</option><option value="duplicate">Second</option><option value="other">Other</option>'
+
+      bindProperty(select, 'value', () => 'duplicate')
+
+      expect(select.selectedIndex).toBe(0)
+      expect(Array.from(select.options, option => option.selected)).toEqual([true, false, false])
+    })
+
+    it('selects only the first duplicate value in a multiple select value assignment', () => {
+      const select = document.createElement('select')
+      select.multiple = true
+      select.innerHTML =
+        '<option value="duplicate">First</option><option value="duplicate">Second</option><option value="other">Other</option>'
+
+      bindProperty(select, 'value', () => 'duplicate')
+
+      expect(select.selectedIndex).toBe(0)
+      expect(Array.from(select.options, option => option.selected)).toEqual([true, false, false])
+    })
+
     it('clears value property with empty string for undefined', async () => {
       const el = document.createElement('input') as HTMLInputElement
       el.value = 'test'

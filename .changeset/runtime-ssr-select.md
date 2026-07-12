@@ -2,4 +2,6 @@
 '@fictjs/runtime': patch
 ---
 
-Select the matching option when applying a `select.value` property so server-side DOM implementations with a read-only select getter serialize reactive form state correctly.
+Select only the first matching option when applying a `select.value` property,
+matching browser behavior for duplicate values while allowing server-side DOM
+implementations with a read-only select getter to serialize reactive form state.

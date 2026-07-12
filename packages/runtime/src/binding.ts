@@ -736,13 +736,15 @@ export function setProp(el: Element, key: string, value: unknown): void {
 }
 
 export function setElementProperty(el: Element, key: string, value: unknown): void {
-  // linkedom exposes HTMLSelectElement.value as a getter. Selecting the
-  // matching option is browser-equivalent and serializes correctly for SSR.
+  // linkedom exposes select.value as a getter, and some server DOMs select
+  // every duplicate value. Apply the browser's first-match algorithm directly
+  // so client and SSR output agree.
   if (key === 'value' && el.localName === 'select') {
     const expected = String(value ?? '')
-    el.querySelectorAll('option').forEach(option => {
-      ;(option as HTMLOptionElement).selected = (option as HTMLOptionElement).value === expected
-    })
+    const options = Array.from(el.querySelectorAll('option')) as HTMLOptionElement[]
+    const matched = options.find(option => option.value === expected)
+    for (const option of options) option.selected = false
+    if (matched) matched.selected = true
     return
   }
   ;(el as unknown as Record<string, unknown>)[key] = value

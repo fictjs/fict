@@ -30,13 +30,32 @@ describe('@fictjs/ssr', () => {
       const { document } = createSSRDocument()
       const select = document.createElement('select')
       select.innerHTML =
-        '<option value="standard">Standard</option><option value="elevated">Elevated</option>'
+        '<option value="standard">Standard</option><option value="elevated">First elevated</option><option value="elevated">Second elevated</option>'
 
       setProp(select, 'value', 'elevated')
 
       expect(select.value).toBe('elevated')
-      expect(select.querySelector('option[value="elevated"]')?.hasAttribute('selected')).toBe(true)
-      expect(select.querySelector('option[value="standard"]')?.hasAttribute('selected')).toBe(false)
+      expect(Array.from(select.options, option => option.hasAttribute('selected'))).toEqual([
+        false,
+        true,
+        false,
+      ])
+    })
+
+    it('serializes only the first duplicate value for a multiple select assignment', () => {
+      const { document } = createSSRDocument()
+      const select = document.createElement('select')
+      select.multiple = true
+      select.innerHTML =
+        '<option value="duplicate">First</option><option value="duplicate">Second</option><option value="other">Other</option>'
+
+      setProp(select, 'value', 'duplicate')
+
+      expect(Array.from(select.options, option => option.hasAttribute('selected'))).toEqual([
+        true,
+        false,
+        false,
+      ])
     })
   })
 
