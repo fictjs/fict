@@ -4,6 +4,19 @@ import path from 'node:path'
 import { createFixture, createWebpackConfiguration, runApp, runCompiler } from './fixture'
 
 describe('@fictjs/webpack-plugin cold metadata graph', () => {
+  it('accepts Babel empty-string output for an empty entry module', async () => {
+    const root = await createFixture({ 'entry.ts': '' })
+
+    try {
+      const stats = await runCompiler(createWebpackConfiguration(root))
+
+      expect(stats.hasErrors()).toBe(false)
+      expect(await readFile(path.join(root, 'dist', 'bundle.cjs'), 'utf8')).toContain('./entry.ts')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('compiles CommonJS entries with a legal top-level return', async () => {
     const root = await createFixture({
       'entry.cjs': `

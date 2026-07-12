@@ -247,7 +247,7 @@ export default function fictWebpackLoader(
     sourceMaps: this.sourceMap,
   }).then(
     result => {
-      if (!result?.code) {
+      if (typeof result?.code !== 'string') {
         callback(new Error(`[fict] Babel returned no output for ${moduleIdentifier}.`))
         return
       }
