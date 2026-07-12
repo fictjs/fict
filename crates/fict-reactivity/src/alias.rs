@@ -400,6 +400,7 @@ fn build_invalidations(
     }
     for barrier in &dependencies.barriers {
         if !barrier.kinds.contains(&BarrierKind::UnknownMutation)
+            || all_definitions.is_empty()
             || invalidations
                 .iter()
                 .any(|invalidation| invalidation.location == barrier.location)
