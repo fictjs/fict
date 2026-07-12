@@ -152,7 +152,7 @@ pub enum LocalKind {
 /// Function-local storage location.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HirLocal {
-    /// Request-local identity. It is not derived from `debug_name`.
+    /// Function-local identity. It is not derived from `debug_name`.
     pub id: LocalId,
     /// Semantic binding for user-authored storage, if any.
     pub binding: Option<BindingId>,
@@ -231,7 +231,7 @@ pub enum ValueKind {
 /// Evaluated value in a function-local value arena.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HirValue {
-    /// Request-local identity.
+    /// Function-local identity.
     pub id: ValueId,
     /// Definition category.
     pub kind: ValueKind,
@@ -871,7 +871,7 @@ pub struct StructuredSourceHint {
 /// Basic block with instructions and one complete terminator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HirBlock {
-    /// Request-local block identity.
+    /// Function-local block identity.
     pub id: BlockId,
     /// Lexical scope active at block entry.
     pub scope: ScopeId,

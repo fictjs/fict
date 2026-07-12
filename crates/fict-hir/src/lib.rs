@@ -6,7 +6,9 @@ mod ids;
 mod ir;
 mod jsx;
 mod origin;
+mod printer;
 mod syntax;
+mod verify;
 
 pub use fict_diagnostics::SourceSpan;
 pub use ids::{
@@ -27,6 +29,8 @@ pub use jsx::{
     JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxNode, JsxTemplate,
 };
 pub use origin::{DesugaringKind, GeneratedOrigin, Origin, OriginKind};
+pub use printer::print_hir;
 pub use syntax::{
     LiteralValue, NumberLiteral, PatternSummary, SyntaxFragment, SyntaxFragmentKind, SyntaxSummary,
 };
+pub use verify::verify_hir;
