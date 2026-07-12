@@ -7,9 +7,15 @@
 //! locks the exact OXC version used by every later compiler milestone.
 
 mod compile;
+mod frontend;
 
 pub use compile::{
     OxcCompileOptions, OxcCompileOutput, OxcModuleKind, OxcSourceLanguage, compile_passthrough,
+};
+pub use frontend::{
+    FrontendBinding, FrontendBindingKind, FrontendMacroCall, FrontendMacroImport,
+    FrontendMacroValueUse, FrontendOutput, FrontendScope, FrontendScopeKind, FrontendSourceSummary,
+    FrontendSummary, NamespaceMacroCall, analyze_frontend,
 };
 
 use oxc::{allocator::Allocator, parser::Parser, span::SourceType};

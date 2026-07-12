@@ -146,7 +146,7 @@ pub fn compile_passthrough(
     }
 }
 
-fn source_type(options: OxcCompileOptions) -> SourceType {
+pub(crate) fn source_type(options: OxcCompileOptions) -> SourceType {
     let language = match options.language {
         OxcSourceLanguage::JavaScript => SourceType::mjs(),
         OxcSourceLanguage::JavaScriptJsx => SourceType::jsx(),
@@ -170,11 +170,11 @@ fn failed_output(diagnostics: Vec<Diagnostic>) -> OxcCompileOutput {
     }
 }
 
-fn sorted(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
+pub(crate) fn sorted(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
     DiagnosticBundle::new(diagnostics).into_sorted()
 }
 
-fn convert_diagnostics(
+pub(crate) fn convert_diagnostics(
     diagnostics: impl IntoIterator<Item = OxcDiagnostic>,
     code: &'static str,
 ) -> Vec<Diagnostic> {
