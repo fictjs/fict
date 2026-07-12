@@ -185,6 +185,24 @@ describe('SSR HTML serializer DOM name validation', () => {
     expect(document.body.firstChild?.nodeType).toBe(8)
   })
 
+  it.each(['---', '----', '-----'])(
+    'keeps overlapping %s comment hyphens inert when reparsed',
+    hyphens => {
+      const comment = {
+        nodeType: 8,
+        nodeValue: `${hyphens}><script data-fict-xss="overlapping-comment">unsafe</script>`,
+      } as unknown as Node
+
+      const html = serializeHtmlNode(comment)
+      const { document } = parseHTML(`<html><body>${html}</body></html>`)
+
+      expect(html.slice(0, -3)).not.toContain('-->')
+      expect(document.querySelector('[data-fict-xss="overlapping-comment"]')).toBeNull()
+      expect(document.body.childNodes).toHaveLength(1)
+      expect(document.body.firstChild?.nodeType).toBe(8)
+    },
+  )
+
   it('preserves a qualified element name from namespace-aware DOMs', () => {
     const element = {
       nodeType: 1,

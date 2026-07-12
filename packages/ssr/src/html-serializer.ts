@@ -875,7 +875,10 @@ function serializeComment(value: string): string {
   // comment. In particular, `<!--><script>...` exits the comment immediately,
   // so an otherwise inert DOM Comment could become active markup when the SSR
   // output is parsed by a browser.
-  let safe = value.replace(/--/g, '- -').replace(/-$/, '- ')
+  // Use a lookahead so every overlapping pair in a longer hyphen run is
+  // separated. A non-overlapping /--/ replacement leaves `-->` behind for
+  // inputs such as `--->`, which lets following markup escape the comment.
+  let safe = value.replace(/-(?=-)/g, '- ').replace(/-$/, '- ')
   if (safe.startsWith('>') || safe.startsWith('->')) {
     safe = ` ${safe}`
   }
