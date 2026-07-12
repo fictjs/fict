@@ -148,8 +148,9 @@ test('clean checkout reuses the content-addressed store without sharing installe
   assert.equal(pnpmStoreRoot('/cache/pnpm'), '/cache/pnpm')
 })
 
-test('clean checkout isolates Turbo artifacts inside its temporary worktree', () => {
+test('clean checkout isolates Turbo artifacts and uses CI browser behavior', () => {
   assert.deepEqual(releaseIsolationEnv('/tmp/fict-clean', '/cache/pnpm'), {
+    CI: 'true',
     FICT_PNPM_STORE_DIR: '/cache/pnpm',
     HUSKY: '0',
     TURBO_CACHE_DIR: '/tmp/fict-clean/.turbo/release-cache',

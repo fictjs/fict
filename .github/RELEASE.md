@@ -52,7 +52,9 @@ E2E, and install-and-consume checks for the actual package tarballs in Node ESM,
 generic ESM targets shadowed by `node` conditions, CJS, and TypeScript projects.
 Only pnpm's content-addressed download store is shared;
 `node_modules`, build output, and Turbo output remain isolated. The temporary
-checkout is always removed.
+checkout is always removed. The inner gate runs with `CI=true`, so Playwright
+starts fresh fixture servers instead of reusing local listeners, forbids focused
+tests, and uses the same retry and worker behavior as CI.
 
 Do not export `FICT_STRICT_GUARANTEE` around either verification command. The
 root release scripts scope it to the compiler contract, build, and bundler gates

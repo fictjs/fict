@@ -45,6 +45,7 @@ export function pnpmStoreRoot(activeStorePath) {
 
 export function releaseIsolationEnv(checkoutDir, sharedStoreDir) {
   return {
+    CI: 'true',
     FICT_PNPM_STORE_DIR: sharedStoreDir,
     HUSKY: '0',
     TURBO_CACHE_DIR: path.join(checkoutDir, '.turbo', 'release-cache'),

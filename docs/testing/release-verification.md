@@ -20,7 +20,7 @@ export BENCH_OUTPUT="${TMPDIR:-/tmp}/fict-optimizer-bench.json"
 pnpm release:verify:clean
 ```
 
-The command refuses a dirty source checkout, creates a temporary worktree at `HEAD`, installs `pnpm-lock.yaml` with `--frozen-lockfile`, runs `pnpm release:verify`, and removes the worktree on success or failure. It may reuse pnpm's content-addressed download store, but it MUST NOT share `node_modules`, build output, or Turbo task output with the source checkout.
+The command refuses a dirty source checkout, creates a temporary worktree at `HEAD`, installs `pnpm-lock.yaml` with `--frozen-lockfile`, runs `pnpm release:verify` with `CI=true`, and removes the worktree on success or failure. It may reuse pnpm's content-addressed download store, but it MUST NOT share `node_modules`, build output, Turbo task output, or an existing Playwright web server with the source checkout. CI mode also forbids focused browser tests and applies the release gate's CI retry and worker settings.
 
 ## Required evidence
 
