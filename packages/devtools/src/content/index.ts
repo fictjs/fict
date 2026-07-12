@@ -1,25 +1,11 @@
 /**
  * Fict DevTools Content Script
  *
- * This script runs in the page context and bridges communication
- * between the Fict runtime hook and the DevTools panel.
+ * This script runs in Chrome's isolated world and bridges communication
+ * between the main-world Fict runtime hook and the DevTools panel.
  */
 
 console.debug('[Fict DevTools] Content script loaded')
-
-// ============================================================================
-// Types
-// ============================================================================
-
-interface FictGlobal {
-  __FICT_DEVTOOLS_HOOK__?: unknown
-  __FICT_VERSION__?: string | undefined
-  __FICT__?:
-    | {
-        version?: string | undefined
-      }
-    | undefined
-}
 
 // ============================================================================
 // State
@@ -27,9 +13,11 @@ interface FictGlobal {
 
 let port: chrome.runtime.Port | null = null
 let isConnected = false
-let detectionAttempts = 0
-const MAX_DETECTION_ATTEMPTS = 50
-const DETECTION_INTERVAL = 100
+let fictDetected = false
+let fictVersion: string | undefined
+;(
+  globalThis as typeof globalThis & { __FICT_DEVTOOLS_CONTENT_INJECTED__?: boolean }
+).__FICT_DEVTOOLS_CONTENT_INJECTED__ = true
 
 // ============================================================================
 // Detection
@@ -39,38 +27,18 @@ const DETECTION_INTERVAL = 100
  * Check if Fict is present on the page
  */
 function detectFict(): { detected: boolean; version?: string | undefined } {
-  const global = globalThis as typeof globalThis & FictGlobal
-
-  if (global.__FICT_DEVTOOLS_HOOK__) {
-    const version = global.__FICT_VERSION__ || global.__FICT__?.version
-    return { detected: true, version }
-  }
-
-  return { detected: false }
+  return fictDetected ? { detected: true, version: fictVersion } : { detected: false }
 }
 
 /**
- * Poll for Fict detection (waits for async app initialization)
+ * Ask the main-world bridge to replay its current status. This closes the race
+ * where page-hook.js posts its initial message before this listener is ready.
  */
-function pollForFict(): void {
-  const check = () => {
-    detectionAttempts++
-    const result = detectFict()
-
-    if (result.detected) {
-      console.debug('[Fict DevTools] Fict detected', result.version ? `v${result.version}` : '')
-      notifyFictDetected(result.version)
-      return
-    }
-
-    if (detectionAttempts < MAX_DETECTION_ATTEMPTS) {
-      setTimeout(check, DETECTION_INTERVAL)
-    } else {
-      console.debug('[Fict DevTools] Fict not detected after polling')
-    }
-  }
-
-  check()
+function requestPageStatus(): void {
+  window.postMessage(
+    { source: 'fict-devtools-content', type: 'request:hook-status', timestamp: Date.now() },
+    '*',
+  )
 }
 
 /**
@@ -83,6 +51,7 @@ function notifyFictDetected(version?: string): void {
       type: 'fict-detected',
       version,
     })
+    return
   }
 
   // Via chrome.runtime.sendMessage as fallback
@@ -125,11 +94,12 @@ function connectToBackground(): void {
 
     console.debug('[Fict DevTools] Connected to background')
 
-    // Check for Fict immediately
+    // Replay detection after an extension-service-worker reconnect.
     const result = detectFict()
     if (result.detected) {
       notifyFictDetected(result.version)
     }
+    requestPageStatus()
   } catch (error) {
     console.debug('[Fict DevTools] Failed to connect to background:', error)
   }
@@ -158,6 +128,24 @@ function handlePageMessage(event: MessageEvent): void {
   // Only forward messages from devtools hook
   if (message.source !== 'fict-devtools-hook') return
 
+  if (message.type === 'fict-detected') {
+    const payloadVersion =
+      message.payload && typeof message.payload === 'object'
+        ? (message.payload as { version?: unknown }).version
+        : undefined
+    const version =
+      typeof message.version === 'string'
+        ? message.version
+        : typeof payloadVersion === 'string'
+          ? payloadVersion
+          : undefined
+    fictDetected = true
+    fictVersion = version
+    console.debug('[Fict DevTools] Fict detected', version ? `v${version}` : '')
+    notifyFictDetected(version)
+    return
+  }
+
   // Forward to background via port
   if (port && isConnected) {
     port.postMessage(message)
@@ -173,79 +161,18 @@ function handlePageMessage(event: MessageEvent): void {
 }
 
 // ============================================================================
-// Script Injection
-// ============================================================================
-
-/**
- * Inject the debugger hook script into the page
- */
-function injectDebuggerHook(): void {
-  // Check if already injected
-  const global = globalThis as typeof globalThis & { __FICT_DEVTOOLS_INJECTED__?: boolean }
-  if (global.__FICT_DEVTOOLS_INJECTED__) return
-
-  const script = document.createElement('script')
-  script.textContent = `
-    (function() {
-      // Mark as injected
-      window.__FICT_DEVTOOLS_INJECTED__ = true;
-
-      // Wait for Fict hook to be available
-      function checkHook() {
-        if (window.__FICT_DEVTOOLS_HOOK__) {
-          console.debug('[Fict DevTools] Hook found, DevTools ready');
-          // Notify content script
-          window.postMessage({
-            source: 'fict-devtools-hook',
-            type: 'hook-ready'
-          }, '*');
-        }
-      }
-
-      // Check immediately and poll
-      checkHook();
-      const interval = setInterval(() => {
-        checkHook();
-        if (window.__FICT_DEVTOOLS_HOOK__) {
-          clearInterval(interval);
-        }
-      }, 100);
-
-      // Stop polling after 10 seconds
-      setTimeout(() => clearInterval(interval), 10000);
-    })();
-  `
-
-  // Inject at document_start
-  const target = document.head || document.documentElement
-  target.insertBefore(script, target.firstChild)
-  script.remove()
-}
-
-// ============================================================================
 // Initialization
 // ============================================================================
 
 function init(): void {
-  // Connect to background
-  connectToBackground()
-
-  // Listen for messages from page
+  // Register the bridge listener before asking either side for status.
   window.addEventListener('message', handlePageMessage)
-
-  // Inject debugger hook
-  injectDebuggerHook()
-
-  // Start polling for Fict
-  pollForFict()
+  connectToBackground()
+  requestPageStatus()
 }
 
-// Initialize based on document state
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init)
-} else {
-  init()
-}
+// document_start must install the bridge before application scripts execute.
+init()
 
 // Also listen for runtime connect events (for when DevTools opens)
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

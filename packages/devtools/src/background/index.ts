@@ -339,34 +339,38 @@ function categorizeInjectionError(error: unknown): InjectionError {
  */
 async function injectContentScript(tabId: number): Promise<void> {
   try {
-    // Check if script is already injected
-    const results = await chrome.scripting.executeScript({
+    // Tabs that were already open when the extension was installed do not get
+    // manifest content scripts retroactively. Install the hook in MAIN world
+    // before connecting the isolated-world transport.
+    const pageResults = await chrome.scripting.executeScript({
       target: { tabId },
+      world: 'MAIN',
       func: () =>
-        (window as Window & { __FICT_DEVTOOLS_INJECTED__?: boolean }).__FICT_DEVTOOLS_INJECTED__,
+        !!(window as Window & { __FICT_DEVTOOLS_PAGE_BRIDGE__?: unknown })
+          .__FICT_DEVTOOLS_PAGE_BRIDGE__,
     })
-
-    if (results[0]?.result) {
-      console.debug(`[Fict DevTools] Content script already injected in tab ${tabId}`)
-      return
+    if (!pageResults[0]?.result) {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN',
+        files: ['page-hook.js'],
+      })
     }
 
-    // Inject the content script
-    await chrome.scripting.executeScript({
+    const contentResults = await chrome.scripting.executeScript({
       target: { tabId },
-      files: ['content.js'],
+      func: () =>
+        !!(window as Window & { __FICT_DEVTOOLS_CONTENT_INJECTED__?: boolean })
+          .__FICT_DEVTOOLS_CONTENT_INJECTED__,
     })
+    if (!contentResults[0]?.result) {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ['content.js'],
+      })
+    }
 
-    // Mark as injected
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      func: () => {
-        ;(window as Window & { __FICT_DEVTOOLS_INJECTED__?: boolean }).__FICT_DEVTOOLS_INJECTED__ =
-          true
-      },
-    })
-
-    console.debug(`[Fict DevTools] Content script injected in tab ${tabId}`)
+    console.debug(`[Fict DevTools] Page hook and content bridge ready in tab ${tabId}`)
   } catch (error) {
     const errorType = categorizeInjectionError(error)
 

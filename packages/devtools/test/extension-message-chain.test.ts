@@ -158,22 +158,29 @@ const waitForTick = () => new Promise(resolve => setTimeout(resolve, 0))
 
 describe('extension message chain', () => {
   afterEach(() => {
+    ;(
+      globalThis as typeof globalThis & {
+        __FICT_DEVTOOLS_PAGE_BRIDGE__?: { dispose(): void }
+      }
+    ).__FICT_DEVTOOLS_PAGE_BRIDGE__?.dispose()
     vi.restoreAllMocks()
     vi.resetModules()
     delete (globalThis as typeof globalThis & { chrome?: unknown }).chrome
     delete (globalThis as typeof globalThis & { __FICT_DEVTOOLS_HOOK__?: unknown })
       .__FICT_DEVTOOLS_HOOK__
     delete (globalThis as typeof globalThis & { __FICT_VERSION__?: unknown }).__FICT_VERSION__
+    delete (globalThis as typeof globalThis & { __FICT_DEVTOOLS_CONTENT_INJECTED__?: unknown })
+      .__FICT_DEVTOOLS_CONTENT_INJECTED__
   })
 
   it('routes messages across panel, background, content, and page', async () => {
     const tabId = 42
     const chromeMock = createChromeMock(tabId)
     vi.stubGlobal('chrome', chromeMock as unknown as typeof chrome)
-    ;(
-      globalThis as typeof globalThis & { __FICT_DEVTOOLS_HOOK__?: unknown }
-    ).__FICT_DEVTOOLS_HOOK__ = {}
     ;(globalThis as typeof globalThis & { __FICT_VERSION__?: string }).__FICT_VERSION__ = '1.0.0'
+    vi.spyOn(window, 'postMessage').mockImplementation((message: unknown) => {
+      window.dispatchEvent(new MessageEvent('message', { data: message, source: window }))
+    })
 
     await import('../src/background/index')
 
@@ -190,7 +197,32 @@ describe('extension message chain', () => {
       pageMessages.push(event.data)
     })
 
+    await import('../src/page/index')
     await import('../src/content/index')
+    await waitForTick()
+
+    expect(chromeMock.scripting.executeScript).toHaveBeenCalledWith({
+      target: { tabId },
+      world: 'MAIN',
+      files: ['page-hook.js'],
+    })
+
+    expect(
+      panelMessages.some(
+        message =>
+          typeof message === 'object' &&
+          message !== null &&
+          (message as { type?: string }).type === 'fict-detected',
+      ),
+    ).toBe(false)
+
+    const installedHook = (
+      globalThis as typeof globalThis & {
+        __FICT_DEVTOOLS_HOOK__?: { registerRoot?: (id: number) => void }
+      }
+    ).__FICT_DEVTOOLS_HOOK__
+    expect(installedHook).toBeDefined()
+    installedHook?.registerRoot?.(1)
     await waitForTick()
 
     expect(

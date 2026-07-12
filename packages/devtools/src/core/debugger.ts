@@ -59,6 +59,7 @@ const settings: DevToolsSettings = {
 
 // Connection state
 let isConnected = false
+let runtimeDetected = false
 const panelPort: MessagePort | null = null
 let broadcastChannel: BroadcastChannel | null = null
 const MAX_TRANSPORT_SANITIZE_DEPTH = 6
@@ -70,6 +71,42 @@ const perfRangeStacks = {
 }
 const perfMarkNames: string[] = []
 const perfMeasureNames: string[] = []
+
+function readRuntimeVersion(): string | undefined {
+  try {
+    const global = globalThis as typeof globalThis & {
+      __FICT_VERSION__?: unknown
+      __FICT__?: { version?: unknown }
+    }
+    const version = global.__FICT_VERSION__ ?? global.__FICT__?.version
+    return typeof version === 'string' ? version : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function markRuntimeDetected(): void {
+  if (runtimeDetected) return
+  runtimeDetected = true
+  if (typeof window === 'undefined') return
+  try {
+    window.postMessage(
+      {
+        source: MessageSource.Hook,
+        type: 'fict-detected',
+        version: readRuntimeVersion(),
+        timestamp: Date.now(),
+      },
+      '*',
+    )
+  } catch {
+    // Detection must never affect the application runtime.
+  }
+}
+
+export function hasDetectedFictRuntime(): boolean {
+  return runtimeDetected
+}
 
 // ============================================================================
 // Console Exposure
@@ -1687,6 +1724,7 @@ const hook: FictDevtoolsHookEnhanced = {
     value: unknown,
     options?: { name?: string; source?: string; ownerId?: number },
   ): void {
+    markRuntimeDetected()
     const parsedSource = parseSourceLocation(options?.source)
     const state: SignalState = {
       id,
@@ -1725,6 +1763,7 @@ const hook: FictDevtoolsHookEnhanced = {
   },
 
   updateSignal(id: number, value: unknown, previousValue?: unknown): void {
+    markRuntimeDetected()
     const state = signals.get(id)
     if (!state) return
 
@@ -1765,6 +1804,7 @@ const hook: FictDevtoolsHookEnhanced = {
     value: unknown,
     options?: { name?: string; source?: string; ownerId?: number; internal?: boolean },
   ): void {
+    markRuntimeDetected()
     if (options?.internal === true) return
     const parsedSource = parseSourceLocation(options?.source)
     const state: ComputedState = {
@@ -1804,6 +1844,7 @@ const hook: FictDevtoolsHookEnhanced = {
   },
 
   updateComputed(id: number, value: unknown, previousValue?: unknown): void {
+    markRuntimeDetected()
     const state = computeds.get(id)
     if (!state) return
 
@@ -1841,6 +1882,7 @@ const hook: FictDevtoolsHookEnhanced = {
 
   // Effect lifecycle
   registerEffect(id: number, options?: { ownerId?: number; source?: string }): void {
+    markRuntimeDetected()
     const parsedSource = parseSourceLocation(options?.source)
     const state: EffectState = {
       id,
@@ -1871,6 +1913,7 @@ const hook: FictDevtoolsHookEnhanced = {
   },
 
   effectRun(id: number, duration?: number): void {
+    markRuntimeDetected()
     const state = effects.get(id)
     if (!state) return
 
@@ -1927,6 +1970,7 @@ const hook: FictDevtoolsHookEnhanced = {
 
   // Component lifecycle
   registerComponent(id: number, name: string, parentId?: number, source?: SourceLocation): void {
+    markRuntimeDetected()
     const parsedSource = parseSourceLocation(source)
     const state: ComponentState = {
       id,
@@ -1980,6 +2024,7 @@ const hook: FictDevtoolsHookEnhanced = {
   },
 
   componentRender(id: number): void {
+    markRuntimeDetected()
     const state = components.get(id)
     if (!state) return
 
@@ -1994,6 +2039,7 @@ const hook: FictDevtoolsHookEnhanced = {
 
   // Root lifecycle
   registerRoot(id: number, name?: string): void {
+    markRuntimeDetected()
     const state: RootState = {
       id,
       type: NodeType.Root,
@@ -2023,6 +2069,7 @@ const hook: FictDevtoolsHookEnhanced = {
 
   // Dependency tracking
   trackDependency(subscriberId: number, dependencyId: number): void {
+    markRuntimeDetected()
     // Add to subscriber's dependencies
     let subDeps = dependencies.get(subscriberId)
     if (!subDeps) {
@@ -2105,21 +2152,25 @@ const hook: FictDevtoolsHookEnhanced = {
 
   // Batch/flush events
   batchStart(): void {
+    markRuntimeDetected()
     batchGroupId = nextTimelineId
     recordEvent(TimelineEventType.BatchStart)
   },
 
   batchEnd(): void {
+    markRuntimeDetected()
     recordEvent(TimelineEventType.BatchEnd)
     batchGroupId = null
   },
 
   flushStart(): void {
+    markRuntimeDetected()
     flushGroupId = nextTimelineId
     recordEvent(TimelineEventType.FlushStart)
   },
 
   flushEnd(): void {
+    markRuntimeDetected()
     recordEvent(TimelineEventType.FlushEnd)
     flushGroupId = null
   },
@@ -2271,6 +2322,7 @@ export function detachDebugger(): void {
 
   // Reset connection state
   isConnected = false
+  runtimeDetected = false
   sourceFileCache.clear()
   clearPerformanceTimelineInstrumentation()
 
