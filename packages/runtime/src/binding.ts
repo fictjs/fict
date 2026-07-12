@@ -731,8 +731,21 @@ export function setProp(el: Element, key: string, value: unknown): void {
   if (propCache[key] === value && (el as unknown as Record<string, unknown>)[key] === next) {
     return
   }
+  setElementProperty(el, key, next)
   propCache[key] = value
-  ;(el as unknown as Record<string, unknown>)[key] = next
+}
+
+export function setElementProperty(el: Element, key: string, value: unknown): void {
+  // linkedom exposes HTMLSelectElement.value as a getter. Selecting the
+  // matching option is browser-equivalent and serializes correctly for SSR.
+  if (key === 'value' && el.localName === 'select') {
+    const expected = String(value ?? '')
+    for (const option of el.querySelectorAll('option')) {
+      ;(option as HTMLOptionElement).selected = (option as HTMLOptionElement).value === expected
+    }
+    return
+  }
+  ;(el as unknown as Record<string, unknown>)[key] = value
 }
 
 function normalizePropertyValue(key: string, value: unknown): unknown {

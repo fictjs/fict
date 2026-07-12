@@ -24,6 +24,7 @@ import {
   isReactive,
   parseEventNameWithModifiers,
   registerCreateElement,
+  setElementProperty,
   type MaybeReactive,
   type AttributeSetter,
   type BindingHandle,
@@ -1255,7 +1256,7 @@ const setAttribute: AttributeSetter = (el: Element, key: string, value: unknown)
 const setProperty: AttributeSetter = (el: Element, key: string, value: unknown): void => {
   if (value === undefined || value === null) {
     const fallback = key === 'checked' || key === 'selected' ? false : ''
-    ;(el as unknown as Record<string, unknown>)[key] = fallback
+    setElementProperty(el, key, fallback)
     return
   }
 
@@ -1270,7 +1271,7 @@ const setProperty: AttributeSetter = (el: Element, key: string, value: unknown):
     return
   }
 
-  ;(el as unknown as Record<string, unknown>)[key] = value as unknown
+  setElementProperty(el, key, value)
 }
 
 /**

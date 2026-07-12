@@ -22,9 +22,18 @@ const releaseWorkflow = readFileSync(
   new URL('../.github/workflows/release.yml', import.meta.url),
   'utf8',
 )
+const ciWorkflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
 
 test('release verification retains tarball, SSR matrix, browser E2E, and clean-checkout gates', () => {
   assert.deepEqual(verifyReleaseContract(rootPackage, releaseWorkflow), [])
+})
+
+test('browser E2E continuously includes production-shaped real applications and scheduled soak', () => {
+  assert.match(rootPackage.scripts['test:e2e'], /pnpm test:real-apps/)
+  assert.match(rootPackage.scripts['test:real-apps'], /examples:build-real-apps/)
+  assert.match(rootPackage.scripts['test:real-apps'], /playwright\.config\.ts/)
+  assert.match(ciWorkflow, /FICT_REAL_APP_SOAK_MS/)
+  assert.match(ciWorkflow, /180000/)
 })
 
 test('packed manifests reject unresolved workspace protocols', () => {

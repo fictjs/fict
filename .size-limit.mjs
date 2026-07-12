@@ -13,8 +13,8 @@ export default [
     path: 'packages/fict/dist/index.js',
     // Approved production baseline after cross-module correctness, resumability,
     // hydration repair, full namespace semantics, selector ownership, and
-    // reflection-safe deep-store tracking.
-    limit: '20.7 KB',
+    // reflection-safe deep-store tracking, and SSR-safe form selection.
+    limit: '20.9 KB',
     modifyEsbuildConfig: production,
   },
   {

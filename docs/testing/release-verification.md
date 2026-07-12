@@ -28,7 +28,7 @@ The inner release gate MUST retain all of these checks:
 
 | Evidence                     | Command                      | Contract                                                                                                                           |
 | ---------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Browser behavior             | `pnpm test:e2e`              | Chromium exercises a production build through Playwright.                                                                          |
+| Browser behavior             | `pnpm test:e2e`              | Chromium exercises the core fixture plus three production-shaped applications, including mixed-workload soak.                      |
 | SSR portability              | `pnpm test:ssr-matrix`       | Node and edge-oriented SSR configurations retain their supported rendering behavior.                                               |
 | Publishable package archives | `pnpm test:package-tarballs` | Every package in `.github/npm-publish-packages.json` is packed, installed outside the workspace, and consumed through ESM and CJS. |
 | Declaration consumption      | `pnpm test:package-tarballs` | The installed archives compile from both `.mts` and `.cts` consumers with strict TypeScript checking and `skipLibCheck` disabled.  |

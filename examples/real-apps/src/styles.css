@@ -513,6 +513,37 @@ th {
   gap: 12px;
 }
 
+.resource-state {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.resource-state h2,
+.resource-state p {
+  margin: 0;
+}
+
+.resource-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.resource-summary div {
+  display: grid;
+  gap: 5px;
+  padding: 14px;
+  border-radius: 7px;
+  background: #f6f8fa;
+}
+
+.resource-summary span {
+  color: #6c7a89;
+  font-size: 12px;
+}
+
 .loader {
   width: 34px;
   height: 34px;
@@ -552,7 +583,7 @@ th {
   }
 
   .view-nav {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
   .intake-grid,
@@ -560,6 +591,7 @@ th {
   .dashboard-grid,
   .auth-grid,
   .account-grid,
+  .resource-summary,
   .route-panel.split {
     grid-template-columns: 1fr;
   }

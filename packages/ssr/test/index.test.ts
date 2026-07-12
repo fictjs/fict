@@ -7,6 +7,7 @@ import {
   __fictQrl,
   __fictUseContext,
   __fictUseSignal,
+  setProp,
 } from '@fictjs/runtime/internal'
 
 import {
@@ -17,6 +18,21 @@ import {
 } from '../src/index'
 
 describe('@fictjs/ssr', () => {
+  describe('form property bindings', () => {
+    it('serializes a select property binding when the SSR DOM exposes a read-only getter', () => {
+      const { document } = createSSRDocument()
+      const select = document.createElement('select')
+      select.innerHTML =
+        '<option value="standard">Standard</option><option value="elevated">Elevated</option>'
+
+      setProp(select, 'value', 'elevated')
+
+      expect(select.value).toBe('elevated')
+      expect(select.querySelector('option[value="elevated"]')?.hasAttribute('selected')).toBe(true)
+      expect(select.querySelector('option[value="standard"]')?.hasAttribute('selected')).toBe(false)
+    })
+  })
+
   describe('renderToStringAsync', () => {
     it('waits for Suspense boundaries and returns their final content', async () => {
       const pending = createSuspenseToken()

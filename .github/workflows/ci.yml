@@ -265,7 +265,10 @@ jobs:
       - run: pnpm install
       - run: pnpm exec playwright install --with-deps chromium
       - run: FICT_STRICT_GUARANTEE=1 pnpm build
-      - run: pnpm test:e2e
+      - name: Run browser and real-application E2E
+        env:
+          FICT_REAL_APP_SOAK_MS: ${{ github.event_name == 'schedule' && '180000' || '10000' }}
+        run: pnpm test:e2e
 
   test-opt-out:
     name: Test (Opt-out)

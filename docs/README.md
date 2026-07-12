@@ -61,6 +61,7 @@ boundary lives in [SCOPE.md](../SCOPE.md); Preview policy lives in
 
 - `testing/review-regressions.md` — Focused regression gate for confirmed high- and medium-risk review findings
 - `testing/release-verification.md` — Clean-checkout and publishable-tarball release verification contract
+- `testing/real-application-validation.md` — Production-shaped application, SSR, concurrency, and scheduled soak gate
 
 ## Roadmap And Essays
 

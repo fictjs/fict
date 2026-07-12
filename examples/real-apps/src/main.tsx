@@ -1,8 +1,8 @@
 import { $state, $store, ErrorBoundary, render, type FictNode } from 'fict'
-import { Link, NavLink, Route, Router } from '@fictjs/router'
+import { createResource, Link, NavLink, Route, Router } from '@fictjs/router'
 import './styles.css'
 
-type View = 'dashboard' | 'intake' | 'router' | 'auth'
+type View = 'dashboard' | 'intake' | 'router' | 'resources' | 'auth'
 type Range = 'today' | 'week' | 'month'
 type Risk = 'low' | 'medium' | 'high'
 
@@ -10,6 +10,7 @@ const viewItems: Array<{ id: View; label: string; meta: string }> = [
   { id: 'dashboard', label: 'Operations', meta: 'Dashboard' },
   { id: 'intake', label: 'Procurement', meta: 'Form' },
   { id: 'router', label: 'Accounts', meta: 'Router' },
+  { id: 'resources', label: 'Fleet', meta: 'Resource' },
   { id: 'auth', label: 'Access', meta: 'Auth' },
 ]
 
@@ -25,6 +26,36 @@ const accounts = [
   { id: 'atlas', name: 'Atlas Health', tier: 'Growth', renewal: 'Jul 03' },
   { id: 'vertex', name: 'Vertex Labs', tier: 'Enterprise', renewal: 'Aug 19' },
 ]
+
+const serviceSnapshots = [
+  {
+    revision: 'rev-241',
+    generatedAt: '14:31 UTC',
+    services: [
+      { name: 'Identity', region: 'Global', latency: '42 ms', status: 'Healthy' },
+      { name: 'Billing', region: 'US East', latency: '67 ms', status: 'Healthy' },
+      { name: 'Messaging', region: 'EU West', latency: '91 ms', status: 'Watching' },
+    ],
+  },
+  {
+    revision: 'rev-242',
+    generatedAt: '14:32 UTC',
+    services: [
+      { name: 'Identity', region: 'Global', latency: '39 ms', status: 'Healthy' },
+      { name: 'Billing', region: 'US East', latency: '64 ms', status: 'Healthy' },
+      { name: 'Messaging', region: 'EU West', latency: '73 ms', status: 'Recovered' },
+    ],
+  },
+] as const
+
+let serviceSnapshotRequest = 0
+
+async function loadServiceSnapshot() {
+  await new Promise(resolve => setTimeout(resolve, 60))
+  const snapshot = serviceSnapshots[serviceSnapshotRequest % serviceSnapshots.length]!
+  serviceSnapshotRequest += 1
+  return snapshot
+}
 
 function App() {
   let activeView = $state<View>('dashboard')
@@ -44,6 +75,7 @@ function App() {
           {viewItems.map(item => (
             <button
               key={item.id}
+              data-view={item.id}
               class={activeView === item.id ? 'view-nav-item is-active' : 'view-nav-item'}
               onClick={() => (activeView = item.id)}
             >
@@ -61,6 +93,8 @@ function App() {
           <ProcurementIntake />
         ) : activeView === 'router' ? (
           <NestedRouterWorkspace />
+        ) : activeView === 'resources' ? (
+          <ResourceMonitor />
         ) : (
           <AccessConsole />
         )}
@@ -291,6 +325,7 @@ function OperationsDashboard() {
           {(['today', 'week', 'month'] as Range[]).map(option => (
             <button
               key={option}
+              data-range={option}
               class={range === option ? 'segment is-active' : 'segment'}
               onClick={() => (range = option)}
             >
@@ -503,6 +538,85 @@ function AccountSettings() {
         Auto-archive closed plans
       </label>
     </section>
+  )
+}
+
+function ResourceMonitor() {
+  const health = createResource(() => 'service-fleet', loadServiceSnapshot)
+
+  return (
+    <article class="surface">
+      <header class="surface-header">
+        <div>
+          <p class="eyebrow">Async resource</p>
+          <h1>Service fleet health</h1>
+        </div>
+        <button
+          class="secondary-action"
+          data-testid="resource-refresh"
+          disabled={health.loading()}
+          onClick={() => void health.refetch()}
+        >
+          {health.loading() ? 'Refreshing' : 'Refresh snapshot'}
+        </button>
+      </header>
+
+      {health.loading() ? (
+        <section class="panel resource-state" data-testid="resource-loading">
+          <span class="loader" />
+          <div>
+            <h2>Loading fleet telemetry</h2>
+            <p class="muted">Aggregating regional service checks.</p>
+          </div>
+        </section>
+      ) : health.error() ? (
+        <section class="panel error-panel" data-testid="resource-error">
+          <h2>Fleet telemetry unavailable</h2>
+          <p>{String(health.error())}</p>
+        </section>
+      ) : health() ? (
+        <section class="panel" data-testid="resource-ready">
+          <div class="resource-summary">
+            <div>
+              <span>Snapshot</span>
+              <strong data-testid="resource-revision">
+                {(health() ?? health.latest())?.revision ?? ''}
+              </strong>
+            </div>
+            <div>
+              <span>Generated</span>
+              <strong>{(health() ?? health.latest())?.generatedAt ?? ''}</strong>
+            </div>
+            <div>
+              <span>Services</span>
+              <strong>{(health() ?? health.latest())?.services.length ?? 0}</strong>
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Service</th>
+                <th>Region</th>
+                <th>Latency</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(health() ?? health.latest())?.services.map(service => (
+                <tr key={service.name}>
+                  <td>{service.name}</td>
+                  <td>{service.region}</td>
+                  <td>{service.latency}</td>
+                  <td>
+                    <span class="priority low">{service.status}</span>
+                  </td>
+                </tr>
+              )) ?? []}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
+    </article>
   )
 }
 

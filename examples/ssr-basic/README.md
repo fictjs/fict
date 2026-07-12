@@ -1,8 +1,12 @@
-# Fict Resumable Page Example
+# Fict Resumable Release Console
 
-SSR page with serialized state snapshots and lazy event handler loading through
-`installResumableLoader`. The server renders HTML with resumability metadata, and the client installs
-delegated event handling without re-running the full component tree.
+Production-shaped release operations application with regional capacity controls,
+a change-request form, and a filtered deployment queue. The server renders the
+application with serialized state snapshots, while `installResumableLoader`
+provides Preview lazy event handling without eagerly re-running the component tree.
+
+The real-application Playwright suite verifies both the server HTML and resumed
+browser interactions from production output.
 
 ## Run
 
