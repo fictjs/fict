@@ -1,0 +1,410 @@
+use std::collections::BTreeSet;
+
+use fict_diagnostics::{
+    Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
+};
+use fict_hir::HirFile;
+use fict_reactivity::RegionAnalysis;
+
+use crate::{
+    CleanupOwner, DomNamespace, EmitOperation, EmitProgram, EmitValueRef, RuntimeHelper,
+    RuntimeHelperStability, verify_runtime_abi,
+};
+
+/// Verify EmitIR helper, slot/temp, region/template, cleanup, and rejection invariants.
+pub fn verify_emit_program(
+    hir: &HirFile,
+    analyses: &[RegionAnalysis],
+    program: &EmitProgram,
+) -> Result<(), DiagnosticBundle> {
+    let mut diagnostics = DiagnosticBundle::default();
+    if verify_runtime_abi().is_err() {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-ABI",
+            "runtime ABI registry is inconsistent",
+        ));
+    }
+    if program.strict_rejected
+        && (!program.imports.is_empty()
+            || program
+                .functions
+                .iter()
+                .any(|function| !function.operations.is_empty()))
+    {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-REJECTED",
+            "strict-rejected modules cannot contain partial output",
+        ));
+    }
+    if program.functions.len() != hir.functions.len()
+        || analyses.len() != hir.functions.len()
+        || program
+            .functions
+            .iter()
+            .enumerate()
+            .any(|(index, function)| function.source.as_usize() != index)
+    {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-FUNCTION",
+            "EmitIR functions must match the HIR function arena",
+        ));
+    }
+    verify_imports(program, &mut diagnostics);
+    let import_names: BTreeSet<_> = program
+        .imports
+        .iter()
+        .map(|intent| intent.local.as_str())
+        .collect();
+    for function in &program.functions {
+        let Some(hir_function) = hir.functions.get(function.source.as_usize()) else {
+            continue;
+        };
+        let analysis = analyses.get(function.source.as_usize());
+        for (index, slot) in function.slots.iter().enumerate() {
+            if slot.id.as_usize() != index
+                || slot.control_path.windows(2).any(|pair| pair[0] >= pair[1])
+            {
+                diagnostics.push(emit_error(
+                    "FICT-EMIT-SLOT",
+                    "reactive slots must be dense with canonical control paths",
+                ));
+            }
+        }
+        let mut temporary_names = BTreeSet::new();
+        for (index, temporary) in function.temporaries.iter().enumerate() {
+            if temporary.id.as_usize() != index
+                || !valid_identifier(&temporary.name)
+                || !temporary_names.insert(temporary.name.as_str())
+                || import_names.contains(temporary.name.as_str())
+            {
+                diagnostics.push(emit_error(
+                    "FICT-EMIT-TEMP",
+                    "temporaries must be dense, unique identifiers without import collisions",
+                ));
+            }
+        }
+        if function.regions.windows(2).any(|pair| pair[0] >= pair[1])
+            || function.regions.iter().any(|region| {
+                analysis.is_none_or(|analysis| analysis.regions.get(region.as_usize()).is_none())
+            })
+            || analysis.is_some_and(|analysis| function.regions != analysis.top_level_regions)
+        {
+            diagnostics.push(emit_error(
+                "FICT-EMIT-REGION",
+                "function regions must be sorted known analysis regions",
+            ));
+        }
+        verify_operations(hir, hir_function, function, analysis, &mut diagnostics);
+    }
+    if diagnostics.is_empty() {
+        Ok(())
+    } else {
+        Err(diagnostics)
+    }
+}
+
+fn verify_imports(program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {
+    let used: BTreeSet<_> = program
+        .functions
+        .iter()
+        .flat_map(|function| function.operations.iter().filter_map(EmitOperation::helper))
+        .collect();
+    let imported: BTreeSet<_> = program.imports.iter().map(|intent| intent.helper).collect();
+    if imported != used
+        || imported.len() != program.imports.len()
+        || program
+            .imports
+            .windows(2)
+            .any(|pair| pair[0].helper >= pair[1].helper)
+    {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-IMPORTS",
+            "runtime imports must exactly match used helpers in ABI order",
+        ));
+    }
+    let mut names = BTreeSet::new();
+    for intent in &program.imports {
+        if !valid_identifier(&intent.local) || !names.insert(intent.local.as_str()) {
+            diagnostics.push(emit_error(
+                "FICT-EMIT-IMPORT-NAME",
+                "runtime import locals must be unique valid identifiers",
+            ));
+        }
+        if !program.preview && intent.helper.spec().stability == RuntimeHelperStability::Preview {
+            diagnostics.push(emit_error(
+                "FICT-EMIT-PREVIEW",
+                "Core EmitIR cannot import a Preview-only helper",
+            ));
+        }
+    }
+}
+
+fn verify_operations(
+    hir: &HirFile,
+    hir_function: &fict_hir::HirFunction,
+    function: &crate::EmitFunction,
+    analysis: Option<&RegionAnalysis>,
+    diagnostics: &mut DiagnosticBundle,
+) {
+    let mut defined = BTreeSet::new();
+    let mut templates = BTreeSet::new();
+    for operation in &function.operations {
+        verify_helper_semantics(function, operation, diagnostics);
+        operation.visit_values(|value| {
+            let valid = match value {
+                EmitValueRef::Hir(value) => hir_function.values.get(value.as_usize()).is_some(),
+                EmitValueRef::Ssa(name) => hir_function.locals.get(name.local.as_usize()).is_some(),
+                EmitValueRef::Slot(slot) => function.slots.get(slot.as_usize()).is_some(),
+                EmitValueRef::Temporary(temporary) => defined.contains(temporary),
+                EmitValueRef::Literal(_) => true,
+                EmitValueRef::Function(function) => {
+                    hir.functions.get(function.as_usize()).is_some()
+                }
+                EmitValueRef::Binding(binding) => hir.bindings.get(binding.as_usize()).is_some(),
+            };
+            if !valid {
+                diagnostics.push(emit_error(
+                    "FICT-EMIT-VALUE",
+                    "value references an unknown or not-yet-defined arena entry",
+                ));
+            }
+        });
+        operation.visit_temporary_uses(|temporary| {
+            if !defined.contains(&temporary) {
+                diagnostics.push(emit_error(
+                    "FICT-EMIT-TEMP-USE",
+                    "temporary must be defined before use",
+                ));
+            }
+        });
+        if let Some(temporary) = operation.defined_temporary()
+            && (!defined.insert(temporary)
+                || function.temporaries.get(temporary.as_usize()).is_none())
+        {
+            diagnostics.push(emit_error(
+                "FICT-EMIT-TEMP-DEF",
+                "temporary must be declared and defined exactly once",
+            ));
+        }
+        match operation {
+            EmitOperation::PreserveHir {
+                block, instruction, ..
+            } => {
+                if hir_function
+                    .blocks
+                    .get(block.as_usize())
+                    .and_then(|block| block.instructions.get(*instruction as usize))
+                    .is_none()
+                {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-HIR",
+                        "preserved HIR location is invalid",
+                    ));
+                }
+            }
+            EmitOperation::CreateReactive { slot, .. }
+            | EmitOperation::ReadReactive { slot, .. } => verify_slot(function, *slot, diagnostics),
+            EmitOperation::RegisterEffect { slot, cleanup, .. } => {
+                verify_slot(function, *slot, diagnostics);
+                verify_cleanup(function, analysis, *cleanup, diagnostics);
+            }
+            EmitOperation::DeclareTemplate {
+                template,
+                html,
+                namespace,
+                ..
+            } => {
+                if html.is_empty()
+                    || *namespace == DomNamespace::Parent
+                    || hir
+                        .templates
+                        .get(template.as_usize())
+                        .is_none_or(|item| item.owner != function.source)
+                    || !templates.insert(*template)
+                {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-TEMPLATE",
+                        "template declarations must be non-empty, unique, owned, and concrete",
+                    ));
+                }
+            }
+            EmitOperation::CloneTemplate { template, .. } => {
+                if !templates.contains(template) {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-TEMPLATE-ORDER",
+                        "template must be declared before cloning",
+                    ));
+                }
+            }
+            EmitOperation::CreateElement {
+                namespace: DomNamespace::Parent,
+                helper,
+                ..
+            } if *helper != RuntimeHelper::CreateElementInParentNamespace => {
+                diagnostics.push(emit_error(
+                    "FICT-EMIT-NAMESPACE",
+                    "parent-derived namespace requires its dedicated helper",
+                ));
+            }
+            EmitOperation::BindEvent { cleanup, .. }
+            | EmitOperation::BindRef { cleanup, .. }
+            | EmitOperation::Conditional { cleanup, .. }
+            | EmitOperation::KeyedList { cleanup, .. } => {
+                verify_cleanup(function, analysis, *cleanup, diagnostics);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn verify_helper_semantics(
+    function: &crate::EmitFunction,
+    operation: &EmitOperation,
+    diagnostics: &mut DiagnosticBundle,
+) {
+    let valid = match operation {
+        EmitOperation::CreateReactive { slot, helper, .. } => function
+            .slots
+            .get(slot.as_usize())
+            .is_some_and(|slot| match slot.kind {
+                crate::ReactiveSlotKind::Signal => {
+                    matches!(helper, RuntimeHelper::Signal | RuntimeHelper::UseSignal)
+                }
+                crate::ReactiveSlotKind::Memo => {
+                    matches!(helper, RuntimeHelper::Memo | RuntimeHelper::UseMemo)
+                }
+                crate::ReactiveSlotKind::Selector => *helper == RuntimeHelper::CreateSelector,
+                crate::ReactiveSlotKind::Effect
+                | crate::ReactiveSlotKind::Context
+                | crate::ReactiveSlotKind::Store
+                | crate::ReactiveSlotKind::Resource => false,
+            }),
+        EmitOperation::RegisterEffect { helper, .. } => {
+            matches!(helper, RuntimeHelper::Effect | RuntimeHelper::UseEffect)
+        }
+        EmitOperation::DeclareTemplate { helper, .. } => *helper == RuntimeHelper::Template,
+        EmitOperation::CreateElement {
+            namespace, helper, ..
+        } => match namespace {
+            DomNamespace::Html => *helper == RuntimeHelper::CreateElement,
+            DomNamespace::Svg | DomNamespace::MathMl => {
+                *helper == RuntimeHelper::CreateElementInNamespace
+            }
+            DomNamespace::Parent => *helper == RuntimeHelper::CreateElementInParentNamespace,
+        },
+        EmitOperation::BindDom {
+            kind,
+            reactive,
+            helper,
+            ..
+        } => match (kind, reactive) {
+            (crate::DomBindingKind::Text, true) => *helper == RuntimeHelper::BindText,
+            (crate::DomBindingKind::Text, false) => *helper == RuntimeHelper::SetText,
+            (crate::DomBindingKind::TextContent, true) => *helper == RuntimeHelper::BindTextContent,
+            (crate::DomBindingKind::TextContent, false) => *helper == RuntimeHelper::SetTextContent,
+            (crate::DomBindingKind::Attribute(_), true) => *helper == RuntimeHelper::BindAttribute,
+            (crate::DomBindingKind::Attribute(_), false) => *helper == RuntimeHelper::SetAttr,
+            (crate::DomBindingKind::Property(_), true) => *helper == RuntimeHelper::BindProperty,
+            (crate::DomBindingKind::Property(_), false) => *helper == RuntimeHelper::SetProp,
+            (crate::DomBindingKind::Class, true) => *helper == RuntimeHelper::BindClass,
+            (crate::DomBindingKind::Class, false) => *helper == RuntimeHelper::SetClass,
+            (crate::DomBindingKind::Style, true) => *helper == RuntimeHelper::BindStyle,
+            (crate::DomBindingKind::Style, false) => *helper == RuntimeHelper::SetStyle,
+            (crate::DomBindingKind::Spread, _) => *helper == RuntimeHelper::Spread,
+        },
+        EmitOperation::ApplyProps {
+            operation, helper, ..
+        } => match operation {
+            crate::PropsOperation::Getter { .. } => *helper == RuntimeHelper::PropGetter,
+            crate::PropsOperation::Rest { .. } => {
+                matches!(helper, RuntimeHelper::PropsRest | RuntimeHelper::ObjectRest)
+            }
+            crate::PropsOperation::Merge(_) => *helper == RuntimeHelper::MergeProps,
+            crate::PropsOperation::Spread { .. } => *helper == RuntimeHelper::Spread,
+            crate::PropsOperation::Keyed(_) => *helper == RuntimeHelper::Keyed,
+        },
+        EmitOperation::BindEvent {
+            delegated, helper, ..
+        } => {
+            if *delegated {
+                *helper == RuntimeHelper::DelegateEvents
+            } else {
+                matches!(
+                    helper,
+                    RuntimeHelper::BindEvent | RuntimeHelper::AddEventListener
+                )
+            }
+        }
+        EmitOperation::BindRef { helper, .. } => *helper == RuntimeHelper::BindRef,
+        EmitOperation::Insert { helper, before, .. } => {
+            if before.is_some() {
+                *helper == RuntimeHelper::InsertBetween
+            } else {
+                *helper == RuntimeHelper::Insert
+            }
+        }
+        EmitOperation::Conditional { helper, .. } => *helper == RuntimeHelper::Conditional,
+        EmitOperation::KeyedList { helper, .. } => *helper == RuntimeHelper::KeyedList,
+        EmitOperation::ReadReactive { helper, .. } => {
+            helper.is_none_or(|helper| helper == RuntimeHelper::ReactiveGetter)
+        }
+        EmitOperation::PreserveHir { .. }
+        | EmitOperation::CloneTemplate { .. }
+        | EmitOperation::Return { .. } => true,
+    };
+    if !valid {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-HELPER",
+            "operation uses a runtime helper incompatible with its semantics",
+        ));
+    }
+}
+
+fn verify_slot(
+    function: &crate::EmitFunction,
+    slot: crate::EmitSlotId,
+    diagnostics: &mut DiagnosticBundle,
+) {
+    if function.slots.get(slot.as_usize()).is_none() {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-SLOT-USE",
+            "operation references an unknown slot",
+        ));
+    }
+}
+
+fn verify_cleanup(
+    function: &crate::EmitFunction,
+    analysis: Option<&RegionAnalysis>,
+    cleanup: CleanupOwner,
+    diagnostics: &mut DiagnosticBundle,
+) {
+    let valid = match cleanup {
+        CleanupOwner::Slot(slot) => function.slots.get(slot.as_usize()).is_some(),
+        CleanupOwner::Region(region) => {
+            analysis.is_some_and(|analysis| analysis.regions.get(region.as_usize()).is_some())
+        }
+        CleanupOwner::Function => true,
+    };
+    if !valid {
+        diagnostics.push(emit_error("FICT-EMIT-CLEANUP", "cleanup owner is unknown"));
+    }
+}
+
+fn valid_identifier(value: &str) -> bool {
+    let mut bytes = value.bytes();
+    let Some(first) = bytes.next() else {
+        return false;
+    };
+    (first == b'$' || first == b'_' || first.is_ascii_alphabetic())
+        && bytes.all(|byte| byte == b'$' || byte == b'_' || byte.is_ascii_alphanumeric())
+}
+
+fn emit_error(code: &'static str, message: impl Into<String>) -> Diagnostic {
+    Diagnostic::new(
+        DiagnosticCode::new(code).expect("EmitIR diagnostic literal"),
+        DiagnosticSeverity::Error,
+        message,
+    )
+    .with_guarantee_class(GuaranteeClass::Internal)
+}
