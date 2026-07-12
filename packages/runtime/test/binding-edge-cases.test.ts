@@ -824,6 +824,23 @@ describe('Binding Edge Cases', () => {
       expect(select.value).toBe('foreign')
     })
 
+    it('uses native option values when an option property is shadowed', () => {
+      const select = document.createElement('select')
+      select.innerHTML =
+        '<option value="real">Real</option><option value="shadowed">Shadowed</option>'
+      Object.defineProperty(select.options[0], 'value', {
+        configurable: true,
+        value: 'shadowed',
+      })
+
+      setProp(select, 'value', 'shadowed')
+      expect(select.selectedIndex).toBe(1)
+
+      select.options[0]!.selected = true
+      setProp(select, 'value', 'shadowed')
+      expect(select.selectedIndex).toBe(1)
+    })
+
     it('repairs a duplicate select value when the cached text is unchanged', async () => {
       const select = document.createElement('select')
       const trigger = createSignal(0)

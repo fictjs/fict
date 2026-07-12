@@ -728,20 +728,15 @@ export function setProp(el: Element, key: string, value: unknown): void {
     (cacheTarget[PROP_CACHE] as Record<string, unknown> | undefined) ??
     (cacheTarget[PROP_CACHE] = Object.create(null))
   const next = normalizePropertyValue(key, value)
-  if (propCache[key] === value && isElementPropertyCurrent(el, key, next)) {
+  if (
+    propCache[key] === value &&
+    (el as unknown as Record<string, unknown>)[key] === next &&
+    (key !== 'value' || el.localName !== 'select' || !('options' in el))
+  ) {
     return
   }
   setElementProperty(el, key, next)
   propCache[key] = value
-}
-
-function isElementPropertyCurrent(el: Element, key: string, value: unknown): boolean {
-  if (key === 'value' && el.localName === 'select' && 'options' in el) {
-    const [options, matched] = resolveSelectValueAssignment(el as HTMLSelectElement, value)
-    return options.every(option => option.selected === (option === matched))
-  }
-
-  return (el as unknown as Record<string, unknown>)[key] === value
 }
 
 export function setElementProperty(el: Element, key: string, value: unknown): void {
@@ -750,22 +745,18 @@ export function setElementProperty(el: Element, key: string, value: unknown): vo
   // so client and SSR output agree.
   if (key === 'value' && el.localName === 'select' && 'options' in el) {
     const select = el as HTMLSelectElement
-    const [options, matched] = resolveSelectValueAssignment(select, value)
+    const expected = '' + ((value ?? '') as string)
+    const options = Array.from(select.options)
+    const matched = options.find(option => option.value === expected)
+    // Trust a conforming platform setter, including for customized options.
+    // Getter-only or duplicate-selecting server DOMs fall through to repair.
+    if (Reflect.set(select, 'value', value) && !select.selectedOptions[1]) return
     for (const option of options) option.selected = false
     if (matched) matched.selected = true
     else select.selectedIndex = -1
     return
   }
   ;(el as unknown as Record<string, unknown>)[key] = value
-}
-
-function resolveSelectValueAssignment(
-  el: HTMLSelectElement,
-  value: unknown,
-): [HTMLOptionElement[], HTMLOptionElement | undefined] {
-  const expected = `${(value ?? '') as string}`
-  const options = Array.from(el.options)
-  return [options, options.find(option => option.value === expected)]
 }
 
 function normalizePropertyValue(key: string, value: unknown): unknown {
