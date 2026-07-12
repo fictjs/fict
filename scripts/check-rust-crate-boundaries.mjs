@@ -58,6 +58,8 @@ const FORBIDDEN_IO_DEPENDENCIES = new Set([
   'walkdir',
 ])
 
+const FRONTEND_AST_REFERENCE = /\b(?:oxc(?:::|_)|Babel[A-Z]|babel::)/u
+
 function isOxcDependency(name) {
   return name === 'oxc' || name.startsWith('oxc_') || name.startsWith('oxc-')
 }
@@ -123,6 +125,13 @@ export function validateRustCrateBoundaries(metadata, sourceFiles = []) {
   for (const source of sourceFiles) {
     if (/\bstd\s*::\s*(?:fs|net)\b/u.test(source.content)) {
       errors.push(`${source.path} must not access std::fs or std::net`)
+    }
+    const normalizedPath = source.path.replaceAll('\\', '/')
+    if (
+      (normalizedPath.includes('/fict-hir/') || normalizedPath.startsWith('crates/fict-hir/')) &&
+      FRONTEND_AST_REFERENCE.test(source.content)
+    ) {
+      errors.push(`${source.path} must not reference frontend-specific AST APIs`)
     }
   }
 

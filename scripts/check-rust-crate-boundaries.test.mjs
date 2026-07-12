@@ -63,3 +63,20 @@ test('rejects filesystem/network dependencies and standard-library I/O', () => {
     ],
   )
 })
+
+test('rejects frontend AST references from typed HIR', () => {
+  const sources = [
+    {
+      path: 'crates/fict-hir/src/lib.rs',
+      content: 'pub struct LeakedNode(oxc::ast::AstKind);',
+    },
+    {
+      path: 'crates/fict-compiler-oxc/src/lib.rs',
+      content: 'use oxc::ast::ast::Program;',
+    },
+  ]
+
+  assert.deepEqual(validateRustCrateBoundaries(validMetadata(), sources), [
+    'crates/fict-hir/src/lib.rs must not reference frontend-specific AST APIs',
+  ])
+})
