@@ -6,6 +6,9 @@ export interface NativeCompilerInfo {
   backend: 'rust'
   oxcVersion: string
   nodeApiVersion: number
+  compilerBuildId: string
+  compilerProtocolVersion: number
+  metadataSchemaVersion: number
 }
 
 export interface NativeParseProbeResult {
@@ -41,6 +44,9 @@ export class NativeCompilerLoadError extends Error {
 }
 
 const requireFromCompiler = createRequire(import.meta.url)
+const EXPECTED_OXC_VERSION = '0.139.0'
+const EXPECTED_COMPILER_PROTOCOL_VERSION = 1
+const EXPECTED_METADATA_SCHEMA_VERSION = 1
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -90,7 +96,19 @@ function toNativeBinding(value: unknown, candidate: string): NativeCompilerBindi
 
   const typed = binding as unknown as NativeCompilerBinding
   const info = typed.nativeCompilerInfo()
-  if (info.backend !== 'rust' || info.nodeApiVersion < 10 || !info.oxcVersion) {
+  const expectedBuildPrefix =
+    `fict-rust-p${EXPECTED_COMPILER_PROTOCOL_VERSION}` +
+    `-oxc${EXPECTED_OXC_VERSION}-m${EXPECTED_METADATA_SCHEMA_VERSION}-`
+  const sourceHash = info.compilerBuildId?.slice(expectedBuildPrefix.length)
+  if (
+    info.backend !== 'rust' ||
+    info.nodeApiVersion < 10 ||
+    info.oxcVersion !== EXPECTED_OXC_VERSION ||
+    info.compilerProtocolVersion !== EXPECTED_COMPILER_PROTOCOL_VERSION ||
+    info.metadataSchemaVersion !== EXPECTED_METADATA_SCHEMA_VERSION ||
+    !info.compilerBuildId?.startsWith(expectedBuildPrefix) ||
+    !/^[0-9a-f]{64}$/.test(sourceHash ?? '')
+  ) {
     throw new Error(`Native package ${candidate} reported incompatible compiler metadata.`)
   }
   return typed

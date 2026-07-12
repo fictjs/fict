@@ -8,6 +8,9 @@
 
 use oxc::{allocator::Allocator, parser::Parser, span::SourceType};
 
+/// Exact OXC release compiled into this adapter.
+pub const OXC_VERSION: &str = "0.139.0";
+
 /// Owned parse information that is safe to cross the OXC arena boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParseProbe {

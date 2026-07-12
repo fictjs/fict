@@ -2,11 +2,12 @@
 
 //! Minimal N-API boundary for proving native Fict compiler integration.
 
-use fict_compiler::{ParseProbe, parse_tsx_probe};
+use fict_compiler::{
+    COMPILER_PROTOCOL_VERSION, MODULE_REACTIVE_METADATA_VERSION, OXC_VERSION, ParseProbe,
+    compiler_build_id, parse_tsx_probe,
+};
 use napi::{Env, Result, Task, bindgen_prelude::AsyncTask};
 use napi_derive::napi;
-
-const OXC_VERSION: &str = "0.139.0";
 
 /// Native compiler build information exposed to the JavaScript loader.
 #[napi(object)]
@@ -17,6 +18,12 @@ pub struct NativeCompilerInfo {
     pub oxc_version: String,
     /// Node-API level required by this addon.
     pub node_api_version: u32,
+    /// Immutable cache/rollback identity for this native artifact.
+    pub compiler_build_id: String,
+    /// Request/result protocol accepted by this artifact.
+    pub compiler_protocol_version: u32,
+    /// Module metadata schema accepted by this artifact.
+    pub metadata_schema_version: u32,
 }
 
 /// Arena-independent parse result returned across N-API.
@@ -44,6 +51,9 @@ pub fn native_compiler_info() -> NativeCompilerInfo {
         backend: "rust".to_owned(),
         oxc_version: OXC_VERSION.to_owned(),
         node_api_version: 10,
+        compiler_build_id: compiler_build_id().to_owned(),
+        compiler_protocol_version: COMPILER_PROTOCOL_VERSION,
+        metadata_schema_version: MODULE_REACTIVE_METADATA_VERSION,
     }
 }
 

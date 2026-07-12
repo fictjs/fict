@@ -4,7 +4,7 @@ use fict_diagnostics::{Diagnostic, DiagnosticSeverity, SourceSpan};
 use fict_metadata::ModuleReactiveMetadata;
 use serde::{Deserialize, Serialize};
 
-use crate::{COMPILER_PROTOCOL_VERSION, RawSourceMap};
+use crate::{COMPILER_BUILD_ID, COMPILER_PROTOCOL_VERSION, RawSourceMap};
 
 /// Kind of additional module emitted by the compiler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,7 +125,7 @@ pub struct CompileResult {
 impl CompileResult {
     /// Construct a result with canonical empty metadata and no side artifacts.
     #[must_use]
-    pub fn empty(compiler_build_id: impl Into<String>) -> Self {
+    pub fn empty() -> Self {
         Self {
             protocol_version: COMPILER_PROTOCOL_VERSION,
             code: String::new(),
@@ -138,7 +138,7 @@ impl CompileResult {
             explain: None,
             artifacts: Vec::new(),
             stats: None,
-            compiler_build_id: compiler_build_id.into(),
+            compiler_build_id: COMPILER_BUILD_ID.to_owned(),
         }
     }
 
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn serializes_the_stable_empty_result_shape() {
-        let result = CompileResult::empty("fict:test-build");
+        let result = CompileResult::empty();
         assert!(!result.has_errors());
         assert_eq!(
             serde_json::to_value(result).expect("serialize result"),
@@ -176,7 +176,7 @@ mod tests {
                 "explain": null,
                 "artifacts": [],
                 "stats": null,
-                "compilerBuildId": "fict:test-build"
+                "compilerBuildId": crate::COMPILER_BUILD_ID
             })
         );
     }

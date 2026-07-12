@@ -11,7 +11,14 @@ import {
 
 function createBinding(): NativeCompilerBinding {
   return {
-    nativeCompilerInfo: () => ({ backend: 'rust', oxcVersion: '0.139.0', nodeApiVersion: 10 }),
+    nativeCompilerInfo: () => ({
+      backend: 'rust',
+      oxcVersion: '0.139.0',
+      nodeApiVersion: 10,
+      compilerBuildId: `fict-rust-p1-oxc0.139.0-m1-${'0'.repeat(64)}`,
+      compilerProtocolVersion: 1,
+      metadataSchemaVersion: 1,
+    }),
     parseTsxProbeSync: () => ({ statementCount: 1, diagnosticCount: 0 }),
     parseTsxProbeAsync: async () => ({ statementCount: 1, diagnosticCount: 0 }),
   }
@@ -66,6 +73,23 @@ describe('native compiler loader', () => {
       }),
     ).toBe(binding)
     expect(load).toHaveBeenCalledWith('/tmp/fict-compiler.node')
+  })
+
+  it('rejects a platform binding built for a different compiler protocol', () => {
+    const binding = createBinding()
+    binding.nativeCompilerInfo = () => ({
+      ...createBinding().nativeCompilerInfo(),
+      compilerProtocolVersion: 2,
+    })
+
+    expect(() =>
+      loadNativeCompilerBinding({
+        nativePath: '/tmp/incompatible.node',
+        platform: 'darwin',
+        arch: 'arm64',
+        load: () => binding,
+      }),
+    ).toThrow('reported incompatible compiler metadata')
   })
 
   it('fails clearly without invoking a legacy compiler fallback', () => {
