@@ -20,8 +20,6 @@ fict-hir.workspace = true
 fict-metadata.workspace = true
 fict-reactivity.workspace = true
 serde.workspace = true
-
-[dev-dependencies]
 serde_json.workspace = true
 
 [build-dependencies]

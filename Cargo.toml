@@ -27,7 +27,7 @@ fict-emit = { path = "crates/fict-emit" }
 fict-hir = { path = "crates/fict-hir" }
 fict-metadata = { path = "crates/fict-metadata" }
 fict-reactivity = { path = "crates/fict-reactivity" }
-napi = { version = "=3.10.4", default-features = false, features = ["napi10"] }
+napi = { version = "=3.10.4", default-features = false, features = ["napi10", "serde-json"] }
 napi-build = { version = "=2.3.2" }
 napi-derive = { version = "=3.5.10" }
 oxc = { version = "=0.139.0", default-features = false, features = [
@@ -45,4 +45,5 @@ sha2 = { version = "=0.11.0", default-features = false }
 [profile.release]
 codegen-units = 1
 lto = "thin"
+panic = "unwind"
 strip = "symbols"

@@ -112,6 +112,8 @@ pub struct CompilerOptions {
     pub dev: bool,
     /// Emit a source map.
     pub sourcemap: bool,
+    /// Return a structured explanation artifact.
+    pub explain: bool,
     /// Enable lazy conditional-derived evaluation.
     pub lazy_conditional: bool,
     /// Cache repeated getter reads within a synchronous region.
@@ -143,6 +145,7 @@ impl Default for CompilerOptions {
         Self {
             dev: false,
             sourcemap: false,
+            explain: false,
             lazy_conditional: true,
             getter_cache: true,
             fine_grained_dom: true,

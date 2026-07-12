@@ -2,12 +2,20 @@
 
 //! Minimal N-API boundary for proving native Fict compiler integration.
 
+mod async_task;
+mod convert;
+mod panic_boundary;
+
+use async_task::CompileTask;
+use convert::{CompileWork, prepare_compile, serialize_result};
 use fict_compiler::{
     COMPILER_PROTOCOL_VERSION, MODULE_REACTIVE_METADATA_VERSION, OXC_VERSION, ParseProbe,
     compiler_build_id, parse_tsx_probe,
 };
 use napi::{Env, Result, Task, bindgen_prelude::AsyncTask};
 use napi_derive::napi;
+use panic_boundary::{catch_panic, compile_safely};
+use serde_json::Value;
 
 /// Native compiler build information exposed to the JavaScript loader.
 #[napi(object)]
@@ -85,4 +93,25 @@ impl Task for ParseTsxTask {
 #[napi]
 pub fn parse_tsx_probe_async(source: String) -> AsyncTask<ParseTsxTask> {
     AsyncTask::new(ParseTsxTask { source })
+}
+
+/// Execute native compilation synchronously for editor and synchronous build APIs.
+#[napi]
+pub fn transform_sync(request: Value) -> Result<Value> {
+    let work = catch_panic(|| prepare_compile(request))
+        .unwrap_or_else(|_| CompileWork::Immediate(fict_compiler::internal_error_result()));
+    let result = match work {
+        CompileWork::Request(request) => compile_safely(request),
+        CompileWork::Immediate(result) => result,
+    };
+    catch_panic(|| serialize_result(result))
+        .unwrap_or_else(|_| serialize_result(fict_compiler::internal_error_result()))
+}
+
+/// Schedule native compilation in the libuv worker pool after JS-value conversion.
+#[napi]
+pub fn transform(request: Value) -> AsyncTask<CompileTask> {
+    let work = catch_panic(|| prepare_compile(request))
+        .unwrap_or_else(|_| CompileWork::Immediate(fict_compiler::internal_error_result()));
+    AsyncTask::new(CompileTask::new(work))
 }

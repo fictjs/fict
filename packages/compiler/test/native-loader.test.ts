@@ -8,6 +8,28 @@ import {
   resolveNativeTarget,
   type NativeCompilerBinding,
 } from '../src/native-loader'
+import {
+  COMPILER_PROTOCOL_VERSION,
+  MODULE_REACTIVE_METADATA_VERSION,
+  type CompileResult,
+} from '../src/types'
+
+function createCompileResult(): CompileResult {
+  return {
+    protocolVersion: COMPILER_PROTOCOL_VERSION,
+    code: '',
+    map: null,
+    diagnostics: [],
+    moduleMetadata: { version: MODULE_REACTIVE_METADATA_VERSION, exports: {} },
+    metadataDependencies: [],
+    unresolvedMetadataRequests: [],
+    metadataIncomplete: false,
+    explain: null,
+    artifacts: [],
+    stats: null,
+    compilerBuildId: `fict-rust-p1-oxc0.139.0-m1-${'0'.repeat(64)}`,
+  }
+}
 
 function createBinding(): NativeCompilerBinding {
   return {
@@ -21,6 +43,8 @@ function createBinding(): NativeCompilerBinding {
     }),
     parseTsxProbeSync: () => ({ statementCount: 1, diagnosticCount: 0 }),
     parseTsxProbeAsync: async () => ({ statementCount: 1, diagnosticCount: 0 }),
+    transformSync: () => createCompileResult(),
+    transform: async () => createCompileResult(),
   }
 }
 

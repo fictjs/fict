@@ -1,5 +1,7 @@
 import { createRequire } from 'node:module'
 
+import type { CompileRequest, CompileResult } from './types'
+
 export type NativeLibc = 'gnu' | 'musl'
 
 export interface NativeCompilerInfo {
@@ -20,6 +22,8 @@ export interface NativeCompilerBinding {
   nativeCompilerInfo(): NativeCompilerInfo
   parseTsxProbeSync(source: string): NativeParseProbeResult
   parseTsxProbeAsync(source: string): Promise<NativeParseProbeResult>
+  transformSync(request: CompileRequest): CompileResult
+  transform(request: CompileRequest): Promise<CompileResult>
 }
 
 export interface NativeLoaderOptions {
@@ -89,7 +93,9 @@ function toNativeBinding(value: unknown, candidate: string): NativeCompilerBindi
     !isRecord(binding) ||
     typeof binding.nativeCompilerInfo !== 'function' ||
     typeof binding.parseTsxProbeSync !== 'function' ||
-    typeof binding.parseTsxProbeAsync !== 'function'
+    typeof binding.parseTsxProbeAsync !== 'function' ||
+    typeof binding.transformSync !== 'function' ||
+    typeof binding.transform !== 'function'
   ) {
     throw new Error(`Native package ${candidate} does not expose the Fict compiler binding.`)
   }

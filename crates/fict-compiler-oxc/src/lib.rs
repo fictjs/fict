@@ -6,6 +6,12 @@
 //! a real workspace member from the first toolchain pin so Cargo resolves and
 //! locks the exact OXC version used by every later compiler milestone.
 
+mod compile;
+
+pub use compile::{
+    OxcCompileOptions, OxcCompileOutput, OxcModuleKind, OxcSourceLanguage, compile_passthrough,
+};
+
 use oxc::{allocator::Allocator, parser::Parser, span::SourceType};
 
 /// Exact OXC release compiled into this adapter.

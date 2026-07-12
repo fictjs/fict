@@ -183,6 +183,7 @@ export interface CompilerPreviewOptions {
 export interface NativeCompilerOptions {
   dev?: boolean
   sourcemap?: boolean
+  explain?: boolean
   lazyConditional?: boolean
   getterCache?: boolean
   fineGrainedDom?: boolean
