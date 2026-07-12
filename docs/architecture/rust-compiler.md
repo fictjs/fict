@@ -206,6 +206,10 @@ Rollout proceeds in this order:
    compatibility window;
 6. graduate Preview separately.
 
+The compatibility window and coordinated Core scope change are defined by
+[ADR-0003](../adr/0003-retire-babel-preset.md). The preset remains a tested
+legacy-only adapter during that window; it is never an in-place Rust bridge.
+
 A rollback changes the backend for the whole build, invalidates compiler and
 metadata caches, and performs a full rebuild. Rust-generated sidecars or
 Preview artifacts MUST NOT be reused by a legacy rebuild.
