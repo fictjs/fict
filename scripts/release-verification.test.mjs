@@ -8,6 +8,7 @@ import {
   buildConsumerEntries,
   collectNonNodeImportTargets,
   collectExportTargets,
+  findConsumerCoverageGaps,
   findWorkspaceProtocols,
   verifyReleaseContract,
 } from './package-tarball-smoke.mjs'
@@ -95,6 +96,34 @@ test('consumer plan covers explicit ESM, CJS, and condition-specific declaration
       cjsTypes: ['@fictjs/example'],
     },
   )
+})
+
+test('consumer plan rejects any publishable package missing a consumption mode', () => {
+  const manifests = [
+    {
+      name: '@fictjs/complete',
+      exports: {
+        '.': {
+          types: './dist/index.d.ts',
+          import: './dist/index.js',
+          require: './dist/index.cjs',
+        },
+      },
+    },
+    {
+      name: '@fictjs/esm-only',
+      exports: {
+        '.': {
+          import: { types: './dist/index.d.ts', default: './dist/index.js' },
+        },
+      },
+    },
+  ]
+
+  assert.deepEqual(findConsumerCoverageGaps(manifests, buildConsumerEntries(manifests)), [
+    '@fictjs/esm-only:cjs',
+    '@fictjs/esm-only:cjsTypes',
+  ])
 })
 
 test('tarball consumers exercise SSR imports shadowed by Node export conditions', () => {

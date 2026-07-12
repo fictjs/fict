@@ -159,6 +159,19 @@ export function buildConsumerEntries(manifests) {
   return entries
 }
 
+export function findConsumerCoverageGaps(manifests, entries) {
+  const gaps = []
+  for (const manifest of manifests) {
+    for (const [mode, specifiers] of Object.entries(entries)) {
+      const covered = specifiers.some(
+        specifier => specifier === manifest.name || specifier.startsWith(`${manifest.name}/`),
+      )
+      if (!covered) gaps.push(`${manifest.name}:${mode}`)
+    }
+  }
+  return gaps
+}
+
 function runtimeTarget(value) {
   if (typeof value === 'string') {
     return value.startsWith('./') && !value.includes('*') ? value.slice(2) : null
@@ -430,8 +443,11 @@ async function main() {
     )
 
     const entries = buildConsumerEntries(packedPackages)
-    if (entries.esm.length === 0 || entries.cjs.length === 0 || entries.esmTypes.length === 0) {
-      throw new Error('Publish allowlist did not expose the required ESM, CJS, and type entries')
+    const coverageGaps = findConsumerCoverageGaps(packedPackages, entries)
+    if (coverageGaps.length > 0) {
+      throw new Error(
+        `Publish allowlist packages lack required consumer coverage: ${coverageGaps.join(', ')}`,
+      )
     }
 
     const esmPath = path.join(consumerDir, 'consumer.mjs')
