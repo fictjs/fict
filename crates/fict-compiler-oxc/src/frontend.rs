@@ -20,6 +20,7 @@ use oxc::{
 use crate::{OxcCompileOptions, OxcModuleKind, OxcSourceLanguage};
 
 use super::compile::{convert_diagnostics, sorted, source_type};
+use super::facts::{FrontendSourceFacts, collect_source_facts};
 
 const FICT_MACRO_MODULES: &[&str] = &["fict", "fict/slim"];
 const MEMO_MACRO_MODULES: &[&str] = &["fict", "fict/slim", "fict/plus"];
@@ -220,6 +221,8 @@ pub struct NamespaceMacroCall {
 pub struct FrontendSummary {
     /// Source and semantic counts.
     pub source: FrontendSourceSummary,
+    /// Directives, suppressions, pure annotations, and Fict JSDoc facts.
+    pub source_facts: FrontendSourceFacts,
     /// Scopes in deterministic semantic order.
     pub scopes: Vec<FrontendScope>,
     /// Bindings in deterministic semantic order.
@@ -294,7 +297,7 @@ pub fn analyze_frontend(source: &str, options: OxcCompileOptions) -> FrontendOut
     }
 
     let semantic = semantic_result.semantic;
-    let summary = build_summary(source_len, options, &program, &semantic);
+    let summary = build_summary(source, source_len, options, &program, &semantic);
     FrontendOutput {
         summary: Some(summary),
         diagnostics,
@@ -302,6 +305,7 @@ pub fn analyze_frontend(source: &str, options: OxcCompileOptions) -> FrontendOut
 }
 
 fn build_summary(
+    source_text: &str,
     source_len: u32,
     options: OxcCompileOptions,
     program: &oxc::ast::ast::Program<'_>,
@@ -406,6 +410,7 @@ fn build_summary(
             symbol_count: stats.symbols,
             reference_count: stats.references,
         },
+        source_facts: collect_source_facts(source_text, program),
         scopes,
         bindings,
         macro_imports,
@@ -672,7 +677,7 @@ fn binding_id(index: usize) -> BindingId {
     BindingId::new(count_u32(index))
 }
 
-fn scope_id(index: usize) -> ScopeId {
+pub(super) fn scope_id(index: usize) -> ScopeId {
     ScopeId::new(count_u32(index))
 }
 

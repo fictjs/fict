@@ -7,10 +7,16 @@
 //! locks the exact OXC version used by every later compiler milestone.
 
 mod compile;
+mod facts;
 mod frontend;
 
 pub use compile::{
     OxcCompileOptions, OxcCompileOutput, OxcModuleKind, OxcSourceLanguage, compile_passthrough,
+};
+pub use facts::{
+    FictDirectiveKind, FictReturnShape, FrontendDirective, FrontendSourceFacts,
+    FrontendSuppression, ParsedFictReturn, PureAnnotation, PureComment, PureCommentKind,
+    PureTargetKind, ReactiveValueKind, SuppressionMode,
 };
 pub use frontend::{
     FrontendBinding, FrontendBindingKind, FrontendMacroCall, FrontendMacroImport,
