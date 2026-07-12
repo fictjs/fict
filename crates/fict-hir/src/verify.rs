@@ -728,6 +728,7 @@ impl Verifier<'_> {
         match place.base {
             PlaceBase::Local(local) => self.local(function, local, origin),
             PlaceBase::Ssa(name) => self.local(function, name.local, origin),
+            PlaceBase::Value(value) => self.value(function, value, origin),
         }
         for projection in &place.projections {
             if let Projection::ComputedProperty { key, .. } = projection {

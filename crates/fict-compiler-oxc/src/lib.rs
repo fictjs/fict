@@ -9,6 +9,7 @@
 mod compile;
 mod facts;
 mod frontend;
+mod hir_builder;
 mod typescript;
 
 pub use compile::{
@@ -24,6 +25,7 @@ pub use frontend::{
     FrontendMacroValueUse, FrontendOutput, FrontendScope, FrontendScopeKind, FrontendSourceSummary,
     FrontendSummary, NamespaceMacroCall, analyze_frontend,
 };
+pub use hir_builder::{HirBuildOptions, HirBuildOutput, OxcSyntaxFragment, build_hir};
 pub use typescript::{
     OxcTypeScriptOptions, TypeScriptCompatibilityOutput, TypeScriptCompatibilityPlan,
     TypeScriptFeature, TypeScriptFeatureKind, TypeScriptLoweringOwner,

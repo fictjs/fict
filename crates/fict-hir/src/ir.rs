@@ -246,6 +246,11 @@ pub enum PlaceBase {
     Local(LocalId),
     /// SSA-versioned local storage.
     Ssa(SsaName),
+    /// Evaluated object used as the base of a projected read or write.
+    ///
+    /// This keeps member access such as `makeObject().field` structural without
+    /// inventing a name or leaking a frontend expression node into HIR.
+    Value(ValueId),
 }
 
 /// Projection from a place base to a property or indexed location.
@@ -277,7 +282,7 @@ pub enum Projection {
 /// Assignable/readable location with structural identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Place {
-    /// Root local or SSA identity.
+    /// Root local, SSA identity, or evaluated object value.
     pub base: PlaceBase,
     /// Property/index path in evaluation order.
     pub projections: Vec<Projection>,
@@ -977,6 +982,15 @@ mod tests {
         assert_ne!(first.id, shadow.id);
         assert_eq!(first.display_name, shadow.display_name);
         assert!(!place.is_local());
+
+        let computed_base = Place {
+            base: PlaceBase::Value(crate::ValueId::new(8)),
+            projections: vec![Projection::StaticProperty {
+                name: "field".into(),
+                optional: false,
+            }],
+        };
+        assert!(!computed_base.is_local());
     }
 
     #[test]

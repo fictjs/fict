@@ -1,0 +1,359 @@
+use fict_compiler_oxc::{
+    HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, build_hir,
+};
+use fict_hir::{CallHost, FictMacroKind, FunctionKind, HirInstructionKind, SyntaxFragmentKind};
+
+fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
+    OxcCompileOptions {
+        language,
+        module_kind: OxcModuleKind::Module,
+        typescript: Default::default(),
+        sourcemap: false,
+    }
+}
+
+#[test]
+fn builds_verified_binding_aware_hir_for_tsx_components_and_macros() {
+    let source = r#"
+        import { $state as state } from 'fict';
+        export function App(props: { initial: number }) {
+            const count = state(props.initial);
+            return <button>{count}</button>;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::TypeScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+
+    let app = hir
+        .functions
+        .iter()
+        .find(|function| function.kind == FunctionKind::Component)
+        .expect("component function");
+    assert_eq!(app.parameters.len(), 1);
+    let call = app.blocks[0]
+        .instructions
+        .iter()
+        .find_map(|instruction| match &instruction.kind {
+            HirInstructionKind::Call(call) => Some(call),
+            _ => None,
+        })
+        .expect("state call");
+    assert_eq!(call.macro_kind, Some(FictMacroKind::State));
+    let CallHost::Binding(callee) = call.host else {
+        panic!("state call must carry its imported binding")
+    };
+    assert_eq!(
+        callee,
+        hir.bindings
+            .iter()
+            .find(|binding| binding.display_name == "state")
+            .unwrap()
+            .id
+    );
+    assert!(
+        hir.bindings
+            .iter()
+            .all(|binding| binding.id.as_usize() < hir.bindings.len())
+    );
+    assert!(
+        output
+            .syntax_fragments
+            .iter()
+            .any(|fragment| fragment.source.contains("<button>"))
+    );
+    assert_eq!(hir.templates.len(), 1);
+    assert_eq!(hir.templates[0].owner, app.id);
+    assert!(
+        app.blocks[0]
+            .instructions
+            .iter()
+            .any(|instruction| matches!(instruction.kind, HirInstructionKind::Jsx { .. }))
+    );
+}
+
+#[test]
+fn alias_and_shadow_calls_keep_distinct_binding_identity() {
+    let source = r#"
+        import { $state as state } from 'fict';
+        const outer = state(1);
+        function inner(state) { return state(2); }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+    let calls: Vec<_> = hir
+        .functions
+        .iter()
+        .flat_map(|function| &function.blocks[0].instructions)
+        .filter_map(|instruction| match &instruction.kind {
+            HirInstructionKind::Call(call) => Some(call),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].macro_kind, Some(FictMacroKind::State));
+    assert_eq!(calls[1].macro_kind, None);
+    let CallHost::Binding(imported) = calls[0].host else {
+        panic!("import call")
+    };
+    let CallHost::Binding(shadow) = calls[1].host else {
+        panic!("shadow call")
+    };
+    assert_ne!(imported, shadow);
+}
+
+#[test]
+fn classifies_hooks_and_binding_resolved_reactive_callbacks() {
+    let source = r#"
+        import { run as render } from './host';
+        function useCounter() { return 1; }
+        render(() => useCounter());
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions {
+            reactive_scopes: vec!["render".into()],
+        },
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+    assert!(
+        hir.functions
+            .iter()
+            .any(|function| function.kind == FunctionKind::Hook)
+    );
+    assert!(
+        hir.functions
+            .iter()
+            .any(|function| function.kind == FunctionKind::ReactiveScope)
+    );
+    let render_call = hir.functions[0].blocks[0]
+        .instructions
+        .iter()
+        .find_map(|instruction| match &instruction.kind {
+            HirInstructionKind::Call(call) => Some(call),
+            _ => None,
+        })
+        .expect("render call");
+    assert!(matches!(render_call.host, CallHost::ReactiveScope(_)));
+}
+
+#[test]
+fn retains_patterns_and_function_bodies_as_owned_controlled_fragments() {
+    let source = "const View = ({ value = 1, ...rest }) => value + rest.offset;";
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+    let view = hir
+        .functions
+        .iter()
+        .find(|function| function.kind == FunctionKind::Component)
+        .expect("inferred arrow component");
+    let pattern = &hir.syntax_fragments[view.parameters[0].pattern.as_usize()];
+    assert_eq!(pattern.kind, SyntaxFragmentKind::Pattern);
+    let summary = pattern.summary.pattern.as_ref().expect("pattern summary");
+    assert_eq!(summary.declared_bindings.len(), 2);
+    assert!(summary.has_defaults);
+    assert!(summary.has_rest);
+    let adapter = output
+        .syntax_fragments
+        .iter()
+        .find(|fragment| fragment.id == pattern.id)
+        .expect("adapter fragment");
+    assert!(adapter.source.contains("value = 1"));
+}
+
+#[test]
+fn unsupported_macro_shapes_fail_closed_with_structured_codes() {
+    let cases = [
+        (
+            "import { $state as state } from 'fict'; state?.(1);",
+            "FICT-HIR-MACRO-OPTIONAL",
+        ),
+        (
+            "import { $state as state } from 'fict'; const escaped = state;",
+            "FICT-HIR-MACRO-VALUE",
+        ),
+        (
+            "import * as Fict from 'fict'; Fict.$state(1);",
+            "FICT-HIR-MACRO-NAMESPACE",
+        ),
+    ];
+    for (source, code) in cases {
+        let output = build_hir(
+            source,
+            options(OxcSourceLanguage::JavaScript),
+            &HirBuildOptions::default(),
+        );
+        assert!(output.hir.is_none());
+        assert_eq!(output.diagnostics[0].code.as_str(), code);
+    }
+}
+
+#[test]
+fn applies_function_directives_and_erases_type_only_binding_ids() {
+    let source = r#"
+        import type { Shape } from './shape';
+        export function useValue(value: Shape) {
+            "use no memo";
+            "use pure";
+            return value;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::TypeScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+    let hook = hir
+        .functions
+        .iter()
+        .find(|function| function.kind == FunctionKind::Hook)
+        .expect("hook");
+    assert!(hook.flags.no_memo);
+    assert!(hook.flags.pure);
+    assert!(
+        hir.bindings
+            .iter()
+            .all(|binding| binding.display_name != "Shape")
+    );
+    for (index, binding) in hir.bindings.iter().enumerate() {
+        assert_eq!(binding.id.as_usize(), index);
+    }
+}
+
+#[test]
+fn builds_structural_jsx_tags_attributes_children_and_spreads() {
+    let source = r#"
+        import * as UI from './ui';
+        import { Item } from './item';
+        export function App({ items }) {
+            return <UI.List dense title="items" {...items}>
+                <Item value={items[0]} />
+                {...items}
+            </UI.List>;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+    assert_eq!(hir.templates.len(), 1);
+    let fict_hir::JsxNode::Element(root) = &hir.templates[0].root else {
+        panic!("root JSX element")
+    };
+    let fict_hir::JsxElementName::Member {
+        root: binding,
+        properties,
+    } = &root.name
+    else {
+        panic!("binding-aware member tag")
+    };
+    assert_eq!(properties, &["List"]);
+    assert_eq!(hir.bindings[binding.as_usize()].display_name, "UI");
+    assert_eq!(root.attributes.len(), 3);
+    assert!(matches!(
+        root.attributes[0],
+        fict_hir::JsxAttribute::Named {
+            value: fict_hir::JsxAttributeValue::ImplicitTrue,
+            ..
+        }
+    ));
+    assert!(
+        root.attributes
+            .iter()
+            .any(|attribute| matches!(attribute, fict_hir::JsxAttribute::Spread { .. }))
+    );
+    assert!(root.children.iter().any(|child| matches!(
+        child,
+        fict_hir::JsxChild::Node(node)
+            if matches!(node.as_ref(), fict_hir::JsxNode::Element(element)
+                if matches!(element.name, fict_hir::JsxElementName::Component(_)))
+    )));
+    assert!(
+        root.children
+            .iter()
+            .any(|child| matches!(child, fict_hir::JsxChild::Spread { .. }))
+    );
+}
+
+#[test]
+fn assigns_dense_function_local_storage_and_outer_captures_without_name_identity() {
+    let source = r#"
+        const outer = 1;
+        function App() {
+            const value = outer;
+            function inner() {
+                const value = outer;
+                return value;
+            }
+            return inner() + value;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+    let value_bindings: Vec<_> = hir
+        .bindings
+        .iter()
+        .filter(|binding| binding.display_name == "value")
+        .map(|binding| binding.id)
+        .collect();
+    assert_eq!(value_bindings.len(), 2);
+    assert_ne!(value_bindings[0], value_bindings[1]);
+
+    let app = hir
+        .functions
+        .iter()
+        .find(|function| function.kind == FunctionKind::Component)
+        .expect("App");
+    let inner = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "inner")
+        })
+        .expect("inner");
+    for function in [app, inner] {
+        for (index, local) in function.locals.iter().enumerate() {
+            assert_eq!(local.id.as_usize(), index);
+        }
+        assert!(function.locals.iter().any(|local| {
+            local.kind == fict_hir::LocalKind::Capture
+                && local
+                    .binding
+                    .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "outer")
+        }));
+    }
+    assert!(
+        hir.functions[0]
+            .locals
+            .iter()
+            .all(|local| local.kind != fict_hir::LocalKind::Capture)
+    );
+}
