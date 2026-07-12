@@ -1037,7 +1037,12 @@ describe('fict vite-plugin', () => {
         },
         optimizeDeps: {
           entries: ['src/first.ts', 'src/second.ts'],
-          include: ['fict', 'custom-dependency'],
+          include: [
+            'fict',
+            'fict/experimental/loader',
+            '@fictjs/runtime/experimental/loader',
+            'custom-dependency',
+          ],
           exclude: ['already-excluded'],
         },
       },
@@ -1053,6 +1058,11 @@ describe('fict vite-plugin', () => {
       (resolved.optimizeDeps.exclude ?? []).filter(dep => dep === 'already-excluded'),
     ).toHaveLength(1)
     expect((resolved.optimizeDeps.exclude ?? []).filter(dep => dep === 'fict')).toHaveLength(1)
+    expect(
+      (resolved.optimizeDeps.exclude ?? []).filter(
+        dep => dep === '@fictjs/runtime/experimental/loader',
+      ),
+    ).toHaveLength(1)
     expect(resolved.define?.CUSTOM_FLAG).toBe('true')
   })
 

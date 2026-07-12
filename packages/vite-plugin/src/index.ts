@@ -1816,6 +1816,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         '@fictjs/runtime',
         '@fictjs/runtime/internal',
         '@fictjs/runtime/advanced',
+        '@fictjs/runtime/experimental/loader',
         '@fictjs/runtime/jsx-runtime',
         '@fictjs/runtime/jsx-dev-runtime',
         '@fictjs/compiler',
