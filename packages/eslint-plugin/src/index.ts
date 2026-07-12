@@ -1,4 +1,4 @@
-import type { ESLint } from 'eslint'
+import type { ESLint, Linter } from 'eslint'
 
 import noComputedPropsKey from './rules/no-computed-props-key'
 import noDirectMutation from './rules/no-direct-mutation'
@@ -15,49 +15,58 @@ import noUnsupportedPropsDestructure from './rules/no-unsupported-props-destruct
 import requireComponentReturn from './rules/require-component-return'
 import requireListKey from './rules/require-list-key'
 
+const rules: NonNullable<ESLint.Plugin['rules']> = {
+  'no-state-in-loop': noStateInLoop,
+  'no-direct-mutation': noDirectMutation,
+  'no-empty-effect': noEmptyEffect,
+  'no-computed-props-key': noComputedPropsKey,
+  'no-inline-functions': noInlineFunctions,
+  'no-state-destructure-write': noStateDestructureWrite,
+  'no-state-outside-component': noStateOutsideComponent,
+  'no-nested-components': noNestedComponents,
+  'no-third-party-props-spread': noThirdPartyPropsSpread,
+  'no-unsafe-props-spread': noUnsafePropsSpread,
+  'no-unsupported-props-destructure': noUnsupportedPropsDestructure,
+  'require-list-key': requireListKey,
+  'no-memo-side-effects': noMemoSideEffects,
+  'require-component-return': requireComponentReturn,
+}
+
+const recommendedRules: Linter.RulesRecord = {
+  'fict/no-state-in-loop': 'error',
+  'fict/no-direct-mutation': 'warn',
+  'fict/no-empty-effect': 'warn', // FICT-E001
+  'fict/no-computed-props-key': 'warn',
+  'fict/no-inline-functions': 'warn', // FICT-X003
+  'fict/no-state-destructure-write': 'error',
+  'fict/no-state-outside-component': 'error',
+  'fict/no-nested-components': 'error', // FICT-C003
+  'fict/no-third-party-props-spread': 'warn',
+  'fict/no-unsafe-props-spread': 'warn',
+  'fict/no-unsupported-props-destructure': 'warn',
+  'fict/require-list-key': 'error', // FICT-J002
+  'fict/no-memo-side-effects': 'warn', // FICT-M003
+  'fict/require-component-return': 'warn', // FICT-C004
+}
+
 const plugin: ESLint.Plugin = {
   meta: {
     name: 'eslint-plugin-fict',
     version: '0.0.1',
   },
-  rules: {
-    'no-state-in-loop': noStateInLoop,
-    'no-direct-mutation': noDirectMutation,
-    'no-empty-effect': noEmptyEffect,
-    'no-computed-props-key': noComputedPropsKey,
-    'no-inline-functions': noInlineFunctions,
-    'no-state-destructure-write': noStateDestructureWrite,
-    'no-state-outside-component': noStateOutsideComponent,
-    'no-nested-components': noNestedComponents,
-    'no-third-party-props-spread': noThirdPartyPropsSpread,
-    'no-unsafe-props-spread': noUnsafePropsSpread,
-    'no-unsupported-props-destructure': noUnsupportedPropsDestructure,
-    'require-list-key': requireListKey,
-    'no-memo-side-effects': noMemoSideEffects,
-    'require-component-return': requireComponentReturn,
-  },
-  configs: {
-    recommended: {
-      plugins: ['fict'],
-      rules: {
-        'fict/no-state-in-loop': 'error',
-        'fict/no-direct-mutation': 'warn',
-        'fict/no-empty-effect': 'warn', // FICT-E001
-        'fict/no-computed-props-key': 'warn',
-        'fict/no-inline-functions': 'warn', // FICT-X003
-        'fict/no-state-destructure-write': 'error',
-        'fict/no-state-outside-component': 'error',
-        'fict/no-nested-components': 'error', // FICT-C003
-        'fict/no-third-party-props-spread': 'warn',
-        'fict/no-unsafe-props-spread': 'warn',
-        'fict/no-unsupported-props-destructure': 'warn',
-        'fict/require-list-key': 'error', // FICT-J002
-        'fict/no-memo-side-effects': 'warn', // FICT-M003
-        'fict/require-component-return': 'warn', // FICT-C004
-      },
-    },
-  },
+  rules,
 }
+
+const recommended: Linter.Config = {
+  name: 'fict/recommended',
+  plugins: { fict: plugin },
+  languageOptions: {
+    parserOptions: { ecmaFeatures: { jsx: true } },
+  },
+  rules: recommendedRules,
+}
+
+plugin.configs = { recommended }
 
 export default plugin
 export {

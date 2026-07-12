@@ -61,6 +61,14 @@ tester.run('no-third-party-props-spread', rule as any, {
         }
       `,
     },
+    {
+      code: `
+        import third from 'lib'
+        function Comp(third) {
+          return <Child {...third} />
+        }
+      `,
+    },
   ],
   invalid: [
     {

@@ -1,5 +1,7 @@
-import type { Rule } from 'eslint'
-import type { Identifier, MemberExpression } from 'estree'
+import type { Rule, Scope } from 'eslint'
+import type { Identifier, MemberExpression, Node } from 'estree'
+
+import { resolveVariable } from '../scope-utils'
 
 const rule: Rule.RuleModule = {
   meta: {
@@ -15,7 +17,20 @@ const rule: Rule.RuleModule = {
     schema: [],
   },
   create(context) {
-    const stateVariables = new Set<string>()
+    const stateVariables = new WeakSet<Scope.Variable>()
+
+    const isStateMutation = (member: MemberExpression): boolean => {
+      const root = getRootIdentifier(member)
+      if (!root) return false
+      const variable = resolveVariable(context, root)
+      return !!variable && stateVariables.has(variable)
+    }
+
+    const reportMemberMutation = (node: Node, member: MemberExpression) => {
+      if (isStateMutation(member)) {
+        context.report({ node, messageId: 'noDirectMutation' })
+      }
+    }
 
     return {
       VariableDeclarator(node) {
@@ -25,21 +40,29 @@ const rule: Rule.RuleModule = {
           node.init.callee.name === '$state' &&
           node.id.type === 'Identifier'
         ) {
-          stateVariables.add(node.id.name)
+          const variable = resolveVariable(context, node.id)
+          if (variable) stateVariables.add(variable)
         }
       },
 
       AssignmentExpression(node) {
         if (node.left.type === 'MemberExpression') {
-          const root = getRootIdentifier(node.left)
-          if (root && stateVariables.has(root.name)) {
-            if (isDeepAccess(node.left)) {
-              context.report({
-                node,
-                messageId: 'noDirectMutation',
-              })
-            }
-          }
+          reportMemberMutation(node, node.left)
+        }
+      },
+
+      UpdateExpression(node) {
+        if (node.argument.type === 'MemberExpression') {
+          reportMemberMutation(node, node.argument)
+        }
+      },
+
+      UnaryExpression(node) {
+        if (node.operator !== 'delete') return
+        const argument =
+          node.argument.type === 'ChainExpression' ? node.argument.expression : node.argument
+        if (argument.type === 'MemberExpression') {
+          reportMemberMutation(node, argument)
         }
       },
     }
@@ -52,16 +75,6 @@ function getRootIdentifier(node: MemberExpression): Identifier | null {
     current = current.object as MemberExpression | Identifier
   }
   return current.type === 'Identifier' ? current : null
-}
-
-function isDeepAccess(node: MemberExpression): boolean {
-  let depth = 0
-  let current: MemberExpression | Identifier = node
-  while (current.type === 'MemberExpression') {
-    depth++
-    current = (current as MemberExpression).object as MemberExpression | Identifier
-  }
-  return depth > 1
 }
 
 export default rule

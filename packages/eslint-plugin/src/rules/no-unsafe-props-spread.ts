@@ -1,4 +1,7 @@
-import type { Rule } from 'eslint'
+import type { Rule, Scope } from 'eslint'
+import type { Identifier } from 'estree'
+
+import { resolveVariable } from '../scope-utils'
 
 /**
  * ESLint rule to warn on JSX prop spreads with dynamic or unsafe sources.
@@ -37,7 +40,8 @@ const rule: Rule.RuleModule = {
   },
   create(context) {
     const options = context.options[0] || {}
-    const accessorVars = new Set<string>(options.accessorNames ?? [])
+    const configuredAccessorNames = new Set<string>(options.accessorNames ?? [])
+    const accessorVars = new WeakSet<Scope.Variable>()
     const accessorModules = new Set<string>(options.accessorModules ?? [])
 
     const isComponentName = (name: any): boolean => {
@@ -56,7 +60,8 @@ const rule: Rule.RuleModule = {
       if (node.init.callee?.type !== 'Identifier') return
       const callee = node.init.callee.name
       if (callee === '$state' || callee === '$memo' || callee === 'prop') {
-        accessorVars.add(node.id.name)
+        const variable = resolveVariable(context, node.id)
+        if (variable) accessorVars.add(variable)
       }
     }
 
@@ -65,10 +70,11 @@ const rule: Rule.RuleModule = {
       if (
         expr.type === 'CallExpression' &&
         expr.callee?.type === 'Identifier' &&
-        expr.arguments.length === 0 &&
-        accessorVars.has(expr.callee.name)
+        expr.arguments.length === 0
       ) {
-        return true
+        if (configuredAccessorNames.has(expr.callee.name)) return true
+        const variable = resolveVariable(context, expr.callee as Identifier)
+        return !!variable && accessorVars.has(variable)
       }
       return false
     }
@@ -120,8 +126,9 @@ const rule: Rule.RuleModule = {
         if (!node.source?.value || typeof node.source.value !== 'string') return
         if (!accessorModules.has(node.source.value)) return
         for (const spec of node.specifiers ?? []) {
-          if (spec.local?.name) {
-            accessorVars.add(spec.local.name)
+          if (spec.local?.type === 'Identifier') {
+            const variable = resolveVariable(context, spec.local)
+            if (variable) accessorVars.add(variable)
           }
         }
       },

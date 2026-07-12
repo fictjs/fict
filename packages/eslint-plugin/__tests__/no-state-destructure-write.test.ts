@@ -20,6 +20,23 @@ tester.run('no-state-destructure-write', rule as any, {
     {
       code: `import { $state } from 'fict'; let state = $state({ count: 0 }); const { count } = state; state = { ...state(), count: state().count + 1 };`,
     },
+    {
+      code: `
+        const state = $state({ count: 0 })
+        const { count } = state
+        function update(count) { count++ }
+        update(1)
+      `,
+    },
+    {
+      code: `
+        const state = $state({ count: 0 })
+        function update(state) {
+          const { count } = state
+          count++
+        }
+      `,
+    },
   ],
   invalid: [
     {
@@ -28,6 +45,19 @@ tester.run('no-state-destructure-write', rule as any, {
     },
     {
       code: `import { $state } from 'fict'; const state = $state({ count: 0 }); const { count } = state; count = 1;`,
+      errors: [{ messageId: 'noWrite' }],
+    },
+    {
+      code: `const state = $state({ count: 0 }); const { count = 0 } = state; count += 1;`,
+      errors: [{ messageId: 'noWrite' }],
+    },
+    {
+      code: `
+        const state = $state({ count: 0 })
+        const { count } = state
+        function update(count) { count++ }
+        count++
+      `,
       errors: [{ messageId: 'noWrite' }],
     },
   ],

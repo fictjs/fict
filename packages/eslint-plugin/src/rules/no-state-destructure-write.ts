@@ -1,4 +1,4 @@
-import type { Rule } from 'eslint'
+import type { Rule, Scope } from 'eslint'
 import type {
   AssignmentExpression,
   Identifier,
@@ -7,6 +7,8 @@ import type {
   UpdateExpression,
   VariableDeclarator,
 } from 'estree'
+
+import { resolveVariable } from '../scope-utils'
 
 /**
  * Prevent writes to aliases created by destructuring a $state-backed object.
@@ -30,8 +32,8 @@ const rule: Rule.RuleModule = {
     schema: [],
   },
   create(context) {
-    const stateVars = new Set<string>()
-    const destructuredAliases = new Set<string>()
+    const stateVars = new WeakSet<Scope.Variable>()
+    const destructuredAliases = new WeakSet<Scope.Variable>()
 
     const collectIds = (pattern: Pattern | RestElement): Identifier[] => {
       const ids: Identifier[] = []
@@ -42,6 +44,10 @@ const rule: Rule.RuleModule = {
         }
         if (p.type === 'RestElement') {
           visit(p.argument)
+          return
+        }
+        if (p.type === 'AssignmentPattern') {
+          visit(p.left)
           return
         }
         if (p.type === 'ObjectPattern') {
@@ -74,12 +80,27 @@ const rule: Rule.RuleModule = {
       const init = node.init
       if (!init) return
       // Only track destructuring from an identifier that is a known $state variable
-      if (init.type === 'Identifier' && stateVars.has(init.name)) {
-        collectIds(node.id).forEach(id => destructuredAliases.add(id.name))
+      const sourceVariable = init.type === 'Identifier' ? resolveVariable(context, init) : null
+      if (sourceVariable && stateVars.has(sourceVariable)) {
+        collectIds(node.id).forEach(id => {
+          const variable = resolveVariable(context, id)
+          if (variable) destructuredAliases.add(variable)
+        })
       }
     }
 
-    const isAliasWrite = (name: string) => destructuredAliases.has(name)
+    const isAliasWrite = (identifier: Identifier): boolean => {
+      const variable = resolveVariable(context, identifier)
+      return !!variable && destructuredAliases.has(variable)
+    }
+
+    const reportAliasWrite = (node: AssignmentExpression | UpdateExpression, id: Identifier) => {
+      context.report({
+        node,
+        messageId: 'noWrite',
+        data: { name: id.name },
+      })
+    }
 
     return {
       VariableDeclarator(node) {
@@ -90,29 +111,24 @@ const rule: Rule.RuleModule = {
           node.init.callee.name === '$state' &&
           node.id.type === 'Identifier'
         ) {
-          stateVars.add(node.id.name)
+          const variable = resolveVariable(context, node.id)
+          if (variable) stateVars.add(variable)
         }
         // Track destructuring from state
         markDestructure(node)
       },
 
       AssignmentExpression(node: AssignmentExpression) {
-        if (node.left.type === 'Identifier' && isAliasWrite(node.left.name)) {
-          context.report({
-            node,
-            messageId: 'noWrite',
-            data: { name: node.left.name },
-          })
+        if (node.left.type === 'MemberExpression') return
+        const alias = collectIds(node.left as Pattern).find(isAliasWrite)
+        if (alias) {
+          reportAliasWrite(node, alias)
         }
       },
 
       UpdateExpression(node: UpdateExpression) {
-        if (node.argument.type === 'Identifier' && isAliasWrite(node.argument.name)) {
-          context.report({
-            node,
-            messageId: 'noWrite',
-            data: { name: node.argument.name },
-          })
+        if (node.argument.type === 'Identifier' && isAliasWrite(node.argument)) {
+          reportAliasWrite(node, node.argument)
         }
       },
     }

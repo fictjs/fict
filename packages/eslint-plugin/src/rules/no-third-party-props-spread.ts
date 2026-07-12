@@ -1,4 +1,7 @@
-import type { Rule } from 'eslint'
+import type { Rule, Scope } from 'eslint'
+import type { Identifier } from 'estree'
+
+import { resolveVariable } from '../scope-utils'
 
 /**
  * ESLint rule to warn on spreading third-party objects into component props.
@@ -42,7 +45,7 @@ const rule: Rule.RuleModule = {
     const allow = new Set<string>(options.allow ?? [])
     const internalPrefixes: string[] = options.internalPrefixes ?? []
     const includeCallExpressions = options.includeCallExpressions === true
-    const thirdPartyImports = new Set<string>()
+    const thirdPartyImports = new WeakSet<Scope.Variable>()
 
     const isThirdPartySource = (source: string): boolean => {
       if (allow.has(source)) return false
@@ -81,10 +84,10 @@ const rule: Rule.RuleModule = {
       return current
     }
 
-    const getRootIdentifierName = (expr: any): string | null => {
+    const getRootIdentifier = (expr: any): Identifier | null => {
       let current = unwrapExpression(expr)
       while (current) {
-        if (current.type === 'Identifier') return current.name
+        if (current.type === 'Identifier') return current as Identifier
         if (current.type === 'MemberExpression' || current.type === 'OptionalMemberExpression') {
           current = unwrapExpression(current.object)
           continue
@@ -106,8 +109,9 @@ const rule: Rule.RuleModule = {
         if (!node.source?.value || typeof node.source.value !== 'string') return
         if (!isThirdPartySource(node.source.value)) return
         for (const spec of node.specifiers ?? []) {
-          if (spec.local?.name) {
-            thirdPartyImports.add(spec.local.name)
+          if (spec.local?.type === 'Identifier') {
+            const variable = resolveVariable(context, spec.local)
+            if (variable) thirdPartyImports.add(variable)
           }
         }
       },
@@ -125,8 +129,9 @@ const rule: Rule.RuleModule = {
           ) {
             continue
           }
-          const root = getRootIdentifierName(expr)
-          if (root && thirdPartyImports.has(root)) {
+          const root = getRootIdentifier(expr)
+          const variable = root ? resolveVariable(context, root) : null
+          if (variable && thirdPartyImports.has(variable)) {
             context.report({
               node: attr,
               messageId: 'thirdPartySpread',

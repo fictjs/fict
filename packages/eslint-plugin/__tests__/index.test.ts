@@ -1,3 +1,4 @@
+import { ESLint, type Linter } from 'eslint'
 import { describe, it, expect } from 'vitest'
 
 import plugin from '../src/index'
@@ -20,18 +21,36 @@ describe('eslint-plugin-fict', () => {
   })
 
   it('includes recommended config entries', () => {
-    const recommended = (plugin.configs as Record<string, any>)?.recommended?.rules ?? {}
-    expect(recommended['fict/no-empty-effect']).toBe('warn')
-    expect(recommended['fict/no-state-in-loop']).toBe('error')
-    expect(recommended['fict/no-state-destructure-write']).toBe('error')
-    expect(recommended['fict/no-state-outside-component']).toBe('error')
-    expect(recommended['fict/no-nested-components']).toBe('error')
-    expect(recommended['fict/no-computed-props-key']).toBe('warn')
-    expect(recommended['fict/no-third-party-props-spread']).toBe('warn')
-    expect(recommended['fict/no-unsafe-props-spread']).toBe('warn')
-    expect(recommended['fict/no-unsupported-props-destructure']).toBe('warn')
-    expect(recommended['fict/require-list-key']).toBe('error')
-    expect(recommended['fict/no-memo-side-effects']).toBe('warn')
-    expect(recommended['fict/require-component-return']).toBe('warn')
+    const recommended = plugin.configs?.recommended as Linter.Config
+    expect(recommended.plugins?.fict).toBe(plugin)
+    expect(recommended.rules?.['fict/no-empty-effect']).toBe('warn')
+    expect(recommended.rules?.['fict/no-state-in-loop']).toBe('error')
+    expect(recommended.rules?.['fict/no-state-destructure-write']).toBe('error')
+    expect(recommended.rules?.['fict/no-state-outside-component']).toBe('error')
+    expect(recommended.rules?.['fict/no-nested-components']).toBe('error')
+    expect(recommended.rules?.['fict/no-computed-props-key']).toBe('warn')
+    expect(recommended.rules?.['fict/no-third-party-props-spread']).toBe('warn')
+    expect(recommended.rules?.['fict/no-unsafe-props-spread']).toBe('warn')
+    expect(recommended.rules?.['fict/no-unsupported-props-destructure']).toBe('warn')
+    expect(recommended.rules?.['fict/require-list-key']).toBe('error')
+    expect(recommended.rules?.['fict/no-memo-side-effects']).toBe('warn')
+    expect(recommended.rules?.['fict/require-component-return']).toBe('warn')
+  })
+
+  it('loads the recommended config directly through the flat-config API', async () => {
+    const eslint = new ESLint({
+      overrideConfigFile: true,
+      overrideConfig: plugin.configs?.recommended as Linter.Config,
+    })
+    const [result] = await eslint.lintText(
+      `function App() { const state = $state({ count: 0 }); state.count++; return <div /> }`,
+      { filePath: 'component.js' },
+    )
+
+    expect(result?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ruleId: 'fict/no-direct-mutation', severity: 1 }),
+      ]),
+    )
   })
 })

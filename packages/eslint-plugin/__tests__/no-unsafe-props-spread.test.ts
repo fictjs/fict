@@ -80,6 +80,25 @@ tester.run('no-unsafe-props-spread', rule as any, {
     },
     {
       code: `
+        const data = $state({})
+        function Parent(data) {
+          return <Child {...data()} />
+        }
+      `,
+      errors: [{ messageId: 'unsafeSpread' }],
+    },
+    {
+      code: `
+        import { data } from './state'
+        function Parent(data) {
+          return <Child {...data()} />
+        }
+      `,
+      options: [{ accessorModules: ['./state'] }],
+      errors: [{ messageId: 'unsafeSpread' }],
+    },
+    {
+      code: `
         function Parent() {
           return <Child {...{ [key]: value }} />
         }
