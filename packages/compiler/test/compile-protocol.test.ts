@@ -16,13 +16,18 @@ describe('native compile protocol', () => {
       moduleId: '/src/view.tsx?worker#client',
       language: 'tsx',
       moduleKind: 'module',
-      options: { strictGuarantee: true, optimizeLevel: 'safe' },
+      options: {
+        strictGuarantee: true,
+        optimizeLevel: 'safe',
+        typescript: { allowNamespaces: true, rewriteImportExtensions: true },
+      },
       metadata: [],
       integrationDiagnostics: [],
     }
 
     expect(request.filename).toBe('/src/view.tsx')
     expect(request.moduleId).toBe('/src/view.tsx?worker#client')
+    expect(request.options?.typescript?.rewriteImportExtensions).toBe(true)
   })
 
   it('exposes a JSON-safe complete result shape', () => {

@@ -1,6 +1,8 @@
 use std::mem;
 
-use fict_compiler_oxc::{OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, compile_passthrough};
+use fict_compiler_oxc::{
+    OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, OxcTypeScriptOptions, compile_passthrough,
+};
 use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
@@ -94,6 +96,17 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         OxcCompileOptions {
             language: oxc_language(request.language),
             module_kind: oxc_module_kind(request.module_kind),
+            typescript: OxcTypeScriptOptions {
+                allow_namespaces: request.options.typescript.allow_namespaces,
+                only_remove_type_imports: request.options.typescript.only_remove_type_imports,
+                optimize_const_enums: request.options.typescript.optimize_const_enums,
+                optimize_enums: request.options.typescript.optimize_enums,
+                rewrite_import_extensions: request.options.typescript.rewrite_import_extensions,
+                remove_class_fields_without_initializer: request
+                    .options
+                    .typescript
+                    .remove_class_fields_without_initializer,
+            },
             sourcemap: request.options.sourcemap,
         },
     );
@@ -240,6 +253,22 @@ mod tests {
         assert!(!typescript.has_errors());
         assert!(typescript.code.contains("export const value = 1"));
         assert!(!typescript.code.contains(": number"));
+    }
+
+    #[test]
+    fn applies_serializable_typescript_lowering_options() {
+        let mut input = request(
+            "import './setup.ts'; const enum Size { Small = 1 } export const value = Size.Small;",
+            "options.ts",
+        );
+        input.options.typescript.rewrite_import_extensions = true;
+        input.options.typescript.optimize_const_enums = true;
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.code.contains("./setup.js"));
+        assert!(!result.code.contains("Size["));
+        assert!(result.code.contains("value = 1"));
     }
 
     #[test]

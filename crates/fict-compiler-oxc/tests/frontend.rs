@@ -9,6 +9,7 @@ fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
     OxcCompileOptions {
         language,
         module_kind: OxcModuleKind::Module,
+        typescript: Default::default(),
         sourcemap: false,
     }
 }
@@ -168,6 +169,7 @@ fn commonjs_frontend_accepts_top_level_return() {
         OxcCompileOptions {
             language: OxcSourceLanguage::TypeScript,
             module_kind: OxcModuleKind::CommonJs,
+            typescript: Default::default(),
             sourcemap: false,
         },
     );

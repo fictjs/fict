@@ -9,6 +9,7 @@
 mod compile;
 mod facts;
 mod frontend;
+mod typescript;
 
 pub use compile::{
     OxcCompileOptions, OxcCompileOutput, OxcModuleKind, OxcSourceLanguage, compile_passthrough,
@@ -22,6 +23,11 @@ pub use frontend::{
     FrontendBinding, FrontendBindingKind, FrontendMacroCall, FrontendMacroImport,
     FrontendMacroValueUse, FrontendOutput, FrontendScope, FrontendScopeKind, FrontendSourceSummary,
     FrontendSummary, NamespaceMacroCall, analyze_frontend,
+};
+pub use typescript::{
+    OxcTypeScriptOptions, TypeScriptCompatibilityOutput, TypeScriptCompatibilityPlan,
+    TypeScriptFeature, TypeScriptFeatureKind, TypeScriptLoweringOwner,
+    analyze_typescript_compatibility,
 };
 
 use oxc::{allocator::Allocator, parser::Parser, span::SourceType};

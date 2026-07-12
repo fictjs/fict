@@ -179,6 +179,15 @@ export interface CompilerPreviewOptions {
   autoExtractThreshold?: number
 }
 
+export interface NativeTypeScriptOptions {
+  allowNamespaces?: boolean
+  onlyRemoveTypeImports?: boolean
+  optimizeConstEnums?: boolean
+  optimizeEnums?: boolean
+  rewriteImportExtensions?: boolean
+  removeClassFieldsWithoutInitializer?: boolean
+}
+
 /** Serializable options accepted by the native core; callbacks and host I/O are excluded. */
 export interface NativeCompilerOptions {
   dev?: boolean
@@ -195,6 +204,7 @@ export interface NativeCompilerOptions {
   warningsAsErrors?: boolean | string[]
   warningLevels?: Record<string, NativeWarningLevel>
   reactiveScopes?: string[]
+  typescript?: NativeTypeScriptOptions
   preview?: CompilerPreviewOptions | null
 }
 

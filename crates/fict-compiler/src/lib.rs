@@ -14,8 +14,9 @@ pub use fict_compiler_oxc::{OXC_VERSION, ParseProbe};
 pub use fict_metadata::MODULE_REACTIVE_METADATA_VERSION;
 pub use pipeline::{compile, internal_error_result, invalid_request_result};
 pub use request::{
-    CompileRequest, CompileRequestError, CompilerOptions, CompilerPreviewOptions, ModuleKind,
-    NormalizedCompileRequest, OptimizeLevel, SourceLanguage, WarningLevel, WarningsAsErrors,
+    CompileRequest, CompileRequestError, CompilerOptions, CompilerPreviewOptions,
+    CompilerTypeScriptOptions, ModuleKind, NormalizedCompileRequest, OptimizeLevel, SourceLanguage,
+    WarningLevel, WarningsAsErrors,
 };
 pub use result::{
     CompileResult, CompilerArtifact, CompilerArtifactKind, CompilerExplainArtifact,

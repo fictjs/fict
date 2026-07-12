@@ -13,6 +13,8 @@ use oxc::{
     transformer::{JsxOptions, Module, TransformOptions, Transformer},
 };
 
+use crate::typescript::{configure_transform, passthrough_blockers, plan_typescript_program};
+
 /// Source grammar supplied by the Fict orchestration layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OxcSourceLanguage {
@@ -46,6 +48,8 @@ pub struct OxcCompileOptions {
     pub language: OxcSourceLanguage,
     /// Module grammar.
     pub module_kind: OxcModuleKind,
+    /// TypeScript compatibility controls.
+    pub typescript: crate::OxcTypeScriptOptions,
     /// Emit a Source Map v3 JSON payload.
     pub sourcemap: bool,
 }
@@ -109,6 +113,18 @@ pub fn compile_passthrough(
         return failed_output(diagnostics);
     }
 
+    let typescript_plan = source_type
+        .is_typescript()
+        .then(|| plan_typescript_program(&program, options.module_kind, &options.typescript));
+    if let Some(plan) = &typescript_plan {
+        let blockers = passthrough_blockers(plan);
+        if !blockers.is_empty() {
+            let mut diagnostics = semantic_diagnostics;
+            diagnostics.extend(blockers);
+            return failed_output(diagnostics);
+        }
+    }
+
     let path = Path::new(filename);
     let mut transform_options = TransformOptions {
         jsx: JsxOptions::disable(),
@@ -116,6 +132,9 @@ pub fn compile_passthrough(
     };
     if options.module_kind == OxcModuleKind::CommonJs {
         transform_options.env.module = Module::CommonJS;
+    }
+    if let Some(plan) = &typescript_plan {
+        configure_transform(plan, &options.typescript, &mut transform_options);
     }
     let transformed = Transformer::new(&allocator, path, &transform_options)
         .build_with_scoping(semantic.semantic.into_scoping(), &mut program);
@@ -129,6 +148,19 @@ pub fn compile_passthrough(
         return failed_output(diagnostics);
     }
 
+    let rebuilt = SemanticBuilder::new()
+        .with_check_syntax_error(true)
+        .with_enum_eval(true)
+        .build(&program);
+    let rebuilt_has_errors = rebuilt.diagnostics.has_errors();
+    diagnostics.extend(convert_diagnostics(
+        rebuilt.diagnostics,
+        "FICT-SEMANTIC-POST-TS",
+    ));
+    if rebuilt_has_errors {
+        return failed_output(diagnostics);
+    }
+
     let generated = Codegen::new()
         .with_options(CodegenOptions {
             source_map_path: options.sourcemap.then(|| PathBuf::from(filename)),
@@ -136,7 +168,7 @@ pub fn compile_passthrough(
         })
         .with_source_text(source)
         .with_source_type(source_type)
-        .with_scoping(Some(transformed.scoping))
+        .with_scoping(Some(rebuilt.semantic.into_scoping()))
         .build(&program);
 
     OxcCompileOutput {
@@ -241,6 +273,7 @@ mod tests {
         OxcCompileOptions {
             language,
             module_kind: OxcModuleKind::Module,
+            typescript: crate::OxcTypeScriptOptions::default(),
             sourcemap: false,
         }
     }

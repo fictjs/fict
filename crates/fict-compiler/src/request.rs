@@ -82,6 +82,37 @@ impl Default for WarningsAsErrors {
     }
 }
 
+/// TypeScript compatibility controls carried as pure request data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+pub struct CompilerTypeScriptOptions {
+    /// Enable runtime namespace lowering.
+    pub allow_namespaces: bool,
+    /// Preserve value imports unless explicitly marked type-only.
+    pub only_remove_type_imports: bool,
+    /// Inline const enum values where semantics permit.
+    pub optimize_const_enums: bool,
+    /// Inline regular enum members where semantics permit.
+    pub optimize_enums: bool,
+    /// Rewrite relative TypeScript module extensions.
+    pub rewrite_import_extensions: bool,
+    /// Remove uninitialized class fields in assignment-semantics compatibility mode.
+    pub remove_class_fields_without_initializer: bool,
+}
+
+impl Default for CompilerTypeScriptOptions {
+    fn default() -> Self {
+        Self {
+            allow_namespaces: true,
+            only_remove_type_imports: false,
+            optimize_const_enums: false,
+            optimize_enums: false,
+            rewrite_import_extensions: false,
+            remove_class_fields_without_initializer: false,
+        }
+    }
+}
+
 /// Default-off Preview options carried as data but implemented in the optional crate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
@@ -136,6 +167,8 @@ pub struct CompilerOptions {
     pub warning_levels: BTreeMap<String, WarningLevel>,
     /// Direct-call functions whose first callback is a reactive scope.
     pub reactive_scopes: Vec<String>,
+    /// TypeScript lowering compatibility controls.
+    pub typescript: CompilerTypeScriptOptions,
     /// Optional Preview configuration, kept out of the stable pass graph by feature gating.
     pub preview: Option<CompilerPreviewOptions>,
 }
@@ -157,6 +190,7 @@ impl Default for CompilerOptions {
             warnings_as_errors: WarningsAsErrors::default(),
             warning_levels: BTreeMap::new(),
             reactive_scopes: Vec::new(),
+            typescript: CompilerTypeScriptOptions::default(),
             preview: None,
         }
     }
@@ -467,6 +501,23 @@ mod tests {
         let input: CompileRequest = serde_json::from_value(value).expect("deserialize request");
         assert_eq!(input.protocol_version, COMPILER_PROTOCOL_VERSION);
         assert!(input.options.strict_guarantee);
+        assert!(input.options.typescript.allow_namespaces);
+        assert!(!input.options.typescript.rewrite_import_extensions);
+
+        let typescript_options = json!({
+            "code": "import './value.ts'",
+            "filename": "value.ts",
+            "options": {
+                "typescript": {
+                    "rewriteImportExtensions": true,
+                    "optimizeConstEnums": true
+                }
+            }
+        });
+        let input: CompileRequest =
+            serde_json::from_value(typescript_options).expect("TypeScript options");
+        assert!(input.options.typescript.rewrite_import_extensions);
+        assert!(input.options.typescript.optimize_const_enums);
 
         let callback_shaped = json!({
             "code": "const value = 1",
@@ -474,5 +525,12 @@ mod tests {
             "options": { "onWarn": "callback" }
         });
         assert!(serde_json::from_value::<CompileRequest>(callback_shaped).is_err());
+
+        let unknown_typescript_option = json!({
+            "code": "const value = 1",
+            "filename": "value.ts",
+            "options": { "typescript": { "transpileOnly": true } }
+        });
+        assert!(serde_json::from_value::<CompileRequest>(unknown_typescript_option).is_err());
     }
 }
