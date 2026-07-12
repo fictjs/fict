@@ -309,7 +309,10 @@ By default SSR does not write `window`, `document`, `Node`, or related DOM const
 should use Fict's render-provided document/ownerDocument paths; set `exposeGlobals: true` only for
 legacy code that still reads DOM globals during server render. That compatibility mode is restored
 on `dispose()`. Default renders may overlap each other, but a compatibility render is exclusive
-with every other SSR render so no request can observe another request's process-global DOM.
+with every other SSR render so no request can observe another request's process-global DOM. On a
+non-extensible hardened global object, ordinary render-local SSR remains available without a
+process marker; compatibility mode remains unavailable because it cannot acquire its exclusive
+lease or install DOM globals.
 
 ### renderToStringAsync
 

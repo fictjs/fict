@@ -174,7 +174,10 @@ and `packages/ssr/test/globals.test.ts`.
   other. `exposeGlobals: true` is a legacy exclusive compatibility lease: it
   MUST fail while any render is active, and every new render MUST fail while the
   compatibility lease is active. The marker is shared across package copies,
-  and `renderToDocument()` holds its reservation until `dispose()`.
+  and `renderToDocument()` holds its reservation until `dispose()`. If the
+  process global object is already non-extensible and has no lease marker,
+  ordinary render-local SSR MAY proceed without adding one because compatibility
+  mode cannot acquire its exclusive marker or install the missing DOM globals.
 
 Verification: `packages/runtime/test/ssr-session.test.ts`,
 `packages/ssr/test/resource-cache.test.ts`, `packages/ssr/test/globals.test.ts`,

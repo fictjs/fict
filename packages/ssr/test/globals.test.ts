@@ -109,6 +109,21 @@ describe('SSR compatibility DOM globals', () => {
     restore()
   })
 
+  it('allows ordinary renders on a non-extensible target without mutating it', () => {
+    const dom = createSSRDocument()
+    const target = Object.preventExtensions({})
+
+    const releaseFirst = acquireSharedGlobalTarget(target)
+    const releaseSecond = acquireSharedGlobalTarget(target)
+
+    expect(Reflect.ownKeys(target)).toEqual([])
+    expect(() => installGlobals(dom.window, dom.document, target)).toThrowError(
+      /Failed to acquire the process DOM-global compatibility lease/,
+    )
+    expect(releaseFirst).not.toThrow()
+    expect(releaseSecond).not.toThrow()
+  })
+
   it('honors the process-wide lease marker from another module instance', () => {
     const dom = createSSRDocument()
     const target = {}

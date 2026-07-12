@@ -42,6 +42,11 @@ export function acquireSharedGlobalTarget(target: object = globalThis): () => vo
   const descriptor = Object.getOwnPropertyDescriptor(target, GLOBALS_LEASE)
   let state: SharedGlobalTargetLease
   if (descriptor === undefined) {
+    // A non-extensible target cannot acquire the exclusive compatibility lease
+    // either, so no exposed-global render can overlap this ordinary render. Let
+    // supported render-local SSR continue without mutating the hardened target.
+    if (isDefinitelyNonExtensible(target)) return () => {}
+
     state = createSharedLeaseState()
     try {
       Object.defineProperty(target, GLOBALS_LEASE, {
@@ -277,6 +282,15 @@ function releaseGlobalTarget(target: object, lease: object): void {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function isDefinitelyNonExtensible(target: object): boolean {
+  try {
+    return !Object.isExtensible(target)
+  } catch {
+    // A hostile Proxy remains fail-closed through the normal defineProperty path.
+    return false
+  }
 }
 
 function createSharedLeaseState(): SharedGlobalTargetLease {
