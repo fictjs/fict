@@ -144,8 +144,46 @@ interface ComponentTracePayload {
   warnings?: string[]
 }
 
+export interface DevToolsLiveTraceUpdate {
+  type: 'trace/update'
+  file: string
+  line: number
+  kind: TraceMarkerKind
+  runCount: number
+  lastDurationMs?: number | undefined
+}
+
+export type DevToolsLiveTraceListener = (update: DevToolsLiveTraceUpdate) => void
+
 const sourceFileCache = new Map<string, Promise<string | null>>()
 const traceRegexEscapes = /[.*+?^${}()|[\]\\]/g
+const LIVE_TRACE_LISTENERS_KEY = '__FICT_DEVTOOLS_LIVE_TRACE_LISTENERS__'
+const fallbackLiveTraceListeners = new Set<DevToolsLiveTraceListener>()
+
+function getLiveTraceListeners(): Set<DevToolsLiveTraceListener> {
+  try {
+    const global = globalThis as typeof globalThis & {
+      __FICT_DEVTOOLS_LIVE_TRACE_LISTENERS__?: Set<DevToolsLiveTraceListener>
+    }
+    if (!global[LIVE_TRACE_LISTENERS_KEY]) {
+      Object.defineProperty(global, LIVE_TRACE_LISTENERS_KEY, {
+        configurable: true,
+        value: new Set<DevToolsLiveTraceListener>(),
+      })
+    }
+    return global[LIVE_TRACE_LISTENERS_KEY]!
+  } catch {
+    return fallbackLiveTraceListeners
+  }
+}
+
+export function subscribeToLiveTrace(listener: DevToolsLiveTraceListener): () => void {
+  const listeners = getLiveTraceListeners()
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
+}
 
 function parseSourceLocation(input?: string | SourceLocation): SourceLocation | undefined {
   if (!input) return undefined
@@ -196,6 +234,33 @@ function parseSourceLocation(input?: string | SourceLocation): SourceLocation | 
   }
 
   return { file: trimmed, line: 1, column: 1 }
+}
+
+function emitLiveTraceUpdate(
+  source: SourceLocation | undefined,
+  kind: TraceMarkerKind,
+  runCount: number,
+  lastDurationMs?: number,
+): void {
+  const listeners = getLiveTraceListeners()
+  if (!source?.file || source.line <= 0 || listeners.size === 0) return
+
+  const update: DevToolsLiveTraceUpdate = {
+    type: 'trace/update',
+    file: source.file,
+    line: source.line,
+    kind,
+    runCount,
+    lastDurationMs,
+  }
+
+  for (const listener of listeners) {
+    try {
+      listener(update)
+    } catch {
+      // Tooling observers must never affect application execution.
+    }
+  }
 }
 
 function chooseDominantFile(locations: SourceLocation[]): string | null {
@@ -1739,6 +1804,7 @@ const hook: FictDevtoolsHookEnhanced = {
     }
     signals.set(id, state)
     observers.set(id, new Set())
+    emitLiveTraceUpdate(parsedSource, 'once', 1)
 
     // Link signal to owner component
     if (options?.ownerId !== undefined) {
@@ -1771,6 +1837,7 @@ const hook: FictDevtoolsHookEnhanced = {
     state.value = value
     state.updateCount++
     state.lastUpdatedAt = Date.now()
+    emitLiveTraceUpdate(state.source, 'reactive', state.updateCount)
 
     recordEvent(
       TimelineEventType.SignalUpdate,
@@ -1823,6 +1890,7 @@ const hook: FictDevtoolsHookEnhanced = {
     computeds.set(id, state)
     dependencies.set(id, new Set())
     observers.set(id, new Set())
+    emitLiveTraceUpdate(parsedSource, 'once', 1)
 
     // Link computed to owner component
     if (options?.ownerId !== undefined) {
@@ -1853,6 +1921,7 @@ const hook: FictDevtoolsHookEnhanced = {
     state.updateCount++
     state.lastUpdatedAt = Date.now()
     state.isDirty = false
+    emitLiveTraceUpdate(state.source, 'reactive', state.updateCount)
 
     recordEvent(
       TimelineEventType.ComputedUpdate,
@@ -1920,6 +1989,7 @@ const hook: FictDevtoolsHookEnhanced = {
     state.runCount++
     state.lastRunAt = Date.now()
     state.lastRunDuration = duration
+    emitLiveTraceUpdate(state.source, 'effect', state.runCount, duration)
 
     // Update dependencies
     const deps = dependencies.get(id)
@@ -2029,6 +2099,7 @@ const hook: FictDevtoolsHookEnhanced = {
     if (!state) return
 
     state.renderCount++
+    emitLiveTraceUpdate(state.source, 'reactive', state.renderCount)
 
     recordEvent(TimelineEventType.ComponentRender, id, NodeType.Component, state.name, {
       renderCount: state.renderCount,

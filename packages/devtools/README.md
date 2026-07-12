@@ -8,6 +8,7 @@ Fict DevTools for Vite development. This package provides:
 
 - A Vite plugin that serves a standalone DevTools UI at `/__fict-devtools__/`
 - Auto-injection of the DevTools hook (best-effort)
+- An authenticated runtime-to-editor live trace bridge at `/__fict-trace__`
 
 ## Compatibility
 
@@ -34,6 +35,25 @@ export default defineConfig({
   plugins: [fictDevTools()],
 })
 ```
+
+## VS Code live trace
+
+The Vite plugin writes an ephemeral bearer token to
+`.fict-cache/devtools-token` and removes the file when the server stops. In VS
+Code, set `fict.trace.mode` to `live` and `fict.dev.serverUrl` to the Vite
+origin (for example, `http://localhost:5173`). The extension reads the token
+from `fict.dev.tokenPath` and subscribes only to the active source file.
+
+To use a different token location, configure both sides with the same path:
+
+```ts
+fictDevTools({
+  liveTrace: { tokenPath: '.cache/fict-live-trace-token' },
+})
+```
+
+The token grants access to local runtime telemetry. Keep its directory out of
+source control and do not share the token.
 
 ## Auto-injection (best-effort)
 

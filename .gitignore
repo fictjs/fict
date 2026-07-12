@@ -160,6 +160,7 @@ js-framework-benchmark/
 hooks/
 ui-primitives/
 .fict-playground/
+.fict-cache/
 shadcn/
 react/
 kit/

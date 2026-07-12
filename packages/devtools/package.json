@@ -44,10 +44,12 @@
     "clean": "rm -rf dist build"
   },
   "dependencies": {
-    "@fictjs/runtime": "workspace:*"
+    "@fictjs/runtime": "workspace:*",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/chrome": "^0.1.37",
+    "@types/ws": "^8.18.1",
     "jsdom": "^28.1.0",
     "tsdown": "^0.22.3",
     "typescript": "^5.7.3",

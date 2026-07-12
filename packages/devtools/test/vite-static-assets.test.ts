@@ -39,7 +39,7 @@ function createStaticAssetMiddleware(): DevToolsMiddleware {
   configureServer({
     config: {
       base: '/',
-      logger: { info: vi.fn() },
+      logger: { info: vi.fn(), warn: vi.fn() },
       server: { host: 'localhost', port: 5173 },
     },
     httpServer: undefined,

@@ -6,7 +6,7 @@ import {
   resolveAnalyzerSettings,
 } from './analysis/analyzerClient'
 import { FictDiagnosticsManager } from './analysis/diagnostics'
-import { LiveTraceClient } from './analysis/live-client'
+import { LiveTraceClient, readLiveTraceToken } from './analysis/live-client'
 import { LiveTraceStore } from './analysis/live-trace'
 import type { FictDocumentAnalysis } from './analysis/types'
 import { CompiledOutputProvider, compileDocumentSource } from './commands/compilePreview'
@@ -113,6 +113,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     if (!enabled) {
       analysisByUri.delete(uriKey)
+      liveTraceClient.disconnect()
       applyAnalysisToEditor(activeEditor, null)
       return
     }
@@ -123,13 +124,21 @@ export function activate(context: vscode.ExtensionContext): void {
     if (settings.mode === 'live') {
       const serverUrl = config.get<string>('dev.serverUrl', '').trim()
       if (serverUrl) {
-        const connected = liveTraceClient.connect(serverUrl)
+        const tokenPath = config.get<string>('dev.tokenPath', '.fict-cache/devtools-token')
+        const workspaceRoot =
+          vscode.workspace.getWorkspaceFolder(activeEditor.document.uri)?.uri.fsPath ??
+          vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+        const token = await readLiveTraceToken(tokenPath, workspaceRoot)
+        const connected = liveTraceClient.connect(serverUrl, token)
         if (connected) {
           liveTraceClient.subscribe(filePath)
         }
+      } else {
+        liveTraceClient.disconnect()
       }
     } else {
       liveTraceClient.unsubscribe(filePath)
+      liveTraceClient.disconnect()
     }
 
     const liveUpdates =
@@ -313,7 +322,9 @@ export function activate(context: vscode.ExtensionContext): void {
       diagnostics.clear(document.uri)
       fileDecorations.clear(document.uri)
       treeProvider.clear(document.uri)
-      liveTraceStore.clearFile(document.uri.fsPath || document.fileName)
+      const filePath = document.uri.fsPath || document.fileName
+      liveTraceClient.unsubscribe(filePath)
+      liveTraceStore.clearFile(filePath)
     }),
     vscode.workspace.onDidChangeTextDocument((event: vscode.TextDocumentChangeEvent) => {
       const active = vscode.window.activeTextEditor

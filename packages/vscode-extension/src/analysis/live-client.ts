@@ -1,3 +1,6 @@
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+
 import WebSocket from 'ws'
 
 import { normalizeLiveTracePayload } from './live-trace'
@@ -8,7 +11,9 @@ interface LiveTraceClientOptions {
   onLog?: (message: string) => void
 }
 
-function normalizeServerUrl(serverUrl: string): string | null {
+const LIVE_TRACE_ENDPOINT = '__fict-trace__'
+
+export function normalizeLiveTraceServerUrl(serverUrl: string): string | null {
   const trimmed = serverUrl.trim()
   if (!trimmed) return null
 
@@ -17,10 +22,13 @@ function normalizeServerUrl(serverUrl: string): string | null {
     if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
       parsed.protocol = parsed.protocol === 'https:' ? 'wss:' : 'ws:'
     }
+    if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') return null
 
-    if (!parsed.pathname || parsed.pathname === '/') {
-      parsed.pathname = '/__fict-trace__'
-    }
+    const pathname = parsed.pathname.replace(/\/+$/, '')
+    parsed.pathname = pathname.endsWith(`/${LIVE_TRACE_ENDPOINT}`)
+      ? pathname
+      : `${pathname}/${LIVE_TRACE_ENDPOINT}`.replace(/^\/+/, '/')
+    parsed.hash = ''
 
     return parsed.toString()
   } catch {
@@ -28,29 +36,75 @@ function normalizeServerUrl(serverUrl: string): string | null {
   }
 }
 
+export async function readLiveTraceToken(
+  tokenPath: string,
+  workspaceRoot?: string,
+): Promise<string | null> {
+  const configuredPath = tokenPath.trim()
+  if (!configuredPath) return null
+  if (!path.isAbsolute(configuredPath) && !workspaceRoot) return null
+
+  const resolvedPath = path.isAbsolute(configuredPath)
+    ? configuredPath
+    : path.resolve(workspaceRoot!, configuredPath)
+  try {
+    const token = (await fs.readFile(resolvedPath, 'utf8')).trim()
+    return token && token.length <= 4096 ? token : null
+  } catch {
+    return null
+  }
+}
+
 export class LiveTraceClient {
   private socket: WebSocket | null = null
+  private socketTarget: string | null = null
+  private socketToken: string | null = null
   private subscribedFile: string | null = null
+  private lastConnectionWarning: string | null = null
 
   constructor(
     private readonly store: LiveTraceStore,
     private readonly options: LiveTraceClientOptions,
   ) {}
 
-  connect(serverUrl: string): boolean {
-    const target = normalizeServerUrl(serverUrl)
-    if (!target) return false
+  connect(serverUrl: string, token: string | null): boolean {
+    const target = normalizeLiveTraceServerUrl(serverUrl)
+    if (!target) {
+      this.disconnect()
+      this.logConnectionWarning('Live trace server URL is invalid.')
+      return false
+    }
 
-    if (this.socket && this.socket.readyState === WebSocket.OPEN && this.socket.url === target) {
+    const normalizedToken = token?.trim() || null
+    if (!normalizedToken) {
+      this.disconnect()
+      this.logConnectionWarning(
+        'Live trace token is unavailable. Start Vite with @fictjs/devtools/vite and verify fict.dev.tokenPath.',
+      )
+      return false
+    }
+
+    if (
+      this.socket &&
+      (this.socket.readyState === WebSocket.CONNECTING ||
+        this.socket.readyState === WebSocket.OPEN) &&
+      this.socketTarget === target &&
+      this.socketToken === normalizedToken
+    ) {
       return true
     }
 
     this.disconnect()
 
-    const socket = new WebSocket(target)
+    const socket = new WebSocket(target, {
+      headers: { Authorization: `Bearer ${normalizedToken}` },
+    })
     this.socket = socket
+    this.socketTarget = target
+    this.socketToken = normalizedToken
 
     socket.on('open', () => {
+      this.lastConnectionWarning = null
       this.options.onLog?.(`Live trace connected: ${target}`)
       if (this.subscribedFile) {
         this.send({ type: 'trace/subscribe', file: this.subscribedFile })
@@ -67,14 +121,20 @@ export class LiveTraceClient {
 
       const payload = normalizeLiveTracePayload(parsed)
       if (!payload) return
-      this.store.apply(payload)
-      this.options.onFileUpdate(payload.file)
+      const subscribedPayload =
+        this.subscribedFile && this.subscribedFile !== payload.file
+          ? { ...payload, file: this.subscribedFile }
+          : payload
+      this.store.apply(subscribedPayload)
+      this.options.onFileUpdate(subscribedPayload.file)
     })
 
     socket.on('close', () => {
       this.options.onLog?.('Live trace disconnected')
       if (this.socket === socket) {
         this.socket = null
+        this.socketTarget = null
+        this.socketToken = null
       }
     })
 
@@ -106,9 +166,13 @@ export class LiveTraceClient {
 
   disconnect(): void {
     if (!this.socket) return
-    this.socket.removeAllListeners()
-    this.socket.close()
+    const socket = this.socket
     this.socket = null
+    this.socketTarget = null
+    this.socketToken = null
+    socket.removeAllListeners()
+    socket.on('error', () => {})
+    socket.close()
   }
 
   dispose(): void {
@@ -122,5 +186,11 @@ export class LiveTraceClient {
   private send(payload: unknown): void {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return
     this.socket.send(JSON.stringify(payload))
+  }
+
+  private logConnectionWarning(message: string): void {
+    if (this.lastConnectionWarning === message) return
+    this.lastConnectionWarning = message
+    this.options.onLog?.(message)
   }
 }

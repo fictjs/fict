@@ -11,6 +11,8 @@ import { fileURLToPath } from 'node:url'
 
 import type { Plugin, ViteDevServer } from 'vite'
 
+import { installLiveTraceBridge, LIVE_TRACE_EVENT } from './live-trace-bridge'
+
 /**
  * Configuration options for the Fict DevTools Vite plugin.
  *
@@ -68,6 +70,18 @@ export interface FictDevToolsOptions {
    * Component name transformer for display
    */
   componentNameTransformer?: (name: string) => string
+
+  /**
+   * Runtime-to-editor live trace bridge.
+   * Enabled by default when the DevTools Vite plugin is enabled.
+   */
+  liveTrace?:
+    | boolean
+    | {
+        enabled?: boolean
+        /** @default '.fict-cache/devtools-token' relative to the Vite root */
+        tokenPath?: string
+      }
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -136,10 +150,17 @@ function resolveAssetPath(buildDir: string, pathname: string): string | undefine
  * Fict DevTools Vite Plugin
  */
 export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[] {
-  const { enabled, openInBrowser = false, port: _port = 5175, launchEditor = 'code' } = options
+  const {
+    enabled,
+    openInBrowser = false,
+    port: _port = 5175,
+    launchEditor = 'code',
+    liveTrace = true,
+  } = options
 
   let server: ViteDevServer
   let resolvedEnabled = enabled
+  let disposeLiveTraceBridge: (() => void) | undefined
 
   const virtualModuleId = 'virtual:fict-devtools'
   const resolvedVirtualModuleId = '\0' + virtualModuleId
@@ -171,6 +192,14 @@ export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[
         if (!resolvedEnabled) return
 
         server = _server
+        disposeLiveTraceBridge?.()
+        const liveTraceOptions = typeof liveTrace === 'object' ? liveTrace : undefined
+        if (liveTrace !== false && liveTraceOptions?.enabled !== false) {
+          disposeLiveTraceBridge = installLiveTraceBridge(
+            server,
+            liveTraceOptions?.tokenPath ? { tokenPath: liveTraceOptions.tokenPath } : {},
+          )
+        }
 
         // Serve DevTools UI at /__fict-devtools__/
         server.middlewares.use('/__fict-devtools__', (req, res, next) => {
@@ -279,13 +308,25 @@ export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[
           }
 
           return `
-            import { attachDebugger } from '@fictjs/devtools/core'
+            import { attachDebugger, subscribeToLiveTrace } from '@fictjs/devtools/core'
+
+            let stopLiveTrace
 
             export function attachDevTools() {
               if (typeof window === 'undefined') return
 
               // Attach debugger hook
               attachDebugger()
+
+              if (import.meta.hot && !stopLiveTrace) {
+                stopLiveTrace = subscribeToLiveTrace((update) => {
+                  import.meta.hot.send(${JSON.stringify(LIVE_TRACE_EVENT)}, update)
+                })
+                import.meta.hot.dispose(() => {
+                  stopLiveTrace?.()
+                  stopLiveTrace = undefined
+                })
+              }
 
               // Add DevTools button to page (optional)
               if (import.meta.hot) {
@@ -306,6 +347,11 @@ export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[
           `
         }
         return undefined
+      },
+
+      closeBundle() {
+        disposeLiveTraceBridge?.()
+        disposeLiveTraceBridge = undefined
       },
 
       // Track which files have been injected to avoid duplicate imports
