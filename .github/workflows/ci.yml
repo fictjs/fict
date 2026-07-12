@@ -14,6 +14,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  rust-native:
+    name: Rust + Native (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.18.0', '24']
+    steps:
+      - name: Checkout repository
+        id: checkout
+        uses: actions/checkout@v4
+        continue-on-error: true
+
+      - name: Fallback checkout from codeload archive
+        if: steps.checkout.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          echo "::warning::actions/checkout failed; falling back to archive download."
+          archive_url="https://codeload.github.com/${GITHUB_REPOSITORY}/tar.gz/${GITHUB_SHA}"
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "${tmp_dir}"' EXIT
+          curl --fail --location --retry 5 --retry-all-errors --retry-delay 3 "${archive_url}" \
+            | tar -xz -C "${tmp_dir}" --strip-components=1
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          cp -a "${tmp_dir}"/. .
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9.1.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      - run: pnpm install
+
+      - name: Verify pinned Rust workspace
+        if: matrix.node == '24'
+        run: |
+          rustc --version
+          cargo --version
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo test --workspace --all-features
+          pnpm guardrails:rust-crates
+
+      - name: Build and smoke host native compiler
+        run: pnpm test:compiler:native-host
+
+      - name: Typecheck ESM and CommonJS native facades
+        if: matrix.node == '24'
+        run: pnpm test:compiler:native-types
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

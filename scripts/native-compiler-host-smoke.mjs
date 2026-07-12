@@ -1,0 +1,79 @@
+#!/usr/bin/env node
+
+import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
+import path from 'node:path'
+import { pathToFileURL } from 'node:url'
+
+const require = createRequire(import.meta.url)
+const root = process.cwd()
+const nativePath = path.resolve(
+  process.env.FICT_COMPILER_NATIVE_PATH ??
+    path.join(root, 'target', 'release', 'fict_compiler_napi.node'),
+)
+const cjsFacade = require('../packages/compiler/dist/native-loader.cjs')
+const esmFacade = await import(
+  pathToFileURL(path.join(root, 'packages/compiler/dist/native-loader.js')).href
+)
+
+const request = {
+  protocolVersion: 1,
+  code: 'export const value: number = 1',
+  filename: '/fixtures/value.ts',
+  moduleId: '/fixtures/value.ts?worker#client',
+  options: { sourcemap: true, explain: true },
+}
+
+let expectedBuildId
+for (const [format, facade] of [
+  ['cjs', cjsFacade],
+  ['esm', esmFacade],
+]) {
+  const binding = facade.loadNativeCompilerBinding({ nativePath })
+  const info = binding.nativeCompilerInfo()
+  assert.equal(info.backend, 'rust')
+  assert.equal(info.oxcVersion, '0.139.0')
+  assert.equal(info.nodeApiVersion, 10)
+  assert.equal(info.compilerProtocolVersion, 1)
+  assert.equal(info.metadataSchemaVersion, 1)
+  assert.match(info.compilerBuildId, /^fict-rust-p1-oxc0\.139\.0-m1-[0-9a-f]{64}$/)
+  expectedBuildId ??= info.compilerBuildId
+  assert.equal(info.compilerBuildId, expectedBuildId)
+
+  const syncResult = binding.transformSync(request)
+  const asyncResult = await binding.transform(request)
+  assert.deepEqual(asyncResult, syncResult)
+  assert.equal(syncResult.protocolVersion, 1)
+  assert.equal(syncResult.compilerBuildId, info.compilerBuildId)
+  assert.equal(syncResult.diagnostics.length, 0)
+  assert.match(syncResult.code, /export const value = 1/)
+  assert.doesNotMatch(syncResult.code, /: number/)
+  assert.deepEqual(syncResult.map?.sources, ['/fixtures/value.ts'])
+  assert.equal(syncResult.explain?.fileName, '/fixtures/value.ts')
+
+  const empty = binding.transformSync({ code: '', filename: 'empty.js' })
+  assert.equal(empty.code, '')
+  assert.deepEqual(empty.diagnostics, [])
+
+  const parserError = binding.transformSync({
+    code: 'export const =',
+    filename: 'broken.ts',
+  })
+  assert.equal(parserError.code, '')
+  assert.equal(parserError.diagnostics[0]?.code, 'FICT-PARSE')
+  assert.ok(parserError.diagnostics[0]?.primarySpan)
+
+  const malformed = binding.transformSync({ code: 42, filename: 'malformed.ts' })
+  assert.equal(malformed.code, '')
+  assert.equal(malformed.diagnostics[0]?.code, 'FICT-REQUEST')
+
+  console.log(
+    JSON.stringify({
+      format,
+      node: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      compilerBuildId: info.compilerBuildId,
+    }),
+  )
+}
