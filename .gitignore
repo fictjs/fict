@@ -166,6 +166,9 @@ react/
 kit/
 plan.md
 
+# Rust compiler artifacts
+/target/
+
 # Standalone repos kept next to the monorepo working tree
 /mcp/
 /skill/

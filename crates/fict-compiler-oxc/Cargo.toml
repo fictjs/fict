@@ -1,0 +1,11 @@
+[package]
+name = "fict-compiler-oxc"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+oxc.workspace = true
