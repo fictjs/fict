@@ -5,6 +5,7 @@
 mod alias;
 mod cfg;
 mod effects;
+mod scopes;
 mod shapes;
 mod ssa;
 
@@ -17,6 +18,10 @@ pub use effects::{
     BarrierFact, BarrierKind, CallbackDisposition, CallbackFact, DependencyAnalysis,
     DependencyBase, DependencyPath, DependencySegment, DependencyStats, EscapeFact, EscapeKind,
     InstructionLocation, ReadFact, WriteFact, analyze_dependencies, verify_dependencies,
+};
+pub use scopes::{
+    ReactiveBindingFact, ReactiveBindingKind, ReactiveBlockFact, ReactiveScopeAnalysis,
+    ReactiveScopeStats, analyze_reactive_scopes, verify_reactive_scopes,
 };
 pub use shapes::{
     PropertyAccessFact, PropertyAccessKind, ShapeAnalysis, ShapeFact, ShapeKey, ShapeKind,
