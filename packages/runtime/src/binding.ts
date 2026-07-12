@@ -719,6 +719,10 @@ export function bindProperty(el: Element, key: string, getValue: () => unknown):
   return createRenderEffect(() => setProp(el, key, getValue()))
 }
 
+function isHTMLSelect(el: Element): el is HTMLSelectElement {
+  return el.localName === 'select' && el.namespaceURI === 'http://www.w3.org/1999/xhtml'
+}
+
 /**
  * Patch DOM property with per-node, per-property cache.
  */
@@ -730,7 +734,7 @@ export function setProp(el: Element, key: string, value: unknown): void {
   const next = normalizePropertyValue(key, value)
   if (
     propCache[key] === value &&
-    (key !== 'value' || el.localName !== 'select' || !('options' in el)) &&
+    (key !== 'value' || !isHTMLSelect(el)) &&
     (el as unknown as Record<string, unknown>)[key] === next
   ) {
     return
@@ -743,8 +747,8 @@ export function setElementProperty(el: Element, key: string, value: unknown): vo
   // linkedom exposes select.value as a getter, and some server DOMs select
   // every duplicate value. Apply the browser's first-match algorithm directly
   // so client and SSR output agree.
-  if (key === 'value' && el.localName === 'select' && 'options' in el) {
-    const select = el as HTMLSelectElement
+  if (key === 'value' && isHTMLSelect(el)) {
+    const select = el
     // Trust a conforming platform setter, including for customized options.
     // Getter-only or duplicate-selecting server DOMs fall through to repair.
     if (Reflect.set(select, 'value', value) && select.selectedOptions.length < 2) return

@@ -815,8 +815,10 @@ describe('Binding Edge Cases', () => {
 
     it('keeps value assignments generic for foreign-namespace select elements', () => {
       const select = document.createElementNS('http://www.w3.org/2000/svg', 'select') as Element & {
+        options?: unknown[]
         value?: string
       }
+      select.options = []
 
       setProp(select, 'value', 'foreign')
 
