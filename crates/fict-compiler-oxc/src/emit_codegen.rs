@@ -6,8 +6,11 @@ use fict_diagnostics::{
 };
 use fict_emit::{EmitOperation, EmitProgram, RuntimeHelper};
 use oxc::{
-    allocator::Allocator,
-    ast::ast::{Expression, ImportDeclarationSpecifier, ImportOrExportKind, Statement},
+    allocator::{Allocator, TakeIn, Vec as ArenaVec},
+    ast::{
+        AstBuilder, NONE,
+        ast::{Expression, ImportDeclarationSpecifier, ImportOrExportKind, Statement},
+    },
     ast_visit::{VisitMut, walk_mut},
     codegen::{Codegen, CodegenOptions},
     parser::{ParseOptions, Parser},
@@ -67,18 +70,22 @@ pub fn emit_program(
     strip_compiler_macro_imports(&mut program);
 
     let (rewrites, rewrite_diagnostics) = call_rewrites(emit);
+    let (reads, read_diagnostics) = read_rewrites(emit);
     diagnostics.extend(rewrite_diagnostics);
+    diagnostics.extend(read_diagnostics);
     if !diagnostics.is_empty() {
         return failed_output(diagnostics);
     }
-    let mut rewriter = CallRewriter {
+    let mut rewriter = AstRewriter {
         allocator: &allocator,
-        rewrites: &rewrites,
-        matched: BTreeSet::new(),
+        call_rewrites: &rewrites,
+        reads: &reads,
+        matched_calls: BTreeSet::new(),
+        matched_reads: BTreeSet::new(),
     };
     rewriter.visit_program(&mut program);
     for location in rewrites.keys() {
-        if !rewriter.matched.contains(location) {
+        if !rewriter.matched_calls.contains(location) {
             diagnostics.push(
                 emit_error(
                     "FICT-OXC-EMIT-ORIGIN",
@@ -88,6 +95,20 @@ pub fn emit_program(
                 .with_primary_span(
                     SourceSpan::new(location.0, location.1)
                         .expect("ordered EmitIR rewrite location"),
+                ),
+            );
+        }
+    }
+    for location in &reads {
+        if !rewriter.matched_reads.contains(location) {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-ORIGIN",
+                    "EmitIR reactive-read origin does not identify an OXC identifier expression",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(
+                    SourceSpan::new(location.0, location.1).expect("ordered EmitIR read location"),
                 ),
             );
         }
@@ -269,8 +290,7 @@ fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
         .find(|operation| {
             matches!(
                 operation,
-                EmitOperation::ReadReactive { .. }
-                    | EmitOperation::WriteReactive { .. }
+                EmitOperation::WriteReactive { .. }
                     | EmitOperation::UpdateReactive { .. }
                     | EmitOperation::DeclareTemplate { .. }
                     | EmitOperation::CloneTemplate { .. }
@@ -284,6 +304,9 @@ fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
                     | EmitOperation::Insert { .. }
                     | EmitOperation::Conditional { .. }
                     | EmitOperation::KeyedList { .. }
+            ) || matches!(
+                operation,
+                EmitOperation::ReadReactive { projections, .. } if !projections.is_empty()
             )
         });
     unsupported.map_or_else(Vec::new, |operation| {
@@ -351,6 +374,39 @@ fn call_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), String>, Vec<Diagn
     (rewrites, diagnostics)
 }
 
+fn read_rewrites(emit: &EmitProgram) -> (BTreeSet<(u32, u32)>, Vec<Diagnostic>) {
+    let mut reads = BTreeSet::new();
+    let mut diagnostics = Vec::new();
+    for operation in emit
+        .functions
+        .iter()
+        .flat_map(|function| &function.operations)
+    {
+        let EmitOperation::ReadReactive { origin, .. } = operation else {
+            continue;
+        };
+        let Some(span) = origin.primary_span else {
+            diagnostics.push(emit_error(
+                "FICT-OXC-EMIT-ORIGIN",
+                "reactive-read EmitIR operation requires a source origin",
+                GuaranteeClass::Internal,
+            ));
+            continue;
+        };
+        if !reads.insert((span.start(), span.end())) {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-ORIGIN",
+                    "multiple reactive-read operations share the same source origin",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(span),
+            );
+        }
+    }
+    (reads, diagnostics)
+}
+
 fn render_runtime_imports(emit: &EmitProgram) -> String {
     let mut output = String::new();
     for intent in &emit.imports {
@@ -367,19 +423,45 @@ fn render_runtime_imports(emit: &EmitProgram) -> String {
     output
 }
 
-struct CallRewriter<'a, 'emit> {
+struct AstRewriter<'a, 'emit> {
     allocator: &'a Allocator,
-    rewrites: &'emit BTreeMap<(u32, u32), String>,
-    matched: BTreeSet<(u32, u32)>,
+    call_rewrites: &'emit BTreeMap<(u32, u32), String>,
+    reads: &'emit BTreeSet<(u32, u32)>,
+    matched_calls: BTreeSet<(u32, u32)>,
+    matched_reads: BTreeSet<(u32, u32)>,
 }
 
-impl<'a> VisitMut<'a> for CallRewriter<'a, '_> {
+impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
+    fn visit_expression(&mut self, expression: &mut Expression<'a>) {
+        let Expression::Identifier(identifier) = expression else {
+            walk_mut::walk_expression(self, expression);
+            return;
+        };
+        let location = (identifier.span.start, identifier.span.end);
+        if !self.reads.contains(&location) {
+            walk_mut::walk_expression(self, expression);
+            return;
+        }
+        let span = identifier.span;
+        let callee = expression.take_in(&self.allocator);
+        let builder = AstBuilder::new(self.allocator);
+        *expression = Expression::new_call_expression(
+            span,
+            callee,
+            NONE,
+            ArenaVec::new_in(&self.allocator),
+            false,
+            &builder,
+        );
+        self.matched_reads.insert(location);
+    }
+
     fn visit_call_expression(&mut self, call: &mut oxc::ast::ast::CallExpression<'a>) {
         let location = (call.span.start, call.span.end);
-        if let Some(local) = self.rewrites.get(&location)
+        if let Some(local) = self.call_rewrites.get(&location)
             && rename_callee(&mut call.callee, self.allocator.alloc_str(local))
         {
-            self.matched.insert(location);
+            self.matched_calls.insert(location);
         }
         walk_mut::walk_call_expression(self, call);
     }
@@ -585,12 +667,10 @@ mod tests {
         let mut unsupported = effect_program(source);
         unsupported.functions[0]
             .operations
-            .push(EmitOperation::ReadReactive {
+            .push(EmitOperation::WriteReactive {
                 slot: EmitSlotId::new(0),
-                source_result: ValueId::new(0),
                 projections: Vec::new(),
-                target: fict_emit::EmitTemporaryId::new(0),
-                helper: None,
+                value: EmitValueRef::Literal(LiteralValue::Undefined),
                 origin: Origin::source(SourceSpan::empty(0)),
             });
         let output = emit_program(
@@ -627,6 +707,42 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.code.as_str() == "FICT-OXC-EMIT-ORIGIN")
         );
+    }
+
+    #[test]
+    fn materializes_unprojected_reactive_reads_as_accessor_calls() {
+        let source = "const memo = () => 1; export const value = memo + memo;";
+        let mut emit = effect_program("$effect(() => 1)");
+        emit.imports.clear();
+        emit.functions[0].slots.clear();
+        emit.functions[0].operations.clear();
+        for (index, (start, _)) in source.match_indices("memo").skip(1).enumerate() {
+            let start = u32::try_from(start).expect("span");
+            emit.functions[0]
+                .operations
+                .push(EmitOperation::ReadReactive {
+                    slot: EmitSlotId::new(0),
+                    source_result: ValueId::new(u32::try_from(index).expect("value")),
+                    projections: Vec::new(),
+                    target: fict_emit::EmitTemporaryId::new(
+                        u32::try_from(index).expect("temporary"),
+                    ),
+                    helper: None,
+                    origin: Origin::source(
+                        SourceSpan::new(start, start + 4).expect("ordered span"),
+                    ),
+                });
+        }
+
+        let output = emit_program(
+            source,
+            "read.js",
+            options(OxcSourceLanguage::JavaScript, false),
+            &emit,
+        );
+
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert!(output.code.contains("value = memo() + memo()"));
     }
 
     #[test]
