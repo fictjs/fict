@@ -62,13 +62,30 @@ async function flushRuntime() {
   await new Promise(resolve => setTimeout(resolve, 0))
 }
 
-async function compileAndImport(source, name, expectedCode) {
-  const result = binding.transformSync({
+async function compileAndImport(source, name, expectedCode, settings = {}) {
+  const request = {
     code: source,
     filename: `/fixtures/${name}.tsx`,
     moduleId: `/fixtures/${name}.tsx`,
-  })
-  assert.deepEqual(result.diagnostics, [], result.diagnostics.map(item => item.message).join('\n'))
+  }
+  if (settings.options) {
+    request.options = settings.options
+  }
+  const result = binding.transformSync(request)
+  const diagnosticCodes = settings.diagnosticCodes ?? []
+  if (diagnosticCodes.length === 0) {
+    assert.deepEqual(
+      result.diagnostics,
+      [],
+      result.diagnostics.map(item => item.message).join('\n'),
+    )
+  } else {
+    assert.deepEqual(
+      result.diagnostics.map(item => item.code),
+      diagnosticCodes,
+      result.diagnostics.map(item => item.message).join('\n'),
+    )
+  }
   if (expectedCode) {
     assert.match(result.code, expectedCode)
   }
@@ -482,6 +499,45 @@ test('Rust compiler output reads literal destructuring keys and excludes them fr
     container.querySelector('[data-id="literal"]')?.textContent,
     'dash:zero:fallback:true:false',
   )
+
+  dispose()
+  assert.equal(container.childNodes.length, 0)
+  container.remove()
+})
+
+test('Rust compiler output preserves executable props-pattern fallbacks in non-strict mode', async () => {
+  const module = await compileAndImport(
+    `
+      import { render } from 'fict'
+
+      function Child({ list: [first, ...rest], user: { ...userRest } }) {
+        return <p>{first}:{rest.join(',')}:{userRest.name}:{userRest.age}</p>
+      }
+
+      export function mount(container) {
+        return render(() => ({
+          type: Child,
+          props: {
+            list: ['A', 'B', 'C'],
+            user: { name: 'Ada', age: 37 },
+          },
+        }), container)
+      }
+    `,
+    'props-pattern-fallback',
+    /function Child\(\{ list: \[first, \.\.\.rest\], user: \{ \.\.\.userRest \} \}\)/,
+    {
+      options: { strictGuarantee: false },
+      diagnosticCodes: ['FICT-P002', 'FICT-P004'],
+    },
+  )
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = module.mount(container)
+  await flushRuntime()
+
+  assert.equal(container.textContent, 'A:B,C:Ada:37')
 
   dispose()
   assert.equal(container.childNodes.length, 0)

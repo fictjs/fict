@@ -344,7 +344,7 @@ fn attach_explain_if_requested(
 
 #[cfg(test)]
 mod tests {
-    use fict_diagnostics::DiagnosticSeverity;
+    use fict_diagnostics::{DiagnosticSeverity, GuaranteeClass};
 
     use super::{compile, internal_error_result};
     use crate::{
@@ -1546,6 +1546,53 @@ mod tests {
             "{}",
             result.code
         );
+    }
+
+    #[test]
+    fn enforces_unsupported_component_props_pattern_guarantees() {
+        let source = "const key = 'name'; function ArrayProps({ list: [first, second] }) { return <p>{first}:{second}</p>; } function ArrayRest({ list: [head, ...tail] }) { return <p>{head}:{tail.length}</p>; } function Computed({ [key]: value }) { return <p>{value}</p>; } function EmptyKey({ '': value }) { return <p>{value}</p>; } function NestedRest({ user: { ...userRest } }) { return <p>{String(userRest.name)}</p>; }";
+        let strict = compile(request(source, "unsupported-component-props.tsx"));
+
+        assert!(strict.has_errors());
+        assert!(strict.code.is_empty());
+        assert_eq!(
+            strict
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "FICT-P001",
+                "FICT-P002",
+                "FICT-P003",
+                "FICT-P003",
+                "FICT-P004"
+            ]
+        );
+        assert!(strict.diagnostics.iter().all(|diagnostic| {
+            diagnostic.severity == DiagnosticSeverity::Error
+                && diagnostic.guarantee_class == GuaranteeClass::Fallback
+                && diagnostic.primary_span.is_some()
+        }));
+
+        let mut fallback_request = request(source, "unsupported-component-props.tsx");
+        fallback_request.options.strict_guarantee = false;
+        let fallback = compile(fallback_request);
+        assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
+        assert!(fallback.diagnostics.iter().all(|diagnostic| {
+            diagnostic.severity == DiagnosticSeverity::Warning
+                && diagnostic.guarantee_class == GuaranteeClass::Fallback
+        }));
+        for pattern in [
+            "{ list: [first, second] }",
+            "{ list: [head, ...tail] }",
+            "{ [key]: value }",
+            "{ \"\": value }",
+            "{ user: { ...userRest } }",
+        ] {
+            assert!(fallback.code.contains(pattern), "{}", fallback.code);
+        }
+        assert!(!fallback.code.contains("prop(() =>"), "{}", fallback.code);
     }
 
     #[test]

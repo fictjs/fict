@@ -1080,6 +1080,107 @@ fn models_simple_component_object_props_with_exact_read_origins() {
 }
 
 #[test]
+fn diagnoses_unsupported_component_props_patterns_with_strict_fallback_policy() {
+    let source = r#"
+        const key = 'name';
+        function ArrayProps({ list: [first, second] }) {
+            return <p>{first}:{second}</p>;
+        }
+        function ArrayRest({ list: [head, ...tail] }) {
+            return <p>{head}:{tail.length}</p>;
+        }
+        function Computed({ [key]: value }) {
+            return <p>{value}</p>;
+        }
+        function EmptyKey({ '': value }) {
+            return <p>{value}</p>;
+        }
+        function NestedRest({ user: { ...userRest } }) {
+            return <p>{String(userRest.name)}</p>;
+        }
+    "#;
+    let strict = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(strict.hir.is_none());
+    assert_eq!(
+        strict
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "FICT-P001",
+            "FICT-P002",
+            "FICT-P003",
+            "FICT-P003",
+            "FICT-P004"
+        ]
+    );
+    assert!(strict.diagnostics.iter().all(|diagnostic| {
+        diagnostic.severity == fict_diagnostics::DiagnosticSeverity::Error
+            && diagnostic.guarantee_class == fict_diagnostics::GuaranteeClass::Fallback
+            && diagnostic.primary_span.is_some()
+    }));
+    let issue_sources = strict
+        .diagnostics
+        .iter()
+        .map(|diagnostic| {
+            let span = diagnostic.primary_span.expect("props issue span");
+            &source[span.start() as usize..span.end() as usize]
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        issue_sources,
+        [
+            "[first, second]",
+            "[head, ...tail]",
+            "[key]: value",
+            "'': value",
+            "...userRest"
+        ]
+    );
+
+    let fallback = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions {
+            strict_guarantee: false,
+            ..HirBuildOptions::default()
+        },
+    );
+    assert!(
+        fallback.diagnostics.iter().all(|diagnostic| {
+            diagnostic.severity == fict_diagnostics::DiagnosticSeverity::Warning
+        }),
+        "{:?}",
+        fallback.diagnostics
+    );
+    let hir = fallback.hir.expect("fallback HIR");
+    for name in [
+        "ArrayProps",
+        "ArrayRest",
+        "Computed",
+        "EmptyKey",
+        "NestedRest",
+    ] {
+        let function = hir
+            .functions
+            .iter()
+            .find(|function| {
+                function
+                    .binding
+                    .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == name)
+            })
+            .unwrap_or_else(|| panic!("{name} component"));
+        assert_eq!(function.kind, FunctionKind::Component);
+        assert!(function.parameters[0].object_properties.is_none());
+    }
+}
+
+#[test]
 fn assigns_dense_function_local_storage_and_outer_captures_without_name_identity() {
     let source = r#"
         const outer = 1;

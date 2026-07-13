@@ -234,8 +234,23 @@ struct ParameterFact {
     direct_binding: Option<SymbolId>,
     default_value: Option<SourceSpan>,
     object: Option<ObjectParameterFact>,
+    props_issues: Vec<PropsPatternIssue>,
     has_default: bool,
     has_rest: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PropsPatternIssue {
+    kind: PropsPatternIssueKind,
+    span: SourceSpan,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PropsPatternIssueKind {
+    Array,
+    ArrayRest,
+    Computed,
+    Nested,
 }
 
 #[derive(Debug, Clone)]
@@ -446,6 +461,7 @@ fn parameter_facts(parameters: &FormalParameters<'_>) -> Vec<ParameterFact> {
                 .as_ref()
                 .map(|initializer| source_span(initializer.span())),
             object: simple_object_parameter(&parameter.pattern),
+            props_issues: object_props_pattern_issues(&parameter.pattern),
             has_default: parameter.initializer.is_some() || collector.has_defaults,
             has_rest: collector.has_rest,
         });
@@ -459,11 +475,69 @@ fn parameter_facts(parameters: &FormalParameters<'_>) -> Vec<ParameterFact> {
             direct_binding: None,
             default_value: None,
             object: None,
+            props_issues: Vec::new(),
             has_default: collector.has_defaults,
             has_rest: true,
         });
     }
     facts
+}
+
+fn object_props_pattern_issues(pattern: &BindingPattern<'_>) -> Vec<PropsPatternIssue> {
+    let BindingPattern::ObjectPattern(object) = pattern else {
+        return Vec::new();
+    };
+    let mut issues = Vec::new();
+    collect_object_props_pattern_issues(object, true, &mut issues);
+    issues
+}
+
+fn collect_object_props_pattern_issues(
+    object: &oxc::ast::ast::ObjectPattern<'_>,
+    allow_rest: bool,
+    issues: &mut Vec<PropsPatternIssue>,
+) {
+    for property in &object.properties {
+        if property.computed || property.key.static_name().is_none_or(|key| key.is_empty()) {
+            issues.push(PropsPatternIssue {
+                kind: PropsPatternIssueKind::Computed,
+                span: source_span(property.span),
+            });
+            continue;
+        }
+        match &property.value {
+            BindingPattern::BindingIdentifier(_) => {}
+            BindingPattern::ObjectPattern(nested) => {
+                collect_object_props_pattern_issues(nested, false, issues);
+            }
+            BindingPattern::AssignmentPattern(default) => {
+                if !matches!(&default.left, BindingPattern::BindingIdentifier(_)) {
+                    issues.push(PropsPatternIssue {
+                        kind: PropsPatternIssueKind::Nested,
+                        span: source_span(property.span),
+                    });
+                }
+            }
+            BindingPattern::ArrayPattern(array) => {
+                issues.push(PropsPatternIssue {
+                    kind: if array.rest.is_some() {
+                        PropsPatternIssueKind::ArrayRest
+                    } else {
+                        PropsPatternIssueKind::Array
+                    },
+                    span: source_span(array.span),
+                });
+            }
+        }
+    }
+    if let Some(rest) = &object.rest
+        && (!allow_rest || !matches!(&rest.argument, BindingPattern::BindingIdentifier(_)))
+    {
+        issues.push(PropsPatternIssue {
+            kind: PropsPatternIssueKind::Nested,
+            span: source_span(rest.span),
+        });
+    }
 }
 
 fn simple_object_parameter(pattern: &BindingPattern<'_>) -> Option<ObjectParameterFact> {
@@ -475,7 +549,10 @@ fn simple_object_parameter(pattern: &BindingPattern<'_>) -> Option<ObjectParamet
     let excluded = object
         .properties
         .iter()
-        .map(|property| property.key.static_name().map(|key| key.into_owned()))
+        .map(|property| {
+            let key = property.key.static_name()?;
+            (!key.is_empty()).then(|| key.into_owned())
+        })
         .collect::<Option<Vec<_>>>()?;
     let rest = if let Some(rest) = &object.rest {
         let BindingPattern::BindingIdentifier(binding) = &rest.argument else {
@@ -506,6 +583,9 @@ fn collect_simple_object_parameter_properties(
             return None;
         }
         let key = property.key.static_name()?.into_owned();
+        if key.is_empty() {
+            return None;
+        }
         let mut path = prefix.to_vec();
         path.push(key);
         match &property.value {
@@ -843,10 +923,30 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 self.functions[root.owner.as_usize()].kind = FunctionKind::Component;
             }
         }
+        self.validate_component_props_patterns();
         self.apply_call_classification(&calls.calls);
         self.validate_macro_placement(&calls.calls);
         self.validate_hook_placement(&calls.calls);
         self.populate_function_bodies(&calls.calls, &mutations.facts, &jsx.roots);
+    }
+
+    fn validate_component_props_patterns(&mut self) {
+        let severity = if self.strict_guarantee {
+            DiagnosticSeverity::Error
+        } else {
+            DiagnosticSeverity::Warning
+        };
+        for function in &self.function_facts {
+            if self.functions[function.id.as_usize()].kind != FunctionKind::Component
+                || function.parameters.len() != 1
+            {
+                continue;
+            }
+            for issue in &function.parameters[0].props_issues {
+                self.diagnostics
+                    .push(props_pattern_diagnostic(*issue, severity));
+            }
+        }
     }
 
     fn build_function_shells(&mut self) {
@@ -3800,4 +3900,37 @@ fn error(code: &'static str, message: &'static str, span: SourceSpan) -> Diagnos
     )
     .with_primary_span(span)
     .with_guarantee_class(GuaranteeClass::Unsupported)
+}
+
+fn props_pattern_diagnostic(issue: PropsPatternIssue, severity: DiagnosticSeverity) -> Diagnostic {
+    let (code, message, help) = match issue.kind {
+        PropsPatternIssueKind::Array => (
+            "FICT-P001",
+            "Props destructuring falls back to non-reactive binding.",
+            "read the prop first, then destructure its array value inside the component body",
+        ),
+        PropsPatternIssueKind::ArrayRest => (
+            "FICT-P002",
+            "Array rest in props destructuring falls back to non-reactive binding.",
+            "read the prop first, then apply array rest destructuring inside the component body",
+        ),
+        PropsPatternIssueKind::Computed => (
+            "FICT-P003",
+            "Computed property in props pattern cannot be made reactive.",
+            "replace the computed key with a non-empty identifier, string, or numeric literal",
+        ),
+        PropsPatternIssueKind::Nested => (
+            "FICT-P004",
+            "Nested props destructuring falls back to non-reactive binding; access props directly or use prop.",
+            "move the unsupported nested pattern into the component body after reading its parent prop",
+        ),
+    };
+    Diagnostic::new(
+        DiagnosticCode::new(code).expect("props diagnostic literal"),
+        severity,
+        message,
+    )
+    .with_primary_span(issue.span)
+    .with_help(help)
+    .with_guarantee_class(GuaranteeClass::Fallback)
 }
