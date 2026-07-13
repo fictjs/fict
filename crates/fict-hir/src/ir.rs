@@ -127,6 +127,26 @@ pub struct ImportedReactiveMemberMatch {
     pub kind: ImportedReactiveKind,
 }
 
+/// One named reactive property in an imported hook return shape.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ImportedReactiveProperty {
+    /// Runtime property key.
+    pub key: String,
+    /// Runtime representation stored at the property.
+    pub kind: ImportedReactiveKind,
+}
+
+/// Reactive shape returned by an imported hook.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ImportedHookReturn {
+    /// Hook directly returns an accessor or store.
+    pub direct_accessor: Option<ImportedReactiveKind>,
+    /// Sorted reactive object properties.
+    pub object_properties: Vec<ImportedReactiveProperty>,
+    /// Sorted reactive tuple/array properties keyed by canonical indexes.
+    pub array_properties: Vec<ImportedReactiveProperty>,
+}
+
 /// Module and exported-symbol identity for an import binding.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ImportBinding {
@@ -140,6 +160,8 @@ pub struct ImportBinding {
     pub reactive: Option<ImportedReactiveKind>,
     /// Sorted static reactive paths below an imported namespace value.
     pub reactive_members: Vec<ImportedReactiveMember>,
+    /// Reactive return shape when this direct import is an exported hook.
+    pub hook_return: Option<ImportedHookReturn>,
 }
 
 /// Semantic binding. `display_name` is never an identity key.

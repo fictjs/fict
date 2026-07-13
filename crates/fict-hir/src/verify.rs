@@ -188,6 +188,22 @@ impl Verifier<'_> {
                             Some(binding.origin),
                         );
                     }
+                    if import.hook_return.as_ref().is_some_and(|hook| {
+                        [&hook.object_properties, &hook.array_properties]
+                            .into_iter()
+                            .any(|properties| {
+                                properties.windows(2).any(|pair| pair[0].key >= pair[1].key)
+                            })
+                    }) {
+                        self.error(
+                            "FICT-HIR-BINDING",
+                            format!(
+                                "import binding{} has non-canonical hook return properties",
+                                binding.id.index()
+                            ),
+                            Some(binding.origin),
+                        );
+                    }
                 }
                 (_, Some(_)) => self.error(
                     "FICT-HIR-BINDING",

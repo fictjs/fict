@@ -91,6 +91,8 @@ pub enum ReactiveSlotStorage {
     /// The slot refers to an accessor or store owned by another module.
     /// `member` identifies a static namespace path; `None` denotes a direct import.
     Imported { member: Option<u32> },
+    /// The slot refers to an accessor returned by an imported hook call.
+    HookReturn { call: ValueId, import: BindingId },
 }
 
 /// One direct reactive identifier target inside an object or array assignment pattern.

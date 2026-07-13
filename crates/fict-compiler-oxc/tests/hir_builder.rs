@@ -4,10 +4,11 @@ use fict_compiler_oxc::{
 use fict_hir::{
     ArrayElement, BinaryOperator, CallHost, CompoundAssignmentOperator, ContextValueKind,
     DeclarationKind, DeleteTarget, EvaluationMode, FictMacroKind, FunctionKind, HirInstructionKind,
-    ImportPhase, ImportedReactiveKind, IterationKind, JavaScriptString, LiteralValue, ModuleExport,
-    ModuleLocalExport, MutationEffect, ObjectEntry, ObjectPropertyKind, PlaceBase, Projection,
-    PropertyKey, Purity, ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind,
-    TerminatorKind, UnaryOperator, UpdateOperator, ValueKind, verify_module_plan,
+    ImportPhase, ImportedHookReturn, ImportedReactiveKind, ImportedReactiveProperty, IterationKind,
+    JavaScriptString, LiteralValue, ModuleExport, ModuleLocalExport, MutationEffect, ObjectEntry,
+    ObjectPropertyKind, PlaceBase, Projection, PropertyKey, Purity, ReactiveCallKind,
+    StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, UnaryOperator, UpdateOperator,
+    ValueKind, verify_module_plan,
 };
 use fict_metadata::{
     MetadataResolutionStatus, ModuleReactiveMetadata, ReactiveExportKind, ResolvedMetadataInput,
@@ -30,7 +31,7 @@ fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
 fn annotates_direct_and_namespace_imports_from_exact_resolved_metadata() {
     let output = build_hir(
         r#"
-            import primary, { count as localCount, doubled, state, plain, group as namedNamespace } from './dep?client';
+            import primary, { count as localCount, doubled, state, plain, group as namedNamespace, useCount } from './dep?client';
             import { count as differentRequest } from './dep';
             import * as namespace from './dep?client';
             import { hidden } from './opaque';
@@ -73,6 +74,20 @@ fn annotates_direct_and_namespace_imports_from_exact_resolved_metadata() {
                         )]
                         .into_iter()
                         .collect(),
+                        hooks: [(
+                            "useCount".into(),
+                            fict_metadata::HookReturnInfo {
+                                direct_accessor: Some(ReactiveExportKind::Signal),
+                                object_props: [("value".into(), ReactiveExportKind::Memo)]
+                                    .into_iter()
+                                    .collect(),
+                                array_props: [("0".into(), ReactiveExportKind::Store)]
+                                    .into_iter()
+                                    .collect(),
+                            },
+                        )]
+                        .into_iter()
+                        .collect(),
                         ..ModuleReactiveMetadata::new()
                     }),
                     fingerprint: "sha256:dep-client".into(),
@@ -108,6 +123,24 @@ fn annotates_direct_and_namespace_imports_from_exact_resolved_metadata() {
     assert_eq!(reactive("differentRequest"), None);
     assert_eq!(reactive("namespace"), None);
     assert_eq!(reactive("hidden"), None);
+    assert_eq!(
+        hir.bindings
+            .iter()
+            .find(|binding| binding.display_name == "useCount")
+            .and_then(|binding| binding.import.as_ref())
+            .and_then(|import| import.hook_return.as_ref()),
+        Some(&ImportedHookReturn {
+            direct_accessor: Some(ImportedReactiveKind::Signal),
+            object_properties: vec![ImportedReactiveProperty {
+                key: "value".into(),
+                kind: ImportedReactiveKind::Memo,
+            }],
+            array_properties: vec![ImportedReactiveProperty {
+                key: "0".into(),
+                kind: ImportedReactiveKind::Store,
+            }],
+        })
+    );
 
     let members = |name: &str| {
         hir.bindings

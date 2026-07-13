@@ -184,7 +184,11 @@ pub(crate) fn generate_module_metadata(
         .bindings
         .iter()
         .filter_map(|binding| binding.import.as_ref())
-        .filter(|import| import.reactive.is_some() || !import.reactive_members.is_empty())
+        .filter(|import| {
+            import.reactive.is_some()
+                || !import.reactive_members.is_empty()
+                || import.hook_return.is_some()
+        })
     {
         let _ = builder.resolve(&import.source);
     }

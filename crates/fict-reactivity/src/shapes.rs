@@ -4,7 +4,7 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
 use fict_hir::{
-    ArrayElement, ContextValueKind, FictMacroKind, FunctionId, FunctionKind, HirFile,
+    ArrayElement, CallHost, ContextValueKind, FictMacroKind, FunctionId, FunctionKind, HirFile,
     HirInstructionKind, ImportedReactiveKind, LocalKind, ObjectEntry, PlaceBase, PropertyKey,
     ReactiveCallKind, SsaName, ValueId,
 };
@@ -248,13 +248,14 @@ pub fn analyze_shapes(
     for block in &function.blocks {
         for (instruction_index, instruction) in block.instructions.iter().enumerate() {
             if let Some(result) = instruction.result {
-                let imported_member = match &instruction.kind {
+                let imported_reactive = match &instruction.kind {
                     HirInstructionKind::Read { place } => {
                         imported_reactive_member_kind(file, function, place)
                     }
+                    HirInstructionKind::Call(call) => imported_hook_direct_kind(file, call),
                     _ => None,
                 };
-                if let Some(kind) = imported_member {
+                if let Some(kind) = imported_reactive {
                     structural_values.insert(result, imported_reactive_shape(kind));
                 } else if let Some(shape) = structural_value_shape(result, instruction) {
                     structural_values.insert(result, shape);
@@ -937,6 +938,22 @@ fn imported_reactive_member_kind(
         .as_ref()?
         .resolve_reactive_member(&place.projections)
         .map(|resolved| resolved.kind)
+}
+
+fn imported_hook_direct_kind(
+    file: &HirFile,
+    call: &fict_hir::CallInstruction,
+) -> Option<ImportedReactiveKind> {
+    let CallHost::Binding(binding) = call.host else {
+        return None;
+    };
+    file.bindings
+        .get(binding.as_usize())?
+        .import
+        .as_ref()?
+        .hook_return
+        .as_ref()?
+        .direct_accessor
 }
 
 fn imported_reactive_shape(kind: ImportedReactiveKind) -> ValueShape {

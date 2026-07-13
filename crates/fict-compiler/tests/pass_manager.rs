@@ -7,7 +7,8 @@ use fict_hir::{
     StructuredSourceKind,
 };
 use fict_metadata::{
-    MetadataResolutionStatus, ModuleReactiveMetadata, ReactiveExportKind, ResolvedMetadataInput,
+    HookReturnInfo, MetadataResolutionStatus, ModuleReactiveMetadata, ReactiveExportKind,
+    ResolvedMetadataInput,
 };
 use fict_reactivity::{
     BarrierKind, DependencyBase, DependencySegment, EscapeKind, ReactiveBindingKind, ShapeKind,
@@ -268,6 +269,96 @@ fn propagates_recursive_import_metadata_into_scopes_and_regions() {
             })
         })
     }));
+}
+
+#[test]
+fn classifies_direct_imported_hook_accessors_in_reactive_scopes() {
+    let frontend = build_hir(
+        r#"
+            import { useCount, useDouble, useStore } from './hooks';
+            export function App() {
+                const count = useCount();
+                const doubled = useDouble();
+                const state = useStore();
+                const derived = count === doubled;
+                return [derived, state.value];
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Module,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions {
+            resolved_metadata: vec![ResolvedMetadataInput {
+                request: "./hooks".into(),
+                resolved_id: Some("/src/hooks.ts".into()),
+                status: MetadataResolutionStatus::Resolved,
+                metadata: Some(ModuleReactiveMetadata {
+                    hooks: [
+                        ("useCount", ReactiveExportKind::Signal),
+                        ("useDouble", ReactiveExportKind::Memo),
+                        ("useStore", ReactiveExportKind::Store),
+                    ]
+                    .into_iter()
+                    .map(|(name, kind)| {
+                        (
+                            name.into(),
+                            HookReturnInfo {
+                                direct_accessor: Some(kind),
+                                ..HookReturnInfo::default()
+                            },
+                        )
+                    })
+                    .collect(),
+                    ..ModuleReactiveMetadata::new()
+                }),
+                fingerprint: "sha256:hooks".into(),
+            }],
+            ..HirBuildOptions::default()
+        },
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified imported hook HIR"),
+        CorePassOptions {
+            optimize: false,
+            ..CorePassOptions::default()
+        },
+    )
+    .expect("core passes over imported hook accessors");
+    let function = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                output.hir.bindings[binding.as_usize()].display_name == "App"
+            })
+        })
+        .expect("App function");
+    let analysis = &output.functions[function.id.as_usize()];
+    let kinds: std::collections::BTreeMap<_, _> = analysis
+        .scopes
+        .bindings
+        .iter()
+        .filter_map(|binding| {
+            function.locals[binding.name.local.as_usize()]
+                .debug_name
+                .as_deref()
+                .map(|name| (name, binding.kind))
+        })
+        .collect();
+
+    assert_eq!(kinds["count"], ReactiveBindingKind::State);
+    assert_eq!(kinds["doubled"], ReactiveBindingKind::Memo);
+    assert_eq!(kinds["state"], ReactiveBindingKind::Store);
+    assert_eq!(kinds["derived"], ReactiveBindingKind::Derived);
 }
 
 #[test]

@@ -588,6 +588,7 @@ fn build_bindings(
                 },
                 reactive: None,
                 reactive_members: Vec::new(),
+                hook_return: None,
             });
             FrontendBinding {
                 id: binding_id(index),

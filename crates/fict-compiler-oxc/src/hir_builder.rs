@@ -10,18 +10,20 @@ use fict_hir::{
     GlobalId, HirBlock, HirFile, HirFunction, HirGlobal, HirInstruction, HirInstructionKind,
     HirLocal, HirObjectParameterCheck, HirObjectParameterMode, HirObjectParameterProperty,
     HirObjectParameterRest, HirParameter, HirPatternWrite, HirScope, HirTerminator, HirValue,
-    ImportPhase, ImportedReactiveKind, ImportedReactiveMember, ImportedReactiveMemberMatch,
-    InstructionSemantics, IterationKind, JavaScriptString, JsxAttribute, JsxAttributeValue,
-    JsxChild, JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression, JsxListReceiver,
-    JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind, ModuleExport, ModuleLocalExport,
-    ModulePlan, MutationEffect, NumberLiteral, ObjectEntry, ObjectPropertyKind, Origin,
-    PatternSummary, PropertyKey, Purity, ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind,
-    RegionId, ScopeId, ScopeKind, StructuredSourceHint, SyntaxFragment, SyntaxFragmentId,
-    SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi, TemplateId, TerminatorKind,
-    UnaryOperator, UpdateOperator, ValueId, ValueKind, verify_hir, verify_module_plan,
+    ImportPhase, ImportedHookReturn, ImportedReactiveKind, ImportedReactiveMember,
+    ImportedReactiveMemberMatch, ImportedReactiveProperty, InstructionSemantics, IterationKind,
+    JavaScriptString, JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName,
+    JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode, JsxTemplate, LiteralValue,
+    LocalId, LocalKind, ModuleExport, ModuleLocalExport, ModulePlan, MutationEffect, NumberLiteral,
+    ObjectEntry, ObjectPropertyKind, Origin, PatternSummary, PropertyKey, Purity, ReactiveCallKind,
+    ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind, StructuredSourceHint,
+    SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi,
+    TemplateId, TerminatorKind, UnaryOperator, UpdateOperator, ValueId, ValueKind, verify_hir,
+    verify_module_plan,
 };
 use fict_metadata::{
-    MetadataResolutionStatus, ModuleReactiveMetadata, ReactiveExportKind, ResolvedMetadataInput,
+    HookReturnInfo, MetadataResolutionStatus, ModuleReactiveMetadata, ReactiveExportKind,
+    ResolvedMetadataInput,
 };
 use oxc::{
     allocator::Allocator,
@@ -1611,12 +1613,37 @@ fn apply_resolved_import_metadata(
         import.reactive = exported
             .and_then(|exported| metadata.exports.get(exported))
             .map(imported_reactive_kind);
+        import.hook_return = exported
+            .and_then(|exported| metadata.hooks.get(exported))
+            .map(imported_hook_return);
         let namespace = match &import.imported {
             fict_hir::ImportedName::Namespace => Some(metadata),
             fict_hir::ImportedName::Default => metadata.namespaces.get("default"),
             fict_hir::ImportedName::Named(exported) => metadata.namespaces.get(exported),
         };
         import.reactive_members = namespace.map_or_else(Vec::new, flatten_reactive_members);
+    }
+}
+
+fn imported_hook_return(info: &HookReturnInfo) -> ImportedHookReturn {
+    ImportedHookReturn {
+        direct_accessor: info.direct_accessor.as_ref().map(imported_reactive_kind),
+        object_properties: info
+            .object_props
+            .iter()
+            .map(|(key, kind)| ImportedReactiveProperty {
+                key: key.clone(),
+                kind: imported_reactive_kind(kind),
+            })
+            .collect(),
+        array_properties: info
+            .array_props
+            .iter()
+            .map(|(key, kind)| ImportedReactiveProperty {
+                key: key.clone(),
+                kind: imported_reactive_kind(kind),
+            })
+            .collect(),
     }
 }
 
@@ -2115,6 +2142,16 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .find(|candidate| self.old_to_new.get(&candidate.id.index()).copied() == Some(binding))
             .and_then(|binding| binding.import.as_ref())
             .and_then(|import| import.reactive)
+    }
+
+    fn imported_hook_direct_kind(&self, binding: BindingId) -> Option<ImportedReactiveKind> {
+        self.frontend
+            .bindings
+            .iter()
+            .find(|candidate| self.old_to_new.get(&candidate.id.index()).copied() == Some(binding))
+            .and_then(|binding| binding.import.as_ref())
+            .and_then(|import| import.hook_return.as_ref())
+            .and_then(|hook| hook.direct_accessor)
     }
 
     fn planned_imported_reactive_member(
@@ -3245,6 +3282,21 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             })
             .filter_map(|call| call.direct_variable_binding)
             .collect();
+        reactive_targets.extend(
+            calls
+                .iter()
+                .filter(|call| {
+                    call.binding
+                        .and_then(|binding| self.imported_hook_direct_kind(binding))
+                        .is_some_and(|kind| {
+                            matches!(
+                                kind,
+                                ImportedReactiveKind::Signal | ImportedReactiveKind::Memo
+                            )
+                        })
+                })
+                .filter_map(|call| call.direct_variable_binding),
+        );
         reactive_targets.extend(self.frontend.bindings.iter().filter_map(|binding| {
             let reactive = binding.import.as_ref().and_then(|import| import.reactive)?;
             matches!(

@@ -708,6 +708,116 @@ mod tests {
     }
 
     #[test]
+    fn consumes_direct_accessor_metadata_from_imported_hooks() {
+        let mut input = request(
+            r#"
+                import { useCount, useDouble, useStore, useUnknown } from './hooks?client';
+                import { useCount as differentRequest } from './hooks';
+                export function App() {
+                    const count = useCount();
+                    const doubled = useDouble();
+                    const state = useStore();
+                    const unknown = useUnknown();
+                    const explicit = count();
+                    const inline = useCount() + 1;
+                    const called = useCount()();
+                    let writable = useCount();
+                    writable = 2;
+                    const reader = () => count;
+                    const ordinary = differentRequest();
+                    return [count, doubled, state.value, unknown, explicit, inline, called, writable, reader, ordinary];
+                }
+            "#,
+            "hook-consumer.jsx",
+        );
+        let snapshot = || ResolvedMetadataInput {
+            request: "./hooks?client".into(),
+            resolved_id: Some("/src/hooks.ts?client".into()),
+            status: MetadataResolutionStatus::Resolved,
+            metadata: Some(ModuleReactiveMetadata {
+                hooks: BTreeMap::from([
+                    (
+                        "useCount".into(),
+                        HookReturnInfo {
+                            direct_accessor: Some(ReactiveExportKind::Signal),
+                            ..HookReturnInfo::default()
+                        },
+                    ),
+                    (
+                        "useDouble".into(),
+                        HookReturnInfo {
+                            direct_accessor: Some(ReactiveExportKind::Memo),
+                            ..HookReturnInfo::default()
+                        },
+                    ),
+                    (
+                        "useStore".into(),
+                        HookReturnInfo {
+                            direct_accessor: Some(ReactiveExportKind::Store),
+                            ..HookReturnInfo::default()
+                        },
+                    ),
+                ]),
+                ..ModuleReactiveMetadata::new()
+            }),
+            fingerprint: "sha256:hooks-client".into(),
+        };
+        input.metadata.push(snapshot());
+
+        let result = compile(input);
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result.code.contains("const count = useCount()"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("const doubled = useDouble()"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("count()"), "{}", result.code);
+        assert!(result.code.contains("doubled()"), "{}", result.code);
+        assert!(result.code.contains("state.value"), "{}", result.code);
+        assert!(!result.code.contains("state().value"), "{}", result.code);
+        assert!(result.code.contains("unknown"), "{}", result.code);
+        assert!(result.code.contains("useCount()() + 1"), "{}", result.code);
+        assert!(result.code.contains("useCount()()"), "{}", result.code);
+        assert!(!result.code.contains("useCount()()()"), "{}", result.code);
+        assert!(
+            result.code.contains("writable(__fict_value)"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("writable()"), "{}", result.code);
+        assert!(result.code.contains("() => count()"), "{}", result.code);
+        assert!(
+            result.code.contains("const ordinary = differentRequest()"),
+            "{}",
+            result.code
+        );
+        assert!(
+            !result.code.contains("differentRequest()()"),
+            "{}",
+            result.code
+        );
+        assert_eq!(result.metadata_dependencies, ["/src/hooks.ts?client"]);
+
+        let mut readonly = request(
+            "import { useDouble } from './hooks?client'; export function App() { let value = useDouble(); value = 2; return value; }",
+            "readonly-hook.jsx",
+        );
+        readonly.metadata.push(snapshot());
+        let readonly = compile(readonly);
+        assert!(readonly.has_errors());
+        assert!(readonly.code.is_empty());
+        assert!(readonly.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-METADATA-READONLY"
+                && diagnostic.message.contains("imported hook")
+        }));
+    }
+
+    #[test]
     fn consumes_recursive_namespace_metadata_for_static_member_reads() {
         let mut input = request(
             r#"

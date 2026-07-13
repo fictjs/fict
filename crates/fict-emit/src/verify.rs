@@ -96,8 +96,11 @@ pub fn verify_emit_program(
                         .get(owner.as_usize())
                         .is_some_and(|owner| {
                             owner.slots.iter().any(|candidate| {
-                                candidate.storage == crate::ReactiveSlotStorage::Owned
-                                    && candidate.binding == slot.binding
+                                matches!(
+                                    candidate.storage,
+                                    crate::ReactiveSlotStorage::Owned
+                                        | crate::ReactiveSlotStorage::HookReturn { .. }
+                                ) && candidate.binding == slot.binding
                                     && candidate.kind == slot.kind
                             })
                         });
@@ -142,6 +145,61 @@ pub fn verify_emit_program(
                     diagnostics.push(emit_error(
                         "FICT-EMIT-IMPORTED-SLOT",
                         "imported reactive slots must match a metadata-annotated local binding",
+                    ));
+                }
+            }
+            if let crate::ReactiveSlotStorage::HookReturn { call, import } = slot.storage {
+                let imported_kind = hir
+                    .bindings
+                    .get(import.as_usize())
+                    .and_then(|binding| binding.import.as_ref())
+                    .and_then(|import| import.hook_return.as_ref())
+                    .and_then(|hook| hook.direct_accessor);
+                let call_matches = hir_function
+                    .blocks
+                    .iter()
+                    .flat_map(|block| &block.instructions)
+                    .find(|instruction| instruction.result == Some(call))
+                    .is_some_and(|instruction| {
+                        matches!(
+                            &instruction.kind,
+                            fict_hir::HirInstructionKind::Call(call)
+                                if call.host == fict_hir::CallHost::Binding(import)
+                        )
+                    });
+                let kind_matches = matches!(
+                    (imported_kind, slot.kind),
+                    (
+                        Some(fict_hir::ImportedReactiveKind::Signal),
+                        crate::ReactiveSlotKind::Signal
+                    ) | (
+                        Some(fict_hir::ImportedReactiveKind::Memo),
+                        crate::ReactiveSlotKind::Memo
+                    )
+                );
+                let binding_matches = slot.binding.is_none_or(|binding| {
+                    hir_function.locals.iter().any(|local| {
+                        local.binding == Some(binding)
+                            && hir_function
+                                .blocks
+                                .iter()
+                                .flat_map(|block| &block.instructions)
+                                .any(|instruction| {
+                                    matches!(
+                                        instruction.kind,
+                                        fict_hir::HirInstructionKind::Declare {
+                                            local: declared,
+                                            initializer: Some(initializer),
+                                            ..
+                                        } if declared == local.id && initializer == call
+                                    )
+                                })
+                    })
+                });
+                if !call_matches || !kind_matches || !binding_matches {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-HOOK-RETURN-SLOT",
+                        "hook return slots must match an imported accessor return call",
                     ));
                 }
             }
@@ -917,22 +975,22 @@ fn verify_reactive_read(
 ) {
     verify_slot(function, slot_id, diagnostics);
     verify_source_result(hir_function, source_result, diagnostics);
-    let source_place = hir_function
+    let source_instruction = hir_function
         .blocks
         .iter()
         .flat_map(|block| &block.instructions)
-        .find(|instruction| instruction.result == Some(source_result))
-        .and_then(|instruction| match &instruction.kind {
-            fict_hir::HirInstructionKind::Read { place } => Some(place),
-            _ => None,
-        });
+        .find(|instruction| instruction.result == Some(source_result));
+    let source_place = source_instruction.and_then(|instruction| match &instruction.kind {
+        fict_hir::HirInstructionKind::Read { place } => Some(place),
+        _ => None,
+    });
     let slot = function.slots.get(slot_id.as_usize());
-    let basic_valid = source_place.is_some_and(|place| place.projections == projections)
-        && usize::from(accessor_depth) <= projections.len();
-    let storage_valid = match slot.map(|slot| slot.storage) {
+    let (basic_valid, storage_valid) = match slot.map(|slot| slot.storage) {
         Some(crate::ReactiveSlotStorage::Imported {
             member: Some(member),
         }) => {
+            let basic_valid = source_place.is_some_and(|place| place.projections == projections)
+                && usize::from(accessor_depth) <= projections.len();
             let root_binding = source_place.and_then(|place| {
                 let local = match place.base {
                     fict_hir::PlaceBase::Local(local) => local,
@@ -945,16 +1003,82 @@ fn verify_reactive_read(
                 .and_then(|binding| hir.bindings.get(binding.as_usize()))
                 .and_then(|binding| binding.import.as_ref())
                 .and_then(|import| import.resolve_reactive_member(projections));
-            resolved.is_some_and(|resolved| {
+            let storage_valid = resolved.is_some_and(|resolved| {
                 resolved.member_index == member as usize
                     && resolved.accessor_depth == usize::from(accessor_depth)
                     && slot.is_some_and(|slot| slot.binding == root_binding)
-            })
+            });
+            (basic_valid, storage_valid)
         }
         Some(crate::ReactiveSlotStorage::Imported { member: None })
         | Some(crate::ReactiveSlotStorage::Owned)
-        | Some(crate::ReactiveSlotStorage::Captured { .. }) => accessor_depth == 0,
-        None => false,
+        | Some(crate::ReactiveSlotStorage::Captured { .. }) => (
+            source_place.is_some_and(|place| place.projections == projections)
+                && usize::from(accessor_depth) <= projections.len(),
+            accessor_depth == 0,
+        ),
+        Some(crate::ReactiveSlotStorage::HookReturn { call, import }) => {
+            let direct_call = source_result == call
+                && source_instruction.is_some_and(|instruction| {
+                    matches!(instruction.kind, fict_hir::HirInstructionKind::Call(_))
+                });
+            let local = source_place.and_then(|place| match place.base {
+                fict_hir::PlaceBase::Local(local) => Some(local),
+                fict_hir::PlaceBase::Ssa(name) => Some(name.local),
+                fict_hir::PlaceBase::Global(_) | fict_hir::PlaceBase::Value(_) => None,
+            });
+            let local_call = local.is_some_and(|local| {
+                hir_function
+                    .blocks
+                    .iter()
+                    .flat_map(|block| &block.instructions)
+                    .any(|instruction| {
+                        matches!(
+                            instruction.kind,
+                            fict_hir::HirInstructionKind::Declare {
+                                local: declared,
+                                initializer: Some(initializer),
+                                ..
+                            } if declared == local && initializer == call
+                        )
+                    })
+            }) && local.is_some_and(|local| {
+                slot.is_some_and(|slot| {
+                    slot.binding
+                        == hir_function
+                            .locals
+                            .get(local.as_usize())
+                            .and_then(|local| local.binding)
+                })
+            });
+            let imported_kind = hir
+                .bindings
+                .get(import.as_usize())
+                .and_then(|binding| binding.import.as_ref())
+                .and_then(|import| import.hook_return.as_ref())
+                .and_then(|hook| hook.direct_accessor);
+            let kind_matches = slot.is_some_and(|slot| {
+                matches!(
+                    (imported_kind, slot.kind),
+                    (
+                        Some(fict_hir::ImportedReactiveKind::Signal),
+                        crate::ReactiveSlotKind::Signal
+                    ) | (
+                        Some(fict_hir::ImportedReactiveKind::Memo),
+                        crate::ReactiveSlotKind::Memo
+                    )
+                )
+            });
+            (
+                projections.is_empty()
+                    && accessor_depth == 0
+                    && (direct_call
+                        || (local_call
+                            && source_place.is_some_and(|place| place.projections.is_empty()))),
+                kind_matches,
+            )
+        }
+        None => (false, false),
     };
     if !basic_valid || !storage_valid {
         diagnostics.push(emit_error(

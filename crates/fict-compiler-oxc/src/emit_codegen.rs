@@ -2958,7 +2958,9 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
         }
         if let Some(rewrite) = self.reads.get(&location).copied().filter(|rewrite| {
             !self.matched_reads.contains(&location)
-                && (rewrite.projected || rewrite.accessor_depth > 0)
+                && (rewrite.projected
+                    || rewrite.accessor_depth > 0
+                    || matches!(expression, Expression::CallExpression(_)))
         }) {
             let root = projected_read_root_location(expression);
             if rewrite_reactive_accessor(
@@ -6230,8 +6232,8 @@ fn projected_chain_read_root_location(
 
 fn rewrite_reactive_root<'a>(expression: &mut Expression<'a>, allocator: &'a Allocator) -> bool {
     match expression {
-        Expression::Identifier(identifier) => {
-            let span = identifier.span;
+        Expression::Identifier(_) | Expression::CallExpression(_) => {
+            let span = expression.span();
             let callee = expression.take_in(&allocator);
             *expression = Expression::new_call_expression(
                 span,

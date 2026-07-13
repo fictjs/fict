@@ -54,6 +54,16 @@ struct ReactiveSite {
 }
 
 #[derive(Debug, Clone, Copy)]
+struct HookReturnSite {
+    result: ValueId,
+    local: Option<LocalId>,
+    import: fict_hir::BindingId,
+    kind: ReactiveSlotKind,
+    origin: fict_hir::Origin,
+    slot: EmitSlotId,
+}
+
+#[derive(Debug, Clone, Copy)]
 struct ReactiveBindingSite {
     owner: FunctionId,
     binding: fict_hir::BindingId,
@@ -327,7 +337,11 @@ fn collect_reactive_binding_sites(
                 (None, Some(ReactiveCallKind::Store)) => ReactiveSlotKind::Store,
                 (None, Some(ReactiveCallKind::Resource)) => ReactiveSlotKind::Resource,
                 (None, Some(ReactiveCallKind::Selector)) => ReactiveSlotKind::Selector,
-                (None, None) => continue,
+                (None, None) => match imported_hook_direct(hir, call).map(|(_, kind)| kind) {
+                    Some(ImportedReactiveKind::Signal) => ReactiveSlotKind::Signal,
+                    Some(ImportedReactiveKind::Memo) => ReactiveSlotKind::Memo,
+                    Some(ImportedReactiveKind::Store) | None => continue,
+                },
             };
             let Some(binding) = instruction
                 .result
@@ -420,6 +434,45 @@ fn lower_function(
                 .flatten()
         })
         .collect();
+    let hook_return_sites: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter_map(|instruction| {
+            let HirInstructionKind::Call(call) = &instruction.kind else {
+                return None;
+            };
+            let result = instruction.result?;
+            let (binding, kind) = imported_hook_direct(hir, call)?;
+            let kind = match kind {
+                ImportedReactiveKind::Signal => ReactiveSlotKind::Signal,
+                ImportedReactiveKind::Memo => ReactiveSlotKind::Memo,
+                ImportedReactiveKind::Store => return None,
+            };
+            Some((
+                result,
+                declarations_by_value.get(&result).copied(),
+                binding,
+                kind,
+                instruction.origin,
+            ))
+        })
+        .enumerate()
+        .map(
+            |(index, (result, local, import, kind, origin))| HookReturnSite {
+                result,
+                local,
+                import,
+                kind,
+                origin,
+                slot: EmitSlotId::new(count_u32(sites.len().saturating_add(index))),
+            },
+        )
+        .collect();
+    let hook_return_by_result: BTreeMap<_, _> = hook_return_sites
+        .iter()
+        .map(|site| (site.result, *site))
+        .collect();
     let captured_sites: Vec<_> = function
         .locals
         .iter()
@@ -434,7 +487,12 @@ fn lower_function(
             (
                 local,
                 site,
-                EmitSlotId::new(count_u32(sites.len().saturating_add(index))),
+                EmitSlotId::new(count_u32(
+                    sites
+                        .len()
+                        .saturating_add(hook_return_sites.len())
+                        .saturating_add(index),
+                )),
             )
         })
         .collect();
@@ -470,6 +528,7 @@ fn lower_function(
                 EmitSlotId::new(count_u32(
                     sites
                         .len()
+                        .saturating_add(hook_return_sites.len())
                         .saturating_add(captured_sites.len())
                         .saturating_add(index),
                 )),
@@ -513,6 +572,7 @@ fn lower_function(
                     EmitSlotId::new(count_u32(
                         sites
                             .len()
+                            .saturating_add(hook_return_sites.len())
                             .saturating_add(captured_sites.len())
                             .saturating_add(imported_sites.len())
                             .saturating_add(index),
@@ -539,6 +599,11 @@ fn lower_function(
             .map(|local| (local, site.slot))
         })
         .collect();
+    slot_by_local.extend(
+        hook_return_sites
+            .iter()
+            .filter_map(|site| site.local.map(|local| (local, site.slot))),
+    );
     slot_by_local.extend(
         captured_sites
             .iter()
@@ -576,6 +641,22 @@ fn lower_function(
             origin: reactive_site_origin(function, site.result),
         })
         .collect();
+    slots.extend(hook_return_sites.iter().map(|site| {
+        ReactiveSlot {
+            id: site.slot,
+            kind: site.kind,
+            storage: ReactiveSlotStorage::HookReturn {
+                call: site.result,
+                import: site.import,
+            },
+            binding: site
+                .local
+                .and_then(|local| function.locals.get(local.as_usize()))
+                .and_then(|local| local.binding),
+            control_path: Vec::new(),
+            origin: site.origin,
+        }
+    }));
     slots.extend(captured_sites.iter().map(|(_, site, slot)| ReactiveSlot {
         id: *slot,
         kind: site.kind,
@@ -631,6 +712,31 @@ fn lower_function(
         .map_or(CleanupOwner::Function, CleanupOwner::Region);
     for block in &function.blocks {
         for (instruction_index, instruction) in block.instructions.iter().enumerate() {
+            if let Some(site) = instruction
+                .result
+                .and_then(|result| hook_return_by_result.get(&result).copied())
+            {
+                preserve(&mut operations, block.id, instruction_index, instruction);
+                if site.local.is_none() {
+                    let target = allocate_temporary(
+                        &mut temporaries,
+                        &mut temporary_names,
+                        format!("__fict_v{}", site.result.index()),
+                        instruction.origin,
+                    );
+                    value_temporaries.insert(site.result, target);
+                    operations.push(EmitOperation::ReadReactive {
+                        slot: site.slot,
+                        source_result: site.result,
+                        projections: Vec::new(),
+                        accessor_depth: 0,
+                        target,
+                        helper: None,
+                        origin: instruction.origin,
+                    });
+                }
+                continue;
+            }
             if let HirInstructionKind::Call(call) = &instruction.kind
                 && let Some(site) = instruction
                     .result
@@ -807,6 +913,7 @@ fn lower_function(
                         preserve(&mut operations, block.id, instruction_index, instruction);
                         continue;
                     };
+                    ensure_writable_hook_return(&slots, slot)?;
                     let value = lower_value(*value, &value_temporaries);
                     let target = instruction.result.map(|result| {
                         let target = allocate_temporary(
@@ -840,6 +947,7 @@ fn lower_function(
                         preserve(&mut operations, block.id, instruction_index, instruction);
                         continue;
                     };
+                    ensure_writable_hook_return(&slots, slot)?;
                     let target = instruction.result.map(|result| {
                         let target = allocate_temporary(
                             &mut temporaries,
@@ -878,6 +986,9 @@ fn lower_function(
                     if targets.is_empty() {
                         preserve(&mut operations, block.id, instruction_index, instruction);
                         continue;
+                    }
+                    for target in &targets {
+                        ensure_writable_hook_return(&slots, target.slot)?;
                     }
                     let Some(source_result) = instruction.result else {
                         return Err(DiagnosticBundle::new(vec![lower_error(
@@ -2930,6 +3041,41 @@ fn imported_reactive_member(
         .as_ref()?
         .resolve_reactive_member(&place.projections)?;
     Some((local, binding, resolved))
+}
+
+fn imported_hook_direct(
+    hir: &HirFile,
+    call: &fict_hir::CallInstruction,
+) -> Option<(fict_hir::BindingId, ImportedReactiveKind)> {
+    let CallHost::Binding(binding) = call.host else {
+        return None;
+    };
+    let kind = hir
+        .bindings
+        .get(binding.as_usize())?
+        .import
+        .as_ref()?
+        .hook_return
+        .as_ref()?
+        .direct_accessor?;
+    Some((binding, kind))
+}
+
+fn ensure_writable_hook_return(
+    slots: &[ReactiveSlot],
+    slot: EmitSlotId,
+) -> Result<(), DiagnosticBundle> {
+    if slots.get(slot.as_usize()).is_some_and(|slot| {
+        slot.kind == ReactiveSlotKind::Memo
+            && matches!(slot.storage, ReactiveSlotStorage::HookReturn { .. })
+    }) {
+        return Err(DiagnosticBundle::new(vec![lower_error(
+            "FICT-METADATA-READONLY",
+            "cannot assign to a memo accessor returned by an imported hook",
+            GuaranteeClass::Unsupported,
+        )]));
+    }
+    Ok(())
 }
 
 fn lower_value(value: ValueId, temporaries: &BTreeMap<ValueId, EmitTemporaryId>) -> EmitValueRef {
