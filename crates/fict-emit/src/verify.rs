@@ -698,12 +698,19 @@ fn verify_helper_semantics(
         EmitOperation::ResolveElement { helper, path, .. } => {
             *helper == RuntimeHelper::ResolvePath && !path.is_empty()
         }
+        EmitOperation::InvokeComponent {
+            props, prop_helper, ..
+        } => {
+            let needs_helper = props
+                .iter()
+                .any(|prop| matches!(prop, crate::ComponentProp::Named { getter: true, .. }));
+            *prop_helper == needs_helper.then_some(RuntimeHelper::PropGetter)
+        }
         EmitOperation::PreserveHir { .. }
         | EmitOperation::TrackRuntimeReactive { .. }
         | EmitOperation::WriteReactive { .. }
         | EmitOperation::UpdateReactive { .. }
         | EmitOperation::CloneTemplate { .. }
-        | EmitOperation::InvokeComponent { .. }
         | EmitOperation::Return { .. } => true,
     };
     if !valid {

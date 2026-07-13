@@ -746,6 +746,71 @@ mod tests {
     }
 
     #[test]
+    fn emits_flat_component_jsx_with_ordered_props_children_and_key() {
+        let result = compile(request(
+            "const Card = (_props) => null; const UI = { Card }; export function App(props) { return <Card title={props.title} fixed=\"x\" disabled {...props.extra} key={props.id}>hello {props.child}</Card>; } export function Member(props) { return <UI.Card value={props.value} />; }",
+            "flat-component.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(!result.code.contains("<Card"), "{}", result.code);
+        assert!(result.code.contains("type: Card"), "{}", result.code);
+        assert!(result.code.contains("type: UI.Card"), "{}", result.code);
+        assert!(
+            result.code.contains("title: __fictProp(() => props.title)"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("fixed: \"x\""), "{}", result.code);
+        assert!(result.code.contains("disabled: true"), "{}", result.code);
+        assert!(result.code.contains("...props.extra"), "{}", result.code);
+        assert!(
+            result.code.contains("children: [\"hello "),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("key: props.id"), "{}", result.code);
+        assert!(!result.code.contains("key: __fictProp"), "{}", result.code);
+    }
+
+    #[test]
+    fn emits_reactive_component_prop_getters() {
+        let result = compile(request(
+            "import { $state } from 'fict'; const Card = (_props) => null; export function App() { let count = $state(0); return <Card value={count} />; }",
+            "reactive-component.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result.code.contains("import { __fictProp"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("value: __fictProp(() => count())"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn preserves_inline_function_component_props_as_values() {
+        let result = compile(request(
+            "import { $state } from 'fict'; const Card = (_props) => null; export function App() { let count = $state(0); return <Card onSelect={(() => count++) as () => number} />; }",
+            "function-component-prop.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(!result.code.contains("__fictProp"), "{}", result.code);
+        assert!(result.code.contains("onSelect: (() =>"), "{}", result.code);
+        assert!(
+            result.code.contains("count(__fict_previous + 1)"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn emits_typescript_jsx_as_ordered_vnode_fallbacks() {
         let mut input = request(
             "type Props = { name: string; value: number; extra: Record<string, unknown> }; const Child = (props: { value: number }) => <em>{props.value}</em>; export function App(props: Props) { return <section id=\"root\" disabled {...props.extra}>Hello {props.name}<Child value={props.value} /></section>; }",

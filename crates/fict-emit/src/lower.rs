@@ -1034,7 +1034,7 @@ fn lower_component_jsx(
     for attribute in &element.attributes {
         match attribute {
             JsxAttribute::Named { name, value, .. } => {
-                let (value, getter) = match value {
+                let (value, mut getter) = match value {
                     JsxAttributeValue::ImplicitTrue => (
                         EmitValueRef::Literal(fict_hir::LiteralValue::Boolean(true)),
                         false,
@@ -1043,12 +1043,16 @@ fn lower_component_jsx(
                         EmitValueRef::Literal(fict_hir::LiteralValue::String(value.clone())),
                         false,
                     ),
-                    JsxAttributeValue::Expression(value) => (
+                    JsxAttributeValue::Expression {
+                        value,
+                        function_like,
+                    } => (
                         lower_value(*value, value_temporaries),
-                        !matches!(
-                            hir.functions[function_id.as_usize()].values[value.as_usize()].kind,
-                            ValueKind::Literal(_)
-                        ),
+                        !function_like
+                            && !matches!(
+                                hir.functions[function_id.as_usize()].values[value.as_usize()].kind,
+                                ValueKind::Literal(_)
+                            ),
                     ),
                     JsxAttributeValue::Node(_) => {
                         return Err(DiagnosticBundle::new(vec![lower_error(
@@ -1058,6 +1062,9 @@ fn lower_component_jsx(
                         )]));
                     }
                 };
+                if name == "key" {
+                    getter = false;
+                }
                 props.push(ComponentProp::Named {
                     name: name.clone(),
                     value,
@@ -1107,6 +1114,10 @@ fn lower_component_jsx(
     operations.push(EmitOperation::InvokeComponent {
         target,
         component,
+        prop_helper: props
+            .iter()
+            .any(|prop| matches!(prop, ComponentProp::Named { getter: true, .. }))
+            .then_some(RuntimeHelper::PropGetter),
         props,
         children,
         origin: instruction.origin,
@@ -1220,7 +1231,7 @@ fn serialize_node(
                                     html.push('"');
                                 }
                             }
-                            JsxAttributeValue::Expression(value) => {
+                            JsxAttributeValue::Expression { value, .. } => {
                                 if name == "ref" {
                                     bindings.push(TemplateBinding::Ref {
                                         path: path.clone(),
@@ -1509,7 +1520,7 @@ fn annotation_xml_encoding(attributes: &[JsxAttribute]) -> AnnotationXmlEncoding
                     {
                         AnnotationXmlEncoding::Html
                     }
-                    JsxAttributeValue::Expression(_) | JsxAttributeValue::Node(_) => {
+                    JsxAttributeValue::Expression { .. } | JsxAttributeValue::Node(_) => {
                         AnnotationXmlEncoding::Dynamic
                     }
                     JsxAttributeValue::ImplicitTrue | JsxAttributeValue::Text(_) => {
@@ -2009,7 +2020,10 @@ mod namespace_tests {
                         },
                         JsxAttribute::Named {
                             name: "xlinkHref".into(),
-                            value: JsxAttributeValue::Expression(ValueId::new(9)),
+                            value: JsxAttributeValue::Expression {
+                                value: ValueId::new(9),
+                                function_like: false,
+                            },
                             origin: test_origin(),
                         },
                         spread(0),
@@ -2092,7 +2106,10 @@ mod namespace_tests {
                     "annotation-xml",
                     vec![JsxAttribute::Named {
                         name: "encoding".into(),
-                        value: JsxAttributeValue::Expression(ValueId::new(11)),
+                        value: JsxAttributeValue::Expression {
+                            value: ValueId::new(11),
+                            function_like: false,
+                        },
                         origin: test_origin(),
                     }],
                     vec![expression(12)],

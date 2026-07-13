@@ -5,8 +5,8 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
 use fict_emit::{
-    DomBindingKind, DomNamespace, EmitOperation, EmitProgram, EmitValueRef, PropsOperation,
-    RuntimeHelper,
+    ComponentProp, DomBindingKind, DomNamespace, EmitOperation, EmitProgram, EmitValueRef,
+    PropsOperation, RuntimeHelper,
 };
 use fict_hir::{CompoundAssignmentOperator, LiteralValue, TemplateId, UpdateOperator};
 use oxc::{
@@ -94,11 +94,13 @@ pub fn emit_program(
     let (reads, read_diagnostics) = read_rewrites(emit);
     let (mutations, mutation_diagnostics) = mutation_rewrites(emit);
     let (vnodes, vnode_diagnostics) = vnode_rewrites(emit);
+    let (components, component_diagnostics) = component_rewrites(emit);
     let templates = template_rewrites(emit);
     diagnostics.extend(rewrite_diagnostics);
     diagnostics.extend(read_diagnostics);
     diagnostics.extend(mutation_diagnostics);
     diagnostics.extend(vnode_diagnostics);
+    diagnostics.extend(component_diagnostics);
     diagnostics.extend(templates.diagnostics);
     if !diagnostics.is_empty() {
         return failed_output(diagnostics);
@@ -113,12 +115,14 @@ pub fn emit_program(
         reads: &reads,
         mutations: &mutations,
         vnodes: &vnodes,
+        components: &components,
         clones: &templates.clones,
         context_declarations,
         matched_calls: BTreeSet::new(),
         matched_reads: BTreeSet::new(),
         matched_mutations: BTreeSet::new(),
         matched_vnodes: BTreeSet::new(),
+        matched_components: BTreeSet::new(),
         matched_clones: BTreeSet::new(),
         vnode_depth: 0,
         active_fragment_local: None,
@@ -179,6 +183,21 @@ pub fn emit_program(
                 )
                 .with_primary_span(
                     SourceSpan::new(location.0, location.1).expect("ordered EmitIR VNode location"),
+                ),
+            );
+        }
+    }
+    for location in components.keys() {
+        if !rewriter.matched_components.contains(location) {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-ORIGIN",
+                    "EmitIR component origin does not identify an OXC JSX element",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(
+                    SourceSpan::new(location.0, location.1)
+                        .expect("ordered EmitIR component location"),
                 ),
             );
         }
@@ -395,8 +414,7 @@ fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
             }
             _ => matches!(
                 operation,
-                EmitOperation::InvokeComponent { .. }
-                    | EmitOperation::CreateElement { .. }
+                EmitOperation::CreateElement { .. }
                     | EmitOperation::Conditional { .. }
                     | EmitOperation::KeyedList { .. }
             ),
@@ -662,6 +680,84 @@ fn vnode_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), VNodeRewrite>, Ve
                 emit_error(
                     "FICT-OXC-EMIT-ORIGIN",
                     "multiple VNode operations share the same source origin",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(span),
+            );
+        }
+    }
+    (rewrites, diagnostics)
+}
+
+#[derive(Debug, Clone)]
+struct ComponentRewrite {
+    props: Vec<ComponentProp>,
+    prop_helper: Option<String>,
+}
+
+fn component_rewrites(
+    emit: &EmitProgram,
+) -> (BTreeMap<(u32, u32), ComponentRewrite>, Vec<Diagnostic>) {
+    let helper_names: BTreeMap<_, _> = emit
+        .imports
+        .iter()
+        .map(|intent| (intent.helper, intent.local.as_str()))
+        .collect();
+    let mut rewrites = BTreeMap::new();
+    let mut diagnostics = Vec::new();
+    for operation in emit
+        .functions
+        .iter()
+        .flat_map(|function| &function.operations)
+    {
+        let EmitOperation::InvokeComponent {
+            props,
+            prop_helper,
+            origin,
+            ..
+        } = operation
+        else {
+            continue;
+        };
+        let Some(span) = origin.primary_span else {
+            diagnostics.push(emit_error(
+                "FICT-OXC-EMIT-ORIGIN",
+                "component invocation requires a source JSX origin",
+                GuaranteeClass::Internal,
+            ));
+            continue;
+        };
+        let prop_helper = match prop_helper {
+            Some(helper) => {
+                let Some(local) = helper_names.get(helper) else {
+                    diagnostics.push(
+                        emit_error(
+                            "FICT-OXC-EMIT-IMPORT",
+                            "component prop helper has no runtime import intent",
+                            GuaranteeClass::Internal,
+                        )
+                        .with_primary_span(span),
+                    );
+                    continue;
+                };
+                Some((*local).to_owned())
+            }
+            None => None,
+        };
+        if rewrites
+            .insert(
+                (span.start(), span.end()),
+                ComponentRewrite {
+                    props: props.clone(),
+                    prop_helper,
+                },
+            )
+            .is_some()
+        {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-ORIGIN",
+                    "multiple component invocations share the same source origin",
                     GuaranteeClass::Internal,
                 )
                 .with_primary_span(span),
@@ -1530,12 +1626,14 @@ struct AstRewriter<'a, 'emit> {
     reads: &'emit BTreeSet<(u32, u32)>,
     mutations: &'emit BTreeMap<(u32, u32), MutationRewrite>,
     vnodes: &'emit BTreeMap<(u32, u32), VNodeRewrite>,
+    components: &'emit BTreeMap<(u32, u32), ComponentRewrite>,
     clones: &'emit BTreeMap<(u32, u32), CloneRewrite>,
     context_declarations: BTreeMap<(u32, u32), Statement<'a>>,
     matched_calls: BTreeSet<(u32, u32)>,
     matched_reads: BTreeSet<(u32, u32)>,
     matched_mutations: BTreeSet<(u32, u32)>,
     matched_vnodes: BTreeSet<(u32, u32)>,
+    matched_components: BTreeSet<(u32, u32)>,
     matched_clones: BTreeSet<(u32, u32)>,
     vnode_depth: usize,
     active_fragment_local: Option<String>,
@@ -1580,6 +1678,16 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
 
     fn visit_expression(&mut self, expression: &mut Expression<'a>) {
         let location = (expression.span().start, expression.span().end);
+        if let Some(component) = self.components.get(&location).cloned()
+            && matches!(expression, Expression::JSXElement(_))
+        {
+            let Expression::JSXElement(element) = expression.take_in(&self.allocator) else {
+                unreachable!()
+            };
+            *expression = self.lower_component_element(element.unbox(), component);
+            self.matched_components.insert(location);
+            return;
+        }
         if let Some(clone) = self.clones.get(&location).cloned()
             && matches!(
                 expression,
@@ -2051,6 +2159,117 @@ impl<'a> AstRewriter<'a, '_> {
             Expression::new_identifier(span, self.allocator.alloc_str(&clone.root), &builder);
         statements.push(Statement::new_return_statement(span, Some(root), &builder));
         block_iife(self.allocator, statements, span)
+    }
+
+    fn lower_component_element(
+        &mut self,
+        element: JSXElement<'a>,
+        component: ComponentRewrite,
+    ) -> Expression<'a> {
+        let span = element.span;
+        let opening = element.opening_element.unbox();
+        let element_type = self.lower_jsx_element_name(opening.name);
+        let mut planned_props = component.props.into_iter();
+        let mut properties = ArenaVec::new_in(&self.allocator);
+        let mut key = None;
+        for attribute in opening.attributes {
+            let planned = planned_props.next();
+            match attribute {
+                JSXAttributeItem::SpreadAttribute(spread) => {
+                    if !matches!(planned, Some(ComponentProp::Spread(_))) {
+                        self.diagnostics.push(emit_error(
+                            "FICT-OXC-EMIT-COMPONENT",
+                            "component spread prop does not match its EmitIR plan",
+                            GuaranteeClass::Internal,
+                        ));
+                    }
+                    let spread = spread.unbox();
+                    let mut value = spread.argument;
+                    self.visit_expression(&mut value);
+                    properties.push(ObjectPropertyKind::new_spread_property(
+                        spread.span,
+                        value,
+                        &AstBuilder::new(self.allocator),
+                    ));
+                }
+                JSXAttributeItem::Attribute(attribute) => {
+                    let attribute = attribute.unbox();
+                    let (name, name_span) = jsx_attribute_name(attribute.name);
+                    let getter = match planned {
+                        Some(ComponentProp::Named {
+                            name: planned_name,
+                            getter,
+                            ..
+                        }) if planned_name == name => getter,
+                        _ => {
+                            self.diagnostics.push(emit_error(
+                                "FICT-OXC-EMIT-COMPONENT",
+                                "component named prop does not match its EmitIR plan",
+                                GuaranteeClass::Internal,
+                            ));
+                            false
+                        }
+                    };
+                    let mut value = self.lower_jsx_attribute_value(attribute.value, attribute.span);
+                    if getter {
+                        if let Some(helper) = &component.prop_helper {
+                            let arrow =
+                                zero_parameter_expression_arrow(self.allocator, value, name_span);
+                            let callee = Expression::new_identifier(
+                                name_span,
+                                self.allocator.alloc_str(helper),
+                                &AstBuilder::new(self.allocator),
+                            );
+                            let mut arguments = ArenaVec::new_in(&self.allocator);
+                            arguments.push(Argument::from(arrow));
+                            value = Expression::new_call_expression(
+                                name_span,
+                                callee,
+                                NONE,
+                                arguments,
+                                false,
+                                &AstBuilder::new(self.allocator),
+                            );
+                        } else {
+                            self.diagnostics.push(emit_error(
+                                "FICT-OXC-EMIT-COMPONENT",
+                                "reactive component prop has no runtime prop helper",
+                                GuaranteeClass::Internal,
+                            ));
+                        }
+                    }
+                    if name == "key" {
+                        key = Some(value);
+                    } else {
+                        properties.push(self.object_property(name_span, &name, value));
+                    }
+                }
+            }
+        }
+        if planned_props.next().is_some() {
+            self.diagnostics.push(emit_error(
+                "FICT-OXC-EMIT-COMPONENT",
+                "component EmitIR has props absent from its source JSX",
+                GuaranteeClass::Internal,
+            ));
+        }
+        if let Some(children) = self.lower_jsx_children(element.children, span) {
+            properties.push(self.object_property(span, "children", children));
+        }
+
+        let builder = AstBuilder::new(self.allocator);
+        let props = if properties.is_empty() {
+            Expression::new_null_literal(span, &builder)
+        } else {
+            Expression::new_object_expression(span, properties, &builder)
+        };
+        let mut vnode = ArenaVec::new_in(&self.allocator);
+        vnode.push(self.object_property(span, "type", element_type));
+        vnode.push(self.object_property(span, "props", props));
+        if let Some(key) = key {
+            vnode.push(self.object_property(span, "key", key));
+        }
+        Expression::new_object_expression(span, vnode, &builder)
     }
 
     fn lower_jsx_expression(&mut self, expression: Expression<'a>) -> Expression<'a> {

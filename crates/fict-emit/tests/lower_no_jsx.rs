@@ -373,17 +373,26 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
                 },
                 JsxAttribute::Named {
                     name: "data-value".into(),
-                    value: JsxAttributeValue::Expression(ValueId::new(0)),
+                    value: JsxAttributeValue::Expression {
+                        value: ValueId::new(0),
+                        function_like: false,
+                    },
                     origin: origin(),
                 },
                 JsxAttribute::Named {
                     name: "onClick".into(),
-                    value: JsxAttributeValue::Expression(ValueId::new(0)),
+                    value: JsxAttributeValue::Expression {
+                        value: ValueId::new(0),
+                        function_like: false,
+                    },
                     origin: origin(),
                 },
                 JsxAttribute::Named {
                     name: "ref".into(),
-                    value: JsxAttributeValue::Expression(ValueId::new(0)),
+                    value: JsxAttributeValue::Expression {
+                        value: ValueId::new(0),
+                        function_like: false,
+                    },
                     origin: origin(),
                 },
             ],
@@ -651,7 +660,10 @@ fn lowers_binding_aware_component_props_spreads_and_children_in_source_order() {
                 },
                 JsxAttribute::Named {
                     name: "value".into(),
-                    value: JsxAttributeValue::Expression(ValueId::new(0)),
+                    value: JsxAttributeValue::Expression {
+                        value: ValueId::new(0),
+                        function_like: false,
+                    },
                     origin: origin(),
                 },
             ],

@@ -1359,7 +1359,7 @@ fn jsx_value_inputs(root: &JsxNode) -> Vec<ValueId> {
                 for attribute in &element.attributes {
                     match attribute {
                         JsxAttribute::Named { value, .. } => match value {
-                            JsxAttributeValue::Expression(value) => values.push(*value),
+                            JsxAttributeValue::Expression { value, .. } => values.push(*value),
                             JsxAttributeValue::Node(node) => stack.push(Item::Node(node)),
                             JsxAttributeValue::ImplicitTrue | JsxAttributeValue::Text(_) => {}
                         },
@@ -1540,7 +1540,7 @@ fn remap_jsx_node(
                 for attribute in &mut element.attributes {
                     match attribute {
                         JsxAttribute::Named { value, .. } => match value {
-                            JsxAttributeValue::Expression(value) => {
+                            JsxAttributeValue::Expression { value, .. } => {
                                 remap_value_id(value, remap)?;
                             }
                             JsxAttributeValue::Node(node) => stack.push(Item::Node(node)),

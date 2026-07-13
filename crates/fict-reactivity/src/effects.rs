@@ -1151,7 +1151,7 @@ fn jsx_values(root: &JsxNode) -> Vec<ValueId> {
                 for attribute in &element.attributes {
                     match attribute {
                         JsxAttribute::Named { value, .. } => match value {
-                            JsxAttributeValue::Expression(value) => values.push(*value),
+                            JsxAttributeValue::Expression { value, .. } => values.push(*value),
                             JsxAttributeValue::Node(node) => stack.push(Item::Node(node)),
                             JsxAttributeValue::ImplicitTrue | JsxAttributeValue::Text(_) => {}
                         },

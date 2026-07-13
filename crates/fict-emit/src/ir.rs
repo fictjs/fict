@@ -276,6 +276,7 @@ pub enum EmitOperation {
         component: ComponentTarget,
         props: Vec<ComponentProp>,
         children: Vec<EmitValueRef>,
+        prop_helper: Option<RuntimeHelper>,
         origin: Origin,
     },
     CreateElement {
@@ -370,13 +371,16 @@ impl EmitOperation {
             | Self::CreateVNode {
                 fragment_helper: helper,
                 ..
+            }
+            | Self::InvokeComponent {
+                prop_helper: helper,
+                ..
             } => *helper,
             Self::PreserveHir { .. }
             | Self::TrackRuntimeReactive { .. }
             | Self::WriteReactive { .. }
             | Self::UpdateReactive { .. }
             | Self::CloneTemplate { .. }
-            | Self::InvokeComponent { .. }
             | Self::Return { .. } => None,
         }
     }

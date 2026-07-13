@@ -25,8 +25,13 @@ pub enum JsxAttributeValue {
     ImplicitTrue,
     /// Static JSX text after entity decoding.
     Text(String),
-    /// Dynamic HIR value.
-    Expression(ValueId),
+    /// Dynamic HIR value and whether its source is a function expression.
+    Expression {
+        /// Evaluated HIR value.
+        value: ValueId,
+        /// Whether the authored expression directly defines a function.
+        function_like: bool,
+    },
     /// Nested JSX node used as an attribute value.
     Node(Box<JsxNode>),
 }
@@ -163,7 +168,10 @@ mod tests {
             name: JsxElementName::Component(BindingId::new(4)),
             attributes: vec![JsxAttribute::Named {
                 name: "value".into(),
-                value: JsxAttributeValue::Expression(ValueId::new(2)),
+                value: JsxAttributeValue::Expression {
+                    value: ValueId::new(2),
+                    function_like: false,
+                },
                 origin,
             }],
             children: Vec::new(),

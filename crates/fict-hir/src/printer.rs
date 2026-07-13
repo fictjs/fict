@@ -288,7 +288,13 @@ fn print_jsx_attribute_value(value: &JsxAttributeValue) -> String {
     match value {
         JsxAttributeValue::ImplicitTrue => "true".into(),
         JsxAttributeValue::Text(value) => format!("text({value:?})"),
-        JsxAttributeValue::Expression(value) => format!("expression(value{})", value.index()),
+        JsxAttributeValue::Expression {
+            value,
+            function_like,
+        } => format!(
+            "expression(value{}, function_like={function_like})",
+            value.index()
+        ),
         JsxAttributeValue::Node(_) => "node".into(),
     }
 }

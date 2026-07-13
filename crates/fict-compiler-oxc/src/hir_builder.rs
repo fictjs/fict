@@ -1508,13 +1508,17 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                                 RawJsxAttributeValue::Text(text) => {
                                     JsxAttributeValue::Text(text.clone())
                                 }
-                                RawJsxAttributeValue::Expression(expression) => {
-                                    JsxAttributeValue::Expression(self.syntax_value(
+                                RawJsxAttributeValue::Expression {
+                                    span,
+                                    function_like,
+                                } => JsxAttributeValue::Expression {
+                                    value: self.syntax_value(
                                         owner,
-                                        *expression,
-                                        self.referenced_bindings(*expression),
-                                    ))
-                                }
+                                        *span,
+                                        self.referenced_bindings(*span),
+                                    ),
+                                    function_like: *function_like,
+                                },
                                 RawJsxAttributeValue::Node(node) => JsxAttributeValue::Node(
                                     Box::new(self.lower_jsx_node(owner, node)),
                                 ),
@@ -1776,7 +1780,10 @@ enum RawJsxAttribute {
 enum RawJsxAttributeValue {
     ImplicitTrue,
     Text(String),
-    Expression(SourceSpan),
+    Expression {
+        span: SourceSpan,
+        function_like: bool,
+    },
     Node(Box<RawJsxNode>),
 }
 
@@ -1973,12 +1980,15 @@ fn raw_jsx_attribute_value(
         OxcJsxAttributeValue::StringLiteral(literal) => {
             RawJsxAttributeValue::Text(crate::jsx_text::decode_entities(literal.value.as_str()))
         }
-        OxcJsxAttributeValue::ExpressionContainer(container) => container
-            .expression
-            .as_expression()
-            .map_or(RawJsxAttributeValue::ImplicitTrue, |expression| {
-                RawJsxAttributeValue::Expression(source_span(expression.span()))
-            }),
+        OxcJsxAttributeValue::ExpressionContainer(container) => {
+            container.expression.as_expression().map_or(
+                RawJsxAttributeValue::ImplicitTrue,
+                |expression| RawJsxAttributeValue::Expression {
+                    span: source_span(expression.span()),
+                    function_like: expression.get_inner_expression().is_function(),
+                },
+            )
+        }
         OxcJsxAttributeValue::Element(element) => {
             RawJsxAttributeValue::Node(Box::new(raw_jsx_element(scoping, element)))
         }

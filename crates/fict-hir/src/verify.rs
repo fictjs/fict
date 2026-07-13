@@ -789,7 +789,7 @@ impl Verifier<'_> {
                             JsxAttribute::Named { value, origin, .. } => {
                                 self.verify_origin(*origin);
                                 match value {
-                                    JsxAttributeValue::Expression(value) => {
+                                    JsxAttributeValue::Expression { value, .. } => {
                                         self.value(owner, *value, *origin);
                                     }
                                     JsxAttributeValue::Node(node) => {
