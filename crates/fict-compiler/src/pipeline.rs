@@ -8,7 +8,6 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
 use fict_emit::{NoJsxLoweringOptions, RuntimeFamily, lower_core};
-use fict_hir::FictMacroKind;
 use fict_metadata::MetadataResolutionStatus;
 
 use crate::{
@@ -155,28 +154,6 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         attach_explain_if_requested(&mut result, &request, &[]);
         return result;
     };
-    for call in frontend
-        .macro_calls
-        .iter()
-        .filter(|call| matches!(call.kind, FictMacroKind::State | FictMacroKind::Memo))
-    {
-        result.diagnostics.push(
-            diagnostic(
-                "FICT-OXC-EMIT-REACTIVE-ACCESS",
-                DiagnosticSeverity::Error,
-                "signal and memo access rewriting is not yet materialized by the OXC output adapter",
-                GuaranteeClass::Unsupported,
-            )
-            .with_primary_span(call.call_span)
-            .with_help("use the legacy backend for modules containing $state or $memo"),
-        );
-    }
-    finalize_diagnostics(&mut result);
-    if result.has_errors() {
-        attach_explain_if_requested(&mut result, &request, &[]);
-        return result;
-    }
-
     let core = match run_core_passes(
         &hir,
         CorePassOptions {
@@ -441,7 +418,27 @@ mod tests {
     }
 
     #[test]
-    fn fails_closed_for_unmaterialized_reactive_access_and_jsx() {
+    fn runs_module_memos_and_reads_through_native_codegen() {
+        let mut input = request(
+            "import { $memo as memo, batch } from 'fict'; const doubled = memo(() => 2); export const result = doubled + doubled; export { batch };",
+            "memo.js",
+        );
+        input.options.explain = true;
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(!result.code.contains("$memo"));
+        assert!(result.code.contains("createMemo"));
+        assert!(result.code.contains("result = doubled() + doubled()"));
+        assert!(result.code.contains("import { batch } from \"fict\""));
+        assert_eq!(
+            result.explain.expect("native explanation").helpers,
+            ["memo"]
+        );
+    }
+
+    #[test]
+    fn fails_closed_for_unmaterialized_scoped_context_and_jsx() {
         let state = compile(request(
             "import { $state } from 'fict'; function Component() { let count = $state(0); return count; }",
             "state.js",
@@ -452,7 +449,7 @@ mod tests {
             state
                 .diagnostics
                 .iter()
-                .any(|diagnostic| { diagnostic.code.as_str() == "FICT-OXC-EMIT-REACTIVE-ACCESS" })
+                .any(|diagnostic| diagnostic.code.as_str() == "FICT-OXC-EMIT-CONTEXT")
         );
 
         let jsx = compile(request(
