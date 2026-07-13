@@ -9,6 +9,8 @@ import { pathToFileURL } from 'node:url'
 
 const require = createRequire(import.meta.url)
 const root = path.resolve(import.meta.dirname, '..')
+const { transformSync } = require('../packages/compiler/node_modules/@babel/core')
+const createFictPlugin = require('../packages/compiler/dist/index.cjs').default
 const { JSDOM } = require('../packages/runtime/node_modules/jsdom')
 const binding = require(path.join(root, 'target', 'release', 'fict_compiler_napi.node'))
 
@@ -62,6 +64,21 @@ async function flushRuntime() {
   await new Promise(resolve => setTimeout(resolve, 0))
 }
 
+async function importCompiledModule(code, name, backend) {
+  const fixture = path.join(
+    root,
+    'packages',
+    'fict',
+    `.native-runtime-${backend}-${name}-${process.pid}-${Date.now()}.mjs`,
+  )
+  await writeFile(fixture, code, 'utf8')
+  try {
+    return await import(`${pathToFileURL(fixture).href}?v=${Date.now()}`)
+  } finally {
+    await unlink(fixture)
+  }
+}
+
 async function compileAndImport(source, name, expectedCode, settings = {}) {
   const request = {
     code: source,
@@ -90,19 +107,153 @@ async function compileAndImport(source, name, expectedCode, settings = {}) {
     assert.match(result.code, expectedCode)
   }
 
-  const fixture = path.join(
-    root,
-    'packages',
-    'fict',
-    `.native-runtime-${name}-${process.pid}-${Date.now()}.mjs`,
-  )
-  await writeFile(fixture, result.code, 'utf8')
-  try {
-    return await import(`${pathToFileURL(fixture).href}?v=${Date.now()}`)
-  } finally {
-    await unlink(fixture)
-  }
+  return importCompiledModule(result.code, name, 'rust')
 }
+
+async function compileLegacyAndImport(source, name, settings = {}) {
+  const diagnostics = []
+  const result = transformSync(source, {
+    filename: `/fixtures/${name}.tsx`,
+    configFile: false,
+    babelrc: false,
+    sourceType: 'module',
+    parserOpts: {
+      sourceType: 'module',
+      plugins: ['typescript', 'jsx'],
+    },
+    plugins: [
+      [
+        createFictPlugin,
+        {
+          dev: false,
+          emitModuleMetadata: false,
+          strictGuarantee: settings.strictGuarantee ?? true,
+          onWarn: diagnostic => diagnostics.push(diagnostic),
+        },
+      ],
+    ],
+    generatorOpts: { compact: false },
+  })
+  assert.ok(result?.code, 'legacy compiler must produce code')
+  assert.deepEqual(
+    diagnostics.map(diagnostic => diagnostic.code),
+    settings.diagnosticCodes ?? [],
+  )
+  return importCompiledModule(result.code, name, 'legacy')
+}
+
+async function exerciseCoreParityModule(module) {
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = module.mount(container)
+  await flushRuntime()
+
+  const initialRows = new Map(
+    [...container.querySelectorAll('li')].map(node => [node.dataset.id, node]),
+  )
+  const snapshot = {
+    initial: {
+      button: container.querySelector('[data-id="toggle"]')?.textContent,
+      effectLog: [...module.effects],
+      label: container.querySelector('[data-id="label"]')?.textContent,
+      mathNamespace: container.querySelector('mi')?.namespaceURI,
+      rowIds: [...initialRows.keys()],
+      rowText: [...initialRows.values()].map(node => node.textContent),
+      svgNamespace: container.querySelector('circle')?.namespaceURI,
+      tableText: container.querySelector('td')?.textContent,
+    },
+  }
+
+  container.querySelector('[data-id="toggle"]')?.click()
+  module.update([
+    { id: 3, label: 'C2' },
+    { id: 1, label: 'A2' },
+    { id: 4, label: 'D' },
+  ])
+  await flushRuntime()
+
+  const updatedRows = [...container.querySelectorAll('li')]
+  snapshot.updated = {
+    button: container.querySelector('[data-id="toggle"]')?.textContent,
+    effectLog: [...module.effects],
+    keyedIdentity: [
+      updatedRows[0] === initialRows.get('3'),
+      updatedRows[1] === initialRows.get('1'),
+    ],
+    label: container.querySelector('[data-id="label"]')?.textContent,
+    removedRowDisconnected: initialRows.get('2')?.isConnected === false,
+    rowIds: updatedRows.map(node => node.dataset.id),
+    rowText: updatedRows.map(node => node.textContent),
+    tableText: container.querySelector('td')?.textContent,
+  }
+
+  dispose()
+  snapshot.cleanedUp = container.childNodes.length === 0
+  container.remove()
+  return snapshot
+}
+
+test('legacy and Rust compilers preserve the same Core runtime behavior', async () => {
+  const source = `
+    import { $effect, $memo, $state, render } from 'fict'
+
+    export const effects = []
+    let replaceRows = () => {}
+
+    function Label({ value, suffix = '!' }) {
+      return <p data-id="label">{value}{suffix}</p>
+    }
+
+    function App() {
+      let active = $state(false)
+      let rows = $state([
+        { id: 1, label: 'A' },
+        { id: 2, label: 'B' },
+        { id: 3, label: 'C' },
+      ])
+      const status = $memo(() => active ? 'on' : 'off')
+      $effect(() => effects.push(status))
+      replaceRows = next => {
+        rows = next
+      }
+
+      return (
+        <main>
+          <button data-id="toggle" class={status} onClick={() => { active = !active }}>
+            {status}
+          </button>
+          <Label value={status} />
+          <ul>{rows.map(row => <li key={row.id} data-id={row.id}>{row.label}</li>)}</ul>
+          <svg viewBox="0 0 10 10"><circle cx={active ? 2 : 1} cy="1" r="1" /></svg>
+          <math><mi>{active ? 'y' : 'x'}</mi></math>
+          <table><tbody><tr><td>{active ? '1' : '0'}</td></tr></tbody></table>
+        </main>
+      )
+    }
+
+    export function mount(container) {
+      return render(() => <App />, container)
+    }
+
+    export function update(next) {
+      replaceRows(next)
+    }
+  `
+  const [legacy, rust] = await Promise.all([
+    compileLegacyAndImport(source, 'core-parity', {
+      strictGuarantee: false,
+      diagnosticCodes: ['FICT-R002'],
+    }),
+    compileAndImport(source, 'core-parity', null, {
+      options: { strictGuarantee: false },
+      diagnosticCodes: ['FICT-R002'],
+    }),
+  ])
+
+  const legacySnapshot = await exerciseCoreParityModule(legacy)
+  const rustSnapshot = await exerciseCoreParityModule(rust)
+  assert.deepEqual(rustSnapshot, legacySnapshot)
+})
 
 async function compileAndRequire(source, name, expectedCode) {
   const result = binding.transformSync({
