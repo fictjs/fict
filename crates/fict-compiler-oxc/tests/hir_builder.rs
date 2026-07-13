@@ -1568,3 +1568,95 @@ fn enforces_namespace_and_member_hook_placement() {
         );
     }
 }
+
+#[test]
+fn diagnoses_binding_aware_reactive_writes_in_jsx_children() {
+    let source = r#"
+        import { $state, $store } from 'fict';
+
+        function App(values) {
+            let count = $state(0);
+            let alias = count;
+            const model = $store({ value: 0 });
+            let local = 0;
+            return <>
+                {count++}
+                {++alias}
+                {count = count + 1}
+                {count += 1}
+                {(local = 1, count++, count)}
+                {model.value++}
+                {([count] = values, count)}
+                {({ value: model.value } = { value: 1 }, model.value)}
+                {() => count++}
+                <button onClick={() => count++}>{local++}</button>
+                <section>{<span>{count++}</span>}</section>
+            </>;
+        }
+    "#;
+    let strict = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(strict.hir.is_none());
+    let findings = strict
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.as_str() == "FICT-R007")
+        .collect::<Vec<_>>();
+    assert_eq!(findings.len(), 9, "{:?}", strict.diagnostics);
+    assert!(findings.iter().all(|diagnostic| {
+        diagnostic.severity == fict_diagnostics::DiagnosticSeverity::Error
+            && diagnostic.guarantee_class == fict_diagnostics::GuaranteeClass::Fallback
+            && diagnostic.primary_span.is_some()
+    }));
+    let finding_sources = findings
+        .iter()
+        .map(|diagnostic| {
+            let span = diagnostic.primary_span.expect("JSX child span");
+            &source[span.start() as usize..span.end() as usize]
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        finding_sources,
+        [
+            "{count++}",
+            "{++alias}",
+            "{count = count + 1}",
+            "{count += 1}",
+            "{(local = 1, count++, count)}",
+            "{model.value++}",
+            "{([count] = values, count)}",
+            "{({ value: model.value } = { value: 1 }, model.value)}",
+            "{count++}"
+        ]
+    );
+
+    let fallback = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions {
+            strict_guarantee: false,
+            ..HirBuildOptions::default()
+        },
+    );
+    assert!(fallback.hir.is_some(), "{:?}", fallback.diagnostics);
+    assert_eq!(
+        fallback
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_str() == "FICT-R007")
+            .count(),
+        9
+    );
+    assert!(
+        fallback
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_str() == "FICT-R007")
+            .all(|diagnostic| {
+                diagnostic.severity == fict_diagnostics::DiagnosticSeverity::Warning
+            })
+    );
+}

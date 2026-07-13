@@ -62,6 +62,8 @@ use crate::{
 
 use super::compile::{convert_diagnostics, sorted, source_type};
 
+mod reactive_jsx_writes;
+
 /// Binding-aware frontend controls that affect HIR classification.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HirBuildOptions {
@@ -984,6 +986,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         }
         let reactive_symbols = self.analyze_reactive_symbols(program, &calls.calls);
         self.validate_dynamic_property_access(program, &reactive_symbols.reactive);
+        self.validate_reactive_jsx_writes(program, &reactive_symbols.reactive);
         self.validate_reactive_escapes(
             program,
             &calls.calls,
@@ -1119,6 +1122,30 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 .with_help(
                     "use a static string or numeric property when the reactive shape is known",
                 )
+                .with_guarantee_class(GuaranteeClass::Fallback),
+            );
+        }
+    }
+
+    fn validate_reactive_jsx_writes(
+        &mut self,
+        program: &Program<'_>,
+        reactive_symbols: &BTreeSet<SymbolId>,
+    ) {
+        let severity = if self.strict_guarantee {
+            DiagnosticSeverity::Error
+        } else {
+            DiagnosticSeverity::Warning
+        };
+        for span in reactive_jsx_writes::collect(program, self.semantic.scoping(), reactive_symbols)
+        {
+            self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::new("FICT-R007").expect("diagnostic literal"),
+                    severity,
+                    "Reactive state writes in JSX children cannot be installed as DOM bindings; move the write into an event, effect, or statement before rendering.",
+                )
+                .with_primary_span(span)
                 .with_guarantee_class(GuaranteeClass::Fallback),
             );
         }

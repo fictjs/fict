@@ -1080,3 +1080,43 @@ test('Rust compiler output keeps ErrorBoundary children lazy and reset keys reac
   assert.equal(container.childNodes.length, 0)
   container.remove()
 })
+
+test('Rust compiler rejects reactive writes in JSX children at the native boundary', () => {
+  const source = `
+    import { $state } from 'fict'
+    export function App() {
+      let count = $state(0)
+      let local = 0
+      return <main>{count++}{count += 1}<button onClick={() => count++}>{local++}</button></main>
+    }
+  `
+  const request = {
+    code: source,
+    filename: '/fixtures/reactive-jsx-write.tsx',
+    moduleId: '/fixtures/reactive-jsx-write.tsx',
+  }
+
+  const strict = binding.transformSync(request)
+  assert.equal(strict.code, '')
+  assert.deepEqual(
+    strict.diagnostics.map(diagnostic => [diagnostic.code, diagnostic.severity]),
+    [
+      ['FICT-R007', 'error'],
+      ['FICT-R007', 'error'],
+    ],
+  )
+  assert.ok(strict.diagnostics.every(diagnostic => diagnostic.primarySpan))
+
+  const fallback = binding.transformSync({
+    ...request,
+    options: { strictGuarantee: false },
+  })
+  assert.notEqual(fallback.code, '')
+  assert.deepEqual(
+    fallback.diagnostics.map(diagnostic => [diagnostic.code, diagnostic.severity]),
+    [
+      ['FICT-R007', 'warning'],
+      ['FICT-R007', 'warning'],
+    ],
+  )
+})

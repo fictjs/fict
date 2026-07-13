@@ -2454,6 +2454,71 @@ mod tests {
     }
 
     #[test]
+    fn enforces_reactive_jsx_child_write_guarantees() {
+        let source = "import { $state } from 'fict'; export function App() { let count = $state(0); let local = 0; return <main>{count++}{count = count + 1}{(count += 1, count)}{() => count++}<button onClick={() => count++}>{local++}</button></main>; }";
+        let strict = compile(request(source, "reactive-jsx-write.tsx"));
+
+        assert!(strict.has_errors());
+        assert!(strict.code.is_empty());
+        assert_eq!(
+            strict
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-R007")
+                .count(),
+            3,
+            "{:?}",
+            strict.diagnostics
+        );
+        assert!(strict.diagnostics.iter().all(|diagnostic| {
+            diagnostic.severity == DiagnosticSeverity::Error
+                && diagnostic.guarantee_class == GuaranteeClass::Fallback
+                && diagnostic.primary_span.is_some()
+        }));
+
+        let mut fallback_request = request(source, "reactive-jsx-write.tsx");
+        fallback_request.options.strict_guarantee = false;
+        let fallback = compile(fallback_request);
+        assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
+        assert_eq!(
+            fallback
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            ["FICT-R007", "FICT-R007", "FICT-R007"]
+        );
+        assert!(
+            fallback
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.severity == DiagnosticSeverity::Warning)
+        );
+        assert!(!fallback.code.is_empty());
+
+        let mut muted_request = request(source, "reactive-jsx-write-muted.tsx");
+        muted_request.options.strict_guarantee = false;
+        muted_request
+            .options
+            .warning_levels
+            .insert("FICT-R007".into(), WarningLevel::Off);
+        let muted = compile(muted_request);
+        assert!(!muted.has_errors(), "{:?}", muted.diagnostics);
+        assert!(muted.diagnostics.iter().all(|diagnostic| {
+            diagnostic.code.as_str() != "FICT-R007"
+                || diagnostic.severity == DiagnosticSeverity::Info
+        }));
+
+        let mut escalated_request = request(source, "reactive-jsx-write-escalated.tsx");
+        escalated_request.options.strict_guarantee = false;
+        escalated_request.options.warnings_as_errors =
+            WarningsAsErrors::Codes(vec!["FICT-R007".into()]);
+        let escalated = compile(escalated_request);
+        assert!(escalated.has_errors());
+        assert!(escalated.code.is_empty());
+    }
+
+    #[test]
     fn diagnoses_reactive_callback_escape_shapes() {
         let source = "import { $state } from 'fict'; function sink(value) { return value; } export function App() { const count = $state(0); sink(() => count); const named = () => count; sink(named); function hoisted() { return count; } sink(hoisted); const nested = () => () => count; sink(nested); sink({ read: () => count }); sink([() => count]); const callbacks = { ...{ read: () => count } }; sink(callbacks); return null; }";
         let mut input = request(source, "reactive-callback-escapes.js");
