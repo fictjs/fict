@@ -11,10 +11,11 @@ use fict_hir::{
     HirObjectParameterProperty, HirObjectParameterRest, HirParameter, HirScope, HirTerminator,
     HirValue, InstructionSemantics, IterationKind, JsxAttribute, JsxAttributeValue, JsxChild,
     JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode,
-    JsxTemplate, LocalId, LocalKind, MutationEffect, Origin, PatternSummary, Purity,
-    ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind,
-    StructuredSourceHint, SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary,
-    TemplateId, TerminatorKind, UpdateOperator, ValueId, ValueKind, verify_hir,
+    JsxTemplate, LiteralValue, LocalId, LocalKind, MutationEffect, NumberLiteral, Origin,
+    PatternSummary, Purity, ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind, RegionId,
+    ScopeId, ScopeKind, StructuredSourceHint, SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind,
+    SyntaxSummary, TemplateId, TerminatorKind, UnaryOperator, UpdateOperator, ValueId, ValueKind,
+    verify_hir,
 };
 use oxc::{
     allocator::Allocator,
@@ -38,8 +39,8 @@ use oxc::{
         Visit,
         walk::{
             walk_arrow_function_expression, walk_assignment_pattern, walk_binding_rest_element,
-            walk_call_expression, walk_function, walk_jsx_element, walk_variable_declaration,
-            walk_variable_declarator,
+            walk_call_expression, walk_expression, walk_function, walk_jsx_element,
+            walk_variable_declaration, walk_variable_declarator,
         },
     },
     parser::{ParseOptions, Parser},
@@ -47,8 +48,9 @@ use oxc::{
     span::{GetSpan, Span},
     syntax::{
         operator::{
-            AssignmentOperator as OxcAssignmentOperator, LogicalOperator as OxcLogicalOperator,
-            UnaryOperator as OxcUnaryOperator, UpdateOperator as OxcUpdateOperator,
+            AssignmentOperator as OxcAssignmentOperator, BinaryOperator as OxcBinaryOperator,
+            LogicalOperator as OxcLogicalOperator, UnaryOperator as OxcUnaryOperator,
+            UpdateOperator as OxcUpdateOperator,
         },
         scope::ScopeFlags,
         symbol::SymbolId,
@@ -517,6 +519,83 @@ impl<'a> Visit<'a> for VariableDeclarationCollector {
             }
         }
         walk_variable_declaration(self, declaration);
+    }
+}
+
+struct TypedExpressionCollector<'semantic> {
+    scoping: &'semantic Scoping,
+    facts: Vec<TypedExpressionFact>,
+}
+
+impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
+    fn visit_expression(&mut self, expression: &Expression<'a>) {
+        let fact = match expression {
+            Expression::BooleanLiteral(literal) => Some(TypedExpressionFact {
+                span: source_span(literal.span),
+                kind: TypedExpressionKind::Literal(LiteralValue::Boolean(literal.value)),
+            }),
+            Expression::NullLiteral(literal) => Some(TypedExpressionFact {
+                span: source_span(literal.span),
+                kind: TypedExpressionKind::Literal(LiteralValue::Null),
+            }),
+            Expression::NumericLiteral(literal) => Some(TypedExpressionFact {
+                span: source_span(literal.span),
+                kind: TypedExpressionKind::Literal(LiteralValue::Number(NumberLiteral::from_f64(
+                    literal.value,
+                ))),
+            }),
+            Expression::BigIntLiteral(literal) => Some(TypedExpressionFact {
+                span: source_span(literal.span),
+                kind: TypedExpressionKind::Literal(LiteralValue::BigInt(literal.value.to_string())),
+            }),
+            Expression::RegExpLiteral(literal) => Some(TypedExpressionFact {
+                span: source_span(literal.span),
+                kind: TypedExpressionKind::Literal(LiteralValue::RegExp {
+                    pattern: literal.regex.pattern.text.to_string(),
+                    flags: literal.regex.flags.to_string(),
+                }),
+            }),
+            Expression::StringLiteral(literal) if !literal.lone_surrogates => {
+                Some(TypedExpressionFact {
+                    span: source_span(literal.span),
+                    kind: TypedExpressionKind::Literal(LiteralValue::String(
+                        literal.value.to_string(),
+                    )),
+                })
+            }
+            Expression::UnaryExpression(unary)
+                if unary.operator != OxcUnaryOperator::Delete
+                    && !is_unresolved_typeof(self.scoping, unary) =>
+            {
+                Some(TypedExpressionFact {
+                    span: source_span(unary.span),
+                    kind: TypedExpressionKind::Unary {
+                        operator: unary_operator(unary.operator),
+                        argument: source_span(unary.argument.get_inner_expression().span()),
+                        argument_has_effects: structured_control_flow::expression_has_effects(
+                            &unary.argument,
+                        ),
+                    },
+                })
+            }
+            Expression::BinaryExpression(binary) => Some(TypedExpressionFact {
+                span: source_span(binary.span),
+                kind: TypedExpressionKind::Binary {
+                    operator: binary_operator(binary.operator),
+                    left: source_span(binary.left.get_inner_expression().span()),
+                    right: source_span(binary.right.get_inner_expression().span()),
+                    left_has_effects: structured_control_flow::expression_has_effects(&binary.left),
+                    right_has_effects: structured_control_flow::expression_has_effects(
+                        &binary.right,
+                    ),
+                },
+            }),
+            _ => None,
+        };
+        if let Some(fact) = fact {
+            self.facts.push(fact);
+        }
+        walk_expression(self, expression);
     }
 }
 
@@ -1014,6 +1093,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         known_arrays.visit_program(program);
         let mut variable_declarations = VariableDeclarationCollector::default();
         variable_declarations.visit_program(program);
+        let mut typed_expressions = TypedExpressionCollector {
+            scoping: self.semantic.scoping(),
+            facts: Vec::new(),
+        };
+        typed_expressions.visit_program(program);
         let binding_to_symbol: BTreeMap<_, _> = self
             .symbol_to_binding
             .iter()
@@ -1099,6 +1183,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         self.populate_function_bodies(
             &calls.calls,
             &variable_declarations.facts,
+            &typed_expressions.facts,
             &mutations.facts,
             &member_accesses.facts,
             &jsx.roots,
@@ -2195,6 +2280,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         &mut self,
         calls: &[CallFact],
         variable_declarations: &[VariableDeclarationFact],
+        typed_expressions: &[TypedExpressionFact],
         mutations: &[MutationFact],
         member_reads: &[MemberReadFact],
         jsx_roots: &[JsxFact],
@@ -2323,6 +2409,21 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 .cloned()
                 .map(EvaluationFact::Call)
                 .chain(
+                    typed_expressions
+                        .iter()
+                        .filter(|expression| {
+                            let owner = self.function_owner_for_span(expression.span);
+                            owner == fact.id
+                                && !span_is_within_owned_pattern(
+                                    owner,
+                                    expression.span,
+                                    &opaque_patterns,
+                                )
+                        })
+                        .cloned()
+                        .map(EvaluationFact::Typed),
+                )
+                .chain(
                     member_reads
                         .iter()
                         .filter(|member| {
@@ -2351,6 +2452,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             });
             for event in &evaluation_facts {
                 let value = match event {
+                    EvaluationFact::Typed(expression) => {
+                        self.materialize_typed_expression(fact.id, expression)
+                    }
                     EvaluationFact::Call(call) => self.materialize_call(fact.id, call),
                     EvaluationFact::Member(member) => self.materialize_member_read(fact.id, member),
                 };
@@ -2640,6 +2744,73 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             },
             InstructionSemantics::CONSERVATIVE_EAGER,
         )
+    }
+
+    fn materialize_typed_expression(
+        &mut self,
+        owner: FunctionId,
+        expression: &TypedExpressionFact,
+    ) -> Option<ValueId> {
+        let block = self.planned_block_for_span(owner, expression.span);
+        let origin = Origin::source(expression.span);
+        Some(match &expression.kind {
+            TypedExpressionKind::Literal(literal) => self.push_value_to_block(
+                owner,
+                block,
+                ValueKind::Literal(literal.clone()),
+                origin,
+                HirInstructionKind::Literal(literal.clone()),
+                InstructionSemantics::PURE_EAGER,
+            ),
+            TypedExpressionKind::Unary {
+                operator,
+                argument,
+                argument_has_effects,
+            } => {
+                let argument = self.control_expression_value(
+                    owner,
+                    block,
+                    *argument,
+                    true,
+                    *argument_has_effects,
+                );
+                self.push_value_to_block(
+                    owner,
+                    block,
+                    ValueKind::InstructionResult,
+                    origin,
+                    HirInstructionKind::Unary {
+                        operator: *operator,
+                        argument,
+                    },
+                    unary_expression_semantics(*operator),
+                )
+            }
+            TypedExpressionKind::Binary {
+                operator,
+                left,
+                right,
+                left_has_effects,
+                right_has_effects,
+            } => {
+                let left =
+                    self.control_expression_value(owner, block, *left, true, *left_has_effects);
+                let right =
+                    self.control_expression_value(owner, block, *right, true, *right_has_effects);
+                self.push_value_to_block(
+                    owner,
+                    block,
+                    ValueKind::InstructionResult,
+                    origin,
+                    HirInstructionKind::Binary {
+                        operator: *operator,
+                        left,
+                        right,
+                    },
+                    binary_expression_semantics(*operator),
+                )
+            }
+        })
     }
 
     fn materialize_variable_declaration(
@@ -3071,7 +3242,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     alternate,
                     ..
                 } => TerminatorKind::Branch {
-                    test: self.control_expression_value(owner, block.id, test, false, has_effects),
+                    test: self.control_expression_value(owner, block.id, test, true, has_effects),
                     consequent,
                     alternate,
                 },
@@ -3089,7 +3260,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         owner,
                         source_block,
                         source,
-                        false,
+                        true,
                         source_has_effects,
                     );
                     self.materialize_iteration_target(owner, body, kind, source, target);
@@ -3117,7 +3288,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         owner,
                         block.id,
                         discriminant,
-                        false,
+                        true,
                         discriminant_has_effects,
                     );
                     TerminatorKind::Goto { target }
@@ -3143,7 +3314,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         owner,
                         block.id,
                         test,
-                        false,
+                        true,
                         test_has_effects,
                     );
                     let comparison_origin = Origin::desugared(test, DesugaringKind::Switch);
@@ -4858,6 +5029,29 @@ struct VariableDeclarationFact {
     contains_jsx: bool,
 }
 
+#[derive(Debug, Clone)]
+struct TypedExpressionFact {
+    span: SourceSpan,
+    kind: TypedExpressionKind,
+}
+
+#[derive(Debug, Clone)]
+enum TypedExpressionKind {
+    Literal(LiteralValue),
+    Unary {
+        operator: UnaryOperator,
+        argument: SourceSpan,
+        argument_has_effects: bool,
+    },
+    Binary {
+        operator: BinaryOperator,
+        left: SourceSpan,
+        right: SourceSpan,
+        left_has_effects: bool,
+        right_has_effects: bool,
+    },
+}
+
 #[derive(Debug, Clone, Copy)]
 struct LocalReadFact {
     owner: FunctionId,
@@ -4925,6 +5119,7 @@ enum PlannedProjection {
 
 #[derive(Debug, Clone)]
 enum EvaluationFact {
+    Typed(TypedExpressionFact),
     Call(CallFact),
     Member(MemberReadFact),
 }
@@ -4932,6 +5127,7 @@ enum EvaluationFact {
 impl EvaluationFact {
     fn span(&self) -> SourceSpan {
         match self {
+            Self::Typed(expression) => expression.span,
             Self::Call(call) => call.span,
             Self::Member(member) => member.span,
         }
@@ -4939,8 +5135,20 @@ impl EvaluationFact {
 
     fn rank(&self) -> u8 {
         match self {
-            Self::Member(_) => 0,
-            Self::Call(_) => 1,
+            Self::Typed(TypedExpressionFact {
+                kind: TypedExpressionKind::Literal(_),
+                ..
+            }) => 0,
+            Self::Typed(TypedExpressionFact {
+                kind: TypedExpressionKind::Unary { .. },
+                ..
+            }) => 1,
+            Self::Typed(TypedExpressionFact {
+                kind: TypedExpressionKind::Binary { .. },
+                ..
+            }) => 2,
+            Self::Member(_) => 3,
+            Self::Call(_) => 4,
         }
     }
 }
@@ -6537,6 +6745,62 @@ fn expression_root_symbol(scoping: &Scoping, expression: &Expression<'_>) -> Opt
     }
 }
 
+fn is_unresolved_typeof(
+    scoping: &Scoping,
+    expression: &oxc::ast::ast::UnaryExpression<'_>,
+) -> bool {
+    if expression.operator != OxcUnaryOperator::Typeof {
+        return false;
+    }
+    let Expression::Identifier(identifier) = expression.argument.get_inner_expression() else {
+        return false;
+    };
+    identifier
+        .reference_id
+        .get()
+        .and_then(|reference| scoping.get_reference(reference).symbol_id())
+        .is_none()
+}
+
+fn unary_operator(operator: OxcUnaryOperator) -> UnaryOperator {
+    match operator {
+        OxcUnaryOperator::UnaryPlus => UnaryOperator::Plus,
+        OxcUnaryOperator::UnaryNegation => UnaryOperator::Minus,
+        OxcUnaryOperator::LogicalNot => UnaryOperator::Not,
+        OxcUnaryOperator::BitwiseNot => UnaryOperator::BitNot,
+        OxcUnaryOperator::Typeof => UnaryOperator::TypeOf,
+        OxcUnaryOperator::Void => UnaryOperator::Void,
+        OxcUnaryOperator::Delete => UnaryOperator::Delete,
+    }
+}
+
+fn binary_operator(operator: OxcBinaryOperator) -> BinaryOperator {
+    match operator {
+        OxcBinaryOperator::Addition => BinaryOperator::Add,
+        OxcBinaryOperator::Subtraction => BinaryOperator::Subtract,
+        OxcBinaryOperator::Multiplication => BinaryOperator::Multiply,
+        OxcBinaryOperator::Division => BinaryOperator::Divide,
+        OxcBinaryOperator::Remainder => BinaryOperator::Remainder,
+        OxcBinaryOperator::Exponential => BinaryOperator::Exponent,
+        OxcBinaryOperator::Equality => BinaryOperator::Equal,
+        OxcBinaryOperator::Inequality => BinaryOperator::NotEqual,
+        OxcBinaryOperator::StrictEquality => BinaryOperator::StrictEqual,
+        OxcBinaryOperator::StrictInequality => BinaryOperator::StrictNotEqual,
+        OxcBinaryOperator::LessThan => BinaryOperator::LessThan,
+        OxcBinaryOperator::LessEqualThan => BinaryOperator::LessThanOrEqual,
+        OxcBinaryOperator::GreaterThan => BinaryOperator::GreaterThan,
+        OxcBinaryOperator::GreaterEqualThan => BinaryOperator::GreaterThanOrEqual,
+        OxcBinaryOperator::ShiftLeft => BinaryOperator::ShiftLeft,
+        OxcBinaryOperator::ShiftRight => BinaryOperator::ShiftRight,
+        OxcBinaryOperator::ShiftRightZeroFill => BinaryOperator::ShiftRightUnsigned,
+        OxcBinaryOperator::BitwiseOR => BinaryOperator::BitOr,
+        OxcBinaryOperator::BitwiseXOR => BinaryOperator::BitXor,
+        OxcBinaryOperator::BitwiseAnd => BinaryOperator::BitAnd,
+        OxcBinaryOperator::In => BinaryOperator::In,
+        OxcBinaryOperator::Instanceof => BinaryOperator::InstanceOf,
+    }
+}
+
 fn compound_assignment_operator(
     operator: OxcAssignmentOperator,
 ) -> Option<CompoundAssignmentOperator> {
@@ -6883,6 +7147,58 @@ fn is_hook_name(name: &str) -> bool {
     rest.chars()
         .next()
         .is_some_and(|character| character.is_uppercase() || character.is_ascii_digit())
+}
+
+fn coercive_expression_semantics() -> InstructionSemantics {
+    InstructionSemantics {
+        purity: Purity::Unknown,
+        mutation: MutationEffect::Unknown,
+        evaluation: EvaluationMode::Eager,
+        may_throw: true,
+    }
+}
+
+fn unary_expression_semantics(operator: UnaryOperator) -> InstructionSemantics {
+    match operator {
+        UnaryOperator::Not | UnaryOperator::TypeOf | UnaryOperator::Void => {
+            InstructionSemantics::PURE_EAGER
+        }
+        UnaryOperator::Plus
+        | UnaryOperator::Minus
+        | UnaryOperator::BitNot
+        | UnaryOperator::Delete => coercive_expression_semantics(),
+    }
+}
+
+fn binary_expression_semantics(operator: BinaryOperator) -> InstructionSemantics {
+    match operator {
+        BinaryOperator::StrictEqual | BinaryOperator::StrictNotEqual => {
+            InstructionSemantics::PURE_EAGER
+        }
+        BinaryOperator::Add
+        | BinaryOperator::Subtract
+        | BinaryOperator::Multiply
+        | BinaryOperator::Divide
+        | BinaryOperator::Remainder
+        | BinaryOperator::Exponent
+        | BinaryOperator::Equal
+        | BinaryOperator::NotEqual
+        | BinaryOperator::LessThan
+        | BinaryOperator::LessThanOrEqual
+        | BinaryOperator::GreaterThan
+        | BinaryOperator::GreaterThanOrEqual
+        | BinaryOperator::ShiftLeft
+        | BinaryOperator::ShiftRight
+        | BinaryOperator::ShiftRightUnsigned
+        | BinaryOperator::BitOr
+        | BinaryOperator::BitXor
+        | BinaryOperator::BitAnd
+        | BinaryOperator::In
+        | BinaryOperator::InstanceOf
+        | BinaryOperator::LogicalAnd
+        | BinaryOperator::LogicalOr
+        | BinaryOperator::NullishCoalescing => coercive_expression_semantics(),
+    }
 }
 
 fn reactive_read_semantics() -> InstructionSemantics {

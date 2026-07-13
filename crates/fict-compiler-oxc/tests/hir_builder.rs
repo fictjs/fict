@@ -3,8 +3,9 @@ use fict_compiler_oxc::{
 };
 use fict_hir::{
     BinaryOperator, CallHost, CompoundAssignmentOperator, DeclarationKind, EvaluationMode,
-    FictMacroKind, FunctionKind, HirInstructionKind, IterationKind, MutationEffect, Purity,
-    ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, UpdateOperator,
+    FictMacroKind, FunctionKind, HirInstructionKind, IterationKind, LiteralValue, MutationEffect,
+    Purity, ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind, TerminatorKind,
+    UnaryOperator, UpdateOperator, ValueKind,
 };
 
 fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
@@ -1370,7 +1371,7 @@ fn materializes_variable_initializers_and_opaque_destructuring_in_semantic_order
                 var fromVar = effect('var');
                 let fromLet = effect('let');
                 const fromMember = input.value;
-                const { value: picked = fallback(), nested: { item }, ...rest } = sourceValue();
+                const { value: picked = fallback() + 1, nested: { item }, ...rest } = sourceValue();
                 return [fromVar, fromLet, fromMember, picked, item, rest];
             }
             return hoisted;
@@ -1502,6 +1503,17 @@ fn materializes_variable_initializers_and_opaque_destructuring_in_semantic_order
         fallback_calls, 0,
         "pattern defaults stay deferred inside the adapter-owned fragment"
     );
+    assert!(!function.blocks.iter().any(|block| {
+        block.instructions.iter().any(|instruction| {
+            matches!(
+                instruction.kind,
+                HirInstructionKind::Binary {
+                    operator: BinaryOperator::Add,
+                    ..
+                }
+            ) && authored(instruction) == "fallback() + 1"
+        })
+    }));
     let source_value = find_result("sourceValue()");
     let (pattern_value, pattern_fragment) = function
         .blocks
@@ -1539,7 +1551,7 @@ fn materializes_variable_initializers_and_opaque_destructuring_in_semantic_order
     );
     assert_eq!(
         output.syntax_fragments[pattern_fragment.as_usize()].source,
-        "{ value: picked = fallback(), nested: { item }, ...rest }"
+        "{ value: picked = fallback() + 1, nested: { item }, ...rest }"
     );
     let declared = [local("picked"), local("item"), local("rest")];
     for target in declared {
@@ -1556,6 +1568,230 @@ fn materializes_variable_initializers_and_opaque_destructuring_in_semantic_order
             })
         }));
     }
+}
+
+#[test]
+fn materializes_literals_unary_and_binary_expressions_as_typed_values() {
+    let source = r#"
+        function expressions(input, side) {
+            const negativeZero = -0;
+            const arithmetic = 0x10 + 2 * 3;
+            const exact = input === null;
+            const loose = input == "1";
+            const negated = !input;
+            const ignored = void side();
+            const big = 9007199254740993n;
+            const regex = /a+/gi;
+            const text = "line\nvalue";
+            const enabled = true;
+            return [negativeZero, arithmetic, exact, loose, negated, ignored, big, regex, text, enabled];
+        }
+        function branch(input) {
+            if (input === null) return 1;
+            return 0;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified typed-expression HIR");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                hir.bindings[binding.as_usize()].display_name == "expressions"
+            })
+        })
+        .expect("expressions function");
+    let instructions: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let authored = |instruction: &fict_hir::HirInstruction| {
+        let span = instruction
+            .origin
+            .primary_span
+            .expect("authored expression");
+        &source[span.start() as usize..span.end() as usize]
+    };
+    let typed_result = |text: &str| {
+        instructions
+            .iter()
+            .find(|instruction| authored(instruction) == text)
+            .and_then(|instruction| instruction.result)
+            .unwrap_or_else(|| panic!("typed result for {text}"))
+    };
+
+    let zero = typed_result("0");
+    assert!(matches!(
+        function.values[zero.as_usize()].kind,
+        ValueKind::Literal(LiteralValue::Number(number)) if number.to_bits() == 0.0_f64.to_bits()
+    ));
+    let negative_zero = typed_result("-0");
+    assert!(instructions.iter().any(|instruction| {
+        instruction.result == Some(negative_zero)
+            && matches!(
+                instruction.kind,
+                HirInstructionKind::Unary {
+                    operator: UnaryOperator::Minus,
+                    argument,
+                } if argument == zero
+            )
+    }));
+
+    let multiply = typed_result("2 * 3");
+    let arithmetic = typed_result("0x10 + 2 * 3");
+    assert!(instructions.iter().any(|instruction| {
+        instruction.result == Some(multiply)
+            && matches!(
+                instruction.kind,
+                HirInstructionKind::Binary {
+                    operator: BinaryOperator::Multiply,
+                    ..
+                }
+            )
+    }));
+    assert!(instructions.iter().any(|instruction| {
+        instruction.result == Some(arithmetic)
+            && matches!(
+                instruction.kind,
+                HirInstructionKind::Binary {
+                    operator: BinaryOperator::Add,
+                    right,
+                    ..
+                } if right == multiply
+            )
+    }));
+
+    let exact = instructions
+        .iter()
+        .find(|instruction| authored(instruction) == "input === null")
+        .expect("strict equality");
+    assert!(matches!(
+        exact.kind,
+        HirInstructionKind::Binary {
+            operator: BinaryOperator::StrictEqual,
+            ..
+        }
+    ));
+    assert_eq!(exact.semantics, fict_hir::InstructionSemantics::PURE_EAGER);
+    let loose = instructions
+        .iter()
+        .find(|instruction| authored(instruction) == "input == \"1\"")
+        .expect("loose equality");
+    assert!(matches!(
+        loose.kind,
+        HirInstructionKind::Binary {
+            operator: BinaryOperator::Equal,
+            ..
+        }
+    ));
+    assert_eq!(loose.semantics.purity, Purity::Unknown);
+    assert_eq!(loose.semantics.mutation, MutationEffect::Unknown);
+    assert!(loose.semantics.may_throw);
+
+    for (text, operator) in [
+        ("!input", UnaryOperator::Not),
+        ("void side()", UnaryOperator::Void),
+    ] {
+        let unary = instructions
+            .iter()
+            .find(|instruction| authored(instruction) == text)
+            .unwrap_or_else(|| panic!("{text} unary"));
+        assert!(matches!(
+            unary.kind,
+            HirInstructionKind::Unary {
+                operator: candidate,
+                ..
+            } if candidate == operator
+        ));
+        assert_eq!(unary.semantics, fict_hir::InstructionSemantics::PURE_EAGER);
+    }
+
+    let literals: Vec<_> = instructions
+        .iter()
+        .filter_map(|instruction| match &instruction.kind {
+            HirInstructionKind::Literal(literal) => Some((authored(instruction), literal)),
+            _ => None,
+        })
+        .collect();
+    assert!(literals.iter().any(|(text, literal)| {
+        *text == "9007199254740993n"
+            && *literal == &LiteralValue::BigInt("9007199254740993".to_owned())
+    }));
+    assert!(literals.iter().any(|(text, literal)| {
+        *text == "/a+/gi"
+            && *literal
+                == &LiteralValue::RegExp {
+                    pattern: "a+".to_owned(),
+                    flags: "gi".to_owned(),
+                }
+    }));
+    assert!(literals.iter().any(|(text, literal)| {
+        *text == "\"line\\nvalue\"" && *literal == &LiteralValue::String("line\nvalue".to_owned())
+    }));
+    assert!(
+        literals
+            .iter()
+            .any(|(text, literal)| { *text == "true" && *literal == &LiteralValue::Boolean(true) })
+    );
+
+    for name in [
+        "negativeZero",
+        "arithmetic",
+        "exact",
+        "loose",
+        "negated",
+        "ignored",
+        "big",
+        "regex",
+        "text",
+        "enabled",
+    ] {
+        let local = function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"));
+        assert!(instructions.iter().any(|instruction| {
+            matches!(
+                instruction.kind,
+                HirInstructionKind::Declare {
+                    local: candidate,
+                    initializer: Some(_),
+                    ..
+                } if candidate == local.id
+            )
+        }));
+    }
+
+    let branch = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "branch")
+        })
+        .expect("branch function");
+    let TerminatorKind::Branch { test, .. } = branch.blocks[0].terminator.kind else {
+        panic!("branch terminator")
+    };
+    assert!(branch.blocks[0].instructions.iter().any(|instruction| {
+        instruction.result == Some(test)
+            && matches!(
+                instruction.kind,
+                HirInstructionKind::Binary {
+                    operator: BinaryOperator::StrictEqual,
+                    ..
+                }
+            )
+    }));
 }
 
 #[test]
