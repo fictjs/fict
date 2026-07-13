@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use fict_diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
-use fict_emit::{EmitOperation, EmitProgram, RuntimeHelper};
-use fict_hir::{CompoundAssignmentOperator, UpdateOperator};
+use fict_emit::{DomNamespace, EmitOperation, EmitProgram, RuntimeHelper};
+use fict_hir::{CompoundAssignmentOperator, TemplateId, UpdateOperator};
 use oxc::{
     allocator::{Allocator, TakeIn, Vec as ArenaVec},
     ast::{
@@ -89,24 +89,32 @@ pub fn emit_program(
     let (reads, read_diagnostics) = read_rewrites(emit);
     let (mutations, mutation_diagnostics) = mutation_rewrites(emit);
     let (vnodes, vnode_diagnostics) = vnode_rewrites(emit);
+    let templates = template_rewrites(emit);
     diagnostics.extend(rewrite_diagnostics);
     diagnostics.extend(read_diagnostics);
     diagnostics.extend(mutation_diagnostics);
     diagnostics.extend(vnode_diagnostics);
+    diagnostics.extend(templates.diagnostics);
     if !diagnostics.is_empty() {
         return failed_output(diagnostics);
     }
+    let template_declarations = match parse_template_declarations(&allocator, &templates.sources) {
+        Ok(declarations) => declarations,
+        Err(findings) => return failed_output(findings),
+    };
     let mut rewriter = AstRewriter {
         allocator: &allocator,
         call_rewrites: &rewrites,
         reads: &reads,
         mutations: &mutations,
         vnodes: &vnodes,
+        clones: &templates.clones,
         context_declarations,
         matched_calls: BTreeSet::new(),
         matched_reads: BTreeSet::new(),
         matched_mutations: BTreeSet::new(),
         matched_vnodes: BTreeSet::new(),
+        matched_clones: BTreeSet::new(),
         vnode_depth: 0,
         active_fragment_local: None,
         diagnostics: Vec::new(),
@@ -170,6 +178,21 @@ pub fn emit_program(
             );
         }
     }
+    for location in templates.clones.keys() {
+        if !rewriter.matched_clones.contains(location) {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-ORIGIN",
+                    "EmitIR template-clone origin does not identify an OXC JSX root expression",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(
+                    SourceSpan::new(location.0, location.1)
+                        .expect("ordered EmitIR template-clone location"),
+                ),
+            );
+        }
+    }
     for location in rewriter.context_declarations.keys() {
         diagnostics.push(
             emit_error(
@@ -185,6 +208,10 @@ pub fn emit_program(
     diagnostics.append(&mut rewriter.diagnostics);
     if !diagnostics.is_empty() {
         return failed_output(diagnostics);
+    }
+
+    for statement in template_declarations.into_iter().rev() {
+        program.body.insert(0, statement);
     }
 
     if !import_source.is_empty() {
@@ -360,9 +387,7 @@ fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
             EmitOperation::UpdateReactive { projections, .. } => !projections.is_empty(),
             _ => matches!(
                 operation,
-                EmitOperation::DeclareTemplate { .. }
-                    | EmitOperation::CloneTemplate { .. }
-                    | EmitOperation::ResolveElement { .. }
+                EmitOperation::ResolveElement { .. }
                     | EmitOperation::InvokeComponent { .. }
                     | EmitOperation::CreateElement { .. }
                     | EmitOperation::BindDom { .. }
@@ -644,6 +669,182 @@ fn vnode_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), VNodeRewrite>, Ve
     (rewrites, diagnostics)
 }
 
+#[derive(Debug)]
+struct TemplateSource {
+    source: String,
+}
+
+#[derive(Debug, Clone)]
+struct CloneRewrite {
+    factory: String,
+}
+
+struct TemplateRewrites {
+    sources: Vec<TemplateSource>,
+    clones: BTreeMap<(u32, u32), CloneRewrite>,
+    diagnostics: Vec<Diagnostic>,
+}
+
+fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
+    let helper_names: BTreeMap<_, _> = emit
+        .imports
+        .iter()
+        .map(|intent| (intent.helper, intent.local.as_str()))
+        .collect();
+    let mut declarations: BTreeMap<TemplateId, String> = BTreeMap::new();
+    let mut locals = BTreeSet::new();
+    let mut sources = Vec::new();
+    let mut diagnostics = Vec::new();
+    for operation in emit
+        .functions
+        .iter()
+        .flat_map(|function| &function.operations)
+    {
+        let EmitOperation::DeclareTemplate {
+            template,
+            local,
+            html,
+            namespace,
+            helper,
+            origin,
+        } = operation
+        else {
+            continue;
+        };
+        let Some(helper_local) = helper_names.get(helper) else {
+            let mut diagnostic = emit_error(
+                "FICT-OXC-EMIT-IMPORT",
+                "template declaration helper has no runtime import intent",
+                GuaranteeClass::Internal,
+            );
+            diagnostic.primary_span = origin.primary_span;
+            diagnostics.push(diagnostic);
+            continue;
+        };
+        if declarations.insert(*template, local.clone()).is_some() || !locals.insert(local.clone())
+        {
+            let mut diagnostic = emit_error(
+                "FICT-OXC-EMIT-TEMPLATE",
+                "template declarations must have unique template and local identities",
+                GuaranteeClass::Internal,
+            );
+            diagnostic.primary_span = origin.primary_span;
+            diagnostics.push(diagnostic);
+            continue;
+        }
+        let Some(call) = render_template_call(helper_local, html, *namespace) else {
+            let mut diagnostic = emit_error(
+                "FICT-OXC-EMIT-TEMPLATE",
+                "template declaration uses a non-concrete DOM namespace",
+                GuaranteeClass::Internal,
+            );
+            diagnostic.primary_span = origin.primary_span;
+            diagnostics.push(diagnostic);
+            continue;
+        };
+        sources.push(TemplateSource {
+            source: format!("const {local} = {call};"),
+        });
+    }
+
+    let mut clones = BTreeMap::new();
+    for operation in emit
+        .functions
+        .iter()
+        .flat_map(|function| &function.operations)
+    {
+        let EmitOperation::CloneTemplate {
+            template, origin, ..
+        } = operation
+        else {
+            continue;
+        };
+        let Some(span) = origin.primary_span else {
+            diagnostics.push(emit_error(
+                "FICT-OXC-EMIT-ORIGIN",
+                "template-clone operation requires a source origin",
+                GuaranteeClass::Internal,
+            ));
+            continue;
+        };
+        let Some(factory) = declarations.get(template) else {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-TEMPLATE",
+                    "template clone has no matching declaration",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(span),
+            );
+            continue;
+        };
+        if clones
+            .insert(
+                (span.start(), span.end()),
+                CloneRewrite {
+                    factory: factory.clone(),
+                },
+            )
+            .is_some()
+        {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-ORIGIN",
+                    "multiple template clones share the same source origin",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(span),
+            );
+        }
+    }
+    TemplateRewrites {
+        sources,
+        clones,
+        diagnostics,
+    }
+}
+
+fn render_template_call(helper: &str, html: &str, namespace: DomNamespace) -> Option<String> {
+    let html = quote_javascript_string(html);
+    Some(match namespace {
+        DomNamespace::Html => format!("{helper}({html})"),
+        DomNamespace::Svg => format!("{helper}({html}, void 0, true)"),
+        DomNamespace::MathMl
+        | DomNamespace::MathMlTextIntegration
+        | DomNamespace::MathMlAnnotationXml => {
+            format!("{helper}({html}, void 0, void 0, true)")
+        }
+        DomNamespace::Parent => return None,
+    })
+}
+
+fn quote_javascript_string(value: &str) -> String {
+    use std::fmt::Write;
+
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\t' => quoted.push_str("\\t"),
+            '\u{08}' => quoted.push_str("\\b"),
+            '\u{0c}' => quoted.push_str("\\f"),
+            '\u{2028}' => quoted.push_str("\\u2028"),
+            '\u{2029}' => quoted.push_str("\\u2029"),
+            character if character <= '\u{1f}' => {
+                write!(quoted, "\\u{:04x}", u32::from(character))
+                    .expect("writing to a String cannot fail");
+            }
+            character => quoted.push(character),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
 fn render_runtime_imports(emit: &EmitProgram) -> String {
     let mut output = String::new();
     for intent in &emit.imports {
@@ -747,17 +948,46 @@ fn parse_context_declarations<'a>(
     Ok(declarations)
 }
 
+fn parse_template_declarations<'a>(
+    allocator: &'a Allocator,
+    sources: &'a [TemplateSource],
+) -> Result<Vec<Statement<'a>>, Vec<Diagnostic>> {
+    let mut declarations = Vec::with_capacity(sources.len());
+    for source in sources {
+        let parsed = Parser::new(allocator, &source.source, SourceType::mjs()).parse();
+        if !parsed.diagnostics.is_empty() {
+            return Err(convert_diagnostics(
+                parsed.diagnostics,
+                "FICT-OXC-EMIT-TEMPLATE",
+            ));
+        }
+        let mut program = parsed.program;
+        if program.body.len() != 1 {
+            return Err(vec![emit_error(
+                "FICT-OXC-EMIT-TEMPLATE",
+                "generated template declaration did not parse as one statement",
+                GuaranteeClass::Internal,
+            )]);
+        }
+        ZeroSpans.visit_program(&mut program);
+        declarations.push(program.body.pop().expect("one template statement"));
+    }
+    Ok(declarations)
+}
+
 struct AstRewriter<'a, 'emit> {
     allocator: &'a Allocator,
     call_rewrites: &'emit BTreeMap<(u32, u32), CallRewrite>,
     reads: &'emit BTreeSet<(u32, u32)>,
     mutations: &'emit BTreeMap<(u32, u32), MutationRewrite>,
     vnodes: &'emit BTreeMap<(u32, u32), VNodeRewrite>,
+    clones: &'emit BTreeMap<(u32, u32), CloneRewrite>,
     context_declarations: BTreeMap<(u32, u32), Statement<'a>>,
     matched_calls: BTreeSet<(u32, u32)>,
     matched_reads: BTreeSet<(u32, u32)>,
     matched_mutations: BTreeSet<(u32, u32)>,
     matched_vnodes: BTreeSet<(u32, u32)>,
+    matched_clones: BTreeSet<(u32, u32)>,
     vnode_depth: usize,
     active_fragment_local: Option<String>,
     diagnostics: Vec<Diagnostic>,
@@ -801,6 +1031,30 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
 
     fn visit_expression(&mut self, expression: &mut Expression<'a>) {
         let location = (expression.span().start, expression.span().end);
+        if let Some(clone) = self.clones.get(&location)
+            && matches!(
+                expression,
+                Expression::JSXElement(_) | Expression::JSXFragment(_)
+            )
+        {
+            let span = expression.span();
+            let builder = AstBuilder::new(self.allocator);
+            let callee = Expression::new_identifier(
+                span,
+                self.allocator.alloc_str(&clone.factory),
+                &builder,
+            );
+            *expression = Expression::new_call_expression(
+                span,
+                callee,
+                NONE,
+                ArenaVec::new_in(&self.allocator),
+                false,
+                &builder,
+            );
+            self.matched_clones.insert(location);
+            return;
+        }
         let vnode = self.vnodes.get(&location).cloned();
         if matches!(
             expression,

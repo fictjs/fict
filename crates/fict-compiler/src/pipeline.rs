@@ -442,7 +442,7 @@ mod tests {
     }
 
     #[test]
-    fn runs_scoped_state_context_reads_and_writes_but_fails_closed_for_fine_grained_jsx() {
+    fn runs_scoped_state_context_reads_writes_and_static_fine_grained_jsx() {
         let state = compile(request(
             "import { $state } from 'fict'; function Component() { const __fictCtx = 'user'; let count = $state(0); const assigned = (count = 2); const before = count++; return [__fictCtx, count, assigned, before]; }",
             "state.js",
@@ -463,13 +463,57 @@ mod tests {
             "export function Component() { return <button>Save</button>; }",
             "component.jsx",
         ));
-        assert!(jsx.has_errors());
-        assert!(jsx.code.is_empty());
+        assert!(!jsx.has_errors(), "{:?}", jsx.diagnostics);
+        assert!(jsx.code.contains("import { template }"), "{}", jsx.code);
         assert!(
-            jsx.diagnostics
+            jsx.code.contains("template(\"<button>Save</button>\")"),
+            "{}",
+            jsx.code
+        );
+        assert!(jsx.code.contains("return __fict_tmpl0()"), "{}", jsx.code);
+
+        let dynamic = compile(request(
+            "export function Component(value) { return <button>{value}</button>; }",
+            "dynamic.jsx",
+        ));
+        assert!(dynamic.has_errors());
+        assert!(dynamic.code.is_empty());
+        assert!(
+            dynamic
+                .diagnostics
                 .iter()
                 .any(|diagnostic| diagnostic.code.as_str() == "FICT-OXC-EMIT-UNSUPPORTED")
         );
+    }
+
+    #[test]
+    fn hoists_collision_free_static_svg_mathml_and_fragment_templates() {
+        let result = compile(request(
+            "const __fict_tmpl0 = 'user'; export function Icon() { return <svg><path d=\"M0 0\" /></svg>; } export function Formula() { return <math><mi>x</mi></math>; } export function Pair() { return <><i>a</i><i>b</i></>; }",
+            "static-roots.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .code
+                .contains("const __fict_tmpl0_1 = template(\"<svg><path d=\\\"M0 0\\\"></path></svg>\", void 0, true)"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("template(\"<math><mi>x</mi></math>\", void 0, void 0, true)"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("template(\"<i>a</i><i>b</i>\")"),
+            "{}",
+            result.code
+        );
+        assert!(!result.code.contains("return <"), "{}", result.code);
     }
 
     #[test]

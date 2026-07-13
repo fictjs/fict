@@ -252,6 +252,7 @@ pub enum EmitOperation {
     },
     DeclareTemplate {
         template: TemplateId,
+        local: String,
         html: String,
         namespace: DomNamespace,
         helper: RuntimeHelper,

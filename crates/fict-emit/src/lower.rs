@@ -173,6 +173,15 @@ fn lower_program(
                 .iter()
                 .flat_map(|function| function.temporaries.iter().map(|temp| temp.name.clone())),
         )
+        .chain(functions.iter().flat_map(|function| {
+            function
+                .operations
+                .iter()
+                .filter_map(|operation| match operation {
+                    EmitOperation::DeclareTemplate { local, .. } => Some(local.clone()),
+                    _ => None,
+                })
+        }))
         .chain(functions.iter().filter_map(|function| {
             function
                 .context
@@ -779,8 +788,11 @@ fn lower_jsx_instruction(
     }
     let serialized = serialize_template(&template.root)?;
     if declared_templates.insert(template_id) {
+        let preferred = format!("__fict_tmpl{}", template_id.index());
+        let local = temporary_names.allocate(&preferred);
         operations.push(EmitOperation::DeclareTemplate {
             template: template_id,
+            local: local.clone(),
             html: serialized.html,
             namespace: serialized.namespace,
             helper: RuntimeHelper::Template,

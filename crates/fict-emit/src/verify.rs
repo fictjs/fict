@@ -295,6 +295,15 @@ fn verify_module_plan(hir: &HirFile, program: &EmitProgram, diagnostics: &mut Di
                         .iter()
                         .map(|context| context.local.as_str()),
                 )
+                .chain(
+                    function
+                        .operations
+                        .iter()
+                        .filter_map(|operation| match operation {
+                            EmitOperation::DeclareTemplate { local, .. } => Some(local.as_str()),
+                            _ => None,
+                        }),
+                )
         }));
     if required_names.into_iter().any(|name| {
         !program
@@ -466,11 +475,13 @@ fn verify_operations(
             }
             EmitOperation::DeclareTemplate {
                 template,
+                local,
                 html,
                 namespace,
                 ..
             } => {
-                if html.is_empty()
+                if !valid_identifier(local)
+                    || html.is_empty()
                     || *namespace == DomNamespace::Parent
                     || hir
                         .templates
