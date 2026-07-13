@@ -1849,7 +1849,7 @@ fn propagates_reactive_dependencies_through_pattern_defaults() {
         analyze_aliases(&hir, function.id, &ssa, &dependencies).expect("reactive-pattern aliases");
     let shapes = analyze_shapes(&hir, function.id, &ssa, &dependencies, &aliases)
         .expect("reactive-pattern shapes");
-    let scopes = analyze_reactive_scopes(&hir, function.id, &ssa, &dependencies, &shapes)
+    let scopes = analyze_reactive_scopes(&hir, function.id, &ssa, &dependencies, &aliases, &shapes)
         .expect("reactive-pattern scopes");
     let derived = scopes
         .bindings

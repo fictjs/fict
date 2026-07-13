@@ -259,8 +259,15 @@ fn propagates_state_into_pure_derived_bindings_and_active_blocks() {
     let aliases = analyze_aliases(&file, FunctionId::new(0), &ssa, &dependencies).expect("aliases");
     let shapes =
         analyze_shapes(&file, FunctionId::new(0), &ssa, &dependencies, &aliases).expect("shapes");
-    let analysis = analyze_reactive_scopes(&file, FunctionId::new(0), &ssa, &dependencies, &shapes)
-        .expect("reactive scopes");
+    let analysis = analyze_reactive_scopes(
+        &file,
+        FunctionId::new(0),
+        &ssa,
+        &dependencies,
+        &aliases,
+        &shapes,
+    )
+    .expect("reactive scopes");
 
     assert_eq!(analysis.bindings.len(), 5);
     assert_eq!(analysis.bindings[0].kind, ReactiveBindingKind::State);

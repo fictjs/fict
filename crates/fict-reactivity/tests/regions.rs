@@ -91,8 +91,15 @@ fn analyze(function: HirFunction) -> fict_reactivity::RegionAnalysis {
     let aliases = analyze_aliases(&file, FunctionId::new(0), &ssa, &dependencies).expect("aliases");
     let shapes =
         analyze_shapes(&file, FunctionId::new(0), &ssa, &dependencies, &aliases).expect("shapes");
-    let scopes = analyze_reactive_scopes(&file, FunctionId::new(0), &ssa, &dependencies, &shapes)
-        .expect("scopes");
+    let scopes = analyze_reactive_scopes(
+        &file,
+        FunctionId::new(0),
+        &ssa,
+        &dependencies,
+        &aliases,
+        &shapes,
+    )
+    .expect("scopes");
     let cycles = analyze_reactive_cycles(function, &scopes).expect("cycles");
     analyze_regions(&file, function, &ssa, &dependencies, &scopes, &cycles).expect("regions")
 }
@@ -196,8 +203,15 @@ fn splits_regions_at_barriers_and_memoizes_only_safe_derived_ranges() {
     let aliases = analyze_aliases(&file, FunctionId::new(0), &ssa, &dependencies).expect("aliases");
     let shapes =
         analyze_shapes(&file, FunctionId::new(0), &ssa, &dependencies, &aliases).expect("shapes");
-    let scopes = analyze_reactive_scopes(&file, FunctionId::new(0), &ssa, &dependencies, &shapes)
-        .expect("scopes");
+    let scopes = analyze_reactive_scopes(
+        &file,
+        FunctionId::new(0),
+        &ssa,
+        &dependencies,
+        &aliases,
+        &shapes,
+    )
+    .expect("scopes");
     let cycles = analyze_reactive_cycles(function, &scopes).expect("cycles");
     let analysis =
         analyze_regions(&file, function, &ssa, &dependencies, &scopes, &cycles).expect("regions");

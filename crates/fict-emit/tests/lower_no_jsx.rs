@@ -190,8 +190,9 @@ fn analyses(hir: &HirFile) -> (Vec<RegionAnalysis>, Vec<ReactiveCycleAnalysis>) 
         let aliases = analyze_aliases(hir, function_id, &ssa, &dependencies).expect("aliases");
         let shapes =
             analyze_shapes(hir, function_id, &ssa, &dependencies, &aliases).expect("shapes");
-        let scopes = analyze_reactive_scopes(hir, function_id, &ssa, &dependencies, &shapes)
-            .expect("scopes");
+        let scopes =
+            analyze_reactive_scopes(hir, function_id, &ssa, &dependencies, &aliases, &shapes)
+                .expect("scopes");
         let cycles = analyze_reactive_cycles(function, &scopes).expect("cycles");
         let regions =
             analyze_regions(hir, function, &ssa, &dependencies, &scopes, &cycles).expect("regions");

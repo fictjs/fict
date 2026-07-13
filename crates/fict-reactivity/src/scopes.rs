@@ -9,8 +9,9 @@ use fict_hir::{
 };
 
 use crate::{
-    DependencyAnalysis, DependencyBase, DependencyPath, ShapeAnalysis, ShapeKind, ShapeSource,
-    SsaAnalysis, SsaDefinitionLocation, verify_dependencies, verify_shapes, verify_ssa,
+    AliasAnalysis, DependencyAnalysis, DependencyBase, DependencyPath, ShapeAnalysis, ShapeKind,
+    ShapeSource, SsaAnalysis, SsaDefinitionLocation, verify_aliases, verify_dependencies,
+    verify_shapes, verify_ssa,
 };
 
 /// How a reactive SSA binding obtained tracked semantics.
@@ -104,6 +105,7 @@ pub fn analyze_reactive_scopes(
     function_id: FunctionId,
     ssa: &SsaAnalysis,
     dependencies: &DependencyAnalysis,
+    aliases: &AliasAnalysis,
     shapes: &ShapeAnalysis,
 ) -> Result<ReactiveScopeAnalysis, DiagnosticBundle> {
     let Some(function) = file.functions.get(function_id.as_usize()) else {
@@ -114,25 +116,8 @@ pub fn analyze_reactive_scopes(
     };
     verify_ssa(function, ssa)?;
     verify_dependencies(file, function_id, ssa, dependencies)?;
-    let empty_aliases = crate::AliasAnalysis {
-        edges: Vec::new(),
-        classes: ssa
-            .definitions
-            .iter()
-            .map(|definition| crate::AliasClass {
-                root: definition.name,
-                members: vec![definition.name],
-            })
-            .collect(),
-        invalidations: Vec::new(),
-        stats: crate::AliasStats {
-            classes: count_u32(ssa.definitions.len()),
-            ..crate::AliasStats::default()
-        },
-    };
-    // Shape's own verifier only needs the alias partition. The real alias verifier
-    // already ran inside shape construction and cannot be reconstructed from shapes.
-    verify_shapes(function, ssa, &empty_aliases, shapes)?;
+    verify_aliases(function, ssa, aliases)?;
+    verify_shapes(function, ssa, aliases, shapes)?;
 
     let shape_by_name: BTreeMap<_, _> = shapes
         .shapes
@@ -140,6 +125,11 @@ pub fn analyze_reactive_scopes(
         .map(|fact| (fact.name, &fact.shape))
         .collect();
     let candidates = binding_candidates(function, ssa, dependencies);
+    let alias_sources: BTreeMap<_, _> = aliases
+        .edges
+        .iter()
+        .map(|edge| (edge.alias, edge.source))
+        .collect();
     let mut kinds = BTreeMap::new();
     for definition in &ssa.definitions {
         let Some(shape) = shape_by_name.get(&definition.name) else {
@@ -194,6 +184,13 @@ pub fn analyze_reactive_scopes(
         let previous = kinds.clone();
         for candidate in &candidates {
             if previous.contains_key(&candidate.name) || !candidate.eligible_for_derivation {
+                continue;
+            }
+            if alias_sources
+                .get(&candidate.name)
+                .is_some_and(|source| previous.contains_key(source))
+            {
+                kinds.insert(candidate.name, ReactiveBindingKind::Alias);
                 continue;
             }
             if candidate.dependencies.iter().any(|path| {

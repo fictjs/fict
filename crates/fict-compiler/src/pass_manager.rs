@@ -272,7 +272,7 @@ pub fn run_core_passes(
             analyze_shapes(&hir, function_id, &ssa, &dependencies, &aliases)
         })?;
         let scopes = timed(&mut context, "reactive-scopes", || {
-            analyze_reactive_scopes(&hir, function_id, &ssa, &dependencies, &shapes)
+            analyze_reactive_scopes(&hir, function_id, &ssa, &dependencies, &aliases, &shapes)
         })?;
         let cycles = timed(&mut context, "reactive-cycles", || {
             analyze_reactive_cycles(function, &scopes)

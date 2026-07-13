@@ -7,8 +7,9 @@ use fict_hir::{
     StructuredSourceKind,
 };
 use fict_reactivity::{
-    BarrierKind, DependencyBase, DependencySegment, EscapeKind, ShapeKind, ShapeSource,
-    SsaDefinitionKind, SsaDefinitionLocation, StructuredConstructKind, StructuredLoopKind,
+    BarrierKind, DependencyBase, DependencySegment, EscapeKind, ReactiveBindingKind, ShapeKind,
+    ShapeSource, SsaDefinitionKind, SsaDefinitionLocation, StructuredConstructKind,
+    StructuredLoopKind,
 };
 
 fn build_fixture() -> fict_hir::HirFile {
@@ -55,6 +56,67 @@ fn runs_complete_core_pipeline_and_materializes_region_ids() {
             function.regions.regions.len()
         );
     }
+}
+
+#[test]
+fn classifies_direct_references_to_derived_values_as_reactive_aliases() {
+    let frontend = build_hir(
+        r#"
+            import { $state } from 'fict';
+            export function Counter() {
+                const count = $state(0);
+                const active = count !== 0;
+                const alias = active;
+                return alias;
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Module,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified alias HIR"),
+        CorePassOptions {
+            optimize: false,
+            ..CorePassOptions::default()
+        },
+    )
+    .expect("core passes over derived alias");
+    let function = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                output.hir.bindings[binding.as_usize()].display_name == "Counter"
+            })
+        })
+        .expect("Counter function");
+    let analysis = &output.functions[function.id.as_usize()];
+    let kinds: std::collections::BTreeMap<_, _> = analysis
+        .scopes
+        .bindings
+        .iter()
+        .filter_map(|binding| {
+            function.locals[binding.name.local.as_usize()]
+                .debug_name
+                .as_deref()
+                .map(|name| (name, binding.kind))
+        })
+        .collect();
+
+    assert_eq!(kinds["count"], ReactiveBindingKind::State);
+    assert_eq!(kinds["active"], ReactiveBindingKind::Derived);
+    assert_eq!(kinds["alias"], ReactiveBindingKind::Alias);
 }
 
 #[test]
