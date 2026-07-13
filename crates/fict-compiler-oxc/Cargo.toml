@@ -15,5 +15,6 @@ fict-metadata.workspace = true
 oxc.workspace = true
 
 [dev-dependencies]
+fict-reactivity.workspace = true
 serde.workspace = true
 serde_json.workspace = true

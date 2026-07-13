@@ -209,6 +209,7 @@ dependencies = [
  "fict-emit",
  "fict-hir",
  "fict-metadata",
+ "fict-reactivity",
  "oxc",
  "serde",
  "serde_json",

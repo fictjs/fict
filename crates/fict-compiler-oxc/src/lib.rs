@@ -7,6 +7,7 @@
 //! locks the exact OXC version used by every later compiler milestone.
 
 mod compile;
+mod emit_codegen;
 mod facts;
 mod frontend;
 mod hir_builder;
@@ -15,6 +16,7 @@ mod typescript;
 pub use compile::{
     OxcCompileOptions, OxcCompileOutput, OxcModuleKind, OxcSourceLanguage, compile_passthrough,
 };
+pub use emit_codegen::emit_program;
 pub use facts::{
     FictDirectiveKind, FictReturnShape, FrontendDirective, FrontendSourceFacts,
     FrontendSuppression, ParsedFictReturn, PureAnnotation, PureComment, PureCommentKind,

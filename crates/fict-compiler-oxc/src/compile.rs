@@ -194,7 +194,7 @@ pub(crate) fn source_type(options: OxcCompileOptions) -> SourceType {
     }
 }
 
-fn failed_output(diagnostics: Vec<Diagnostic>) -> OxcCompileOutput {
+pub(crate) fn failed_output(diagnostics: Vec<Diagnostic>) -> OxcCompileOutput {
     OxcCompileOutput {
         code: String::new(),
         source_map_json: None,
