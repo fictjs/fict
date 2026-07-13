@@ -2046,6 +2046,106 @@ mod tests {
     }
 
     #[test]
+    fn diagnoses_reactive_classic_and_enumeration_loop_controls() {
+        let cases = [
+            (
+                "while",
+                "2",
+                "let index = 0; while (index < source) index += 1;",
+                false,
+            ),
+            (
+                "do-while",
+                "2",
+                "let index = 0; do { index += 1; } while (index < source);",
+                false,
+            ),
+            (
+                "for",
+                "2",
+                "for (let index = 0; index < source; index += 1) {}",
+                false,
+            ),
+            ("break", "true", "for (;;) { if (source) break; }", false),
+            (
+                "continue",
+                "false",
+                "for (let index = 0; index < 1; index += 1) { if (source) continue; }",
+                false,
+            ),
+            (
+                "for-of",
+                "[1, 2]",
+                "for (const value of source) { void value; }",
+                false,
+            ),
+            (
+                "for-in",
+                "{ first: 1, second: 2 }",
+                "for (const key in source) { void key; }",
+                false,
+            ),
+            (
+                "for-await-of",
+                "[1, 2]",
+                "for await (const value of source) { void value; }",
+                true,
+            ),
+        ];
+
+        for (name, initial, loop_source, is_async) in cases {
+            let async_keyword = if is_async { "async " } else { "" };
+            let source = format!(
+                "import {{ $state }} from 'fict'; export {async_keyword}function App() {{ let source = $state({initial}); {loop_source} return <div />; }}"
+            );
+            let filename = format!("reactive-{name}.tsx");
+            let strict = compile(request(&source, &filename));
+            assert!(strict.has_errors(), "{name}: {:?}", strict.diagnostics);
+            assert!(strict.code.is_empty(), "{name}: {}", strict.code);
+            let finding = strict
+                .diagnostics
+                .iter()
+                .find(|diagnostic| diagnostic.code.as_str() == "FICT-R006")
+                .unwrap_or_else(|| panic!("{name}: missing R006 in {:?}", strict.diagnostics));
+            assert_eq!(finding.severity, DiagnosticSeverity::Error, "{name}");
+            assert_eq!(finding.guarantee_class, GuaranteeClass::Fallback, "{name}");
+            assert!(finding.primary_span.is_some(), "{name}: {finding:?}");
+            assert!(finding.message.contains("source"), "{name}: {finding:?}");
+
+            let mut fallback_request = request(&source, &filename);
+            fallback_request.options.strict_guarantee = false;
+            let fallback = compile(fallback_request);
+            assert!(!fallback.has_errors(), "{name}: {:?}", fallback.diagnostics);
+            assert!(!fallback.code.is_empty(), "{name}");
+            assert!(
+                fallback.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code.as_str() == "FICT-R006"
+                        && diagnostic.severity == DiagnosticSeverity::Warning
+                        && diagnostic.message.contains("source")
+                }),
+                "{name}: {:?}",
+                fallback.diagnostics
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_diagnose_reactive_reads_that_do_not_control_a_loop() {
+        let source = "import { $state } from 'fict'; export function App() { let value = $state(1); let total = 0; for (let index = 0; index < 2; index += 1) total += value; return <div>{total}</div>; }";
+        let result = compile(request(source, "loop-body-read.tsx"));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|diagnostic| { diagnostic.code.as_str() != "FICT-R006" }),
+            "{:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
     fn emits_authored_classic_loops_from_structured_hir() {
         let source = "import { $state } from 'fict'; export function App() { let count = $state(0); while (count < 1) count++; do { count++; } while (count < 2); for (let index = 0; index < 1; index++) { count += index; } return count; }";
         let result = compile(request(source, "classic-loops.js"));

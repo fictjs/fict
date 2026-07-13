@@ -34,53 +34,75 @@ pub(crate) fn reactive_control_flow_diagnostics(core: &CorePassOutput) -> Vec<Di
         let mut unsupported = BTreeSet::new();
         let mut primary_span: Option<SourceSpan> = None;
         for construct in &analysis.structurize.constructs {
-            let StructuredConstructKind::Conditional { join, .. } = construct.kind else {
-                continue;
-            };
-            let Some(block) = function.blocks.get(construct.header.as_usize()) else {
-                continue;
-            };
-            let TerminatorKind::Branch { test, .. } = block.terminator.kind else {
-                continue;
-            };
-            let Some(paths) = analysis
-                .dependencies
-                .value_dependencies
-                .get(test.as_usize())
-            else {
-                continue;
-            };
-            let reactive_paths: Vec<_> = paths
-                .iter()
-                .filter(|path| {
-                    path.local()
-                        .is_some_and(|local| tracked_locals.contains(&local))
-                })
-                .cloned()
-                .collect();
-            if reactive_paths.is_empty() {
-                continue;
-            }
+            match &construct.kind {
+                StructuredConstructKind::Conditional { join, .. } => {
+                    let Some(block) = function.blocks.get(construct.header.as_usize()) else {
+                        continue;
+                    };
+                    let TerminatorKind::Branch { test, .. } = block.terminator.kind else {
+                        continue;
+                    };
+                    let reactive_paths = reactive_control_paths(
+                        analysis
+                            .dependencies
+                            .value_dependencies
+                            .get(test.as_usize())
+                            .map(Vec::as_slice),
+                        &tracked_locals,
+                    );
+                    if reactive_paths.is_empty() {
+                        continue;
+                    }
 
-            let condition_invokes_user_code =
-                value_has_unsafe_control_work(&core.hir, function, test, &mut BTreeSet::new());
-            let branch_return = is_branch_return_construct(function, construct, join);
-            let memoizable_story = !function.flags.no_memo
-                && !construct_has_unsafe_control_work(&core.hir, function, construct);
-            if !condition_invokes_user_code && (branch_return || memoizable_story) {
-                continue;
-            }
+                    let condition_invokes_user_code = value_has_unsafe_control_work(
+                        &core.hir,
+                        function,
+                        test,
+                        &mut BTreeSet::new(),
+                    );
+                    let branch_return = is_branch_return_construct(function, construct, *join);
+                    let memoizable_story = !function.flags.no_memo
+                        && !construct_has_unsafe_control_work(&core.hir, function, construct);
+                    if !condition_invokes_user_code && (branch_return || memoizable_story) {
+                        continue;
+                    }
 
-            unsupported.extend(reactive_paths);
-            let span = function
-                .values
-                .get(test.as_usize())
-                .and_then(|value| value.origin.primary_span)
-                .or(block.terminator.origin.primary_span);
-            if primary_span.is_none_or(|current| {
-                span.is_some_and(|candidate| candidate.start() < current.start())
-            }) {
-                primary_span = span;
+                    unsupported.extend(reactive_paths);
+                    record_primary_span(
+                        &mut primary_span,
+                        function
+                            .values
+                            .get(test.as_usize())
+                            .and_then(|value| value.origin.primary_span)
+                            .or(block.terminator.origin.primary_span),
+                    );
+                }
+                StructuredConstructKind::Loop { .. } => {
+                    for (control, block_id) in loop_control_values(function, construct) {
+                        let reactive_paths = reactive_control_paths(
+                            analysis
+                                .dependencies
+                                .value_dependencies
+                                .get(control.as_usize())
+                                .map(Vec::as_slice),
+                            &tracked_locals,
+                        );
+                        if reactive_paths.is_empty() {
+                            continue;
+                        }
+                        unsupported.extend(reactive_paths);
+                        let block = &function.blocks[block_id.as_usize()];
+                        record_primary_span(
+                            &mut primary_span,
+                            function
+                                .values
+                                .get(control.as_usize())
+                                .and_then(|value| value.origin.primary_span)
+                                .or(block.terminator.origin.primary_span),
+                        );
+                    }
+                }
+                StructuredConstructKind::Switch { .. } | StructuredConstructKind::Try { .. } => {}
             }
         }
         if unsupported.is_empty() {
@@ -102,12 +124,12 @@ pub(crate) fn reactive_control_flow_diagnostics(core: &CorePassOutput) -> Vec<Di
             DiagnosticCode::new("FICT-R006").expect("diagnostic literal"),
             DiagnosticSeverity::Warning,
             format!(
-                "Reactive control-flow reads ({displayed}{remainder}) force region re-execution. Prefer expression-only branching in JSX (for example, ternary or logical expressions) when you want finer-grained updates."
+                "Reactive control-flow reads ({displayed}{remainder}) force region re-execution. Prefer expression-only branching or iteration in JSX (for example, ternary, logical, or map expressions) when you want finer-grained updates."
             ),
         )
         .with_guarantee_class(GuaranteeClass::Fallback)
         .with_help(
-            "keep calls out of control-flow predicates, use a supported branch-return shape, or move the branch into JSX",
+            "keep calls out of control-flow predicates, keep loop controls static, use a supported branch-return shape, or move reactive branching/iteration into JSX",
         );
         if let Some(span) = primary_span {
             diagnostic = diagnostic.with_primary_span(span);
@@ -115,6 +137,59 @@ pub(crate) fn reactive_control_flow_diagnostics(core: &CorePassOutput) -> Vec<Di
         diagnostics.push(diagnostic);
     }
     diagnostics
+}
+
+fn reactive_control_paths(
+    paths: Option<&[DependencyPath]>,
+    tracked_locals: &BTreeSet<fict_hir::LocalId>,
+) -> Vec<DependencyPath> {
+    paths
+        .into_iter()
+        .flatten()
+        .filter(|path| {
+            path.local()
+                .is_some_and(|local| tracked_locals.contains(&local))
+        })
+        .cloned()
+        .collect()
+}
+
+fn loop_control_values(
+    function: &HirFunction,
+    construct: &StructuredConstruct,
+) -> Vec<(ValueId, BlockId)> {
+    let mut controls = Vec::new();
+    // A component loop executes only during its owning render. Every CFG decision nested in that
+    // loop can therefore make the loop result stale, including `continue`/`break` predicates; the
+    // backedge/header predicate alone is not a sufficient fail-closed boundary.
+    for block_id in &construct.blocks {
+        let block = &function.blocks[block_id.as_usize()];
+        let value = match &block.terminator.kind {
+            TerminatorKind::Branch { test, .. } => Some(*test),
+            TerminatorKind::ForIn { object, .. } => Some(*object),
+            TerminatorKind::ForOf { iterable, .. } => Some(*iterable),
+            TerminatorKind::Switch { discriminant, .. } => Some(*discriminant),
+            TerminatorKind::Return { .. }
+            | TerminatorKind::Throw { .. }
+            | TerminatorKind::Goto { .. }
+            | TerminatorKind::Try { .. }
+            | TerminatorKind::Unreachable => None,
+        };
+        if let Some(value) = value {
+            controls.push((value, *block_id));
+        }
+    }
+    controls.sort_unstable();
+    controls.dedup();
+    controls
+}
+
+fn record_primary_span(primary: &mut Option<SourceSpan>, candidate: Option<SourceSpan>) {
+    if primary.is_none_or(|current| {
+        candidate.is_some_and(|candidate| candidate.start() < current.start())
+    }) {
+        *primary = candidate;
+    }
 }
 
 fn display_names(function: &HirFunction, paths: &BTreeSet<DependencyPath>) -> Vec<String> {
