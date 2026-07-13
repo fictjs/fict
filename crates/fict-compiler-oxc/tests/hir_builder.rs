@@ -1432,6 +1432,95 @@ fn enforces_direct_hook_owner_and_control_flow_placement_by_binding() {
 }
 
 #[test]
+fn enforces_binding_aware_selector_control_flow_placement() {
+    let source = r#"
+        import { createSelector as select } from 'fict';
+        import * as Advanced from 'fict/advanced';
+
+        function Demo({ ready, items, value }) {
+            if (ready) select(() => value);
+            for (const item of items) Advanced.createSelector(() => item);
+            ready && select(() => value);
+            if (ready) select?.(() => value);
+            select(() => value) && ready;
+            return <div>{ready && select(() => value)(value)}</div>;
+        }
+
+        function Nested({ ready, value }) {
+            if (ready) {
+                const setup = () => select(() => value);
+                console.log(setup);
+            }
+            return <div />;
+        }
+
+        function Immediate({ ready, value }) {
+            if (ready) (() => select(() => value))();
+            return <div />;
+        }
+
+        function Shadow({ ready, value }, select) {
+            if (ready) select(() => value);
+            return <div />;
+        }
+    "#;
+    let strict = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(strict.hir.is_none());
+    let findings = strict
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.as_str() == "FICT-R004")
+        .collect::<Vec<_>>();
+    assert_eq!(findings.len(), 5, "{:?}", strict.diagnostics);
+    assert!(findings.iter().all(|diagnostic| {
+        diagnostic.severity == fict_diagnostics::DiagnosticSeverity::Error
+            && diagnostic.guarantee_class == fict_diagnostics::GuaranteeClass::Fallback
+    }));
+    let finding_sources = findings
+        .iter()
+        .map(|diagnostic| {
+            let span = diagnostic.primary_span.expect("selector placement span");
+            &source[span.start() as usize..span.end() as usize]
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        finding_sources,
+        [
+            "select(() => value)",
+            "Advanced.createSelector(() => item)",
+            "select(() => value)",
+            "select?.(() => value)",
+            "select(() => value)"
+        ]
+    );
+
+    let fallback = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions {
+            reactive_creation_control_flow_severity: fict_diagnostics::DiagnosticSeverity::Warning,
+            ..HirBuildOptions::default()
+        },
+    );
+    assert!(fallback.hir.is_some(), "{:?}", fallback.diagnostics);
+    assert_eq!(
+        fallback
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_str() == "FICT-R004")
+            .count(),
+        5
+    );
+    assert!(fallback.diagnostics.iter().all(|diagnostic| {
+        diagnostic.severity == fict_diagnostics::DiagnosticSeverity::Warning
+    }));
+}
+
+#[test]
 fn enforces_namespace_and_member_hook_placement() {
     let cases = [
         (

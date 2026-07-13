@@ -26,9 +26,9 @@ use oxc::{
             JSXAttributeItem, JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue,
             JSXChild as OxcJsxChild, JSXElement, JSXElementName as OxcJsxElementName,
             JSXExpression, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject,
-            MemberExpression, MetaProperty, Program, SimpleAssignmentTarget, Statement, Super,
-            ThisExpression, UpdateExpression, VariableDeclaration, VariableDeclarationKind,
-            VariableDeclarator,
+            LogicalExpression, MemberExpression, MetaProperty, Program, SimpleAssignmentTarget,
+            Statement, Super, ThisExpression, UpdateExpression, VariableDeclaration,
+            VariableDeclarationKind, VariableDeclarator,
         },
         ast_kind::AstKind,
     },
@@ -70,6 +70,8 @@ pub struct HirBuildOptions {
     pub reactive_scopes: Vec<String>,
     /// Reject non-guaranteed nested state mutations instead of emitting a fallback warning.
     pub strict_guarantee: bool,
+    /// Effective severity for runtime reactive creation in non-JSX control flow.
+    pub reactive_creation_control_flow_severity: DiagnosticSeverity,
 }
 
 impl Default for HirBuildOptions {
@@ -77,6 +79,7 @@ impl Default for HirBuildOptions {
         Self {
             reactive_scopes: Vec::new(),
             strict_guarantee: true,
+            reactive_creation_control_flow_severity: DiagnosticSeverity::Error,
         }
     }
 }
@@ -763,6 +766,7 @@ struct Builder<'source, 'semantic> {
     configured_bindings: BTreeSet<BindingId>,
     reactive_functions: BTreeMap<FunctionId, ReactiveScopeKind>,
     strict_guarantee: bool,
+    reactive_creation_control_flow_severity: DiagnosticSeverity,
 }
 
 impl<'source, 'semantic> Builder<'source, 'semantic> {
@@ -846,6 +850,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             configured_bindings,
             reactive_functions: BTreeMap::new(),
             strict_guarantee: options.strict_guarantee,
+            reactive_creation_control_flow_severity: options
+                .reactive_creation_control_flow_severity,
         }
     }
 
@@ -887,6 +893,13 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 })
                 .filter_map(|binding| self.old_to_new.get(&binding.id.index()).copied())
                 .collect();
+        let mut immediate_invocation_spans = ImmediateInvocationCollector::default();
+        immediate_invocation_spans.visit_program(program);
+        let immediate_invocations = immediate_invocation_spans
+            .functions
+            .into_iter()
+            .filter_map(|span| self.function_by_span.get(&span).copied())
+            .collect();
         let mut calls = CallCollector {
             scoping: self.semantic.scoping(),
             stack: vec![FunctionId::new(0)],
@@ -896,6 +909,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             namespace_imports: &namespace_imports,
             reactive_bindings: &reactive_bindings,
             reactive_namespace_sources: &reactive_namespace_sources,
+            immediate_invocations: &immediate_invocations,
             context: PlacementContext::default(),
             calls: Vec::new(),
         };
@@ -926,6 +940,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         self.validate_component_props_patterns();
         self.apply_call_classification(&calls.calls);
         self.validate_macro_placement(&calls.calls);
+        self.validate_runtime_reactive_placement(&calls.calls);
         self.validate_hook_placement(&calls.calls);
         self.populate_function_bodies(&calls.calls, &mutations.facts, &jsx.roots);
     }
@@ -1380,6 +1395,29 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     }
                 }
             }
+        }
+    }
+
+    fn validate_runtime_reactive_placement(&mut self, calls: &[CallFact]) {
+        for call in calls {
+            if call.reactive_kind != Some(ReactiveCallKind::Selector)
+                || !call.conditional_or_loop
+                || call.inside_jsx
+            {
+                continue;
+            }
+            self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::new("FICT-R004").expect("diagnostic literal"),
+                    self.reactive_creation_control_flow_severity,
+                    "Reactive creation inside non-JSX control flow may not auto-dispose in complex paths.",
+                )
+                .with_primary_span(call.span)
+                .with_help(
+                    "move createSelector outside the control-flow branch or wrap it in createScope/runInScope",
+                )
+                .with_guarantee_class(GuaranteeClass::Fallback),
+            );
         }
     }
 
@@ -3101,6 +3139,7 @@ struct CallFact {
     immediate_effect_statement: bool,
     immediate_default_export: bool,
     conditional_or_loop: bool,
+    inside_jsx: bool,
     hook: Option<HookCall>,
     optional: bool,
     pure: bool,
@@ -3167,6 +3206,8 @@ struct PlacementContext {
     block_depth: u32,
     control_depth: u32,
     function_baselines: Vec<(u32, u32)>,
+    next_function_inheritance: Vec<bool>,
+    jsx_depth: u32,
     variables: Vec<VariableContext>,
     expression_statements: Vec<SourceSpan>,
     default_exports: Vec<SourceSpan>,
@@ -3175,9 +3216,21 @@ struct PlacementContext {
 impl PlacementContext {
     fn enter(&mut self, kind: AstKind<'_>) {
         match kind {
-            AstKind::Function(_) | AstKind::ArrowFunctionExpression(_) => self
-                .function_baselines
-                .push((self.block_depth, self.control_depth)),
+            AstKind::Function(_) | AstKind::ArrowFunctionExpression(_) => {
+                let inherits_parent = self.next_function_inheritance.pop().unwrap_or(false);
+                let baseline = if inherits_parent {
+                    self.function_baselines
+                        .last()
+                        .copied()
+                        .unwrap_or((self.block_depth, self.control_depth))
+                } else {
+                    (self.block_depth, self.control_depth)
+                };
+                self.function_baselines.push(baseline);
+            }
+            AstKind::JSXElement(_) | AstKind::JSXFragment(_) => {
+                self.jsx_depth = self.jsx_depth.saturating_add(1);
+            }
             AstKind::BlockStatement(_) => self.block_depth = self.block_depth.saturating_add(1),
             AstKind::VariableDeclarator(declarator) => {
                 self.variables.push(VariableContext {
@@ -3217,6 +3270,9 @@ impl PlacementContext {
             AstKind::Function(_) | AstKind::ArrowFunctionExpression(_) => {
                 self.function_baselines.pop();
             }
+            AstKind::JSXElement(_) | AstKind::JSXFragment(_) => {
+                self.jsx_depth = self.jsx_depth.saturating_sub(1);
+            }
             AstKind::BlockStatement(_) => self.block_depth = self.block_depth.saturating_sub(1),
             AstKind::VariableDeclarator(_) => {
                 self.variables.pop();
@@ -3234,7 +3290,10 @@ impl PlacementContext {
         }
     }
 
-    fn facts(&self, call: SourceSpan) -> (Option<bool>, Option<SymbolId>, bool, bool, bool, bool) {
+    fn facts(
+        &self,
+        call: SourceSpan,
+    ) -> (Option<bool>, Option<SymbolId>, bool, bool, bool, bool, bool) {
         let (block_baseline, control_baseline) =
             self.function_baselines.last().copied().unwrap_or_default();
         let conditional_or_loop = self.control_depth > control_baseline;
@@ -3258,6 +3317,7 @@ impl PlacementContext {
             immediate_effect_statement,
             immediate_default_export,
             conditional_or_loop,
+            self.jsx_depth > 0,
         )
     }
 }
@@ -3273,8 +3333,26 @@ fn is_control_context(kind: AstKind<'_>) -> bool {
             | AstKind::ForOfStatement(_)
             | AstKind::SwitchStatement(_)
             | AstKind::ConditionalExpression(_)
-            | AstKind::LogicalExpression(_)
     )
+}
+
+#[derive(Default)]
+struct ImmediateInvocationCollector {
+    functions: BTreeSet<(u32, u32)>,
+}
+
+impl<'a> Visit<'a> for ImmediateInvocationCollector {
+    fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        let span = match call.callee.get_inner_expression() {
+            Expression::FunctionExpression(function) => Some(function.span),
+            Expression::ArrowFunctionExpression(function) => Some(function.span),
+            _ => None,
+        };
+        if let Some(span) = span {
+            self.functions.insert((span.start, span.end));
+        }
+        walk_call_expression(self, call);
+    }
 }
 
 struct CallCollector<'facts, 'semantic> {
@@ -3286,6 +3364,7 @@ struct CallCollector<'facts, 'semantic> {
     namespace_imports: &'facts BTreeSet<BindingId>,
     reactive_bindings: &'facts BTreeMap<BindingId, ReactiveCallKind>,
     reactive_namespace_sources: &'facts BTreeMap<BindingId, String>,
+    immediate_invocations: &'facts BTreeSet<FunctionId>,
     context: PlacementContext,
     calls: Vec<CallFact>,
 }
@@ -3315,6 +3394,9 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             return;
         };
         self.stack.push(id);
+        self.context
+            .next_function_inheritance
+            .push(self.immediate_invocations.contains(&id));
         walk_function(self, function, flags);
         self.stack.pop();
     }
@@ -3328,8 +3410,19 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             return;
         };
         self.stack.push(id);
+        self.context
+            .next_function_inheritance
+            .push(self.immediate_invocations.contains(&id));
         walk_arrow_function_expression(self, function);
         self.stack.pop();
+    }
+
+    fn visit_logical_expression(&mut self, expression: &LogicalExpression<'a>) {
+        self.visit_span(&expression.span);
+        self.visit_expression(&expression.left);
+        self.context.control_depth = self.context.control_depth.saturating_add(1);
+        self.visit_expression(&expression.right);
+        self.context.control_depth = self.context.control_depth.saturating_sub(1);
     }
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
@@ -3341,6 +3434,7 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             immediate_effect_statement,
             immediate_default_export,
             conditional_or_loop,
+            inside_jsx,
         ) = self.context.facts(call_span);
         let direct_variable_binding =
             direct_variable_symbol.and_then(|symbol| self.symbol_to_binding.get(&symbol).copied());
@@ -3398,6 +3492,7 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             immediate_effect_statement,
             immediate_default_export,
             conditional_or_loop,
+            inside_jsx,
             hook,
             arguments,
             optional: call.optional,

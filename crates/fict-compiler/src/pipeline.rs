@@ -13,7 +13,7 @@ use fict_metadata::MetadataResolutionStatus;
 use crate::{
     CompileRequest, CompileResult, CompilerExplainArtifact, CompilerExplainEvent,
     CompilerExplainEventKind, CompilerStats, CorePassOptions, ModuleKind, NormalizedCompileRequest,
-    RawSourceMap, SourceLanguage, run_core_passes,
+    RawSourceMap, SourceLanguage, WarningLevel, run_core_passes,
 };
 
 /// Execute the currently connected native pipeline and return a complete result.
@@ -127,6 +127,11 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         &HirBuildOptions {
             reactive_scopes: request.options.reactive_scopes.clone(),
             strict_guarantee: request.options.strict_guarantee,
+            reactive_creation_control_flow_severity: configured_diagnostic_severity(
+                &request.options.warning_levels,
+                "FICT-R004",
+                DiagnosticSeverity::Error,
+            ),
         },
     );
     result.diagnostics.extend(build.diagnostics);
@@ -300,6 +305,34 @@ fn static_code(value: &'static str) -> DiagnosticCode {
     DiagnosticCode::new(value).expect("compiler diagnostic literals must be valid")
 }
 
+fn configured_diagnostic_severity(
+    levels: &std::collections::BTreeMap<String, WarningLevel>,
+    code: &str,
+    default: DiagnosticSeverity,
+) -> DiagnosticSeverity {
+    let level = levels.get(code).or_else(|| {
+        levels
+            .iter()
+            .filter(|(pattern, _)| diagnostic_code_matches(code, pattern))
+            .max_by_key(|(pattern, _)| pattern.len())
+            .map(|(_, level)| level)
+    });
+    match level {
+        Some(WarningLevel::Off) => DiagnosticSeverity::Info,
+        Some(WarningLevel::Warn) => DiagnosticSeverity::Warning,
+        Some(WarningLevel::Error) => DiagnosticSeverity::Error,
+        None => default,
+    }
+}
+
+fn diagnostic_code_matches(code: &str, pattern: &str) -> bool {
+    code == pattern
+        || code
+            .strip_prefix(pattern)
+            .and_then(|suffix| suffix.chars().next())
+            .is_some_and(|character| character.is_ascii_digit())
+}
+
 fn finalize_diagnostics(result: &mut CompileResult) {
     result.diagnostics = DiagnosticBundle::new(mem::take(&mut result.diagnostics)).into_sorted();
 }
@@ -349,6 +382,7 @@ mod tests {
     use super::{compile, internal_error_result};
     use crate::{
         COMPILER_PROTOCOL_VERSION, CompileRequest, CompilerExplainEventKind, CompilerOptions,
+        WarningLevel,
     };
 
     fn request(code: &str, filename: &str) -> CompileRequest {
@@ -1635,6 +1669,41 @@ mod tests {
         assert!(!result.code.contains("greeting()"), "{}", result.code);
         assert!(!result.code.contains("selected()"), "{}", result.code);
         assert!(!result.code.contains("__fictUseContext"), "{}", result.code);
+    }
+
+    #[test]
+    fn enforces_selector_control_flow_lifecycle_safety() {
+        let source = "import { createSelector as select } from 'fict'; export function App(ready) { if (ready) { const selected = select(() => ready); console.log(selected); } return <div>{String(ready)}</div>; }";
+        let strict = compile(request(source, "conditional-selector.tsx"));
+
+        assert!(strict.has_errors());
+        assert!(strict.code.is_empty());
+        let finding = strict
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code.as_str() == "FICT-R004")
+            .expect("selector placement diagnostic");
+        assert_eq!(finding.severity, DiagnosticSeverity::Error);
+        assert_eq!(finding.guarantee_class, GuaranteeClass::Fallback);
+
+        let mut fallback_request = request(source, "conditional-selector.tsx");
+        fallback_request
+            .options
+            .warning_levels
+            .insert("FICT-R004".into(), WarningLevel::Warn);
+        let fallback = compile(fallback_request);
+        assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
+        assert!(fallback.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R004"
+                && diagnostic.severity == DiagnosticSeverity::Warning
+        }));
+        assert!(
+            fallback
+                .code
+                .contains("const selected = select(() => ready);"),
+            "{}",
+            fallback.code
+        );
     }
 
     #[test]
