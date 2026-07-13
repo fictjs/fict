@@ -56,6 +56,27 @@ fn runs_complete_core_pipeline_and_materializes_region_ids() {
             function.regions.regions.len()
         );
     }
+    let app = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| function.kind == FunctionKind::Component)
+        .expect("component function");
+    let doubled = app
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("doubled"))
+        .expect("doubled local");
+    assert!(
+        output.functions[app.id.as_usize()]
+            .scopes
+            .bindings
+            .iter()
+            .any(|binding| {
+                binding.name.local == doubled.id && binding.kind == ReactiveBindingKind::Derived
+            }),
+        "coercive derived expressions remain reactive while their barrier blocks optimization"
+    );
 }
 
 #[test]

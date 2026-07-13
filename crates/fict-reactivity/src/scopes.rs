@@ -5,7 +5,7 @@ use fict_diagnostics::{
 };
 use fict_hir::{
     BlockId, EvaluationMode, FictMacroKind, FunctionId, HirFile, HirInstructionKind,
-    MutationEffect, Purity, ReactiveCallKind, SsaName,
+    MutationEffect, ReactiveCallKind, SsaName,
 };
 
 use crate::{
@@ -506,11 +506,12 @@ fn binding_candidates(
                                     .flatten()
                                     .cloned(),
                             );
+                            // Reactive tracking and optimization safety are separate decisions.
+                            // Coercive expressions may call user code or throw, but their result
+                            // still depends on tracked inputs. Regions retain the accompanying
+                            // mutation/throw barrier and therefore will not memoize or reorder it.
                             eligible = result_semantics.get(&value).is_some_and(|semantics| {
-                                semantics.purity == Purity::Pure
-                                    && semantics.mutation == MutationEffect::None
-                                    && semantics.evaluation == EvaluationMode::Eager
-                                    && !semantics.may_throw
+                                semantics.evaluation == EvaluationMode::Eager
                             });
                         }
                     }
