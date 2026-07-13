@@ -1,10 +1,10 @@
 use fict_hir::{
     BlockId, CallHost, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile,
     HirFunction, HirInstruction, HirInstructionKind, HirScope, HirTerminator, HirValue,
-    InstructionSemantics, LiteralValue, NumberLiteral, ObjectEntry, ObjectPropertyKind, Origin,
-    PropertyKey, ScopeId, ScopeKind, StructuredSourceHint, StructuredSourceKind,
-    StructuredSwitchCaseHint, TaggedTemplateQuasi, TerminatorKind, ValueId, ValueKind, print_hir,
-    verify_hir,
+    ImportPhase, InstructionSemantics, LiteralValue, NumberLiteral, ObjectEntry,
+    ObjectPropertyKind, Origin, PropertyKey, ScopeId, ScopeKind, StructuredSourceHint,
+    StructuredSourceKind, StructuredSwitchCaseHint, TaggedTemplateQuasi, TerminatorKind, ValueId,
+    ValueKind, print_hir, verify_hir,
 };
 
 fn empty_file() -> HirFile {
@@ -369,6 +369,58 @@ fn verifier_enforces_tagged_template_inputs_and_arity() {
     });
     *tag = ValueId::new(99);
     let diagnostics = verify_hir(&file).expect_err("invalid tagged template tag must fail");
+    assert!(diagnostics.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-REF" && diagnostic.message.contains("value99")
+    }));
+}
+
+#[test]
+fn verifier_checks_dynamic_import_specifier_and_options() {
+    let mut file = empty_file();
+    let origin = Origin::source(fict_hir::SourceSpan::empty(0));
+    for index in 0..2 {
+        let value = ValueId::new(index);
+        let literal = LiteralValue::String(format!("input-{index}"));
+        file.functions[0].values.push(HirValue {
+            id: value,
+            kind: ValueKind::Literal(literal.clone()),
+            origin,
+        });
+        file.functions[0].blocks[0]
+            .instructions
+            .push(HirInstruction {
+                result: Some(value),
+                kind: HirInstructionKind::Literal(literal),
+                semantics: InstructionSemantics::PURE_EAGER,
+                origin,
+            });
+    }
+    file.functions[0].values.push(HirValue {
+        id: ValueId::new(2),
+        kind: ValueKind::InstructionResult,
+        origin,
+    });
+    file.functions[0].blocks[0]
+        .instructions
+        .push(HirInstruction {
+            result: Some(ValueId::new(2)),
+            kind: HirInstructionKind::DynamicImport {
+                specifier: ValueId::new(0),
+                options: Some(ValueId::new(1)),
+                phase: ImportPhase::Source,
+            },
+            semantics: InstructionSemantics::CONSERVATIVE_EAGER,
+            origin,
+        });
+
+    verify_hir(&file).expect("well-formed dynamic import HIR");
+    let HirInstructionKind::DynamicImport { options, .. } =
+        &mut file.functions[0].blocks[0].instructions[2].kind
+    else {
+        panic!("dynamic import fixture")
+    };
+    *options = Some(ValueId::new(99));
+    let diagnostics = verify_hir(&file).expect_err("invalid import options must fail");
     assert!(diagnostics.as_slice().iter().any(|diagnostic| {
         diagnostic.code.as_str() == "FICT-HIR-REF" && diagnostic.message.contains("value99")
     }));

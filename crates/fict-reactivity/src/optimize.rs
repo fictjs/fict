@@ -1195,6 +1195,14 @@ fn rewrite_instruction_values(
                 rewrite_value(substitution, replacements);
             }
         }
+        HirInstructionKind::DynamicImport {
+            specifier, options, ..
+        } => {
+            rewrite_value(specifier, replacements);
+            if let Some(options) = options {
+                rewrite_value(options, replacements);
+            }
+        }
         HirInstructionKind::Call(call) => {
             rewrite_value(&mut call.callee, replacements);
             for argument in &mut call.arguments {
@@ -1314,6 +1322,11 @@ fn instruction_value_inputs(
             tag, substitutions, ..
         } => std::iter::once(*tag)
             .chain(substitutions.iter().copied())
+            .collect(),
+        HirInstructionKind::DynamicImport {
+            specifier, options, ..
+        } => std::iter::once(*specifier)
+            .chain(options.iter().copied())
             .collect(),
         HirInstructionKind::Call(call) => std::iter::once(call.callee)
             .chain(call.arguments.iter().map(|argument| argument.value))
@@ -1510,6 +1523,14 @@ fn remap_instruction_values(
             remap_value_id(tag, remap)?;
             for substitution in substitutions {
                 remap_value_id(substitution, remap)?;
+            }
+        }
+        HirInstructionKind::DynamicImport {
+            specifier, options, ..
+        } => {
+            remap_value_id(specifier, remap)?;
+            if let Some(options) = options {
+                remap_value_id(options, remap)?;
             }
         }
         HirInstructionKind::Call(call) => {

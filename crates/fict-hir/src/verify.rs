@@ -733,6 +733,12 @@ impl Verifier<'_> {
                     CallHost::Unknown => {}
                 }
             }
+            HirInstructionKind::DynamicImport {
+                specifier, options, ..
+            } => {
+                self.value(function, *specifier, instruction.origin);
+                self.optional_value(function, *options, instruction.origin);
+            }
             HirInstructionKind::Call(call) => {
                 self.value(function, call.callee, instruction.origin);
                 for argument in &call.arguments {

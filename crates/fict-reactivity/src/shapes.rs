@@ -42,6 +42,8 @@ pub enum ShapeSource {
     Literal(ValueId),
     /// String produced by an untagged template literal.
     TemplateLiteral(ValueId),
+    /// Promise object returned by a dynamic import request.
+    DynamicImport(ValueId),
     /// Object literal.
     ObjectLiteral(ValueId),
     /// Array literal.
@@ -615,6 +617,17 @@ fn structural_value_shape(
             known_keys: Vec::new(),
             mutable_keys: Vec::new(),
             complete_key_set: true,
+            dynamic_access: false,
+            has_spread: false,
+            escapes: false,
+            array_length: None,
+        },
+        HirInstructionKind::DynamicImport { .. } => ValueShape {
+            kind: ShapeKind::Object,
+            source: ShapeSource::DynamicImport(value),
+            known_keys: Vec::new(),
+            mutable_keys: Vec::new(),
+            complete_key_set: false,
             dynamic_access: false,
             has_spread: false,
             escapes: false,

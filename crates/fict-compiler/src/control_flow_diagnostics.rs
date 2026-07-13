@@ -506,6 +506,14 @@ fn value_has_unsafe_control_work(
                     .iter()
                     .any(|value| value_has_unsafe_control_work(file, function, *value, visiting))
         }
+        HirInstructionKind::DynamicImport {
+            specifier, options, ..
+        } => {
+            value_has_unsafe_control_work(file, function, *specifier, visiting)
+                || options.is_some_and(|value| {
+                    value_has_unsafe_control_work(file, function, value, visiting)
+                })
+        }
         _ => false,
     }
 }
@@ -516,6 +524,7 @@ fn instruction_is_unsafe(file: &HirFile, instruction: &HirInstruction) -> bool {
         | HirInstructionKind::New { .. }
         | HirInstructionKind::TemplateLiteral { .. }
         | HirInstructionKind::TaggedTemplate { .. }
+        | HirInstructionKind::DynamicImport { .. }
         | HirInstructionKind::Await { .. }
         | HirInstructionKind::Yield { .. }
         | HirInstructionKind::Debugger => true,

@@ -1260,6 +1260,11 @@ fn instruction_inputs(instruction: &HirInstruction, file: &HirFile) -> Vec<Value
         } => std::iter::once(*tag)
             .chain(substitutions.iter().copied())
             .collect(),
+        HirInstructionKind::DynamicImport {
+            specifier, options, ..
+        } => std::iter::once(*specifier)
+            .chain(options.iter().copied())
+            .collect(),
         HirInstructionKind::Call(call) => std::iter::once(call.callee)
             .chain(call.arguments.iter().map(|argument| argument.value))
             .collect(),

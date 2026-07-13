@@ -713,6 +713,17 @@ pub struct TaggedTemplateQuasi {
     pub raw: String,
 }
 
+/// Runtime loading phase selected by a dynamic import expression.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ImportPhase {
+    /// Ordinary `import(specifier)` evaluation.
+    Evaluation,
+    /// Source-phase `import.source(specifier)` evaluation.
+    Source,
+    /// Deferred-phase `import.defer(specifier)` evaluation.
+    Defer,
+}
+
 /// JavaScript enumeration protocol used by a structured iteration loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IterationKind {
@@ -824,6 +835,15 @@ pub enum HirInstructionKind {
         substitutions: Vec<ValueId>,
         /// Binding-aware invocation host classification.
         host: CallHost,
+    },
+    /// Request a module through the host's dynamic import pipeline.
+    DynamicImport {
+        /// Module specifier value, converted to a string after `options` is evaluated.
+        specifier: ValueId,
+        /// Optional import-options object expression.
+        options: Option<ValueId>,
+        /// Requested runtime loading phase.
+        phase: ImportPhase,
     },
     /// Invoke a function or method.
     Call(CallInstruction),

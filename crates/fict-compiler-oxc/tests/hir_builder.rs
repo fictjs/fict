@@ -3,10 +3,10 @@ use fict_compiler_oxc::{
 };
 use fict_hir::{
     ArrayElement, BinaryOperator, CallHost, CompoundAssignmentOperator, DeclarationKind,
-    EvaluationMode, FictMacroKind, FunctionKind, HirInstructionKind, IterationKind, LiteralValue,
-    MutationEffect, ObjectEntry, ObjectPropertyKind, PropertyKey, Purity, ReactiveCallKind,
-    StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, UnaryOperator, UpdateOperator,
-    ValueKind,
+    EvaluationMode, FictMacroKind, FunctionKind, HirInstructionKind, ImportPhase, IterationKind,
+    LiteralValue, MutationEffect, ObjectEntry, ObjectPropertyKind, PropertyKey, Purity,
+    ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, UnaryOperator,
+    UpdateOperator, ValueKind,
 };
 
 fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
@@ -3560,6 +3560,147 @@ fn materializes_tagged_template_objects_substitutions_and_utf16_cooked_values() 
     let (_, _, _, substitutions, host) = tagged("member");
     assert_eq!(substitutions.len(), 1);
     assert_eq!(host, fict_hir::CallHost::Unknown);
+}
+
+#[test]
+fn materializes_dynamic_import_phases_options_and_coercion_order() {
+    let source = r#"
+        function loads(make, specifier, options, optional) {
+            const simple = import(specifier);
+            const configured = import(make('specifier'), make('options'));
+            const sourcePhase = import.source(specifier);
+            const deferPhase = import.defer(specifier);
+            const lazy = optional?.(import(make('lazy'), options));
+            return [simple, configured, sourcePhase, deferPhase, lazy];
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified dynamic-import HIR");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "loads")
+        })
+        .expect("loads function");
+    let instructions: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let authored = |instruction: &fict_hir::HirInstruction| {
+        let span = instruction
+            .origin
+            .primary_span
+            .expect("authored dynamic-import instruction");
+        &source[span.start() as usize..span.end() as usize]
+    };
+    let instruction_for_result = |value| {
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| instruction.result == Some(value))
+            .unwrap_or_else(|| panic!("instruction for value{}", value.index()))
+    };
+    let initializer = |name: &str| {
+        let local = function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"));
+        instructions
+            .iter()
+            .find_map(|instruction| match instruction.kind {
+                HirInstructionKind::Declare {
+                    local: candidate,
+                    initializer,
+                    ..
+                } if candidate == local.id => initializer,
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{name} initializer"))
+    };
+    let dynamic_import = |name: &str| {
+        let value = initializer(name);
+        let instruction = instruction_for_result(value);
+        let HirInstructionKind::DynamicImport {
+            specifier,
+            options,
+            phase,
+        } = &instruction.kind
+        else {
+            panic!("typed {name} dynamic import")
+        };
+        (instruction, *specifier, *options, *phase)
+    };
+
+    let (simple, specifier, options, phase) = dynamic_import("simple");
+    assert_eq!(phase, ImportPhase::Evaluation);
+    assert!(options.is_none());
+    assert_eq!(authored(instruction_for_result(specifier)), "specifier");
+    assert_eq!(
+        simple.semantics,
+        fict_hir::InstructionSemantics::CONSERVATIVE_EAGER
+    );
+
+    let (configured, specifier, options, phase) = dynamic_import("configured");
+    let options = options.expect("configured import options");
+    assert_eq!(phase, ImportPhase::Evaluation);
+    assert_eq!(
+        authored(instruction_for_result(specifier)),
+        "make('specifier')"
+    );
+    assert_eq!(authored(instruction_for_result(options)), "make('options')");
+    let position = |value| {
+        instructions
+            .iter()
+            .position(|instruction| instruction.result == Some(value))
+            .expect("dynamic-import value position")
+    };
+    assert!(position(specifier) < position(options));
+    assert!(position(options) < position(initializer("configured")));
+    assert_eq!(
+        instruction_for_result(specifier).semantics.evaluation,
+        EvaluationMode::Eager
+    );
+    assert_eq!(
+        instruction_for_result(options).semantics.evaluation,
+        EvaluationMode::Eager
+    );
+    assert!(!instructions.iter().any(|instruction| {
+        matches!(instruction.kind, HirInstructionKind::SyntaxFragment { .. })
+            && instruction.origin.primary_span == configured.origin.primary_span
+    }));
+
+    assert_eq!(dynamic_import("sourcePhase").3, ImportPhase::Source);
+    assert_eq!(dynamic_import("deferPhase").3, ImportPhase::Defer);
+
+    let lazy_call = instruction_for_result(initializer("lazy"));
+    let HirInstructionKind::Call(call) = &lazy_call.kind else {
+        panic!("typed optional call around import")
+    };
+    assert!(call.optional);
+    assert_eq!(call.arguments.len(), 1);
+    let lazy_import = instruction_for_result(call.arguments[0].value);
+    let HirInstructionKind::DynamicImport {
+        specifier, options, ..
+    } = lazy_import.kind
+    else {
+        panic!("typed lazy dynamic import")
+    };
+    assert!(options.is_some());
+    assert_eq!(lazy_import.semantics.evaluation, EvaluationMode::Deferred);
+    assert_eq!(
+        instruction_for_result(specifier).semantics.evaluation,
+        EvaluationMode::Deferred
+    );
 }
 
 #[test]

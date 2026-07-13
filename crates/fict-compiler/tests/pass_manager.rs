@@ -377,6 +377,103 @@ fn tagged_templates_track_tag_substitutions_and_unknown_call_escapes() {
 }
 
 #[test]
+fn dynamic_imports_track_inputs_and_produce_promise_object_shapes() {
+    let frontend = build_hir(
+        r#"
+            export function load(specifier, options) {
+                const request = import(specifier, options);
+                return request;
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Module,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified dynamic-import HIR"),
+        CorePassOptions {
+            optimize: false,
+            ..CorePassOptions::default()
+        },
+    )
+    .expect("core passes over dynamic imports");
+    let function = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                output.hir.bindings[binding.as_usize()].display_name == "load"
+            })
+        })
+        .expect("load function");
+    let analysis = &output.functions[function.id.as_usize()];
+    let local = |name: &str| {
+        function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"))
+    };
+    let request = local("request");
+    let request_value = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find_map(|instruction| match instruction.kind {
+            fict_hir::HirInstructionKind::Declare {
+                local, initializer, ..
+            } if local == request.id => initializer,
+            _ => None,
+        })
+        .expect("dynamic-import request initializer");
+    let dependency_locals: std::collections::BTreeSet<_> = analysis.dependencies.value_dependencies
+        [request_value.as_usize()]
+    .iter()
+    .filter_map(|dependency| match dependency.base {
+        DependencyBase::Ssa(name) => Some(name.local),
+        DependencyBase::Value(_) => None,
+    })
+    .collect();
+    assert_eq!(
+        dependency_locals,
+        [local("specifier").id, local("options").id]
+            .into_iter()
+            .collect()
+    );
+
+    let definition = analysis
+        .ssa
+        .definitions
+        .iter()
+        .find(|definition| {
+            definition.name.local == request.id && definition.kind == SsaDefinitionKind::Declare
+        })
+        .expect("request declaration definition");
+    let shape = analysis
+        .shapes
+        .shapes
+        .iter()
+        .find(|shape| shape.name == definition.name)
+        .expect("dynamic-import result shape");
+    assert_eq!(shape.shape.kind, ShapeKind::Object);
+    assert!(matches!(
+        shape.shape.source,
+        ShapeSource::DynamicImport(value) if value == request_value
+    ));
+    assert!(!shape.shape.complete_key_set);
+}
+
+#[test]
 fn analyzes_frontend_if_cfg_as_control_dependent_reactive_work() {
     let frontend = build_hir(
         r#"

@@ -9,10 +9,10 @@ use fict_hir::{
     FictMacroKind, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction,
     HirInstruction, HirInstructionKind, HirLocal, HirObjectParameterCheck, HirObjectParameterMode,
     HirObjectParameterProperty, HirObjectParameterRest, HirParameter, HirScope, HirTerminator,
-    HirValue, InstructionSemantics, IterationKind, JsxAttribute, JsxAttributeValue, JsxChild,
-    JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode,
-    JsxTemplate, LiteralValue, LocalId, LocalKind, MutationEffect, NumberLiteral, ObjectEntry,
-    ObjectPropertyKind, Origin, PatternSummary, PropertyKey, Purity, ReactiveCallKind,
+    HirValue, ImportPhase, InstructionSemantics, IterationKind, JsxAttribute, JsxAttributeValue,
+    JsxChild, JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression, JsxListReceiver,
+    JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind, MutationEffect, NumberLiteral,
+    ObjectEntry, ObjectPropertyKind, Origin, PatternSummary, PropertyKey, Purity, ReactiveCallKind,
     ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind, StructuredSourceHint,
     SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi,
     TemplateId, TerminatorKind, UnaryOperator, UpdateOperator, ValueId, ValueKind, verify_hir,
@@ -25,14 +25,14 @@ use oxc::{
             AssignmentPattern, AssignmentTarget, BindingIdentifier, BindingPattern,
             BindingRestElement, CallExpression, ChainElement, Class, ComputedMemberExpression,
             Expression, FormalParameters, Function, FunctionBody, IdentifierReference,
-            JSXAttributeItem, JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue,
-            JSXChild as OxcJsxChild, JSXElement, JSXElementName as OxcJsxElementName,
-            JSXExpression, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject,
-            LogicalExpression, MemberExpression, MetaProperty, NewExpression,
-            ObjectPropertyKind as OxcObjectPropertyKind, Program, PropertyKey as OxcPropertyKey,
-            PropertyKind, SimpleAssignmentTarget, Statement, Super, TaggedTemplateExpression,
-            TemplateLiteral, ThisExpression, UpdateExpression, VariableDeclaration,
-            VariableDeclarationKind, VariableDeclarator,
+            ImportExpression, ImportPhase as OxcImportPhase, JSXAttributeItem, JSXAttributeName,
+            JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild, JSXElement,
+            JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment, JSXMemberExpression,
+            JSXMemberExpressionObject, LogicalExpression, MemberExpression, MetaProperty,
+            NewExpression, ObjectPropertyKind as OxcObjectPropertyKind, Program,
+            PropertyKey as OxcPropertyKey, PropertyKind, SimpleAssignmentTarget, Statement, Super,
+            TaggedTemplateExpression, TemplateLiteral, ThisExpression, UpdateExpression,
+            VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
         },
         ast_kind::AstKind,
     },
@@ -569,6 +569,9 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
             Expression::TaggedTemplateExpression(tagged) => {
                 typed_tagged_template(self.scoping, tagged)
             }
+            Expression::ImportExpression(import_expression) => {
+                Some(typed_dynamic_import(import_expression))
+            }
             Expression::UnaryExpression(unary)
                 if unary.operator != OxcUnaryOperator::Delete
                     && !is_unresolved_typeof(self.scoping, unary) =>
@@ -848,6 +851,33 @@ fn typed_tagged_template(
                 .collect(),
         },
     })
+}
+
+fn typed_dynamic_import(import_expression: &ImportExpression<'_>) -> TypedExpressionFact {
+    let specifier = import_expression.source.get_inner_expression();
+    let options = import_expression
+        .options
+        .as_ref()
+        .map(Expression::get_inner_expression);
+    TypedExpressionFact {
+        span: source_span(import_expression.span),
+        kind: TypedExpressionKind::DynamicImport {
+            specifier: source_span(specifier.span()),
+            specifier_has_effects: structured_control_flow::expression_has_effects(
+                &import_expression.source,
+            ),
+            options: options.map(|options| source_span(options.span())),
+            options_have_effects: import_expression
+                .options
+                .as_ref()
+                .is_some_and(structured_control_flow::expression_has_effects),
+            phase: match import_expression.phase {
+                None => ImportPhase::Evaluation,
+                Some(OxcImportPhase::Source) => ImportPhase::Source,
+                Some(OxcImportPhase::Defer) => ImportPhase::Defer,
+            },
+        },
+    }
 }
 
 fn template_cooked_code_units(value: &str, has_lone_surrogates: bool) -> Option<Vec<u16>> {
@@ -3302,6 +3332,42 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         quasis: quasis.clone(),
                         substitutions,
                         host,
+                    },
+                    InstructionSemantics::CONSERVATIVE_EAGER,
+                )
+            }
+            TypedExpressionKind::DynamicImport {
+                specifier,
+                specifier_has_effects,
+                options,
+                options_have_effects,
+                phase,
+            } => {
+                let specifier = self.control_expression_value(
+                    owner,
+                    block,
+                    *specifier,
+                    true,
+                    *specifier_has_effects,
+                );
+                let options = options.map(|options| {
+                    self.control_expression_value(
+                        owner,
+                        block,
+                        options,
+                        true,
+                        *options_have_effects,
+                    )
+                });
+                self.push_value_to_block(
+                    owner,
+                    block,
+                    ValueKind::InstructionResult,
+                    origin,
+                    HirInstructionKind::DynamicImport {
+                        specifier,
+                        options,
+                        phase: *phase,
                     },
                     InstructionSemantics::CONSERVATIVE_EAGER,
                 )
@@ -5861,6 +5927,13 @@ enum TypedExpressionKind {
         quasis: Vec<TaggedTemplateQuasi>,
         substitutions: Vec<TypedTemplateExpression>,
     },
+    DynamicImport {
+        specifier: SourceSpan,
+        specifier_has_effects: bool,
+        options: Option<SourceSpan>,
+        options_have_effects: bool,
+        phase: ImportPhase,
+    },
     Await {
         value: SourceSpan,
         value_has_effects: bool,
@@ -6062,28 +6135,32 @@ impl EvaluationFact {
                 ..
             }) => 7,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Await { .. },
+                kind: TypedExpressionKind::DynamicImport { .. },
                 ..
             }) => 8,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Yield { .. },
+                kind: TypedExpressionKind::Await { .. },
                 ..
             }) => 9,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::New { .. },
+                kind: TypedExpressionKind::Yield { .. },
                 ..
             }) => 10,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Array { .. },
+                kind: TypedExpressionKind::New { .. },
                 ..
             }) => 11,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Object { .. },
+                kind: TypedExpressionKind::Array { .. },
                 ..
             }) => 12,
-            Self::Jsx(_) => 13,
-            Self::Member(_) => 14,
-            Self::Call(_) => 15,
+            Self::Typed(TypedExpressionFact {
+                kind: TypedExpressionKind::Object { .. },
+                ..
+            }) => 13,
+            Self::Jsx(_) => 14,
+            Self::Member(_) => 15,
+            Self::Call(_) => 16,
         }
     }
 }
@@ -8234,6 +8311,12 @@ fn instruction_value_inputs(instruction: &HirInstruction) -> Vec<ValueId> {
         } => {
             inputs.push(*tag);
             inputs.extend(substitutions);
+        }
+        HirInstructionKind::DynamicImport {
+            specifier, options, ..
+        } => {
+            inputs.push(*specifier);
+            inputs.extend(options);
         }
         HirInstructionKind::Call(call) => {
             inputs.push(call.callee);

@@ -164,6 +164,7 @@ pub fn analyze_reactive_scopes(
             | ShapeSource::Parameter
             | ShapeSource::Literal(_)
             | ShapeSource::TemplateLiteral(_)
+            | ShapeSource::DynamicImport(_)
             | ShapeSource::ObjectLiteral(_)
             | ShapeSource::ArrayLiteral(_)
             | ShapeSource::Function(_)
