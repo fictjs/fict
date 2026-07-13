@@ -2117,9 +2117,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 &mut accessor_read_suppressions,
             );
         }
-        let reactive_reads =
-            self.collect_reactive_reads(&reactive_targets, &accessor_read_suppressions);
-        let reactive_mutations = self.collect_reactive_mutations(mutations, &reactive_targets);
+        let local_reads = self.collect_local_reads(&reactive_targets, &accessor_read_suppressions);
+        let local_mutations = self.collect_local_mutations(mutations, &reactive_targets);
         for fact in self.function_facts.clone() {
             let has_structured_control_flow = self.has_structured_control_flow(fact.id);
             let mut inputs = Vec::new();
@@ -2153,12 +2152,47 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 inputs.push(value);
             }
 
-            for call in calls.iter().filter(|call| call.owner == fact.id) {
-                let callee = self.syntax_value(
+            for read in local_reads.iter().filter(|read| read.owner == fact.id) {
+                let Some(local) = self.functions[fact.id.as_usize()]
+                    .locals
+                    .iter()
+                    .find(|local| local.binding == Some(read.binding))
+                    .map(|local| local.id)
+                else {
+                    continue;
+                };
+                let value = self.push_value(
                     fact.id,
-                    call.callee_span,
-                    call.binding.into_iter().collect(),
+                    ValueKind::InstructionResult,
+                    Origin::source(read.span),
+                    HirInstructionKind::Read {
+                        place: fict_hir::Place::local(local),
+                    },
+                    if read.reactive {
+                        reactive_read_semantics()
+                    } else {
+                        InstructionSemantics::PURE_EAGER
+                    },
                 );
+                inputs.push(value);
+            }
+
+            let mut owner_calls: Vec<_> = calls
+                .iter()
+                .filter(|call| call.owner == fact.id)
+                .cloned()
+                .collect();
+            owner_calls.sort_by_key(|call| {
+                (
+                    call.span.end(),
+                    std::cmp::Reverse(call.span.start()),
+                    call.span.end().saturating_sub(call.span.start()),
+                )
+            });
+            for call in &owner_calls {
+                let block = self.planned_block_for_span(fact.id, call.span);
+                let callee =
+                    self.control_expression_value(fact.id, block, call.callee_span, true, true);
                 let mut arguments = Vec::new();
                 for argument in &call.arguments {
                     let value = if let Some(function) = argument.function {
@@ -2170,11 +2204,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                             InstructionSemantics::PURE_EAGER,
                         )
                     } else {
-                        self.syntax_value(
-                            fact.id,
-                            argument.span,
-                            self.referenced_bindings(argument.span),
-                        )
+                        self.control_expression_value(fact.id, block, argument.span, true, true)
                     };
                     arguments.push(CallArgument {
                         value,
@@ -2236,33 +2266,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 inputs.push(value);
             }
 
-            for read in reactive_reads.iter().filter(|read| read.owner == fact.id) {
-                let Some(local) = self.functions[fact.id.as_usize()]
-                    .locals
-                    .iter()
-                    .find(|local| local.binding == Some(read.binding))
-                    .map(|local| local.id)
-                else {
-                    continue;
-                };
-                let value = self.push_value(
-                    fact.id,
-                    ValueKind::InstructionResult,
-                    Origin::source(read.span),
-                    HirInstructionKind::Read {
-                        place: fict_hir::Place::local(local),
-                    },
-                    InstructionSemantics {
-                        purity: Purity::Unknown,
-                        mutation: MutationEffect::None,
-                        evaluation: EvaluationMode::Eager,
-                        may_throw: true,
-                    },
-                );
-                inputs.push(value);
-            }
-
-            for mutation in reactive_mutations
+            for mutation in local_mutations
                 .iter()
                 .filter(|mutation| mutation.owner == fact.id)
             {
@@ -2275,13 +2279,18 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     continue;
                 };
                 match mutation.kind {
-                    ReactiveMutationKind::Write { value_span } => {
-                        let value = self.syntax_value(
-                            fact.id,
-                            value_span,
-                            self.referenced_bindings(value_span),
-                        );
+                    ReactiveMutationKind::Write {
+                        value_span,
+                        value_has_effects,
+                    } => {
                         let block = self.planned_block_for_span(fact.id, mutation.span);
+                        let value = self.control_expression_value(
+                            fact.id,
+                            block,
+                            value_span,
+                            true,
+                            value_has_effects,
+                        );
                         self.functions[fact.id.as_usize()].blocks[block.as_usize()]
                             .instructions
                             .push(HirInstruction {
@@ -2290,7 +2299,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                                     place: fict_hir::Place::local(local),
                                     value,
                                 },
-                                semantics: reactive_mutation_semantics(),
+                                semantics: local_mutation_semantics(mutation.reactive),
                                 origin: Origin::source(mutation.span),
                             });
                         inputs.push(value);
@@ -2298,14 +2307,19 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     ReactiveMutationKind::Compound {
                         operator,
                         value_span,
+                        value_has_effects,
                     } => {
-                        let value = self.syntax_value(
+                        let block = self.planned_block_for_span(fact.id, mutation.span);
+                        let value = self.control_expression_value(
                             fact.id,
+                            block,
                             value_span,
-                            self.referenced_bindings(value_span),
+                            true,
+                            value_has_effects,
                         );
-                        let result = self.push_value(
+                        let result = self.push_value_to_block(
                             fact.id,
+                            block,
                             ValueKind::InstructionResult,
                             Origin::source(mutation.span),
                             HirInstructionKind::ReadWrite {
@@ -2315,13 +2329,15 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                                 update: None,
                                 prefix: false,
                             },
-                            reactive_mutation_semantics(),
+                            local_mutation_semantics(mutation.reactive),
                         );
                         inputs.extend([value, result]);
                     }
                     ReactiveMutationKind::Update { operator, prefix } => {
-                        let result = self.push_value(
+                        let block = self.planned_block_for_span(fact.id, mutation.span);
+                        let result = self.push_value_to_block(
                             fact.id,
+                            block,
                             ValueKind::InstructionResult,
                             Origin::source(mutation.span),
                             HirInstructionKind::ReadWrite {
@@ -2331,7 +2347,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                                 update: Some(operator),
                                 prefix,
                             },
-                            reactive_mutation_semantics(),
+                            local_mutation_semantics(mutation.reactive),
                         );
                         inputs.push(result);
                     }
@@ -2381,32 +2397,32 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     });
             }
             self.materialize_control_flow_terminators(fact.id);
+            self.order_function_instructions(fact.id);
         }
     }
 
-    fn collect_reactive_reads(
+    fn collect_local_reads(
         &self,
         reactive_targets: &BTreeSet<BindingId>,
         suppressions: &BTreeSet<(u32, u32)>,
-    ) -> Vec<ReactiveReadFact> {
+    ) -> Vec<LocalReadFact> {
         let mut reads = Vec::new();
         for (symbol, binding) in &self.symbol_to_binding {
-            if !reactive_targets.contains(binding) {
-                continue;
-            }
             for reference in self.semantic.scoping().get_resolved_reference_ids(*symbol) {
                 let reference = self.semantic.scoping().get_reference(*reference);
                 if !reference.is_read() || reference.is_write() {
                     continue;
                 }
                 let span = source_span(self.semantic.reference_span(reference));
-                if suppressions.contains(&(span.start(), span.end())) {
+                let reactive = reactive_targets.contains(binding);
+                if reactive && suppressions.contains(&(span.start(), span.end())) {
                     continue;
                 }
-                reads.push(ReactiveReadFact {
+                reads.push(LocalReadFact {
                     owner: self.function_owner_for_span(span),
                     binding: *binding,
                     span,
+                    reactive,
                 });
             }
         }
@@ -2414,20 +2430,18 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         reads
     }
 
-    fn collect_reactive_mutations(
+    fn collect_local_mutations(
         &mut self,
         mutations: &[MutationFact],
         reactive_targets: &BTreeSet<BindingId>,
-    ) -> Vec<ReactiveMutationFact> {
+    ) -> Vec<LocalMutationFact> {
         let mut facts = Vec::new();
         for mutation in mutations {
             let Some(binding) = self.symbol_to_binding.get(&mutation.symbol).copied() else {
                 continue;
             };
-            if !reactive_targets.contains(&binding) {
-                continue;
-            }
-            if mutation.projected {
+            let reactive = reactive_targets.contains(&binding);
+            if mutation.projected && reactive {
                 self.diagnostics.push(
                     Diagnostic::new(
                         DiagnosticCode::new("FICT-M").expect("diagnostic literal"),
@@ -2444,11 +2458,15 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 );
                 continue;
             }
-            facts.push(ReactiveMutationFact {
+            if mutation.projected {
+                continue;
+            }
+            facts.push(LocalMutationFact {
                 owner: self.function_owner_for_span(mutation.span),
                 binding,
                 span: mutation.span,
                 kind: mutation.kind,
+                reactive,
             });
         }
         facts.sort_by_key(|mutation| {
@@ -2502,6 +2520,67 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             },
             InstructionSemantics::CONSERVATIVE_EAGER,
         )
+    }
+
+    fn order_function_instructions(&mut self, owner: FunctionId) {
+        for block in &mut self.functions[owner.as_usize()].blocks {
+            if block.instructions.len() < 2 {
+                continue;
+            }
+            let instructions = std::mem::take(&mut block.instructions);
+            let mut definitions = BTreeMap::new();
+            for (index, instruction) in instructions.iter().enumerate() {
+                if let Some(result) = instruction.result {
+                    definitions.insert(result, index);
+                }
+            }
+
+            let mut dependencies = vec![BTreeSet::new(); instructions.len()];
+            let mut dependents = vec![Vec::new(); instructions.len()];
+            for (index, instruction) in instructions.iter().enumerate() {
+                for input in instruction_value_inputs(instruction) {
+                    if let Some(definition) = definitions.get(&input).copied()
+                        && definition != index
+                        && dependencies[index].insert(definition)
+                    {
+                        dependents[definition].push(index);
+                    }
+                }
+            }
+
+            let mut remaining: Vec<_> = dependencies.iter().map(BTreeSet::len).collect();
+            let mut ready = BTreeSet::new();
+            for (index, count) in remaining.iter().enumerate() {
+                if *count == 0 {
+                    ready.insert(instruction_source_order_key(&instructions[index], index));
+                }
+            }
+
+            let mut order = Vec::with_capacity(instructions.len());
+            while let Some(key) = ready.pop_first() {
+                let index = key.3;
+                order.push(index);
+                for dependent in &dependents[index] {
+                    remaining[*dependent] = remaining[*dependent].saturating_sub(1);
+                    if remaining[*dependent] == 0 {
+                        ready.insert(instruction_source_order_key(
+                            &instructions[*dependent],
+                            *dependent,
+                        ));
+                    }
+                }
+            }
+
+            if order.len() != instructions.len() {
+                block.instructions = instructions;
+                continue;
+            }
+            let mut slots: Vec<_> = instructions.into_iter().map(Some).collect();
+            block.instructions = order
+                .into_iter()
+                .filter_map(|index| slots[index].take())
+                .collect();
+        }
     }
 
     fn has_structured_control_flow(&self, owner: FunctionId) -> bool {
@@ -4393,10 +4472,11 @@ struct CallFact {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ReactiveReadFact {
+struct LocalReadFact {
     owner: FunctionId,
     binding: BindingId,
     span: SourceSpan,
+    reactive: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -4408,21 +4488,24 @@ struct MutationFact {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ReactiveMutationFact {
+struct LocalMutationFact {
     owner: FunctionId,
     binding: BindingId,
     span: SourceSpan,
     kind: ReactiveMutationKind,
+    reactive: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
 enum ReactiveMutationKind {
     Write {
         value_span: SourceSpan,
+        value_has_effects: bool,
     },
     Compound {
         operator: CompoundAssignmentOperator,
         value_span: SourceSpan,
+        value_has_effects: bool,
     },
     Update {
         operator: UpdateOperator,
@@ -5620,12 +5703,18 @@ impl<'a> Visit<'a> for MutationCollector<'_> {
             let kind = if assignment.operator == OxcAssignmentOperator::Assign {
                 Some(ReactiveMutationKind::Write {
                     value_span: source_span(assignment.right.span()),
+                    value_has_effects: structured_control_flow::expression_has_effects(
+                        &assignment.right,
+                    ),
                 })
             } else {
                 compound_assignment_operator(assignment.operator).map(|operator| {
                     ReactiveMutationKind::Compound {
                         operator,
                         value_span: source_span(assignment.right.span()),
+                        value_has_effects: structured_control_flow::expression_has_effects(
+                            &assignment.right,
+                        ),
                     }
                 })
             };
@@ -6072,12 +6161,118 @@ fn is_hook_name(name: &str) -> bool {
         .is_some_and(|character| character.is_uppercase() || character.is_ascii_digit())
 }
 
-fn reactive_mutation_semantics() -> InstructionSemantics {
+fn reactive_read_semantics() -> InstructionSemantics {
     InstructionSemantics {
         purity: Purity::Unknown,
-        mutation: MutationEffect::Local,
+        mutation: MutationEffect::None,
         evaluation: EvaluationMode::Eager,
         may_throw: true,
+    }
+}
+
+fn local_mutation_semantics(reactive: bool) -> InstructionSemantics {
+    InstructionSemantics {
+        purity: if reactive {
+            Purity::Unknown
+        } else {
+            Purity::Impure
+        },
+        mutation: if reactive {
+            MutationEffect::Observable
+        } else {
+            MutationEffect::Local
+        },
+        evaluation: EvaluationMode::Eager,
+        may_throw: true,
+    }
+}
+
+fn instruction_source_order_key(
+    instruction: &HirInstruction,
+    original_index: usize,
+) -> (u32, std::cmp::Reverse<u32>, u8, usize) {
+    let span = instruction.origin.primary_span;
+    let end = span.map_or(0, SourceSpan::end);
+    let start = span.map_or(0, SourceSpan::start);
+    let rank = match instruction.kind {
+        HirInstructionKind::Declare { .. } => 5,
+        HirInstructionKind::Write { .. } | HirInstructionKind::ReadWrite { .. } => 4,
+        HirInstructionKind::Call(_) | HirInstructionKind::New { .. } => 3,
+        HirInstructionKind::SyntaxFragment { .. } => 2,
+        _ => 1,
+    };
+    (end, std::cmp::Reverse(start), rank, original_index)
+}
+
+fn instruction_value_inputs(instruction: &HirInstruction) -> Vec<ValueId> {
+    let mut inputs = Vec::new();
+    match &instruction.kind {
+        HirInstructionKind::Declare { initializer, .. } => inputs.extend(initializer),
+        HirInstructionKind::Read { place } => place_value_inputs(place, &mut inputs),
+        HirInstructionKind::Write { place, value } => {
+            place_value_inputs(place, &mut inputs);
+            inputs.push(*value);
+        }
+        HirInstructionKind::ReadWrite { place, value, .. } => {
+            place_value_inputs(place, &mut inputs);
+            inputs.extend(value);
+        }
+        HirInstructionKind::Iteration { source, .. } => inputs.push(*source),
+        HirInstructionKind::Unary { argument, .. } => inputs.push(*argument),
+        HirInstructionKind::Binary { left, right, .. } => inputs.extend([*left, *right]),
+        HirInstructionKind::Call(call) => {
+            inputs.push(call.callee);
+            inputs.extend(call.arguments.iter().map(|argument| argument.value));
+        }
+        HirInstructionKind::New { callee, arguments } => {
+            inputs.push(*callee);
+            inputs.extend(arguments.iter().map(|argument| argument.value));
+        }
+        HirInstructionKind::Array { elements } => {
+            for element in elements {
+                match element {
+                    fict_hir::ArrayElement::Hole(_) => {}
+                    fict_hir::ArrayElement::Value(value)
+                    | fict_hir::ArrayElement::Spread { value, .. } => inputs.push(*value),
+                }
+            }
+        }
+        HirInstructionKind::Object { entries } => {
+            for entry in entries {
+                match entry {
+                    fict_hir::ObjectEntry::Property { key, value, .. } => {
+                        if let fict_hir::PropertyKey::Computed(key) = key {
+                            inputs.push(*key);
+                        }
+                        inputs.push(*value);
+                    }
+                    fict_hir::ObjectEntry::Spread { value, .. } => inputs.push(*value),
+                }
+            }
+        }
+        HirInstructionKind::Await { value } => inputs.push(*value),
+        HirInstructionKind::Yield { value, .. } => inputs.extend(value),
+        HirInstructionKind::SyntaxFragment {
+            inputs: fragment_inputs,
+            ..
+        } => inputs.extend(fragment_inputs),
+        HirInstructionKind::Literal(_)
+        | HirInstructionKind::Function { .. }
+        | HirInstructionKind::Jsx { .. }
+        | HirInstructionKind::Phi { .. }
+        | HirInstructionKind::Debugger => {}
+    }
+    inputs
+}
+
+fn place_value_inputs(place: &fict_hir::Place, inputs: &mut Vec<ValueId>) {
+    if let fict_hir::PlaceBase::Value(value) = place.base {
+        inputs.push(value);
+    }
+    for projection in &place.projections {
+        if let fict_hir::Projection::ComputedProperty { key, .. } = projection {
+            inputs.push(*key);
+        }
     }
 }
 

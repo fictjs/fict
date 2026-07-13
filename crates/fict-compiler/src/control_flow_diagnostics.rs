@@ -5,7 +5,7 @@ use fict_diagnostics::{
 };
 use fict_hir::{
     BlockId, FunctionKind, HirFile, HirFunction, HirInstruction, HirInstructionKind,
-    TerminatorKind, ValueId,
+    MutationEffect, TerminatorKind, ValueId,
 };
 use fict_reactivity::{DependencyPath, StructuredConstruct, StructuredConstructKind};
 
@@ -489,11 +489,12 @@ fn instruction_is_unsafe(file: &HirFile, instruction: &HirInstruction) -> bool {
     match &instruction.kind {
         HirInstructionKind::Call(_)
         | HirInstructionKind::New { .. }
-        | HirInstructionKind::Write { .. }
-        | HirInstructionKind::ReadWrite { .. }
         | HirInstructionKind::Await { .. }
         | HirInstructionKind::Yield { .. }
         | HirInstructionKind::Debugger => true,
+        HirInstructionKind::Write { .. } | HirInstructionKind::ReadWrite { .. } => {
+            instruction.semantics.mutation != MutationEffect::Local
+        }
         HirInstructionKind::SyntaxFragment { fragment, .. } => file
             .syntax_fragments
             .get(fragment.as_usize())

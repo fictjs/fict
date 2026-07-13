@@ -3,8 +3,8 @@ use fict_compiler_oxc::{
 };
 use fict_hir::{
     BinaryOperator, CallHost, CompoundAssignmentOperator, FictMacroKind, FunctionKind,
-    HirInstructionKind, IterationKind, ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind,
-    TerminatorKind, UpdateOperator,
+    HirInstructionKind, IterationKind, MutationEffect, Purity, ReactiveCallKind,
+    StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, UpdateOperator,
 };
 
 fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
@@ -72,13 +72,24 @@ fn lowers_if_returns_into_real_hir_blocks_with_control_dependencies() {
                 })
         })
         .expect("materialized branch test");
+    let count = app
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("count"))
+        .expect("state local");
     let reactive_read = app.blocks[0]
         .instructions
         .iter()
-        .find_map(|instruction| {
-            matches!(instruction.kind, HirInstructionKind::Read { .. })
-                .then_some(instruction.result)
-                .flatten()
+        .find_map(|instruction| match &instruction.kind {
+            HirInstructionKind::Read { place }
+                if place == &fict_hir::Place::local(count.id)
+                    && instruction.origin.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == "count"
+                    }) =>
+            {
+                instruction.result
+            }
+            _ => None,
         })
         .expect("reactive condition read");
     let unknown_call = app.blocks[0]
@@ -1121,11 +1132,18 @@ fn materializes_binding_resolved_macro_reads_in_hir() {
                 .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "shadow")
         })
         .expect("shadow function");
-    assert!(
-        shadow.blocks[0]
-            .instructions
-            .iter()
-            .all(|instruction| { !matches!(instruction.kind, HirInstructionKind::Read { .. }) })
+    let shadow_reads: Vec<_> = shadow.blocks[0]
+        .instructions
+        .iter()
+        .filter(|instruction| matches!(instruction.kind, HirInstructionKind::Read { .. }))
+        .collect();
+    assert_eq!(shadow_reads.len(), 1, "plain local reads are explicit HIR");
+    assert_eq!(
+        shadow_reads[0]
+            .origin
+            .primary_span
+            .map(|span| &source[span.start() as usize..span.end() as usize]),
+        Some("doubled")
     );
 }
 
@@ -1173,6 +1191,10 @@ fn materializes_reactive_assignments_compounds_and_updates() {
         .collect();
 
     assert_eq!(mutations.len(), 4);
+    assert!(mutations.iter().all(|instruction| {
+        instruction.semantics.mutation == MutationEffect::Observable
+            && instruction.semantics.purity == Purity::Unknown
+    }));
     assert!(matches!(
         mutations[0].kind,
         HirInstructionKind::Write { .. }
@@ -1222,11 +1244,120 @@ fn materializes_reactive_assignments_compounds_and_updates() {
                 .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "shadow")
         })
         .expect("shadow function");
-    assert!(shadow.blocks[0].instructions.iter().all(|instruction| {
-        !matches!(
+    let plain_mutations: Vec<_> = shadow.blocks[0]
+        .instructions
+        .iter()
+        .filter(|instruction| {
+            matches!(
+                instruction.kind,
+                HirInstructionKind::Write { .. } | HirInstructionKind::ReadWrite { .. }
+            )
+        })
+        .collect();
+    assert_eq!(plain_mutations.len(), 2, "plain writes are explicit HIR");
+    assert_eq!(
+        plain_mutations
+            .iter()
+            .map(|instruction| {
+                let span = instruction
+                    .origin
+                    .primary_span
+                    .expect("plain mutation span");
+                &source[span.start() as usize..span.end() as usize]
+            })
+            .collect::<Vec<_>>(),
+        ["count += 1", "count++"]
+    );
+}
+
+#[test]
+fn materializes_plain_local_accesses_in_dependency_safe_source_order() {
+    let source = r#"
+        function plain(input) {
+            let value = input;
+            const assigned = (value = side('assign'));
+            const compound = (value += side('compound'));
+            const postfix = value++;
+            return [value, assigned, compound, postfix];
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified plain-local HIR");
+    let plain = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "plain")
+        })
+        .expect("plain function");
+
+    let input = plain
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("input"))
+        .expect("input local");
+    let value = plain
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("value"))
+        .expect("value local");
+    assert!(plain.blocks[0].instructions.iter().any(|instruction| {
+        matches!(
+            &instruction.kind,
+            HirInstructionKind::Read { place }
+                if place == &fict_hir::Place::local(input.id)
+        )
+    }));
+    assert!(plain.blocks[0].instructions.iter().any(|instruction| {
+        matches!(
+            &instruction.kind,
+            HirInstructionKind::Read { place }
+                if place == &fict_hir::Place::local(value.id)
+        )
+    }));
+
+    let ordered_effects: Vec<_> = plain.blocks[0]
+        .instructions
+        .iter()
+        .filter(|instruction| {
+            matches!(
+                instruction.kind,
+                HirInstructionKind::Call(_)
+                    | HirInstructionKind::Write { .. }
+                    | HirInstructionKind::ReadWrite { .. }
+            )
+        })
+        .map(|instruction| {
+            let span = instruction
+                .origin
+                .primary_span
+                .expect("authored effect span");
+            &source[span.start() as usize..span.end() as usize]
+        })
+        .collect();
+    assert_eq!(
+        ordered_effects,
+        [
+            "side('assign')",
+            "value = side('assign')",
+            "side('compound')",
+            "value += side('compound')",
+            "value++",
+        ]
+    );
+    assert!(plain.blocks[0].instructions.iter().any(|instruction| {
+        matches!(
             instruction.kind,
             HirInstructionKind::Write { .. } | HirInstructionKind::ReadWrite { .. }
-        )
+        ) && instruction.semantics.mutation == MutationEffect::Local
+            && instruction.semantics.purity == Purity::Impure
     }));
 }
 

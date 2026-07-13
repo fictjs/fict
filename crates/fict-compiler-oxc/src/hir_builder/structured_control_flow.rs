@@ -1205,7 +1205,7 @@ impl<'a> Visit<'a> for ExpressionEffectCollector {
     }
 }
 
-fn expression_has_effects(expression: &Expression<'_>) -> bool {
+pub(super) fn expression_has_effects(expression: &Expression<'_>) -> bool {
     let mut collector = ExpressionEffectCollector::default();
     collector.visit_expression(expression);
     collector.found

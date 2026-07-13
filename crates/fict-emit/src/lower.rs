@@ -436,6 +436,9 @@ fn lower_function(
     slot_by_local.extend(
         captured_sites
             .iter()
+            .filter(|(_, site, _)| {
+                matches!(site.kind, ReactiveSlotKind::Signal | ReactiveSlotKind::Memo)
+            })
             .map(|(local, _, slot)| (*local, *slot)),
     );
     let mut slots: Vec<_> = sites
