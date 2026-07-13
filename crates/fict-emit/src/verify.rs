@@ -383,7 +383,10 @@ fn verify_helper_semantics(
             namespace, helper, ..
         } => match namespace {
             DomNamespace::Html => *helper == RuntimeHelper::CreateElement,
-            DomNamespace::Svg | DomNamespace::MathMl => {
+            DomNamespace::Svg
+            | DomNamespace::MathMl
+            | DomNamespace::MathMlTextIntegration
+            | DomNamespace::MathMlAnnotationXml => {
                 *helper == RuntimeHelper::CreateElementInNamespace
             }
             DomNamespace::Parent => *helper == RuntimeHelper::CreateElementInParentNamespace,

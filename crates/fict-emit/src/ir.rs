@@ -93,6 +93,11 @@ pub enum DomNamespace {
     Html,
     Svg,
     MathMl,
+    /// Children of MathML text integration points; runtime tag choice decides HTML vs MathML.
+    MathMlTextIntegration,
+    /// Children of non-HTML MathML `annotation-xml`; only nested `svg` switches namespace.
+    MathMlAnnotationXml,
+    /// Resolve from the live parent after a runtime `annotation-xml` encoding decision.
     Parent,
 }
 
@@ -276,6 +281,7 @@ pub enum EmitOperation {
         parent: EmitTemporaryId,
         value: EmitValueRef,
         before: Option<EmitTemporaryId>,
+        namespace: DomNamespace,
         helper: RuntimeHelper,
         origin: Origin,
     },

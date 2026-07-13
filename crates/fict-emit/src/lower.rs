@@ -460,10 +460,12 @@ enum TemplateBinding {
     Spread {
         path: Vec<u32>,
         value: ValueId,
+        namespace: DomNamespace,
     },
     Child {
         parent_path: Vec<u32>,
         value: ValueId,
+        namespace: DomNamespace,
     },
     Event {
         path: Vec<u32>,
@@ -476,6 +478,7 @@ enum TemplateBinding {
     },
 }
 
+#[derive(Debug)]
 struct SerializedTemplate {
     html: String,
     namespace: DomNamespace,
@@ -577,7 +580,11 @@ fn lower_jsx_instruction(
                     origin: instruction.origin,
                 });
             }
-            TemplateBinding::Spread { path, value } => {
+            TemplateBinding::Spread {
+                path,
+                value,
+                namespace,
+            } => {
                 let element = resolved_element(
                     root,
                     path,
@@ -590,7 +597,7 @@ fn lower_jsx_instruction(
                     target: element,
                     operation: PropsOperation::Spread {
                         source: lower_value(value, value_temporaries),
-                        namespace: serialized.namespace,
+                        namespace,
                         skip_children: false,
                         excluded: Vec::new(),
                     },
@@ -598,7 +605,11 @@ fn lower_jsx_instruction(
                     origin: instruction.origin,
                 });
             }
-            TemplateBinding::Child { parent_path, value } => {
+            TemplateBinding::Child {
+                parent_path,
+                value,
+                namespace,
+            } => {
                 let parent = resolved_element(
                     root,
                     parent_path,
@@ -611,6 +622,7 @@ fn lower_jsx_instruction(
                     parent,
                     value: lower_value(value, value_temporaries),
                     before: None,
+                    namespace,
                     helper: RuntimeHelper::Insert,
                     origin: instruction.origin,
                 });
@@ -771,15 +783,14 @@ fn lower_component_jsx(
 fn serialize_template(root: &JsxNode) -> Result<SerializedTemplate, DiagnosticBundle> {
     let namespace = match root {
         JsxNode::Element(element) => match &element.name {
-            JsxElementName::Intrinsic(name) if name == "svg" => DomNamespace::Svg,
-            JsxElementName::Intrinsic(name) if name == "math" => DomNamespace::MathMl,
+            JsxElementName::Intrinsic(name) => resolve_element_namespace(name, None, true),
             _ => DomNamespace::Html,
         },
         JsxNode::Fragment { .. } => DomNamespace::Html,
     };
     let mut html = String::new();
     let mut bindings = Vec::new();
-    serialize_node(root, &mut Vec::new(), &mut html, &mut bindings)?;
+    serialize_node(root, None, true, &mut Vec::new(), &mut html, &mut bindings)?;
     if html.is_empty() {
         html.push_str("<!---->");
     }
@@ -792,14 +803,22 @@ fn serialize_template(root: &JsxNode) -> Result<SerializedTemplate, DiagnosticBu
 
 fn serialize_node(
     node: &JsxNode,
+    parent_namespace: Option<DomNamespace>,
+    allow_standalone: bool,
     path: &mut Vec<u32>,
     html: &mut String,
     bindings: &mut Vec<TemplateBinding>,
-) -> Result<(), DiagnosticBundle> {
+) -> Result<u32, DiagnosticBundle> {
     match node {
-        JsxNode::Fragment { children, .. } => {
-            serialize_children(children, path, html, bindings)?;
-        }
+        JsxNode::Fragment { children, .. } => serialize_children(
+            children,
+            path,
+            html,
+            bindings,
+            None,
+            parent_namespace.unwrap_or(DomNamespace::Html),
+            parent_namespace.unwrap_or(DomNamespace::Html),
+        ),
         JsxNode::Element(element) => {
             let JsxElementName::Intrinsic(tag) = &element.name else {
                 return Err(DiagnosticBundle::new(vec![lower_error(
@@ -808,6 +827,10 @@ fn serialize_node(
                     GuaranteeClass::Unsupported,
                 )]));
             };
+            let element_namespace =
+                resolve_element_namespace(tag, parent_namespace, allow_standalone);
+            let child_namespace =
+                resolve_child_namespace(tag, element_namespace, &element.attributes);
             if !valid_markup_name(tag) {
                 return Err(DiagnosticBundle::new(vec![lower_error(
                     "FICT-EMIT-TAG",
@@ -820,7 +843,8 @@ fn serialize_node(
             for attribute in &element.attributes {
                 match attribute {
                     JsxAttribute::Named { name, value, .. } => {
-                        if !valid_markup_name(name) {
+                        let name = normalize_attribute_name(tag, name, element_namespace);
+                        if !valid_markup_name(&name) {
                             return Err(DiagnosticBundle::new(vec![lower_error(
                                 "FICT-EMIT-ATTRIBUTE",
                                 "JSX attribute contains unsafe markup characters",
@@ -830,11 +854,11 @@ fn serialize_node(
                         match value {
                             JsxAttributeValue::ImplicitTrue => {
                                 html.push(' ');
-                                html.push_str(name);
+                                html.push_str(&name);
                             }
                             JsxAttributeValue::Text(value) => {
                                 html.push(' ');
-                                html.push_str(name);
+                                html.push_str(&name);
                                 html.push_str("=\"");
                                 escape_attribute(value, html);
                                 html.push('"');
@@ -845,7 +869,7 @@ fn serialize_node(
                                         path: path.clone(),
                                         reference: *value,
                                     });
-                                } else if let Some(event) = event_name(name) {
+                                } else if let Some(event) = event_name(&name) {
                                     bindings.push(TemplateBinding::Event {
                                         path: path.clone(),
                                         event,
@@ -854,7 +878,7 @@ fn serialize_node(
                                 } else {
                                     bindings.push(TemplateBinding::Attribute {
                                         path: path.clone(),
-                                        name: name.clone(),
+                                        name,
                                         value: *value,
                                     });
                                 }
@@ -868,46 +892,468 @@ fn serialize_node(
                             }
                         }
                     }
-                    JsxAttribute::Spread { value, .. } => bindings.push(TemplateBinding::Spread {
-                        path: path.clone(),
-                        value: *value,
-                    }),
+                    JsxAttribute::Spread { value, .. } => {
+                        bindings.push(TemplateBinding::Spread {
+                            path: path.clone(),
+                            value: *value,
+                            namespace: element_namespace,
+                        });
+                    }
                 }
             }
             html.push('>');
-            serialize_children(&element.children, path, html, bindings)?;
-            html.push_str("</");
-            html.push_str(tag);
-            html.push('>');
+            if is_html_void_element(tag, element_namespace) {
+                if element.children.iter().any(renderable_child) {
+                    return Err(DiagnosticBundle::new(vec![lower_error(
+                        "FICT-EMIT-VOID-CHILD",
+                        "HTML void elements cannot contain JSX children",
+                        GuaranteeClass::Unsupported,
+                    )]));
+                }
+            } else {
+                serialize_children(
+                    &element.children,
+                    path,
+                    html,
+                    bindings,
+                    Some(tag),
+                    element_namespace,
+                    child_namespace,
+                )?;
+                html.push_str("</");
+                html.push_str(tag);
+                html.push('>');
+            }
+            Ok(1)
         }
     }
-    Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn serialize_children(
     children: &[JsxChild],
     parent_path: &mut Vec<u32>,
     html: &mut String,
     bindings: &mut Vec<TemplateBinding>,
-) -> Result<(), DiagnosticBundle> {
-    for (index, child) in children.iter().enumerate() {
+    parent_tag: Option<&str>,
+    parent_element_namespace: DomNamespace,
+    child_namespace: DomNamespace,
+) -> Result<u32, DiagnosticBundle> {
+    let mut child_index = 0_u32;
+    let mut source_index = 0_usize;
+    let mut previous_static_text = false;
+    while source_index < children.len() {
+        let child = &children[source_index];
         match child {
-            JsxChild::Text { value, .. } => escape_text(value, html),
+            JsxChild::Text { value, .. } => {
+                if !value.is_empty() {
+                    escape_text(value, html);
+                    if !previous_static_text {
+                        child_index += 1;
+                    }
+                    previous_static_text = true;
+                }
+            }
             JsxChild::Expression { value, .. } | JsxChild::Spread { value, .. } => {
+                previous_static_text = false;
                 html.push_str("<!---->");
                 bindings.push(TemplateBinding::Child {
                     parent_path: parent_path.clone(),
                     value: *value,
+                    namespace: child_namespace,
                 });
+                child_index += 1;
             }
             JsxChild::Node(node) => {
-                parent_path.push(count_u32(index));
-                serialize_node(node, parent_path, html, bindings)?;
+                previous_static_text = false;
+                if child_namespace == DomNamespace::Parent {
+                    return Err(DiagnosticBundle::new(vec![lower_error(
+                        "FICT-EMIT-NAMESPACE-DYNAMIC",
+                        "runtime annotation-xml encoding requires nested JSX to be lowered through a parent-derived slot",
+                        GuaranteeClass::Unsupported,
+                    )]));
+                }
+                if is_implicit_table_child(parent_tag, parent_element_namespace, child, "tr") {
+                    parent_path.push(child_index);
+                    html.push_str("<tbody>");
+                    let mut row_index = 0_u32;
+                    while source_index < children.len()
+                        && is_implicit_table_child(
+                            parent_tag,
+                            parent_element_namespace,
+                            &children[source_index],
+                            "tr",
+                        )
+                    {
+                        let JsxChild::Node(row) = &children[source_index] else {
+                            unreachable!("table child predicate requires a JSX node")
+                        };
+                        parent_path.push(row_index);
+                        serialize_node(
+                            row,
+                            Some(child_namespace),
+                            false,
+                            parent_path,
+                            html,
+                            bindings,
+                        )?;
+                        parent_path.pop();
+                        row_index += 1;
+                        source_index += 1;
+                    }
+                    html.push_str("</tbody>");
+                    parent_path.pop();
+                    child_index += 1;
+                    continue;
+                }
+                if is_implicit_table_child(parent_tag, parent_element_namespace, child, "col") {
+                    parent_path.push(child_index);
+                    html.push_str("<colgroup>");
+                    let mut column_index = 0_u32;
+                    while source_index < children.len()
+                        && is_implicit_table_child(
+                            parent_tag,
+                            parent_element_namespace,
+                            &children[source_index],
+                            "col",
+                        )
+                    {
+                        let JsxChild::Node(column) = &children[source_index] else {
+                            unreachable!("table child predicate requires a JSX node")
+                        };
+                        parent_path.push(column_index);
+                        serialize_node(
+                            column,
+                            Some(child_namespace),
+                            false,
+                            parent_path,
+                            html,
+                            bindings,
+                        )?;
+                        parent_path.pop();
+                        column_index += 1;
+                        source_index += 1;
+                    }
+                    html.push_str("</colgroup>");
+                    parent_path.pop();
+                    child_index += 1;
+                    continue;
+                }
+                parent_path.push(child_index);
+                let node_count = serialize_node(
+                    node,
+                    Some(child_namespace),
+                    false,
+                    parent_path,
+                    html,
+                    bindings,
+                )?;
                 parent_path.pop();
+                child_index += node_count;
             }
         }
+        source_index += 1;
     }
-    Ok(())
+    Ok(child_index)
+}
+
+fn resolve_element_namespace(
+    tag: &str,
+    parent: Option<DomNamespace>,
+    allow_standalone: bool,
+) -> DomNamespace {
+    let tag = tag.to_ascii_lowercase();
+    match parent {
+        None | Some(DomNamespace::Html) => {
+            if tag == "svg" {
+                DomNamespace::Svg
+            } else if tag == "math" {
+                DomNamespace::MathMl
+            } else if parent.is_none() && allow_standalone && is_standalone_svg_tag(&tag) {
+                DomNamespace::Svg
+            } else if parent.is_none() && allow_standalone && is_standalone_mathml_tag(&tag) {
+                DomNamespace::MathMl
+            } else {
+                DomNamespace::Html
+            }
+        }
+        Some(DomNamespace::Svg) => DomNamespace::Svg,
+        Some(DomNamespace::MathMl) => DomNamespace::MathMl,
+        Some(DomNamespace::MathMlTextIntegration) => {
+            if tag == "svg" {
+                DomNamespace::Svg
+            } else if tag == "math" || matches!(tag.as_str(), "mglyph" | "malignmark") {
+                DomNamespace::MathMl
+            } else {
+                DomNamespace::Html
+            }
+        }
+        Some(DomNamespace::MathMlAnnotationXml) => {
+            if tag == "svg" {
+                DomNamespace::Svg
+            } else {
+                DomNamespace::MathMl
+            }
+        }
+        Some(DomNamespace::Parent) => DomNamespace::Parent,
+    }
+}
+
+fn resolve_child_namespace(
+    tag: &str,
+    element_namespace: DomNamespace,
+    attributes: &[JsxAttribute],
+) -> DomNamespace {
+    let tag = tag.to_ascii_lowercase();
+    if element_namespace == DomNamespace::Svg
+        && matches!(tag.as_str(), "foreignobject" | "title" | "desc")
+    {
+        return DomNamespace::Html;
+    }
+    if element_namespace == DomNamespace::MathMl && tag == "annotation-xml" {
+        return match annotation_xml_encoding(attributes) {
+            AnnotationXmlEncoding::Html => DomNamespace::Html,
+            AnnotationXmlEncoding::Other => DomNamespace::MathMlAnnotationXml,
+            AnnotationXmlEncoding::Dynamic => DomNamespace::Parent,
+        };
+    }
+    if element_namespace == DomNamespace::MathMl
+        && matches!(tag.as_str(), "mi" | "mo" | "mn" | "ms" | "mtext")
+    {
+        return DomNamespace::MathMlTextIntegration;
+    }
+    element_namespace
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnnotationXmlEncoding {
+    Html,
+    Other,
+    Dynamic,
+}
+
+fn annotation_xml_encoding(attributes: &[JsxAttribute]) -> AnnotationXmlEncoding {
+    let mut encoding = AnnotationXmlEncoding::Other;
+    for attribute in attributes {
+        match attribute {
+            JsxAttribute::Spread { .. } => encoding = AnnotationXmlEncoding::Dynamic,
+            JsxAttribute::Named { name, value, .. } if name.eq_ignore_ascii_case("encoding") => {
+                encoding = match value {
+                    JsxAttributeValue::Text(value)
+                        if matches!(
+                            value.to_ascii_lowercase().as_str(),
+                            "text/html" | "application/xhtml+xml"
+                        ) =>
+                    {
+                        AnnotationXmlEncoding::Html
+                    }
+                    JsxAttributeValue::Expression(_) | JsxAttributeValue::Node(_) => {
+                        AnnotationXmlEncoding::Dynamic
+                    }
+                    JsxAttributeValue::ImplicitTrue | JsxAttributeValue::Text(_) => {
+                        AnnotationXmlEncoding::Other
+                    }
+                };
+            }
+            JsxAttribute::Named { .. } => {}
+        }
+    }
+    encoding
+}
+
+fn normalize_attribute_name(tag: &str, name: &str, namespace: DomNamespace) -> String {
+    if tag.eq_ignore_ascii_case("annotation-xml") && name.eq_ignore_ascii_case("encoding") {
+        return "encoding".to_owned();
+    }
+    match name {
+        "className" => return "class".to_owned(),
+        "htmlFor" => return "for".to_owned(),
+        _ => {}
+    }
+    if namespace != DomNamespace::Svg {
+        return name.to_owned();
+    }
+    match name {
+        "xmlnsXlink" => "xmlns:xlink",
+        "strokeWidth" => "stroke-width",
+        "strokeLinecap" => "stroke-linecap",
+        "strokeLinejoin" => "stroke-linejoin",
+        "strokeDasharray" => "stroke-dasharray",
+        "strokeDashoffset" => "stroke-dashoffset",
+        "strokeOpacity" => "stroke-opacity",
+        "fillOpacity" => "fill-opacity",
+        "fillRule" => "fill-rule",
+        "clipRule" => "clip-rule",
+        "transformOrigin" => "transform-origin",
+        "clipPath" => "clip-path",
+        "textAnchor" => "text-anchor",
+        "dominantBaseline" => "dominant-baseline",
+        "fontSize" => "font-size",
+        "fontFamily" => "font-family",
+        "fontWeight" => "font-weight",
+        "xlinkHref" => "xlink:href",
+        "stopColor" => "stop-color",
+        "stopOpacity" => "stop-opacity",
+        "markerStart" => "marker-start",
+        "markerMid" => "marker-mid",
+        "markerEnd" => "marker-end",
+        "vectorEffect" => "vector-effect",
+        _ => name,
+    }
+    .to_owned()
+}
+
+fn is_implicit_table_child(
+    parent_tag: Option<&str>,
+    parent_namespace: DomNamespace,
+    child: &JsxChild,
+    expected: &str,
+) -> bool {
+    if parent_namespace != DomNamespace::Html
+        || !parent_tag.is_some_and(|tag| tag.eq_ignore_ascii_case("table"))
+    {
+        return false;
+    }
+    matches!(
+        child,
+        JsxChild::Node(node)
+            if matches!(
+                node.as_ref(),
+                JsxNode::Element(element)
+                    if matches!(&element.name, JsxElementName::Intrinsic(tag) if tag.eq_ignore_ascii_case(expected))
+            )
+    )
+}
+
+fn renderable_child(child: &JsxChild) -> bool {
+    !matches!(child, JsxChild::Text { value, .. } if value.is_empty())
+}
+
+fn is_html_void_element(tag: &str, namespace: DomNamespace) -> bool {
+    namespace == DomNamespace::Html
+        && matches!(
+            tag.to_ascii_lowercase().as_str(),
+            "area"
+                | "base"
+                | "br"
+                | "col"
+                | "embed"
+                | "hr"
+                | "img"
+                | "input"
+                | "link"
+                | "meta"
+                | "param"
+                | "source"
+                | "track"
+                | "wbr"
+        )
+}
+
+fn is_standalone_svg_tag(tag: &str) -> bool {
+    matches!(
+        tag,
+        "animate"
+            | "animatemotion"
+            | "animatetransform"
+            | "circle"
+            | "clippath"
+            | "defs"
+            | "desc"
+            | "ellipse"
+            | "feblend"
+            | "fecolormatrix"
+            | "fecomponenttransfer"
+            | "fecomposite"
+            | "feconvolvematrix"
+            | "fediffuselighting"
+            | "fedisplacementmap"
+            | "fedistantlight"
+            | "fedropshadow"
+            | "feflood"
+            | "fefunca"
+            | "fefuncb"
+            | "fefuncg"
+            | "fefuncr"
+            | "fegaussianblur"
+            | "feimage"
+            | "femerge"
+            | "femergenode"
+            | "femorphology"
+            | "feoffset"
+            | "fepointlight"
+            | "fespecularlighting"
+            | "fespotlight"
+            | "fetile"
+            | "feturbulence"
+            | "filter"
+            | "g"
+            | "image"
+            | "line"
+            | "lineargradient"
+            | "marker"
+            | "mask"
+            | "metadata"
+            | "mpath"
+            | "path"
+            | "pattern"
+            | "polygon"
+            | "polyline"
+            | "radialgradient"
+            | "rect"
+            | "set"
+            | "stop"
+            | "switch"
+            | "symbol"
+            | "text"
+            | "textpath"
+            | "tspan"
+            | "use"
+            | "view"
+    )
+}
+
+fn is_standalone_mathml_tag(tag: &str) -> bool {
+    matches!(
+        tag,
+        "mi" | "mo"
+            | "mn"
+            | "ms"
+            | "mtext"
+            | "annotation"
+            | "maction"
+            | "maligngroup"
+            | "malignmark"
+            | "menclose"
+            | "merror"
+            | "mfenced"
+            | "mfrac"
+            | "mglyph"
+            | "mlabeledtr"
+            | "mlongdiv"
+            | "mmultiscripts"
+            | "mover"
+            | "mpadded"
+            | "mphantom"
+            | "mroot"
+            | "mrow"
+            | "msgroup"
+            | "msline"
+            | "mspace"
+            | "msqrt"
+            | "msrow"
+            | "mstack"
+            | "mstyle"
+            | "msub"
+            | "msubsup"
+            | "msup"
+            | "mtable"
+            | "mtd"
+            | "mtr"
+            | "munder"
+            | "munderover"
+            | "semantics"
+    )
 }
 
 fn resolved_element(
@@ -1131,4 +1577,272 @@ fn lower_error(
 
 fn count_u32(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+#[cfg(test)]
+mod namespace_tests {
+    use super::*;
+    use fict_diagnostics::SourceSpan;
+    use fict_hir::{JsxElement, Origin};
+
+    fn test_origin() -> Origin {
+        Origin::source(SourceSpan::empty(0))
+    }
+
+    fn element(tag: &str, attributes: Vec<JsxAttribute>, children: Vec<JsxChild>) -> JsxNode {
+        JsxNode::Element(JsxElement {
+            name: JsxElementName::Intrinsic(tag.to_owned()),
+            attributes,
+            children,
+            origin: test_origin(),
+        })
+    }
+
+    fn node(node: JsxNode) -> JsxChild {
+        JsxChild::Node(Box::new(node))
+    }
+
+    fn spread(value: u32) -> JsxAttribute {
+        JsxAttribute::Spread {
+            value: ValueId::new(value),
+            origin: test_origin(),
+        }
+    }
+
+    fn expression(value: u32) -> JsxChild {
+        JsxChild::Expression {
+            value: ValueId::new(value),
+            origin: test_origin(),
+        }
+    }
+
+    #[test]
+    fn resolves_svg_integration_points_and_normalizes_attributes() {
+        let root = element(
+            "svg",
+            Vec::new(),
+            vec![
+                node(element(
+                    "path",
+                    vec![
+                        JsxAttribute::Named {
+                            name: "strokeWidth".into(),
+                            value: JsxAttributeValue::Text("2".into()),
+                            origin: test_origin(),
+                        },
+                        JsxAttribute::Named {
+                            name: "xlinkHref".into(),
+                            value: JsxAttributeValue::Expression(ValueId::new(9)),
+                            origin: test_origin(),
+                        },
+                        spread(0),
+                    ],
+                    Vec::new(),
+                )),
+                node(element(
+                    "foreignObject",
+                    Vec::new(),
+                    vec![node(element("div", vec![spread(1)], Vec::new()))],
+                )),
+                node(element(
+                    "title",
+                    Vec::new(),
+                    vec![node(element("span", vec![spread(2)], Vec::new()))],
+                )),
+                node(element("math", vec![spread(3)], Vec::new())),
+            ],
+        );
+        let serialized = serialize_template(&root).expect("SVG namespace serialization");
+        assert_eq!(serialized.namespace, DomNamespace::Svg);
+        assert!(serialized.html.contains("stroke-width=\"2\""));
+        assert!(serialized.bindings.iter().any(|binding| matches!(
+            binding,
+            TemplateBinding::Attribute { name, .. } if name == "xlink:href"
+        )));
+        let spread_namespaces: Vec<_> = serialized
+            .bindings
+            .iter()
+            .filter_map(|binding| match binding {
+                TemplateBinding::Spread { namespace, .. } => Some(*namespace),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            spread_namespaces,
+            [
+                DomNamespace::Svg,
+                DomNamespace::Html,
+                DomNamespace::Html,
+                DomNamespace::Svg,
+            ]
+        );
+    }
+
+    #[test]
+    fn resolves_mathml_text_annotation_and_runtime_parent_contexts() {
+        let root = element(
+            "math",
+            Vec::new(),
+            vec![
+                node(element(
+                    "mtext",
+                    Vec::new(),
+                    vec![
+                        node(element("span", vec![spread(0)], Vec::new())),
+                        node(element("mglyph", vec![spread(1)], Vec::new())),
+                        expression(10),
+                    ],
+                )),
+                node(element(
+                    "annotation-xml",
+                    vec![JsxAttribute::Named {
+                        name: "ENCODING".into(),
+                        value: JsxAttributeValue::Text("text/html".into()),
+                        origin: test_origin(),
+                    }],
+                    vec![node(element("div", vec![spread(2)], Vec::new()))],
+                )),
+                node(element(
+                    "annotation-xml",
+                    vec![JsxAttribute::Named {
+                        name: "encoding".into(),
+                        value: JsxAttributeValue::Text("application/xml".into()),
+                        origin: test_origin(),
+                    }],
+                    vec![node(element("mi", vec![spread(3)], Vec::new()))],
+                )),
+                node(element(
+                    "annotation-xml",
+                    vec![JsxAttribute::Named {
+                        name: "encoding".into(),
+                        value: JsxAttributeValue::Expression(ValueId::new(11)),
+                        origin: test_origin(),
+                    }],
+                    vec![expression(12)],
+                )),
+            ],
+        );
+        let serialized = serialize_template(&root).expect("MathML namespace serialization");
+        assert_eq!(serialized.namespace, DomNamespace::MathMl);
+        let spread_namespaces: Vec<_> = serialized
+            .bindings
+            .iter()
+            .filter_map(|binding| match binding {
+                TemplateBinding::Spread { namespace, .. } => Some(*namespace),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            spread_namespaces,
+            [
+                DomNamespace::Html,
+                DomNamespace::MathMl,
+                DomNamespace::Html,
+                DomNamespace::MathMl,
+            ]
+        );
+        assert!(serialized.bindings.iter().any(|binding| matches!(
+            binding,
+            TemplateBinding::Child {
+                value,
+                namespace: DomNamespace::MathMlTextIntegration,
+                ..
+            } if *value == ValueId::new(10)
+        )));
+        assert!(serialized.bindings.iter().any(|binding| matches!(
+            binding,
+            TemplateBinding::Child {
+                value,
+                namespace: DomNamespace::Parent,
+                ..
+            } if *value == ValueId::new(12)
+        )));
+    }
+
+    #[test]
+    fn materializes_implicit_table_groups_and_browser_paths() {
+        let root = element(
+            "table",
+            Vec::new(),
+            vec![
+                node(element("col", vec![spread(0)], Vec::new())),
+                node(element("col", Vec::new(), Vec::new())),
+                node(element(
+                    "tr",
+                    Vec::new(),
+                    vec![node(element("td", vec![spread(1)], Vec::new()))],
+                )),
+                node(element(
+                    "tr",
+                    Vec::new(),
+                    vec![node(element("td", vec![spread(2)], Vec::new()))],
+                )),
+            ],
+        );
+        let serialized = serialize_template(&root).expect("table parser serialization");
+        assert_eq!(
+            serialized.html,
+            "<table><colgroup><col><col></colgroup><tbody><tr><td></td></tr><tr><td></td></tr></tbody></table>"
+        );
+        let paths: Vec<_> = serialized
+            .bindings
+            .iter()
+            .filter_map(|binding| match binding {
+                TemplateBinding::Spread { path, .. } => Some(path.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(paths, [vec![0, 0], vec![1, 0, 0], vec![1, 1, 0]]);
+    }
+
+    #[test]
+    fn rejects_static_children_when_annotation_namespace_is_runtime_selected() {
+        let root = element(
+            "math",
+            Vec::new(),
+            vec![node(element(
+                "annotation-xml",
+                vec![spread(0)],
+                vec![node(element("mi", Vec::new(), Vec::new()))],
+            ))],
+        );
+        let diagnostics = serialize_template(&root).expect_err("must fail closed");
+        assert!(
+            diagnostics
+                .as_slice()
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == "FICT-EMIT-NAMESPACE-DYNAMIC")
+        );
+    }
+
+    #[test]
+    fn classifies_standalone_foreign_roots_and_rejects_void_children() {
+        assert_eq!(
+            serialize_template(&element("circle", Vec::new(), Vec::new()))
+                .expect("standalone SVG")
+                .namespace,
+            DomNamespace::Svg
+        );
+        assert_eq!(
+            serialize_template(&element("mi", Vec::new(), Vec::new()))
+                .expect("standalone MathML")
+                .namespace,
+            DomNamespace::MathMl
+        );
+        let invalid = element(
+            "input",
+            Vec::new(),
+            vec![JsxChild::Text {
+                value: "child".into(),
+                origin: test_origin(),
+            }],
+        );
+        let diagnostics = serialize_template(&invalid).expect_err("void child is invalid");
+        assert!(
+            diagnostics
+                .as_slice()
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == "FICT-EMIT-VOID-CHILD")
+        );
+    }
 }
