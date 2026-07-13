@@ -117,6 +117,66 @@ fn verifier_rejects_a_value_definition_that_changes_literal_bits() {
 }
 
 #[test]
+fn verifier_checks_every_typed_conditional_input() {
+    let mut file = empty_file();
+    let origin = Origin::source(fict_hir::SourceSpan::empty(0));
+    let literals = [
+        LiteralValue::Boolean(true),
+        LiteralValue::Number(NumberLiteral::from_f64(1.0)),
+        LiteralValue::Number(NumberLiteral::from_f64(2.0)),
+    ];
+    for (index, literal) in literals.iter().enumerate() {
+        let value = ValueId::new(u32::try_from(index).expect("small fixture index"));
+        file.functions[0].values.push(HirValue {
+            id: value,
+            kind: ValueKind::Literal(literal.clone()),
+            origin,
+        });
+        file.functions[0].blocks[0]
+            .instructions
+            .push(HirInstruction {
+                result: Some(value),
+                kind: HirInstructionKind::Literal(literal.clone()),
+                semantics: InstructionSemantics::PURE_EAGER,
+                origin,
+            });
+    }
+    file.functions[0].values.push(HirValue {
+        id: ValueId::new(3),
+        kind: ValueKind::InstructionResult,
+        origin,
+    });
+    file.functions[0].blocks[0]
+        .instructions
+        .push(HirInstruction {
+            result: Some(ValueId::new(3)),
+            kind: HirInstructionKind::Conditional {
+                test: ValueId::new(0),
+                consequent: ValueId::new(1),
+                alternate: ValueId::new(2),
+            },
+            semantics: InstructionSemantics::PURE_EAGER,
+            origin,
+        });
+
+    verify_hir(&file).expect("well-formed conditional HIR");
+    let HirInstructionKind::Conditional { alternate, .. } =
+        &mut file.functions[0].blocks[0].instructions[3].kind
+    else {
+        panic!("conditional fixture")
+    };
+    *alternate = ValueId::new(99);
+    let diagnostics = verify_hir(&file).expect_err("invalid conditional arm must fail");
+    assert!(
+        diagnostics
+            .as_slice()
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "FICT-HIR-REF"
+                && diagnostic.message.contains("value99"))
+    );
+}
+
+#[test]
 fn verifier_rejects_overlapping_switch_test_and_body_blocks() {
     let mut file = empty_file();
     let origin = Origin::source(fict_hir::SourceSpan::empty(0));

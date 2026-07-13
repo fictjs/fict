@@ -483,6 +483,15 @@ fn value_has_unsafe_control_work(
             value_has_unsafe_control_work(file, function, *left, visiting)
                 || value_has_unsafe_control_work(file, function, *right, visiting)
         }
+        HirInstructionKind::Conditional {
+            test,
+            consequent,
+            alternate,
+        } => {
+            value_has_unsafe_control_work(file, function, *test, visiting)
+                || value_has_unsafe_control_work(file, function, *consequent, visiting)
+                || value_has_unsafe_control_work(file, function, *alternate, visiting)
+        }
         _ => false,
     }
 }

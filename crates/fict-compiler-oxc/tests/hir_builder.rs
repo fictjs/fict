@@ -61,18 +61,22 @@ fn lowers_if_returns_into_real_hir_blocks_with_control_dependencies() {
     else {
         panic!("entry block must branch")
     };
-    let test_inputs = app.blocks[0]
+    let (logical_left, logical_right) = app.blocks[0]
         .instructions
         .iter()
         .find_map(|instruction| {
             (instruction.result == Some(test))
                 .then_some(&instruction.kind)
                 .and_then(|kind| match kind {
-                    HirInstructionKind::SyntaxFragment { inputs, .. } => Some(inputs),
+                    HirInstructionKind::Binary {
+                        operator: BinaryOperator::LogicalAnd,
+                        left,
+                        right,
+                    } => Some((*left, *right)),
                     _ => None,
                 })
         })
-        .expect("materialized branch test");
+        .expect("typed logical branch test");
     let count = app
         .locals
         .iter()
@@ -101,8 +105,18 @@ fn lowers_if_returns_into_real_hir_blocks_with_control_dependencies() {
             _ => None,
         })
         .expect("condition call");
-    assert!(test_inputs.contains(&reactive_read));
-    assert!(test_inputs.contains(&unknown_call));
+    assert_eq!(logical_right, unknown_call);
+    assert!(app.blocks[0].instructions.iter().any(|instruction| {
+        instruction.result == Some(logical_left)
+            && matches!(
+                instruction.kind,
+                HirInstructionKind::Binary {
+                    operator: BinaryOperator::GreaterThan,
+                    left,
+                    ..
+                } if left == reactive_read
+            )
+    }));
 
     let consequent_block = &app.blocks[consequent.as_usize()];
     let TerminatorKind::Return {
@@ -1791,6 +1805,205 @@ fn materializes_literals_unary_and_binary_expressions_as_typed_values() {
                     ..
                 }
             )
+    }));
+}
+
+#[test]
+fn materializes_logical_and_conditional_expressions_with_lazy_arms() {
+    let source = r#"
+        function lazyExpressions(input, inspect, fallback) {
+            const andValue = inspect('and-left', input) && fallback('and-right');
+            const orValue = inspect('or-left', input) || fallback('or-right');
+            const nullishValue = inspect('nullish-left', input) ?? fallback('nullish-right');
+            const choice = inspect('test', input)
+                ? fallback('consequent')
+                : fallback('alternate');
+            return [andValue, orValue, nullishValue, choice];
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified lazy-expression HIR");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                hir.bindings[binding.as_usize()].display_name == "lazyExpressions"
+            })
+        })
+        .expect("lazyExpressions function");
+    let instructions: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let authored = |instruction: &fict_hir::HirInstruction| {
+        let span = instruction
+            .origin
+            .primary_span
+            .expect("authored expression");
+        &source[span.start() as usize..span.end() as usize]
+    };
+    let instruction = |text: &str| {
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| authored(instruction) == text)
+            .unwrap_or_else(|| panic!("instruction for {text}"))
+    };
+
+    for text in [
+        "inspect('and-left', input)",
+        "inspect('or-left', input)",
+        "inspect('nullish-left', input)",
+        "inspect('test', input)",
+        "'and-left'",
+        "'or-left'",
+        "'nullish-left'",
+        "'test'",
+    ] {
+        assert_eq!(
+            instruction(text).semantics.evaluation,
+            EvaluationMode::Eager,
+            "logical left/tests must stay eager: {text}"
+        );
+    }
+    for text in [
+        "fallback('and-right')",
+        "fallback('or-right')",
+        "fallback('nullish-right')",
+        "fallback('consequent')",
+        "fallback('alternate')",
+        "'and-right'",
+        "'or-right'",
+        "'nullish-right'",
+        "'consequent'",
+        "'alternate'",
+    ] {
+        assert_eq!(
+            instruction(text).semantics.evaluation,
+            EvaluationMode::Deferred,
+            "short-circuit arms must stay lazy: {text}"
+        );
+    }
+
+    for (text, operator, left, right) in [
+        (
+            "inspect('and-left', input) && fallback('and-right')",
+            BinaryOperator::LogicalAnd,
+            "inspect('and-left', input)",
+            "fallback('and-right')",
+        ),
+        (
+            "inspect('or-left', input) || fallback('or-right')",
+            BinaryOperator::LogicalOr,
+            "inspect('or-left', input)",
+            "fallback('or-right')",
+        ),
+        (
+            "inspect('nullish-left', input) ?? fallback('nullish-right')",
+            BinaryOperator::NullishCoalescing,
+            "inspect('nullish-left', input)",
+            "fallback('nullish-right')",
+        ),
+    ] {
+        let root = instruction(text);
+        let left = instruction(left).result.expect("logical left result");
+        let right = instruction(right).result.expect("logical right result");
+        assert!(matches!(
+            root.kind,
+            HirInstructionKind::Binary {
+                operator: candidate,
+                left: candidate_left,
+                right: candidate_right,
+            } if candidate == operator && candidate_left == left && candidate_right == right
+        ));
+        assert_eq!(root.semantics, fict_hir::InstructionSemantics::PURE_EAGER);
+    }
+
+    let conditional = instructions
+        .iter()
+        .copied()
+        .find(|instruction| {
+            matches!(instruction.kind, HirInstructionKind::Conditional { .. })
+                && authored(instruction).contains("? fallback('consequent')")
+        })
+        .expect("typed conditional expression");
+    let test = instruction("inspect('test', input)")
+        .result
+        .expect("conditional test result");
+    let consequent = instruction("fallback('consequent')")
+        .result
+        .expect("conditional consequent result");
+    let alternate = instruction("fallback('alternate')")
+        .result
+        .expect("conditional alternate result");
+    assert!(matches!(
+        conditional.kind,
+        HirInstructionKind::Conditional {
+            test: candidate_test,
+            consequent: candidate_consequent,
+            alternate: candidate_alternate,
+        } if candidate_test == test
+            && candidate_consequent == consequent
+            && candidate_alternate == alternate
+    ));
+    assert_eq!(
+        conditional.semantics,
+        fict_hir::InstructionSemantics::PURE_EAGER
+    );
+
+    for (name, expected) in [
+        ("andValue", BinaryOperator::LogicalAnd),
+        ("orValue", BinaryOperator::LogicalOr),
+        ("nullishValue", BinaryOperator::NullishCoalescing),
+    ] {
+        let local = function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .expect("logical declaration local");
+        assert!(instructions.iter().any(|instruction| {
+            let HirInstructionKind::Declare {
+                local: candidate,
+                initializer: Some(initializer),
+                ..
+            } = instruction.kind
+            else {
+                return false;
+            };
+            candidate == local.id
+                && instructions.iter().any(|root| {
+                    root.result == Some(initializer)
+                        && matches!(
+                            root.kind,
+                            HirInstructionKind::Binary {
+                                operator,
+                                ..
+                            } if operator == expected
+                        )
+                })
+        }));
+    }
+    let choice = function
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("choice"))
+        .expect("conditional declaration local");
+    assert!(instructions.iter().any(|instruction| {
+        matches!(
+            instruction.kind,
+            HirInstructionKind::Declare {
+                local,
+                initializer: Some(initializer),
+                ..
+            } if local == choice.id && initializer == conditional.result.expect("conditional result")
+        )
     }));
 }
 

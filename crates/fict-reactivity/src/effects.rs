@@ -1186,6 +1186,11 @@ fn instruction_inputs(instruction: &HirInstruction, file: &HirFile) -> Vec<Value
         | HirInstructionKind::Debugger => Vec::new(),
         HirInstructionKind::Unary { argument, .. } => vec![*argument],
         HirInstructionKind::Binary { left, right, .. } => vec![*left, *right],
+        HirInstructionKind::Conditional {
+            test,
+            consequent,
+            alternate,
+        } => vec![*test, *consequent, *alternate],
         HirInstructionKind::Call(call) => std::iter::once(call.callee)
             .chain(call.arguments.iter().map(|argument| argument.value))
             .collect(),

@@ -777,6 +777,15 @@ pub enum HirInstructionKind {
         /// Right operand.
         right: ValueId,
     },
+    /// Select exactly one lazily evaluated branch from a conditional expression.
+    Conditional {
+        /// Eager condition value.
+        test: ValueId,
+        /// Value produced by the truthy branch.
+        consequent: ValueId,
+        /// Value produced by the falsy branch.
+        alternate: ValueId,
+    },
     /// Invoke a function or method.
     Call(CallInstruction),
     /// Construct a value with `new`.

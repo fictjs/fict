@@ -671,6 +671,15 @@ impl Verifier<'_> {
                 self.value(function, *left, instruction.origin);
                 self.value(function, *right, instruction.origin);
             }
+            HirInstructionKind::Conditional {
+                test,
+                consequent,
+                alternate,
+            } => {
+                self.value(function, *test, instruction.origin);
+                self.value(function, *consequent, instruction.origin);
+                self.value(function, *alternate, instruction.origin);
+            }
             HirInstructionKind::Call(call) => {
                 self.value(function, call.callee, instruction.origin);
                 for argument in &call.arguments {

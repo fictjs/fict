@@ -590,6 +590,37 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
                     ),
                 },
             }),
+            Expression::LogicalExpression(logical) => Some(TypedExpressionFact {
+                span: source_span(logical.span),
+                kind: TypedExpressionKind::Logical {
+                    operator: logical_operator(logical.operator),
+                    left: source_span(logical.left.get_inner_expression().span()),
+                    right: source_span(logical.right.get_inner_expression().span()),
+                    left_has_effects: structured_control_flow::expression_has_effects(
+                        &logical.left,
+                    ),
+                    right_has_effects: structured_control_flow::expression_has_effects(
+                        &logical.right,
+                    ),
+                },
+            }),
+            Expression::ConditionalExpression(conditional) => Some(TypedExpressionFact {
+                span: source_span(conditional.span),
+                kind: TypedExpressionKind::Conditional {
+                    test: source_span(conditional.test.get_inner_expression().span()),
+                    consequent: source_span(conditional.consequent.get_inner_expression().span()),
+                    alternate: source_span(conditional.alternate.get_inner_expression().span()),
+                    test_has_effects: structured_control_flow::expression_has_effects(
+                        &conditional.test,
+                    ),
+                    consequent_has_effects: structured_control_flow::expression_has_effects(
+                        &conditional.consequent,
+                    ),
+                    alternate_has_effects: structured_control_flow::expression_has_effects(
+                        &conditional.alternate,
+                    ),
+                },
+            }),
             _ => None,
         };
         if let Some(fact) = fact {
@@ -2808,6 +2839,78 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         right,
                     },
                     binary_expression_semantics(*operator),
+                )
+            }
+            TypedExpressionKind::Logical {
+                operator,
+                left,
+                right,
+                left_has_effects,
+                right_has_effects,
+            } => {
+                let right_span = *right;
+                let left =
+                    self.control_expression_value(owner, block, *left, true, *left_has_effects);
+                let right = self.control_expression_value(
+                    owner,
+                    block,
+                    right_span,
+                    true,
+                    *right_has_effects,
+                );
+                self.mark_span_deferred(owner, block, right_span);
+                self.push_value_to_block(
+                    owner,
+                    block,
+                    ValueKind::InstructionResult,
+                    origin,
+                    HirInstructionKind::Binary {
+                        operator: *operator,
+                        left,
+                        right,
+                    },
+                    InstructionSemantics::PURE_EAGER,
+                )
+            }
+            TypedExpressionKind::Conditional {
+                test,
+                consequent,
+                alternate,
+                test_has_effects,
+                consequent_has_effects,
+                alternate_has_effects,
+            } => {
+                let consequent_span = *consequent;
+                let alternate_span = *alternate;
+                let test =
+                    self.control_expression_value(owner, block, *test, true, *test_has_effects);
+                let consequent = self.control_expression_value(
+                    owner,
+                    block,
+                    consequent_span,
+                    true,
+                    *consequent_has_effects,
+                );
+                let alternate = self.control_expression_value(
+                    owner,
+                    block,
+                    alternate_span,
+                    true,
+                    *alternate_has_effects,
+                );
+                self.mark_span_deferred(owner, block, consequent_span);
+                self.mark_span_deferred(owner, block, alternate_span);
+                self.push_value_to_block(
+                    owner,
+                    block,
+                    ValueKind::InstructionResult,
+                    origin,
+                    HirInstructionKind::Conditional {
+                        test,
+                        consequent,
+                        alternate,
+                    },
+                    InstructionSemantics::PURE_EAGER,
                 )
             }
         })
@@ -5050,6 +5153,21 @@ enum TypedExpressionKind {
         left_has_effects: bool,
         right_has_effects: bool,
     },
+    Logical {
+        operator: BinaryOperator,
+        left: SourceSpan,
+        right: SourceSpan,
+        left_has_effects: bool,
+        right_has_effects: bool,
+    },
+    Conditional {
+        test: SourceSpan,
+        consequent: SourceSpan,
+        alternate: SourceSpan,
+        test_has_effects: bool,
+        consequent_has_effects: bool,
+        alternate_has_effects: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -5147,8 +5265,16 @@ impl EvaluationFact {
                 kind: TypedExpressionKind::Binary { .. },
                 ..
             }) => 2,
-            Self::Member(_) => 3,
-            Self::Call(_) => 4,
+            Self::Typed(TypedExpressionFact {
+                kind: TypedExpressionKind::Logical { .. },
+                ..
+            }) => 3,
+            Self::Typed(TypedExpressionFact {
+                kind: TypedExpressionKind::Conditional { .. },
+                ..
+            }) => 4,
+            Self::Member(_) => 5,
+            Self::Call(_) => 6,
         }
     }
 }
@@ -6801,6 +6927,14 @@ fn binary_operator(operator: OxcBinaryOperator) -> BinaryOperator {
     }
 }
 
+fn logical_operator(operator: OxcLogicalOperator) -> BinaryOperator {
+    match operator {
+        OxcLogicalOperator::And => BinaryOperator::LogicalAnd,
+        OxcLogicalOperator::Or => BinaryOperator::LogicalOr,
+        OxcLogicalOperator::Coalesce => BinaryOperator::NullishCoalescing,
+    }
+}
+
 fn compound_assignment_operator(
     operator: OxcAssignmentOperator,
 ) -> Option<CompoundAssignmentOperator> {
@@ -7175,6 +7309,9 @@ fn binary_expression_semantics(operator: BinaryOperator) -> InstructionSemantics
         BinaryOperator::StrictEqual | BinaryOperator::StrictNotEqual => {
             InstructionSemantics::PURE_EAGER
         }
+        BinaryOperator::LogicalAnd
+        | BinaryOperator::LogicalOr
+        | BinaryOperator::NullishCoalescing => InstructionSemantics::PURE_EAGER,
         BinaryOperator::Add
         | BinaryOperator::Subtract
         | BinaryOperator::Multiply
@@ -7194,10 +7331,7 @@ fn binary_expression_semantics(operator: BinaryOperator) -> InstructionSemantics
         | BinaryOperator::BitXor
         | BinaryOperator::BitAnd
         | BinaryOperator::In
-        | BinaryOperator::InstanceOf
-        | BinaryOperator::LogicalAnd
-        | BinaryOperator::LogicalOr
-        | BinaryOperator::NullishCoalescing => coercive_expression_semantics(),
+        | BinaryOperator::InstanceOf => coercive_expression_semantics(),
     }
 }
 
@@ -7269,6 +7403,11 @@ fn instruction_value_inputs(instruction: &HirInstruction) -> Vec<ValueId> {
         HirInstructionKind::Iteration { source, .. } => inputs.push(*source),
         HirInstructionKind::Unary { argument, .. } => inputs.push(*argument),
         HirInstructionKind::Binary { left, right, .. } => inputs.extend([*left, *right]),
+        HirInstructionKind::Conditional {
+            test,
+            consequent,
+            alternate,
+        } => inputs.extend([*test, *consequent, *alternate]),
         HirInstructionKind::Call(call) => {
             inputs.push(call.callee);
             inputs.extend(call.arguments.iter().map(|argument| argument.value));

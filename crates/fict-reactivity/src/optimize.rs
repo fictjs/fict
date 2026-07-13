@@ -1168,6 +1168,15 @@ fn rewrite_instruction_values(
             rewrite_value(left, replacements);
             rewrite_value(right, replacements);
         }
+        HirInstructionKind::Conditional {
+            test,
+            consequent,
+            alternate,
+        } => {
+            rewrite_value(test, replacements);
+            rewrite_value(consequent, replacements);
+            rewrite_value(alternate, replacements);
+        }
         HirInstructionKind::Call(call) => {
             rewrite_value(&mut call.callee, replacements);
             for argument in &mut call.arguments {
@@ -1276,6 +1285,11 @@ fn instruction_value_inputs(
         | HirInstructionKind::Debugger => Vec::new(),
         HirInstructionKind::Unary { argument, .. } => vec![*argument],
         HirInstructionKind::Binary { left, right, .. } => vec![*left, *right],
+        HirInstructionKind::Conditional {
+            test,
+            consequent,
+            alternate,
+        } => vec![*test, *consequent, *alternate],
         HirInstructionKind::Call(call) => std::iter::once(call.callee)
             .chain(call.arguments.iter().map(|argument| argument.value))
             .collect(),
@@ -1445,6 +1459,15 @@ fn remap_instruction_values(
         HirInstructionKind::Binary { left, right, .. } => {
             remap_value_id(left, remap)?;
             remap_value_id(right, remap)?;
+        }
+        HirInstructionKind::Conditional {
+            test,
+            consequent,
+            alternate,
+        } => {
+            remap_value_id(test, remap)?;
+            remap_value_id(consequent, remap)?;
+            remap_value_id(alternate, remap)?;
         }
         HirInstructionKind::Call(call) => {
             remap_value_id(&mut call.callee, remap)?;

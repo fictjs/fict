@@ -699,6 +699,7 @@ fn structural_value_shape(
         | HirInstructionKind::Iteration { .. }
         | HirInstructionKind::Unary { .. }
         | HirInstructionKind::Binary { .. }
+        | HirInstructionKind::Conditional { .. }
         | HirInstructionKind::Await { .. }
         | HirInstructionKind::Yield { .. }
         | HirInstructionKind::Phi { .. }
