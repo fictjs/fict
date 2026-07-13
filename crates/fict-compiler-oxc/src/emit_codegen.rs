@@ -162,7 +162,7 @@ pub fn emit_program(
             );
         }
     }
-    for location in &reads {
+    for location in reads.keys() {
         if !rewriter.matched_reads.contains(location) {
             diagnostics.push(
                 emit_error(
@@ -480,8 +480,7 @@ fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
         .iter()
         .flat_map(|function| &function.operations)
         .find(|operation| match operation {
-            EmitOperation::ReadReactive { projections, .. }
-            | EmitOperation::WriteReactive { projections, .. } => !projections.is_empty(),
+            EmitOperation::WriteReactive { projections, .. } => !projections.is_empty(),
             EmitOperation::UpdateReactive { projections, .. } => !projections.is_empty(),
             EmitOperation::ApplyProps { operation, .. } => {
                 !matches!(operation, PropsOperation::Spread { .. })
@@ -868,15 +867,25 @@ fn call_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), CallRewrite>, Vec<
     (rewrites, diagnostics)
 }
 
-fn read_rewrites(emit: &EmitProgram) -> (BTreeSet<(u32, u32)>, Vec<Diagnostic>) {
-    let mut reads = BTreeSet::new();
+#[derive(Debug, Clone, Copy)]
+struct ReadRewrite {
+    projected: bool,
+}
+
+fn read_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), ReadRewrite>, Vec<Diagnostic>) {
+    let mut reads = BTreeMap::new();
     let mut diagnostics = Vec::new();
     for operation in emit
         .functions
         .iter()
         .flat_map(|function| &function.operations)
     {
-        let EmitOperation::ReadReactive { origin, .. } = operation else {
+        let EmitOperation::ReadReactive {
+            projections,
+            origin,
+            ..
+        } = operation
+        else {
             continue;
         };
         let Some(span) = origin.primary_span else {
@@ -887,7 +896,15 @@ fn read_rewrites(emit: &EmitProgram) -> (BTreeSet<(u32, u32)>, Vec<Diagnostic>) 
             ));
             continue;
         };
-        if !reads.insert((span.start(), span.end())) {
+        if reads
+            .insert(
+                (span.start(), span.end()),
+                ReadRewrite {
+                    projected: !projections.is_empty(),
+                },
+            )
+            .is_some()
+        {
             diagnostics.push(
                 emit_error(
                     "FICT-OXC-EMIT-ORIGIN",
@@ -2539,7 +2556,7 @@ struct AstRewriter<'a, 'emit> {
     call_rewrites: &'emit BTreeMap<(u32, u32), CallRewrite>,
     props: &'emit BTreeMap<(u32, u32), PropsRewrite>,
     prop_reads: &'emit BTreeSet<(u32, u32)>,
-    reads: &'emit BTreeSet<(u32, u32)>,
+    reads: &'emit BTreeMap<(u32, u32), ReadRewrite>,
     mutations: &'emit BTreeMap<(u32, u32), MutationRewrite>,
     vnodes: &'emit BTreeMap<(u32, u32), VNodeRewrite>,
     components: &'emit BTreeMap<(u32, u32), ComponentRewrite>,
@@ -2887,6 +2904,25 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
             self.matched_mutations.insert(location);
             return;
         }
+        if self
+            .reads
+            .get(&location)
+            .is_some_and(|rewrite| rewrite.projected)
+        {
+            let root = projected_read_root_location(expression);
+            if rewrite_projected_read_root(expression, self.allocator) {
+                self.matched_reads.insert(location);
+                let suppressed_list_read = root.filter(|root| self.active_list_reads.remove(root));
+                if let Some(root) = suppressed_list_read {
+                    self.matched_list_reads.insert(root);
+                }
+                walk_mut::walk_expression(self, expression);
+                if let Some(root) = suppressed_list_read {
+                    self.active_list_reads.insert(root);
+                }
+                return;
+            }
+        }
         let Expression::Identifier(identifier) = expression else {
             walk_mut::walk_expression(self, expression);
             return;
@@ -2894,7 +2930,7 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
         let location = (identifier.span.start, identifier.span.end);
         let list_read = self.active_list_reads.contains(&location);
         let prop_read = self.prop_reads.contains(&location);
-        let reactive_read = self.reads.contains(&location);
+        let reactive_read = self.reads.contains_key(&location);
         if !list_read && !prop_read && !reactive_read {
             walk_mut::walk_expression(self, expression);
             return;
@@ -4074,6 +4110,10 @@ impl<'a> AstRewriter<'a, '_> {
             );
             return;
         }
+        let projected_callee_root = projected_chain_read_root_location(&call.callee, self.reads);
+        if projected_callee_root.is_some() {
+            self.visit_expression(&mut call.callee);
+        }
         let (mut items, source_optional) = match call.callee.into_inner_expression() {
             Expression::StaticMemberExpression(member) => {
                 let member = member.unbox();
@@ -4153,7 +4193,15 @@ impl<'a> AstRewriter<'a, '_> {
             );
             return;
         };
+        let suppressed_list_root =
+            projected_callee_root.filter(|root| self.active_list_reads.remove(root));
+        if let Some(root) = suppressed_list_root {
+            self.matched_list_reads.insert(root);
+        }
         self.visit_expression(&mut items);
+        if let Some(root) = suppressed_list_root {
+            self.active_list_reads.insert(root);
+        }
         if optional {
             let items_span = items.span();
             let builder = AstBuilder::new(self.allocator);
@@ -5530,6 +5578,200 @@ fn getter_call<'a>(allocator: &'a Allocator, signal: &str, span: Span) -> Expres
     )
 }
 
+fn rewrite_projected_read_root<'a>(
+    expression: &mut Expression<'a>,
+    allocator: &'a Allocator,
+) -> bool {
+    match expression {
+        Expression::StaticMemberExpression(member) => {
+            rewrite_reactive_root(&mut member.object, allocator)
+        }
+        Expression::ComputedMemberExpression(member) => {
+            rewrite_reactive_root(&mut member.object, allocator)
+        }
+        Expression::ChainExpression(chain) => match &mut chain.expression {
+            ChainElement::StaticMemberExpression(member) => {
+                rewrite_reactive_root(&mut member.object, allocator)
+            }
+            ChainElement::ComputedMemberExpression(member) => {
+                rewrite_reactive_root(&mut member.object, allocator)
+            }
+            ChainElement::PrivateFieldExpression(member) => {
+                rewrite_reactive_root(&mut member.object, allocator)
+            }
+            ChainElement::TSNonNullExpression(expression) => {
+                rewrite_reactive_root(&mut expression.expression, allocator)
+            }
+            ChainElement::CallExpression(_) => false,
+        },
+        _ => false,
+    }
+}
+
+fn projected_read_root_location(expression: &Expression<'_>) -> Option<(u32, u32)> {
+    match expression {
+        Expression::Identifier(identifier) => Some((identifier.span.start, identifier.span.end)),
+        Expression::StaticMemberExpression(member) => projected_read_root_location(&member.object),
+        Expression::ComputedMemberExpression(member) => {
+            projected_read_root_location(&member.object)
+        }
+        Expression::PrivateFieldExpression(member) => projected_read_root_location(&member.object),
+        Expression::ChainExpression(chain) => match &chain.expression {
+            ChainElement::StaticMemberExpression(member) => {
+                projected_read_root_location(&member.object)
+            }
+            ChainElement::ComputedMemberExpression(member) => {
+                projected_read_root_location(&member.object)
+            }
+            ChainElement::PrivateFieldExpression(member) => {
+                projected_read_root_location(&member.object)
+            }
+            ChainElement::TSNonNullExpression(expression) => {
+                projected_read_root_location(&expression.expression)
+            }
+            ChainElement::CallExpression(_) => None,
+        },
+        Expression::ParenthesizedExpression(parenthesized) => {
+            projected_read_root_location(&parenthesized.expression)
+        }
+        Expression::TSAsExpression(expression) => {
+            projected_read_root_location(&expression.expression)
+        }
+        Expression::TSSatisfiesExpression(expression) => {
+            projected_read_root_location(&expression.expression)
+        }
+        Expression::TSTypeAssertion(expression) => {
+            projected_read_root_location(&expression.expression)
+        }
+        Expression::TSNonNullExpression(expression) => {
+            projected_read_root_location(&expression.expression)
+        }
+        Expression::TSInstantiationExpression(expression) => {
+            projected_read_root_location(&expression.expression)
+        }
+        _ => None,
+    }
+}
+
+fn projected_chain_read_root_location(
+    expression: &Expression<'_>,
+    reads: &BTreeMap<(u32, u32), ReadRewrite>,
+) -> Option<(u32, u32)> {
+    let span = expression.span();
+    if reads
+        .get(&(span.start, span.end))
+        .is_some_and(|rewrite| rewrite.projected)
+    {
+        return projected_read_root_location(expression);
+    }
+    match expression {
+        Expression::StaticMemberExpression(member) => {
+            projected_chain_read_root_location(&member.object, reads)
+        }
+        Expression::ComputedMemberExpression(member) => {
+            projected_chain_read_root_location(&member.object, reads)
+        }
+        Expression::PrivateFieldExpression(member) => {
+            projected_chain_read_root_location(&member.object, reads)
+        }
+        Expression::ChainExpression(chain) => match &chain.expression {
+            ChainElement::StaticMemberExpression(member) => {
+                projected_chain_read_root_location(&member.object, reads)
+            }
+            ChainElement::ComputedMemberExpression(member) => {
+                projected_chain_read_root_location(&member.object, reads)
+            }
+            ChainElement::PrivateFieldExpression(member) => {
+                projected_chain_read_root_location(&member.object, reads)
+            }
+            ChainElement::TSNonNullExpression(expression) => {
+                projected_chain_read_root_location(&expression.expression, reads)
+            }
+            ChainElement::CallExpression(_) => None,
+        },
+        Expression::ParenthesizedExpression(parenthesized) => {
+            projected_chain_read_root_location(&parenthesized.expression, reads)
+        }
+        Expression::TSAsExpression(expression) => {
+            projected_chain_read_root_location(&expression.expression, reads)
+        }
+        Expression::TSSatisfiesExpression(expression) => {
+            projected_chain_read_root_location(&expression.expression, reads)
+        }
+        Expression::TSTypeAssertion(expression) => {
+            projected_chain_read_root_location(&expression.expression, reads)
+        }
+        Expression::TSNonNullExpression(expression) => {
+            projected_chain_read_root_location(&expression.expression, reads)
+        }
+        Expression::TSInstantiationExpression(expression) => {
+            projected_chain_read_root_location(&expression.expression, reads)
+        }
+        _ => None,
+    }
+}
+
+fn rewrite_reactive_root<'a>(expression: &mut Expression<'a>, allocator: &'a Allocator) -> bool {
+    match expression {
+        Expression::Identifier(identifier) => {
+            let span = identifier.span;
+            let callee = expression.take_in(&allocator);
+            *expression = Expression::new_call_expression(
+                span,
+                callee,
+                NONE,
+                ArenaVec::new_in(&allocator),
+                false,
+                &AstBuilder::new(allocator),
+            );
+            true
+        }
+        Expression::StaticMemberExpression(member) => {
+            rewrite_reactive_root(&mut member.object, allocator)
+        }
+        Expression::ComputedMemberExpression(member) => {
+            rewrite_reactive_root(&mut member.object, allocator)
+        }
+        Expression::PrivateFieldExpression(member) => {
+            rewrite_reactive_root(&mut member.object, allocator)
+        }
+        Expression::ChainExpression(chain) => match &mut chain.expression {
+            ChainElement::StaticMemberExpression(member) => {
+                rewrite_reactive_root(&mut member.object, allocator)
+            }
+            ChainElement::ComputedMemberExpression(member) => {
+                rewrite_reactive_root(&mut member.object, allocator)
+            }
+            ChainElement::PrivateFieldExpression(member) => {
+                rewrite_reactive_root(&mut member.object, allocator)
+            }
+            ChainElement::TSNonNullExpression(expression) => {
+                rewrite_reactive_root(&mut expression.expression, allocator)
+            }
+            ChainElement::CallExpression(_) => false,
+        },
+        Expression::ParenthesizedExpression(parenthesized) => {
+            rewrite_reactive_root(&mut parenthesized.expression, allocator)
+        }
+        Expression::TSAsExpression(expression) => {
+            rewrite_reactive_root(&mut expression.expression, allocator)
+        }
+        Expression::TSSatisfiesExpression(expression) => {
+            rewrite_reactive_root(&mut expression.expression, allocator)
+        }
+        Expression::TSTypeAssertion(expression) => {
+            rewrite_reactive_root(&mut expression.expression, allocator)
+        }
+        Expression::TSNonNullExpression(expression) => {
+            rewrite_reactive_root(&mut expression.expression, allocator)
+        }
+        Expression::TSInstantiationExpression(expression) => {
+            rewrite_reactive_root(&mut expression.expression, allocator)
+        }
+        _ => false,
+    }
+}
+
 fn setter_call<'a>(
     allocator: &'a Allocator,
     signal: &str,
@@ -6063,6 +6305,59 @@ mod tests {
 
         assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
         assert!(output.code.contains("value = memo() + memo()"));
+    }
+
+    #[test]
+    fn materializes_projected_reactive_reads_at_the_root_only() {
+        let source = "const state = () => ({}); export const values = [state.user.name, state?.items?.[key()]];";
+        let mut emit = effect_program("$effect(() => 1)");
+        emit.imports.clear();
+        emit.functions[0].slots.clear();
+        emit.functions[0].operations.clear();
+        for (index, authored) in ["state.user.name", "state?.items?.[key()]"]
+            .into_iter()
+            .enumerate()
+        {
+            let start =
+                u32::try_from(source.find(authored).expect("projected read span")).expect("span");
+            emit.functions[0]
+                .operations
+                .push(EmitOperation::ReadReactive {
+                    slot: EmitSlotId::new(0),
+                    source_result: ValueId::new(u32::try_from(index).expect("value")),
+                    projections: vec![Projection::StaticProperty {
+                        name: "placeholder".into(),
+                        optional: false,
+                    }],
+                    target: fict_emit::EmitTemporaryId::new(
+                        u32::try_from(index).expect("temporary"),
+                    ),
+                    helper: None,
+                    origin: Origin::source(
+                        SourceSpan::new(
+                            start,
+                            start + u32::try_from(authored.len()).expect("span"),
+                        )
+                        .expect("ordered span"),
+                    ),
+                });
+        }
+
+        let output = emit_program(
+            source,
+            "projected-read.js",
+            options(OxcSourceLanguage::JavaScript, false),
+            &emit,
+        );
+
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert!(output.code.contains("state().user.name"), "{}", output.code);
+        assert!(
+            output.code.contains("state()?.items?.[key()]"),
+            "{}",
+            output.code
+        );
+        assert!(!output.code.contains("state()()"), "{}", output.code);
     }
 
     #[test]

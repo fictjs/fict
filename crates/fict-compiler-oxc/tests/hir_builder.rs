@@ -2,8 +2,8 @@ use fict_compiler_oxc::{
     HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, build_hir,
 };
 use fict_hir::{
-    BinaryOperator, CallHost, CompoundAssignmentOperator, FictMacroKind, FunctionKind,
-    HirInstructionKind, IterationKind, MutationEffect, Purity, ReactiveCallKind,
+    BinaryOperator, CallHost, CompoundAssignmentOperator, EvaluationMode, FictMacroKind,
+    FunctionKind, HirInstructionKind, IterationKind, MutationEffect, Purity, ReactiveCallKind,
     StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, UpdateOperator,
 };
 
@@ -1358,6 +1358,222 @@ fn materializes_plain_local_accesses_in_dependency_safe_source_order() {
             HirInstructionKind::Write { .. } | HirInstructionKind::ReadWrite { .. }
         ) && instruction.semantics.mutation == MutationEffect::Local
             && instruction.semantics.purity == Purity::Impure
+    }));
+}
+
+#[test]
+fn materializes_static_computed_index_and_value_base_projections() {
+    let source = r#"
+        function project(obj) {
+            const nested = obj.user.name;
+            const dynamic = obj[key()];
+            const indexed = obj[0];
+            const temporary = make().value;
+            const optional = obj?.user?.[key()];
+            obj.user.name = rhs();
+            obj[key()] += delta();
+            obj[0]++;
+            delete obj.ignored;
+            return [nested, dynamic, indexed, temporary, optional, obj.user.name];
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified projected-place HIR");
+    let project = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "project")
+        })
+        .expect("project function");
+    let object = project
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("obj"))
+        .expect("object parameter");
+
+    let instructions: Vec<_> = project
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let unprojected_object_reads: Vec<_> = instructions
+        .iter()
+        .filter(|instruction| {
+            matches!(
+                &instruction.kind,
+                HirInstructionKind::Read { place }
+                    if place.base == fict_hir::PlaceBase::Local(object.id)
+                        && place.projections.is_empty()
+            )
+        })
+        .collect();
+    assert_eq!(
+        unprojected_object_reads.len(),
+        1,
+        "delete still evaluates its base object"
+    );
+
+    let authored_projected_reads: Vec<_> = instructions
+        .iter()
+        .filter_map(|instruction| match &instruction.kind {
+            HirInstructionKind::Read { place } if !place.projections.is_empty() => {
+                let span = instruction.origin.primary_span?;
+                Some((
+                    &source[span.start() as usize..span.end() as usize],
+                    place,
+                    instruction.result,
+                ))
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(authored_projected_reads.iter().any(|(authored, place, _)| {
+        *authored == "obj.user.name"
+            && place.base == fict_hir::PlaceBase::Local(object.id)
+            && matches!(
+                place.projections.as_slice(),
+                [
+                    fict_hir::Projection::StaticProperty { name: user, optional: false },
+                    fict_hir::Projection::StaticProperty { name, optional: false },
+                ] if user == "user" && name == "name"
+            )
+    }));
+    assert!(authored_projected_reads.iter().any(|(authored, place, _)| {
+        *authored == "obj[key()]"
+            && matches!(
+                place.projections.as_slice(),
+                [fict_hir::Projection::ComputedProperty {
+                    optional: false,
+                    ..
+                }]
+            )
+    }));
+    assert!(authored_projected_reads.iter().any(|(authored, place, _)| {
+        *authored == "obj[0]"
+            && matches!(
+                place.projections.as_slice(),
+                [fict_hir::Projection::Index {
+                    index: 0,
+                    optional: false
+                }]
+            )
+    }));
+    assert!(authored_projected_reads.iter().any(|(authored, place, _)| {
+        *authored == "obj?.user?.[key()]"
+            && matches!(
+                place.projections.as_slice(),
+                [
+                    fict_hir::Projection::StaticProperty { name, optional: true },
+                    fict_hir::Projection::ComputedProperty { optional: true, .. },
+                ] if name == "user"
+            )
+    }));
+    let optional_span = instructions
+        .iter()
+        .find(|instruction| {
+            instruction.origin.primary_span.is_some_and(|span| {
+                &source[span.start() as usize..span.end() as usize] == "obj?.user?.[key()]"
+            })
+        })
+        .and_then(|instruction| instruction.origin.primary_span)
+        .expect("optional projection span");
+    assert!(instructions.iter().any(|instruction| {
+        matches!(instruction.kind, HirInstructionKind::Call(_))
+            && instruction.origin.primary_span.is_some_and(|span| {
+                optional_span.start() <= span.start()
+                    && span.end() <= optional_span.end()
+                    && &source[span.start() as usize..span.end() as usize] == "key()"
+            })
+            && instruction.semantics.evaluation == EvaluationMode::Deferred
+    }));
+    let value_base = authored_projected_reads
+        .iter()
+        .find(|(authored, _, _)| *authored == "make().value")
+        .expect("temporary-base projection");
+    let fict_hir::PlaceBase::Value(base) = value_base.1.base else {
+        panic!("temporary member base must be an evaluated value")
+    };
+    assert!(instructions.iter().any(|instruction| {
+        instruction.result == Some(base)
+            && instruction
+                .origin
+                .primary_span
+                .is_some_and(|span| &source[span.start() as usize..span.end() as usize] == "make()")
+            && matches!(instruction.kind, HirInstructionKind::Call(_))
+    }));
+
+    let projected_mutations: Vec<_> = instructions
+        .iter()
+        .filter(|instruction| {
+            matches!(
+                &instruction.kind,
+                HirInstructionKind::Write { place, .. }
+                    | HirInstructionKind::ReadWrite { place, .. }
+                    if !place.projections.is_empty()
+            )
+        })
+        .collect();
+    assert_eq!(projected_mutations.len(), 3);
+    assert!(
+        projected_mutations
+            .iter()
+            .all(|instruction| { instruction.semantics.mutation == MutationEffect::Observable })
+    );
+    assert_eq!(
+        projected_mutations
+            .iter()
+            .map(|instruction| {
+                let span = instruction
+                    .origin
+                    .primary_span
+                    .expect("projected write span");
+                &source[span.start() as usize..span.end() as usize]
+            })
+            .collect::<Vec<_>>(),
+        ["obj.user.name = rhs()", "obj[key()] += delta()", "obj[0]++"]
+    );
+    let ordered_calls_and_writes: Vec<_> = instructions
+        .iter()
+        .filter(|instruction| {
+            matches!(
+                instruction.kind,
+                HirInstructionKind::Call(_)
+                    | HirInstructionKind::Write { .. }
+                    | HirInstructionKind::ReadWrite { .. }
+            )
+        })
+        .map(|instruction| {
+            let span = instruction.origin.primary_span.expect("effect source span");
+            &source[span.start() as usize..span.end() as usize]
+        })
+        .collect();
+    assert_eq!(
+        ordered_calls_and_writes,
+        [
+            "key()",
+            "make()",
+            "key()",
+            "rhs()",
+            "obj.user.name = rhs()",
+            "key()",
+            "delta()",
+            "obj[key()] += delta()",
+            "obj[0]++",
+        ]
+    );
+    assert!(instructions.iter().all(|instruction| {
+        instruction.origin.primary_span.is_none_or(|span| {
+            &source[span.start() as usize..span.end() as usize] != "obj.ignored"
+                || !matches!(instruction.kind, HirInstructionKind::Read { .. })
+        })
     }));
 }
 
