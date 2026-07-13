@@ -1272,6 +1272,60 @@ mod tests {
     }
 
     #[test]
+    fn lowers_simple_component_object_props_to_reactive_accessors() {
+        let result = compile(request(
+            "import { $state } from 'fict'; function Child({ value: renamed, label }) { return <span>{label}:{renamed}</span>; } const Arrow = ({ value }) => <b>{value}</b>; function Method({ value }) { return <i>{value.toString()}</i>; } function Callable({ onClick }) { return <button onClick={() => onClick()}>go</button>; } export function App() { let value = $state(1); return <main><Child value={value} label={String(value)} /><Arrow value={value} /><Method value={value} /><Callable onClick={() => value++} /></main>; }",
+            "component-object-props.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result.code.contains("function Child(__fictProps)"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("const renamed = prop(() => __fictProps.value)"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("const label = prop(() => __fictProps.label)"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("() => renamed()"), "{}", result.code);
+        assert!(result.code.contains("() => label()"), "{}", result.code);
+        assert!(
+            result.code.contains("const Arrow = (__fictProps"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("const value = prop(() => __fictProps.value)"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("() => value().toString()"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("function Callable({ onClick })"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("onClick()"), "{}", result.code);
+    }
+
+    #[test]
     fn omits_intrinsic_keys_without_losing_dynamic_key_effects() {
         let result = compile(request(
             "export function Static() { return <p key=\"row\" title=\"ok\" />; } export function Dynamic() { return <div before={before()} key={side()} after={after()} />; }",

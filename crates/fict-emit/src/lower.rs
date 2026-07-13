@@ -14,9 +14,10 @@ use fict_reactivity::{ReactiveCycleAnalysis, RegionAnalysis, analyze_cfg, struct
 use crate::{
     CleanupOwner, ComponentChild, ComponentProp, ComponentTarget, ConditionalKind,
     DELEGATED_EVENTS, DomBindingKind, DomNamespace, EmitContext, EmitFunction, EmitModulePlan,
-    EmitOperation, EmitProgram, EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef,
-    PropsOperation, ReactiveSlot, ReactiveSlotKind, ReactiveSlotStorage, RuntimeFamily,
-    RuntimeHelper, RuntimeImportIntent, name_allocator::NameAllocator, verify_emit_program,
+    EmitOperation, EmitProgram, EmitPropBinding, EmitPropsPlan, EmitSlotId, EmitTemporary,
+    EmitTemporaryId, EmitValueRef, PropsOperation, ReactiveSlot, ReactiveSlotKind,
+    ReactiveSlotStorage, RuntimeFamily, RuntimeHelper, RuntimeImportIntent,
+    name_allocator::NameAllocator, verify_emit_program,
 };
 
 /// Phase-1 Core lowering configuration.
@@ -148,6 +149,7 @@ fn lower_program(
                 .iter()
                 .flat_map(|operation| operation.helper_slots().into_iter().flatten())
                 .chain(function.context.iter().map(|context| context.helper))
+                .chain(function.props.iter().map(|props| props.helper))
         })
         .collect();
     if options.strict_guarantee
@@ -191,7 +193,12 @@ fn lower_program(
                 .context
                 .as_ref()
                 .map(|context| context.local.clone())
-        }));
+        }))
+        .chain(
+            functions
+                .iter()
+                .filter_map(|function| function.props.as_ref().map(|props| props.source.clone())),
+        );
     let mut module_names = NameAllocator::new(source_names);
     let imports = helpers
         .into_iter()
@@ -442,6 +449,7 @@ fn lower_function(
                     .filter_map(|local| local.debug_name.clone()),
             ),
     );
+    let props = lower_component_props_plan(hir, function, &mut temporary_names)?;
     let mut temporaries = Vec::new();
     let mut value_temporaries = BTreeMap::new();
     let mut operations = Vec::new();
@@ -703,12 +711,51 @@ fn lower_function(
     Ok(EmitFunction {
         source: function_id,
         context,
+        props,
         slots,
         temporaries,
         regions: regions.top_level_regions.clone(),
         control_flow: structurize_cfg(function, &analyze_cfg(function)?)?,
         operations,
     })
+}
+
+fn lower_component_props_plan(
+    hir: &HirFile,
+    function: &fict_hir::HirFunction,
+    names: &mut NameAllocator,
+) -> Result<Option<EmitPropsPlan>, DiagnosticBundle> {
+    if function.kind != FunctionKind::Component {
+        return Ok(None);
+    }
+    let Some(parameter) = function.parameters.first() else {
+        return Ok(None);
+    };
+    let Some(properties) = &parameter.object_properties else {
+        return Ok(None);
+    };
+    let mut bindings = Vec::with_capacity(properties.len());
+    for property in properties {
+        let Some(binding) = hir.bindings.get(property.binding.as_usize()) else {
+            return Err(DiagnosticBundle::new(vec![lower_error(
+                "FICT-EMIT-PROPS-BINDING",
+                "component props plan references an unknown binding",
+                GuaranteeClass::Internal,
+            )]));
+        };
+        bindings.push(EmitPropBinding {
+            property: property.key.clone(),
+            local: binding.display_name.clone(),
+            references: property.references.clone(),
+            origin: property.origin,
+        });
+    }
+    Ok(Some(EmitPropsPlan {
+        parameter: parameter.origin,
+        source: names.allocate("__fictProps"),
+        bindings,
+        helper: RuntimeHelper::Prop,
+    }))
 }
 
 fn is_scoped_helper(helper: RuntimeHelper) -> bool {

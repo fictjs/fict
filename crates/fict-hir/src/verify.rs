@@ -306,6 +306,23 @@ impl Verifier<'_> {
             if let Some(binding) = parameter.binding {
                 self.binding(binding, parameter.origin);
             }
+            if let Some(properties) = &parameter.object_properties {
+                let mut bindings = BTreeSet::new();
+                for property in properties {
+                    self.binding(property.binding, property.origin);
+                    self.verify_origin(property.origin);
+                    for reference in &property.references {
+                        self.verify_origin(*reference);
+                    }
+                    if property.key.is_empty() || !bindings.insert(property.binding) {
+                        self.error(
+                            "FICT-HIR-PROPS",
+                            "modeled object parameters require non-empty keys and unique bindings",
+                            Some(property.origin),
+                        );
+                    }
+                }
+            }
             self.verify_origin(parameter.origin);
             if !parameter_locals.insert(parameter.local) {
                 self.error(

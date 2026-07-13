@@ -664,11 +664,30 @@ pub struct EmitContext {
     pub origin: Origin,
 }
 
+/// One component prop destructured into a reactive local accessor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmitPropBinding {
+    pub property: String,
+    pub local: String,
+    pub references: Vec<Origin>,
+    pub origin: Origin,
+}
+
+/// Function-entry plan for a binding-aware object props parameter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmitPropsPlan {
+    pub parameter: Origin,
+    pub source: String,
+    pub bindings: Vec<EmitPropBinding>,
+    pub helper: RuntimeHelper,
+}
+
 /// Emit plan for one HIR function.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmitFunction {
     pub source: FunctionId,
     pub context: Option<EmitContext>,
+    pub props: Option<EmitPropsPlan>,
     pub slots: Vec<ReactiveSlot>,
     pub temporaries: Vec<EmitTemporary>,
     pub regions: Vec<RegionId>,

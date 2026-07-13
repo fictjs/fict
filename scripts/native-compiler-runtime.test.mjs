@@ -62,14 +62,16 @@ async function flushRuntime() {
   await new Promise(resolve => setTimeout(resolve, 0))
 }
 
-async function compileAndImport(source, name) {
+async function compileAndImport(source, name, expectedCode) {
   const result = binding.transformSync({
     code: source,
     filename: `/fixtures/${name}.tsx`,
     moduleId: `/fixtures/${name}.tsx`,
   })
   assert.deepEqual(result.diagnostics, [], result.diagnostics.map(item => item.message).join('\n'))
-  assert.match(result.code, /createKeyedList/)
+  if (expectedCode) {
+    assert.match(result.code, expectedCode)
+  }
 
   const fixture = path.join(
     root,
@@ -113,6 +115,7 @@ test('Rust compiler output preserves keyed identity, reactive updates, and clean
       }
     `,
     'keyed-list',
+    /createKeyedList/,
   )
 
   const container = document.createElement('div')
@@ -143,6 +146,60 @@ test('Rust compiler output preserves keyed identity, reactive updates, and clean
   assert.equal(updated[0], initial.get('3'))
   assert.equal(updated[1], initial.get('1'))
   assert.equal(initial.get('2')?.isConnected, false)
+
+  dispose()
+  assert.equal(container.childNodes.length, 0)
+  container.remove()
+})
+
+test('Rust compiler output keeps destructured component props reactive', async () => {
+  const module = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      let setValue = () => {}
+
+      function Child({ value: renamed, label }) {
+        return <p data-label={label}>{label}:{renamed}</p>
+      }
+
+      function App() {
+        let value = $state('A')
+        setValue = next => {
+          value = next
+        }
+        return <Child value={value} label={value.toLowerCase()} />
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+
+      export function update(next) {
+        setValue(next)
+      }
+    `,
+    'destructured-props',
+    /const renamed = prop\(\(\) => __fictProps\.value\)/,
+  )
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = module.mount(container)
+  await flushRuntime()
+
+  const child = container.querySelector('p')
+  assert.ok(child)
+  assert.equal(child.textContent, 'a:A')
+  assert.equal(child.dataset.label, 'a')
+
+  module.update('B')
+  await flushRuntime()
+
+  const updated = container.querySelector('p')
+  assert.equal(updated, child)
+  assert.equal(updated?.textContent, 'b:B')
+  assert.equal(updated?.dataset.label, 'b')
 
   dispose()
   assert.equal(container.childNodes.length, 0)

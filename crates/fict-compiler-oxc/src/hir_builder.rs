@@ -7,13 +7,13 @@ use fict_hir::{
     Binding, BindingId, BindingKind, BlockId, CallArgument, CallHost, CallInstruction,
     CompoundAssignmentOperator, DeclarationKind, EvaluationMode, FictMacroKind, FileId,
     FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction, HirInstruction,
-    HirInstructionKind, HirLocal, HirParameter, HirScope, HirTerminator, HirValue,
-    InstructionSemantics, JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName,
-    JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode, JsxTemplate, LocalId,
-    LocalKind, MutationEffect, Origin, PatternSummary, Purity, ReactiveCallKind, ReactiveScopeHost,
-    ReactiveScopeKind, RegionId, ScopeId, ScopeKind, SyntaxFragment, SyntaxFragmentId,
-    SyntaxFragmentKind, SyntaxSummary, TemplateId, TerminatorKind, UpdateOperator, ValueId,
-    ValueKind, verify_hir,
+    HirInstructionKind, HirLocal, HirObjectParameterProperty, HirParameter, HirScope,
+    HirTerminator, HirValue, InstructionSemantics, JsxAttribute, JsxAttributeValue, JsxChild,
+    JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode,
+    JsxTemplate, LocalId, LocalKind, MutationEffect, Origin, PatternSummary, Purity,
+    ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind,
+    SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TemplateId,
+    TerminatorKind, UpdateOperator, ValueId, ValueKind, verify_hir,
 };
 use oxc::{
     allocator::Allocator,
@@ -230,8 +230,17 @@ fn unsupported_macro_diagnostics(frontend: &FrontendSummary) -> Vec<Diagnostic> 
 struct ParameterFact {
     span: SourceSpan,
     bindings: Vec<SymbolId>,
+    direct_binding: Option<SymbolId>,
+    object_properties: Option<Vec<ObjectParameterPropertyFact>>,
     has_default: bool,
     has_rest: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ObjectParameterPropertyFact {
+    key: String,
+    binding: SymbolId,
+    origin: SourceSpan,
 }
 
 #[derive(Debug, Clone)]
@@ -403,6 +412,15 @@ fn parameter_facts(parameters: &FormalParameters<'_>) -> Vec<ParameterFact> {
         facts.push(ParameterFact {
             span: source_span(parameter.span),
             bindings: collector.symbols,
+            direct_binding: match &parameter.pattern {
+                BindingPattern::BindingIdentifier(identifier) => identifier.symbol_id.get(),
+                BindingPattern::ObjectPattern(_)
+                | BindingPattern::ArrayPattern(_)
+                | BindingPattern::AssignmentPattern(_) => None,
+            },
+            object_properties: (parameter.initializer.is_none())
+                .then(|| simple_object_parameter_properties(&parameter.pattern))
+                .flatten(),
             has_default: parameter.initializer.is_some() || collector.has_defaults,
             has_rest: collector.has_rest,
         });
@@ -413,11 +431,75 @@ fn parameter_facts(parameters: &FormalParameters<'_>) -> Vec<ParameterFact> {
         facts.push(ParameterFact {
             span: source_span(rest.span),
             bindings: collector.symbols,
+            direct_binding: None,
+            object_properties: None,
             has_default: collector.has_defaults,
             has_rest: true,
         });
     }
     facts
+}
+
+fn simple_object_parameter_properties(
+    pattern: &BindingPattern<'_>,
+) -> Option<Vec<ObjectParameterPropertyFact>> {
+    let BindingPattern::ObjectPattern(object) = pattern else {
+        return None;
+    };
+    if object.rest.is_some() {
+        return None;
+    }
+    let properties = object
+        .properties
+        .iter()
+        .map(|property| {
+            if property.computed {
+                return None;
+            }
+            let key = property.key.static_name()?.into_owned();
+            let BindingPattern::BindingIdentifier(binding) = &property.value else {
+                return None;
+            };
+            Some(ObjectParameterPropertyFact {
+                key,
+                binding: binding.symbol_id.get()?,
+                origin: source_span(property.span),
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    (!properties.is_empty()).then_some(properties)
+}
+
+fn reference_is_invoked(
+    semantic: &Semantic<'_>,
+    node_id: oxc::syntax::node::NodeId,
+    span: Span,
+) -> bool {
+    for ancestor in semantic.nodes().ancestors(node_id) {
+        match ancestor.kind() {
+            AstKind::CallExpression(call) => {
+                let callee = call.callee.span();
+                if callee == span {
+                    return true;
+                }
+            }
+            AstKind::NewExpression(call) => {
+                let callee = call.callee.span();
+                if callee == span {
+                    return true;
+                }
+            }
+            AstKind::TaggedTemplateExpression(tagged) => {
+                let tag = tagged.tag.span();
+                if tag == span {
+                    return true;
+                }
+            }
+            AstKind::Function(_) | AstKind::ArrowFunctionExpression(_) => break,
+            _ => {}
+        }
+    }
+    false
 }
 
 struct Builder<'source, 'semantic> {
@@ -647,8 +729,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     .iter()
                     .filter_map(|symbol| self.symbol_to_binding.get(symbol).copied())
                     .collect();
-                let direct_binding = (declared_bindings.len() == 1).then(|| declared_bindings[0]);
+                let direct_binding = parameter
+                    .direct_binding
+                    .and_then(|symbol| self.symbol_to_binding.get(&symbol).copied());
                 direct_parameter_bindings.extend(direct_binding);
+                let object_properties = self.lower_object_parameter_properties(parameter);
                 let fragment = self.add_fragment(
                     SyntaxFragmentKind::Pattern,
                     parameter.span,
@@ -688,6 +773,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     local,
                     binding: direct_binding,
                     pattern: fragment,
+                    object_properties,
                     origin,
                 });
                 values.push(HirValue {
@@ -787,6 +873,43 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 origin,
             });
         }
+    }
+
+    fn lower_object_parameter_properties(
+        &self,
+        parameter: &ParameterFact,
+    ) -> Option<Vec<HirObjectParameterProperty>> {
+        parameter
+            .object_properties
+            .as_ref()?
+            .iter()
+            .map(|property| {
+                let binding = self.symbol_to_binding.get(&property.binding).copied()?;
+                let mut references = Vec::new();
+                for reference in self.semantic.symbol_references(property.binding) {
+                    if reference.is_write() {
+                        return None;
+                    }
+                    if !reference.is_read() {
+                        continue;
+                    }
+                    let node = self.semantic.nodes().get_node(reference.node_id());
+                    let AstKind::IdentifierReference(identifier) = node.kind() else {
+                        return None;
+                    };
+                    if reference_is_invoked(self.semantic, reference.node_id(), identifier.span) {
+                        return None;
+                    }
+                    references.push(Origin::source(source_span(identifier.span)));
+                }
+                Some(HirObjectParameterProperty {
+                    key: property.key.clone(),
+                    binding,
+                    references,
+                    origin: Origin::source(property.origin),
+                })
+            })
+            .collect()
     }
 
     fn function_owner_for_scope(&self, mut scope: ScopeId) -> FunctionId {

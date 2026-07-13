@@ -207,7 +207,22 @@ pub struct HirParameter {
     pub binding: Option<BindingId>,
     /// Adapter-owned source pattern for destructuring/default/rest shape.
     pub pattern: SyntaxFragmentId,
+    /// Statically modeled top-level object properties for safe component-prop lowering.
+    pub object_properties: Option<Vec<HirObjectParameterProperty>>,
     /// Source provenance.
+    pub origin: Origin,
+}
+
+/// One simple property in a binding-aware object parameter pattern.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HirObjectParameterProperty {
+    /// Static property name read from the incoming object.
+    pub key: String,
+    /// Semantic local binding introduced by the property pattern.
+    pub binding: BindingId,
+    /// Exact read references that must become accessor calls.
+    pub references: Vec<Origin>,
+    /// Source provenance of the property declaration.
     pub origin: Origin,
 }
 

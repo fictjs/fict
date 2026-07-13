@@ -94,12 +94,14 @@ pub fn emit_program(
     strip_compiler_macro_imports(&mut program);
 
     let (rewrites, rewrite_diagnostics) = call_rewrites(emit);
+    let props_rewrites = props_rewrites(emit);
     let (reads, read_diagnostics) = read_rewrites(emit);
     let (mutations, mutation_diagnostics) = mutation_rewrites(emit);
     let (vnodes, vnode_diagnostics) = vnode_rewrites(emit);
     let (components, component_diagnostics) = component_rewrites(emit);
     let templates = template_rewrites(emit);
     diagnostics.extend(rewrite_diagnostics);
+    diagnostics.extend(props_rewrites.diagnostics);
     diagnostics.extend(read_diagnostics);
     diagnostics.extend(mutation_diagnostics);
     diagnostics.extend(vnode_diagnostics);
@@ -115,6 +117,8 @@ pub fn emit_program(
     let mut rewriter = AstRewriter {
         allocator: &allocator,
         call_rewrites: &rewrites,
+        props: &props_rewrites.parameters,
+        prop_reads: &props_rewrites.reads,
         reads: &reads,
         mutations: &mutations,
         vnodes: &vnodes,
@@ -122,6 +126,8 @@ pub fn emit_program(
         clones: &templates.clones,
         context_declarations,
         matched_calls: BTreeSet::new(),
+        matched_props: BTreeSet::new(),
+        matched_prop_reads: BTreeSet::new(),
         matched_reads: BTreeSet::new(),
         matched_mutations: BTreeSet::new(),
         matched_vnodes: BTreeSet::new(),
@@ -165,6 +171,36 @@ pub fn emit_program(
                 )
                 .with_primary_span(
                     SourceSpan::new(location.0, location.1).expect("ordered EmitIR read location"),
+                ),
+            );
+        }
+    }
+    for location in props_rewrites.parameters.keys() {
+        if !rewriter.matched_props.contains(location) {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-PROPS",
+                    "component props plan does not identify a function object parameter",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(
+                    SourceSpan::new(location.0, location.1)
+                        .expect("ordered component props parameter location"),
+                ),
+            );
+        }
+    }
+    for location in &props_rewrites.reads {
+        if !rewriter.matched_prop_reads.contains(location) {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-PROPS",
+                    "component prop read origin does not identify an OXC identifier expression",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(
+                    SourceSpan::new(location.0, location.1)
+                        .expect("ordered component prop read location"),
                 ),
             );
         }
@@ -464,6 +500,139 @@ fn is_scoped_helper(helper: RuntimeHelper) -> bool {
 struct CallRewrite {
     local: String,
     context: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct PropBindingRewrite {
+    property: String,
+    local: String,
+    origin: SourceSpan,
+}
+
+#[derive(Debug, Clone)]
+struct PropsRewrite {
+    source: String,
+    helper: String,
+    bindings: Vec<PropBindingRewrite>,
+}
+
+struct PropsRewrites {
+    parameters: BTreeMap<(u32, u32), PropsRewrite>,
+    reads: BTreeSet<(u32, u32)>,
+    diagnostics: Vec<Diagnostic>,
+}
+
+fn props_rewrites(emit: &EmitProgram) -> PropsRewrites {
+    let helper_names: BTreeMap<_, _> = emit
+        .imports
+        .iter()
+        .map(|intent| (intent.helper, intent.local.as_str()))
+        .collect();
+    let mut rewrites = BTreeMap::new();
+    let mut reads = BTreeSet::new();
+    let mut diagnostics = Vec::new();
+    for function in &emit.functions {
+        let Some(props) = &function.props else {
+            continue;
+        };
+        let Some(parameter) = props.parameter.primary_span else {
+            diagnostics.push(emit_error(
+                "FICT-OXC-EMIT-PROPS",
+                "component props parameter requires a source origin",
+                GuaranteeClass::Internal,
+            ));
+            continue;
+        };
+        let Some(helper) = helper_names.get(&props.helper) else {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-IMPORT",
+                    "component props helper has no runtime import intent",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(parameter),
+            );
+            continue;
+        };
+        let mut bindings = Vec::with_capacity(props.bindings.len());
+        let mut valid = true;
+        for binding in &props.bindings {
+            let Some(origin) = binding.origin.primary_span else {
+                diagnostics.push(
+                    emit_error(
+                        "FICT-OXC-EMIT-PROPS",
+                        "component prop binding requires a source origin",
+                        GuaranteeClass::Internal,
+                    )
+                    .with_primary_span(parameter),
+                );
+                valid = false;
+                break;
+            };
+            for reference in &binding.references {
+                let Some(reference) = reference.primary_span else {
+                    diagnostics.push(
+                        emit_error(
+                            "FICT-OXC-EMIT-PROPS",
+                            "component prop read requires a source origin",
+                            GuaranteeClass::Internal,
+                        )
+                        .with_primary_span(parameter),
+                    );
+                    valid = false;
+                    break;
+                };
+                if !reads.insert((reference.start(), reference.end())) {
+                    diagnostics.push(
+                        emit_error(
+                            "FICT-OXC-EMIT-PROPS",
+                            "component prop reads must have unique source origins",
+                            GuaranteeClass::Internal,
+                        )
+                        .with_primary_span(reference),
+                    );
+                    valid = false;
+                    break;
+                }
+            }
+            if !valid {
+                break;
+            }
+            bindings.push(PropBindingRewrite {
+                property: binding.property.clone(),
+                local: binding.local.clone(),
+                origin,
+            });
+        }
+        if !valid {
+            continue;
+        }
+        if rewrites
+            .insert(
+                (parameter.start(), parameter.end()),
+                PropsRewrite {
+                    source: props.source.clone(),
+                    helper: (*helper).to_owned(),
+                    bindings,
+                },
+            )
+            .is_some()
+        {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-PROPS",
+                    "component props parameters must have unique source origins",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(parameter),
+            );
+        }
+    }
+    PropsRewrites {
+        parameters: rewrites,
+        reads,
+        diagnostics,
+    }
 }
 
 fn call_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), CallRewrite>, Vec<Diagnostic>) {
@@ -2193,6 +2362,8 @@ fn parse_template_declarations<'a>(
 struct AstRewriter<'a, 'emit> {
     allocator: &'a Allocator,
     call_rewrites: &'emit BTreeMap<(u32, u32), CallRewrite>,
+    props: &'emit BTreeMap<(u32, u32), PropsRewrite>,
+    prop_reads: &'emit BTreeSet<(u32, u32)>,
     reads: &'emit BTreeSet<(u32, u32)>,
     mutations: &'emit BTreeMap<(u32, u32), MutationRewrite>,
     vnodes: &'emit BTreeMap<(u32, u32), VNodeRewrite>,
@@ -2200,6 +2371,8 @@ struct AstRewriter<'a, 'emit> {
     clones: &'emit BTreeMap<(u32, u32), CloneRewrite>,
     context_declarations: BTreeMap<(u32, u32), Statement<'a>>,
     matched_calls: BTreeSet<(u32, u32)>,
+    matched_props: BTreeSet<(u32, u32)>,
+    matched_prop_reads: BTreeSet<(u32, u32)>,
     matched_reads: BTreeSet<(u32, u32)>,
     matched_mutations: BTreeSet<(u32, u32)>,
     matched_vnodes: BTreeSet<(u32, u32)>,
@@ -2414,19 +2587,43 @@ fn component_children_match(children: &[JSXChild<'_>], planned: &[ComponentChild
 impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
     fn visit_function(&mut self, function: &mut Function<'a>, flags: ScopeFlags) {
         let location = (function.span.start, function.span.end);
-        if let Some(body) = &mut function.body
-            && let Some(declaration) = self.context_declarations.remove(&location)
-        {
-            body.statements.insert(0, declaration);
+        if let Some(body) = &mut function.body {
+            self.apply_props_plan(&mut function.params, body);
+            if let Some(declaration) = self.context_declarations.remove(&location) {
+                body.statements.insert(0, declaration);
+            }
         }
         walk_mut::walk_function(self, function, flags);
     }
 
     fn visit_arrow_function_expression(&mut self, function: &mut ArrowFunctionExpression<'a>) {
         let location = (function.span.start, function.span.end);
-        if !function.expression
-            && let Some(declaration) = self.context_declarations.remove(&location)
-        {
+        if self.has_props_plan(&function.params) && function.expression {
+            let Some(returned) = function
+                .get_expression()
+                .map(|expression| expression.clone_in(self.allocator))
+            else {
+                self.diagnostics.push(emit_error(
+                    "FICT-OXC-EMIT-PROPS",
+                    "expression-bodied component has no return expression",
+                    GuaranteeClass::Internal,
+                ));
+                return;
+            };
+            function.expression = false;
+            let body_span = function.body.span;
+            function.body.statements.clear();
+            function
+                .body
+                .statements
+                .push(Statement::new_return_statement(
+                    body_span,
+                    Some(returned),
+                    &AstBuilder::new(self.allocator),
+                ));
+        }
+        self.apply_props_plan(&mut function.params, &mut function.body);
+        if let Some(declaration) = self.context_declarations.remove(&location) {
             function.body.statements.insert(0, declaration);
         }
         walk_mut::walk_arrow_function_expression(self, function);
@@ -2502,8 +2699,9 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
         };
         let location = (identifier.span.start, identifier.span.end);
         let list_read = self.active_list_reads.contains(&location);
+        let prop_read = self.prop_reads.contains(&location);
         let reactive_read = self.reads.contains(&location);
-        if !list_read && !reactive_read {
+        if !list_read && !prop_read && !reactive_read {
             walk_mut::walk_expression(self, expression);
             return;
         }
@@ -2520,6 +2718,9 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
         );
         if list_read {
             self.matched_list_reads.insert(location);
+        }
+        if prop_read {
+            self.matched_prop_reads.insert(location);
         }
         if reactive_read {
             self.matched_reads.insert(location);
@@ -2547,6 +2748,87 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
 }
 
 impl<'a> AstRewriter<'a, '_> {
+    fn has_props_plan(&self, parameters: &FormalParameters<'_>) -> bool {
+        parameters.items.first().is_some_and(|parameter| {
+            self.props
+                .contains_key(&(parameter.span.start, parameter.span.end))
+        })
+    }
+
+    fn apply_props_plan(
+        &mut self,
+        parameters: &mut oxc::allocator::Box<'a, FormalParameters<'a>>,
+        body: &mut oxc::allocator::Box<'a, FunctionBody<'a>>,
+    ) {
+        let Some(parameter) = parameters.items.first_mut() else {
+            return;
+        };
+        let location = (parameter.span.start, parameter.span.end);
+        let Some(plan) = self.props.get(&location).cloned() else {
+            return;
+        };
+        if !matches!(parameter.pattern, BindingPattern::ObjectPattern(_))
+            || parameter.initializer.is_some()
+        {
+            self.diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-PROPS",
+                    "component props plan requires a non-defaulted object parameter",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(
+                    SourceSpan::new(location.0, location.1)
+                        .expect("ordered component props parameter"),
+                ),
+            );
+            return;
+        }
+        let builder = AstBuilder::new(self.allocator);
+        parameter.pattern = BindingPattern::new_binding_identifier(
+            parameter.pattern.span(),
+            self.allocator.alloc_str(&plan.source),
+            &builder,
+        );
+        for (index, binding) in plan.bindings.iter().enumerate() {
+            let span = Span::new(binding.origin.start(), binding.origin.end());
+            let source =
+                Expression::new_identifier(span, self.allocator.alloc_str(&plan.source), &builder);
+            let value = if is_identifier_name(&binding.property) {
+                Expression::new_static_member_expression(
+                    span,
+                    source,
+                    IdentifierName::new(
+                        span,
+                        self.allocator.alloc_str(&binding.property),
+                        &builder,
+                    ),
+                    false,
+                    &builder,
+                )
+            } else {
+                let property = Expression::new_string_literal(
+                    span,
+                    self.allocator.alloc_str(&binding.property),
+                    None,
+                    &builder,
+                );
+                Expression::new_computed_member_expression(span, source, property, false, &builder)
+            };
+            let getter = zero_parameter_expression_arrow(self.allocator, value, span);
+            let helper =
+                Expression::new_identifier(span, self.allocator.alloc_str(&plan.helper), &builder);
+            let mut arguments = ArenaVec::new_in(&self.allocator);
+            arguments.push(Argument::from(getter));
+            let initializer =
+                Expression::new_call_expression(span, helper, NONE, arguments, false, &builder);
+            body.statements.insert(
+                index,
+                const_statement(self.allocator, &binding.local, initializer, span),
+            );
+        }
+        self.matched_props.insert(location);
+    }
+
     fn lower_template_clone(
         &mut self,
         clone: CloneRewrite,
@@ -5048,6 +5330,7 @@ mod tests {
             functions: vec![EmitFunction {
                 source: FunctionId::new(0),
                 context: None,
+                props: None,
                 slots: vec![ReactiveSlot {
                     id: EmitSlotId::new(0),
                     kind: ReactiveSlotKind::Effect,

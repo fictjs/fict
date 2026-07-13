@@ -84,10 +84,11 @@ pub fn print_hir(file: &HirFile) -> String {
         for parameter in &function.parameters {
             writeln!(
                 output,
-                "  parameter local{} binding={} pattern=fragment{} origin={}",
+                "  parameter local{} binding={} pattern=fragment{} object_properties={:?} origin={}",
                 parameter.local.index(),
                 optional_binding(parameter.binding),
                 parameter.pattern.index(),
+                parameter.object_properties,
                 print_origin(parameter.origin)
             )
             .expect("writing to String cannot fail");

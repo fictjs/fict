@@ -149,6 +149,55 @@ pub fn verify_emit_program(
             )),
             Some(_) | None => {}
         }
+        if let Some(props) = &function.props {
+            let expected = hir_function
+                .parameters
+                .first()
+                .and_then(|parameter| parameter.object_properties.as_ref());
+            let structurally_valid = expected.is_some_and(|expected| {
+                props.parameter == hir_function.parameters[0].origin
+                    && props.bindings.len() == expected.len()
+                    && props
+                        .bindings
+                        .iter()
+                        .zip(expected)
+                        .all(|(planned, source)| {
+                            hir.bindings
+                                .get(source.binding.as_usize())
+                                .is_some_and(|binding| {
+                                    planned.property == source.key
+                                        && planned.local == binding.display_name
+                                        && planned.references == source.references
+                                        && planned.origin == source.origin
+                                })
+                        })
+            });
+            if hir_function.kind != fict_hir::FunctionKind::Component
+                || props.helper != RuntimeHelper::Prop
+                || !valid_identifier(&props.source)
+                || import_names.contains(props.source.as_str())
+                || source_names.contains(props.source.as_str())
+                || temporary_names.contains(props.source.as_str())
+                || function
+                    .context
+                    .as_ref()
+                    .is_some_and(|context| context.local == props.source)
+                || props.bindings.iter().any(|binding| {
+                    binding.property.is_empty()
+                        || !valid_identifier(&binding.local)
+                        || binding
+                            .references
+                            .iter()
+                            .any(|origin| origin.primary_span.is_none())
+                })
+                || !structurally_valid
+            {
+                diagnostics.push(emit_error(
+                    "FICT-EMIT-PROPS",
+                    "component props plans must exactly match a collision-free modeled object parameter",
+                ));
+            }
+        }
         if function.regions.windows(2).any(|pair| pair[0] >= pair[1])
             || function.regions.iter().any(|region| {
                 analysis.is_none_or(|analysis| analysis.regions.get(region.as_usize()).is_none())
@@ -189,6 +238,7 @@ fn verify_imports(program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {
                 .iter()
                 .flat_map(|operation| operation.helper_slots().into_iter().flatten())
                 .chain(function.context.iter().map(|context| context.helper))
+                .chain(function.props.iter().map(|props| props.helper))
         })
         .collect();
     let imported: BTreeSet<_> = program.imports.iter().map(|intent| intent.helper).collect();
@@ -295,6 +345,7 @@ fn verify_module_plan(hir: &HirFile, program: &EmitProgram, diagnostics: &mut Di
                         .iter()
                         .map(|context| context.local.as_str()),
                 )
+                .chain(function.props.iter().map(|props| props.source.as_str()))
                 .chain(
                     function
                         .operations

@@ -847,6 +847,97 @@ fn models_context_free_anonymous_function_map_callbacks() {
 }
 
 #[test]
+fn models_simple_component_object_props_with_exact_read_origins() {
+    let source = r#"
+        function Child({ value: renamed, label }) {
+            return <span>{label}:{renamed}</span>;
+        }
+        function Method({ value, value: alias }) {
+            return <span>{value.toString()}:{alias}</span>;
+        }
+        export function App(value) {
+            return <><Child value={value} label="ok" /><Method value={value} /></>;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+    let child = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "Child")
+        })
+        .expect("Child component");
+    assert_eq!(child.kind, FunctionKind::Component);
+    assert!(child.parameters[0].binding.is_none());
+    let properties = child.parameters[0]
+        .object_properties
+        .as_ref()
+        .expect("modeled object props");
+    assert_eq!(properties.len(), 2);
+    assert_eq!(properties[0].key, "value");
+    assert_eq!(properties[1].key, "label");
+    for property in properties {
+        assert_eq!(property.references.len(), 1);
+        let reference = property.references[0]
+            .primary_span
+            .expect("prop reference origin");
+        assert_eq!(
+            &source[reference.start() as usize..reference.end() as usize],
+            hir.bindings[property.binding.as_usize()].display_name
+        );
+    }
+    let method = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "Method")
+        })
+        .expect("Method component");
+    let method_properties = method.parameters[0]
+        .object_properties
+        .as_ref()
+        .expect("method receiver props remain modeled");
+    assert_eq!(method_properties.len(), 2);
+    assert!(
+        method_properties
+            .iter()
+            .all(|property| property.key == "value")
+    );
+
+    let callable = build_hir(
+        "function Button({ onClick }) { return <button onClick={() => onClick()}>go</button>; } export function App(fn) { return <Button onClick={fn} />; }",
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        callable.diagnostics.is_empty(),
+        "{:?}",
+        callable.diagnostics
+    );
+    let callable = callable.hir.expect("verified callable props HIR");
+    let button = callable
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                callable.bindings[binding.as_usize()].display_name == "Button"
+            })
+        })
+        .expect("Button component");
+    assert!(button.parameters[0].object_properties.is_none());
+}
+
+#[test]
 fn assigns_dense_function_local_storage_and_outer_captures_without_name_identity() {
     let source = r#"
         const outer = 1;
