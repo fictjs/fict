@@ -671,6 +671,56 @@ mod tests {
     }
 
     #[test]
+    fn emits_delegated_events_refs_and_reactive_handler_mutations() {
+        let result = compile(request(
+            "import { $state } from 'fict'; let seen; export function Button(handler) { let count = $state(0); return <button onClick={() => count++} onInput={handler} ref={(node) => { seen = node; }}>Save</button>; }",
+            "events.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result.code.matches("addEventListener(").count(),
+            2,
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("\"click\"") && result.code.contains("\"input\""),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains(", handler, true)"), "{}", result.code);
+        assert!(
+            result.code.contains("count(__fict_previous + 1)"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("bindRef("), "{}", result.code);
+        assert!(result.code.contains("seen = node"), "{}", result.code);
+    }
+
+    #[test]
+    fn registers_non_delegated_event_cleanup_with_the_render_owner() {
+        let result = compile(request(
+            "export function Scroller(handler) { return <div onScroll={handler}>content</div>; }",
+            "event-cleanup.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result.code.contains("onDestroy(bindEvent("),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("\"scroll\", handler"),
+            "{}",
+            result.code
+        );
+        assert!(!result.code.contains("delegateEvents("), "{}", result.code);
+    }
+
+    #[test]
     fn emits_typescript_jsx_as_ordered_vnode_fallbacks() {
         let mut input = request(
             "type Props = { name: string; value: number; extra: Record<string, unknown> }; const Child = (props: { value: number }) => <em>{props.value}</em>; export function App(props: Props) { return <section id=\"root\" disabled {...props.extra}>Hello {props.name}<Child value={props.value} /></section>; }",

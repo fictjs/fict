@@ -396,8 +396,6 @@ fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
                 operation,
                 EmitOperation::InvokeComponent { .. }
                     | EmitOperation::CreateElement { .. }
-                    | EmitOperation::BindEvent { .. }
-                    | EmitOperation::BindRef { .. }
                     | EmitOperation::Conditional { .. }
                     | EmitOperation::KeyedList { .. }
             ),
@@ -706,6 +704,19 @@ enum FineJsxStep {
         namespace: DomNamespace,
         skip_children: bool,
         excluded: Vec<String>,
+    },
+    Event {
+        element: String,
+        event: String,
+        delegated: bool,
+        helper: String,
+        cleanup_helper: Option<String>,
+        handler_origin: SourceSpan,
+    },
+    Ref {
+        element: String,
+        helper: String,
+        reference_origin: SourceSpan,
     },
     Insert {
         parent: String,
@@ -1072,6 +1083,159 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                         namespace: *namespace,
                         skip_children: *skip_children,
                         excluded: excluded.clone(),
+                    });
+                }
+                EmitOperation::BindEvent {
+                    element,
+                    event,
+                    handler,
+                    delegated,
+                    helper,
+                    cleanup_helper,
+                    origin,
+                    ..
+                } => {
+                    let Some(plan) = current.and_then(|location| clones.get_mut(&location)) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-TEMPLATE",
+                                "event binding is not attached to a template clone",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    let Some(element) = temporary_names.get(element) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-TEMP",
+                                "event binding target has no generated local",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    if !matches!(handler, EmitValueRef::Hir(_)) {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-VALUE",
+                                "event handler is not backed by a source HIR expression",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    }
+                    let Some(handler_origin) = origin.primary_span else {
+                        diagnostics.push(emit_error(
+                            "FICT-OXC-EMIT-ORIGIN",
+                            "event binding requires a source handler origin",
+                            GuaranteeClass::Internal,
+                        ));
+                        continue;
+                    };
+                    let Some(helper) = helper_names.get(helper) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-IMPORT",
+                                "event binding helper has no runtime import intent",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    let cleanup_helper = match cleanup_helper {
+                        Some(cleanup_helper) => {
+                            let Some(local) = helper_names.get(cleanup_helper) else {
+                                diagnostics.push(with_operation_span(
+                                    emit_error(
+                                        "FICT-OXC-EMIT-IMPORT",
+                                        "event cleanup helper has no runtime import intent",
+                                        GuaranteeClass::Internal,
+                                    ),
+                                    *origin,
+                                ));
+                                continue;
+                            };
+                            Some((*local).to_owned())
+                        }
+                        None => None,
+                    };
+                    plan.steps.push(FineJsxStep::Event {
+                        element: (*element).to_owned(),
+                        event: event.clone(),
+                        delegated: *delegated,
+                        helper: (*helper).to_owned(),
+                        cleanup_helper,
+                        handler_origin,
+                    });
+                }
+                EmitOperation::BindRef {
+                    element,
+                    reference,
+                    helper,
+                    origin,
+                    ..
+                } => {
+                    let Some(plan) = current.and_then(|location| clones.get_mut(&location)) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-TEMPLATE",
+                                "ref binding is not attached to a template clone",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    let Some(element) = temporary_names.get(element) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-TEMP",
+                                "ref binding target has no generated local",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    if !matches!(reference, EmitValueRef::Hir(_)) {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-VALUE",
+                                "ref value is not backed by a source HIR expression",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    }
+                    let Some(reference_origin) = origin.primary_span else {
+                        diagnostics.push(emit_error(
+                            "FICT-OXC-EMIT-ORIGIN",
+                            "ref binding requires a source value origin",
+                            GuaranteeClass::Internal,
+                        ));
+                        continue;
+                    };
+                    let Some(helper) = helper_names.get(helper) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-IMPORT",
+                                "ref binding helper has no runtime import intent",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    plan.steps.push(FineJsxStep::Ref {
+                        element: (*element).to_owned(),
+                        helper: (*helper).to_owned(),
+                        reference_origin,
                     });
                 }
                 EmitOperation::Insert {
@@ -1716,6 +1880,110 @@ impl<'a> AstRewriter<'a, '_> {
                             span, exclusions, &builder,
                         )));
                     }
+                    let call = Expression::new_call_expression(
+                        span, callee, NONE, arguments, false, &builder,
+                    );
+                    statements.push(Statement::new_expression_statement(span, call, &builder));
+                }
+                FineJsxStep::Event {
+                    element,
+                    event,
+                    delegated,
+                    helper,
+                    cleanup_helper,
+                    handler_origin,
+                } => {
+                    let location = (handler_origin.start(), handler_origin.end());
+                    let Some(mut handler) = values.remove(&location) else {
+                        self.diagnostics.push(
+                            emit_error(
+                                "FICT-OXC-EMIT-ORIGIN",
+                                "event binding origin does not identify a JSX handler expression",
+                                GuaranteeClass::Internal,
+                            )
+                            .with_primary_span(handler_origin),
+                        );
+                        continue;
+                    };
+                    self.visit_expression(&mut handler);
+                    let callee = Expression::new_identifier(
+                        span,
+                        self.allocator.alloc_str(&helper),
+                        &builder,
+                    );
+                    let element = Expression::new_identifier(
+                        span,
+                        self.allocator.alloc_str(&element),
+                        &builder,
+                    );
+                    let mut arguments = ArenaVec::new_in(&self.allocator);
+                    arguments.extend([
+                        Argument::from(element),
+                        Argument::from(Expression::new_string_literal(
+                            span,
+                            self.allocator.alloc_str(&event),
+                            None,
+                            &builder,
+                        )),
+                        Argument::from(handler),
+                    ]);
+                    if delegated {
+                        arguments.push(Argument::from(Expression::new_boolean_literal(
+                            span, true, &builder,
+                        )));
+                    }
+                    let mut call = Expression::new_call_expression(
+                        span, callee, NONE, arguments, false, &builder,
+                    );
+                    if let Some(cleanup_helper) = cleanup_helper {
+                        let cleanup = Expression::new_identifier(
+                            span,
+                            self.allocator.alloc_str(&cleanup_helper),
+                            &builder,
+                        );
+                        let mut cleanup_arguments = ArenaVec::new_in(&self.allocator);
+                        cleanup_arguments.push(Argument::from(call));
+                        call = Expression::new_call_expression(
+                            span,
+                            cleanup,
+                            NONE,
+                            cleanup_arguments,
+                            false,
+                            &builder,
+                        );
+                    }
+                    statements.push(Statement::new_expression_statement(span, call, &builder));
+                }
+                FineJsxStep::Ref {
+                    element,
+                    helper,
+                    reference_origin,
+                } => {
+                    let location = (reference_origin.start(), reference_origin.end());
+                    let Some(mut reference) = values.remove(&location) else {
+                        self.diagnostics.push(
+                            emit_error(
+                                "FICT-OXC-EMIT-ORIGIN",
+                                "ref binding origin does not identify a JSX ref expression",
+                                GuaranteeClass::Internal,
+                            )
+                            .with_primary_span(reference_origin),
+                        );
+                        continue;
+                    };
+                    self.visit_expression(&mut reference);
+                    let callee = Expression::new_identifier(
+                        span,
+                        self.allocator.alloc_str(&helper),
+                        &builder,
+                    );
+                    let element = Expression::new_identifier(
+                        span,
+                        self.allocator.alloc_str(&element),
+                        &builder,
+                    );
+                    let mut arguments = ArenaVec::new_in(&self.allocator);
+                    arguments.extend([Argument::from(element), Argument::from(reference)]);
                     let call = Expression::new_call_expression(
                         span, callee, NONE, arguments, false, &builder,
                     );
