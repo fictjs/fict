@@ -188,6 +188,12 @@ fn verify_imports(program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {
                 .operations
                 .iter()
                 .filter_map(EmitOperation::helper)
+                .chain(
+                    function
+                        .operations
+                        .iter()
+                        .filter_map(EmitOperation::auxiliary_helper),
+                )
                 .chain(function.context.iter().map(|context| context.helper))
         })
         .collect();
@@ -660,7 +666,26 @@ fn verify_helper_semantics(
             }
         }
         EmitOperation::BindRef { helper, .. } => *helper == RuntimeHelper::BindRef,
-        EmitOperation::Insert { helper, .. } => *helper == RuntimeHelper::Insert,
+        EmitOperation::Insert {
+            namespace,
+            helper,
+            create_helper,
+            ..
+        } => {
+            *helper == RuntimeHelper::Insert
+                && match namespace {
+                    DomNamespace::Html => *create_helper == RuntimeHelper::CreateElement,
+                    DomNamespace::Svg
+                    | DomNamespace::MathMl
+                    | DomNamespace::MathMlTextIntegration
+                    | DomNamespace::MathMlAnnotationXml => {
+                        *create_helper == RuntimeHelper::CreateElementInNamespace
+                    }
+                    DomNamespace::Parent => {
+                        *create_helper == RuntimeHelper::CreateElementInParentNamespace
+                    }
+                }
+        }
         EmitOperation::Conditional { helper, .. } => *helper == RuntimeHelper::Conditional,
         EmitOperation::KeyedList { helper, .. } => *helper == RuntimeHelper::KeyedList,
         EmitOperation::ReadReactive { helper, .. } => {

@@ -395,7 +395,6 @@ fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
                     | EmitOperation::ApplyProps { .. }
                     | EmitOperation::BindEvent { .. }
                     | EmitOperation::BindRef { .. }
-                    | EmitOperation::Insert { .. }
                     | EmitOperation::Conditional { .. }
                     | EmitOperation::KeyedList { .. }
             ),
@@ -697,6 +696,14 @@ enum FineJsxStep {
         helper: String,
         value_origin: SourceSpan,
     },
+    Insert {
+        parent: String,
+        before: Option<String>,
+        helper: String,
+        create_helper: String,
+        namespace: DomNamespace,
+        value_origin: SourceSpan,
+    },
 }
 
 struct TemplateRewrites {
@@ -967,9 +974,112 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                         value_origin,
                     });
                 }
+                EmitOperation::Insert {
+                    parent,
+                    value,
+                    before,
+                    namespace,
+                    helper,
+                    create_helper,
+                    origin,
+                } => {
+                    let Some(plan) = current.and_then(|location| clones.get_mut(&location)) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-TEMPLATE",
+                                "child insertion is not attached to a template clone",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    let Some(parent) = temporary_names.get(parent) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-TEMP",
+                                "child insertion parent has no generated local",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    let before = match before {
+                        Some(before) => {
+                            let Some(local) = temporary_names.get(before) else {
+                                diagnostics.push(with_operation_span(
+                                    emit_error(
+                                        "FICT-OXC-EMIT-TEMP",
+                                        "child insertion marker has no generated local",
+                                        GuaranteeClass::Internal,
+                                    ),
+                                    *origin,
+                                ));
+                                continue;
+                            };
+                            Some((*local).to_owned())
+                        }
+                        None => None,
+                    };
+                    if !matches!(value, EmitValueRef::Hir(_)) {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-VALUE",
+                                "child insertion value is not backed by a source HIR expression",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    }
+                    let Some(value_origin) = origin.primary_span else {
+                        diagnostics.push(emit_error(
+                            "FICT-OXC-EMIT-ORIGIN",
+                            "child insertion requires a source expression origin",
+                            GuaranteeClass::Internal,
+                        ));
+                        continue;
+                    };
+                    let Some(helper) = helper_names.get(helper) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-IMPORT",
+                                "child insertion helper has no runtime import intent",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    let Some(create_helper) = helper_names.get(create_helper) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-IMPORT",
+                                "child creation helper has no runtime import intent",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    plan.steps.push(FineJsxStep::Insert {
+                        parent: (*parent).to_owned(),
+                        before,
+                        helper: (*helper).to_owned(),
+                        create_helper: (*create_helper).to_owned(),
+                        namespace: *namespace,
+                        value_origin,
+                    });
+                }
                 _ => {}
             }
         }
+    }
+    for clone in clones.values_mut() {
+        clone
+            .steps
+            .sort_by_key(|step| !matches!(step, FineJsxStep::Resolve { .. }));
     }
     TemplateRewrites {
         sources,
@@ -1415,6 +1525,60 @@ impl<'a> AstRewriter<'a, '_> {
                         }
                     }
                     arguments.push(Argument::from(value));
+                    let call = Expression::new_call_expression(
+                        span, callee, NONE, arguments, false, &builder,
+                    );
+                    statements.push(Statement::new_expression_statement(span, call, &builder));
+                }
+                FineJsxStep::Insert {
+                    parent,
+                    before,
+                    helper,
+                    create_helper,
+                    namespace,
+                    value_origin,
+                } => {
+                    let location = (value_origin.start(), value_origin.end());
+                    let Some(mut value) = values.remove(&location) else {
+                        self.diagnostics.push(
+                            emit_error(
+                                "FICT-OXC-EMIT-ORIGIN",
+                                "child insertion origin does not identify a JSX value expression",
+                                GuaranteeClass::Internal,
+                            )
+                            .with_primary_span(value_origin),
+                        );
+                        continue;
+                    };
+                    self.visit_expression(&mut value);
+                    let getter = zero_parameter_expression_arrow(self.allocator, value, span);
+                    let callee = Expression::new_identifier(
+                        span,
+                        self.allocator.alloc_str(&helper),
+                        &builder,
+                    );
+                    let create = insertion_create_callback(
+                        self.allocator,
+                        &create_helper,
+                        namespace,
+                        &parent,
+                        span,
+                    );
+                    let parent = Expression::new_identifier(
+                        span,
+                        self.allocator.alloc_str(&parent),
+                        &builder,
+                    );
+                    let mut arguments = ArenaVec::new_in(&self.allocator);
+                    arguments.extend([Argument::from(parent), Argument::from(getter)]);
+                    if let Some(before) = before {
+                        arguments.push(Argument::from(Expression::new_identifier(
+                            span,
+                            self.allocator.alloc_str(&before),
+                            &builder,
+                        )));
+                    }
+                    arguments.push(Argument::from(create));
                     let call = Expression::new_call_expression(
                         span, callee, NONE, arguments, false, &builder,
                     );
@@ -1923,6 +2087,45 @@ fn zero_parameter_expression_arrow<'a>(
     Expression::new_arrow_function_expression(
         span, true, false, NONE, parameters, NONE, body, &builder,
     )
+}
+
+fn insertion_create_callback<'a>(
+    allocator: &'a Allocator,
+    helper: &str,
+    namespace: DomNamespace,
+    parent: &str,
+    span: Span,
+) -> Expression<'a> {
+    let builder = AstBuilder::new(allocator);
+    if namespace == DomNamespace::Html {
+        return Expression::new_identifier(span, allocator.alloc_str(helper), &builder);
+    }
+
+    let parameter = allocator.alloc_str("__fict_child");
+    let callee = Expression::new_identifier(span, allocator.alloc_str(helper), &builder);
+    let child = Expression::new_identifier(span, parameter, &builder);
+    let mut arguments = ArenaVec::new_in(&allocator);
+    arguments.push(Argument::from(child));
+    if namespace == DomNamespace::Parent {
+        arguments.push(Argument::from(Expression::new_identifier(
+            span,
+            allocator.alloc_str(parent),
+            &builder,
+        )));
+    } else {
+        let namespace = match namespace {
+            DomNamespace::Svg => "svg",
+            DomNamespace::MathMl => "mathml",
+            DomNamespace::MathMlTextIntegration => "mathmlTextIntegration",
+            DomNamespace::MathMlAnnotationXml => "mathmlAnnotationXml",
+            DomNamespace::Html | DomNamespace::Parent => unreachable!(),
+        };
+        arguments.push(Argument::from(Expression::new_string_literal(
+            span, namespace, None, &builder,
+        )));
+    }
+    let body = Expression::new_call_expression(span, callee, NONE, arguments, false, &builder);
+    expression_arrow(allocator, parameter, body, span)
 }
 
 fn block_iife<'a>(

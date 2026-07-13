@@ -144,6 +144,12 @@ fn lower_program(
                 .operations
                 .iter()
                 .filter_map(EmitOperation::helper)
+                .chain(
+                    function
+                        .operations
+                        .iter()
+                        .filter_map(EmitOperation::auxiliary_helper),
+                )
                 .chain(function.context.iter().map(|context| context.helper))
         })
         .collect();
@@ -907,6 +913,7 @@ fn lower_jsx_instruction(
                     before: Some(marker),
                     namespace,
                     helper: RuntimeHelper::Insert,
+                    create_helper: create_element_helper(namespace),
                     origin,
                 });
             }
@@ -1691,6 +1698,17 @@ fn dom_binding_kind(name: &str) -> DomBindingKind {
             DomBindingKind::Property(name.to_owned())
         }
         _ => DomBindingKind::Attribute(name.to_owned()),
+    }
+}
+
+fn create_element_helper(namespace: DomNamespace) -> RuntimeHelper {
+    match namespace {
+        DomNamespace::Html => RuntimeHelper::CreateElement,
+        DomNamespace::Svg
+        | DomNamespace::MathMl
+        | DomNamespace::MathMlTextIntegration
+        | DomNamespace::MathMlAnnotationXml => RuntimeHelper::CreateElementInNamespace,
+        DomNamespace::Parent => RuntimeHelper::CreateElementInParentNamespace,
     }
 }
 

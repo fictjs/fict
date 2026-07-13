@@ -321,6 +321,7 @@ pub enum EmitOperation {
         before: Option<EmitTemporaryId>,
         namespace: DomNamespace,
         helper: RuntimeHelper,
+        create_helper: RuntimeHelper,
         origin: Origin,
     },
     Conditional {
@@ -376,6 +377,14 @@ impl EmitOperation {
             | Self::CloneTemplate { .. }
             | Self::InvokeComponent { .. }
             | Self::Return { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn auxiliary_helper(&self) -> Option<RuntimeHelper> {
+        match self {
+            Self::Insert { create_helper, .. } => Some(*create_helper),
+            _ => None,
         }
     }
 

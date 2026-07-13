@@ -476,13 +476,14 @@ mod tests {
             "export function Component(value) { return <button>{value}</button>; }",
             "dynamic.jsx",
         ));
-        assert!(dynamic.has_errors());
-        assert!(dynamic.code.is_empty());
+        assert!(!dynamic.has_errors(), "{:?}", dynamic.diagnostics);
+        assert!(dynamic.code.contains("resolvePath("), "{}", dynamic.code);
         assert!(
-            dynamic
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code.as_str() == "FICT-OXC-EMIT-UNSUPPORTED")
+            dynamic.code.contains("insert(")
+                && dynamic.code.contains("() => value")
+                && dynamic.code.contains("__fict_node1"),
+            "{}",
+            dynamic.code
         );
     }
 
@@ -552,6 +553,74 @@ mod tests {
         );
         assert!(result.code.contains("bindAttribute("), "{}", result.code);
         assert!(result.code.contains("bindClass("), "{}", result.code);
+    }
+
+    #[test]
+    fn resolves_adjacent_dynamic_child_markers_before_insertion() {
+        let result = compile(request(
+            "export function View(props) { return <div>{props.first}{props.second}<span>{props.third}</span></div>; }",
+            "children.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        let last_resolve = result
+            .code
+            .rfind("resolvePath(")
+            .expect("marker resolution");
+        let first_insert = result.code.find("insert(").expect("child insertion");
+        assert!(last_resolve < first_insert, "{}", result.code);
+        assert_eq!(result.code.matches("insert(").count(), 3, "{}", result.code);
+        assert!(
+            result.code.contains("() => props.first")
+                && result.code.contains("() => props.second")
+                && result.code.contains("() => props.third"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains(", createElement)"), "{}", result.code);
+    }
+
+    #[test]
+    fn preserves_reactive_reads_inside_dynamic_children() {
+        let result = compile(request(
+            "import { $state } from 'fict'; export function Counter() { let count = $state(0); return <p>Count: {count}</p>; }",
+            "reactive-child.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.code.contains("insert("), "{}", result.code);
+        assert!(result.code.contains("() => count()"), "{}", result.code);
+    }
+
+    #[test]
+    fn supplies_namespace_aware_creators_to_dynamic_children() {
+        let result = compile(request(
+            "export function Foreign(props) { return <svg>{props.icon}</svg>; } export function Formula(props) { return <math>{props.node}</math>; } export function Annotation(props) { return <math><annotation-xml encoding={props.encoding}>{props.node}</annotation-xml></math>; }",
+            "foreign-children.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .code
+                .contains("createElementInNamespace(__fict_child, \"svg\")"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("createElementInNamespace(__fict_child, \"mathml\")"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("createElementInParentNamespace(__fict_child"),
+            "{}",
+            result.code
+        );
     }
 
     #[test]
