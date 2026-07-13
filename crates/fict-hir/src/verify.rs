@@ -816,8 +816,30 @@ impl Verifier<'_> {
                     }
                 }
                 Item::Child(JsxChild::Text { origin, .. }) => self.verify_origin(*origin),
-                Item::Child(JsxChild::Expression { value, origin, .. })
-                | Item::Child(JsxChild::Spread { value, origin }) => {
+                Item::Child(JsxChild::Expression {
+                    value,
+                    list,
+                    origin,
+                    ..
+                }) => {
+                    self.value(owner, *value, *origin);
+                    self.verify_origin(*origin);
+                    if let Some(list) = list {
+                        self.verify_origin(list.items);
+                        self.verify_origin(list.key);
+                        self.function(list.callback, *origin);
+                        match list.receiver {
+                            crate::JsxListReceiver::ArrayLiteral => {}
+                            crate::JsxListReceiver::Binding { root, .. } => {
+                                self.binding(root, *origin);
+                            }
+                        }
+                        for reference in list.item_references.iter().chain(&list.index_references) {
+                            self.verify_origin(*reference);
+                        }
+                    }
+                }
+                Item::Child(JsxChild::Spread { value, origin }) => {
                     self.value(owner, *value, *origin);
                     self.verify_origin(*origin);
                 }

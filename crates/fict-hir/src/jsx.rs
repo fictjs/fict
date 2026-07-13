@@ -70,6 +70,39 @@ pub enum JsxExpressionKind {
     LogicalAnd,
 }
 
+/// Receiver identity for a structurally recognized `Array.prototype.map` JSX child.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JsxListReceiver {
+    /// An inline array literal is unconditionally an Array receiver.
+    ArrayLiteral,
+    /// A binding-backed receiver. Projected receivers are member paths such as `store.items`.
+    Binding {
+        /// Semantically resolved root binding.
+        root: BindingId,
+        /// Whether the map receiver projects from the root binding.
+        projected: bool,
+    },
+}
+
+/// Binding-aware source plan for a direct keyed JSX map callback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JsxListExpression {
+    /// Source range of the expression before `.map(...)`.
+    pub items: Origin,
+    /// Receiver proof used by EmitIR to decide whether Array map specialization is sound.
+    pub receiver: JsxListReceiver,
+    /// HIR function that owns the inline render callback.
+    pub callback: FunctionId,
+    /// Source range of the returned JSX key expression.
+    pub key: Origin,
+    /// Exact semantic references to the callback item parameter.
+    pub item_references: Vec<Origin>,
+    /// Exact semantic references to the callback index parameter.
+    pub index_references: Vec<Origin>,
+    /// Whether the authored callback declares an index parameter.
+    pub needs_index: bool,
+}
+
 /// JSX child in authored order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JsxChild {
@@ -90,6 +123,8 @@ pub enum JsxChild {
         contains_fragment: bool,
         /// Whether the authored expression directly defines a function.
         function_like: bool,
+        /// Safe structural map candidate, retained independently from later receiver proofs.
+        list: Option<JsxListExpression>,
         /// Source provenance.
         origin: Origin,
     },

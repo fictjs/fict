@@ -593,6 +593,62 @@ fn builds_structural_jsx_tags_attributes_children_and_spreads() {
 }
 
 #[test]
+fn models_binding_aware_direct_keyed_map_callbacks() {
+    let source = r#"
+        import { $state } from 'fict';
+        export function App() {
+            let rows = $state([{ id: 1, name: 'A' }]);
+            return <ul>{rows.map((row, index) => <li key={row.id}>{index}:{row.name}</li>)}</ul>;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+    let fict_hir::JsxNode::Element(root) = &hir.templates[0].root else {
+        panic!("intrinsic list root")
+    };
+    let fict_hir::JsxChild::Expression {
+        list: Some(list), ..
+    } = &root.children[0]
+    else {
+        panic!("keyed map metadata")
+    };
+    let fict_hir::JsxListReceiver::Binding {
+        root: receiver,
+        projected: false,
+    } = list.receiver
+    else {
+        panic!("direct binding receiver")
+    };
+    assert_eq!(hir.bindings[receiver.as_usize()].display_name, "rows");
+    assert!(hir.functions[list.callback.as_usize()].flags.is_arrow);
+    assert_eq!(list.item_references.len(), 2);
+    assert_eq!(list.index_references.len(), 1);
+    assert!(list.needs_index);
+    let key = list.key.primary_span.expect("source key span");
+    assert_eq!(&source[key.start() as usize..key.end() as usize], "row.id");
+
+    let mutated = build_hir(
+        "export function App(rows) { return <ul>{rows.map(row => <li key={row.id}>{row++}</li>)}</ul>; }",
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(mutated.diagnostics.is_empty(), "{:?}", mutated.diagnostics);
+    let mutated = mutated.hir.expect("verified fallback HIR");
+    let fict_hir::JsxNode::Element(root) = &mutated.templates[0].root else {
+        panic!("intrinsic list root")
+    };
+    assert!(matches!(
+        &root.children[0],
+        fict_hir::JsxChild::Expression { list: None, .. }
+    ));
+}
+
+#[test]
 fn assigns_dense_function_local_storage_and_outer_captures_without_name_identity() {
     let source = r#"
         const outer = 1;

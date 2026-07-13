@@ -2362,6 +2362,7 @@ mod namespace_tests {
             kind: fict_hir::JsxExpressionKind::Value,
             contains_fragment: false,
             function_like: false,
+            list: None,
             origin: test_origin(),
         }
     }

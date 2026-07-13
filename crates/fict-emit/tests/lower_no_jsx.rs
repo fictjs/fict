@@ -413,6 +413,7 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
                         kind: JsxExpressionKind::Value,
                         contains_fragment: false,
                         function_like: false,
+                        list: None,
                         origin: origin(),
                     }],
                     origin: origin(),

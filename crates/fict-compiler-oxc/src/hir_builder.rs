@@ -9,10 +9,11 @@ use fict_hir::{
     FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction, HirInstruction,
     HirInstructionKind, HirLocal, HirParameter, HirScope, HirTerminator, HirValue,
     InstructionSemantics, JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName,
-    JsxExpressionKind, JsxNode, JsxTemplate, LocalId, LocalKind, MutationEffect, Origin,
-    PatternSummary, Purity, ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind, RegionId,
-    ScopeId, ScopeKind, SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary,
-    TemplateId, TerminatorKind, UpdateOperator, ValueId, ValueKind, verify_hir,
+    JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode, JsxTemplate, LocalId,
+    LocalKind, MutationEffect, Origin, PatternSummary, Purity, ReactiveCallKind, ReactiveScopeHost,
+    ReactiveScopeKind, RegionId, ScopeId, ScopeKind, SyntaxFragment, SyntaxFragmentId,
+    SyntaxFragmentKind, SyntaxSummary, TemplateId, TerminatorKind, UpdateOperator, ValueId,
+    ValueKind, verify_hir,
 };
 use oxc::{
     allocator::Allocator,
@@ -20,7 +21,7 @@ use oxc::{
         ast::{
             ArrowFunctionExpression, AssignmentExpression, AssignmentPattern, AssignmentTarget,
             BindingIdentifier, BindingPattern, BindingRestElement, CallExpression, Expression,
-            FormalParameters, Function, JSXAttributeItem, JSXAttributeName,
+            FormalParameters, Function, IdentifierReference, JSXAttributeItem, JSXAttributeName,
             JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild, JSXElement,
             JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment, JSXMemberExpression,
             JSXMemberExpressionObject, MemberExpression, Program, SimpleAssignmentTarget,
@@ -1570,11 +1571,15 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 kind,
                 contains_fragment,
                 function_like,
+                list,
             } => JsxChild::Expression {
                 value: self.syntax_value(owner, *span, self.referenced_bindings(*span)),
                 kind: *kind,
                 contains_fragment: *contains_fragment,
                 function_like: *function_like,
+                list: list
+                    .as_ref()
+                    .and_then(|list| self.lower_jsx_list_expression(list)),
                 origin: Origin::source(*span),
             },
             RawJsxChild::Node(node) => JsxChild::Node(Box::new(self.lower_jsx_node(owner, node))),
@@ -1583,6 +1588,40 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 origin: Origin::source(*span),
             },
         }
+    }
+
+    fn lower_jsx_list_expression(&self, list: &RawJsxListExpression) -> Option<JsxListExpression> {
+        let callback = self
+            .function_facts
+            .iter()
+            .find(|function| function.span == list.callback)?
+            .id;
+        let receiver = match list.receiver {
+            RawJsxListReceiver::ArrayLiteral => JsxListReceiver::ArrayLiteral,
+            RawJsxListReceiver::Binding { root, projected } => JsxListReceiver::Binding {
+                root: self.symbol_to_binding.get(&root).copied()?,
+                projected,
+            },
+        };
+        Some(JsxListExpression {
+            items: Origin::source(list.items),
+            receiver,
+            callback,
+            key: Origin::source(list.key),
+            item_references: list
+                .item_references
+                .iter()
+                .copied()
+                .map(Origin::source)
+                .collect(),
+            index_references: list
+                .index_references
+                .iter()
+                .copied()
+                .map(Origin::source)
+                .collect(),
+            needs_index: list.needs_index,
+        })
     }
 
     fn push_value(
@@ -1810,12 +1849,30 @@ enum RawJsxChild {
         kind: JsxExpressionKind,
         contains_fragment: bool,
         function_like: bool,
+        list: Option<RawJsxListExpression>,
     },
     Node(Box<RawJsxNode>),
     Spread {
         expression: SourceSpan,
         span: SourceSpan,
     },
+}
+
+#[derive(Debug, Clone)]
+struct RawJsxListExpression {
+    items: SourceSpan,
+    receiver: RawJsxListReceiver,
+    callback: SourceSpan,
+    key: SourceSpan,
+    item_references: Vec<SourceSpan>,
+    index_references: Vec<SourceSpan>,
+    needs_index: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RawJsxListReceiver {
+    ArrayLiteral,
+    Binding { root: SymbolId, projected: bool },
 }
 
 struct JsxCollector<'facts> {
@@ -2069,6 +2126,7 @@ fn raw_jsx_child(scoping: &Scoping, child: &OxcJsxChild<'_>) -> Option<RawJsxChi
                             kind,
                             contains_fragment: fragments.found,
                             function_like: inner.is_function(),
+                            list: raw_jsx_list_expression(scoping, expression),
                         }
                     }
                 }
@@ -2078,6 +2136,180 @@ fn raw_jsx_child(scoping: &Scoping, child: &OxcJsxChild<'_>) -> Option<RawJsxChi
             expression: source_span(spread.expression.span()),
             span: source_span(spread.span),
         }),
+    }
+}
+
+fn raw_jsx_list_expression(
+    scoping: &Scoping,
+    expression: &Expression<'_>,
+) -> Option<RawJsxListExpression> {
+    let Expression::CallExpression(call) = expression.get_inner_expression() else {
+        return None;
+    };
+    if call.optional || call.arguments.len() != 1 {
+        return None;
+    }
+    let items = match call.callee.get_inner_expression() {
+        Expression::StaticMemberExpression(member)
+            if !member.optional && member.property.name == "map" =>
+        {
+            &member.object
+        }
+        Expression::ComputedMemberExpression(member)
+            if !member.optional
+                && matches!(member.expression.get_inner_expression(),
+                    Expression::StringLiteral(property) if property.value == "map") =>
+        {
+            &member.object
+        }
+        _ => return None,
+    };
+    let callback = call.arguments[0].as_expression()?.get_inner_expression();
+    let Expression::ArrowFunctionExpression(callback) = callback else {
+        return None;
+    };
+    if callback.r#async
+        || !callback.expression
+        || callback.params.rest.is_some()
+        || !(1..=2).contains(&callback.params.items.len())
+    {
+        return None;
+    }
+    let item = simple_parameter_symbol(&callback.params, 0)?;
+    let index = if callback.params.items.len() == 2 {
+        Some(simple_parameter_symbol(&callback.params, 1)?)
+    } else {
+        None
+    };
+    let returned = callback.get_expression()?.get_inner_expression();
+    let Expression::JSXElement(element) = returned else {
+        return None;
+    };
+    let key = direct_jsx_key_span(element)?;
+    let mut references = ListParameterReferenceCollector {
+        scoping,
+        item,
+        index,
+        item_references: Vec::new(),
+        index_references: Vec::new(),
+        readonly: true,
+    };
+    references.visit_arrow_function_expression(callback);
+    if !references.readonly {
+        return None;
+    }
+    references.item_references.sort_unstable();
+    references.item_references.dedup();
+    references.index_references.sort_unstable();
+    references.index_references.dedup();
+    let receiver = classify_raw_list_receiver(scoping, items)?;
+    Some(RawJsxListExpression {
+        items: source_span(items.span()),
+        receiver,
+        callback: source_span(callback.span),
+        key,
+        item_references: references.item_references,
+        index_references: references.index_references,
+        needs_index: index.is_some(),
+    })
+}
+
+fn simple_parameter_symbol(parameters: &FormalParameters<'_>, index: usize) -> Option<SymbolId> {
+    let parameter = parameters.items.get(index)?;
+    if parameter.initializer.is_some() {
+        return None;
+    }
+    let BindingPattern::BindingIdentifier(identifier) = &parameter.pattern else {
+        return None;
+    };
+    identifier.symbol_id.get()
+}
+
+struct ListParameterReferenceCollector<'scoping> {
+    scoping: &'scoping Scoping,
+    item: SymbolId,
+    index: Option<SymbolId>,
+    item_references: Vec<SourceSpan>,
+    index_references: Vec<SourceSpan>,
+    readonly: bool,
+}
+
+impl<'a> Visit<'a> for ListParameterReferenceCollector<'_> {
+    fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+        let Some(reference) = identifier
+            .reference_id
+            .get()
+            .map(|reference| self.scoping.get_reference(reference))
+        else {
+            return;
+        };
+        let Some(symbol) = reference.symbol_id() else {
+            return;
+        };
+        let target = if symbol == self.item {
+            Some(&mut self.item_references)
+        } else if self.index == Some(symbol) {
+            Some(&mut self.index_references)
+        } else {
+            None
+        };
+        let Some(target) = target else {
+            return;
+        };
+        if reference.is_write() {
+            self.readonly = false;
+        }
+        if reference.is_read() {
+            target.push(source_span(identifier.span));
+        }
+    }
+}
+
+fn direct_jsx_key_span(element: &JSXElement<'_>) -> Option<SourceSpan> {
+    let mut key = None;
+    for attribute in &element.opening_element.attributes {
+        let JSXAttributeItem::Attribute(attribute) = attribute else {
+            return None;
+        };
+        if !matches!(&attribute.name, JSXAttributeName::Identifier(name) if name.name == "key") {
+            continue;
+        }
+        if key.is_some() {
+            return None;
+        }
+        key = Some(match attribute.value.as_ref()? {
+            OxcJsxAttributeValue::StringLiteral(literal) => source_span(literal.span),
+            OxcJsxAttributeValue::ExpressionContainer(container) => {
+                source_span(container.expression.as_expression()?.span())
+            }
+            OxcJsxAttributeValue::Element(_) | OxcJsxAttributeValue::Fragment(_) => return None,
+        });
+    }
+    key
+}
+
+fn classify_raw_list_receiver(
+    scoping: &Scoping,
+    expression: &Expression<'_>,
+) -> Option<RawJsxListReceiver> {
+    match expression.get_inner_expression() {
+        Expression::ArrayExpression(_) => Some(RawJsxListReceiver::ArrayLiteral),
+        Expression::Identifier(identifier) => scoping
+            .get_reference(identifier.reference_id.get()?)
+            .symbol_id()
+            .map(|root| RawJsxListReceiver::Binding {
+                root,
+                projected: false,
+            }),
+        Expression::StaticMemberExpression(_)
+        | Expression::ComputedMemberExpression(_)
+        | Expression::PrivateFieldExpression(_) => {
+            expression_root_symbol(scoping, expression).map(|root| RawJsxListReceiver::Binding {
+                root,
+                projected: true,
+            })
+        }
+        _ => None,
     }
 }
 

@@ -248,13 +248,14 @@ fn print_jsx(output: &mut String, root: &JsxNode) {
                     kind,
                     contains_fragment,
                     function_like,
+                    list,
                     origin,
                 },
                 depth,
             ) => {
                 writeln!(
                     output,
-                    "{}child expression=value{} kind={kind:?} fragment={contains_fragment} function_like={function_like} origin={}",
+                    "{}child expression=value{} kind={kind:?} fragment={contains_fragment} function_like={function_like} list={list:?} origin={}",
                     indentation(depth),
                     value.index(),
                     print_origin(*origin)

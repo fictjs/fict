@@ -27,7 +27,7 @@ pub use ir::{
 };
 pub use jsx::{
     JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxExpressionKind,
-    JsxNode, JsxTemplate,
+    JsxListExpression, JsxListReceiver, JsxNode, JsxTemplate,
 };
 pub use origin::{DesugaringKind, GeneratedOrigin, Origin, OriginKind};
 pub use printer::print_hir;
