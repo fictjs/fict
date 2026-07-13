@@ -693,6 +693,8 @@ struct ComponentRewrite {
     props: Vec<ComponentProp>,
     children: Vec<ComponentChild>,
     prop_helper: Option<String>,
+    merge_helper: Option<String>,
+    non_reactive_helper: Option<String>,
     fragment_local: Option<String>,
 }
 
@@ -715,6 +717,8 @@ fn component_rewrites(
             props,
             children,
             prop_helper,
+            merge_helper,
+            non_reactive_helper,
             fragment_helper,
             origin,
             ..
@@ -737,6 +741,40 @@ fn component_rewrites(
                         emit_error(
                             "FICT-OXC-EMIT-IMPORT",
                             "component prop helper has no runtime import intent",
+                            GuaranteeClass::Internal,
+                        )
+                        .with_primary_span(span),
+                    );
+                    continue;
+                };
+                Some((*local).to_owned())
+            }
+            None => None,
+        };
+        let merge_helper = match merge_helper {
+            Some(helper) => {
+                let Some(local) = helper_names.get(helper) else {
+                    diagnostics.push(
+                        emit_error(
+                            "FICT-OXC-EMIT-IMPORT",
+                            "component merge helper has no runtime import intent",
+                            GuaranteeClass::Internal,
+                        )
+                        .with_primary_span(span),
+                    );
+                    continue;
+                };
+                Some((*local).to_owned())
+            }
+            None => None,
+        };
+        let non_reactive_helper = match non_reactive_helper {
+            Some(helper) => {
+                let Some(local) = helper_names.get(helper) else {
+                    diagnostics.push(
+                        emit_error(
+                            "FICT-OXC-EMIT-IMPORT",
+                            "component non-reactive helper has no runtime import intent",
                             GuaranteeClass::Internal,
                         )
                         .with_primary_span(span),
@@ -771,6 +809,8 @@ fn component_rewrites(
                     props: props.clone(),
                     children: children.clone(),
                     prop_helper,
+                    merge_helper,
+                    non_reactive_helper,
                     fragment_local,
                 },
             )
@@ -2617,6 +2657,7 @@ impl<'a> AstRewriter<'a, '_> {
         let element_type = self.lower_jsx_element_name(opening.name);
         let mut planned_props = component.props.into_iter();
         let mut properties = ArenaVec::new_in(&self.allocator);
+        let mut prop_segments = Vec::new();
         let mut key = None;
         for attribute in opening.attributes {
             let planned = planned_props.next();
@@ -2630,24 +2671,32 @@ impl<'a> AstRewriter<'a, '_> {
                         ));
                     }
                     let spread = spread.unbox();
+                    if !properties.is_empty() {
+                        let bucket =
+                            std::mem::replace(&mut properties, ArenaVec::new_in(&self.allocator));
+                        prop_segments.push(Expression::new_object_expression(
+                            spread.span,
+                            bucket,
+                            &AstBuilder::new(self.allocator),
+                        ));
+                    }
                     let mut value = spread.argument;
                     self.visit_expression(&mut value);
-                    properties.push(ObjectPropertyKind::new_spread_property(
-                        spread.span,
-                        value,
-                        &AstBuilder::new(self.allocator),
-                    ));
+                    prop_segments.push(value);
                 }
                 JSXAttributeItem::Attribute(attribute) => {
                     let attribute = attribute.unbox();
                     let (name, name_span) = jsx_attribute_name(attribute.name);
                     let source_node_span = jsx_attribute_node_span(&attribute.value);
-                    let getter = match planned {
+                    let (getter, non_reactive) = match planned {
                         Some(ComponentProp::Named {
                             name: planned_name,
                             getter,
+                            non_reactive,
                             ..
-                        }) if planned_name == name && source_node_span.is_none() => getter,
+                        }) if planned_name == name && source_node_span.is_none() => {
+                            (getter, non_reactive)
+                        }
                         Some(ComponentProp::Node {
                             name: planned_name,
                             origin,
@@ -2656,7 +2705,7 @@ impl<'a> AstRewriter<'a, '_> {
                                 component_node_origin_matches(origin, span)
                             }) =>
                         {
-                            false
+                            (false, false)
                         }
                         _ => {
                             self.diagnostics.push(emit_error(
@@ -2664,7 +2713,7 @@ impl<'a> AstRewriter<'a, '_> {
                                 "component named prop does not match its EmitIR plan",
                                 GuaranteeClass::Internal,
                             ));
-                            false
+                            (false, false)
                         }
                     };
                     let mut value = self.lower_jsx_attribute_value(attribute.value, attribute.span);
@@ -2695,6 +2744,31 @@ impl<'a> AstRewriter<'a, '_> {
                             ));
                         }
                     }
+                    if non_reactive {
+                        if let Some(helper) = &component.non_reactive_helper {
+                            let callee = Expression::new_identifier(
+                                name_span,
+                                self.allocator.alloc_str(helper),
+                                &AstBuilder::new(self.allocator),
+                            );
+                            let mut arguments = ArenaVec::new_in(&self.allocator);
+                            arguments.push(Argument::from(value));
+                            value = Expression::new_call_expression(
+                                name_span,
+                                callee,
+                                NONE,
+                                arguments,
+                                false,
+                                &AstBuilder::new(self.allocator),
+                            );
+                        } else {
+                            self.diagnostics.push(emit_error(
+                                "FICT-OXC-EMIT-COMPONENT",
+                                "function component prop has no non-reactive runtime helper",
+                                GuaranteeClass::Internal,
+                            ));
+                        }
+                    }
                     if name == "key" {
                         key = Some(value);
                     } else {
@@ -2715,10 +2789,31 @@ impl<'a> AstRewriter<'a, '_> {
         }
 
         let builder = AstBuilder::new(self.allocator);
-        let props = if properties.is_empty() {
+        if !properties.is_empty() {
+            prop_segments.push(Expression::new_object_expression(
+                span, properties, &builder,
+            ));
+        }
+        let props = if prop_segments.is_empty() {
             Expression::new_null_literal(span, &builder)
+        } else if let Some(helper) = &component.merge_helper {
+            let callee =
+                Expression::new_identifier(span, self.allocator.alloc_str(helper), &builder);
+            let mut arguments = ArenaVec::new_in(&self.allocator);
+            arguments.extend(prop_segments.into_iter().map(Argument::from));
+            Expression::new_call_expression(span, callee, NONE, arguments, false, &builder)
         } else {
-            Expression::new_object_expression(span, properties, &builder)
+            if prop_segments.len() != 1 {
+                self.diagnostics.push(emit_error(
+                    "FICT-OXC-EMIT-COMPONENT",
+                    "segmented component props have no runtime merge helper",
+                    GuaranteeClass::Internal,
+                ));
+            }
+            prop_segments
+                .into_iter()
+                .next()
+                .expect("non-empty component prop segments")
         };
         let mut vnode = ArenaVec::new_in(&self.allocator);
         vnode.push(self.object_property(span, "type", element_type));

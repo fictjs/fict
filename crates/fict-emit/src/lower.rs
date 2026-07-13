@@ -1268,13 +1268,15 @@ fn lower_component_operation(
     for attribute in &element.attributes {
         match attribute {
             JsxAttribute::Named { name, value, .. } => {
-                let (value, mut getter) = match value {
+                let (value, mut getter, mut non_reactive) = match value {
                     JsxAttributeValue::ImplicitTrue => (
                         EmitValueRef::Literal(fict_hir::LiteralValue::Boolean(true)),
+                        false,
                         false,
                     ),
                     JsxAttributeValue::Text(value) => (
                         EmitValueRef::Literal(fict_hir::LiteralValue::String(value.clone())),
+                        false,
                         false,
                     ),
                     JsxAttributeValue::Expression {
@@ -1287,6 +1289,7 @@ fn lower_component_operation(
                                 hir.functions[function_id.as_usize()].values[value.as_usize()].kind,
                                 ValueKind::Literal(_)
                             ),
+                        *function_like,
                     ),
                     JsxAttributeValue::Node(node) => {
                         props.push(ComponentProp::Node {
@@ -1298,11 +1301,13 @@ fn lower_component_operation(
                 };
                 if name == "key" {
                     getter = false;
+                    non_reactive = false;
                 }
                 props.push(ComponentProp::Named {
                     name: name.clone(),
                     value,
                     getter,
+                    non_reactive,
                 });
             }
             JsxAttribute::Spread { value, .. } => {
@@ -1341,6 +1346,22 @@ fn lower_component_operation(
             .iter()
             .any(|prop| matches!(prop, ComponentProp::Named { getter: true, .. }))
             .then_some(RuntimeHelper::PropGetter),
+        merge_helper: props
+            .iter()
+            .any(|prop| matches!(prop, ComponentProp::Spread(_)))
+            .then_some(RuntimeHelper::MergeProps),
+        non_reactive_helper: props
+            .iter()
+            .any(|prop| {
+                matches!(
+                    prop,
+                    ComponentProp::Named {
+                        non_reactive: true,
+                        ..
+                    }
+                )
+            })
+            .then_some(RuntimeHelper::NonReactive),
         fragment_helper: element
             .contains_fragment()
             .then_some(RuntimeHelper::Fragment),

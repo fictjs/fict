@@ -739,13 +739,40 @@ fn verify_helper_semantics(
         EmitOperation::InvokeComponent {
             props,
             prop_helper,
+            merge_helper,
+            non_reactive_helper,
             fragment_helper,
             ..
         } => {
-            let needs_helper = props
+            let needs_prop = props
                 .iter()
                 .any(|prop| matches!(prop, crate::ComponentProp::Named { getter: true, .. }));
-            *prop_helper == needs_helper.then_some(RuntimeHelper::PropGetter)
+            let needs_merge = props
+                .iter()
+                .any(|prop| matches!(prop, crate::ComponentProp::Spread(_)));
+            let needs_non_reactive = props.iter().any(|prop| {
+                matches!(
+                    prop,
+                    crate::ComponentProp::Named {
+                        non_reactive: true,
+                        ..
+                    }
+                )
+            });
+            let wrappers_exclusive = props.iter().all(|prop| {
+                !matches!(
+                    prop,
+                    crate::ComponentProp::Named {
+                        getter: true,
+                        non_reactive: true,
+                        ..
+                    }
+                )
+            });
+            wrappers_exclusive
+                && *prop_helper == needs_prop.then_some(RuntimeHelper::PropGetter)
+                && *merge_helper == needs_merge.then_some(RuntimeHelper::MergeProps)
+                && *non_reactive_helper == needs_non_reactive.then_some(RuntimeHelper::NonReactive)
                 && fragment_helper.is_none_or(|helper| helper == RuntimeHelper::Fragment)
         }
         EmitOperation::PreserveHir { .. }

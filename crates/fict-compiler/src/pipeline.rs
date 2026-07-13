@@ -748,7 +748,7 @@ mod tests {
     #[test]
     fn emits_flat_component_jsx_with_ordered_props_children_and_key() {
         let result = compile(request(
-            "const Card = (_props) => null; const UI = { Card }; export function App(props) { return <Card title={props.title} fixed=\"x\" disabled {...props.extra} key={props.id}>hello {props.child}</Card>; } export function Member(props) { return <UI.Card value={props.value} />; }",
+            "const Card = (_props) => null; const UI = { Card }; export function App(props) { return <Card title={props.title} fixed=\"x\" disabled {...props.extra} middle=\"m\" {...props.tail} last=\"z\" key={props.id}>hello {props.child}</Card>; } export function Member(props) { return <UI.Card value={props.value} />; }",
             "flat-component.tsx",
         ));
 
@@ -763,7 +763,35 @@ mod tests {
         );
         assert!(result.code.contains("fixed: \"x\""), "{}", result.code);
         assert!(result.code.contains("disabled: true"), "{}", result.code);
-        assert!(result.code.contains("...props.extra"), "{}", result.code);
+        assert!(
+            result.code.contains("props: mergeProps("),
+            "{}",
+            result.code
+        );
+        let title = result.code.find("title:").expect("named prop segment");
+        let first_spread = result
+            .code
+            .find("props.extra")
+            .expect("first spread prop segment");
+        let middle = result.code.find("middle:").expect("middle prop segment");
+        let second_spread = result
+            .code
+            .find("props.tail")
+            .expect("second spread prop segment");
+        let last = result.code.find("last:").expect("last prop segment");
+        let children = result
+            .code
+            .find("children:")
+            .expect("children prop segment");
+        assert!(
+            title < first_spread
+                && first_spread < middle
+                && middle < second_spread
+                && second_spread < last
+                && last < children,
+            "{}",
+            result.code
+        );
         assert!(
             result.code.contains("children: [\"hello "),
             "{}",
@@ -944,7 +972,11 @@ mod tests {
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
         assert!(!result.code.contains("__fictProp"), "{}", result.code);
-        assert!(result.code.contains("onSelect: (() =>"), "{}", result.code);
+        assert!(
+            result.code.contains("onSelect: nonReactive((() =>"),
+            "{}",
+            result.code
+        );
         assert!(
             result.code.contains("count(__fict_previous + 1)"),
             "{}",

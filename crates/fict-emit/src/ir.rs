@@ -181,6 +181,7 @@ pub enum ComponentProp {
         name: String,
         value: EmitValueRef,
         getter: bool,
+        non_reactive: bool,
     },
     Node {
         name: String,
@@ -295,6 +296,8 @@ pub enum EmitOperation {
         props: Vec<ComponentProp>,
         children: Vec<ComponentChild>,
         prop_helper: Option<RuntimeHelper>,
+        merge_helper: Option<RuntimeHelper>,
+        non_reactive_helper: Option<RuntimeHelper>,
         fragment_helper: Option<RuntimeHelper>,
         origin: Origin,
     },
@@ -399,11 +402,19 @@ impl EmitOperation {
             } => *helper,
             Self::InvokeComponent {
                 prop_helper,
+                merge_helper,
+                non_reactive_helper,
                 fragment_helper,
                 ..
             } => match prop_helper {
                 Some(helper) => Some(*helper),
-                None => *fragment_helper,
+                None => match merge_helper {
+                    Some(helper) => Some(*helper),
+                    None => match non_reactive_helper {
+                        Some(helper) => Some(*helper),
+                        None => *fragment_helper,
+                    },
+                },
             },
             Self::PreserveHir { .. }
             | Self::TrackRuntimeReactive { .. }
@@ -448,13 +459,51 @@ impl EmitOperation {
     }
 
     #[must_use]
-    pub const fn helper_slots(&self) -> [Option<RuntimeHelper>; 4] {
-        [
-            self.helper(),
-            self.auxiliary_helper(),
-            self.tertiary_helper(),
-            self.quaternary_helper(),
-        ]
+    pub const fn helper_slots(&self) -> [Option<RuntimeHelper>; 8] {
+        match self {
+            Self::InvokeComponent {
+                prop_helper,
+                merge_helper,
+                non_reactive_helper,
+                fragment_helper,
+                ..
+            } => [
+                *prop_helper,
+                *merge_helper,
+                *non_reactive_helper,
+                *fragment_helper,
+                None,
+                None,
+                None,
+                None,
+            ],
+            Self::Conditional {
+                helper,
+                create_helper,
+                cleanup_helper,
+                fragment_helper,
+                ..
+            } => [
+                Some(*helper),
+                Some(*create_helper),
+                Some(*cleanup_helper),
+                *fragment_helper,
+                None,
+                None,
+                None,
+                None,
+            ],
+            _ => [
+                self.helper(),
+                self.auxiliary_helper(),
+                self.tertiary_helper(),
+                self.quaternary_helper(),
+                None,
+                None,
+                None,
+                None,
+            ],
+        }
     }
 
     #[must_use]
