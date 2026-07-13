@@ -1,11 +1,11 @@
 use fict_hir::{
-    BlockId, CallHost, DeleteTarget, FileId, FunctionFlags, FunctionId, FunctionKind, GlobalId,
-    HirBlock, HirFile, HirFunction, HirGlobal, HirInstruction, HirInstructionKind, HirScope,
-    HirTerminator, HirValue, ImportPhase, InstructionSemantics, JavaScriptString, LiteralValue,
-    NumberLiteral, ObjectEntry, ObjectPropertyKind, Origin, Place, PlaceBase, Projection,
-    PropertyKey, ScopeId, ScopeKind, StructuredSourceHint, StructuredSourceKind,
-    StructuredSwitchCaseHint, TaggedTemplateQuasi, TerminatorKind, ValueId, ValueKind, print_hir,
-    verify_hir,
+    BlockId, CallHost, CallInstruction, DeleteTarget, FileId, FunctionFlags, FunctionId,
+    FunctionKind, GlobalId, HirBlock, HirFile, HirFunction, HirGlobal, HirInstruction,
+    HirInstructionKind, HirScope, HirTerminator, HirValue, ImportPhase, InstructionSemantics,
+    JavaScriptString, LiteralValue, NumberLiteral, ObjectEntry, ObjectPropertyKind, Origin, Place,
+    PlaceBase, Projection, PropertyKey, ScopeId, ScopeKind, StructuredSourceHint,
+    StructuredSourceKind, StructuredSwitchCaseHint, TaggedTemplateQuasi, TerminatorKind, ValueId,
+    ValueKind, print_hir, verify_hir,
 };
 
 fn empty_file() -> HirFile {
@@ -179,6 +179,93 @@ fn verifier_enforces_interned_global_identity_and_place_references() {
             .iter()
             .any(|diagnostic| diagnostic.code.as_str() == "FICT-HIR-GLOBAL")
     );
+}
+
+#[test]
+fn verifier_requires_method_calls_to_retain_the_exact_callee_read_reference() {
+    let mut file = empty_file();
+    let origin = Origin::source(fict_hir::SourceSpan::empty(0));
+    let method = Place {
+        base: PlaceBase::Global(GlobalId::new(0)),
+        projections: vec![Projection::StaticProperty {
+            name: "method".to_owned(),
+            optional: false,
+        }],
+    };
+    file.globals.push(HirGlobal {
+        id: GlobalId::new(0),
+        name: "hostObject".to_owned(),
+        origin,
+    });
+    file.functions[0].values.extend([
+        HirValue {
+            id: ValueId::new(0),
+            kind: ValueKind::InstructionResult,
+            origin,
+        },
+        HirValue {
+            id: ValueId::new(1),
+            kind: ValueKind::InstructionResult,
+            origin,
+        },
+    ]);
+    file.functions[0].blocks[0].instructions.extend([
+        HirInstruction {
+            result: Some(ValueId::new(0)),
+            kind: HirInstructionKind::Read {
+                place: method.clone(),
+            },
+            semantics: InstructionSemantics::CONSERVATIVE_EAGER,
+            origin,
+        },
+        HirInstruction {
+            result: Some(ValueId::new(1)),
+            kind: HirInstructionKind::Call(CallInstruction {
+                callee: ValueId::new(0),
+                callee_reference: Some(method.clone()),
+                arguments: Vec::new(),
+                host: CallHost::Unknown,
+                macro_kind: None,
+                reactive_kind: None,
+                optional: false,
+            }),
+            semantics: InstructionSemantics::CONSERVATIVE_EAGER,
+            origin,
+        },
+    ]);
+
+    verify_hir(&file).expect("well-formed method-call reference");
+
+    let HirInstructionKind::Call(call) = &mut file.functions[0].blocks[0].instructions[1].kind
+    else {
+        panic!("method-call fixture")
+    };
+    call.callee_reference = Some(Place {
+        base: PlaceBase::Global(GlobalId::new(0)),
+        projections: vec![Projection::StaticProperty {
+            name: "other".to_owned(),
+            optional: false,
+        }],
+    });
+    let mismatched = verify_hir(&file).expect_err("mismatched method reference must fail");
+    assert!(mismatched.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-CALL-REFERENCE"
+            && diagnostic.message.contains("match the read")
+    }));
+
+    let HirInstructionKind::Call(call) = &mut file.functions[0].blocks[0].instructions[1].kind
+    else {
+        panic!("method-call fixture")
+    };
+    call.callee_reference = Some(Place {
+        base: PlaceBase::Global(GlobalId::new(0)),
+        projections: Vec::new(),
+    });
+    let unprojected = verify_hir(&file).expect_err("unprojected method reference must fail");
+    assert!(unprojected.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-CALL-REFERENCE"
+            && diagnostic.message.contains("property projection")
+    }));
 }
 
 #[test]

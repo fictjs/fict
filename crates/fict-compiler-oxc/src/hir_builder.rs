@@ -3974,6 +3974,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             true,
             call.callee_has_effects,
         );
+        let callee_reference = call
+            .callee_reference
+            .as_ref()
+            .and_then(|place| self.materialize_planned_place(owner, block, place));
         let mut arguments = Vec::new();
         let mut owns_evaluation = call.arguments_conditional;
         for argument in &call.arguments {
@@ -4032,6 +4036,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             Origin::source(call.span),
             HirInstructionKind::Call(CallInstruction {
                 callee,
+                callee_reference,
                 arguments,
                 host,
                 macro_kind: call
@@ -6092,6 +6097,7 @@ struct CallFact {
     span: SourceSpan,
     callee_span: SourceSpan,
     callee_has_effects: bool,
+    callee_reference: Option<PlannedPlace>,
     binding: Option<BindingId>,
     reactive_kind: Option<ReactiveCallKind>,
     arguments: Vec<ArgumentFact>,
@@ -6843,6 +6849,7 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             span: call_span,
             callee_span: source_span(call.callee.get_inner_expression().span()),
             callee_has_effects: structured_control_flow::expression_has_effects(&call.callee),
+            callee_reference: planned_call_callee_reference(self.scoping, &call.callee),
             binding,
             reactive_kind,
             callback: arguments.first().and_then(|argument| argument.function),
@@ -8116,6 +8123,14 @@ fn planned_computed_member_place(
     Some(place)
 }
 
+fn planned_call_callee_reference(
+    scoping: &Scoping,
+    callee: &Expression<'_>,
+) -> Option<PlannedPlace> {
+    let place = planned_expression_place(scoping, callee)?;
+    (!place.projections.is_empty()).then_some(place)
+}
+
 fn planned_expression_place(
     scoping: &Scoping,
     expression: &Expression<'_>,
@@ -8130,6 +8145,7 @@ fn planned_expression_place(
             planned_computed_member_place(scoping, member)
         }
         Expression::PrivateFieldExpression(_) => None,
+        Expression::Super(_) => None,
         Expression::ChainExpression(chain) => match &chain.expression {
             ChainElement::StaticMemberExpression(member) => {
                 planned_static_member_place(scoping, member)

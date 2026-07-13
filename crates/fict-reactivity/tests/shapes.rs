@@ -204,6 +204,7 @@ fn propagates_shape_state_across_aliases() {
                     result: Some(ValueId::new(8)),
                     kind: HirInstructionKind::Call(CallInstruction {
                         callee: ValueId::new(6),
+                        callee_reference: None,
                         arguments: vec![CallArgument {
                             value: ValueId::new(7),
                             spread: false,

@@ -724,6 +724,12 @@ pub enum CallHost {
 pub struct CallInstruction {
     /// Evaluated callee.
     pub callee: ValueId,
+    /// Property reference used to obtain the callee, when this is a method call.
+    ///
+    /// Retaining the reference preserves the receiver/`this` identity and optional member-chain
+    /// semantics without re-evaluating its base or computed keys. Direct value calls keep this
+    /// absent.
+    pub callee_reference: Option<Place>,
     /// Arguments in evaluation order.
     pub arguments: Vec<CallArgument>,
     /// Host classification derived from semantic binding identity.

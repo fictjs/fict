@@ -496,6 +496,17 @@ impl Verifier<'_> {
         self.block(function, function.entry, function.origin);
 
         let mut definitions: Vec<Option<DefinitionKind>> = vec![None; function.values.len()];
+        let mut read_definitions = vec![None; function.values.len()];
+        for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
+            let (Some(result), HirInstructionKind::Read { place }) =
+                (instruction.result, &instruction.kind)
+            else {
+                continue;
+            };
+            if let Some(slot) = read_definitions.get_mut(result.as_usize()) {
+                *slot = Some(place);
+            }
+        }
         for (index, block) in function.blocks.iter().enumerate() {
             if block.id.as_usize() != index {
                 self.error(
@@ -514,7 +525,7 @@ impl Verifier<'_> {
                 self.verify_source_hint(function, hint);
             }
             for instruction in &block.instructions {
-                self.verify_instruction(function, instruction, &mut definitions);
+                self.verify_instruction(function, instruction, &mut definitions, &read_definitions);
             }
             self.verify_terminator(function, &block.terminator);
         }
@@ -569,6 +580,7 @@ impl Verifier<'_> {
         function: &HirFunction,
         instruction: &HirInstruction,
         definitions: &mut [Option<DefinitionKind>],
+        read_definitions: &[Option<&Place>],
     ) {
         self.verify_origin(instruction.origin);
         if instruction.semantics.purity == Purity::Pure
@@ -851,6 +863,27 @@ impl Verifier<'_> {
             }
             HirInstructionKind::Call(call) => {
                 self.value(function, call.callee, instruction.origin);
+                if let Some(reference) = &call.callee_reference {
+                    self.verify_place(function, reference, instruction.origin);
+                    if reference.projections.is_empty() {
+                        self.error(
+                            "FICT-HIR-CALL-REFERENCE",
+                            "a call callee reference must retain at least one property projection",
+                            Some(instruction.origin),
+                        );
+                    }
+                    let matching_read = read_definitions
+                        .get(call.callee.as_usize())
+                        .and_then(|definition| *definition)
+                        .is_some_and(|place| place == reference);
+                    if !matching_read {
+                        self.error(
+                            "FICT-HIR-CALL-REFERENCE",
+                            "a call callee reference must match the read that defines its callee value",
+                            Some(instruction.origin),
+                        );
+                    }
+                }
                 for argument in &call.arguments {
                     self.value(function, argument.value, instruction.origin);
                 }

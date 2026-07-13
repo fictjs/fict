@@ -268,6 +268,51 @@ test('Rust compiler preserves unresolved host places and temporary member update
   }
 })
 
+test('Rust compiler preserves method receivers and evaluates computed call references once', async () => {
+  const module = await compileAndImport(
+    `
+      export function invoke(object, key, delta) {
+        const effects = []
+        const computedKey = () => {
+          effects.push('key')
+          return key
+        }
+        const make = () => {
+          effects.push('make')
+          return object
+        }
+        const staticResult = object.add(delta)
+        const computedResult = object[computedKey()](delta)
+        const temporaryResult = make().add(delta)
+        const groupedResult = (object?.add)(delta)
+        return { staticResult, computedResult, temporaryResult, groupedResult, effects }
+      }
+
+      export function invokeOptional(object, delta) {
+        return object?.add(delta)
+      }
+    `,
+    'method-call-references',
+    /object\[computedKey\(\)\]\(delta\)/,
+  )
+
+  const object = {
+    base: 5,
+    add(delta) {
+      return this.base + delta
+    },
+  }
+  assert.deepEqual(module.invoke(object, 'add', 2), {
+    staticResult: 7,
+    computedResult: 7,
+    temporaryResult: 7,
+    groupedResult: 7,
+    effects: ['key', 'make'],
+  })
+  assert.equal(module.invokeOptional(object, 3), 8)
+  assert.equal(module.invokeOptional(null, 3), undefined)
+})
+
 test('Rust compiler output executes structured for-of and for-in loops', async () => {
   const module = await compileAndImport(
     `

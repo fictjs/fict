@@ -45,6 +45,7 @@ fn fixture(kind: FunctionKind) -> HirFile {
         result: Some(ValueId::new(result)),
         kind: HirInstructionKind::Call(CallInstruction {
             callee: ValueId::new(0),
+            callee_reference: None,
             arguments,
             host: CallHost::Unknown,
             macro_kind: Some(macro_kind),
@@ -815,6 +816,7 @@ fn lowers_only_binding_aware_runtime_keyed_list_calls() {
             result: Some(ValueId::new(4)),
             kind: HirInstructionKind::Call(CallInstruction {
                 callee: ValueId::new(0),
+                callee_reference: None,
                 arguments: vec![
                     CallArgument {
                         value: ValueId::new(1),
@@ -941,6 +943,7 @@ fn tracks_preserved_store_resource_and_selector_calls() {
         result: Some(ValueId::new(result)),
         kind: HirInstructionKind::Call(CallInstruction {
             callee: ValueId::new(0),
+            callee_reference: None,
             arguments: vec![CallArgument {
                 value: ValueId::new(1),
                 spread: false,

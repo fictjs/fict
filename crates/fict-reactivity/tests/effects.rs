@@ -333,6 +333,7 @@ fn classifies_callback_hosts_captures_and_unknown_argument_escapes() {
         result: Some(ValueId::new(result)),
         kind: HirInstructionKind::Call(CallInstruction {
             callee: ValueId::new(2),
+            callee_reference: None,
             arguments: vec![CallArgument {
                 value: argument,
                 spread: false,
@@ -350,6 +351,7 @@ fn classifies_callback_hosts_captures_and_unknown_argument_escapes() {
             result: Some(ValueId::new(result)),
             kind: HirInstructionKind::Call(CallInstruction {
                 callee: ValueId::new(2),
+                callee_reference: None,
                 arguments: vec![CallArgument {
                     value: argument,
                     spread: false,

@@ -58,6 +58,75 @@ fn runs_complete_core_pipeline_and_materializes_region_ids() {
 }
 
 #[test]
+fn optimized_hir_keeps_method_call_references_aligned_with_callee_reads() {
+    let frontend = build_hir(
+        r#"
+            export function invoke(object, key, argument) {
+                const first = argument + 1;
+                const second = argument + 1;
+                return object[key](second + first);
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Module,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified method-call HIR"),
+        CorePassOptions::default(),
+    )
+    .expect("optimized core passes over method call");
+    let function = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                output.hir.bindings[binding.as_usize()].display_name == "invoke"
+            })
+        })
+        .expect("invoke function");
+    let instructions: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let call = instructions
+        .iter()
+        .find_map(|instruction| match &instruction.kind {
+            HirInstructionKind::Call(call) if call.callee_reference.is_some() => Some(call),
+            _ => None,
+        })
+        .expect("method call");
+    let reference = call
+        .callee_reference
+        .as_ref()
+        .expect("method-call reference");
+    assert!(instructions.iter().any(|instruction| {
+        instruction.result == Some(call.callee)
+            && matches!(
+                &instruction.kind,
+                HirInstructionKind::Read { place } if place == reference
+            )
+    }));
+    assert!(
+        output
+            .stats
+            .stage_durations_ns
+            .contains_key("verify-optimized-hir")
+    );
+}
+
+#[test]
 fn rejects_hir_that_exceeds_an_explicit_resource_budget() {
     let input = build_fixture();
     let diagnostics = run_core_passes(

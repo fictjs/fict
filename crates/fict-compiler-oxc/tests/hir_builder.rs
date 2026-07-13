@@ -5,8 +5,9 @@ use fict_hir::{
     ArrayElement, BinaryOperator, CallHost, CompoundAssignmentOperator, ContextValueKind,
     DeclarationKind, DeleteTarget, EvaluationMode, FictMacroKind, FunctionKind, HirInstructionKind,
     ImportPhase, IterationKind, JavaScriptString, LiteralValue, MutationEffect, ObjectEntry,
-    ObjectPropertyKind, PropertyKey, Purity, ReactiveCallKind, StructuredSourceKind,
-    SyntaxFragmentKind, TerminatorKind, UnaryOperator, UpdateOperator, ValueKind,
+    ObjectPropertyKind, PlaceBase, Projection, PropertyKey, Purity, ReactiveCallKind,
+    StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, UnaryOperator, UpdateOperator,
+    ValueKind,
 };
 
 fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
@@ -3133,6 +3134,7 @@ fn preserves_call_spread_optional_and_pure_evaluation_boundaries() {
         panic!("typed direct call")
     };
     assert!(!direct_call.optional);
+    assert!(direct_call.callee_reference.is_none());
     assert_eq!(direct_call.arguments.len(), 3);
     assert!(
         direct_call
@@ -3160,6 +3162,7 @@ fn preserves_call_spread_optional_and_pure_evaluation_boundaries() {
     let HirInstructionKind::Call(spread_call) = &spread.kind else {
         panic!("typed spread call")
     };
+    assert!(spread_call.callee_reference.is_none());
     assert_eq!(
         spread_call
             .arguments
@@ -3185,6 +3188,7 @@ fn preserves_call_spread_optional_and_pure_evaluation_boundaries() {
         panic!("typed optional call")
     };
     assert!(optional_call.optional);
+    assert!(optional_call.callee_reference.is_none());
     assert_eq!(optional_call.arguments.len(), 4);
     assert!(matches!(
         function.values[optional_call.arguments[1].value.as_usize()].kind,
@@ -3222,6 +3226,18 @@ fn preserves_call_spread_optional_and_pure_evaluation_boundaries() {
             !member_call.optional,
             "the member, rather than the call token, starts the optional chain"
         );
+        let reference = member_call
+            .callee_reference
+            .as_ref()
+            .expect("method call reference");
+        assert!(!reference.projections.is_empty());
+        assert!(instructions.iter().any(|instruction| {
+            instruction.result == Some(member_call.callee)
+                && matches!(
+                    &instruction.kind,
+                    HirInstructionKind::Read { place } if place == reference
+                )
+        }));
         assert_eq!(member_call.arguments.len(), 1);
         assert_eq!(
             instructions
@@ -3250,6 +3266,7 @@ fn preserves_call_spread_optional_and_pure_evaluation_boundaries() {
         panic!("typed grouped-member call")
     };
     assert!(!grouped_call.optional);
+    assert!(grouped_call.callee_reference.is_some());
     assert_eq!(
         instruction("make('grouped-eager')").semantics.evaluation,
         EvaluationMode::Eager,
@@ -3265,6 +3282,153 @@ fn preserves_call_spread_optional_and_pure_evaluation_boundaries() {
     assert_eq!(
         instruction("make('pure-spread')").semantics.evaluation,
         EvaluationMode::Deferred
+    );
+}
+
+#[test]
+fn preserves_exact_method_receivers_and_computed_keys_in_call_references() {
+    let source = r#"
+        function invoke(object, key, make, argument) {
+            const staticResult = object.method(argument);
+            const computedResult = object[key()](argument);
+            const temporaryResult = make().method(argument);
+            return [staticResult, computedResult, temporaryResult];
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified method-call HIR");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "invoke")
+        })
+        .expect("invoke function");
+    let instructions: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let authored = |instruction: &fict_hir::HirInstruction| {
+        let span = instruction
+            .origin
+            .primary_span
+            .expect("authored expression");
+        &source[span.start() as usize..span.end() as usize]
+    };
+    let instruction = |text: &str| {
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| authored(instruction) == text)
+            .unwrap_or_else(|| panic!("instruction for {text}"))
+    };
+    let call_for_local = |name: &str| {
+        let local = function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"));
+        let initializer = instructions
+            .iter()
+            .find_map(|instruction| match instruction.kind {
+                HirInstructionKind::Declare {
+                    local: candidate,
+                    initializer,
+                    ..
+                } if candidate == local.id => initializer,
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{name} initializer"));
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| instruction.result == Some(initializer))
+            .unwrap_or_else(|| panic!("{name} call"))
+    };
+    let assert_matching_read = |call: &fict_hir::CallInstruction| {
+        let reference = call
+            .callee_reference
+            .as_ref()
+            .expect("method call reference");
+        assert!(instructions.iter().any(|instruction| {
+            instruction.result == Some(call.callee)
+                && matches!(
+                    &instruction.kind,
+                    HirInstructionKind::Read { place } if place == reference
+                )
+        }));
+        reference.clone()
+    };
+
+    let HirInstructionKind::Call(static_call) = &call_for_local("staticResult").kind else {
+        panic!("static method call")
+    };
+    let static_reference = assert_matching_read(static_call);
+    assert!(matches!(static_reference.base, PlaceBase::Local(_)));
+    assert!(matches!(
+        static_reference.projections.as_slice(),
+        [Projection::StaticProperty {
+            name,
+            optional: false,
+        }] if name == "method"
+    ));
+
+    let HirInstructionKind::Call(computed_call) = &call_for_local("computedResult").kind else {
+        panic!("computed method call")
+    };
+    let computed_reference = assert_matching_read(computed_call);
+    let [
+        Projection::ComputedProperty {
+            key: computed_key,
+            optional: false,
+        },
+    ] = computed_reference.projections.as_slice()
+    else {
+        panic!("computed method projection")
+    };
+    let key_call = instruction("key()");
+    assert_eq!(key_call.result, Some(*computed_key));
+    let HirInstructionKind::Call(key_call) = &key_call.kind else {
+        panic!("computed-key call")
+    };
+    assert!(key_call.callee_reference.is_none());
+    assert_eq!(
+        instructions
+            .iter()
+            .filter(|candidate| authored(candidate) == "key()")
+            .count(),
+        1,
+        "a computed method key must be evaluated exactly once"
+    );
+
+    let HirInstructionKind::Call(temporary_call) = &call_for_local("temporaryResult").kind else {
+        panic!("temporary-receiver method call")
+    };
+    let temporary_reference = assert_matching_read(temporary_call);
+    let PlaceBase::Value(receiver) = temporary_reference.base else {
+        panic!("temporary receiver value")
+    };
+    let receiver_call = instruction("make()");
+    assert_eq!(receiver_call.result, Some(receiver));
+    let HirInstructionKind::Call(receiver_call) = &receiver_call.kind else {
+        panic!("temporary receiver call")
+    };
+    assert!(receiver_call.callee_reference.is_none());
+    assert_eq!(
+        instructions
+            .iter()
+            .filter(|candidate| authored(candidate) == "make()")
+            .count(),
+        1,
+        "a temporary method receiver must be evaluated exactly once"
     );
 }
 

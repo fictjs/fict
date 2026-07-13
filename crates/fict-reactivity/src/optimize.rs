@@ -1221,6 +1221,9 @@ fn rewrite_instruction_values(
         }
         HirInstructionKind::Call(call) => {
             rewrite_value(&mut call.callee, replacements);
+            if let Some(reference) = &mut call.callee_reference {
+                rewrite_place(reference, replacements);
+            }
             for argument in &mut call.arguments {
                 rewrite_value(&mut argument.value, replacements);
             }
@@ -1565,6 +1568,9 @@ fn remap_instruction_values(
         }
         HirInstructionKind::Call(call) => {
             remap_value_id(&mut call.callee, remap)?;
+            if let Some(reference) = &mut call.callee_reference {
+                remap_place_values(reference, remap)?;
+            }
             for argument in &mut call.arguments {
                 remap_value_id(&mut argument.value, remap)?;
             }

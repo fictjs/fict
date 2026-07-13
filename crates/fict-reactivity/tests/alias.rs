@@ -203,6 +203,7 @@ fn forms_versioned_alias_classes_and_invalidates_every_member() {
                     result: Some(ValueId::new(5)),
                     kind: HirInstructionKind::Call(CallInstruction {
                         callee: ValueId::new(4),
+                        callee_reference: None,
                         arguments: vec![CallArgument {
                             value: ValueId::new(3),
                             spread: false,

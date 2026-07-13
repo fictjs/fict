@@ -48,6 +48,7 @@ fn call(result: u32, macro_kind: Option<FictMacroKind>) -> HirInstruction {
         result: Some(ValueId::new(result)),
         kind: HirInstructionKind::Call(CallInstruction {
             callee: ValueId::new(0),
+            callee_reference: None,
             arguments: if macro_kind == Some(FictMacroKind::State) {
                 vec![CallArgument {
                     value: ValueId::new(1),

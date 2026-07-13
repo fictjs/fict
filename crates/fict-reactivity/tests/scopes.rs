@@ -50,6 +50,7 @@ fn runtime_reactive_call(result: u32, binding: u32, kind: ReactiveCallKind) -> H
         result: Some(ValueId::new(result)),
         kind: HirInstructionKind::Call(CallInstruction {
             callee: ValueId::new(0),
+            callee_reference: None,
             arguments: vec![CallArgument {
                 value: ValueId::new(1),
                 spread: false,
@@ -84,6 +85,7 @@ fn propagates_state_into_pure_derived_bindings_and_active_blocks() {
     let call = |kind, arguments| {
         HirInstructionKind::Call(CallInstruction {
             callee: ValueId::new(0),
+            callee_reference: None,
             arguments,
             host: CallHost::Unknown,
             macro_kind: Some(kind),
