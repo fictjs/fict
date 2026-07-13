@@ -686,9 +686,11 @@ fn verify_helper_semantics(
             namespace,
             helper,
             create_helper,
+            fragment_helper,
             ..
         } => {
             *helper == RuntimeHelper::Insert
+                && fragment_helper.is_none_or(|helper| helper == RuntimeHelper::Fragment)
                 && match namespace {
                     DomNamespace::Html => *create_helper == RuntimeHelper::CreateElement,
                     DomNamespace::Svg

@@ -907,6 +907,27 @@ mod tests {
     }
 
     #[test]
+    fn lowers_jsx_nested_in_dynamic_map_expressions() {
+        let result = compile(request(
+            "export function List(items) { return <ul>{items.map((item) => <li key={item.id}>{item.name}</li>)}</ul>; } export function Groups(items) { return <div>{items.map((item) => <><b>{item}</b><i /></>)}</div>; }",
+            "map-fallback.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(!result.code.contains("<li"), "{}", result.code);
+        assert!(!result.code.contains("<b"), "{}", result.code);
+        assert_eq!(
+            result.code.matches("items.map(").count(),
+            2,
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("item.name"), "{}", result.code);
+        assert!(result.code.contains("item.id"), "{}", result.code);
+        assert!(result.code.contains("type: Fragment"), "{}", result.code);
+    }
+
+    #[test]
     fn emits_fine_grained_ternary_and_logical_conditions() {
         let result = compile(request(
             "import { $state } from 'fict'; const Yes = () => null; const No = () => null; export function App() { let show = $state(true); return <main>{show ? <><Yes /></> : <No />}{show && <span>{show}</span>}</main>; }",

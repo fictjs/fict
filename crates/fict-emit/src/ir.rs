@@ -351,6 +351,7 @@ pub enum EmitOperation {
         namespace: DomNamespace,
         helper: RuntimeHelper,
         create_helper: RuntimeHelper,
+        fragment_helper: Option<RuntimeHelper>,
         origin: Origin,
     },
     Conditional {
@@ -453,6 +454,9 @@ impl EmitOperation {
     pub const fn tertiary_helper(&self) -> Option<RuntimeHelper> {
         match self {
             Self::Conditional { cleanup_helper, .. } => Some(*cleanup_helper),
+            Self::Insert {
+                fragment_helper, ..
+            } => *fragment_helper,
             _ => None,
         }
     }

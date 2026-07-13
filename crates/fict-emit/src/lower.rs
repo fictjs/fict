@@ -733,6 +733,7 @@ enum TemplateBinding {
         parent_path: Vec<u32>,
         marker_path: Vec<u32>,
         value: ValueId,
+        contains_fragment: bool,
         namespace: DomNamespace,
     },
     ComponentChild {
@@ -934,6 +935,7 @@ fn lower_jsx_instruction(
                 parent_path,
                 marker_path,
                 value,
+                contains_fragment,
                 namespace,
             } => {
                 let origin = hir.functions[function_id.as_usize()].values[value.as_usize()].origin;
@@ -962,6 +964,7 @@ fn lower_jsx_instruction(
                     namespace,
                     helper: RuntimeHelper::Insert,
                     create_helper: create_element_helper(namespace),
+                    fragment_helper: contains_fragment.then_some(RuntimeHelper::Fragment),
                     origin,
                 });
             }
@@ -1011,6 +1014,7 @@ fn lower_jsx_instruction(
                     namespace,
                     helper: RuntimeHelper::Insert,
                     create_helper: create_element_helper(namespace),
+                    fragment_helper: None,
                     origin,
                 });
             }
@@ -1649,6 +1653,13 @@ fn serialize_children(
                     parent_path: parent_path.clone(),
                     marker_path,
                     value: *value,
+                    contains_fragment: matches!(
+                        child,
+                        JsxChild::Expression {
+                            contains_fragment: true,
+                            ..
+                        }
+                    ),
                     namespace: child_namespace,
                 });
                 child_index += 1;

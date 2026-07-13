@@ -902,6 +902,7 @@ enum FineJsxStep {
         before: Option<String>,
         helper: String,
         create_helper: String,
+        fragment_local: Option<String>,
         namespace: DomNamespace,
         value_origin: SourceSpan,
     },
@@ -1447,6 +1448,7 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                     namespace,
                     helper,
                     create_helper,
+                    fragment_helper,
                     origin,
                 } => {
                     let Some(plan) = current.and_then(|location| clones.get_mut(&location)) else {
@@ -1530,11 +1532,29 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                         ));
                         continue;
                     };
+                    let fragment_local = match fragment_helper {
+                        Some(fragment_helper) => {
+                            let Some(local) = helper_names.get(fragment_helper) else {
+                                diagnostics.push(with_operation_span(
+                                    emit_error(
+                                        "FICT-OXC-EMIT-IMPORT",
+                                        "child fragment helper has no runtime import intent",
+                                        GuaranteeClass::Internal,
+                                    ),
+                                    *origin,
+                                ));
+                                continue;
+                            };
+                            Some((*local).to_owned())
+                        }
+                        None => None,
+                    };
                     plan.steps.push(FineJsxStep::Insert {
                         parent: (*parent).to_owned(),
                         before,
                         helper: (*helper).to_owned(),
                         create_helper: (*create_helper).to_owned(),
+                        fragment_local,
                         namespace: *namespace,
                         value_origin,
                     });
@@ -2425,6 +2445,7 @@ impl<'a> AstRewriter<'a, '_> {
                     before,
                     helper,
                     create_helper,
+                    fragment_local,
                     namespace,
                     value_origin,
                 } => {
@@ -2440,7 +2461,14 @@ impl<'a> AstRewriter<'a, '_> {
                         );
                         continue;
                     };
+                    let previous_fragment = self.active_fragment_local.clone();
+                    if let Some(fragment_local) = fragment_local {
+                        self.active_fragment_local = Some(fragment_local);
+                    }
+                    self.vnode_depth += 1;
                     self.visit_expression(&mut value);
+                    self.vnode_depth -= 1;
+                    self.active_fragment_local = previous_fragment;
                     let getter = zero_parameter_expression_arrow(self.allocator, value, span);
                     let callee = Expression::new_identifier(
                         span,
