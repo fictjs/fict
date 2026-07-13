@@ -27,9 +27,9 @@ use oxc::{
             AssignmentExpression, AssignmentPattern, AssignmentTarget,
             AssignmentTargetMaybeDefault, AssignmentTargetProperty, AssignmentTargetRest,
             AssignmentTargetWithDefault, BindingIdentifier, BindingPattern, BindingRestElement,
-            CallExpression, ChainElement, Class, ComputedMemberExpression, Expression,
-            FormalParameters, Function, FunctionBody, IdentifierReference, ImportExpression,
-            ImportPhase as OxcImportPhase, JSXAttributeItem, JSXAttributeName,
+            CallExpression, ChainElement, Class, ClassElement, ClassType, ComputedMemberExpression,
+            Decorator, Expression, FormalParameters, Function, FunctionBody, IdentifierReference,
+            ImportExpression, ImportPhase as OxcImportPhase, JSXAttributeItem, JSXAttributeName,
             JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild, JSXElement,
             JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment, JSXMemberExpression,
             JSXMemberExpressionObject, LogicalExpression, MemberExpression, MetaProperty,
@@ -565,6 +565,8 @@ impl<'a> Visit<'a> for VariableDeclarationCollector {
 struct TypedExpressionCollector<'semantic> {
     scoping: &'semantic Scoping,
     facts: Vec<TypedExpressionFact>,
+    classes: Vec<ClassFact>,
+    decorators: Vec<DecoratorFact>,
 }
 
 impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
@@ -830,6 +832,99 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
             self.facts.push(fact);
         }
         walk_expression(self, expression);
+    }
+
+    fn visit_class(&mut self, class: &Class<'a>) {
+        let mut deferred_initializers = Vec::new();
+        let mut decorator_spans: Vec<_> = class
+            .decorators
+            .iter()
+            .map(|decorator| source_span(decorator.span))
+            .collect();
+        let mut eager_spans = decorator_spans.clone();
+        if let Some(super_class) = &class.super_class {
+            eager_spans.push(source_span(super_class.get_inner_expression().span()));
+        }
+        for element in &class.body.body {
+            match element {
+                ClassElement::StaticBlock(block) => {
+                    eager_spans.push(source_span(block.span));
+                }
+                ClassElement::MethodDefinition(method) => {
+                    let decorators = method
+                        .decorators
+                        .iter()
+                        .map(|decorator| source_span(decorator.span));
+                    decorator_spans.extend(decorators.clone());
+                    eager_spans.extend(decorators);
+                    if method.computed {
+                        eager_spans.push(source_span(method.key.span()));
+                    }
+                    eager_spans.push(source_span(method.value.span));
+                }
+                ClassElement::PropertyDefinition(property) => {
+                    let decorators = property
+                        .decorators
+                        .iter()
+                        .map(|decorator| source_span(decorator.span));
+                    decorator_spans.extend(decorators.clone());
+                    eager_spans.extend(decorators);
+                    if property.computed {
+                        eager_spans.push(source_span(property.key.span()));
+                    }
+                    if let Some(initializer) = &property.value {
+                        let span = source_span(initializer.get_inner_expression().span());
+                        if property.r#static {
+                            eager_spans.push(span);
+                        } else {
+                            deferred_initializers.push(span);
+                        }
+                    }
+                }
+                ClassElement::AccessorProperty(property) => {
+                    let decorators = property
+                        .decorators
+                        .iter()
+                        .map(|decorator| source_span(decorator.span));
+                    decorator_spans.extend(decorators.clone());
+                    eager_spans.extend(decorators);
+                    if property.computed {
+                        eager_spans.push(source_span(property.key.span()));
+                    }
+                    if let Some(initializer) = &property.value {
+                        let span = source_span(initializer.get_inner_expression().span());
+                        if property.r#static {
+                            eager_spans.push(span);
+                        } else {
+                            deferred_initializers.push(span);
+                        }
+                    }
+                }
+                ClassElement::TSIndexSignature(_) => {}
+            }
+        }
+        self.classes.push(ClassFact {
+            span: source_span(class.span),
+            declaration_binding: (class.r#type == ClassType::ClassDeclaration)
+                .then(|| {
+                    class
+                        .id
+                        .as_ref()
+                        .and_then(|identifier| identifier.symbol_id.get())
+                })
+                .flatten(),
+            deferred_initializers,
+            eager_spans,
+            decorator_spans,
+        });
+        oxc::ast_visit::walk::walk_class(self, class);
+    }
+
+    fn visit_decorator(&mut self, decorator: &Decorator<'a>) {
+        self.decorators.push(DecoratorFact {
+            span: source_span(decorator.span),
+        });
+        oxc::ast_visit::walk::walk_decorator(self, decorator);
     }
 }
 
@@ -1596,6 +1691,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         let mut typed_expressions = TypedExpressionCollector {
             scoping: self.semantic.scoping(),
             facts: Vec::new(),
+            classes: Vec::new(),
+            decorators: Vec::new(),
         };
         typed_expressions.visit_program(program);
         let binding_to_symbol: BTreeMap<_, _> = self
@@ -1691,7 +1788,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         self.populate_function_bodies(
             &calls.calls,
             &variable_declarations.facts,
-            &typed_expressions.facts,
+            &typed_expressions,
             &mutations,
             &member_accesses.facts,
             &jsx.roots,
@@ -2788,11 +2885,14 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         &mut self,
         calls: &[CallFact],
         variable_declarations: &[VariableDeclarationFact],
-        typed_expressions: &[TypedExpressionFact],
+        typed_expression_collector: &TypedExpressionCollector<'_>,
         mutation_collector: &MutationCollector<'_>,
         member_reads: &[MemberReadFact],
         jsx_roots: &[JsxFact],
     ) {
+        let typed_expressions = typed_expression_collector.facts.as_slice();
+        let classes = typed_expression_collector.classes.as_slice();
+        let decorators = typed_expression_collector.decorators.as_slice();
         let mutations = mutation_collector.facts.as_slice();
         let pattern_assignments = mutation_collector.pattern_assignments.as_slice();
         let reactive_targets: BTreeSet<_> = calls
@@ -3014,6 +3114,22 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         .cloned()
                         .map(EvaluationFact::PatternAssignment),
                 )
+                .chain(
+                    decorators
+                        .iter()
+                        .filter(|decorator| {
+                            self.function_owner_for_span(decorator.span) == fact.id
+                        })
+                        .copied()
+                        .map(EvaluationFact::Decorator),
+                )
+                .chain(
+                    classes
+                        .iter()
+                        .filter(|class| self.function_owner_for_span(class.span) == fact.id)
+                        .cloned()
+                        .map(EvaluationFact::Class),
+                )
                 .collect();
             evaluation_facts.sort_by_key(|event| {
                 let span = event.span();
@@ -3033,6 +3149,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     EvaluationFact::PatternAssignment(assignment) => {
                         self.materialize_pattern_assignment(fact.id, assignment)
                     }
+                    EvaluationFact::Decorator(decorator) => {
+                        Some(self.materialize_decorator(fact.id, decorator))
+                    }
+                    EvaluationFact::Class(class) => Some(self.materialize_class(fact.id, class)),
                 };
                 inputs.extend(value);
             }
@@ -3274,6 +3394,101 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             },
             InstructionSemantics::CONSERVATIVE_EAGER,
         )
+    }
+
+    fn materialize_decorator(&mut self, owner: FunctionId, decorator: &DecoratorFact) -> ValueId {
+        let block = self.planned_block_for_span(owner, decorator.span);
+        let inputs = self.instruction_inputs_for_spans(owner, block, &[decorator.span], true);
+        let fragment = self.add_fragment(
+            SyntaxFragmentKind::Decorator,
+            decorator.span,
+            SyntaxSummary {
+                referenced_bindings: self.read_referenced_bindings(decorator.span),
+                has_side_effects: true,
+                may_throw: true,
+                contains_decorators: true,
+                ..SyntaxSummary::default()
+            },
+        );
+        self.push_value_to_block(
+            owner,
+            block,
+            ValueKind::SyntaxFragment(fragment),
+            Origin::source(decorator.span),
+            HirInstructionKind::SyntaxFragment { fragment, inputs },
+            InstructionSemantics::CONSERVATIVE_EAGER,
+        )
+    }
+
+    fn materialize_class(&mut self, owner: FunctionId, class: &ClassFact) -> ValueId {
+        let block = self.planned_block_for_span(owner, class.span);
+        for initializer in &class.deferred_initializers {
+            self.mark_span_deferred(owner, block, *initializer);
+        }
+        let inputs = self.instruction_inputs_for_spans(owner, block, &class.eager_spans, true);
+        let fragment = self.add_fragment(
+            SyntaxFragmentKind::Class,
+            class.span,
+            SyntaxSummary {
+                referenced_bindings: self
+                    .read_referenced_bindings_in_spans(owner, &class.eager_spans),
+                has_side_effects: true,
+                may_throw: true,
+                contains_decorators: !class.decorator_spans.is_empty(),
+                ..SyntaxSummary::default()
+            },
+        );
+        let value = self.push_value_to_block(
+            owner,
+            block,
+            ValueKind::SyntaxFragment(fragment),
+            Origin::source(class.span),
+            HirInstructionKind::SyntaxFragment { fragment, inputs },
+            InstructionSemantics::CONSERVATIVE_EAGER,
+        );
+        if let Some(binding) = class
+            .declaration_binding
+            .and_then(|symbol| self.symbol_to_binding.get(&symbol).copied())
+            && let Some(local) = self.functions[owner.as_usize()]
+                .locals
+                .iter()
+                .find(|local| local.binding == Some(binding))
+                .map(|local| local.id)
+        {
+            self.link_lexical_declaration(owner, local, block, value);
+        }
+        value
+    }
+
+    fn instruction_inputs_for_spans(
+        &self,
+        owner: FunctionId,
+        block: BlockId,
+        spans: &[SourceSpan],
+        eager_only: bool,
+    ) -> Vec<ValueId> {
+        let mut ordered_inputs: Vec<_> = self.functions[owner.as_usize()].blocks[block.as_usize()]
+            .instructions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, instruction)| {
+                if eager_only && instruction.semantics.evaluation != EvaluationMode::Eager {
+                    return None;
+                }
+                let value = instruction.result?;
+                let candidate = instruction.origin.primary_span?;
+                spans
+                    .iter()
+                    .any(|span| span_contains(*span, candidate))
+                    .then_some((candidate.start(), candidate.end(), index, value))
+            })
+            .collect();
+        ordered_inputs.sort_by_key(|(start, end, index, _)| (*start, *end, *index));
+        let mut seen = BTreeSet::new();
+        ordered_inputs
+            .into_iter()
+            .filter_map(|(_, _, _, value)| seen.insert(value).then_some(value))
+            .collect()
     }
 
     fn materialize_typed_expression(
@@ -5066,6 +5281,42 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         references.into_iter().map(|(_, binding)| binding).collect()
     }
 
+    fn read_referenced_bindings_in_spans(
+        &self,
+        owner: FunctionId,
+        spans: &[SourceSpan],
+    ) -> Vec<BindingId> {
+        let mut references: Vec<_> = self
+            .semantic
+            .scoping()
+            .symbol_ids()
+            .filter_map(|symbol| {
+                let binding = self.symbol_to_binding.get(&symbol).copied()?;
+                let first = self
+                    .semantic
+                    .scoping()
+                    .get_resolved_reference_ids(symbol)
+                    .iter()
+                    .filter_map(|reference| {
+                        let reference = self.semantic.scoping().get_reference(*reference);
+                        if !reference.is_read() {
+                            return None;
+                        }
+                        let reference_span = source_span(self.semantic.reference_span(reference));
+                        (self.function_owner_for_span(reference_span) == owner
+                            && spans
+                                .iter()
+                                .any(|span| span_contains(*span, reference_span)))
+                        .then_some(reference_span.start())
+                    })
+                    .min()?;
+                Some((first, binding))
+            })
+            .collect();
+        references.sort_unstable();
+        references.into_iter().map(|(_, binding)| binding).collect()
+    }
+
     fn directly_referenced_bindings(&self, function: &FunctionFact) -> Vec<BindingId> {
         let nested_spans: Vec<_> = self
             .function_facts
@@ -6342,6 +6593,20 @@ struct TypedExpressionFact {
 }
 
 #[derive(Debug, Clone)]
+struct ClassFact {
+    span: SourceSpan,
+    declaration_binding: Option<SymbolId>,
+    deferred_initializers: Vec<SourceSpan>,
+    eager_spans: Vec<SourceSpan>,
+    decorator_spans: Vec<SourceSpan>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DecoratorFact {
+    span: SourceSpan,
+}
+
+#[derive(Debug, Clone)]
 enum TypedExpressionKind {
     Literal(LiteralValue),
     UnresolvedTypeof {
@@ -6632,6 +6897,8 @@ enum EvaluationFact {
     Member(MemberReadFact),
     Mutation(LocalMutationFact),
     PatternAssignment(PatternAssignmentFact),
+    Decorator(DecoratorFact),
+    Class(ClassFact),
 }
 
 impl EvaluationFact {
@@ -6643,6 +6910,8 @@ impl EvaluationFact {
             Self::Member(member) => member.span,
             Self::Mutation(mutation) => mutation.span,
             Self::PatternAssignment(assignment) => assignment.span,
+            Self::Decorator(decorator) => decorator.span,
+            Self::Class(class) => class.span,
         }
     }
 
@@ -6721,6 +6990,8 @@ impl EvaluationFact {
             Self::Call(_) => 17,
             Self::Mutation(_) => 18,
             Self::PatternAssignment(_) => 19,
+            Self::Decorator(_) => 20,
+            Self::Class(_) => 21,
         }
     }
 }

@@ -7284,6 +7284,236 @@ fn diagnoses_shallow_inline_non_event_jsx_function_props() {
     );
 }
 
+#[test]
+fn retains_classes_and_decorators_with_exact_definition_and_initializer_timing() {
+    let source = r#"
+        function build(base, key, decorate, staticValue, instanceValue, methodValue) {
+            @decorate('class')
+            class Example extends base() {
+                @decorate('field')
+                [key()] = instanceValue();
+                accessor current = instanceValue();
+                static [key()] = staticValue();
+                static accessor stable = staticValue();
+                static { staticValue(); }
+                [key()]() { return methodValue(); }
+            }
+            const Expression = class extends base() {
+                field = instanceValue();
+                static field = staticValue();
+            };
+            return [Example, Expression];
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::TypeScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.as_ref().expect("verified class HIR");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "build")
+        })
+        .expect("build function");
+    let instructions: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let authored = |instruction: &fict_hir::HirInstruction| {
+        let span = instruction
+            .origin
+            .primary_span
+            .expect("authored instruction");
+        &source[span.start() as usize..span.end() as usize]
+    };
+    let fragment_kind =
+        |fragment: fict_hir::SyntaxFragmentId| hir.syntax_fragments[fragment.as_usize()].kind;
+
+    let class_instructions: Vec<_> = instructions
+        .iter()
+        .copied()
+        .filter(|instruction| {
+            matches!(
+                instruction.kind,
+                HirInstructionKind::SyntaxFragment { fragment, .. }
+                    if fragment_kind(fragment) == SyntaxFragmentKind::Class
+            )
+        })
+        .collect();
+    assert_eq!(class_instructions.len(), 2);
+    let declaration_class = class_instructions
+        .iter()
+        .copied()
+        .find(|instruction| authored(instruction).contains("class Example"))
+        .expect("class declaration fragment");
+    let expression_class = class_instructions
+        .iter()
+        .copied()
+        .find(|instruction| !authored(instruction).contains("class Example"))
+        .expect("class expression fragment");
+
+    let decorator_instructions: Vec<_> = instructions
+        .iter()
+        .copied()
+        .filter(|instruction| {
+            matches!(
+                instruction.kind,
+                HirInstructionKind::SyntaxFragment { fragment, .. }
+                    if fragment_kind(fragment) == SyntaxFragmentKind::Decorator
+            )
+        })
+        .collect();
+    assert_eq!(decorator_instructions.len(), 2);
+    assert!(
+        decorator_instructions
+            .iter()
+            .any(|instruction| authored(instruction).contains("decorate('class')"))
+    );
+    assert!(
+        decorator_instructions
+            .iter()
+            .any(|instruction| authored(instruction).contains("decorate('field')"))
+    );
+
+    let HirInstructionKind::SyntaxFragment {
+        fragment: declaration_fragment,
+        inputs: declaration_inputs,
+    } = &declaration_class.kind
+    else {
+        unreachable!()
+    };
+    let HirInstructionKind::SyntaxFragment {
+        fragment: expression_fragment,
+        inputs: expression_inputs,
+    } = &expression_class.kind
+    else {
+        unreachable!()
+    };
+    assert_eq!(
+        output.syntax_fragments[declaration_fragment.as_usize()].source,
+        authored(declaration_class)
+    );
+    assert_eq!(
+        output.syntax_fragments[expression_fragment.as_usize()].source,
+        authored(expression_class)
+    );
+    assert!(
+        hir.syntax_fragments[declaration_fragment.as_usize()]
+            .summary
+            .contains_decorators
+    );
+    assert!(
+        !hir.syntax_fragments[expression_fragment.as_usize()]
+            .summary
+            .contains_decorators
+    );
+    for decorator in &decorator_instructions {
+        assert!(declaration_inputs.contains(&decorator.result.expect("decorator value")));
+    }
+
+    let summary_names = |fragment: fict_hir::SyntaxFragmentId| {
+        hir.syntax_fragments[fragment.as_usize()]
+            .summary
+            .referenced_bindings
+            .iter()
+            .map(|binding| hir.bindings[binding.as_usize()].display_name.as_str())
+            .collect::<Vec<_>>()
+    };
+    let declaration_references = summary_names(*declaration_fragment);
+    assert!(declaration_references.contains(&"base"));
+    assert!(declaration_references.contains(&"key"));
+    assert!(declaration_references.contains(&"decorate"));
+    assert!(declaration_references.contains(&"staticValue"));
+    assert!(!declaration_references.contains(&"instanceValue"));
+    assert!(!declaration_references.contains(&"methodValue"));
+    let expression_references = summary_names(*expression_fragment);
+    assert!(expression_references.contains(&"base"));
+    assert!(expression_references.contains(&"staticValue"));
+    assert!(!expression_references.contains(&"instanceValue"));
+
+    let local = |name: &str| {
+        function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"))
+    };
+    assert!(instructions.iter().any(|instruction| {
+        matches!(
+            instruction.kind,
+            HirInstructionKind::Declare {
+                local: candidate,
+                declaration_kind: DeclarationKind::Class,
+                initializer: Some(initializer),
+            } if candidate == local("Example").id
+                && initializer == declaration_class.result.expect("class declaration value")
+        )
+    }));
+    assert!(instructions.iter().any(|instruction| {
+        matches!(
+            instruction.kind,
+            HirInstructionKind::Declare {
+                local: candidate,
+                declaration_kind: DeclarationKind::Const,
+                initializer: Some(initializer),
+            } if candidate == local("Expression").id
+                && initializer == expression_class.result.expect("class expression value")
+        )
+    }));
+
+    let calls = |source_text: &str| {
+        instructions
+            .iter()
+            .copied()
+            .filter(|instruction| {
+                matches!(instruction.kind, HirInstructionKind::Call(_))
+                    && authored(instruction) == source_text
+            })
+            .collect::<Vec<_>>()
+    };
+    for source_text in ["base()", "key()", "staticValue()"] {
+        let matches = calls(source_text);
+        assert!(!matches.is_empty(), "{source_text} calls");
+        assert!(
+            matches
+                .iter()
+                .all(|instruction| { instruction.semantics.evaluation == EvaluationMode::Eager })
+        );
+    }
+    let instance_calls = calls("instanceValue()");
+    assert_eq!(instance_calls.len(), 3);
+    assert!(
+        instance_calls
+            .iter()
+            .all(|instruction| { instruction.semantics.evaluation == EvaluationMode::Deferred })
+    );
+    for instance_call in instance_calls {
+        let value = instance_call
+            .result
+            .expect("instance initializer call value");
+        assert!(!declaration_inputs.contains(&value));
+        assert!(!expression_inputs.contains(&value));
+    }
+
+    for class in &class_instructions {
+        assert!(!instructions.iter().any(|instruction| {
+            instruction.origin.primary_span == class.origin.primary_span
+                && matches!(
+                    instruction.kind,
+                    HirInstructionKind::SyntaxFragment { fragment, .. }
+                        if fragment_kind(fragment) == SyntaxFragmentKind::Expression
+                )
+        }));
+    }
+}
+
 fn memo_side_effect_diagnostics(source: &str) -> Vec<fict_diagnostics::Diagnostic> {
     build_hir(
         source,

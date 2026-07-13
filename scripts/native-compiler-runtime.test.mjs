@@ -505,6 +505,79 @@ test('Rust compiler preserves destructuring assignment order, results, and react
   container.remove()
 })
 
+test('Rust compiler preserves class definition and instance initializer timing', async () => {
+  const module = await compileAndImport(
+    `
+      export function evaluate() {
+        const order = []
+        const key = label => {
+          order.push('key:' + label)
+          return label
+        }
+        const base = () => {
+          order.push('base')
+          return class {}
+        }
+        const instanceValue = () => {
+          order.push('instance')
+          return order.length
+        }
+        const staticValue = () => {
+          order.push('static')
+          return order.length
+        }
+
+        class Example extends base() {
+          [key('instance')] = instanceValue()
+          static [key('static')] = staticValue()
+          static { order.push('static-block') }
+        }
+        order.push('declaration-defined')
+        const first = new Example()
+        order.push('declaration-constructed')
+
+        const Expression = class extends base() {
+          value = instanceValue()
+          static value = staticValue()
+        }
+        order.push('expression-defined')
+        const second = new Expression()
+
+        return {
+          order,
+          declarationInstance: first.instance,
+          declarationStatic: Example.static,
+          expressionInstance: second.value,
+          expressionStatic: Expression.value,
+        }
+      }
+    `,
+    'class-initializer-timing',
+    /class Example extends base\(\)/,
+  )
+
+  assert.deepEqual(module.evaluate(), {
+    order: [
+      'base',
+      'key:instance',
+      'key:static',
+      'static',
+      'static-block',
+      'declaration-defined',
+      'instance',
+      'declaration-constructed',
+      'base',
+      'static',
+      'expression-defined',
+      'instance',
+    ],
+    declarationInstance: 7,
+    declarationStatic: 4,
+    expressionInstance: 12,
+    expressionStatic: 10,
+  })
+})
+
 test('Rust compiler output executes structured for-of and for-in loops', async () => {
   const module = await compileAndImport(
     `
