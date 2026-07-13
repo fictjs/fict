@@ -226,6 +226,26 @@ fn maps_commonjs_rewrites_and_keeps_generated_preludes_unmapped() {
 }
 
 #[test]
+fn maps_reactive_writes_across_try_catch_and_finally() {
+    let source = concat!(
+        "import { $state } from 'fict';\n",
+        "export function App(fail) {\n",
+        "  let result = $state('init');\n",
+        "  try { result = 'try'; if (fail) throw new Error('boom'); }\n",
+        "  catch (error) { result = error.message; }\n",
+        "  finally { result += '!'; }\n",
+        "  return <span>{result}</span>;\n",
+        "}",
+    );
+    let output = MappedOutput::compile(source, "try-origins.tsx");
+
+    output.assert_maps("result(__fict_value)", 0, "result = 'try'", 0);
+    output.assert_maps("result(__fict_value)", 1, "result = error.message", 0);
+    output.assert_maps("result(__fict_value)", 2, "result += '!'", 0);
+    output.assert_maps("result() + \"!\"", 0, "result += '!'", 0);
+}
+
+#[test]
 fn preserves_utf16_columns_for_unicode_jsx_reads() {
     let source = concat!(
         "export function Emoji() {\n",

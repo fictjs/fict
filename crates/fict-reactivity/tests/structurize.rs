@@ -217,6 +217,59 @@ fn recovers_an_ordered_branch_chain_as_one_switch() {
 }
 
 #[test]
+fn recovers_try_catch_finally_with_one_continuation() {
+    let function = function(vec![
+        block(
+            0,
+            TerminatorKind::Try {
+                body: BlockId::new(1),
+                catch: Some(BlockId::new(2)),
+                finally: Some(BlockId::new(3)),
+                continuation: BlockId::new(4),
+            },
+        ),
+        block(
+            1,
+            TerminatorKind::Goto {
+                target: BlockId::new(3),
+            },
+        ),
+        block(
+            2,
+            TerminatorKind::Goto {
+                target: BlockId::new(3),
+            },
+        ),
+        block(
+            3,
+            TerminatorKind::Goto {
+                target: BlockId::new(4),
+            },
+        ),
+        block(4, TerminatorKind::Return { value: None }),
+    ]);
+
+    let cfg = analyze_cfg(&function).expect("try CFG");
+    let analysis = structurize_cfg(&function, &cfg).expect("structured try");
+    assert_eq!(analysis.stats.tries, 1);
+    assert!(analysis.fallback.is_none());
+    assert!(analysis.constructs.iter().any(|construct| {
+        matches!(
+            construct.kind,
+            StructuredConstructKind::Try {
+                body,
+                catch: Some(catch),
+                finally: Some(finally),
+                continuation,
+            } if body == BlockId::new(1)
+                && catch == BlockId::new(2)
+                && finally == BlockId::new(3)
+                && continuation == BlockId::new(4)
+        )
+    }));
+}
+
+#[test]
 fn falls_back_for_a_multi_entry_irreducible_scc() {
     let function = function(vec![
         block(

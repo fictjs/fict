@@ -371,3 +371,74 @@ fn analyzes_frontend_switch_cfg_with_ordered_dispatch_phi_and_reactive_control()
     assert!(switch.1.is_some());
     assert!(analysis.structurize.fallback.is_none());
 }
+
+#[test]
+fn analyzes_frontend_try_cfg_with_catch_finally_and_reactive_phi() {
+    let frontend = build_hir(
+        r#"
+            import { $state } from 'fict';
+            export function App(shouldThrow) {
+                let result = $state('init');
+                try {
+                    result = 'try';
+                    if (shouldThrow) throw new Error('boom');
+                } catch (error) {
+                    result = error.message;
+                } finally {
+                    result += '!';
+                }
+                return <span>{result}</span>;
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScriptJsx,
+            module_kind: OxcModuleKind::Module,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified frontend try CFG"),
+        CorePassOptions::default(),
+    )
+    .expect("core passes over try CFG");
+    let app = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| function.kind == FunctionKind::Component)
+        .expect("component function");
+    let analysis = &output.functions[app.id.as_usize()];
+    let result = app
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("result"))
+        .expect("result local")
+        .id;
+
+    assert!(
+        analysis
+            .ssa
+            .phis
+            .iter()
+            .any(|phi| phi.target.local == result)
+    );
+    assert_eq!(analysis.structurize.stats.tries, 1);
+    assert!(analysis.structurize.constructs.iter().any(|construct| {
+        matches!(
+            construct.kind,
+            StructuredConstructKind::Try {
+                catch: Some(_),
+                finally: Some(_),
+                ..
+            }
+        )
+    }));
+    assert!(analysis.structurize.fallback.is_none());
+}

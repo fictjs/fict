@@ -268,6 +268,54 @@ test('Rust compiler output preserves switch test order, deferred default, and fa
   container.remove()
 })
 
+test('Rust compiler output preserves catch binding and finally completion ordering', async () => {
+  const module = await compileAndImport(
+    `
+      import { render } from 'fict'
+
+      function App() {
+        const audit = []
+        const execute = mode => {
+          try {
+            audit.push('try:' + mode)
+            if (mode === 'throw') throw { message: 'boom' }
+            if (mode === 'return') return 'returned'
+            return 'normal'
+          } catch ({ message = 'fallback' }) {
+            audit.push('catch:' + message)
+            return 'caught:' + message
+          } finally {
+            audit.push('finally:' + mode)
+            if (mode === 'override') return 'overridden'
+          }
+        }
+        const results = ['normal', 'throw', 'return', 'override'].map(execute)
+        return <output data-id="try-order">{audit.join(',')}|{results.join(',')}</output>
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+    `,
+    'try-order',
+    /try \{/,
+  )
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = module.mount(container)
+  await flushRuntime()
+
+  assert.equal(
+    container.querySelector('[data-id="try-order"]')?.textContent,
+    'try:normal,finally:normal,try:throw,catch:boom,finally:throw,try:return,finally:return,try:override,finally:override|normal,caught:boom,returned,overridden',
+  )
+
+  dispose()
+  assert.equal(container.childNodes.length, 0)
+  container.remove()
+})
+
 test('Rust compiler output preserves keyed identity, reactive updates, and cleanup', async () => {
   const module = await compileAndImport(
     `

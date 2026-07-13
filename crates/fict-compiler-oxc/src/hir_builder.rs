@@ -2536,6 +2536,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 | structured_control_flow::PlannedTerminator::ForEach { origin, .. }
                 | structured_control_flow::PlannedTerminator::SwitchDispatch { origin, .. }
                 | structured_control_flow::PlannedTerminator::SwitchCase { origin, .. }
+                | structured_control_flow::PlannedTerminator::Try { origin, .. }
                 | structured_control_flow::PlannedTerminator::Unreachable { origin } => *origin,
             };
             let kind = match block.terminator {
@@ -2655,6 +2656,24 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         alternate,
                     }
                 }
+                structured_control_flow::PlannedTerminator::Try {
+                    body,
+                    catch,
+                    catch_pattern,
+                    finally,
+                    continuation,
+                    ..
+                } => {
+                    if let (Some(catch), Some(pattern)) = (catch, catch_pattern) {
+                        self.materialize_catch_pattern(owner, catch, pattern);
+                    }
+                    TerminatorKind::Try {
+                        body,
+                        catch,
+                        finally,
+                        continuation,
+                    }
+                }
                 structured_control_flow::PlannedTerminator::Unreachable { .. } => {
                     TerminatorKind::Unreachable
                 }
@@ -2733,6 +2752,83 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     targets,
                 },
                 semantics: InstructionSemantics::CONSERVATIVE_EAGER,
+                origin: Origin::source(target.span),
+            },
+        );
+    }
+
+    fn materialize_catch_pattern(
+        &mut self,
+        owner: FunctionId,
+        catch: BlockId,
+        target: structured_control_flow::PlannedCatchPattern,
+    ) {
+        let mut ordered_inputs: Vec<_> = self.functions[owner.as_usize()].blocks[catch.as_usize()]
+            .instructions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, instruction)| {
+                let value = instruction.result?;
+                let candidate = instruction.origin.primary_span?;
+                span_contains(target.span, candidate).then_some((
+                    candidate.start(),
+                    candidate.end(),
+                    index,
+                    value,
+                ))
+            })
+            .collect();
+        ordered_inputs.sort_by_key(|(start, end, index, _)| (*start, *end, *index));
+        let mut seen = BTreeSet::new();
+        let inputs: Vec<_> = ordered_inputs
+            .iter()
+            .filter_map(|(_, _, _, value)| seen.insert(*value).then_some(*value))
+            .collect();
+        let last_input_instruction = ordered_inputs.iter().map(|(_, _, index, _)| *index).max();
+        let declared_bindings: Vec<_> = target
+            .declared
+            .iter()
+            .filter_map(|symbol| self.symbol_to_binding.get(symbol).copied())
+            .collect();
+        let fragment = self.add_fragment(
+            SyntaxFragmentKind::Pattern,
+            target.span,
+            SyntaxSummary {
+                referenced_bindings: self.referenced_bindings(target.span),
+                pattern: Some(PatternSummary {
+                    declared_bindings,
+                    assigned_bindings: Vec::new(),
+                    has_defaults: target.has_defaults,
+                    has_rest: target.has_rest,
+                }),
+                has_side_effects: target.has_effects,
+                may_throw: target.has_effects,
+                ..SyntaxSummary::default()
+            },
+        );
+        let block = &mut self.functions[owner.as_usize()].blocks[catch.as_usize()];
+        let insertion = last_input_instruction.map_or_else(
+            || {
+                block
+                    .instructions
+                    .iter()
+                    .position(|instruction| {
+                        !matches!(instruction.kind, HirInstructionKind::Declare { .. })
+                    })
+                    .unwrap_or(block.instructions.len())
+            },
+            |index| index.saturating_add(1),
+        );
+        block.instructions.insert(
+            insertion,
+            HirInstruction {
+                result: None,
+                kind: HirInstructionKind::SyntaxFragment { fragment, inputs },
+                semantics: if target.has_effects {
+                    InstructionSemantics::CONSERVATIVE_EAGER
+                } else {
+                    InstructionSemantics::PURE_EAGER
+                },
                 origin: Origin::source(target.span),
             },
         );

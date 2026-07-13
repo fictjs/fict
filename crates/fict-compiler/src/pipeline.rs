@@ -2105,6 +2105,50 @@ mod tests {
     }
 
     #[test]
+    fn emits_authored_try_catch_finally_from_structured_hir() {
+        let source = "import { $state } from 'fict'; export function App(shouldThrow) { let result = $state('init'); try { result = 'try'; if (shouldThrow) throw new Error('boom'); } catch (error) { result = error.message; } finally { result += '!'; } return <span>{result}</span>; }";
+        let compiled = compile(request(source, "try-catch-finally.tsx"));
+
+        assert!(!compiled.has_errors(), "{:?}", compiled.diagnostics);
+        assert!(
+            compiled.diagnostics.is_empty(),
+            "{:?}",
+            compiled.diagnostics
+        );
+        assert!(compiled.code.contains("try {"), "{}", compiled.code);
+        assert!(compiled.code.contains("catch (error)"), "{}", compiled.code);
+        assert!(compiled.code.contains("finally {"), "{}", compiled.code);
+        assert!(compiled.code.contains(")(\"try\");"), "{}", compiled.code);
+        assert!(
+            compiled.code.contains(")(result() + \"!\");"),
+            "{}",
+            compiled.code
+        );
+    }
+
+    #[test]
+    fn rejects_reactive_try_stories_that_rethrow_from_catch() {
+        let source = "import { $state } from 'fict'; export function App() { let count = $state(0); let label = 'init'; try { if (count > 0) throw 'boom'; label = 'ok'; } catch (error) { throw error; } return <span>{label}</span>; }";
+        let strict = compile(request(source, "try-rethrow.tsx"));
+        assert!(strict.has_errors(), "{:?}", strict.diagnostics);
+        assert!(strict.code.is_empty());
+        assert!(strict.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R006"
+                && diagnostic.severity == DiagnosticSeverity::Error
+                && diagnostic.message.contains("count")
+        }));
+
+        let mut fallback_request = request(source, "try-rethrow.tsx");
+        fallback_request.options.strict_guarantee = false;
+        let fallback = compile(fallback_request);
+        assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
+        assert!(fallback.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R006"
+                && diagnostic.severity == DiagnosticSeverity::Warning
+        }));
+    }
+
+    #[test]
     fn diagnoses_reactive_classic_and_enumeration_loop_controls() {
         let cases = [
             (

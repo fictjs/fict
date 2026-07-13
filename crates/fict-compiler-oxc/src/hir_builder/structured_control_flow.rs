@@ -7,9 +7,9 @@ use fict_hir::{
 };
 use oxc::{
     ast::ast::{
-        ArrowFunctionExpression, AssignmentTargetRest, AssignmentTargetWithDefault, BlockStatement,
-        Expression, ForStatementLeft, Function, IdentifierReference, Program, Statement,
-        SwitchStatement,
+        ArrowFunctionExpression, AssignmentTargetRest, AssignmentTargetWithDefault, BindingPattern,
+        BlockStatement, Expression, ForStatementLeft, Function, IdentifierReference, Program,
+        Statement, SwitchStatement, TryStatement,
     },
     ast_visit::{
         Visit,
@@ -102,9 +102,26 @@ pub(super) enum PlannedTerminator {
         alternate: BlockId,
         origin: SourceSpan,
     },
+    Try {
+        body: BlockId,
+        catch: Option<BlockId>,
+        catch_pattern: Option<PlannedCatchPattern>,
+        finally: Option<BlockId>,
+        continuation: BlockId,
+        origin: SourceSpan,
+    },
     Unreachable {
         origin: SourceSpan,
     },
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct PlannedCatchPattern {
+    pub span: SourceSpan,
+    pub declared: Vec<SymbolId>,
+    pub has_defaults: bool,
+    pub has_rest: bool,
+    pub has_effects: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -285,6 +302,7 @@ impl<'semantic> PlanBuilder<'semantic> {
             Statement::ForInStatement(statement) => self.lower_for_in(statement, current, None),
             Statement::ForOfStatement(statement) => self.lower_for_of(statement, current, None),
             Statement::SwitchStatement(statement) => self.lower_switch(statement, current, None),
+            Statement::TryStatement(statement) => self.lower_try(statement, current),
             Statement::LabeledStatement(statement) => self.lower_labeled(statement, current),
             Statement::BreakStatement(statement) => self.lower_break(statement, current),
             Statement::ContinueStatement(statement) => self.lower_continue(statement, current),
@@ -317,7 +335,7 @@ impl<'semantic> PlanBuilder<'semantic> {
                 };
                 None
             }
-            Statement::TryStatement(_) | Statement::WithStatement(_) => {
+            Statement::WithStatement(_) => {
                 self.supported = false;
                 self.owners.push(SpanOwner {
                     span: source_span(statement.span()),
@@ -502,6 +520,117 @@ impl<'semantic> PlanBuilder<'semantic> {
         }
         self.control_targets.pop();
         Some(exit)
+    }
+
+    fn lower_try(&mut self, statement: &TryStatement<'_>, current: BlockId) -> Option<BlockId> {
+        self.has_control_flow = true;
+        let origin = source_span(statement.span);
+        let parent_scope = self.blocks[current.as_usize()].scope;
+        let body_scope = statement
+            .block
+            .scope_id
+            .get()
+            .map_or(parent_scope, |scope| ScopeId::new(count_u32(scope.index())));
+        let body = self.new_block(body_scope, source_span(statement.block.span));
+        let catch = statement.handler.as_ref().map(|handler| {
+            let scope = handler
+                .scope_id
+                .get()
+                .map_or(parent_scope, |scope| ScopeId::new(count_u32(scope.index())));
+            self.new_block(scope, source_span(handler.span))
+        });
+        let finally = statement.finalizer.as_ref().map(|finalizer| {
+            let scope = finalizer
+                .scope_id
+                .get()
+                .map_or(parent_scope, |scope| ScopeId::new(count_u32(scope.index())));
+            self.new_block(scope, source_span(finalizer.span))
+        });
+        let continuation = self.new_block(parent_scope, origin);
+
+        self.owners.push(SpanOwner {
+            span: source_span(statement.block.span),
+            block: body,
+        });
+        let catch_pattern = statement.handler.as_ref().and_then(|handler| {
+            let catch = catch?;
+            self.owners.push(SpanOwner {
+                span: source_span(handler.span),
+                block: catch,
+            });
+            let parameter = handler.param.as_ref()?;
+            let mut collector = PatternBindingCollector::default();
+            collector.visit_binding_pattern(&parameter.pattern);
+            let simple_identifier =
+                matches!(parameter.pattern, BindingPattern::BindingIdentifier(_));
+            Some(PlannedCatchPattern {
+                span: source_span(parameter.span),
+                declared: collector.symbols,
+                has_defaults: collector.has_defaults,
+                has_rest: collector.has_rest,
+                has_effects: !simple_identifier,
+            })
+        });
+        if let (Some(finalizer), Some(finally)) = (&statement.finalizer, finally) {
+            self.owners.push(SpanOwner {
+                span: source_span(finalizer.span),
+                block: finally,
+            });
+        }
+
+        self.blocks[current.as_usize()].source_kind = Some(StructuredSourceKind::Try);
+        self.blocks[current.as_usize()].source_exit = Some(continuation);
+        self.blocks[current.as_usize()].source_origin = Some(origin);
+        self.blocks[current.as_usize()].terminator = PlannedTerminator::Try {
+            body,
+            catch,
+            catch_pattern,
+            finally,
+            continuation,
+            origin,
+        };
+
+        if let Some(catch) = catch {
+            self.blocks[catch.as_usize()].source_kind = Some(StructuredSourceKind::Catch);
+            self.blocks[catch.as_usize()].source_exit = Some(finally.unwrap_or(continuation));
+            self.blocks[catch.as_usize()].source_origin = statement
+                .handler
+                .as_ref()
+                .map(|handler| source_span(handler.span));
+        }
+        if let Some(finally) = finally {
+            self.blocks[finally.as_usize()].source_kind = Some(StructuredSourceKind::Finally);
+            self.blocks[finally.as_usize()].source_exit = Some(continuation);
+            self.blocks[finally.as_usize()].source_origin = statement
+                .finalizer
+                .as_ref()
+                .map(|finalizer| source_span(finalizer.span));
+        }
+
+        let normal_target = finally.unwrap_or(continuation);
+        if let Some(end) = self.lower_statement_list(&statement.block.body, Some(body), false) {
+            self.blocks[end.as_usize()].terminator = PlannedTerminator::Goto {
+                target: normal_target,
+                origin: source_span(statement.block.span),
+            };
+        }
+        if let (Some(handler), Some(catch)) = (&statement.handler, catch)
+            && let Some(end) = self.lower_statement_list(&handler.body.body, Some(catch), false)
+        {
+            self.blocks[end.as_usize()].terminator = PlannedTerminator::Goto {
+                target: normal_target,
+                origin: source_span(handler.body.span),
+            };
+        }
+        if let (Some(finalizer), Some(finally)) = (&statement.finalizer, finally)
+            && let Some(end) = self.lower_statement_list(&finalizer.body, Some(finally), false)
+        {
+            self.blocks[end.as_usize()].terminator = PlannedTerminator::Goto {
+                target: continuation,
+                origin: source_span(finalizer.span),
+            };
+        }
+        Some(continuation)
     }
 
     fn lower_while(

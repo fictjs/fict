@@ -347,6 +347,253 @@ fn lowers_switch_tests_fallthrough_and_breaks_in_exact_evaluation_order() {
 }
 
 #[test]
+fn lowers_try_catch_finally_and_catch_patterns_into_structured_cfg() {
+    let source = r#"
+        function work(action) {
+            let result = 0;
+            try {
+                result = action();
+            } catch ({ message = fallbackMessage() }) {
+                result = message;
+            } finally {
+                cleanup();
+            }
+            return result;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified try CFG");
+    let work = hir
+        .bindings
+        .iter()
+        .find(|binding| binding.display_name == "work")
+        .expect("work binding")
+        .id;
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| function.binding == Some(work))
+        .expect("work function");
+    let header = function
+        .blocks
+        .iter()
+        .find(|block| {
+            block
+                .source_hint
+                .as_ref()
+                .is_some_and(|hint| matches!(hint.kind, StructuredSourceKind::Try))
+        })
+        .expect("try header");
+    let TerminatorKind::Try {
+        body,
+        catch: Some(catch),
+        finally: Some(finally),
+        continuation,
+    } = header.terminator.kind
+    else {
+        panic!("complete try terminator")
+    };
+    assert_eq!(
+        header.source_hint.as_ref().and_then(|hint| hint.exit),
+        Some(continuation)
+    );
+    assert!(matches!(
+        function.blocks[body.as_usize()].terminator.kind,
+        TerminatorKind::Goto { target } if target == finally
+    ));
+    assert!(matches!(
+        function.blocks[catch.as_usize()].terminator.kind,
+        TerminatorKind::Goto { target } if target == finally
+    ));
+    assert!(matches!(
+        function.blocks[finally.as_usize()].terminator.kind,
+        TerminatorKind::Goto { target } if target == continuation
+    ));
+    assert!(matches!(
+        function.blocks[catch.as_usize()]
+            .source_hint
+            .as_ref()
+            .map(|hint| &hint.kind),
+        Some(StructuredSourceKind::Catch)
+    ));
+    assert!(matches!(
+        function.blocks[finally.as_usize()]
+            .source_hint
+            .as_ref()
+            .map(|hint| &hint.kind),
+        Some(StructuredSourceKind::Finally)
+    ));
+
+    for (call, expected_block) in [
+        ("action()", body),
+        ("fallbackMessage()", catch),
+        ("cleanup()", finally),
+    ] {
+        let block = function
+            .blocks
+            .iter()
+            .find(|block| {
+                block.instructions.iter().any(|instruction| {
+                    matches!(instruction.kind, HirInstructionKind::Call(_))
+                        && instruction.origin.primary_span.is_some_and(|span| {
+                            source.get(span.start() as usize..span.end() as usize) == Some(call)
+                        })
+                })
+            })
+            .unwrap_or_else(|| panic!("missing {call}"));
+        assert_eq!(block.id, expected_block, "{call}");
+    }
+
+    let catch_block = &function.blocks[catch.as_usize()];
+    let fallback_value = catch_block
+        .instructions
+        .iter()
+        .find_map(|instruction| {
+            (matches!(instruction.kind, HirInstructionKind::Call(_))
+                && instruction.origin.primary_span.is_some_and(|span| {
+                    source.get(span.start() as usize..span.end() as usize)
+                        == Some("fallbackMessage()")
+                }))
+            .then_some(instruction.result)
+            .flatten()
+        })
+        .expect("fallback value");
+    let (pattern, inputs) = catch_block
+        .instructions
+        .iter()
+        .find_map(|instruction| match &instruction.kind {
+            HirInstructionKind::SyntaxFragment { fragment, inputs }
+                if hir.syntax_fragments[fragment.as_usize()].kind
+                    == SyntaxFragmentKind::Pattern =>
+            {
+                Some((*fragment, inputs))
+            }
+            _ => None,
+        })
+        .expect("catch pattern fragment");
+    let fallback_position = catch_block
+        .instructions
+        .iter()
+        .position(|instruction| instruction.result == Some(fallback_value))
+        .expect("fallback instruction position");
+    let pattern_position = catch_block
+        .instructions
+        .iter()
+        .position(|instruction| {
+            matches!(
+                instruction.kind,
+                HirInstructionKind::SyntaxFragment { fragment, .. } if fragment == pattern
+            )
+        })
+        .expect("pattern instruction position");
+    assert!(fallback_position < pattern_position);
+    let summary = hir.syntax_fragments[pattern.as_usize()]
+        .summary
+        .pattern
+        .as_ref()
+        .expect("pattern summary");
+    assert_eq!(summary.declared_bindings.len(), 1);
+    assert!(summary.has_defaults);
+    assert!(inputs.contains(&fallback_value));
+    let message = function
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("message"))
+        .expect("catch local")
+        .id;
+    assert!(catch_block.instructions.iter().any(|instruction| {
+        matches!(
+            instruction.kind,
+            HirInstructionKind::Declare { local, .. } if local == message
+        )
+    }));
+    assert!(
+        function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .all(|instruction| match instruction.kind {
+                HirInstructionKind::SyntaxFragment { fragment, .. } => {
+                    hir.syntax_fragments[fragment.as_usize()].kind != SyntaxFragmentKind::Statement
+                }
+                _ => true,
+            })
+    );
+}
+
+#[test]
+fn lowers_catch_only_and_finally_only_try_variants() {
+    let source = r#"
+        function catchOnly() {
+            try { work(); } catch { recover(); }
+        }
+        function finallyOnly() {
+            try { work(); } finally { cleanup(); }
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified try variants");
+    for (name, has_catch, has_finally) in [("catchOnly", true, false), ("finallyOnly", false, true)]
+    {
+        let binding = hir
+            .bindings
+            .iter()
+            .find(|binding| binding.display_name == name)
+            .unwrap_or_else(|| panic!("missing {name} binding"))
+            .id;
+        let function = hir
+            .functions
+            .iter()
+            .find(|function| function.binding == Some(binding))
+            .unwrap_or_else(|| panic!("missing {name} function"));
+        let terminator = function
+            .blocks
+            .iter()
+            .find_map(|block| match block.terminator.kind {
+                TerminatorKind::Try {
+                    body,
+                    catch,
+                    finally,
+                    continuation,
+                } => Some((body, catch, finally, continuation)),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("missing {name} try"));
+        assert_eq!(terminator.1.is_some(), has_catch, "{name}");
+        assert_eq!(terminator.2.is_some(), has_finally, "{name}");
+        let normal_target = terminator.2.unwrap_or(terminator.3);
+        assert!(matches!(
+            function.blocks[terminator.0.as_usize()].terminator.kind,
+            TerminatorKind::Goto { target } if target == normal_target
+        ));
+        if let Some(catch) = terminator.1 {
+            assert!(matches!(
+                function.blocks[catch.as_usize()].terminator.kind,
+                TerminatorKind::Goto { target } if target == terminator.3
+            ));
+            assert!(function.blocks[catch.as_usize()].instructions.iter().all(
+                |instruction| !matches!(
+                    instruction.kind,
+                    HirInstructionKind::SyntaxFragment { fragment, .. }
+                        if hir.syntax_fragments[fragment.as_usize()].kind
+                            == SyntaxFragmentKind::Pattern
+                )
+            ));
+        }
+    }
+}
+
+#[test]
 fn lowers_classic_loops_and_labeled_control_edges() {
     let source = r#"
         function loops(limit) {

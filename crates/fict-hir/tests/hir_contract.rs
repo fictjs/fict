@@ -175,3 +175,57 @@ fn verifier_rejects_overlapping_switch_test_and_body_blocks() {
             && diagnostic.message.contains("disjoint")
     }));
 }
+
+#[test]
+fn verifier_rejects_overlapping_try_targets() {
+    let mut file = empty_file();
+    let origin = Origin::source(fict_hir::SourceSpan::empty(0));
+    file.functions[0].blocks = vec![
+        HirBlock {
+            id: BlockId::new(0),
+            scope: ScopeId::new(0),
+            instructions: Vec::new(),
+            terminator: HirTerminator {
+                kind: TerminatorKind::Try {
+                    body: BlockId::new(1),
+                    catch: Some(BlockId::new(1)),
+                    finally: None,
+                    continuation: BlockId::new(2),
+                },
+                origin,
+            },
+            source_hint: None,
+            origin,
+        },
+        HirBlock {
+            id: BlockId::new(1),
+            scope: ScopeId::new(0),
+            instructions: Vec::new(),
+            terminator: HirTerminator {
+                kind: TerminatorKind::Goto {
+                    target: BlockId::new(2),
+                },
+                origin,
+            },
+            source_hint: None,
+            origin,
+        },
+        HirBlock {
+            id: BlockId::new(2),
+            scope: ScopeId::new(0),
+            instructions: Vec::new(),
+            terminator: HirTerminator {
+                kind: TerminatorKind::Return { value: None },
+                origin,
+            },
+            source_hint: None,
+            origin,
+        },
+    ];
+
+    let diagnostics = verify_hir(&file).expect_err("overlapping try targets must fail");
+    assert!(diagnostics.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-CFG"
+            && diagnostic.message.contains("must be distinct")
+    }));
+}

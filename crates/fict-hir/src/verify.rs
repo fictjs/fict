@@ -897,6 +897,18 @@ impl Verifier<'_> {
                         Some(terminator.origin),
                     );
                 }
+                let targets = std::iter::once(*body)
+                    .chain(*catch)
+                    .chain(*finally)
+                    .chain(std::iter::once(*continuation));
+                let mut unique = BTreeSet::new();
+                if targets.into_iter().any(|target| !unique.insert(target)) {
+                    self.error(
+                        "FICT-HIR-CFG",
+                        "try body, catch, finally, and continuation targets must be distinct",
+                        Some(terminator.origin),
+                    );
+                }
             }
             TerminatorKind::Unreachable => {}
         }
