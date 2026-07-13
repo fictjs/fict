@@ -15,15 +15,16 @@ use oxc::{
         AstBuilder, NONE,
         ast::{
             Argument, ArrayExpressionElement, ArrowFunctionExpression, AssignmentTarget,
-            BindingPattern, Expression, FormalParameter, FormalParameterKind, FormalParameters,
-            Function, FunctionBody, IdentifierName, ImportDeclarationSpecifier, ImportOrExportKind,
+            BindingPattern, BindingRestElement, Expression, FormalParameter, FormalParameterKind,
+            FormalParameterRest, FormalParameters, Function, FunctionBody, FunctionType,
+            IdentifierName, IdentifierReference, ImportDeclarationSpecifier, ImportOrExportKind,
             JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild, JSXElement,
             JSXElementName, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject,
             ObjectPropertyKind, PropertyKey, PropertyKind, SimpleAssignmentTarget, Statement,
             VariableDeclarationKind, VariableDeclarator,
         },
     },
-    ast_visit::{VisitMut, walk_mut},
+    ast_visit::{Visit, VisitMut, walk_mut},
     codegen::{Codegen, CodegenOptions},
     parser::{ParseOptions, Parser},
     semantic::SemanticBuilder,
@@ -1906,6 +1907,7 @@ impl<'a> AstRewriter<'a, '_> {
                         continue;
                     };
                     self.visit_expression(&mut handler);
+                    handler = ignore_inline_event_handler_return(self.allocator, handler, span);
                     let callee = Expression::new_identifier(
                         span,
                         self.allocator.alloc_str(&helper),
@@ -2570,6 +2572,97 @@ fn zero_parameter_expression_arrow<'a>(
     Expression::new_arrow_function_expression(
         span, true, false, NONE, parameters, NONE, body, &builder,
     )
+}
+
+fn ignore_inline_event_handler_return<'a>(
+    allocator: &'a Allocator,
+    handler: Expression<'a>,
+    span: Span,
+) -> Expression<'a> {
+    let arrow = matches!(handler, Expression::ArrowFunctionExpression(_));
+    if !arrow && !matches!(handler, Expression::FunctionExpression(_)) {
+        return handler;
+    }
+
+    let mut collector = IdentifierCollector::default();
+    collector.visit_expression(&handler);
+    let mut parameter = "__fictArgs".to_owned();
+    let mut suffix = 1_u32;
+    while collector.names.contains(&parameter) {
+        parameter = format!("__fictArgs_{suffix}");
+        suffix = suffix.saturating_add(1);
+    }
+    let parameter = allocator.alloc_str(&parameter);
+    let builder = AstBuilder::new(allocator);
+    let arguments = Expression::new_identifier(span, parameter, &builder);
+    let call = if arrow {
+        let mut call_arguments = ArenaVec::new_in(&allocator);
+        call_arguments.push(Argument::new_spread_element(span, arguments, &builder));
+        Expression::new_call_expression(span, handler, NONE, call_arguments, false, &builder)
+    } else {
+        let apply = Expression::new_static_member_expression(
+            span,
+            handler,
+            IdentifierName::new(span, "apply", &builder),
+            false,
+            &builder,
+        );
+        let mut call_arguments = ArenaVec::new_in(&allocator);
+        call_arguments.extend([
+            Argument::from(Expression::new_this_expression(span, &builder)),
+            Argument::from(arguments),
+        ]);
+        Expression::new_call_expression(span, apply, NONE, call_arguments, false, &builder)
+    };
+    let mut statements = ArenaVec::new_in(&allocator);
+    statements.push(Statement::new_expression_statement(span, call, &builder));
+    let body = FunctionBody::boxed(span, ArenaVec::new_in(&allocator), statements, &builder);
+    let rest_pattern = BindingPattern::new_binding_identifier(span, parameter, &builder);
+    let rest = BindingRestElement::new(span, rest_pattern, &builder);
+    let rest = FormalParameterRest::boxed(span, ArenaVec::new_in(&allocator), rest, NONE, &builder);
+    let parameter_kind = if arrow {
+        FormalParameterKind::ArrowFormalParameters
+    } else {
+        FormalParameterKind::FormalParameter
+    };
+    let parameters = FormalParameters::boxed(
+        span,
+        parameter_kind,
+        ArenaVec::new_in(&allocator),
+        Some(rest),
+        &builder,
+    );
+    if arrow {
+        Expression::new_arrow_function_expression(
+            span, false, false, NONE, parameters, NONE, body, &builder,
+        )
+    } else {
+        Expression::new_function_expression(
+            span,
+            FunctionType::FunctionExpression,
+            None,
+            false,
+            false,
+            false,
+            NONE,
+            NONE,
+            parameters,
+            NONE,
+            Some(body),
+            &builder,
+        )
+    }
+}
+
+#[derive(Default)]
+struct IdentifierCollector {
+    names: BTreeSet<String>,
+}
+
+impl<'a> Visit<'a> for IdentifierCollector {
+    fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+        self.names.insert(identifier.name.to_string());
+    }
 }
 
 fn insertion_create_callback<'a>(

@@ -721,6 +721,31 @@ mod tests {
     }
 
     #[test]
+    fn discards_inline_event_returns_without_capturing_handler_identifiers() {
+        let result = compile(request(
+            "const __fictArgs = () => 42; export function Events() { return <button onClick={() => __fictArgs} onInput={function () { return __fictArgs; }}>run</button>; }",
+            "event-returns.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result.code.matches("...__fictArgs_1").count() >= 2,
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("(() => __fictArgs)(...__fictArgs_1)"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains(".apply(this, __fictArgs_1)"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn emits_typescript_jsx_as_ordered_vnode_fallbacks() {
         let mut input = request(
             "type Props = { name: string; value: number; extra: Record<string, unknown> }; const Child = (props: { value: number }) => <em>{props.value}</em>; export function App(props: Props) { return <section id=\"root\" disabled {...props.extra}>Hello {props.name}<Child value={props.value} /></section>; }",
