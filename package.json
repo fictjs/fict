@@ -34,6 +34,7 @@
     "test:strict-guarantee": "FICT_STRICT_GUARANTEE=1 pnpm -C packages/compiler test -- reactivity-guarantee-contract.test.ts",
     "test:compiler:differential": "pnpm -C packages/compiler test:differential",
     "test:compiler:native-host": "pnpm --filter @fictjs/compiler build && pnpm build:compiler:native-host && node scripts/native-compiler-host-smoke.mjs",
+    "test:compiler:native-runtime": "pnpm --filter @fictjs/runtime build && pnpm --filter fict build && cargo build --release -p fict-compiler-napi && node scripts/prepare-native-compiler-addon.mjs && node --test scripts/native-compiler-runtime.test.mjs",
     "test:compiler:native-types": "pnpm --filter @fictjs/compiler build && tsc -p scripts/fixtures/native-compiler-types/tsconfig.json",
     "test:runtime-package-smoke": "node scripts/runtime-package-smoke.mjs",
     "test:runtime-bundler-smoke": "node scripts/runtime-bundler-smoke.mjs",

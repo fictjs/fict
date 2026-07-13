@@ -64,6 +64,12 @@ jobs:
       - name: Build and smoke host native compiler
         run: pnpm test:compiler:native-host
 
+      - name: Execute Rust compiler output against the runtime
+        run: |
+          pnpm --filter @fictjs/runtime build
+          pnpm --filter fict build
+          node --test scripts/native-compiler-runtime.test.mjs
+
       - name: Typecheck ESM and CommonJS native facades
         if: matrix.node == '24'
         run: pnpm test:compiler:native-types
