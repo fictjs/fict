@@ -35,9 +35,10 @@ use oxc::{
             JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment, JSXMemberExpression,
             JSXMemberExpressionObject, LogicalExpression, MemberExpression, MetaProperty,
             NewExpression, ObjectAssignmentTarget, ObjectPropertyKind as OxcObjectPropertyKind,
-            Program, PropertyKey as OxcPropertyKey, PropertyKind, SimpleAssignmentTarget,
-            Statement, Super, TaggedTemplateExpression, TemplateLiteral, ThisExpression,
-            UpdateExpression, VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
+            Program, PropertyKey as OxcPropertyKey, PropertyKind, ReturnStatement,
+            SimpleAssignmentTarget, Statement, Super, TaggedTemplateExpression, TemplateLiteral,
+            ThisExpression, UpdateExpression, VariableDeclaration, VariableDeclarationKind,
+            VariableDeclarator,
         },
         ast_kind::AstKind,
     },
@@ -46,7 +47,7 @@ use oxc::{
         walk::{
             walk_arrow_function_expression, walk_assignment_pattern, walk_binding_rest_element,
             walk_call_expression, walk_expression, walk_function, walk_jsx_element,
-            walk_variable_declaration, walk_variable_declarator,
+            walk_return_statement, walk_variable_declaration, walk_variable_declarator,
         },
     },
     parser::{ParseOptions, Parser},
@@ -319,6 +320,13 @@ struct FunctionFact {
     body_span: SourceSpan,
     parameters: Vec<ParameterFact>,
     flags: FunctionFlags,
+    returns: Vec<FunctionReturnFact>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FunctionReturnFact {
+    statement: SourceSpan,
+    value: Option<SourceSpan>,
 }
 
 struct FunctionCollector {
@@ -340,6 +348,7 @@ impl FunctionCollector {
                 body_span: program_span,
                 parameters: Vec::new(),
                 flags: FunctionFlags::default(),
+                returns: Vec::new(),
             }],
             stack: vec![FunctionId::new(0)],
             inferred_bindings: BTreeMap::new(),
@@ -373,6 +382,7 @@ impl FunctionCollector {
             body_span: source_span(body_span),
             parameters: parameter_facts(parameters),
             flags,
+            returns: Vec::new(),
         });
         id
     }
@@ -433,9 +443,32 @@ impl<'a> Visit<'a> for FunctionCollector {
                 pure: function.pure,
             },
         );
+        if let Some(expression) = function.get_expression() {
+            self.functions[id.as_usize()]
+                .returns
+                .push(FunctionReturnFact {
+                    statement: source_span(function.body.span),
+                    value: Some(source_span(expression.span())),
+                });
+        }
         self.stack.push(id);
         walk_arrow_function_expression(self, function);
         self.stack.pop();
+    }
+
+    fn visit_return_statement(&mut self, statement: &ReturnStatement<'a>) {
+        if let Some(owner) = self.stack.last().copied() {
+            self.functions[owner.as_usize()]
+                .returns
+                .push(FunctionReturnFact {
+                    statement: source_span(statement.span),
+                    value: statement
+                        .argument
+                        .as_ref()
+                        .map(|value| source_span(value.span())),
+                });
+        }
+        walk_return_statement(self, statement);
     }
 }
 
@@ -3204,6 +3237,15 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         semantics: InstructionSemantics::CONSERVATIVE_EAGER,
                         origin: Origin::source(fact.body_span),
                     });
+                if let [return_fact] = fact.returns.as_slice() {
+                    let value = return_fact.value.map(|span| {
+                        self.control_expression_value(fact.id, BlockId::new(0), span, true, true)
+                    });
+                    self.functions[fact.id.as_usize()].blocks[0].terminator = HirTerminator {
+                        kind: TerminatorKind::Return { value },
+                        origin: Origin::source(return_fact.statement),
+                    };
+                }
             }
             self.materialize_control_flow_terminators(fact.id);
             self.order_function_instructions(fact.id);

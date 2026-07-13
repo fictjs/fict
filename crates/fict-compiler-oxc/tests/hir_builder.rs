@@ -71,6 +71,49 @@ fn remaps_owned_module_exports_after_typescript_runtime_erasure() {
 }
 
 #[test]
+fn retains_simple_explicit_and_arrow_return_values_in_terminators() {
+    let output = build_hir(
+        r#"
+            function useObject(value) { return { value }; }
+            const read = (value) => value + 1;
+            function empty() { return; }
+        "#,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+    let named = |name: &str| {
+        hir.functions
+            .iter()
+            .find(|function| {
+                function
+                    .binding
+                    .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == name)
+            })
+            .unwrap_or_else(|| panic!("missing function {name}"))
+    };
+
+    for name in ["useObject", "read"] {
+        let function = named(name);
+        let TerminatorKind::Return { value: Some(value) } = function.blocks[0].terminator.kind
+        else {
+            panic!("{name} must retain its returned value")
+        };
+        assert!(
+            function.blocks[0]
+                .instructions
+                .iter()
+                .any(|instruction| instruction.result == Some(value))
+        );
+    }
+    assert!(matches!(
+        named("empty").blocks[0].terminator.kind,
+        TerminatorKind::Return { value: None }
+    ));
+}
+
+#[test]
 fn lowers_if_returns_into_real_hir_blocks_with_control_dependencies() {
     let source = r#"
         import { $state } from 'fict';
