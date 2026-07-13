@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use fict_diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
-use fict_emit::{EmitOperation, EmitProgram};
+use fict_emit::{EmitOperation, EmitProgram, RuntimeHelper};
 use oxc::{
     allocator::Allocator,
     ast::ast::{Expression, ImportDeclarationSpecifier, ImportOrExportKind, Statement},
@@ -237,6 +237,31 @@ fn strip_compiler_macro_imports(program: &mut oxc::ast::ast::Program<'_>) {
 }
 
 fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
+    let unsupported_scoped_helper = emit
+        .functions
+        .iter()
+        .flat_map(|function| &function.operations)
+        .find(|operation| {
+            matches!(
+                operation,
+                EmitOperation::CreateReactive {
+                    helper: RuntimeHelper::UseSignal | RuntimeHelper::UseMemo,
+                    ..
+                } | EmitOperation::RegisterEffect {
+                    helper: RuntimeHelper::UseEffect,
+                    ..
+                }
+            )
+        });
+    if let Some(operation) = unsupported_scoped_helper {
+        let mut diagnostic = emit_error(
+            "FICT-OXC-EMIT-CONTEXT",
+            "component and hook runtime helpers require a compiler context argument that is not yet materialized",
+            GuaranteeClass::Unsupported,
+        );
+        diagnostic.primary_span = operation_origin(operation).primary_span;
+        return vec![diagnostic];
+    }
     let unsupported = emit
         .functions
         .iter()
@@ -602,5 +627,29 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.code.as_str() == "FICT-OXC-EMIT-ORIGIN")
         );
+    }
+
+    #[test]
+    fn fails_closed_for_scoped_helpers_without_context_materialization() {
+        let source = "import { $effect } from 'fict'; $effect(() => 1);";
+        let mut scoped = effect_program(source);
+        let EmitOperation::RegisterEffect { helper, .. } = &mut scoped.functions[0].operations[0]
+        else {
+            unreachable!()
+        };
+        *helper = RuntimeHelper::UseEffect;
+        scoped.imports[0].helper = RuntimeHelper::UseEffect;
+        scoped.imports[0].imported = "__fictUseEffect".into();
+        scoped.imports[0].local = "__fictUseEffect".into();
+
+        let output = emit_program(
+            source,
+            "scoped.js",
+            options(OxcSourceLanguage::JavaScript, false),
+            &scoped,
+        );
+
+        assert!(output.code.is_empty());
+        assert_eq!(output.diagnostics[0].code.as_str(), "FICT-OXC-EMIT-CONTEXT");
     }
 }
