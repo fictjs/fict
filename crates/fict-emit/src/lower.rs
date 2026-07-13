@@ -14,8 +14,8 @@ use crate::{
     CleanupOwner, ComponentProp, ComponentTarget, DELEGATED_EVENTS, DomBindingKind, DomNamespace,
     EmitContext, EmitFunction, EmitModulePlan, EmitOperation, EmitProgram, EmitSlotId,
     EmitTemporary, EmitTemporaryId, EmitValueRef, PropsOperation, ReactiveSlot, ReactiveSlotKind,
-    RuntimeFamily, RuntimeHelper, RuntimeImportIntent, name_allocator::NameAllocator,
-    verify_emit_program,
+    ReactiveSlotStorage, RuntimeFamily, RuntimeHelper, RuntimeImportIntent,
+    name_allocator::NameAllocator, verify_emit_program,
 };
 
 /// Phase-1 Core lowering configuration.
@@ -45,6 +45,14 @@ struct ReactiveSite {
     local: Option<LocalId>,
     kind: ReactiveSiteKind,
     slot: EmitSlotId,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ReactiveBindingSite {
+    owner: FunctionId,
+    binding: fict_hir::BindingId,
+    kind: ReactiveSlotKind,
+    origin: fict_hir::Origin,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +107,7 @@ fn lower_program(
             GuaranteeClass::Fallback,
         )]));
     }
+    let reactive_bindings = collect_reactive_binding_sites(hir)?;
     let mut functions = Vec::with_capacity(hir.functions.len());
     for (function_index, function) in hir.functions.iter().enumerate() {
         if !allow_jsx
@@ -120,6 +129,7 @@ fn lower_program(
             hir,
             FunctionId::new(count_u32(function_index)),
             &regions[function_index],
+            &reactive_bindings,
             allow_jsx,
         )?);
     }
@@ -208,10 +218,73 @@ fn module_source_fragment(hir: &HirFile) -> Option<fict_hir::SyntaxFragmentId> {
         })
 }
 
+fn collect_reactive_binding_sites(
+    hir: &HirFile,
+) -> Result<BTreeMap<fict_hir::BindingId, ReactiveBindingSite>, DiagnosticBundle> {
+    let mut sites = BTreeMap::new();
+    for (function_index, function) in hir.functions.iter().enumerate() {
+        let owner = FunctionId::new(count_u32(function_index));
+        let declarations: BTreeMap<_, _> = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .filter_map(|instruction| match instruction.kind {
+                HirInstructionKind::Declare {
+                    local,
+                    initializer: Some(initializer),
+                    ..
+                } => function.locals[local.as_usize()]
+                    .binding
+                    .map(|binding| (initializer, binding)),
+                _ => None,
+            })
+            .collect();
+        for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
+            let HirInstructionKind::Call(call) = &instruction.kind else {
+                continue;
+            };
+            let Some(kind) = call.macro_kind else {
+                continue;
+            };
+            let slot_kind = match kind {
+                FictMacroKind::State => ReactiveSlotKind::Signal,
+                FictMacroKind::Memo => ReactiveSlotKind::Memo,
+                FictMacroKind::Effect => continue,
+            };
+            let Some(binding) = instruction
+                .result
+                .and_then(|result| declarations.get(&result).copied())
+            else {
+                continue;
+            };
+            if sites
+                .insert(
+                    binding,
+                    ReactiveBindingSite {
+                        owner,
+                        binding,
+                        kind: slot_kind,
+                        origin: instruction.origin,
+                    },
+                )
+                .is_some()
+            {
+                return Err(DiagnosticBundle::new(vec![lower_error(
+                    "FICT-EMIT-REACTIVE-BINDING",
+                    "one semantic binding cannot own multiple reactive creation sites",
+                    GuaranteeClass::Internal,
+                )]));
+            }
+        }
+    }
+    Ok(sites)
+}
+
 fn lower_function(
     hir: &HirFile,
     function_id: FunctionId,
     regions: &RegionAnalysis,
+    reactive_bindings: &BTreeMap<fict_hir::BindingId, ReactiveBindingSite>,
     allow_jsx: bool,
 ) -> Result<EmitFunction, DiagnosticBundle> {
     let function = &hir.functions[function_id.as_usize()];
@@ -274,7 +347,25 @@ fn lower_function(
                 .flatten()
         })
         .collect();
-    let slot_by_local: BTreeMap<_, _> = sites
+    let captured_sites: Vec<_> = function
+        .locals
+        .iter()
+        .filter(|local| local.kind == fict_hir::LocalKind::Capture)
+        .filter_map(|local| {
+            let binding = local.binding?;
+            let site = reactive_bindings.get(&binding).copied()?;
+            (site.owner != function_id).then_some((local.id, site))
+        })
+        .enumerate()
+        .map(|(index, (local, site))| {
+            (
+                local,
+                site,
+                EmitSlotId::new(count_u32(sites.len().saturating_add(index))),
+            )
+        })
+        .collect();
+    let mut slot_by_local: BTreeMap<_, _> = sites
         .iter()
         .filter_map(|site| {
             matches!(
@@ -286,7 +377,12 @@ fn lower_function(
             .map(|local| (local, site.slot))
         })
         .collect();
-    let slots = sites
+    slot_by_local.extend(
+        captured_sites
+            .iter()
+            .map(|(local, _, slot)| (*local, *slot)),
+    );
+    let mut slots: Vec<_> = sites
         .iter()
         .map(|site| ReactiveSlot {
             id: site.slot,
@@ -298,6 +394,7 @@ fn lower_function(
                 ReactiveSiteKind::Runtime(ReactiveCallKind::Resource) => ReactiveSlotKind::Resource,
                 ReactiveSiteKind::Runtime(ReactiveCallKind::Selector) => ReactiveSlotKind::Selector,
             },
+            storage: ReactiveSlotStorage::Owned,
             binding: site
                 .local
                 .and_then(|local| function.locals.get(local.as_usize()))
@@ -306,6 +403,14 @@ fn lower_function(
             origin: reactive_site_origin(function, site.result),
         })
         .collect();
+    slots.extend(captured_sites.iter().map(|(_, site, slot)| ReactiveSlot {
+        id: *slot,
+        kind: site.kind,
+        storage: ReactiveSlotStorage::Captured { owner: site.owner },
+        binding: Some(site.binding),
+        control_path: Vec::new(),
+        origin: site.origin,
+    }));
     let mut temporary_names = NameAllocator::new(
         hir.bindings
             .iter()

@@ -469,6 +469,20 @@ mod tests {
     }
 
     #[test]
+    fn rewrites_state_captured_by_effect_callbacks() {
+        let result = compile(request(
+            "import { $state, $effect } from 'fict'; const seen = []; function Component() { let count = $state(0); $effect(() => { seen.push(count); count += 1; }); return count; }",
+            "captured.js",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.code.contains("__fictUseEffect(__fictCtx"));
+        assert!(result.code.contains("seen.push(count())"));
+        assert!(result.code.contains("count() + 1"));
+        assert!(result.code.contains("return count()"));
+    }
+
+    #[test]
     fn rejects_preview_options_until_the_optional_pass_graph_is_connected() {
         let mut input = request("export const value = 1", "preview.js");
         input.options.preview = Some(Default::default());

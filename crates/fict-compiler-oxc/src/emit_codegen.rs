@@ -1103,8 +1103,8 @@ fn emit_error(
 mod tests {
     use fict_emit::{
         CleanupOwner, EmitContext, EmitFunction, EmitModulePlan, EmitOperation, EmitProgram,
-        EmitSlotId, EmitValueRef, ReactiveSlot, ReactiveSlotKind, RuntimeFamily, RuntimeHelper,
-        RuntimeImportIntent,
+        EmitSlotId, EmitValueRef, ReactiveSlot, ReactiveSlotKind, ReactiveSlotStorage,
+        RuntimeFamily, RuntimeHelper, RuntimeImportIntent,
     };
     use fict_hir::{
         CompoundAssignmentOperator, FunctionId, LiteralValue, Origin, Projection, SourceSpan,
@@ -1149,6 +1149,7 @@ mod tests {
                 slots: vec![ReactiveSlot {
                     id: EmitSlotId::new(0),
                     kind: ReactiveSlotKind::Effect,
+                    storage: ReactiveSlotStorage::Owned,
                     binding: None,
                     control_path: Vec::new(),
                     origin,

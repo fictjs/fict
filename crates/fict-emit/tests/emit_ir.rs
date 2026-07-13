@@ -1,7 +1,7 @@
 use fict_emit::{
     DomBindingKind, DomNamespace, EmitFunction, EmitModulePlan, EmitOperation, EmitProgram,
     EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef, ReactiveSlot, ReactiveSlotKind,
-    RuntimeFamily, RuntimeHelper, RuntimeImportIntent, verify_emit_program,
+    ReactiveSlotStorage, RuntimeFamily, RuntimeHelper, RuntimeImportIntent, verify_emit_program,
 };
 use fict_hir::{
     BlockId, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction,
@@ -107,6 +107,7 @@ fn program() -> EmitProgram {
             slots: vec![ReactiveSlot {
                 id: EmitSlotId::new(0),
                 kind: ReactiveSlotKind::Signal,
+                storage: ReactiveSlotStorage::Owned,
                 binding: None,
                 control_path: Vec::new(),
                 origin: origin(),

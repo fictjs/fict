@@ -12,7 +12,7 @@ pub use ir::{
     CleanupOwner, ComponentProp, ComponentTarget, DomBindingKind, DomNamespace, EmitContext,
     EmitControlArm, EmitFunction, EmitModulePlan, EmitOperation, EmitProgram, EmitSlotId,
     EmitTemporary, EmitTemporaryId, EmitValueRef, PropsOperation, ReactiveSlot, ReactiveSlotKind,
-    RuntimeImportIntent,
+    ReactiveSlotStorage, RuntimeImportIntent,
 };
 pub use lower::{NoJsxLoweringOptions, lower_core, lower_no_jsx};
 

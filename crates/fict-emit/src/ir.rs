@@ -81,6 +81,15 @@ pub enum ReactiveSlotKind {
     Selector,
 }
 
+/// Whether a reactive slot is created by this function or captured from an outer function.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ReactiveSlotStorage {
+    /// The function contains the reactive creator operation.
+    Owned,
+    /// The function closes over a reactive binding created by another HIR function.
+    Captured { owner: FunctionId },
+}
+
 /// One control-flow arm used to prove hook slot stability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EmitControlArm {
@@ -93,6 +102,7 @@ pub struct EmitControlArm {
 pub struct ReactiveSlot {
     pub id: EmitSlotId,
     pub kind: ReactiveSlotKind,
+    pub storage: ReactiveSlotStorage,
     pub binding: Option<BindingId>,
     pub control_path: Vec<EmitControlArm>,
     pub origin: Origin,

@@ -88,6 +88,26 @@ pub fn verify_emit_program(
                     "reactive slots must be dense with canonical control paths",
                 ));
             }
+            if let crate::ReactiveSlotStorage::Captured { owner } = slot.storage {
+                let capture_valid = owner != function.source
+                    && slot.binding.is_some()
+                    && program
+                        .functions
+                        .get(owner.as_usize())
+                        .is_some_and(|owner| {
+                            owner.slots.iter().any(|candidate| {
+                                candidate.storage == crate::ReactiveSlotStorage::Owned
+                                    && candidate.binding == slot.binding
+                                    && candidate.kind == slot.kind
+                            })
+                        });
+                if !capture_valid {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-CAPTURE",
+                        "captured reactive slots must reference an owned slot with the same binding and kind",
+                    ));
+                }
+            }
         }
         let mut temporary_names = BTreeSet::new();
         for (index, temporary) in function.temporaries.iter().enumerate() {
@@ -525,22 +545,26 @@ fn verify_helper_semantics(
     diagnostics: &mut DiagnosticBundle,
 ) {
     let valid = match operation {
-        EmitOperation::CreateReactive { slot, helper, .. } => function
-            .slots
-            .get(slot.as_usize())
-            .is_some_and(|slot| match slot.kind {
-                crate::ReactiveSlotKind::Signal => {
-                    matches!(helper, RuntimeHelper::Signal | RuntimeHelper::UseSignal)
-                }
-                crate::ReactiveSlotKind::Memo => {
-                    matches!(helper, RuntimeHelper::Memo | RuntimeHelper::UseMemo)
-                }
-                crate::ReactiveSlotKind::Selector => *helper == RuntimeHelper::CreateSelector,
-                crate::ReactiveSlotKind::Effect
-                | crate::ReactiveSlotKind::Context
-                | crate::ReactiveSlotKind::Store
-                | crate::ReactiveSlotKind::Resource => false,
-            }),
+        EmitOperation::CreateReactive { slot, helper, .. } => {
+            function.slots.get(slot.as_usize()).is_some_and(|slot| {
+                slot.storage == crate::ReactiveSlotStorage::Owned
+                    && match slot.kind {
+                        crate::ReactiveSlotKind::Signal => {
+                            matches!(helper, RuntimeHelper::Signal | RuntimeHelper::UseSignal)
+                        }
+                        crate::ReactiveSlotKind::Memo => {
+                            matches!(helper, RuntimeHelper::Memo | RuntimeHelper::UseMemo)
+                        }
+                        crate::ReactiveSlotKind::Selector => {
+                            *helper == RuntimeHelper::CreateSelector
+                        }
+                        crate::ReactiveSlotKind::Effect
+                        | crate::ReactiveSlotKind::Context
+                        | crate::ReactiveSlotKind::Store
+                        | crate::ReactiveSlotKind::Resource => false,
+                    }
+            })
+        }
         EmitOperation::RegisterEffect { helper, .. } => {
             matches!(helper, RuntimeHelper::Effect | RuntimeHelper::UseEffect)
         }
