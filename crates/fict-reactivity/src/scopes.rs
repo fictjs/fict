@@ -5,7 +5,7 @@ use fict_diagnostics::{
 };
 use fict_hir::{
     BlockId, EvaluationMode, FictMacroKind, FunctionId, HirFile, HirInstructionKind,
-    MutationEffect, Purity, SsaName,
+    MutationEffect, Purity, ReactiveCallKind, SsaName,
 };
 
 use crate::{
@@ -20,10 +20,24 @@ pub enum ReactiveBindingKind {
     State,
     /// `$memo` result.
     Memo,
+    /// `$store` deep proxy result.
+    Store,
+    /// `resource` factory result.
+    Resource,
+    /// `createSelector` keyed accessor result.
+    Selector,
     /// Direct alias of another tracked binding.
     Alias,
     /// Pure value transitively derived from tracked inputs.
     Derived,
+}
+
+impl ReactiveBindingKind {
+    /// Stateful roots own invalidation independently and therefore break derived SCCs.
+    #[must_use]
+    pub const fn breaks_derived_cycle(self) -> bool {
+        matches!(self, Self::State | Self::Store | Self::Resource)
+    }
 }
 
 /// One tracked SSA definition and its external inputs.
@@ -134,6 +148,15 @@ pub fn analyze_reactive_scopes(
         let kind = match shape.source {
             ShapeSource::ReactiveMacro(FictMacroKind::State) => Some(ReactiveBindingKind::State),
             ShapeSource::ReactiveMacro(FictMacroKind::Memo) => Some(ReactiveBindingKind::Memo),
+            ShapeSource::RuntimeReactive(ReactiveCallKind::Store) => {
+                Some(ReactiveBindingKind::Store)
+            }
+            ShapeSource::RuntimeReactive(ReactiveCallKind::Resource) => {
+                Some(ReactiveBindingKind::Resource)
+            }
+            ShapeSource::RuntimeReactive(ReactiveCallKind::Selector) => {
+                Some(ReactiveBindingKind::Selector)
+            }
             ShapeSource::Alias(_) if shape.kind == ShapeKind::Reactive => {
                 Some(ReactiveBindingKind::Alias)
             }

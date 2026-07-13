@@ -5,10 +5,7 @@ use fict_diagnostics::{
 };
 use fict_hir::{BlockId, HirFunction, LocalId, SsaName};
 
-use crate::{
-    DependencyBase, DependencyPath, ReactiveBindingKind, ReactiveScopeAnalysis,
-    SsaDefinitionLocation,
-};
+use crate::{DependencyBase, DependencyPath, ReactiveScopeAnalysis, SsaDefinitionLocation};
 
 /// Dependency edge between tracked bindings, directed producer to consumer.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -91,7 +88,7 @@ pub fn analyze_reactive_cycles(
     let nodes: Vec<_> = bindings.keys().copied().collect();
     let mut edges = BTreeSet::new();
     for binding in &scopes.bindings {
-        if binding.kind == ReactiveBindingKind::State {
+        if binding.kind.breaks_derived_cycle() {
             continue;
         }
         for path in &binding.dependencies {
@@ -202,14 +199,14 @@ pub fn verify_reactive_cycles(
             "reactive graph edges must be sorted, unique, and reference tracked bindings",
         ));
     }
-    if analysis
-        .edges
-        .iter()
-        .any(|edge| bindings.get(&edge.to).copied() == Some(ReactiveBindingKind::State))
-    {
+    if analysis.edges.iter().any(|edge| {
+        bindings
+            .get(&edge.to)
+            .is_some_and(|kind| kind.breaks_derived_cycle())
+    }) {
         diagnostics.push(cycle_error(
-            "FICT-CYCLE-STATE",
-            "state bindings must break incoming derived dependency cycles",
+            "FICT-CYCLE-STATEFUL",
+            "stateful bindings must break incoming derived dependency cycles",
         ));
     }
     let mut group_by_node = BTreeMap::new();
@@ -310,7 +307,7 @@ fn resolve_local_dependency(
         .find(|name| {
             bindings
                 .get(name)
-                .is_some_and(|binding| binding.kind != ReactiveBindingKind::State)
+                .is_some_and(|binding| !binding.kind.breaks_derived_cycle())
         })
         .or_else(|| candidates.first().copied())
 }

@@ -1,9 +1,11 @@
 use fict_hir::{
-    BinaryOperator, BlockId, CallArgument, CallHost, CallInstruction, DeclarationKind,
-    FictMacroKind, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction,
-    HirInstruction, HirInstructionKind, HirLocal, HirScope, HirTerminator, HirValue,
-    InstructionSemantics, LiteralValue, LocalId, LocalKind, NumberLiteral, Origin, Place, ScopeId,
-    ScopeKind, SourceSpan, TerminatorKind, ValueId, ValueKind, verify_hir,
+    BinaryOperator, Binding, BindingId, BindingKind, BlockId, CallArgument, CallHost,
+    CallInstruction, DeclarationKind, FictMacroKind, FileId, FunctionFlags, FunctionId,
+    FunctionKind, HirBlock, HirFile, HirFunction, HirInstruction, HirInstructionKind, HirLocal,
+    HirScope, HirTerminator, HirValue, ImportBinding, ImportKind, ImportedName,
+    InstructionSemantics, LiteralValue, LocalId, LocalKind, NumberLiteral, Origin, Place,
+    ReactiveCallKind, ScopeId, ScopeKind, SourceSpan, TerminatorKind, ValueId, ValueKind,
+    verify_hir,
 };
 use fict_reactivity::{
     ReactiveBindingKind, analyze_aliases, analyze_dependencies, analyze_reactive_scopes,
@@ -43,6 +45,25 @@ fn instruction(result: Option<u32>, kind: HirInstructionKind) -> HirInstruction 
     }
 }
 
+fn runtime_reactive_call(result: u32, binding: u32, kind: ReactiveCallKind) -> HirInstruction {
+    HirInstruction {
+        result: Some(ValueId::new(result)),
+        kind: HirInstructionKind::Call(CallInstruction {
+            callee: ValueId::new(0),
+            arguments: vec![CallArgument {
+                value: ValueId::new(1),
+                spread: false,
+            }],
+            host: CallHost::Binding(BindingId::new(binding)),
+            macro_kind: None,
+            reactive_kind: Some(kind),
+            optional: false,
+        }),
+        semantics: InstructionSemantics::CONSERVATIVE_EAGER,
+        origin: origin(),
+    }
+}
+
 fn block(id: u32, instructions: Vec<HirInstruction>, kind: TerminatorKind) -> HirBlock {
     HirBlock {
         id: BlockId::new(id),
@@ -77,7 +98,13 @@ fn propagates_state_into_pure_derived_bindings_and_active_blocks() {
         kind: FunctionKind::Module,
         flags: FunctionFlags::default(),
         parameters: Vec::new(),
-        locals: vec![local(0, "state"), local(1, "derived")],
+        locals: vec![
+            local(0, "state"),
+            local(1, "derived"),
+            local(2, "store"),
+            local(3, "resource"),
+            local(4, "selector"),
+        ],
         values: vec![
             value(0, ValueKind::Literal(LiteralValue::Undefined)),
             value(1, ValueKind::Literal(number())),
@@ -86,6 +113,9 @@ fn propagates_state_into_pure_derived_bindings_and_active_blocks() {
             value(4, ValueKind::Literal(number())),
             value(5, ValueKind::InstructionResult),
             value(6, ValueKind::InstructionResult),
+            value(7, ValueKind::InstructionResult),
+            value(8, ValueKind::InstructionResult),
+            value(9, ValueKind::InstructionResult),
         ],
         blocks: vec![
             block(
@@ -145,6 +175,33 @@ fn propagates_state_into_pure_derived_bindings_and_active_blocks() {
                         semantics: InstructionSemantics::CONSERVATIVE_EAGER,
                         origin: origin(),
                     },
+                    runtime_reactive_call(7, 0, ReactiveCallKind::Store),
+                    instruction(
+                        None,
+                        HirInstructionKind::Declare {
+                            local: LocalId::new(2),
+                            declaration_kind: DeclarationKind::Const,
+                            initializer: Some(ValueId::new(7)),
+                        },
+                    ),
+                    runtime_reactive_call(8, 1, ReactiveCallKind::Resource),
+                    instruction(
+                        None,
+                        HirInstructionKind::Declare {
+                            local: LocalId::new(3),
+                            declaration_kind: DeclarationKind::Const,
+                            initializer: Some(ValueId::new(8)),
+                        },
+                    ),
+                    runtime_reactive_call(9, 2, ReactiveCallKind::Selector),
+                    instruction(
+                        None,
+                        HirInstructionKind::Declare {
+                            local: LocalId::new(4),
+                            declaration_kind: DeclarationKind::Const,
+                            initializer: Some(ValueId::new(9)),
+                        },
+                    ),
                 ],
                 TerminatorKind::Branch {
                     test: ValueId::new(3),
@@ -169,7 +226,26 @@ fn propagates_state_into_pure_derived_bindings_and_active_blocks() {
             kind: ScopeKind::Module,
             origin: origin(),
         }],
-        bindings: Vec::new(),
+        bindings: [
+            ("$store", "fict"),
+            ("resource", "fict/plus"),
+            ("createSelector", "@fictjs/runtime/advanced"),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, (name, source))| Binding {
+            id: BindingId::new(u32::try_from(index).expect("binding id")),
+            scope: ScopeId::new(0),
+            kind: BindingKind::Import,
+            display_name: name.into(),
+            import: Some(ImportBinding {
+                source: source.into(),
+                imported: ImportedName::Named(name.into()),
+                kind: ImportKind::Value,
+            }),
+            origin: origin(),
+        })
+        .collect(),
         functions: vec![function],
         templates: Vec::new(),
         syntax_fragments: Vec::new(),
@@ -183,9 +259,12 @@ fn propagates_state_into_pure_derived_bindings_and_active_blocks() {
     let analysis = analyze_reactive_scopes(&file, FunctionId::new(0), &ssa, &dependencies, &shapes)
         .expect("reactive scopes");
 
-    assert_eq!(analysis.bindings.len(), 2);
+    assert_eq!(analysis.bindings.len(), 5);
     assert_eq!(analysis.bindings[0].kind, ReactiveBindingKind::State);
     assert_eq!(analysis.bindings[1].kind, ReactiveBindingKind::Derived);
+    assert_eq!(analysis.bindings[2].kind, ReactiveBindingKind::Store);
+    assert_eq!(analysis.bindings[3].kind, ReactiveBindingKind::Resource);
+    assert_eq!(analysis.bindings[4].kind, ReactiveBindingKind::Selector);
     assert_eq!(analysis.bindings[1].dependencies.len(), 1);
     assert_eq!(analysis.blocks.len(), 1);
     assert_eq!(analysis.blocks[0].block, BlockId::new(0));

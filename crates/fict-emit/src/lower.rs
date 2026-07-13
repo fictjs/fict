@@ -6,7 +6,7 @@ use fict_diagnostics::{
 use fict_hir::{
     CallHost, FictMacroKind, FunctionId, FunctionKind, HirFile, HirInstructionKind, ImportedName,
     JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName, JsxNode, LocalId, PlaceBase,
-    TemplateId, TerminatorKind, ValueId, ValueKind,
+    ReactiveCallKind, TemplateId, TerminatorKind, ValueId, ValueKind,
 };
 use fict_reactivity::{ReactiveCycleAnalysis, RegionAnalysis, analyze_cfg, structurize_cfg};
 
@@ -39,11 +39,17 @@ impl Default for NoJsxLoweringOptions {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct MacroSite {
+struct ReactiveSite {
     result: ValueId,
     local: Option<LocalId>,
-    kind: FictMacroKind,
+    kind: ReactiveSiteKind,
     slot: EmitSlotId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReactiveSiteKind {
+    Macro(FictMacroKind),
+    Runtime(ReactiveCallKind),
 }
 
 /// Lower state/memo/effect and reactive reads/writes while preserving ordinary HIR.
@@ -175,17 +181,21 @@ fn lower_function(
             let HirInstructionKind::Call(call) = &instruction.kind else {
                 continue;
             };
-            let Some(kind) = call.macro_kind else {
+            let Some(kind) = call
+                .macro_kind
+                .map(ReactiveSiteKind::Macro)
+                .or_else(|| call.reactive_kind.map(ReactiveSiteKind::Runtime))
+            else {
                 continue;
             };
             let Some(result) = instruction.result else {
                 return Err(DiagnosticBundle::new(vec![lower_error(
-                    "FICT-EMIT-MACRO-RESULT",
-                    "reactive macro call has no HIR result",
+                    "FICT-EMIT-REACTIVE-RESULT",
+                    "reactive creation call has no HIR result",
                     GuaranteeClass::Internal,
                 )]));
             };
-            sites.push(MacroSite {
+            sites.push(ReactiveSite {
                 result,
                 local: declarations_by_value.get(&result).copied(),
                 kind,
@@ -194,6 +204,10 @@ fn lower_function(
         }
     }
     let site_by_result: BTreeMap<_, _> = sites.iter().map(|site| (site.result, *site)).collect();
+    let macro_results: BTreeSet<_> = sites
+        .iter()
+        .filter_map(|site| matches!(site.kind, ReactiveSiteKind::Macro(_)).then_some(site.result))
+        .collect();
     let keyed_results: BTreeSet<_> = function
         .blocks
         .iter()
@@ -209,23 +223,34 @@ fn lower_function(
         .collect();
     let slot_by_local: BTreeMap<_, _> = sites
         .iter()
-        .filter_map(|site| site.local.map(|local| (local, site.slot)))
+        .filter_map(|site| {
+            matches!(
+                site.kind,
+                ReactiveSiteKind::Macro(FictMacroKind::State | FictMacroKind::Memo)
+            )
+            .then_some(site.local)
+            .flatten()
+            .map(|local| (local, site.slot))
+        })
         .collect();
     let slots = sites
         .iter()
         .map(|site| ReactiveSlot {
             id: site.slot,
             kind: match site.kind {
-                FictMacroKind::State => ReactiveSlotKind::Signal,
-                FictMacroKind::Memo => ReactiveSlotKind::Memo,
-                FictMacroKind::Effect => ReactiveSlotKind::Effect,
+                ReactiveSiteKind::Macro(FictMacroKind::State) => ReactiveSlotKind::Signal,
+                ReactiveSiteKind::Macro(FictMacroKind::Memo) => ReactiveSlotKind::Memo,
+                ReactiveSiteKind::Macro(FictMacroKind::Effect) => ReactiveSlotKind::Effect,
+                ReactiveSiteKind::Runtime(ReactiveCallKind::Store) => ReactiveSlotKind::Store,
+                ReactiveSiteKind::Runtime(ReactiveCallKind::Resource) => ReactiveSlotKind::Resource,
+                ReactiveSiteKind::Runtime(ReactiveCallKind::Selector) => ReactiveSlotKind::Selector,
             },
             binding: site
                 .local
                 .and_then(|local| function.locals.get(local.as_usize()))
                 .and_then(|local| local.binding),
             control_path: Vec::new(),
-            origin: macro_origin(function, site.result),
+            origin: reactive_site_origin(function, site.result),
         })
         .collect();
     let mut temporaries = Vec::new();
@@ -240,12 +265,13 @@ fn lower_function(
     for block in &function.blocks {
         for (instruction_index, instruction) in block.instructions.iter().enumerate() {
             if let HirInstructionKind::Call(call) = &instruction.kind
-                && call.macro_kind.is_some()
+                && let Some(site) = instruction
+                    .result
+                    .and_then(|result| site_by_result.get(&result).copied())
             {
-                let result = instruction.result.expect("macro result validated");
-                let site = site_by_result[&result];
+                let result = instruction.result.expect("reactive result validated");
                 match site.kind {
-                    FictMacroKind::State | FictMacroKind::Memo => {
+                    ReactiveSiteKind::Macro(FictMacroKind::State | FictMacroKind::Memo) => {
                         operations.push(EmitOperation::CreateReactive {
                             slot: site.slot,
                             source_result: result,
@@ -254,11 +280,14 @@ fn lower_function(
                                 .arguments
                                 .first()
                                 .map(|argument| lower_value(argument.value, &value_temporaries)),
-                            helper: creation_helper(function.kind, site.kind),
+                            helper: creation_helper(
+                                function.kind,
+                                call.macro_kind.expect("macro site"),
+                            ),
                             origin: instruction.origin,
                         });
                     }
-                    FictMacroKind::Effect => {
+                    ReactiveSiteKind::Macro(FictMacroKind::Effect) => {
                         let Some(callback) = call.arguments.first() else {
                             return Err(DiagnosticBundle::new(vec![lower_error(
                                 "FICT-EMIT-EFFECT-CALLBACK",
@@ -274,6 +303,16 @@ fn lower_function(
                             cleanup: CleanupOwner::Slot(site.slot),
                             origin: instruction.origin,
                         });
+                    }
+                    ReactiveSiteKind::Runtime(_) => {
+                        operations.push(EmitOperation::TrackRuntimeReactive {
+                            slot: site.slot,
+                            source_result: result,
+                            local: site.local,
+                            cleanup: CleanupOwner::Slot(site.slot),
+                            origin: instruction.origin,
+                        });
+                        preserve(&mut operations, block.id, instruction_index, instruction);
                     }
                 }
                 continue;
@@ -328,8 +367,7 @@ fn lower_function(
                 initializer: Some(initializer),
                 ..
             } = instruction.kind
-                && (site_by_result.contains_key(&initializer)
-                    || keyed_results.contains(&initializer))
+                && (macro_results.contains(&initializer) || keyed_results.contains(&initializer))
             {
                 continue;
             }
@@ -1553,7 +1591,7 @@ fn preserve(
     });
 }
 
-fn macro_origin(function: &fict_hir::HirFunction, result: ValueId) -> fict_hir::Origin {
+fn reactive_site_origin(function: &fict_hir::HirFunction, result: ValueId) -> fict_hir::Origin {
     function
         .blocks
         .iter()

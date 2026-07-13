@@ -3,9 +3,9 @@ use fict_hir::{
     CallInstruction, DeclarationKind, EvaluationMode, FileId, FunctionFlags, FunctionId,
     FunctionKind, HirBlock, HirFile, HirFunction, HirInstruction, HirInstructionKind, HirLocal,
     HirScope, HirTerminator, HirValue, InstructionSemantics, LiteralValue, LocalId, LocalKind,
-    MutationEffect, NumberLiteral, Origin, Place, PlaceBase, Projection, Purity, ReactiveScopeHost,
-    ReactiveScopeKind, ScopeId, ScopeKind, SourceSpan, TerminatorKind, ValueId, ValueKind,
-    verify_hir,
+    MutationEffect, NumberLiteral, Origin, Place, PlaceBase, Projection, Purity, ReactiveCallKind,
+    ReactiveScopeHost, ReactiveScopeKind, ScopeId, ScopeKind, SourceSpan, TerminatorKind, ValueId,
+    ValueKind, verify_hir,
 };
 use fict_reactivity::{
     BarrierKind, CallbackDisposition, DependencyBase, DependencySegment, EscapeKind,
@@ -317,6 +317,16 @@ fn classifies_callback_hosts_captures_and_unknown_argument_escapes() {
             kind: ValueKind::InstructionResult,
             origin: origin(),
         },
+        HirValue {
+            id: ValueId::new(7),
+            kind: ValueKind::InstructionResult,
+            origin: origin(),
+        },
+        HirValue {
+            id: ValueId::new(8),
+            kind: ValueKind::InstructionResult,
+            origin: origin(),
+        },
     ];
     let call = |result: u32, host: CallHost, argument: ValueId| HirInstruction {
         result: Some(ValueId::new(result)),
@@ -334,6 +344,23 @@ fn classifies_callback_hosts_captures_and_unknown_argument_escapes() {
         semantics: InstructionSemantics::CONSERVATIVE_EAGER,
         origin: origin(),
     };
+    let runtime_callback_call =
+        |result: u32, kind: ReactiveCallKind, argument: ValueId| HirInstruction {
+            result: Some(ValueId::new(result)),
+            kind: HirInstructionKind::Call(CallInstruction {
+                callee: ValueId::new(2),
+                arguments: vec![CallArgument {
+                    value: argument,
+                    spread: false,
+                }],
+                host: CallHost::Binding(BindingId::new(0)),
+                macro_kind: None,
+                reactive_kind: Some(kind),
+                optional: false,
+            }),
+            semantics: InstructionSemantics::CONSERVATIVE_EAGER,
+            origin: origin(),
+        };
     let outer = HirFunction {
         id: FunctionId::new(0),
         binding: None,
@@ -385,6 +412,8 @@ fn classifies_callback_hosts_captures_and_unknown_argument_escapes() {
                     origin: origin(),
                 },
                 call(6, CallHost::Unknown, ValueId::new(5)),
+                runtime_callback_call(7, ReactiveCallKind::Resource, ValueId::new(1)),
+                runtime_callback_call(8, ReactiveCallKind::Selector, ValueId::new(1)),
             ],
             TerminatorKind::Return { value: None },
         )],
@@ -429,7 +458,7 @@ fn classifies_callback_hosts_captures_and_unknown_argument_escapes() {
     let ssa = analyze_ssa(&file.functions[0]).expect("SSA");
     let analysis = analyze_dependencies(&file, FunctionId::new(0), &ssa).expect("dependencies");
 
-    assert_eq!(analysis.callbacks.len(), 2);
+    assert_eq!(analysis.callbacks.len(), 4);
     assert_eq!(
         analysis.callbacks[0].disposition,
         CallbackDisposition::EscapesUnknown
@@ -437,6 +466,14 @@ fn classifies_callback_hosts_captures_and_unknown_argument_escapes() {
     assert_eq!(
         analysis.callbacks[1].disposition,
         CallbackDisposition::Reactive(ReactiveScopeKind::Configured)
+    );
+    assert_eq!(
+        analysis.callbacks[2].disposition,
+        CallbackDisposition::Resource
+    );
+    assert_eq!(
+        analysis.callbacks[3].disposition,
+        CallbackDisposition::Selector
     );
     for kind in [
         EscapeKind::CallbackCapture,
@@ -471,5 +508,16 @@ fn classifies_callback_hosts_captures_and_unknown_argument_escapes() {
             })
             .count()
             >= 3
+    );
+
+    let mut corrupted = analysis.clone();
+    corrupted.callbacks[2].disposition = CallbackDisposition::Memo;
+    let diagnostics = verify_dependencies(&file, FunctionId::new(0), &ssa, &corrupted)
+        .expect_err("runtime callback disposition is verified");
+    assert!(
+        diagnostics
+            .as_slice()
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "FICT-ANALYSIS-CALLBACK-KIND")
     );
 }

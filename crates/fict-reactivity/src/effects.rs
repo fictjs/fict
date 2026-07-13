@@ -7,7 +7,7 @@ use fict_hir::{
     ArrayElement, BlockId, CallHost, FictMacroKind, FunctionId, HirFile, HirFunction,
     HirInstruction, HirInstructionKind, JsxAttribute, JsxAttributeValue, JsxChild, JsxNode,
     LocalId, LocalKind, MutationEffect, ObjectEntry, Place, PlaceBase, Projection, Purity,
-    ReactiveScopeKind, SsaName, SsaVersion, TerminatorKind, ValueId, ValueKind,
+    ReactiveCallKind, ReactiveScopeKind, SsaName, SsaVersion, TerminatorKind, ValueId, ValueKind,
 };
 
 use crate::{SsaAnalysis, SsaDefinitionLocation, SsaUseKind, SsaUseLocation, verify_ssa};
@@ -153,6 +153,10 @@ pub enum CallbackDisposition {
     Effect,
     /// Fict memo callback.
     Memo,
+    /// Async resource callback retained by `resource`.
+    Resource,
+    /// Selector source/equality callback retained by `createSelector`.
+    Selector,
     /// Callback passed to a known nested HIR function.
     Internal,
     /// Unknown host may retain/invoke the callback arbitrarily.
@@ -486,7 +490,9 @@ pub fn analyze_dependencies(
             CallbackDisposition::EscapesUnknown => EscapeKind::CallbackCapture,
             CallbackDisposition::Reactive(_)
             | CallbackDisposition::Effect
-            | CallbackDisposition::Memo => EscapeKind::DeferredCapture,
+            | CallbackDisposition::Memo
+            | CallbackDisposition::Resource
+            | CallbackDisposition::Selector => EscapeKind::DeferredCapture,
             CallbackDisposition::Internal => continue,
         };
         add_callback_capture_escapes(file, function, ssa, *callback, kind, &mut escapes);
@@ -622,6 +628,13 @@ pub fn verify_dependencies(
             diagnostics.push(analysis_error(
                 "FICT-ANALYSIS-CALLBACK",
                 "callback fact does not reference a function-valued call argument",
+            ));
+        } else if call.is_some_and(|call| {
+            callback_disposition(call, usize::from(callback.argument_index)) != callback.disposition
+        }) {
+            diagnostics.push(analysis_error(
+                "FICT-ANALYSIS-CALLBACK-KIND",
+                "callback disposition must match the binding-resolved call host",
             ));
         }
     }
@@ -875,21 +888,7 @@ fn classify_callbacks_and_call_escapes(
                 _ => None,
             });
         if let Some(nested) = nested {
-            let disposition = match call.host {
-                CallHost::ReactiveScope(host)
-                    if usize::from(host.callback_index) == argument_index =>
-                {
-                    CallbackDisposition::Reactive(host.kind)
-                }
-                CallHost::Function(_) => CallbackDisposition::Internal,
-                CallHost::Unknown | CallHost::Binding(_) | CallHost::ReactiveScope(_) => {
-                    match (call.macro_kind, argument_index) {
-                        (Some(FictMacroKind::Effect), 0) => CallbackDisposition::Effect,
-                        (Some(FictMacroKind::Memo), 0) => CallbackDisposition::Memo,
-                        _ => CallbackDisposition::EscapesUnknown,
-                    }
-                }
-            };
+            let disposition = callback_disposition(call, argument_index);
             if file.functions.get(nested.as_usize()).is_some() {
                 callbacks.push(CallbackFact {
                     location,
@@ -908,6 +907,27 @@ fn classify_callbacks_and_call_escapes(
                 value_dependencies,
                 escapes,
             );
+        }
+    }
+}
+
+fn callback_disposition(
+    call: &fict_hir::CallInstruction,
+    argument_index: usize,
+) -> CallbackDisposition {
+    match call.host {
+        CallHost::ReactiveScope(host) if usize::from(host.callback_index) == argument_index => {
+            CallbackDisposition::Reactive(host.kind)
+        }
+        CallHost::Function(_) => CallbackDisposition::Internal,
+        CallHost::Unknown | CallHost::Binding(_) | CallHost::ReactiveScope(_) => {
+            match (call.macro_kind, call.reactive_kind, argument_index) {
+                (Some(FictMacroKind::Effect), _, 0) => CallbackDisposition::Effect,
+                (Some(FictMacroKind::Memo), _, 0) => CallbackDisposition::Memo,
+                (_, Some(ReactiveCallKind::Resource), _) => CallbackDisposition::Resource,
+                (_, Some(ReactiveCallKind::Selector), _) => CallbackDisposition::Selector,
+                _ => CallbackDisposition::EscapesUnknown,
+            }
         }
     }
 }

@@ -180,6 +180,15 @@ pub enum EmitOperation {
         helper: RuntimeHelper,
         origin: Origin,
     },
+    /// Associate a preserved runtime call (`$store`, `resource`, `createSelector`) with a stable
+    /// compiler slot without replacing the executable call.
+    TrackRuntimeReactive {
+        slot: EmitSlotId,
+        source_result: ValueId,
+        local: Option<LocalId>,
+        cleanup: CleanupOwner,
+        origin: Origin,
+    },
     ReadReactive {
         slot: EmitSlotId,
         source_result: ValueId,
@@ -328,6 +337,7 @@ impl EmitOperation {
             | Self::ResolveElement { helper, .. } => Some(*helper),
             Self::ReadReactive { helper, .. } => *helper,
             Self::PreserveHir { .. }
+            | Self::TrackRuntimeReactive { .. }
             | Self::WriteReactive { .. }
             | Self::UpdateReactive { .. }
             | Self::CloneTemplate { .. }
@@ -394,6 +404,7 @@ impl EmitOperation {
             }
             Self::Return { value, .. } => value.iter().for_each(visit),
             Self::PreserveHir { .. }
+            | Self::TrackRuntimeReactive { .. }
             | Self::ReadReactive { .. }
             | Self::DeclareTemplate { .. }
             | Self::CloneTemplate { .. }

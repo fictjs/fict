@@ -5,7 +5,7 @@ use fict_diagnostics::{
 };
 use fict_hir::{
     ArrayElement, FictMacroKind, FunctionId, FunctionKind, HirFile, HirInstructionKind, LocalKind,
-    ObjectEntry, PlaceBase, PropertyKey, SsaName, ValueId,
+    ObjectEntry, PlaceBase, PropertyKey, ReactiveCallKind, SsaName, ValueId,
 };
 
 use crate::{
@@ -50,6 +50,8 @@ pub enum ShapeSource {
     UnknownOperation,
     /// Fict state or memo macro.
     ReactiveMacro(FictMacroKind),
+    /// Binding-resolved runtime store/resource/selector call.
+    RuntimeReactive(ReactiveCallKind),
     /// Direct alias of another SSA definition.
     Alias(SsaName),
     /// Join of multiple control-flow definitions.
@@ -651,6 +653,18 @@ fn structural_value_shape(
                 ValueShape {
                     kind: ShapeKind::Reactive,
                     source: ShapeSource::ReactiveMacro(kind),
+                    known_keys: Vec::new(),
+                    mutable_keys: Vec::new(),
+                    complete_key_set: false,
+                    dynamic_access: false,
+                    has_spread: false,
+                    escapes: false,
+                    array_length: None,
+                }
+            } else if let Some(kind) = call.reactive_kind {
+                ValueShape {
+                    kind: ShapeKind::Reactive,
+                    source: ShapeSource::RuntimeReactive(kind),
                     known_keys: Vec::new(),
                     mutable_keys: Vec::new(),
                     complete_key_set: false,

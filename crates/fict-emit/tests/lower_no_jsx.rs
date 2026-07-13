@@ -1,6 +1,6 @@
 use fict_emit::{
-    DomNamespace, EmitOperation, NoJsxLoweringOptions, RuntimeFamily, RuntimeHelper, lower_core,
-    lower_no_jsx,
+    CleanupOwner, DomNamespace, EmitOperation, NoJsxLoweringOptions, ReactiveSlotKind,
+    RuntimeFamily, RuntimeHelper, lower_core, lower_no_jsx,
 };
 use fict_hir::{
     Binding, BindingId, BindingKind, BlockId, CallArgument, CallHost, CallInstruction,
@@ -8,8 +8,9 @@ use fict_hir::{
     HirFile, HirFunction, HirInstruction, HirInstructionKind, HirLocal, HirScope, HirTerminator,
     HirValue, ImportBinding, ImportKind, ImportedName, InstructionSemantics, JsxAttribute,
     JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxNode, JsxTemplate, LiteralValue,
-    LocalId, LocalKind, MutationEffect, NumberLiteral, Origin, Place, ScopeId, ScopeKind,
-    SourceSpan, TemplateId, TerminatorKind, UpdateOperator, ValueId, ValueKind, verify_hir,
+    LocalId, LocalKind, MutationEffect, NumberLiteral, Origin, Place, ReactiveCallKind, ScopeId,
+    ScopeKind, SourceSpan, TemplateId, TerminatorKind, UpdateOperator, ValueId, ValueKind,
+    verify_hir,
 };
 use fict_reactivity::{
     ReactiveCycleAnalysis, RegionAnalysis, analyze_aliases, analyze_dependencies,
@@ -708,5 +709,152 @@ fn lowers_only_binding_aware_runtime_keyed_list_calls() {
             .operations
             .iter()
             .any(|operation| matches!(operation, EmitOperation::PreserveHir { .. }))
+    );
+}
+
+#[test]
+fn tracks_preserved_store_resource_and_selector_calls() {
+    let mut hir = fixture(FunctionKind::Module);
+    hir.bindings = [
+        ("$store", "fict", ReactiveCallKind::Store),
+        ("resource", "fict/plus", ReactiveCallKind::Resource),
+        (
+            "createSelector",
+            "@fictjs/runtime/advanced",
+            ReactiveCallKind::Selector,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (name, source, _))| Binding {
+        id: BindingId::new(u32::try_from(index).expect("binding id")),
+        scope: ScopeId::new(0),
+        kind: BindingKind::Import,
+        display_name: name.into(),
+        import: Some(ImportBinding {
+            source: source.into(),
+            imported: ImportedName::Named(name.into()),
+            kind: ImportKind::Value,
+        }),
+        origin: origin(),
+    })
+    .collect();
+    hir.functions[0].locals = ["store", "resource", "selector"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, name)| HirLocal {
+            id: LocalId::new(u32::try_from(index).expect("local id")),
+            binding: None,
+            scope: ScopeId::new(0),
+            kind: LocalKind::User,
+            declaration_kind: DeclarationKind::Const,
+            debug_name: Some(name.into()),
+            origin: origin(),
+        })
+        .collect();
+    hir.functions[0].values = vec![
+        value(0, ValueKind::Literal(LiteralValue::Undefined)),
+        value(
+            1,
+            ValueKind::Literal(LiteralValue::Number(NumberLiteral::from_f64(1.0))),
+        ),
+        value(2, ValueKind::InstructionResult),
+        value(3, ValueKind::InstructionResult),
+        value(4, ValueKind::InstructionResult),
+        value(5, ValueKind::InstructionResult),
+    ];
+    let runtime_call = |result: u32, binding: u32, kind: ReactiveCallKind| HirInstruction {
+        result: Some(ValueId::new(result)),
+        kind: HirInstructionKind::Call(CallInstruction {
+            callee: ValueId::new(0),
+            arguments: vec![CallArgument {
+                value: ValueId::new(1),
+                spread: false,
+            }],
+            host: CallHost::Binding(BindingId::new(binding)),
+            macro_kind: None,
+            reactive_kind: Some(kind),
+            optional: false,
+        }),
+        semantics: InstructionSemantics::CONSERVATIVE_EAGER,
+        origin: origin(),
+    };
+    let declaration = |local: u32, initializer: u32| {
+        instruction(
+            None,
+            HirInstructionKind::Declare {
+                local: LocalId::new(local),
+                declaration_kind: DeclarationKind::Const,
+                initializer: Some(ValueId::new(initializer)),
+            },
+        )
+    };
+    hir.functions[0].blocks[0].instructions = vec![
+        instruction(
+            Some(0),
+            HirInstructionKind::Literal(LiteralValue::Undefined),
+        ),
+        instruction(
+            Some(1),
+            HirInstructionKind::Literal(LiteralValue::Number(NumberLiteral::from_f64(1.0))),
+        ),
+        runtime_call(2, 0, ReactiveCallKind::Store),
+        declaration(0, 2),
+        runtime_call(3, 1, ReactiveCallKind::Resource),
+        declaration(1, 3),
+        runtime_call(4, 2, ReactiveCallKind::Selector),
+        declaration(2, 4),
+        instruction(
+            Some(5),
+            HirInstructionKind::Read {
+                place: Place::local(LocalId::new(0)),
+            },
+        ),
+    ];
+    hir.functions[0].blocks[0].terminator.kind = TerminatorKind::Return {
+        value: Some(ValueId::new(5)),
+    };
+    verify_hir(&hir).expect("valid runtime reactive fixture");
+    let (regions, cycles) = analyses(&hir);
+    let program = lower_no_jsx(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
+        .expect("runtime reactive tracking");
+    assert_eq!(
+        program.functions[0]
+            .slots
+            .iter()
+            .map(|slot| slot.kind)
+            .collect::<Vec<_>>(),
+        [
+            ReactiveSlotKind::Store,
+            ReactiveSlotKind::Resource,
+            ReactiveSlotKind::Selector,
+        ]
+    );
+    let tracked: Vec<_> = program.functions[0]
+        .operations
+        .iter()
+        .filter_map(|operation| match operation {
+            EmitOperation::TrackRuntimeReactive { slot, cleanup, .. } => Some((*slot, *cleanup)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tracked.len(), 3);
+    assert!(
+        tracked
+            .iter()
+            .all(|(slot, cleanup)| *cleanup == CleanupOwner::Slot(*slot))
+    );
+    assert!(
+        !program.functions[0]
+            .operations
+            .iter()
+            .any(|operation| matches!(operation, EmitOperation::ReadReactive { .. }))
+    );
+    assert!(
+        !program
+            .imports
+            .iter()
+            .any(|intent| intent.helper == RuntimeHelper::CreateSelector),
+        "preserved runtime calls must not request replacement helpers"
     );
 }

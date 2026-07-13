@@ -226,6 +226,25 @@ fn verify_operations(
                 verify_slot(function, *slot, diagnostics);
                 verify_source_result(hir_function, *source_result, diagnostics);
             }
+            EmitOperation::TrackRuntimeReactive {
+                slot,
+                source_result,
+                local,
+                cleanup,
+                ..
+            } => {
+                verify_slot(function, *slot, diagnostics);
+                verify_source_result(hir_function, *source_result, diagnostics);
+                verify_cleanup(function, analysis, *cleanup, diagnostics);
+                verify_runtime_reactive_site(
+                    hir_function,
+                    function,
+                    *slot,
+                    *source_result,
+                    *local,
+                    diagnostics,
+                );
+            }
             EmitOperation::WriteReactive { slot, .. }
             | EmitOperation::UpdateReactive {
                 slot,
@@ -451,6 +470,7 @@ fn verify_helper_semantics(
             *helper == RuntimeHelper::ResolvePath && !path.is_empty()
         }
         EmitOperation::PreserveHir { .. }
+        | EmitOperation::TrackRuntimeReactive { .. }
         | EmitOperation::WriteReactive { .. }
         | EmitOperation::UpdateReactive { .. }
         | EmitOperation::CloneTemplate { .. }
@@ -461,6 +481,69 @@ fn verify_helper_semantics(
         diagnostics.push(emit_error(
             "FICT-EMIT-HELPER",
             "operation uses a runtime helper incompatible with its semantics",
+        ));
+    }
+}
+
+fn verify_runtime_reactive_site(
+    hir_function: &fict_hir::HirFunction,
+    function: &crate::EmitFunction,
+    slot: crate::EmitSlotId,
+    source_result: fict_hir::ValueId,
+    local: Option<fict_hir::LocalId>,
+    diagnostics: &mut DiagnosticBundle,
+) {
+    let source_kind = hir_function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find_map(|instruction| {
+            (instruction.result == Some(source_result)).then_some(match &instruction.kind {
+                fict_hir::HirInstructionKind::Call(call) => call.reactive_kind,
+                _ => None,
+            })
+        })
+        .flatten();
+    let expected = match source_kind {
+        Some(fict_hir::ReactiveCallKind::Store) => crate::ReactiveSlotKind::Store,
+        Some(fict_hir::ReactiveCallKind::Resource) => crate::ReactiveSlotKind::Resource,
+        Some(fict_hir::ReactiveCallKind::Selector) => crate::ReactiveSlotKind::Selector,
+        None => {
+            diagnostics.push(emit_error(
+                "FICT-EMIT-RUNTIME-REACTIVE",
+                "tracked runtime reactive slot must originate from a classified HIR call",
+            ));
+            return;
+        }
+    };
+    if function
+        .slots
+        .get(slot.as_usize())
+        .is_none_or(|actual| actual.kind != expected)
+    {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-RUNTIME-REACTIVE",
+            "runtime reactive call kind must match its EmitIR slot kind",
+        ));
+    }
+    if let Some(local) = local
+        && (hir_function.locals.get(local.as_usize()).is_none()
+            || !hir_function.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instruction| {
+                    matches!(
+                        instruction.kind,
+                        fict_hir::HirInstructionKind::Declare {
+                            local: declared,
+                            initializer: Some(initializer),
+                            ..
+                        } if declared == local && initializer == source_result
+                    )
+                })
+            }))
+    {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-RUNTIME-REACTIVE",
+            "runtime reactive local must be declared from the classified call result",
         ));
     }
 }
