@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use fict_diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
-use fict_emit::{DomNamespace, EmitOperation, EmitProgram, RuntimeHelper};
+use fict_emit::{
+    DomBindingKind, DomNamespace, EmitOperation, EmitProgram, EmitValueRef, RuntimeHelper,
+};
 use fict_hir::{CompoundAssignmentOperator, TemplateId, UpdateOperator};
 use oxc::{
     allocator::{Allocator, TakeIn, Vec as ArenaVec},
@@ -17,6 +19,7 @@ use oxc::{
             JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild, JSXElement,
             JSXElementName, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject,
             ObjectPropertyKind, PropertyKey, PropertyKind, SimpleAssignmentTarget, Statement,
+            VariableDeclarationKind, VariableDeclarator,
         },
     },
     ast_visit::{VisitMut, walk_mut},
@@ -387,10 +390,8 @@ fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
             EmitOperation::UpdateReactive { projections, .. } => !projections.is_empty(),
             _ => matches!(
                 operation,
-                EmitOperation::ResolveElement { .. }
-                    | EmitOperation::InvokeComponent { .. }
+                EmitOperation::InvokeComponent { .. }
                     | EmitOperation::CreateElement { .. }
-                    | EmitOperation::BindDom { .. }
                     | EmitOperation::ApplyProps { .. }
                     | EmitOperation::BindEvent { .. }
                     | EmitOperation::BindRef { .. }
@@ -677,6 +678,25 @@ struct TemplateSource {
 #[derive(Debug, Clone)]
 struct CloneRewrite {
     factory: String,
+    root: String,
+    steps: Vec<FineJsxStep>,
+}
+
+#[derive(Debug, Clone)]
+enum FineJsxStep {
+    Resolve {
+        source: String,
+        target: String,
+        path: Vec<u32>,
+        helper: String,
+    },
+    Bind {
+        element: String,
+        kind: DomBindingKind,
+        reactive: bool,
+        helper: String,
+        value_origin: SourceSpan,
+    },
 }
 
 struct TemplateRewrites {
@@ -747,54 +767,208 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
         });
     }
 
-    let mut clones = BTreeMap::new();
-    for operation in emit
-        .functions
-        .iter()
-        .flat_map(|function| &function.operations)
-    {
-        let EmitOperation::CloneTemplate {
-            template, origin, ..
-        } = operation
-        else {
-            continue;
-        };
-        let Some(span) = origin.primary_span else {
-            diagnostics.push(emit_error(
-                "FICT-OXC-EMIT-ORIGIN",
-                "template-clone operation requires a source origin",
-                GuaranteeClass::Internal,
-            ));
-            continue;
-        };
-        let Some(factory) = declarations.get(template) else {
-            diagnostics.push(
-                emit_error(
-                    "FICT-OXC-EMIT-TEMPLATE",
-                    "template clone has no matching declaration",
-                    GuaranteeClass::Internal,
-                )
-                .with_primary_span(span),
-            );
-            continue;
-        };
-        if clones
-            .insert(
-                (span.start(), span.end()),
-                CloneRewrite {
-                    factory: factory.clone(),
-                },
-            )
-            .is_some()
-        {
-            diagnostics.push(
-                emit_error(
-                    "FICT-OXC-EMIT-ORIGIN",
-                    "multiple template clones share the same source origin",
-                    GuaranteeClass::Internal,
-                )
-                .with_primary_span(span),
-            );
+    let mut clones: BTreeMap<(u32, u32), CloneRewrite> = BTreeMap::new();
+    for function in &emit.functions {
+        let temporary_names: BTreeMap<_, _> = function
+            .temporaries
+            .iter()
+            .map(|temporary| (temporary.id, temporary.name.as_str()))
+            .collect();
+        let mut current = None;
+        for operation in &function.operations {
+            match operation {
+                EmitOperation::CloneTemplate {
+                    template,
+                    target,
+                    origin,
+                    ..
+                } => {
+                    let Some(span) = origin.primary_span else {
+                        diagnostics.push(emit_error(
+                            "FICT-OXC-EMIT-ORIGIN",
+                            "template-clone operation requires a source origin",
+                            GuaranteeClass::Internal,
+                        ));
+                        current = None;
+                        continue;
+                    };
+                    let Some(factory) = declarations.get(template) else {
+                        diagnostics.push(
+                            emit_error(
+                                "FICT-OXC-EMIT-TEMPLATE",
+                                "template clone has no matching declaration",
+                                GuaranteeClass::Internal,
+                            )
+                            .with_primary_span(span),
+                        );
+                        current = None;
+                        continue;
+                    };
+                    let Some(root) = temporary_names.get(target) else {
+                        diagnostics.push(
+                            emit_error(
+                                "FICT-OXC-EMIT-TEMP",
+                                "template clone target has no generated local",
+                                GuaranteeClass::Internal,
+                            )
+                            .with_primary_span(span),
+                        );
+                        current = None;
+                        continue;
+                    };
+                    let location = (span.start(), span.end());
+                    if clones
+                        .insert(
+                            location,
+                            CloneRewrite {
+                                factory: factory.clone(),
+                                root: (*root).to_owned(),
+                                steps: Vec::new(),
+                            },
+                        )
+                        .is_some()
+                    {
+                        diagnostics.push(
+                            emit_error(
+                                "FICT-OXC-EMIT-ORIGIN",
+                                "multiple template clones share the same source origin",
+                                GuaranteeClass::Internal,
+                            )
+                            .with_primary_span(span),
+                        );
+                        current = None;
+                    } else {
+                        current = Some(location);
+                    }
+                }
+                EmitOperation::ResolveElement {
+                    root,
+                    path,
+                    target,
+                    helper,
+                    origin,
+                } => {
+                    let Some(plan) = current.and_then(|location| clones.get_mut(&location)) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-TEMPLATE",
+                                "element resolution is not attached to a template clone",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    let Some(source) = temporary_names.get(root) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-TEMP",
+                                "element resolution source has no generated local",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    let Some(target) = temporary_names.get(target) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-TEMP",
+                                "element resolution target has no generated local",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    let Some(helper) = helper_names.get(helper) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-IMPORT",
+                                "element resolution helper has no runtime import intent",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    plan.steps.push(FineJsxStep::Resolve {
+                        source: (*source).to_owned(),
+                        target: (*target).to_owned(),
+                        path: path.clone(),
+                        helper: (*helper).to_owned(),
+                    });
+                }
+                EmitOperation::BindDom {
+                    element,
+                    kind,
+                    value,
+                    reactive,
+                    helper,
+                    origin,
+                } => {
+                    let Some(plan) = current.and_then(|location| clones.get_mut(&location)) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-TEMPLATE",
+                                "DOM binding is not attached to a template clone",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    let Some(element) = temporary_names.get(element) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-TEMP",
+                                "DOM binding target has no generated local",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    if !matches!(value, EmitValueRef::Hir(_)) {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-VALUE",
+                                "DOM binding value is not backed by a source HIR expression",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    }
+                    let Some(value_origin) = origin.primary_span else {
+                        diagnostics.push(emit_error(
+                            "FICT-OXC-EMIT-ORIGIN",
+                            "DOM binding requires a source expression origin",
+                            GuaranteeClass::Internal,
+                        ));
+                        continue;
+                    };
+                    let Some(helper) = helper_names.get(helper) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-IMPORT",
+                                "DOM binding helper has no runtime import intent",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    plan.steps.push(FineJsxStep::Bind {
+                        element: (*element).to_owned(),
+                        kind: kind.clone(),
+                        reactive: *reactive,
+                        helper: (*helper).to_owned(),
+                        value_origin,
+                    });
+                }
+                _ => {}
+            }
         }
     }
     TemplateRewrites {
@@ -1031,27 +1205,15 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
 
     fn visit_expression(&mut self, expression: &mut Expression<'a>) {
         let location = (expression.span().start, expression.span().end);
-        if let Some(clone) = self.clones.get(&location)
+        if let Some(clone) = self.clones.get(&location).cloned()
             && matches!(
                 expression,
                 Expression::JSXElement(_) | Expression::JSXFragment(_)
             )
         {
             let span = expression.span();
-            let builder = AstBuilder::new(self.allocator);
-            let callee = Expression::new_identifier(
-                span,
-                self.allocator.alloc_str(&clone.factory),
-                &builder,
-            );
-            *expression = Expression::new_call_expression(
-                span,
-                callee,
-                NONE,
-                ArenaVec::new_in(&self.allocator),
-                false,
-                &builder,
-            );
+            let jsx = expression.take_in(&self.allocator);
+            *expression = self.lower_template_clone(clone, jsx, span);
             self.matched_clones.insert(location);
             return;
         }
@@ -1125,6 +1287,147 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
 }
 
 impl<'a> AstRewriter<'a, '_> {
+    fn lower_template_clone(
+        &mut self,
+        clone: CloneRewrite,
+        jsx: Expression<'a>,
+        span: Span,
+    ) -> Expression<'a> {
+        let builder = AstBuilder::new(self.allocator);
+        let factory =
+            Expression::new_identifier(span, self.allocator.alloc_str(&clone.factory), &builder);
+        let clone_call = Expression::new_call_expression(
+            span,
+            factory,
+            NONE,
+            ArenaVec::new_in(&self.allocator),
+            false,
+            &builder,
+        );
+        if clone.steps.is_empty() {
+            return clone_call;
+        }
+
+        let mut values = jsx_dynamic_values(jsx);
+        let mut statements = ArenaVec::new_in(&self.allocator);
+        statements.push(const_statement(
+            self.allocator,
+            &clone.root,
+            clone_call,
+            span,
+        ));
+        for step in clone.steps {
+            match step {
+                FineJsxStep::Resolve {
+                    source,
+                    target,
+                    path,
+                    helper,
+                } => {
+                    let callee = Expression::new_identifier(
+                        span,
+                        self.allocator.alloc_str(&helper),
+                        &builder,
+                    );
+                    let source = Expression::new_identifier(
+                        span,
+                        self.allocator.alloc_str(&source),
+                        &builder,
+                    );
+                    let mut path_elements = ArenaVec::new_in(&self.allocator);
+                    for index in path {
+                        path_elements.push(ArrayExpressionElement::from(
+                            Expression::new_numeric_literal(
+                                span,
+                                f64::from(index),
+                                None,
+                                NumberBase::Decimal,
+                                &builder,
+                            ),
+                        ));
+                    }
+                    let path = Expression::new_array_expression(span, path_elements, &builder);
+                    let mut arguments = ArenaVec::new_in(&self.allocator);
+                    arguments.extend([Argument::from(source), Argument::from(path)]);
+                    let resolved = Expression::new_call_expression(
+                        span, callee, NONE, arguments, false, &builder,
+                    );
+                    statements.push(const_statement(self.allocator, &target, resolved, span));
+                }
+                FineJsxStep::Bind {
+                    element,
+                    kind,
+                    reactive,
+                    helper,
+                    value_origin,
+                } => {
+                    let location = (value_origin.start(), value_origin.end());
+                    let Some(mut value) = values.remove(&location) else {
+                        self.diagnostics.push(
+                            emit_error(
+                                "FICT-OXC-EMIT-ORIGIN",
+                                "DOM binding origin does not identify a JSX value expression",
+                                GuaranteeClass::Internal,
+                            )
+                            .with_primary_span(value_origin),
+                        );
+                        continue;
+                    };
+                    self.visit_expression(&mut value);
+                    if reactive {
+                        value = zero_parameter_expression_arrow(self.allocator, value, span);
+                    }
+                    let callee = Expression::new_identifier(
+                        span,
+                        self.allocator.alloc_str(&helper),
+                        &builder,
+                    );
+                    let element = Expression::new_identifier(
+                        span,
+                        self.allocator.alloc_str(&element),
+                        &builder,
+                    );
+                    let mut arguments = ArenaVec::new_in(&self.allocator);
+                    arguments.push(Argument::from(element));
+                    match kind {
+                        DomBindingKind::Attribute(name) | DomBindingKind::Property(name) => {
+                            arguments.push(Argument::from(Expression::new_string_literal(
+                                span,
+                                self.allocator.alloc_str(&name),
+                                None,
+                                &builder,
+                            )));
+                        }
+                        DomBindingKind::Text
+                        | DomBindingKind::TextContent
+                        | DomBindingKind::Class
+                        | DomBindingKind::Style => {}
+                        DomBindingKind::Spread => {
+                            self.diagnostics.push(
+                                emit_error(
+                                    "FICT-OXC-EMIT-BINDING",
+                                    "spread DOM bindings must use ApplyProps EmitIR",
+                                    GuaranteeClass::Internal,
+                                )
+                                .with_primary_span(value_origin),
+                            );
+                            continue;
+                        }
+                    }
+                    arguments.push(Argument::from(value));
+                    let call = Expression::new_call_expression(
+                        span, callee, NONE, arguments, false, &builder,
+                    );
+                    statements.push(Statement::new_expression_statement(span, call, &builder));
+                }
+            }
+        }
+        let root =
+            Expression::new_identifier(span, self.allocator.alloc_str(&clone.root), &builder);
+        statements.push(Statement::new_return_statement(span, Some(root), &builder));
+        block_iife(self.allocator, statements, span)
+    }
+
     fn lower_jsx_expression(&mut self, expression: Expression<'a>) -> Expression<'a> {
         match expression {
             Expression::JSXElement(element) => self.lower_jsx_element(element.unbox()),
@@ -1494,6 +1797,161 @@ impl<'a> AstRewriter<'a, '_> {
     }
 }
 
+fn jsx_dynamic_values<'a>(jsx: Expression<'a>) -> BTreeMap<(u32, u32), Expression<'a>> {
+    let mut values = BTreeMap::new();
+    match jsx {
+        Expression::JSXElement(element) => collect_jsx_element_values(element.unbox(), &mut values),
+        Expression::JSXFragment(fragment) => {
+            collect_jsx_children_values(fragment.unbox().children, &mut values);
+        }
+        _ => unreachable!("template clone source must be JSX"),
+    }
+    values
+}
+
+fn collect_jsx_element_values<'a>(
+    element: JSXElement<'a>,
+    values: &mut BTreeMap<(u32, u32), Expression<'a>>,
+) {
+    for attribute in element.opening_element.unbox().attributes {
+        match attribute {
+            JSXAttributeItem::SpreadAttribute(spread) => {
+                let spread = spread.unbox();
+                let span = spread.argument.span();
+                values.insert((span.start, span.end), spread.argument);
+            }
+            JSXAttributeItem::Attribute(attribute) => {
+                if let Some(value) = attribute.unbox().value {
+                    match value {
+                        JSXAttributeValue::ExpressionContainer(container) => {
+                            let expression = container.unbox().expression;
+                            if expression.is_expression() {
+                                let expression = expression.into_expression();
+                                let span = expression.span();
+                                values.insert((span.start, span.end), expression);
+                            }
+                        }
+                        JSXAttributeValue::Element(element) => {
+                            collect_jsx_element_values(element.unbox(), values);
+                        }
+                        JSXAttributeValue::Fragment(fragment) => {
+                            collect_jsx_children_values(fragment.unbox().children, values);
+                        }
+                        JSXAttributeValue::StringLiteral(_) => {}
+                    }
+                }
+            }
+        }
+    }
+    collect_jsx_children_values(element.children, values);
+}
+
+fn collect_jsx_children_values<'a>(
+    children: ArenaVec<'a, JSXChild<'a>>,
+    values: &mut BTreeMap<(u32, u32), Expression<'a>>,
+) {
+    for child in children {
+        match child {
+            JSXChild::Element(element) => collect_jsx_element_values(element.unbox(), values),
+            JSXChild::Fragment(fragment) => {
+                collect_jsx_children_values(fragment.unbox().children, values);
+            }
+            JSXChild::ExpressionContainer(container) => {
+                let expression = container.unbox().expression;
+                if expression.is_expression() {
+                    let expression = expression.into_expression();
+                    let span = expression.span();
+                    values.insert((span.start, span.end), expression);
+                }
+            }
+            JSXChild::Spread(spread) => {
+                let spread = spread.unbox();
+                let span = spread.expression.span();
+                values.insert((span.start, span.end), spread.expression);
+            }
+            JSXChild::Text(_) => {}
+        }
+    }
+}
+
+fn const_statement<'a>(
+    allocator: &'a Allocator,
+    name: &str,
+    initializer: Expression<'a>,
+    span: Span,
+) -> Statement<'a> {
+    let builder = AstBuilder::new(allocator);
+    let pattern = BindingPattern::new_binding_identifier(span, allocator.alloc_str(name), &builder);
+    let declarator = VariableDeclarator::new(
+        span,
+        VariableDeclarationKind::Const,
+        pattern,
+        NONE,
+        Some(initializer),
+        false,
+        &builder,
+    );
+    let mut declarations = ArenaVec::new_in(&allocator);
+    declarations.push(declarator);
+    Statement::new_variable_declaration(
+        span,
+        VariableDeclarationKind::Const,
+        declarations,
+        false,
+        &builder,
+    )
+}
+
+fn zero_parameter_expression_arrow<'a>(
+    allocator: &'a Allocator,
+    expression: Expression<'a>,
+    span: Span,
+) -> Expression<'a> {
+    let builder = AstBuilder::new(allocator);
+    let parameters = FormalParameters::boxed(
+        span,
+        FormalParameterKind::ArrowFormalParameters,
+        ArenaVec::new_in(&allocator),
+        NONE,
+        &builder,
+    );
+    let mut statements = ArenaVec::new_in(&allocator);
+    statements.push(Statement::new_expression_statement(
+        span, expression, &builder,
+    ));
+    let body = FunctionBody::boxed(span, ArenaVec::new_in(&allocator), statements, &builder);
+    Expression::new_arrow_function_expression(
+        span, true, false, NONE, parameters, NONE, body, &builder,
+    )
+}
+
+fn block_iife<'a>(
+    allocator: &'a Allocator,
+    statements: ArenaVec<'a, Statement<'a>>,
+    span: Span,
+) -> Expression<'a> {
+    let builder = AstBuilder::new(allocator);
+    let parameters = FormalParameters::boxed(
+        span,
+        FormalParameterKind::ArrowFormalParameters,
+        ArenaVec::new_in(&allocator),
+        NONE,
+        &builder,
+    );
+    let body = FunctionBody::boxed(span, ArenaVec::new_in(&allocator), statements, &builder);
+    let arrow = Expression::new_arrow_function_expression(
+        span, false, false, NONE, parameters, NONE, body, &builder,
+    );
+    Expression::new_call_expression(
+        span,
+        arrow,
+        NONE,
+        ArenaVec::new_in(&allocator),
+        false,
+        &builder,
+    )
+}
+
 fn assignment_target_name(target: &AssignmentTarget<'_>) -> Option<String> {
     let AssignmentTarget::AssignmentTargetIdentifier(identifier) = target else {
         return None;
@@ -1766,6 +2224,11 @@ fn operation_origin(operation: &EmitOperation) -> fict_hir::Origin {
         | EmitOperation::KeyedList { origin, .. }
         | EmitOperation::Return { origin, .. } => *origin,
     }
+}
+
+fn with_operation_span(mut diagnostic: Diagnostic, origin: fict_hir::Origin) -> Diagnostic {
+    diagnostic.primary_span = origin.primary_span;
+    diagnostic
 }
 
 fn emit_error(

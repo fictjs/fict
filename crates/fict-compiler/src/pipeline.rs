@@ -517,6 +517,44 @@ mod tests {
     }
 
     #[test]
+    fn emits_nested_fine_grained_dom_attribute_and_property_bindings() {
+        let result = compile(request(
+            "export function View(props) { return <main><input value={props.value} checked={props.checked} /><p class={props.className} style={props.style} title={props.title}>text</p></main>; }",
+            "bindings.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.code.contains("resolvePath("), "{}", result.code);
+        assert!(
+            result.code.contains("bindProperty(") && result.code.contains("\"value\""),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("bindClass("), "{}", result.code);
+        assert!(result.code.contains("bindStyle("), "{}", result.code);
+        assert!(result.code.contains("bindAttribute("), "{}", result.code);
+        assert!(result.code.contains("() => props.title"), "{}", result.code);
+        assert!(!result.code.contains("return <"), "{}", result.code);
+    }
+
+    #[test]
+    fn preserves_reactive_reads_inside_fine_grained_dom_bindings() {
+        let result = compile(request(
+            "import { $state } from 'fict'; export function View() { let count = $state(0); return <div title={count}><span class={count}>value</span></div>; }",
+            "reactive-binding.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result.code.matches("() => count()").count() >= 2,
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("bindAttribute("), "{}", result.code);
+        assert!(result.code.contains("bindClass("), "{}", result.code);
+    }
+
+    #[test]
     fn emits_typescript_jsx_as_ordered_vnode_fallbacks() {
         let mut input = request(
             "type Props = { name: string; value: number; extra: Record<string, unknown> }; const Child = (props: { value: number }) => <em>{props.value}</em>; export function App(props: Props) { return <section id=\"root\" disabled {...props.extra}>Hello {props.name}<Child value={props.value} /></section>; }",
