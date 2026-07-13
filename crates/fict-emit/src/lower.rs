@@ -974,10 +974,11 @@ fn lower_jsx_instruction(
                     handler: lower_value(handler, value_temporaries),
                     delegated,
                     helper: if delegated {
-                        RuntimeHelper::DelegateEvents
+                        RuntimeHelper::AddEventListener
                     } else {
                         RuntimeHelper::BindEvent
                     },
+                    cleanup_helper: (!delegated).then_some(RuntimeHelper::OnDestroy),
                     cleanup,
                     origin,
                 });

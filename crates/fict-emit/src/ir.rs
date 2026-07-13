@@ -305,6 +305,7 @@ pub enum EmitOperation {
         handler: EmitValueRef,
         delegated: bool,
         helper: RuntimeHelper,
+        cleanup_helper: Option<RuntimeHelper>,
         cleanup: CleanupOwner,
         origin: Origin,
     },
@@ -384,6 +385,7 @@ impl EmitOperation {
     pub const fn auxiliary_helper(&self) -> Option<RuntimeHelper> {
         match self {
             Self::Insert { create_helper, .. } => Some(*create_helper),
+            Self::BindEvent { cleanup_helper, .. } => *cleanup_helper,
             _ => None,
         }
     }

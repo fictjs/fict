@@ -654,15 +654,16 @@ fn verify_helper_semantics(
             crate::PropsOperation::Keyed(_) => *helper == RuntimeHelper::Keyed,
         },
         EmitOperation::BindEvent {
-            delegated, helper, ..
+            delegated,
+            helper,
+            cleanup_helper,
+            ..
         } => {
             if *delegated {
-                *helper == RuntimeHelper::DelegateEvents
+                *helper == RuntimeHelper::AddEventListener && cleanup_helper.is_none()
             } else {
-                matches!(
-                    helper,
-                    RuntimeHelper::BindEvent | RuntimeHelper::AddEventListener
-                )
+                *helper == RuntimeHelper::BindEvent
+                    && *cleanup_helper == Some(RuntimeHelper::OnDestroy)
             }
         }
         EmitOperation::BindRef { helper, .. } => *helper == RuntimeHelper::BindRef,

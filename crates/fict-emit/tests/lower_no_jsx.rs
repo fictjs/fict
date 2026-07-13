@@ -496,7 +496,8 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
             EmitOperation::BindEvent {
                 event,
                 delegated: true,
-                helper: RuntimeHelper::DelegateEvents,
+                helper: RuntimeHelper::AddEventListener,
+                cleanup_helper: None,
                 ..
             } if event == "click"
         )
