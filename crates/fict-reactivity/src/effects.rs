@@ -292,6 +292,9 @@ pub fn analyze_dependencies(
                 HirInstructionKind::SyntaxFragment { fragment, .. }
                 | HirInstructionKind::Iteration {
                     pattern: fragment, ..
+                }
+                | HirInstructionKind::PatternAssignment {
+                    pattern: fragment, ..
                 } => Some(*fragment),
                 _ => None,
             };
@@ -525,6 +528,39 @@ pub fn analyze_dependencies(
                         if let Some(name) =
                             definition_names.get(&(block.id, count_u32(instruction_index), *target))
                         {
+                            writes.push(WriteFact {
+                                path: DependencyPath {
+                                    base: DependencyBase::Ssa(*name),
+                                    segments: Vec::new(),
+                                },
+                                location,
+                                mutation: MutationEffect::Local,
+                            });
+                        }
+                    }
+                }
+                HirInstructionKind::PatternAssignment {
+                    value,
+                    writes: pattern_writes,
+                    ..
+                } => {
+                    add_value_escapes(
+                        *value,
+                        EscapeKind::SyntaxFragment,
+                        Some(location),
+                        &value_dependencies,
+                        &mut escapes,
+                    );
+                    let mut seen = BTreeSet::new();
+                    for write in pattern_writes {
+                        if !seen.insert(write.local) {
+                            continue;
+                        }
+                        if let Some(name) = definition_names.get(&(
+                            block.id,
+                            count_u32(instruction_index),
+                            write.local,
+                        )) {
                             writes.push(WriteFact {
                                 path: DependencyPath {
                                     base: DependencyBase::Ssa(*name),
@@ -1252,10 +1288,12 @@ fn barrier_fact(
             kinds.insert(BarrierKind::DeferredExecution);
         }
         HirInstructionKind::SyntaxFragment { fragment, .. }
-            if file
-                .syntax_fragments
-                .get(fragment.as_usize())
-                .is_some_and(|fragment| fragment.summary.has_side_effects) =>
+        | HirInstructionKind::PatternAssignment {
+            pattern: fragment, ..
+        } if file
+            .syntax_fragments
+            .get(fragment.as_usize())
+            .is_some_and(|fragment| fragment.summary.has_side_effects) =>
         {
             kinds.insert(BarrierKind::SyntaxFragment);
         }
@@ -1285,6 +1323,7 @@ fn instruction_inputs(instruction: &HirInstruction, file: &HirFile) -> Vec<Value
             values
         }
         HirInstructionKind::Iteration { source, .. } => vec![*source],
+        HirInstructionKind::PatternAssignment { value, .. } => vec![*value],
         HirInstructionKind::Literal(_)
         | HirInstructionKind::UnresolvedTypeof { .. }
         | HirInstructionKind::Context { .. }

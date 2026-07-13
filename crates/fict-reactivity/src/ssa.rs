@@ -26,6 +26,8 @@ pub enum SsaDefinitionKind {
     ReadWrite,
     /// Per-step binding or assignment performed by an iteration loop.
     Iteration,
+    /// Final local state produced by an object or array assignment pattern.
+    PatternAssignment,
     /// Dominance-frontier merge.
     Phi,
 }
@@ -363,6 +365,24 @@ pub fn analyze_ssa(function: &HirFunction) -> Result<SsaAnalysis, DiagnosticBund
                                 );
                             }
                         }
+                        HirInstructionKind::PatternAssignment { writes, .. } => {
+                            let mut defined = BTreeSet::new();
+                            for write in writes {
+                                if !defined.insert(write.local) {
+                                    continue;
+                                }
+                                define_instruction(
+                                    write.local,
+                                    SsaDefinitionKind::PatternAssignment,
+                                    block,
+                                    instruction_index,
+                                    &mut counters,
+                                    &mut stacks,
+                                    &mut definitions,
+                                    &mut pushed,
+                                );
+                            }
+                        }
                         HirInstructionKind::Literal(_)
                         | HirInstructionKind::UnresolvedTypeof { .. }
                         | HirInstructionKind::Context { .. }
@@ -678,6 +698,9 @@ fn validate_local_references(function: &HirFunction, cfg: &CfgAnalysis) -> Diagn
                     target: DeleteTarget::Place(place),
                 } => place_local(place).into_iter().collect(),
                 HirInstructionKind::Iteration { targets, .. } => targets.clone(),
+                HirInstructionKind::PatternAssignment { writes, .. } => {
+                    unique_pattern_write_locals(writes)
+                }
                 _ => Vec::new(),
             };
             if referenced
@@ -703,8 +726,17 @@ fn defined_locals(instruction: &HirInstruction) -> Vec<LocalId> {
             place_local(place).into_iter().collect()
         }
         HirInstructionKind::Iteration { targets, .. } => targets.clone(),
+        HirInstructionKind::PatternAssignment { writes, .. } => unique_pattern_write_locals(writes),
         _ => Vec::new(),
     }
+}
+
+fn unique_pattern_write_locals(writes: &[fict_hir::HirPatternWrite]) -> Vec<LocalId> {
+    let mut seen = BTreeSet::new();
+    writes
+        .iter()
+        .filter_map(|write| seen.insert(write.local).then_some(write.local))
+        .collect()
 }
 
 fn place_local(place: &Place) -> Option<LocalId> {

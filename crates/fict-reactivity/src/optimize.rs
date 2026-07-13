@@ -949,6 +949,9 @@ fn evaluate_instruction(
 ) -> Option<LiteralValue> {
     match &instruction.kind {
         HirInstructionKind::Write { value, .. } => return values.get(value).cloned(),
+        HirInstructionKind::PatternAssignment { value, .. } => {
+            return values.get(value).cloned();
+        }
         HirInstructionKind::Sequence { values: sequence } => {
             return sequence.last().and_then(|value| values.get(value)).cloned();
         }
@@ -1181,6 +1184,9 @@ fn rewrite_instruction_values(
             }
         }
         HirInstructionKind::Iteration { source, .. } => rewrite_value(source, replacements),
+        HirInstructionKind::PatternAssignment { value, .. } => {
+            rewrite_value(value, replacements);
+        }
         HirInstructionKind::Delete { target } => match target {
             DeleteTarget::Place(place) => rewrite_place(place, replacements),
             DeleteTarget::Value(value) => rewrite_value(value, replacements),
@@ -1339,6 +1345,7 @@ fn instruction_value_inputs(
             values
         }
         HirInstructionKind::Iteration { source, .. } => vec![*source],
+        HirInstructionKind::PatternAssignment { value, .. } => vec![*value],
         HirInstructionKind::Literal(_)
         | HirInstructionKind::UnresolvedTypeof { .. }
         | HirInstructionKind::Context { .. }
@@ -1534,6 +1541,7 @@ fn remap_instruction_values(
             }
         }
         HirInstructionKind::Iteration { source, .. } => remap_value_id(source, remap)?,
+        HirInstructionKind::PatternAssignment { value, .. } => remap_value_id(value, remap)?,
         HirInstructionKind::Delete { target } => match target {
             DeleteTarget::Place(place) => remap_place_values(place, remap)?,
             DeleteTarget::Value(value) => remap_value_id(value, remap)?,

@@ -776,6 +776,19 @@ pub enum IterationKind {
     AwaitOf,
 }
 
+/// One direct local write performed by an adapter-owned assignment pattern.
+///
+/// Multiple entries may name the same local because JavaScript patterns can assign the same
+/// binding more than once. SSA treats the containing instruction as the final definition while
+/// output lowering uses every source origin to preserve the authored write order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HirPatternWrite {
+    /// Directly assigned local storage.
+    pub local: LocalId,
+    /// Exact identifier target occurrence inside the retained pattern.
+    pub origin: Origin,
+}
+
 /// One operation in a basic block.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HirInstructionKind {
@@ -829,6 +842,19 @@ pub enum HirInstructionKind {
         pattern: SyntaxFragmentId,
         /// Direct local writes performed by the pattern in source order.
         targets: Vec<LocalId>,
+    },
+    /// Apply an object or array assignment pattern and return its right-hand-side value.
+    ///
+    /// The adapter owns computed keys, defaults, rest elements, member targets, and iterator
+    /// protocol details. `writes` exposes every direct local target occurrence to SSA and
+    /// reactive output lowering without embedding an OXC node in core HIR.
+    PatternAssignment {
+        /// Once-evaluated right-hand-side value. This is also the JavaScript expression result.
+        value: ValueId,
+        /// Exact object or array assignment pattern.
+        pattern: SyntaxFragmentId,
+        /// Direct local target occurrences in authored order. Repeated locals are retained.
+        writes: Vec<HirPatternWrite>,
     },
     /// Materialize a literal value.
     Literal(LiteralValue),

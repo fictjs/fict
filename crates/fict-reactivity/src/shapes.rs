@@ -245,6 +245,9 @@ pub fn analyze_shapes(
                     HirInstructionKind::Write { value, .. } => {
                         value_sources.insert(result, *value);
                     }
+                    HirInstructionKind::PatternAssignment { value, .. } => {
+                        value_sources.insert(result, *value);
+                    }
                     _ => {}
                 }
                 if matches!(instruction.kind, HirInstructionKind::Read { .. })
@@ -264,6 +267,22 @@ pub fn analyze_shapes(
                         block.id,
                         count_u32(instruction_index),
                         *local,
+                    )) {
+                        assigned_values.insert(*target, None);
+                    }
+                }
+                continue;
+            }
+            if let HirInstructionKind::PatternAssignment { writes, .. } = &instruction.kind {
+                let mut seen = BTreeSet::new();
+                for write in writes {
+                    if !seen.insert(write.local) {
+                        continue;
+                    }
+                    if let Some(target) = definitions_by_location.get(&(
+                        block.id,
+                        count_u32(instruction_index),
+                        write.local,
                     )) {
                         assigned_values.insert(*target, None);
                     }
@@ -796,6 +815,7 @@ fn structural_value_shape(
         | HirInstructionKind::Write { .. }
         | HirInstructionKind::ReadWrite { .. }
         | HirInstructionKind::Iteration { .. }
+        | HirInstructionKind::PatternAssignment { .. }
         | HirInstructionKind::Unary { .. }
         | HirInstructionKind::Binary { .. }
         | HirInstructionKind::Conditional { .. }

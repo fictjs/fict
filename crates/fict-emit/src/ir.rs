@@ -90,6 +90,14 @@ pub enum ReactiveSlotStorage {
     Captured { owner: FunctionId },
 }
 
+/// One direct reactive identifier target inside an object or array assignment pattern.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReactivePatternTarget {
+    pub slot: EmitSlotId,
+    pub local: LocalId,
+    pub origin: Origin,
+}
+
 /// One control-flow arm used to prove hook slot stability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EmitControlArm {
@@ -259,6 +267,13 @@ pub enum EmitOperation {
         projections: Vec<Projection>,
         value: EmitValueRef,
         target: Option<EmitTemporaryId>,
+        origin: Origin,
+    },
+    /// Rewrite selected direct targets of a retained assignment pattern into reactive setters.
+    WriteReactivePattern {
+        source_result: ValueId,
+        value: EmitValueRef,
+        targets: Vec<ReactivePatternTarget>,
         origin: Origin,
     },
     UpdateReactive {
@@ -466,6 +481,7 @@ impl EmitOperation {
             Self::PreserveHir { .. }
             | Self::TrackRuntimeReactive { .. }
             | Self::WriteReactive { .. }
+            | Self::WriteReactivePattern { .. }
             | Self::UpdateReactive { .. }
             | Self::Evaluate { .. }
             | Self::CloneTemplate { .. }
@@ -588,6 +604,7 @@ impl EmitOperation {
             Self::CreateReactive { initializer, .. } => initializer.iter().for_each(&mut visit),
             Self::RegisterEffect { callback, .. } => visit(callback),
             Self::WriteReactive { value, .. } => visit(value),
+            Self::WriteReactivePattern { value, .. } => visit(value),
             Self::UpdateReactive { value, .. } => value.iter().for_each(visit),
             Self::CreateElement { tag, .. }
             | Self::BindDom { value: tag, .. }

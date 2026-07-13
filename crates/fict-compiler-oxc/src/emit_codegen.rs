@@ -17,13 +17,14 @@ use oxc::{
         AstBuilder, NONE,
         ast::{
             Argument, ArrayExpressionElement, ArrowFunctionExpression, AssignmentTarget,
-            BindingPattern, BindingRestElement, ChainElement, Expression, FormalParameter,
-            FormalParameterKind, FormalParameterRest, FormalParameters, Function, FunctionBody,
-            FunctionType, IdentifierName, IdentifierReference, ImportDeclarationSpecifier,
-            ImportOrExportKind, JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild,
-            JSXElement, JSXElementName, JSXFragment, JSXMemberExpression,
-            JSXMemberExpressionObject, ObjectPropertyKind, PropertyKey, PropertyKind,
-            SimpleAssignmentTarget, Statement, VariableDeclarationKind, VariableDeclarator,
+            AssignmentTargetMaybeDefault, AssignmentTargetProperty, BindingPattern,
+            BindingRestElement, ChainElement, Expression, FormalParameter, FormalParameterKind,
+            FormalParameterRest, FormalParameters, Function, FunctionBody, FunctionType,
+            IdentifierName, IdentifierReference, ImportDeclarationSpecifier, ImportOrExportKind,
+            JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild, JSXElement,
+            JSXElementName, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject,
+            ObjectPropertyKind, PropertyKey, PropertyKind, SimpleAssignmentTarget, Statement,
+            VariableDeclarationKind, VariableDeclarator,
         },
     },
     ast_visit::{Visit, VisitMut, walk, walk_mut},
@@ -920,13 +921,16 @@ fn read_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), ReadRewrite>, Vec<
     (reads, diagnostics)
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum MutationRewrite {
     Write,
     Compound(CompoundAssignmentOperator),
     Update {
         operator: UpdateOperator,
         prefix: bool,
+    },
+    Pattern {
+        targets: BTreeSet<(u32, u32)>,
     },
 }
 
@@ -961,6 +965,32 @@ fn mutation_rewrites(
                     prefix: *prefix,
                 },
             ),
+            EmitOperation::WriteReactivePattern {
+                origin, targets, ..
+            } => {
+                let mut locations = BTreeSet::new();
+                for target in targets {
+                    let Some(span) = target.origin.primary_span else {
+                        diagnostics.push(emit_error(
+                            "FICT-OXC-EMIT-ORIGIN",
+                            "reactive pattern target requires a source origin",
+                            GuaranteeClass::Internal,
+                        ));
+                        continue;
+                    };
+                    if !locations.insert((span.start(), span.end())) {
+                        diagnostics.push(
+                            emit_error(
+                                "FICT-OXC-EMIT-ORIGIN",
+                                "reactive pattern target origins must be unique",
+                                GuaranteeClass::Internal,
+                            )
+                            .with_primary_span(span),
+                        );
+                    }
+                }
+                (origin, MutationRewrite::Pattern { targets: locations })
+            }
             _ => continue,
         };
         let Some(span) = origin.primary_span else {
@@ -2904,7 +2934,7 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
             }
             return;
         }
-        if let Some(rewrite) = self.mutations.get(&location).copied()
+        if let Some(rewrite) = self.mutations.get(&location).cloned()
             && self.rewrite_mutation(expression, rewrite)
         {
             self.matched_mutations.insert(location);
@@ -5146,8 +5176,291 @@ impl<'a> AstRewriter<'a, '_> {
                 };
                 true
             }
+            MutationRewrite::Pattern { targets } => {
+                let Expression::AssignmentExpression(assignment) = expression else {
+                    return false;
+                };
+                if assignment.operator != oxc::syntax::operator::AssignmentOperator::Assign
+                    || !matches!(
+                        assignment.left,
+                        AssignmentTarget::ArrayAssignmentTarget(_)
+                            | AssignmentTarget::ObjectAssignmentTarget(_)
+                    )
+                {
+                    return false;
+                }
+                walk_mut::walk_assignment_expression(self, assignment);
+                let mut matched = BTreeSet::new();
+                rewrite_pattern_assignment_target(
+                    &mut assignment.left,
+                    &targets,
+                    &mut matched,
+                    self.allocator,
+                );
+                if matched != targets {
+                    self.diagnostics.push(
+                        emit_error(
+                            "FICT-OXC-EMIT-PATTERN",
+                            "reactive pattern target origins do not match the OXC assignment pattern",
+                            GuaranteeClass::Internal,
+                        )
+                        .with_primary_span(
+                            SourceSpan::new(assignment.span.start, assignment.span.end)
+                                .expect("ordered OXC assignment span"),
+                        ),
+                    );
+                }
+                true
+            }
         }
     }
+}
+
+fn rewrite_pattern_assignment_target<'a>(
+    target: &mut AssignmentTarget<'a>,
+    expected: &BTreeSet<(u32, u32)>,
+    matched: &mut BTreeSet<(u32, u32)>,
+    allocator: &'a Allocator,
+) {
+    if let Some((name, span)) = direct_pattern_target_identifier(target) {
+        let location = (span.start, span.end);
+        if expected.contains(&location) {
+            *target = reactive_setter_assignment_target(allocator, &name, span);
+            matched.insert(location);
+        }
+        return;
+    }
+    match target {
+        AssignmentTarget::ArrayAssignmentTarget(array) => {
+            for element in array.elements.iter_mut().flatten() {
+                rewrite_pattern_maybe_default(element, expected, matched, allocator);
+            }
+            if let Some(rest) = &mut array.rest {
+                rewrite_pattern_assignment_target(&mut rest.target, expected, matched, allocator);
+            }
+        }
+        AssignmentTarget::ObjectAssignmentTarget(object) => {
+            for property in &mut object.properties {
+                rewrite_pattern_property(property, expected, matched, allocator);
+            }
+            if let Some(rest) = &mut object.rest {
+                rewrite_pattern_assignment_target(&mut rest.target, expected, matched, allocator);
+            }
+        }
+        AssignmentTarget::AssignmentTargetIdentifier(_)
+        | AssignmentTarget::TSAsExpression(_)
+        | AssignmentTarget::TSSatisfiesExpression(_)
+        | AssignmentTarget::TSNonNullExpression(_)
+        | AssignmentTarget::TSTypeAssertion(_)
+        | AssignmentTarget::ComputedMemberExpression(_)
+        | AssignmentTarget::StaticMemberExpression(_)
+        | AssignmentTarget::PrivateFieldExpression(_) => {}
+    }
+}
+
+fn rewrite_pattern_maybe_default<'a>(
+    target: &mut AssignmentTargetMaybeDefault<'a>,
+    expected: &BTreeSet<(u32, u32)>,
+    matched: &mut BTreeSet<(u32, u32)>,
+    allocator: &'a Allocator,
+) {
+    if let AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) = target {
+        rewrite_pattern_assignment_target(&mut default.binding, expected, matched, allocator);
+        return;
+    }
+    let owned = target.take_in(&allocator);
+    let Ok(mut assignment_target) = AssignmentTarget::try_from(owned) else {
+        unreachable!("non-default assignment target must convert to AssignmentTarget")
+    };
+    rewrite_pattern_assignment_target(&mut assignment_target, expected, matched, allocator);
+    *target = assignment_target.into();
+}
+
+fn rewrite_pattern_property<'a>(
+    property: &mut AssignmentTargetProperty<'a>,
+    expected: &BTreeSet<(u32, u32)>,
+    matched: &mut BTreeSet<(u32, u32)>,
+    allocator: &'a Allocator,
+) {
+    match property {
+        AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
+            rewrite_pattern_maybe_default(&mut property.binding, expected, matched, allocator);
+        }
+        AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(shorthand) => {
+            let location = (shorthand.binding.span.start, shorthand.binding.span.end);
+            if !expected.contains(&location) {
+                return;
+            }
+            let owned = property.take_in(&allocator);
+            let AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(shorthand) = owned
+            else {
+                unreachable!("selected shorthand assignment property")
+            };
+            let shorthand = shorthand.unbox();
+            let span = shorthand.binding.span;
+            let name = shorthand.binding.name.to_string();
+            let builder = AstBuilder::new(allocator);
+            let key =
+                PropertyKey::new_static_identifier(span, allocator.alloc_str(&name), &builder);
+            let setter = reactive_setter_assignment_target(allocator, &name, span);
+            let binding = match shorthand.init {
+                Some(init) => AssignmentTargetMaybeDefault::new_assignment_target_with_default(
+                    shorthand.span,
+                    setter,
+                    init,
+                    &builder,
+                ),
+                None => AssignmentTargetMaybeDefault::from(setter),
+            };
+            *property = AssignmentTargetProperty::new_assignment_target_property_property(
+                shorthand.span,
+                key,
+                binding,
+                false,
+                &builder,
+            );
+            matched.insert(location);
+        }
+    }
+}
+
+fn direct_pattern_target_identifier(target: &AssignmentTarget<'_>) -> Option<(String, Span)> {
+    let identifier = match target {
+        AssignmentTarget::AssignmentTargetIdentifier(identifier) => Some(identifier.as_ref()),
+        AssignmentTarget::TSAsExpression(expression) => {
+            direct_pattern_expression_identifier(&expression.expression)
+        }
+        AssignmentTarget::TSSatisfiesExpression(expression) => {
+            direct_pattern_expression_identifier(&expression.expression)
+        }
+        AssignmentTarget::TSNonNullExpression(expression) => {
+            direct_pattern_expression_identifier(&expression.expression)
+        }
+        AssignmentTarget::TSTypeAssertion(expression) => {
+            direct_pattern_expression_identifier(&expression.expression)
+        }
+        AssignmentTarget::ComputedMemberExpression(_)
+        | AssignmentTarget::StaticMemberExpression(_)
+        | AssignmentTarget::PrivateFieldExpression(_)
+        | AssignmentTarget::ArrayAssignmentTarget(_)
+        | AssignmentTarget::ObjectAssignmentTarget(_) => None,
+    }?;
+    Some((identifier.name.to_string(), identifier.span))
+}
+
+fn direct_pattern_expression_identifier<'a, 'expression>(
+    expression: &'expression Expression<'a>,
+) -> Option<&'expression IdentifierReference<'a>> {
+    match expression.get_inner_expression() {
+        Expression::Identifier(identifier) => Some(identifier),
+        _ => None,
+    }
+}
+
+fn reactive_setter_assignment_target<'a>(
+    allocator: &'a Allocator,
+    signal: &str,
+    span: Span,
+) -> AssignmentTarget<'a> {
+    let builder = AstBuilder::new(allocator);
+    let setter_property = "__fictSetter";
+    let value_property = "__fictValue";
+    let parameter_name = "__fictNext";
+
+    let mut properties = ArenaVec::new_in(&allocator);
+    properties.push(ObjectPropertyKind::new_object_property(
+        span,
+        PropertyKind::Init,
+        PropertyKey::new_static_identifier(span, allocator.alloc_str(setter_property), &builder),
+        Expression::new_identifier(span, allocator.alloc_str(signal), &builder),
+        false,
+        false,
+        false,
+        &builder,
+    ));
+
+    let parameter_pattern = BindingPattern::new_binding_identifier(span, parameter_name, &builder);
+    let parameter = FormalParameter::new(
+        span,
+        ArenaVec::new_in(&allocator),
+        parameter_pattern,
+        NONE,
+        NONE,
+        false,
+        None,
+        false,
+        false,
+        &builder,
+    );
+    let mut parameter_items = ArenaVec::new_in(&allocator);
+    parameter_items.push(parameter);
+    let parameters = FormalParameters::boxed(
+        span,
+        FormalParameterKind::FormalParameter,
+        parameter_items,
+        NONE,
+        &builder,
+    );
+    let setter_callee = Expression::new_static_member_expression(
+        span,
+        Expression::new_this_expression(span, &builder),
+        IdentifierName::new(span, setter_property, &builder),
+        false,
+        &builder,
+    );
+    let mut setter_arguments = ArenaVec::new_in(&allocator);
+    setter_arguments.push(Argument::from(Expression::new_identifier(
+        span,
+        parameter_name,
+        &builder,
+    )));
+    let setter_call = Expression::new_call_expression(
+        span,
+        setter_callee,
+        NONE,
+        setter_arguments,
+        false,
+        &builder,
+    );
+    let mut statements = ArenaVec::new_in(&allocator);
+    statements.push(Statement::new_expression_statement(
+        span,
+        setter_call,
+        &builder,
+    ));
+    let body = FunctionBody::boxed(span, ArenaVec::new_in(&allocator), statements, &builder);
+    let setter_function = Expression::new_function_expression(
+        span,
+        FunctionType::FunctionExpression,
+        None,
+        false,
+        false,
+        false,
+        NONE,
+        NONE,
+        parameters,
+        NONE,
+        Some(body),
+        &builder,
+    );
+    properties.push(ObjectPropertyKind::new_object_property(
+        span,
+        PropertyKind::Set,
+        PropertyKey::new_static_identifier(span, allocator.alloc_str(value_property), &builder),
+        setter_function,
+        false,
+        false,
+        false,
+        &builder,
+    ));
+    let object = Expression::new_object_expression(span, properties, &builder);
+    AssignmentTarget::new_static_member_expression(
+        span,
+        object,
+        IdentifierName::new(span, value_property, &builder),
+        false,
+        &builder,
+    )
 }
 
 fn jsx_dynamic_values<'a>(
@@ -6100,6 +6413,7 @@ fn operation_origin(operation: &EmitOperation) -> fict_hir::Origin {
         | EmitOperation::ReadReactive { origin, .. }
         | EmitOperation::RegisterEffect { origin, .. }
         | EmitOperation::WriteReactive { origin, .. }
+        | EmitOperation::WriteReactivePattern { origin, .. }
         | EmitOperation::UpdateReactive { origin, .. }
         | EmitOperation::CreateVNode { origin, .. }
         | EmitOperation::DeclareTemplate { origin, .. }

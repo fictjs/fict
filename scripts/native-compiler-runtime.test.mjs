@@ -416,6 +416,95 @@ test('Rust compiler preserves assignment results and logical-assignment laziness
   container.remove()
 })
 
+test('Rust compiler preserves destructuring assignment order, results, and reactive writes', async () => {
+  const module = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      export let evaluate = () => null
+
+      function App() {
+        let first = $state(0)
+        let second = $state(0)
+        evaluate = source => {
+          const effects = []
+          let local = 0
+          let rest = {}
+          let fallbackObserved = -1
+          const holder = { value: 0 }
+          const key = () => {
+            effects.push('key')
+            return 'missing'
+          }
+          const fallback = () => {
+            fallbackObserved = first
+            effects.push('fallback')
+            return fallbackObserved + 1
+          }
+          const result = ({
+            first,
+            [key()]: second = fallback(),
+            nested: [local],
+            ...rest
+          } = source)
+          const rhs = [9, undefined, 10, 12]
+          const argument = ((value) => value)(
+            [first, second = first, first, holder.value] = rhs
+          )
+          return {
+            sameResult: result === source,
+            sameArgument: argument === rhs,
+            argument: [...argument],
+            first,
+            second,
+            local,
+            member: holder.value,
+            fallbackObserved,
+            rest,
+            effects,
+          }
+        }
+        return <output data-id="destructuring-value">{first}:{second}</output>
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+    `,
+    'destructuring-assignment-results',
+    /set __fictValue/,
+  )
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = module.mount(container)
+  await flushRuntime()
+
+  const source = {
+    first: 4,
+    missing: undefined,
+    nested: [7],
+    extra: 11,
+  }
+  assert.deepEqual(module.evaluate(source), {
+    sameResult: true,
+    sameArgument: true,
+    argument: [9, undefined, 10, 12],
+    first: 10,
+    second: 9,
+    local: 7,
+    member: 12,
+    fallbackObserved: 4,
+    rest: { extra: 11 },
+    effects: ['key', 'fallback'],
+  })
+  await flushRuntime()
+  assert.equal(container.querySelector('[data-id="destructuring-value"]')?.textContent, '10:9')
+
+  dispose()
+  container.remove()
+})
+
 test('Rust compiler output executes structured for-of and for-in loops', async () => {
   const module = await compileAndImport(
     `

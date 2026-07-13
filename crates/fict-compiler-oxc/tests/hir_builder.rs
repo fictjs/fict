@@ -9,6 +9,10 @@ use fict_hir::{
     StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, UnaryOperator, UpdateOperator,
     ValueKind,
 };
+use fict_reactivity::{
+    ReactiveBindingKind, SsaDefinitionKind, analyze_aliases, analyze_dependencies,
+    analyze_reactive_scopes, analyze_shapes, analyze_ssa,
+};
 
 fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
     OxcCompileOptions {
@@ -1541,6 +1545,361 @@ fn preserves_assignment_results_projected_order_and_logical_rhs_laziness() {
     };
     assert_eq!(call.arguments.len(), 1);
     assert_eq!(call.arguments[0].value, argument_result);
+}
+
+#[test]
+fn materializes_destructuring_assignments_as_typed_result_bearing_hir() {
+    let source = r#"
+        function assign(source, key, fallback, invoke, object) {
+            let a, b, rest;
+            const result = ({ [key()]: a = fallback(), nested: [b], ...rest } = source());
+            const argument = invoke([a, object.slot] = source());
+            return [result, argument, a, b, rest];
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified destructuring-assignment HIR");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "assign")
+        })
+        .expect("assign function");
+    let instructions: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let authored = |origin: fict_hir::Origin| {
+        let span = origin.primary_span.expect("authored origin");
+        &source[span.start() as usize..span.end() as usize]
+    };
+    let local_name = |local: fict_hir::LocalId| {
+        function.locals[local.as_usize()]
+            .debug_name
+            .as_deref()
+            .expect("named local")
+    };
+    let instruction_for_result = |value| {
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| instruction.result == Some(value))
+            .unwrap_or_else(|| panic!("instruction for {value:?}"))
+    };
+    let initializer = |name: &str| {
+        let local = function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"));
+        instructions
+            .iter()
+            .find_map(|instruction| match instruction.kind {
+                HirInstructionKind::Declare {
+                    local: candidate,
+                    initializer,
+                    ..
+                } if candidate == local.id => initializer,
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{name} initializer"))
+    };
+
+    let assignments: Vec<_> = instructions
+        .iter()
+        .copied()
+        .filter(|instruction| {
+            matches!(
+                instruction.kind,
+                HirInstructionKind::PatternAssignment { .. }
+            )
+        })
+        .collect();
+    assert_eq!(assignments.len(), 2);
+    assert_eq!(
+        assignments
+            .iter()
+            .map(|instruction| authored(instruction.origin))
+            .collect::<Vec<_>>(),
+        [
+            "{ [key()]: a = fallback(), nested: [b], ...rest } = source()",
+            "[a, object.slot] = source()",
+        ]
+    );
+    assert!(
+        assignments
+            .iter()
+            .all(|instruction| instruction.result.is_some())
+    );
+
+    let first = assignments[0];
+    let HirInstructionKind::PatternAssignment {
+        value: first_value,
+        pattern: first_pattern,
+        writes: ref first_writes,
+    } = first.kind
+    else {
+        unreachable!()
+    };
+    assert_eq!(
+        first_writes
+            .iter()
+            .map(|write| (local_name(write.local), authored(write.origin)))
+            .collect::<Vec<_>>(),
+        [("a", "a"), ("b", "b"), ("rest", "rest")]
+    );
+    assert_eq!(
+        authored(instruction_for_result(first_value).origin),
+        "source()"
+    );
+    assert_eq!(
+        initializer("result"),
+        first.result.expect("first assignment result")
+    );
+    let first_fragment = &hir.syntax_fragments[first_pattern.as_usize()];
+    assert_eq!(
+        output.syntax_fragments[first_pattern.as_usize()].source,
+        "{ [key()]: a = fallback(), nested: [b], ...rest }"
+    );
+    let first_summary = first_fragment
+        .summary
+        .pattern
+        .as_ref()
+        .expect("assignment-pattern summary");
+    assert!(first_summary.has_defaults);
+    assert!(first_summary.has_rest);
+    assert_eq!(
+        first_summary
+            .assigned_bindings
+            .iter()
+            .map(|binding| hir.bindings[binding.as_usize()].display_name.as_str())
+            .collect::<Vec<_>>(),
+        ["a", "b", "rest"]
+    );
+    assert_eq!(
+        first_fragment
+            .summary
+            .referenced_bindings
+            .iter()
+            .map(|binding| hir.bindings[binding.as_usize()].display_name.as_str())
+            .collect::<Vec<_>>(),
+        ["key", "fallback"]
+    );
+
+    let second = assignments[1];
+    let HirInstructionKind::PatternAssignment {
+        value: second_value,
+        pattern: second_pattern,
+        writes: ref second_writes,
+    } = second.kind
+    else {
+        unreachable!()
+    };
+    assert_eq!(
+        second_writes
+            .iter()
+            .map(|write| (local_name(write.local), authored(write.origin)))
+            .collect::<Vec<_>>(),
+        [("a", "a")]
+    );
+    assert_eq!(
+        authored(instruction_for_result(second_value).origin),
+        "source()"
+    );
+    assert_eq!(
+        output.syntax_fragments[second_pattern.as_usize()].source,
+        "[a, object.slot]"
+    );
+    assert_eq!(
+        hir.syntax_fragments[second_pattern.as_usize()]
+            .summary
+            .referenced_bindings
+            .iter()
+            .map(|binding| hir.bindings[binding.as_usize()].display_name.as_str())
+            .collect::<Vec<_>>(),
+        ["object"]
+    );
+    let invocation = instructions
+        .iter()
+        .copied()
+        .find(|instruction| authored(instruction.origin) == "invoke([a, object.slot] = source())")
+        .expect("outer invocation");
+    let HirInstructionKind::Call(call) = &invocation.kind else {
+        panic!("outer invocation must remain a typed call")
+    };
+    assert_eq!(
+        call.arguments[0].value,
+        second.result.expect("second assignment result")
+    );
+    assert_eq!(
+        initializer("argument"),
+        invocation.result.expect("call result")
+    );
+
+    for deferred in ["key()", "fallback()", "object.slot"] {
+        assert!(
+            instructions
+                .iter()
+                .all(|instruction| authored(instruction.origin) != deferred),
+            "adapter-owned pattern child must not be evaluated independently: {deferred}"
+        );
+    }
+    assert!(instructions.iter().all(|instruction| {
+        !matches!(
+            instruction.kind,
+            HirInstructionKind::SyntaxFragment { fragment, .. }
+                if hir.syntax_fragments[fragment.as_usize()].kind == SyntaxFragmentKind::Expression
+                    && [
+                        "{ [key()]: a = fallback(), nested: [b], ...rest } = source()",
+                        "[a, object.slot] = source()",
+                    ]
+                    .contains(&authored(instruction.origin))
+        )
+    }));
+
+    let ssa = analyze_ssa(function).expect("destructuring-assignment SSA");
+    assert_eq!(
+        ssa.definitions
+            .iter()
+            .filter(|definition| definition.kind == SsaDefinitionKind::PatternAssignment)
+            .count(),
+        4,
+        "a is defined by both assignments while b and rest are each defined once"
+    );
+    analyze_dependencies(&hir, function.id, &ssa).expect("destructuring-assignment dependencies");
+}
+
+#[test]
+fn plain_assignment_results_do_not_escape_reactive_pattern_targets() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App(consume) {
+            let first = $state(0);
+            let second = $state(0);
+            const rhs = [1, undefined];
+            return consume([first, second = first] = rhs);
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    assert!(
+        output
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code.as_str() != "FICT-R002"),
+        "a plain assignment passes its RHS, not the reactive write targets: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn propagates_reactive_dependencies_through_pattern_defaults() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            let state = $state(1);
+            let derived;
+            [derived = state] = [];
+            return derived;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified reactive pattern HIR");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "App")
+        })
+        .expect("App function");
+    let local = |name: &str| {
+        function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"))
+            .id
+    };
+    let state = local("state");
+    let derived = local("derived");
+    let ssa = analyze_ssa(function).expect("reactive-pattern SSA");
+    let dependencies =
+        analyze_dependencies(&hir, function.id, &ssa).expect("reactive-pattern dependencies");
+    let aliases =
+        analyze_aliases(&hir, function.id, &ssa, &dependencies).expect("reactive-pattern aliases");
+    let shapes = analyze_shapes(&hir, function.id, &ssa, &dependencies, &aliases)
+        .expect("reactive-pattern shapes");
+    let scopes = analyze_reactive_scopes(&hir, function.id, &ssa, &dependencies, &shapes)
+        .expect("reactive-pattern scopes");
+    let derived = scopes
+        .bindings
+        .iter()
+        .find(|binding| binding.name.local == derived)
+        .expect("derived pattern target");
+    assert_eq!(derived.kind, ReactiveBindingKind::Derived);
+    assert!(derived.dependencies.iter().any(|path| {
+        matches!(path.base, fict_reactivity::DependencyBase::Ssa(name) if name.local == state)
+    }));
+
+    let escaped_source = r#"
+            import { $state } from 'fict';
+            function App(consume) {
+                let state = $state(1);
+                let derived;
+                [derived = state] = [];
+                return consume(derived);
+            }
+        "#;
+    let escaped = build_hir(
+        escaped_source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(escaped.hir.is_none());
+    assert!(escaped.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-R002"
+            && diagnostic.primary_span.is_some_and(|span| {
+                &escaped_source[span.start() as usize..span.end() as usize] == "derived"
+            })
+    }));
+
+    let callback_default = build_hir(
+        r#"
+            import { $state } from 'fict';
+            function App(consume) {
+                let state = $state(1);
+                let callback;
+                [callback = () => state] = [];
+                return consume(callback);
+            }
+        "#,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(callback_default.hir.is_none());
+    assert!(callback_default.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-R005" && diagnostic.message.contains("state")
+    }));
 }
 
 #[test]

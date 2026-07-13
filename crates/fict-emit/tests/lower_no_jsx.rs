@@ -5,13 +5,13 @@ use fict_emit::{
 use fict_hir::{
     Binding, BindingId, BindingKind, BlockId, CallArgument, CallHost, CallInstruction,
     DeclarationKind, FictMacroKind, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock,
-    HirFile, HirFunction, HirInstruction, HirInstructionKind, HirLocal, HirScope, HirTerminator,
-    HirValue, ImportBinding, ImportKind, ImportedName, InstructionSemantics, JsxAttribute,
-    JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxExpressionKind, JsxNode,
-    JsxTemplate, LiteralValue, LocalId, LocalKind, MutationEffect, NumberLiteral, Origin, Place,
-    ReactiveCallKind, ScopeId, ScopeKind, SourceSpan, SyntaxFragment, SyntaxFragmentId,
-    SyntaxFragmentKind, SyntaxSummary, TemplateId, TerminatorKind, UpdateOperator, ValueId,
-    ValueKind, verify_hir,
+    HirFile, HirFunction, HirInstruction, HirInstructionKind, HirLocal, HirPatternWrite, HirScope,
+    HirTerminator, HirValue, ImportBinding, ImportKind, ImportedName, InstructionSemantics,
+    JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxExpressionKind,
+    JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind, MutationEffect, NumberLiteral, Origin,
+    PatternSummary, Place, ReactiveCallKind, ScopeId, ScopeKind, SourceSpan, SyntaxFragment,
+    SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TemplateId, TerminatorKind,
+    UpdateOperator, ValueId, ValueKind, verify_hir,
 };
 use fict_reactivity::{
     ReactiveCycleAnalysis, RegionAnalysis, analyze_aliases, analyze_dependencies,
@@ -301,6 +301,82 @@ fn lowers_module_state_reads_writes_updates_and_effects() {
             .operations
             .iter()
             .any(|operation| matches!(operation, EmitOperation::RegisterEffect { .. }))
+    );
+}
+
+#[test]
+fn lowers_reactive_targets_inside_assignment_patterns() {
+    let mut hir = fixture(FunctionKind::Module);
+    hir.bindings.push(Binding {
+        id: BindingId::new(0),
+        scope: ScopeId::new(0),
+        kind: BindingKind::Let,
+        display_name: "count".into(),
+        import: None,
+        origin: origin(),
+    });
+    hir.functions[0].locals[0].binding = Some(BindingId::new(0));
+    hir.syntax_fragments.push(SyntaxFragment {
+        id: SyntaxFragmentId::new(0),
+        kind: SyntaxFragmentKind::Pattern,
+        origin: origin(),
+        summary: SyntaxSummary {
+            pattern: Some(PatternSummary {
+                assigned_bindings: vec![BindingId::new(0)],
+                ..PatternSummary::default()
+            }),
+            has_side_effects: true,
+            may_throw: true,
+            ..SyntaxSummary::default()
+        },
+    });
+    hir.functions[0]
+        .values
+        .push(value(8, ValueKind::InstructionResult));
+    hir.functions[0].blocks[0].instructions.insert(
+        8,
+        HirInstruction {
+            result: Some(ValueId::new(8)),
+            kind: HirInstructionKind::PatternAssignment {
+                value: ValueId::new(1),
+                pattern: SyntaxFragmentId::new(0),
+                writes: vec![HirPatternWrite {
+                    local: LocalId::new(0),
+                    origin: origin(),
+                }],
+            },
+            semantics: InstructionSemantics {
+                mutation: MutationEffect::Local,
+                ..InstructionSemantics::CONSERVATIVE_EAGER
+            },
+            origin: origin(),
+        },
+    );
+
+    verify_hir(&hir).expect("valid reactive pattern lowering fixture");
+    let (regions, cycles) = analyses(&hir);
+    let program = lower_no_jsx(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
+        .expect("reactive pattern lowering");
+    let operation = program.functions[0]
+        .operations
+        .iter()
+        .find_map(|operation| match operation {
+            EmitOperation::WriteReactivePattern {
+                source_result,
+                value,
+                targets,
+                ..
+            } => Some((*source_result, value.clone(), targets.as_slice())),
+            _ => None,
+        })
+        .expect("reactive pattern operation");
+    assert_eq!(operation.0, ValueId::new(8));
+    assert_eq!(operation.1, fict_emit::EmitValueRef::Hir(ValueId::new(1)));
+    assert_eq!(operation.2.len(), 1);
+    assert_eq!(operation.2[0].local, LocalId::new(0));
+    assert_eq!(
+        program.functions[0].slots[operation.2[0].slot.as_usize()].binding,
+        Some(BindingId::new(0))
     );
 }
 

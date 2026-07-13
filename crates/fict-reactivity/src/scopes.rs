@@ -472,6 +472,32 @@ fn binding_candidates(
                                 );
                                 None
                             }
+                            HirInstructionKind::PatternAssignment { value, writes, .. }
+                                if writes
+                                    .iter()
+                                    .any(|write| write.local == definition.name.local) =>
+                            {
+                                paths.extend(
+                                    dependencies
+                                        .value_dependencies
+                                        .get(value.as_usize())
+                                        .into_iter()
+                                        .flatten()
+                                        .cloned(),
+                                );
+                                paths.extend(
+                                    dependencies
+                                        .reads
+                                        .iter()
+                                        .filter(|read| {
+                                            read.location.block == block
+                                                && read.location.instruction == instruction
+                                        })
+                                        .map(|read| read.path.clone()),
+                                );
+                                eligible = true;
+                                None
+                            }
                             _ => None,
                         };
                         if let Some(value) = value {

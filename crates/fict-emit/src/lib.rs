@@ -13,7 +13,8 @@ pub use ir::{
     DomNamespace, EmitContext, EmitControlArm, EmitFunction, EmitModulePlan, EmitOperation,
     EmitProgram, EmitPropBinding, EmitPropCheck, EmitPropMode, EmitPropsDefault, EmitPropsPlan,
     EmitPropsRest, EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef, PropsOperation,
-    ReactiveSlot, ReactiveSlotKind, ReactiveSlotStorage, RuntimeImportIntent,
+    ReactivePatternTarget, ReactiveSlot, ReactiveSlotKind, ReactiveSlotStorage,
+    RuntimeImportIntent,
 };
 pub use lower::{NoJsxLoweringOptions, lower_core, lower_no_jsx};
 

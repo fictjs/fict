@@ -614,6 +614,56 @@ fn verify_operations(
                 verify_slot(function, *slot, diagnostics);
                 verify_source_result(hir_function, *source_result, diagnostics);
             }
+            EmitOperation::WriteReactivePattern {
+                source_result,
+                targets,
+                origin,
+                ..
+            } => {
+                verify_source_result(hir_function, *source_result, diagnostics);
+                let source = hir_function
+                    .blocks
+                    .iter()
+                    .flat_map(|block| &block.instructions)
+                    .find(|instruction| instruction.result == Some(*source_result));
+                let source_writes = source.and_then(|instruction| {
+                    let fict_hir::HirInstructionKind::PatternAssignment { writes, .. } =
+                        &instruction.kind
+                    else {
+                        return None;
+                    };
+                    (instruction.origin == *origin).then_some(writes.as_slice())
+                });
+                let mut origins = BTreeSet::new();
+                if targets.is_empty()
+                    || source_writes.is_none()
+                    || targets.iter().any(|target| {
+                        verify_slot(function, target.slot, diagnostics);
+                        let slot_binding = function
+                            .slots
+                            .get(target.slot.as_usize())
+                            .and_then(|slot| slot.binding);
+                        let local_binding = hir_function
+                            .locals
+                            .get(target.local.as_usize())
+                            .and_then(|local| local.binding);
+                        target.origin.primary_span.is_none()
+                            || !origins.insert(target.origin)
+                            || slot_binding.is_none()
+                            || slot_binding != local_binding
+                            || source_writes.is_none_or(|writes| {
+                                !writes.iter().any(|write| {
+                                    write.local == target.local && write.origin == target.origin
+                                })
+                            })
+                    })
+                {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-PATTERN",
+                        "reactive pattern targets must match source HIR writes and slots",
+                    ));
+                }
+            }
             EmitOperation::RegisterEffect {
                 slot,
                 source_result,
@@ -1038,6 +1088,7 @@ fn verify_helper_semantics(
         EmitOperation::PreserveHir { .. }
         | EmitOperation::TrackRuntimeReactive { .. }
         | EmitOperation::WriteReactive { .. }
+        | EmitOperation::WriteReactivePattern { .. }
         | EmitOperation::UpdateReactive { .. }
         | EmitOperation::Evaluate { .. }
         | EmitOperation::CloneTemplate { .. }

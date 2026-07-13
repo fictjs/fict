@@ -16,8 +16,9 @@ use crate::{
     DELEGATED_EVENTS, DomBindingKind, DomNamespace, EmitContext, EmitFunction, EmitModulePlan,
     EmitOperation, EmitProgram, EmitPropBinding, EmitPropCheck, EmitPropMode, EmitPropsDefault,
     EmitPropsPlan, EmitPropsRest, EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef,
-    PropsOperation, ReactiveSlot, ReactiveSlotKind, ReactiveSlotStorage, RuntimeFamily,
-    RuntimeHelper, RuntimeImportIntent, name_allocator::NameAllocator, verify_emit_program,
+    PropsOperation, ReactivePatternTarget, ReactiveSlot, ReactiveSlotKind, ReactiveSlotStorage,
+    RuntimeFamily, RuntimeHelper, RuntimeImportIntent, name_allocator::NameAllocator,
+    verify_emit_program,
 };
 
 /// Phase-1 Core lowering configuration.
@@ -715,6 +716,37 @@ fn lower_function(
                         update: *update,
                         prefix: *prefix,
                         target,
+                        origin: instruction.origin,
+                    });
+                }
+                HirInstructionKind::PatternAssignment { value, writes, .. } => {
+                    let targets: Vec<_> = writes
+                        .iter()
+                        .filter_map(|write| {
+                            slot_by_local.get(&write.local).copied().map(|slot| {
+                                ReactivePatternTarget {
+                                    slot,
+                                    local: write.local,
+                                    origin: write.origin,
+                                }
+                            })
+                        })
+                        .collect();
+                    if targets.is_empty() {
+                        preserve(&mut operations, block.id, instruction_index, instruction);
+                        continue;
+                    }
+                    let Some(source_result) = instruction.result else {
+                        return Err(DiagnosticBundle::new(vec![lower_error(
+                            "FICT-EMIT-PATTERN-RESULT",
+                            "reactive pattern assignment has no HIR result",
+                            GuaranteeClass::Internal,
+                        )]));
+                    };
+                    operations.push(EmitOperation::WriteReactivePattern {
+                        source_result,
+                        value: lower_value(*value, &value_temporaries),
+                        targets,
                         origin: instruction.origin,
                     });
                 }

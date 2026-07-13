@@ -356,6 +356,9 @@ fn direct_value_sources(
                 HirInstructionKind::Write { value, .. } => {
                     forwarded_values.insert(result, *value);
                 }
+                HirInstructionKind::PatternAssignment { value, .. } => {
+                    forwarded_values.insert(result, *value);
+                }
                 HirInstructionKind::Sequence { values } => {
                     if let Some(value) = values.last() {
                         forwarded_values.insert(result, *value);

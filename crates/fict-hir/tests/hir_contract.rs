@@ -1,11 +1,13 @@
 use fict_hir::{
-    BlockId, CallHost, CallInstruction, DeleteTarget, FileId, FunctionFlags, FunctionId,
-    FunctionKind, GlobalId, HirBlock, HirFile, HirFunction, HirGlobal, HirInstruction,
-    HirInstructionKind, HirScope, HirTerminator, HirValue, ImportPhase, InstructionSemantics,
-    JavaScriptString, LiteralValue, NumberLiteral, ObjectEntry, ObjectPropertyKind, Origin, Place,
-    PlaceBase, Projection, PropertyKey, ScopeId, ScopeKind, StructuredSourceHint,
-    StructuredSourceKind, StructuredSwitchCaseHint, TaggedTemplateQuasi, TerminatorKind, ValueId,
-    ValueKind, print_hir, verify_hir,
+    Binding, BindingId, BindingKind, BlockId, CallHost, CallInstruction, DeclarationKind,
+    DeleteTarget, FileId, FunctionFlags, FunctionId, FunctionKind, GlobalId, HirBlock, HirFile,
+    HirFunction, HirGlobal, HirInstruction, HirInstructionKind, HirLocal, HirPatternWrite,
+    HirScope, HirTerminator, HirValue, ImportPhase, InstructionSemantics, JavaScriptString,
+    LiteralValue, LocalId, LocalKind, NumberLiteral, ObjectEntry, ObjectPropertyKind, Origin,
+    PatternSummary, Place, PlaceBase, Projection, PropertyKey, ScopeId, ScopeKind,
+    StructuredSourceHint, StructuredSourceKind, StructuredSwitchCaseHint, SyntaxFragment,
+    SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi, TerminatorKind,
+    ValueId, ValueKind, print_hir, verify_hir,
 };
 
 fn empty_file() -> HirFile {
@@ -89,6 +91,122 @@ fn verifier_reports_arena_and_span_corruption_without_panicking() {
     assert!(codes.contains(&"FICT-HIR-SPAN"));
     assert!(diagnostics.iter().all(|diagnostic| {
         diagnostic.guarantee_class == fict_diagnostics::GuaranteeClass::Internal
+    }));
+}
+
+#[test]
+fn verifier_enforces_pattern_assignment_result_write_and_summary_invariants() {
+    let mut file = empty_file();
+    file.source_len = 4;
+    let assignment_origin =
+        Origin::source(fict_hir::SourceSpan::new(0, 4).expect("assignment fixture span"));
+    let pattern_origin =
+        Origin::source(fict_hir::SourceSpan::new(0, 2).expect("pattern fixture span"));
+    let write_origin = Origin::source(fict_hir::SourceSpan::new(0, 1).expect("write fixture span"));
+    file.bindings.push(Binding {
+        id: BindingId::new(0),
+        scope: ScopeId::new(0),
+        kind: BindingKind::Let,
+        display_name: "target".into(),
+        import: None,
+        origin: write_origin,
+    });
+    file.syntax_fragments.push(SyntaxFragment {
+        id: SyntaxFragmentId::new(0),
+        kind: SyntaxFragmentKind::Pattern,
+        origin: pattern_origin,
+        summary: SyntaxSummary {
+            pattern: Some(PatternSummary {
+                assigned_bindings: vec![BindingId::new(0)],
+                ..PatternSummary::default()
+            }),
+            has_side_effects: true,
+            may_throw: true,
+            ..SyntaxSummary::default()
+        },
+    });
+    file.functions[0].locals.push(HirLocal {
+        id: LocalId::new(0),
+        binding: Some(BindingId::new(0)),
+        scope: ScopeId::new(0),
+        kind: LocalKind::User,
+        declaration_kind: DeclarationKind::Let,
+        debug_name: Some("target".into()),
+        origin: write_origin,
+    });
+    file.functions[0].values.extend([
+        HirValue {
+            id: ValueId::new(0),
+            kind: ValueKind::Literal(LiteralValue::Undefined),
+            origin: assignment_origin,
+        },
+        HirValue {
+            id: ValueId::new(1),
+            kind: ValueKind::InstructionResult,
+            origin: assignment_origin,
+        },
+    ]);
+    file.functions[0].blocks[0].instructions.extend([
+        HirInstruction {
+            result: Some(ValueId::new(0)),
+            kind: HirInstructionKind::Literal(LiteralValue::Undefined),
+            semantics: InstructionSemantics::PURE_EAGER,
+            origin: assignment_origin,
+        },
+        HirInstruction {
+            result: Some(ValueId::new(1)),
+            kind: HirInstructionKind::PatternAssignment {
+                value: ValueId::new(0),
+                pattern: SyntaxFragmentId::new(0),
+                writes: vec![HirPatternWrite {
+                    local: LocalId::new(0),
+                    origin: write_origin,
+                }],
+            },
+            semantics: InstructionSemantics::CONSERVATIVE_EAGER,
+            origin: assignment_origin,
+        },
+    ]);
+    file.functions[0].blocks[0].terminator.kind = TerminatorKind::Return {
+        value: Some(ValueId::new(1)),
+    };
+
+    verify_hir(&file).expect("well-formed pattern assignment");
+
+    let mut missing_result = file.clone();
+    missing_result.functions[0].blocks[0].instructions[1].result = None;
+    let diagnostics = verify_hir(&missing_result).expect_err("pattern result is mandatory");
+    assert!(diagnostics.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-INSTRUCTION"
+            && diagnostic.message.contains("right-hand-side result")
+    }));
+
+    let mut outside_pattern = file.clone();
+    let HirInstructionKind::PatternAssignment { writes, .. } =
+        &mut outside_pattern.functions[0].blocks[0].instructions[1].kind
+    else {
+        panic!("pattern fixture")
+    };
+    writes[0].origin =
+        Origin::source(fict_hir::SourceSpan::new(2, 3).expect("outside-pattern span"));
+    let diagnostics = verify_hir(&outside_pattern).expect_err("write origin must be contained");
+    assert!(diagnostics.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-INSTRUCTION"
+            && diagnostic.message.contains("contained by its pattern")
+    }));
+
+    let mut missing_summary = file;
+    missing_summary.syntax_fragments[0]
+        .summary
+        .pattern
+        .as_mut()
+        .expect("pattern summary")
+        .assigned_bindings
+        .clear();
+    let diagnostics = verify_hir(&missing_summary).expect_err("write must appear in summary");
+    assert!(diagnostics.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-INSTRUCTION"
+            && diagnostic.message.contains("assigned-binding summary")
     }));
 }
 

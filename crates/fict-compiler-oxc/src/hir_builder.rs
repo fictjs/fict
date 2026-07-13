@@ -9,31 +9,34 @@ use fict_hir::{
     DesugaringKind, EvaluationMode, FictMacroKind, FileId, FunctionFlags, FunctionId, FunctionKind,
     GlobalId, HirBlock, HirFile, HirFunction, HirGlobal, HirInstruction, HirInstructionKind,
     HirLocal, HirObjectParameterCheck, HirObjectParameterMode, HirObjectParameterProperty,
-    HirObjectParameterRest, HirParameter, HirScope, HirTerminator, HirValue, ImportPhase,
-    InstructionSemantics, IterationKind, JavaScriptString, JsxAttribute, JsxAttributeValue,
-    JsxChild, JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression, JsxListReceiver,
-    JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind, MutationEffect, NumberLiteral,
-    ObjectEntry, ObjectPropertyKind, Origin, PatternSummary, PropertyKey, Purity, ReactiveCallKind,
-    ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind, StructuredSourceHint,
-    SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi,
-    TemplateId, TerminatorKind, UnaryOperator, UpdateOperator, ValueId, ValueKind, verify_hir,
+    HirObjectParameterRest, HirParameter, HirPatternWrite, HirScope, HirTerminator, HirValue,
+    ImportPhase, InstructionSemantics, IterationKind, JavaScriptString, JsxAttribute,
+    JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression,
+    JsxListReceiver, JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind, MutationEffect,
+    NumberLiteral, ObjectEntry, ObjectPropertyKind, Origin, PatternSummary, PropertyKey, Purity,
+    ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind,
+    StructuredSourceHint, SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary,
+    TaggedTemplateQuasi, TemplateId, TerminatorKind, UnaryOperator, UpdateOperator, ValueId,
+    ValueKind, verify_hir,
 };
 use oxc::{
     allocator::Allocator,
     ast::{
         ast::{
-            ArrayExpressionElement, ArrowFunctionExpression, AssignmentExpression,
-            AssignmentPattern, AssignmentTarget, BindingIdentifier, BindingPattern,
-            BindingRestElement, CallExpression, ChainElement, Class, ComputedMemberExpression,
-            Expression, FormalParameters, Function, FunctionBody, IdentifierReference,
-            ImportExpression, ImportPhase as OxcImportPhase, JSXAttributeItem, JSXAttributeName,
+            ArrayAssignmentTarget, ArrayExpressionElement, ArrowFunctionExpression,
+            AssignmentExpression, AssignmentPattern, AssignmentTarget,
+            AssignmentTargetMaybeDefault, AssignmentTargetProperty, AssignmentTargetRest,
+            AssignmentTargetWithDefault, BindingIdentifier, BindingPattern, BindingRestElement,
+            CallExpression, ChainElement, Class, ComputedMemberExpression, Expression,
+            FormalParameters, Function, FunctionBody, IdentifierReference, ImportExpression,
+            ImportPhase as OxcImportPhase, JSXAttributeItem, JSXAttributeName,
             JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild, JSXElement,
             JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment, JSXMemberExpression,
             JSXMemberExpressionObject, LogicalExpression, MemberExpression, MetaProperty,
-            NewExpression, ObjectPropertyKind as OxcObjectPropertyKind, Program,
-            PropertyKey as OxcPropertyKey, PropertyKind, SimpleAssignmentTarget, Statement, Super,
-            TaggedTemplateExpression, TemplateLiteral, ThisExpression, UpdateExpression,
-            VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
+            NewExpression, ObjectAssignmentTarget, ObjectPropertyKind as OxcObjectPropertyKind,
+            Program, PropertyKey as OxcPropertyKey, PropertyKind, SimpleAssignmentTarget,
+            Statement, Super, TaggedTemplateExpression, TemplateLiteral, ThisExpression,
+            UpdateExpression, VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
         },
         ast_kind::AstKind,
     },
@@ -462,6 +465,40 @@ impl<'a> Visit<'a> for PatternBindingCollector {
     fn visit_binding_rest_element(&mut self, rest: &BindingRestElement<'a>) {
         self.has_rest = true;
         walk_binding_rest_element(self, rest);
+    }
+
+    fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
+
+    fn visit_arrow_function_expression(&mut self, _function: &ArrowFunctionExpression<'a>) {}
+}
+
+#[derive(Default)]
+struct AssignmentPatternSyntaxCollector {
+    has_defaults: bool,
+    has_rest: bool,
+    contains_await: bool,
+    contains_yield: bool,
+    contains_jsx: bool,
+}
+
+impl<'a> Visit<'a> for AssignmentPatternSyntaxCollector {
+    fn enter_node(&mut self, kind: AstKind<'a>) {
+        match kind {
+            AstKind::AwaitExpression(_) => self.contains_await = true,
+            AstKind::YieldExpression(_) => self.contains_yield = true,
+            AstKind::JSXElement(_) | AstKind::JSXFragment(_) => self.contains_jsx = true,
+            _ => {}
+        }
+    }
+
+    fn visit_assignment_target_with_default(&mut self, target: &AssignmentTargetWithDefault<'a>) {
+        self.has_defaults = true;
+        oxc::ast_visit::walk::walk_assignment_target_with_default(self, target);
+    }
+
+    fn visit_assignment_target_rest(&mut self, target: &AssignmentTargetRest<'a>) {
+        self.has_rest = true;
+        oxc::ast_visit::walk::walk_assignment_target_rest(self, target);
     }
 
     fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
@@ -1604,6 +1641,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         let mut mutations = MutationCollector {
             scoping: self.semantic.scoping(),
             facts: Vec::new(),
+            pattern_assignments: Vec::new(),
         };
         mutations.visit_program(program);
         let mut delete_targets = DeleteTargetCollector::default();
@@ -1613,6 +1651,13 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             let span = fact.target_span;
             (span.start(), span.end())
         }));
+        suppressed_members.extend(
+            mutations
+                .pattern_assignments
+                .iter()
+                .flat_map(|assignment| &assignment.projected_targets)
+                .map(|target| (target.span.start(), target.span.end())),
+        );
         let mut member_accesses = MemberAccessCollector {
             scoping: self.semantic.scoping(),
             suppressed: suppressed_members,
@@ -1647,7 +1692,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             &calls.calls,
             &variable_declarations.facts,
             &typed_expressions.facts,
-            &mutations.facts,
+            &mutations,
             &member_accesses.facts,
             &jsx.roots,
         );
@@ -2744,10 +2789,12 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         calls: &[CallFact],
         variable_declarations: &[VariableDeclarationFact],
         typed_expressions: &[TypedExpressionFact],
-        mutations: &[MutationFact],
+        mutation_collector: &MutationCollector<'_>,
         member_reads: &[MemberReadFact],
         jsx_roots: &[JsxFact],
     ) {
+        let mutations = mutation_collector.facts.as_slice();
+        let pattern_assignments = mutation_collector.pattern_assignments.as_slice();
         let reactive_targets: BTreeSet<_> = calls
             .iter()
             .filter(|call| {
@@ -2758,7 +2805,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .filter_map(|call| call.direct_variable_binding)
             .collect();
         self.reactive_value_bindings = reactive_targets.clone();
-        let opaque_patterns: Vec<_> = variable_declarations
+        let mut opaque_patterns: Vec<_> = variable_declarations
             .iter()
             .filter(|declaration| {
                 declaration.initializer_span.is_some() && declaration.simple_binding.is_none()
@@ -2770,6 +2817,12 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 )
             })
             .collect();
+        opaque_patterns.extend(pattern_assignments.iter().map(|assignment| {
+            (
+                self.function_owner_for_span(assignment.span),
+                assignment.pattern_span,
+            )
+        }));
         let mut accessor_read_suppressions = BTreeSet::new();
         for jsx in jsx_roots {
             collect_reactive_component_accessor_spans(
@@ -2790,6 +2843,12 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 let materialized = !fact.projected || !reactive;
                 materialized.then_some(fact.place.as_ref()?.root_reference_span?)
             }))
+            .chain(pattern_assignments.iter().flat_map(|assignment| {
+                assignment
+                    .projected_targets
+                    .iter()
+                    .filter_map(|target| target.place.root_reference_span)
+            }))
             .chain(
                 typed_expressions
                     .iter()
@@ -2806,6 +2865,21 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         self.preintern_globals(typed_expressions, mutations, member_reads, &reads);
         let local_mutations =
             self.collect_local_mutations(mutations, &reactive_targets, &opaque_patterns);
+        for assignment in pattern_assignments {
+            for target in &assignment.projected_targets {
+                let reactive = match target.place.base {
+                    PlannedPlaceBase::Binding(symbol) => self
+                        .symbol_to_binding
+                        .get(&symbol)
+                        .is_some_and(|binding| reactive_targets.contains(binding)),
+                    PlannedPlaceBase::UnresolvedGlobal { .. }
+                    | PlannedPlaceBase::Expression { .. } => false,
+                };
+                if reactive {
+                    self.report_nested_reactive_mutation(target.span);
+                }
+            }
+        }
         for fact in self.function_facts.clone() {
             let has_structured_control_flow = self.has_structured_control_flow(fact.id);
             let mut inputs = Vec::new();
@@ -2931,6 +3005,15 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         .cloned()
                         .map(EvaluationFact::Mutation),
                 )
+                .chain(
+                    pattern_assignments
+                        .iter()
+                        .filter(|assignment| {
+                            self.function_owner_for_span(assignment.span) == fact.id
+                        })
+                        .cloned()
+                        .map(EvaluationFact::PatternAssignment),
+                )
                 .collect();
             evaluation_facts.sort_by_key(|event| {
                 let span = event.span();
@@ -2946,6 +3029,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     EvaluationFact::Member(member) => self.materialize_member_read(fact.id, member),
                     EvaluationFact::Mutation(mutation) => {
                         self.materialize_mutation(fact.id, mutation)
+                    }
+                    EvaluationFact::PatternAssignment(assignment) => {
+                        self.materialize_pattern_assignment(fact.id, assignment)
                     }
                 };
                 inputs.extend(value);
@@ -4048,6 +4134,74 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         ))
     }
 
+    fn materialize_pattern_assignment(
+        &mut self,
+        owner: FunctionId,
+        assignment: &PatternAssignmentFact,
+    ) -> Option<ValueId> {
+        let block = self.planned_block_for_span(owner, assignment.span);
+        let value = self.control_expression_value(
+            owner,
+            block,
+            assignment.value_span,
+            true,
+            assignment.value_has_effects,
+        );
+        let mut writes = Vec::new();
+        let mut assigned_bindings = Vec::new();
+        for target in &assignment.targets {
+            let Some(binding) = self.symbol_to_binding.get(&target.symbol).copied() else {
+                continue;
+            };
+            if !assigned_bindings.contains(&binding) {
+                assigned_bindings.push(binding);
+            }
+            let Some(local) = self.functions[owner.as_usize()]
+                .locals
+                .iter()
+                .find(|local| local.binding == Some(binding))
+                .map(|local| local.id)
+            else {
+                continue;
+            };
+            writes.push(HirPatternWrite {
+                local,
+                origin: Origin::source(target.span),
+            });
+        }
+        let fragment = self.add_fragment(
+            SyntaxFragmentKind::Pattern,
+            assignment.pattern_span,
+            SyntaxSummary {
+                referenced_bindings: self.read_referenced_bindings(assignment.pattern_span),
+                pattern: Some(PatternSummary {
+                    declared_bindings: Vec::new(),
+                    assigned_bindings,
+                    has_defaults: assignment.has_defaults,
+                    has_rest: assignment.has_rest,
+                }),
+                has_side_effects: true,
+                may_throw: true,
+                contains_await: assignment.contains_await,
+                contains_yield: assignment.contains_yield,
+                contains_jsx: assignment.contains_jsx,
+                ..SyntaxSummary::default()
+            },
+        );
+        Some(self.push_value_to_block(
+            owner,
+            block,
+            ValueKind::InstructionResult,
+            Origin::source(assignment.span),
+            HirInstructionKind::PatternAssignment {
+                value,
+                pattern: fragment,
+                writes,
+            },
+            InstructionSemantics::CONSERVATIVE_EAGER,
+        ))
+    }
+
     fn materialize_member_read(
         &mut self,
         owner: FunctionId,
@@ -4869,6 +5023,36 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     .iter()
                     .filter_map(|reference| {
                         let reference = self.semantic.scoping().get_reference(*reference);
+                        let reference_span = source_span(self.semantic.reference_span(reference));
+                        (reference_span.start() >= span.start()
+                            && reference_span.end() <= span.end())
+                        .then_some(reference_span.start())
+                    })
+                    .min()?;
+                Some((first, binding))
+            })
+            .collect();
+        references.sort_unstable();
+        references.into_iter().map(|(_, binding)| binding).collect()
+    }
+
+    fn read_referenced_bindings(&self, span: SourceSpan) -> Vec<BindingId> {
+        let mut references: Vec<_> = self
+            .semantic
+            .scoping()
+            .symbol_ids()
+            .filter_map(|symbol| {
+                let binding = self.symbol_to_binding.get(&symbol).copied()?;
+                let first = self
+                    .semantic
+                    .scoping()
+                    .get_resolved_reference_ids(symbol)
+                    .iter()
+                    .filter_map(|reference| {
+                        let reference = self.semantic.scoping().get_reference(*reference);
+                        if !reference.is_read() {
+                            return None;
+                        }
                         let reference_span = source_span(self.semantic.reference_span(reference));
                         (reference_span.start() >= span.start()
                             && reference_span.end() <= span.end())
@@ -6347,6 +6531,33 @@ struct MutationFact {
 }
 
 #[derive(Debug, Clone)]
+struct PatternAssignmentTargetFact {
+    symbol: SymbolId,
+    span: SourceSpan,
+}
+
+#[derive(Debug, Clone)]
+struct PatternProjectedTargetFact {
+    place: PlannedPlace,
+    span: SourceSpan,
+}
+
+#[derive(Debug, Clone)]
+struct PatternAssignmentFact {
+    span: SourceSpan,
+    pattern_span: SourceSpan,
+    value_span: SourceSpan,
+    value_has_effects: bool,
+    targets: Vec<PatternAssignmentTargetFact>,
+    projected_targets: Vec<PatternProjectedTargetFact>,
+    has_defaults: bool,
+    has_rest: bool,
+    contains_await: bool,
+    contains_yield: bool,
+    contains_jsx: bool,
+}
+
+#[derive(Debug, Clone)]
 struct LocalMutationFact {
     owner: FunctionId,
     binding: Option<BindingId>,
@@ -6420,6 +6631,7 @@ enum EvaluationFact {
     Call(CallFact),
     Member(MemberReadFact),
     Mutation(LocalMutationFact),
+    PatternAssignment(PatternAssignmentFact),
 }
 
 impl EvaluationFact {
@@ -6430,6 +6642,7 @@ impl EvaluationFact {
             Self::Call(call) => call.span,
             Self::Member(member) => member.span,
             Self::Mutation(mutation) => mutation.span,
+            Self::PatternAssignment(assignment) => assignment.span,
         }
     }
 
@@ -6507,6 +6720,7 @@ impl EvaluationFact {
             Self::Member(_) => 16,
             Self::Call(_) => 17,
             Self::Mutation(_) => 18,
+            Self::PatternAssignment(_) => 19,
         }
     }
 }
@@ -6866,6 +7080,7 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
 struct MutationCollector<'semantic> {
     scoping: &'semantic Scoping,
     facts: Vec<MutationFact>,
+    pattern_assignments: Vec<PatternAssignmentFact>,
 }
 
 struct MemberAccessCollector<'semantic> {
@@ -7028,6 +7243,105 @@ impl ReactiveBindingDependencyCollector<'_> {
             });
         }
     }
+
+    fn push_pattern_default_facts(&mut self, target: &AssignmentTarget<'_>) {
+        match target {
+            AssignmentTarget::ArrayAssignmentTarget(array) => {
+                for element in array.elements.iter().flatten() {
+                    self.push_maybe_default_facts(element);
+                }
+                if let Some(rest) = &array.rest {
+                    self.push_pattern_default_facts(&rest.target);
+                }
+            }
+            AssignmentTarget::ObjectAssignmentTarget(object) => {
+                for property in &object.properties {
+                    match property {
+                        AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(property) => {
+                            if let Some(initializer) = &property.init
+                                && let Some(symbol) =
+                                    identifier_symbol(self.scoping, &property.binding)
+                            {
+                                self.push_fact(vec![symbol], initializer);
+                            }
+                        }
+                        AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
+                            self.push_maybe_default_facts(&property.binding);
+                        }
+                    }
+                }
+                if let Some(rest) = &object.rest {
+                    self.push_pattern_default_facts(&rest.target);
+                }
+            }
+            AssignmentTarget::AssignmentTargetIdentifier(_)
+            | AssignmentTarget::TSAsExpression(_)
+            | AssignmentTarget::TSSatisfiesExpression(_)
+            | AssignmentTarget::TSNonNullExpression(_)
+            | AssignmentTarget::TSTypeAssertion(_)
+            | AssignmentTarget::ComputedMemberExpression(_)
+            | AssignmentTarget::StaticMemberExpression(_)
+            | AssignmentTarget::PrivateFieldExpression(_) => {}
+        }
+    }
+
+    fn push_maybe_default_facts(&mut self, target: &AssignmentTargetMaybeDefault<'_>) {
+        match target {
+            AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) => {
+                let mut targets = Vec::new();
+                collect_pattern_assignment_targets(
+                    self.scoping,
+                    &default.binding,
+                    &mut targets,
+                    &mut Vec::new(),
+                );
+                let mut symbols = targets
+                    .into_iter()
+                    .map(|target| target.symbol)
+                    .collect::<Vec<_>>();
+                symbols.sort_unstable();
+                symbols.dedup();
+                self.push_fact(symbols, &default.init);
+                self.push_pattern_default_facts(&default.binding);
+            }
+            AssignmentTargetMaybeDefault::ArrayAssignmentTarget(array) => {
+                for element in array.elements.iter().flatten() {
+                    self.push_maybe_default_facts(element);
+                }
+                if let Some(rest) = &array.rest {
+                    self.push_pattern_default_facts(&rest.target);
+                }
+            }
+            AssignmentTargetMaybeDefault::ObjectAssignmentTarget(object) => {
+                for property in &object.properties {
+                    match property {
+                        AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(property) => {
+                            if let Some(initializer) = &property.init
+                                && let Some(symbol) =
+                                    identifier_symbol(self.scoping, &property.binding)
+                            {
+                                self.push_fact(vec![symbol], initializer);
+                            }
+                        }
+                        AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
+                            self.push_maybe_default_facts(&property.binding);
+                        }
+                    }
+                }
+                if let Some(rest) = &object.rest {
+                    self.push_pattern_default_facts(&rest.target);
+                }
+            }
+            AssignmentTargetMaybeDefault::AssignmentTargetIdentifier(_)
+            | AssignmentTargetMaybeDefault::TSAsExpression(_)
+            | AssignmentTargetMaybeDefault::TSSatisfiesExpression(_)
+            | AssignmentTargetMaybeDefault::TSNonNullExpression(_)
+            | AssignmentTargetMaybeDefault::TSTypeAssertion(_)
+            | AssignmentTargetMaybeDefault::ComputedMemberExpression(_)
+            | AssignmentTargetMaybeDefault::StaticMemberExpression(_)
+            | AssignmentTargetMaybeDefault::PrivateFieldExpression(_) => {}
+        }
+    }
 }
 
 impl<'a> Visit<'a> for ReactiveBindingDependencyCollector<'_> {
@@ -7041,8 +7355,51 @@ impl<'a> Visit<'a> for ReactiveBindingDependencyCollector<'_> {
     }
 
     fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
-        if let Some((symbol, _)) = assignment_target_symbol(self.scoping, &assignment.left) {
-            self.push_fact(vec![symbol], &assignment.right);
+        if matches!(
+            assignment.left,
+            AssignmentTarget::ArrayAssignmentTarget(_)
+                | AssignmentTarget::ObjectAssignmentTarget(_)
+        ) {
+            let mut targets = Vec::new();
+            collect_pattern_assignment_targets(
+                self.scoping,
+                &assignment.left,
+                &mut targets,
+                &mut Vec::new(),
+            );
+            let target_spans = targets
+                .iter()
+                .map(|target| (target.span.start(), target.span.end()))
+                .collect();
+            let mut pattern_reads = PatternReadSymbolCollector {
+                scoping: self.scoping,
+                target_spans,
+                symbols: BTreeSet::new(),
+            };
+            pattern_reads.visit_assignment_target(&assignment.left);
+            let mut target_symbols = targets
+                .into_iter()
+                .map(|target| target.symbol)
+                .collect::<Vec<_>>();
+            target_symbols.sort_unstable();
+            target_symbols.dedup();
+            if !target_symbols.is_empty() && !pattern_reads.symbols.is_empty() {
+                self.facts.push(ReactiveBindingDependencyFact {
+                    targets: target_symbols.clone(),
+                    sources: pattern_reads.symbols,
+                    source_span: source_span(assignment.span),
+                    // Computed keys, default calls, and member bases affect reactive execution
+                    // without becoming the callback value assigned to a target.
+                    callback_container: false,
+                });
+            }
+            self.push_fact(target_symbols, &assignment.right);
+            self.push_pattern_default_facts(&assignment.left);
+        } else {
+            let targets = assignment_target_symbol(self.scoping, &assignment.left)
+                .map(|(symbol, _)| vec![symbol])
+                .unwrap_or_default();
+            self.push_fact(targets, &assignment.right);
         }
         oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
     }
@@ -7069,6 +7426,38 @@ struct ResolvedSymbolCollector<'semantic> {
     symbols: BTreeSet<SymbolId>,
 }
 
+struct PatternReadSymbolCollector<'semantic> {
+    scoping: &'semantic Scoping,
+    target_spans: BTreeSet<(u32, u32)>,
+    symbols: BTreeSet<SymbolId>,
+}
+
+impl<'a> Visit<'a> for PatternReadSymbolCollector<'_> {
+    fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+        if self
+            .target_spans
+            .contains(&(identifier.span.start, identifier.span.end))
+        {
+            return;
+        }
+        if let Some(symbol) = identifier
+            .reference_id
+            .get()
+            .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+        {
+            self.symbols.insert(symbol);
+        }
+    }
+
+    fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
+        if assignment.operator == OxcAssignmentOperator::Assign {
+            self.visit_expression(&assignment.right);
+        } else {
+            oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
+        }
+    }
+}
+
 impl<'a> Visit<'a> for ResolvedSymbolCollector<'_> {
     fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
         if let Some(symbol) = identifier
@@ -7077,6 +7466,17 @@ impl<'a> Visit<'a> for ResolvedSymbolCollector<'_> {
             .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
         {
             self.symbols.insert(symbol);
+        }
+    }
+
+    fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
+        if assignment.operator == OxcAssignmentOperator::Assign {
+            // A plain assignment expression evaluates to its RHS. Identifiers in an object or
+            // array assignment target are writes, so they must not become value dependencies of
+            // a binding or callback property initialized by the assignment result.
+            self.visit_expression(&assignment.right);
+        } else {
+            oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
         }
     }
 }
@@ -7738,6 +8138,16 @@ impl<'a> Visit<'a> for ReactiveArgumentCollector<'_, '_> {
             self.symbols.insert(symbol);
         }
     }
+
+    fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
+        if assignment.operator == OxcAssignmentOperator::Assign {
+            // The value passed by a plain assignment expression is its RHS. Pattern identifiers
+            // are write targets and therefore cannot make that value a reactive escape.
+            self.visit_expression(&assignment.right);
+        } else {
+            oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
+        }
+    }
 }
 
 fn is_safe_global_call(scoping: &Scoping, callee: &Expression<'_>) -> bool {
@@ -7842,6 +8252,40 @@ impl<'a> Visit<'a> for DynamicReactivePropertyCollector<'_, '_> {
 
 impl<'a> Visit<'a> for MutationCollector<'_> {
     fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
+        if assignment.operator == OxcAssignmentOperator::Assign
+            && matches!(
+                assignment.left,
+                AssignmentTarget::ArrayAssignmentTarget(_)
+                    | AssignmentTarget::ObjectAssignmentTarget(_)
+            )
+        {
+            let mut targets = Vec::new();
+            let mut projected_targets = Vec::new();
+            collect_pattern_assignment_targets(
+                self.scoping,
+                &assignment.left,
+                &mut targets,
+                &mut projected_targets,
+            );
+            let mut syntax = AssignmentPatternSyntaxCollector::default();
+            syntax.visit_assignment_target(&assignment.left);
+            let right = assignment.right.get_inner_expression();
+            self.pattern_assignments.push(PatternAssignmentFact {
+                span: source_span(assignment.span),
+                pattern_span: source_span(assignment.left.span()),
+                value_span: source_span(right.span()),
+                value_has_effects: structured_control_flow::expression_has_effects(
+                    &assignment.right,
+                ),
+                targets,
+                projected_targets,
+                has_defaults: syntax.has_defaults,
+                has_rest: syntax.has_rest,
+                contains_await: syntax.contains_await,
+                contains_yield: syntax.contains_yield,
+                contains_jsx: syntax.contains_jsx,
+            });
+        }
         let place = planned_assignment_target_place(self.scoping, &assignment.left);
         let identity = assignment_target_symbol(self.scoping, &assignment.left);
         let symbol = identity.map(|(symbol, _)| symbol).or_else(|| {
@@ -7926,6 +8370,227 @@ impl<'a> Visit<'a> for MutationCollector<'_> {
             });
         }
         oxc::ast_visit::walk::walk_update_expression(self, update);
+    }
+}
+
+fn collect_pattern_assignment_targets(
+    scoping: &Scoping,
+    target: &AssignmentTarget<'_>,
+    targets: &mut Vec<PatternAssignmentTargetFact>,
+    projected_targets: &mut Vec<PatternProjectedTargetFact>,
+) {
+    if let Some(identifier) = direct_assignment_target_identifier(target) {
+        if let Some(symbol) = identifier_symbol(scoping, identifier) {
+            targets.push(PatternAssignmentTargetFact {
+                symbol,
+                span: source_span(identifier.span),
+            });
+        }
+        return;
+    }
+    match target {
+        AssignmentTarget::ArrayAssignmentTarget(array) => {
+            collect_array_assignment_targets(scoping, array, targets, projected_targets);
+        }
+        AssignmentTarget::ObjectAssignmentTarget(object) => {
+            collect_object_assignment_targets(scoping, object, targets, projected_targets);
+        }
+        AssignmentTarget::StaticMemberExpression(_)
+        | AssignmentTarget::ComputedMemberExpression(_)
+        | AssignmentTarget::TSAsExpression(_)
+        | AssignmentTarget::TSSatisfiesExpression(_)
+        | AssignmentTarget::TSNonNullExpression(_)
+        | AssignmentTarget::TSTypeAssertion(_) => {
+            if let Some(place) = planned_assignment_target_place(scoping, target) {
+                projected_targets.push(PatternProjectedTargetFact {
+                    place,
+                    span: source_span(target.span()),
+                });
+            }
+        }
+        AssignmentTarget::PrivateFieldExpression(_)
+        | AssignmentTarget::AssignmentTargetIdentifier(_) => {}
+    }
+}
+
+fn direct_assignment_target_identifier<'a, 'target>(
+    target: &'target AssignmentTarget<'a>,
+) -> Option<&'target IdentifierReference<'a>> {
+    match target {
+        AssignmentTarget::AssignmentTargetIdentifier(identifier) => Some(identifier),
+        AssignmentTarget::TSAsExpression(expression) => {
+            direct_expression_identifier(&expression.expression)
+        }
+        AssignmentTarget::TSSatisfiesExpression(expression) => {
+            direct_expression_identifier(&expression.expression)
+        }
+        AssignmentTarget::TSNonNullExpression(expression) => {
+            direct_expression_identifier(&expression.expression)
+        }
+        AssignmentTarget::TSTypeAssertion(expression) => {
+            direct_expression_identifier(&expression.expression)
+        }
+        AssignmentTarget::ComputedMemberExpression(_)
+        | AssignmentTarget::StaticMemberExpression(_)
+        | AssignmentTarget::PrivateFieldExpression(_)
+        | AssignmentTarget::ArrayAssignmentTarget(_)
+        | AssignmentTarget::ObjectAssignmentTarget(_) => None,
+    }
+}
+
+fn direct_expression_identifier<'a, 'expression>(
+    expression: &'expression Expression<'a>,
+) -> Option<&'expression IdentifierReference<'a>> {
+    match expression.get_inner_expression() {
+        Expression::Identifier(identifier) => Some(identifier),
+        _ => None,
+    }
+}
+
+fn collect_array_assignment_targets(
+    scoping: &Scoping,
+    array: &ArrayAssignmentTarget<'_>,
+    targets: &mut Vec<PatternAssignmentTargetFact>,
+    projected_targets: &mut Vec<PatternProjectedTargetFact>,
+) {
+    for element in array.elements.iter().flatten() {
+        collect_maybe_default_assignment_targets(scoping, element, targets, projected_targets);
+    }
+    if let Some(rest) = &array.rest {
+        collect_pattern_assignment_targets(scoping, &rest.target, targets, projected_targets);
+    }
+}
+
+fn collect_object_assignment_targets(
+    scoping: &Scoping,
+    object: &ObjectAssignmentTarget<'_>,
+    targets: &mut Vec<PatternAssignmentTargetFact>,
+    projected_targets: &mut Vec<PatternProjectedTargetFact>,
+) {
+    for property in &object.properties {
+        match property {
+            AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(property) => {
+                if let Some(symbol) = identifier_symbol(scoping, &property.binding) {
+                    targets.push(PatternAssignmentTargetFact {
+                        symbol,
+                        span: source_span(property.binding.span),
+                    });
+                }
+            }
+            AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
+                collect_maybe_default_assignment_targets(
+                    scoping,
+                    &property.binding,
+                    targets,
+                    projected_targets,
+                );
+            }
+        }
+    }
+    if let Some(rest) = &object.rest {
+        collect_pattern_assignment_targets(scoping, &rest.target, targets, projected_targets);
+    }
+}
+
+fn collect_maybe_default_assignment_targets(
+    scoping: &Scoping,
+    target: &AssignmentTargetMaybeDefault<'_>,
+    targets: &mut Vec<PatternAssignmentTargetFact>,
+    projected_targets: &mut Vec<PatternProjectedTargetFact>,
+) {
+    match target {
+        AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(target) => {
+            collect_pattern_assignment_targets(
+                scoping,
+                &target.binding,
+                targets,
+                projected_targets,
+            );
+        }
+        AssignmentTargetMaybeDefault::AssignmentTargetIdentifier(identifier) => {
+            if let Some(symbol) = identifier_symbol(scoping, identifier) {
+                targets.push(PatternAssignmentTargetFact {
+                    symbol,
+                    span: source_span(identifier.span),
+                });
+            }
+        }
+        AssignmentTargetMaybeDefault::ArrayAssignmentTarget(array) => {
+            collect_array_assignment_targets(scoping, array, targets, projected_targets);
+        }
+        AssignmentTargetMaybeDefault::ObjectAssignmentTarget(object) => {
+            collect_object_assignment_targets(scoping, object, targets, projected_targets);
+        }
+        AssignmentTargetMaybeDefault::StaticMemberExpression(member) => {
+            if let Some(place) = planned_static_member_place(scoping, member) {
+                projected_targets.push(PatternProjectedTargetFact {
+                    place,
+                    span: source_span(member.span),
+                });
+            }
+        }
+        AssignmentTargetMaybeDefault::ComputedMemberExpression(member) => {
+            if let Some(place) = planned_computed_member_place(scoping, member) {
+                projected_targets.push(PatternProjectedTargetFact {
+                    place,
+                    span: source_span(member.span),
+                });
+            }
+        }
+        AssignmentTargetMaybeDefault::TSAsExpression(expression) => {
+            collect_wrapped_pattern_target(
+                scoping,
+                &expression.expression,
+                targets,
+                projected_targets,
+            );
+        }
+        AssignmentTargetMaybeDefault::TSSatisfiesExpression(expression) => {
+            collect_wrapped_pattern_target(
+                scoping,
+                &expression.expression,
+                targets,
+                projected_targets,
+            );
+        }
+        AssignmentTargetMaybeDefault::TSNonNullExpression(expression) => {
+            collect_wrapped_pattern_target(
+                scoping,
+                &expression.expression,
+                targets,
+                projected_targets,
+            );
+        }
+        AssignmentTargetMaybeDefault::TSTypeAssertion(expression) => {
+            collect_wrapped_pattern_target(
+                scoping,
+                &expression.expression,
+                targets,
+                projected_targets,
+            );
+        }
+        AssignmentTargetMaybeDefault::PrivateFieldExpression(_) => {}
+    }
+}
+
+fn collect_wrapped_pattern_target(
+    scoping: &Scoping,
+    expression: &Expression<'_>,
+    targets: &mut Vec<PatternAssignmentTargetFact>,
+    projected_targets: &mut Vec<PatternProjectedTargetFact>,
+) {
+    if let Some(identifier) = direct_expression_identifier(expression) {
+        if let Some(symbol) = identifier_symbol(scoping, identifier) {
+            targets.push(PatternAssignmentTargetFact {
+                symbol,
+                span: source_span(identifier.span),
+            });
+        }
+    } else if let Some(place) = planned_expression_place(scoping, expression) {
+        projected_targets.push(PatternProjectedTargetFact {
+            place,
+            span: source_span(expression.span()),
+        });
     }
 }
 
@@ -8738,7 +9403,9 @@ fn instruction_source_order_key(
     let start = span.map_or(0, SourceSpan::start);
     let rank = match instruction.kind {
         HirInstructionKind::Declare { .. } => 5,
-        HirInstructionKind::Write { .. } | HirInstructionKind::ReadWrite { .. } => 4,
+        HirInstructionKind::Write { .. }
+        | HirInstructionKind::ReadWrite { .. }
+        | HirInstructionKind::PatternAssignment { .. } => 4,
         HirInstructionKind::Call(_) | HirInstructionKind::New { .. } => 3,
         HirInstructionKind::SyntaxFragment { .. } => 2,
         _ => 1,
@@ -8760,6 +9427,7 @@ fn instruction_value_inputs(instruction: &HirInstruction) -> Vec<ValueId> {
             inputs.extend(value);
         }
         HirInstructionKind::Iteration { source, .. } => inputs.push(*source),
+        HirInstructionKind::PatternAssignment { value, .. } => inputs.push(*value),
         HirInstructionKind::Delete { target } => match target {
             DeleteTarget::Place(place) => place_value_inputs(place, &mut inputs),
             DeleteTarget::UnresolvedIdentifier(_) => {}

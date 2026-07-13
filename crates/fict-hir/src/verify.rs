@@ -737,6 +737,62 @@ impl Verifier<'_> {
                     );
                 }
             }
+            HirInstructionKind::PatternAssignment {
+                value,
+                pattern,
+                writes,
+            } => {
+                self.value(function, *value, instruction.origin);
+                self.fragment(*pattern, instruction.origin);
+                let fragment = self.file.syntax_fragments.get(pattern.as_usize());
+                if fragment.is_none_or(|fragment| fragment.kind != SyntaxFragmentKind::Pattern) {
+                    self.error(
+                        "FICT-HIR-INSTRUCTION",
+                        "pattern assignment must reference a pattern fragment",
+                        Some(instruction.origin),
+                    );
+                }
+                if instruction.result.is_none() {
+                    self.error(
+                        "FICT-HIR-INSTRUCTION",
+                        "pattern assignment must define its right-hand-side result",
+                        Some(instruction.origin),
+                    );
+                }
+                self.require_mutation(instruction, "pattern assignment");
+
+                let pattern_span = fragment.and_then(|fragment| fragment.origin.primary_span);
+                let assigned = fragment
+                    .and_then(|fragment| fragment.summary.pattern.as_ref())
+                    .map(|summary| summary.assigned_bindings.as_slice())
+                    .unwrap_or_default();
+                for write in writes {
+                    self.local(function, write.local, write.origin);
+                    self.verify_origin(write.origin);
+                    if write.origin.primary_span.is_none_or(|origin| {
+                        pattern_span.is_none_or(|pattern| {
+                            pattern.start() > origin.start() || origin.end() > pattern.end()
+                        })
+                    }) {
+                        self.error(
+                            "FICT-HIR-INSTRUCTION",
+                            "pattern write origin must be contained by its pattern fragment",
+                            Some(write.origin),
+                        );
+                    }
+                    let binding = function
+                        .locals
+                        .get(write.local.as_usize())
+                        .and_then(|local| local.binding);
+                    if binding.is_none_or(|binding| !assigned.contains(&binding)) {
+                        self.error(
+                            "FICT-HIR-INSTRUCTION",
+                            "pattern write local must be listed by the assigned-binding summary",
+                            Some(write.origin),
+                        );
+                    }
+                }
+            }
             HirInstructionKind::Literal(_)
             | HirInstructionKind::Context { .. }
             | HirInstructionKind::Debugger => {}
