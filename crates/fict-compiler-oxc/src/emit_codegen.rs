@@ -8,7 +8,9 @@ use fict_emit::{
     ComponentChild, ComponentProp, ConditionalKind, DomBindingKind, DomNamespace, EmitOperation,
     EmitProgram, EmitPropMode, EmitValueRef, PropsOperation, RuntimeHelper,
 };
-use fict_hir::{CompoundAssignmentOperator, LiteralValue, TemplateId, UpdateOperator};
+use fict_hir::{
+    CompoundAssignmentOperator, JavaScriptString, LiteralValue, TemplateId, UpdateOperator,
+};
 use oxc::{
     allocator::{Allocator, CloneIn, TakeIn, Vec as ArenaVec},
     ast::{
@@ -2734,7 +2736,11 @@ fn component_children_match(children: &[JSXChild<'_>], planned: &[ComponentChild
                     Some(ComponentChild::Value {
                         value: EmitValueRef::Literal(LiteralValue::String(planned_value)),
                         ..
-                    }) if planned_value == &value
+                    }) if planned_value
+                        .as_code_units()
+                        .iter()
+                        .copied()
+                        .eq(value.encode_utf16())
                 )
             }
             JSXChild::Element(element) => matches!(
@@ -5321,17 +5327,45 @@ fn dom_literal_expression<'a>(
         LiteralValue::Boolean(value) => {
             Some(Expression::new_boolean_literal(span, *value, &builder))
         }
-        LiteralValue::String(value) => Some(Expression::new_string_literal(
-            span,
-            allocator.alloc_str(value),
-            None,
-            &builder,
-        )),
+        LiteralValue::String(value) => {
+            let (value, lone_surrogates) = encode_javascript_string_for_oxc(value);
+            Some(Expression::new_string_literal_with_lone_surrogates(
+                span,
+                allocator.alloc_str(&value),
+                None,
+                lone_surrogates,
+                &builder,
+            ))
+        }
         LiteralValue::Null
         | LiteralValue::Undefined
         | LiteralValue::Number(_)
         | LiteralValue::BigInt(_)
         | LiteralValue::RegExp { .. } => None,
+    }
+}
+
+fn encode_javascript_string_for_oxc(value: &JavaScriptString) -> (String, bool) {
+    if let Some(value) = value.to_utf8() {
+        return (value, false);
+    }
+
+    let mut encoded = String::new();
+    for character in char::decode_utf16(value.as_code_units().iter().copied()) {
+        match character {
+            Ok('\u{fffd}') => push_oxc_utf16_marker(&mut encoded, 0xfffd),
+            Ok(character) => encoded.push(character),
+            Err(error) => push_oxc_utf16_marker(&mut encoded, error.unpaired_surrogate()),
+        }
+    }
+    (encoded, true)
+}
+
+fn push_oxc_utf16_marker(output: &mut String, code_unit: u16) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    output.push('\u{fffd}');
+    for shift in [12_u16, 8, 4, 0] {
+        output.push(char::from(HEX[usize::from((code_unit >> shift) & 0x0f)]));
     }
 }
 
@@ -6112,12 +6146,12 @@ mod tests {
         RuntimeFamily, RuntimeHelper, RuntimeImportIntent,
     };
     use fict_hir::{
-        CompoundAssignmentOperator, FunctionId, LiteralValue, Origin, Projection, SourceSpan,
-        UpdateOperator, ValueId,
+        CompoundAssignmentOperator, FunctionId, JavaScriptString, LiteralValue, Origin, Projection,
+        SourceSpan, UpdateOperator, ValueId,
     };
     use fict_reactivity::{StructurizeAnalysis, StructurizeStats};
 
-    use super::emit_program;
+    use super::{emit_program, encode_javascript_string_for_oxc};
     use crate::{OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, OxcTypeScriptOptions};
 
     fn options(language: OxcSourceLanguage, sourcemap: bool) -> OxcCompileOptions {
@@ -6127,6 +6161,28 @@ mod tests {
             typescript: OxcTypeScriptOptions::default(),
             sourcemap,
         }
+    }
+
+    #[test]
+    fn encodes_exact_utf16_strings_for_oxc_without_replacement_loss() {
+        let well_formed = JavaScriptString::from("value � 😀");
+        assert_eq!(
+            encode_javascript_string_for_oxc(&well_formed),
+            ("value � 😀".to_owned(), false)
+        );
+
+        let exact = JavaScriptString::from_code_units(vec![
+            u16::from(b'a'),
+            0xd800,
+            0xfffd,
+            0xd83d,
+            0xde00,
+            0xdc00,
+        ]);
+        assert_eq!(
+            encode_javascript_string_for_oxc(&exact),
+            ("a\u{fffd}d800\u{fffd}fffd😀\u{fffd}dc00".to_owned(), true,)
+        );
     }
 
     fn effect_program(source: &str) -> EmitProgram {

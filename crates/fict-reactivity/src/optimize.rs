@@ -999,7 +999,7 @@ fn fold_binary(
     if operator == BinaryOperator::Add
         && let (LiteralValue::String(left), LiteralValue::String(right)) = (left, right)
     {
-        return Some(LiteralValue::String(format!("{left}{right}")));
+        return Some(LiteralValue::String(left.concat(right)));
     }
     if matches!(
         operator,

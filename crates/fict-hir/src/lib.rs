@@ -34,6 +34,7 @@ pub use jsx::{
 pub use origin::{DesugaringKind, GeneratedOrigin, Origin, OriginKind};
 pub use printer::print_hir;
 pub use syntax::{
-    LiteralValue, NumberLiteral, PatternSummary, SyntaxFragment, SyntaxFragmentKind, SyntaxSummary,
+    JavaScriptString, LiteralValue, NumberLiteral, PatternSummary, SyntaxFragment,
+    SyntaxFragmentKind, SyntaxSummary,
 };
 pub use verify::verify_hir;

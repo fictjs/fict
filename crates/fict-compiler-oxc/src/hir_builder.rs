@@ -9,13 +9,14 @@ use fict_hir::{
     FictMacroKind, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction,
     HirInstruction, HirInstructionKind, HirLocal, HirObjectParameterCheck, HirObjectParameterMode,
     HirObjectParameterProperty, HirObjectParameterRest, HirParameter, HirScope, HirTerminator,
-    HirValue, ImportPhase, InstructionSemantics, IterationKind, JsxAttribute, JsxAttributeValue,
-    JsxChild, JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression, JsxListReceiver,
-    JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind, MutationEffect, NumberLiteral,
-    ObjectEntry, ObjectPropertyKind, Origin, PatternSummary, PropertyKey, Purity, ReactiveCallKind,
-    ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind, StructuredSourceHint,
-    SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi,
-    TemplateId, TerminatorKind, UnaryOperator, UpdateOperator, ValueId, ValueKind, verify_hir,
+    HirValue, ImportPhase, InstructionSemantics, IterationKind, JavaScriptString, JsxAttribute,
+    JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression,
+    JsxListReceiver, JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind, MutationEffect,
+    NumberLiteral, ObjectEntry, ObjectPropertyKind, Origin, PatternSummary, PropertyKey, Purity,
+    ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind,
+    StructuredSourceHint, SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary,
+    TaggedTemplateQuasi, TemplateId, TerminatorKind, UnaryOperator, UpdateOperator, ValueId,
+    ValueKind, verify_hir,
 };
 use oxc::{
     allocator::Allocator,
@@ -557,12 +558,12 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
                     flags: literal.regex.flags.to_string(),
                 }),
             }),
-            Expression::StringLiteral(literal) if !literal.lone_surrogates => {
-                Some(TypedExpressionFact {
-                    span: source_span(literal.span),
-                    kind: TypedExpressionKind::Literal(LiteralValue::String(
-                        literal.value.to_string(),
-                    )),
+            Expression::StringLiteral(literal) => {
+                oxc_javascript_string(&literal.value, literal.lone_surrogates).map(|value| {
+                    TypedExpressionFact {
+                        span: source_span(literal.span),
+                        kind: TypedExpressionKind::Literal(LiteralValue::String(value)),
+                    }
                 })
             }
             Expression::TemplateLiteral(template) => typed_template_literal(template),
@@ -775,13 +776,11 @@ fn typed_template_literal(template: &TemplateLiteral<'_>) -> Option<TypedExpress
         .quasis
         .iter()
         .map(|quasi| {
-            if quasi.lone_surrogates {
-                // HIR strings are valid UTF-8. Keep exact UTF-16 surrogate spelling in the
-                // adapter-owned syntax fragment instead of replacing a JavaScript code unit.
-                None
-            } else {
-                quasi.value.cooked.as_ref().map(ToString::to_string)
-            }
+            quasi
+                .value
+                .cooked
+                .as_ref()
+                .and_then(|value| oxc_javascript_string(value, quasi.lone_surrogates))
         })
         .collect();
     let quasis = quasis?;
@@ -821,7 +820,7 @@ fn typed_tagged_template(
         .iter()
         .map(|quasi| {
             let cooked = match quasi.value.cooked.as_ref() {
-                Some(value) => Some(template_cooked_code_units(value, quasi.lone_surrogates)?),
+                Some(value) => Some(oxc_javascript_string(value, quasi.lone_surrogates)?),
                 None => None,
             };
             Some(TaggedTemplateQuasi {
@@ -880,9 +879,9 @@ fn typed_dynamic_import(import_expression: &ImportExpression<'_>) -> TypedExpres
     }
 }
 
-fn template_cooked_code_units(value: &str, has_lone_surrogates: bool) -> Option<Vec<u16>> {
+fn oxc_javascript_string(value: &str, has_lone_surrogates: bool) -> Option<JavaScriptString> {
     if !has_lone_surrogates {
-        return Some(value.encode_utf16().collect());
+        return Some(value.into());
     }
 
     let mut code_units = Vec::with_capacity(value.len());
@@ -899,7 +898,7 @@ fn template_cooked_code_units(value: &str, has_lone_surrogates: bool) -> Option<
             code_units.extend_from_slice(character.encode_utf16(&mut encoded));
         }
     }
-    Some(code_units)
+    Some(JavaScriptString::from_code_units(code_units))
 }
 
 fn typed_object_entries(
@@ -5917,7 +5916,7 @@ enum TypedExpressionKind {
         values: Vec<TypedSequenceValue>,
     },
     TemplateLiteral {
-        quasis: Vec<String>,
+        quasis: Vec<JavaScriptString>,
         expressions: Vec<TypedTemplateExpression>,
     },
     TaggedTemplate {

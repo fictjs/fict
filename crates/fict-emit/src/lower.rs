@@ -1527,7 +1527,7 @@ fn lower_component_operation(
                         false,
                     ),
                     JsxAttributeValue::Text(value) => (
-                        EmitValueRef::Literal(fict_hir::LiteralValue::String(value.clone())),
+                        EmitValueRef::Literal(fict_hir::LiteralValue::String(value.clone().into())),
                         false,
                         false,
                     ),
@@ -1581,7 +1581,7 @@ fn lower_component_operation(
     for child in &element.children {
         let child = match child {
             JsxChild::Text { value, .. } => ComponentChild::Value {
-                value: EmitValueRef::Literal(fict_hir::LiteralValue::String(value.clone())),
+                value: EmitValueRef::Literal(fict_hir::LiteralValue::String(value.clone().into())),
                 getter: false,
                 non_reactive: false,
             },
@@ -1955,7 +1955,7 @@ fn serialize_node(
                                     bindings.push(TemplateBinding::StaticAttribute {
                                         path: path.clone(),
                                         name,
-                                        value: fict_hir::LiteralValue::String(value.clone()),
+                                        value: fict_hir::LiteralValue::String(value.clone().into()),
                                         origin: *origin,
                                     });
                                 } else {

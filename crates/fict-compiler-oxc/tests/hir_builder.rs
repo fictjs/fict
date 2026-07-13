@@ -4,9 +4,9 @@ use fict_compiler_oxc::{
 use fict_hir::{
     ArrayElement, BinaryOperator, CallHost, CompoundAssignmentOperator, DeclarationKind,
     EvaluationMode, FictMacroKind, FunctionKind, HirInstructionKind, ImportPhase, IterationKind,
-    LiteralValue, MutationEffect, ObjectEntry, ObjectPropertyKind, PropertyKey, Purity,
-    ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, UnaryOperator,
-    UpdateOperator, ValueKind,
+    JavaScriptString, LiteralValue, MutationEffect, ObjectEntry, ObjectPropertyKind, PropertyKey,
+    Purity, ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind, TerminatorKind,
+    UnaryOperator, UpdateOperator, ValueKind,
 };
 
 fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
@@ -1748,7 +1748,7 @@ fn materializes_literals_unary_and_binary_expressions_as_typed_values() {
                 }
     }));
     assert!(literals.iter().any(|(text, literal)| {
-        *text == "\"line\\nvalue\"" && *literal == &LiteralValue::String("line\nvalue".to_owned())
+        *text == "\"line\\nvalue\"" && *literal == &LiteralValue::String("line\nvalue".into())
     }));
     assert!(
         literals
@@ -1807,6 +1807,101 @@ fn materializes_literals_unary_and_binary_expressions_as_typed_values() {
                 }
             )
     }));
+}
+
+#[test]
+fn materializes_exact_utf16_strings_and_template_quasis() {
+    let source = r#"
+        function unicode(value) {
+            const high = "\uD800";
+            const lowTemplate = `\uDFFF`;
+            const mixed = "\uFFFD\uD800";
+            const astral = "\uD83D\uDE00";
+            const dynamic = `left \uD800${value}\uDC00 right`;
+            return [high, lowTemplate, mixed, astral, dynamic];
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified UTF-16 string HIR");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "unicode")
+        })
+        .expect("unicode function");
+    let instructions: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let instruction_for_result = |value| {
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| instruction.result == Some(value))
+            .unwrap_or_else(|| panic!("instruction for value{}", value.index()))
+    };
+    let initializer = |name: &str| {
+        let local = function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"));
+        instructions
+            .iter()
+            .find_map(|instruction| match instruction.kind {
+                HirInstructionKind::Declare {
+                    local: candidate,
+                    initializer,
+                    ..
+                } if candidate == local.id => initializer,
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{name} initializer"))
+    };
+    let literal = |name: &str| {
+        let instruction = instruction_for_result(initializer(name));
+        let HirInstructionKind::Literal(LiteralValue::String(value)) = &instruction.kind else {
+            panic!("typed {name} UTF-16 literal")
+        };
+        value
+    };
+
+    assert_eq!(literal("high").as_code_units(), &[0xd800]);
+    assert_eq!(literal("lowTemplate").as_code_units(), &[0xdfff]);
+    assert_eq!(literal("mixed").as_code_units(), &[0xfffd, 0xd800]);
+    assert_eq!(literal("astral").as_code_units(), &[0xd83d, 0xde00]);
+
+    let dynamic = instruction_for_result(initializer("dynamic"));
+    let HirInstructionKind::TemplateLiteral {
+        quasis,
+        expressions,
+    } = &dynamic.kind
+    else {
+        panic!("typed dynamic UTF-16 template")
+    };
+    assert_eq!(expressions.len(), 1);
+    let expected_head =
+        JavaScriptString::from("left ").concat(&JavaScriptString::from_code_units(vec![0xd800]));
+    let expected_tail =
+        JavaScriptString::from_code_units(vec![0xdc00]).concat(&JavaScriptString::from(" right"));
+    assert_eq!(quasis, &[expected_head, expected_tail]);
+
+    for name in ["high", "lowTemplate", "mixed", "astral", "dynamic"] {
+        let root = instruction_for_result(initializer(name));
+        assert!(
+            !matches!(root.kind, HirInstructionKind::SyntaxFragment { .. }),
+            "{name} must not fall back to adapter-owned syntax"
+        );
+    }
 }
 
 #[test]
@@ -3349,7 +3444,7 @@ fn materializes_template_quasis_coercions_and_lazy_ownership() {
         let instruction = instruction_for_result(initializer(name));
         assert_eq!(
             instruction.kind,
-            HirInstructionKind::Literal(LiteralValue::String(expected.to_owned()))
+            HirInstructionKind::Literal(LiteralValue::String(expected.into()))
         );
         assert_eq!(
             instruction.semantics,
@@ -3365,7 +3460,7 @@ fn materializes_template_quasis_coercions_and_lazy_ownership() {
     else {
         panic!("typed dynamic template")
     };
-    assert_eq!(quasis, &["head ", " middle ", " tail"]);
+    assert_eq!(quasis, &["head ".into(), " middle ".into(), " tail".into()]);
     assert_eq!(expressions.len(), 2);
     assert_eq!(
         authored(instruction_for_result(expressions[0])),
@@ -3497,10 +3592,7 @@ fn materializes_tagged_template_objects_substitutions_and_utf16_cooked_values() 
     assert!(substitutions.is_empty());
     assert_eq!(quasis.len(), 1);
     assert_eq!(quasis[0].raw, r"line\n");
-    assert_eq!(
-        quasis[0].cooked,
-        Some("line\n".encode_utf16().collect::<Vec<_>>())
-    );
+    assert_eq!(quasis[0].cooked, Some(JavaScriptString::from("line\n")));
     assert_eq!(
         host,
         fict_hir::CallHost::Binding(local("tag").binding.expect("tag binding"))
@@ -3519,8 +3611,11 @@ fn materializes_tagged_template_objects_substitutions_and_utf16_cooked_values() 
     assert_eq!(substitutions.len(), 1);
     assert_eq!(quasis.len(), 2);
     assert_eq!(quasis[0].raw, r"\uD800");
-    assert_eq!(quasis[0].cooked, Some(vec![0xd800]));
-    assert_eq!(quasis[1].cooked, Some(Vec::new()));
+    assert_eq!(
+        quasis[0].cooked,
+        Some(JavaScriptString::from_code_units(vec![0xd800]))
+    );
+    assert_eq!(quasis[1].cooked, Some(JavaScriptString::default()));
 
     let (dynamic, tag, quasis, substitutions, _) = tagged("dynamic");
     assert_eq!(

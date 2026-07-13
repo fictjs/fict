@@ -1,8 +1,7 @@
 use crate::{
-    BindingId, BlockId, FileId, FunctionId, JsxTemplate, LocalId, Origin, ScopeId, SsaName,
-    SyntaxFragment, SyntaxFragmentId, TemplateId, ValueId,
+    BindingId, BlockId, FileId, FunctionId, JavaScriptString, JsxTemplate, LiteralValue, LocalId,
+    Origin, RegionId, ScopeId, SsaName, SyntaxFragment, SyntaxFragmentId, TemplateId, ValueId,
 };
-use crate::{LiteralValue, RegionId};
 
 /// Lexical scope category produced by frontend semantic analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -708,7 +707,7 @@ pub struct TaggedTemplateQuasi {
     ///
     /// This is absent when the source segment contains an escape sequence that is only legal in
     /// a tagged template. UTF-16 retains lone surrogates that a Rust [`String`] cannot represent.
-    pub cooked: Option<Vec<u16>>,
+    pub cooked: Option<JavaScriptString>,
     /// Raw template text as exposed through `template.raw`.
     pub raw: String,
 }
@@ -821,7 +820,7 @@ pub enum HirInstructionKind {
     /// Build an untagged template literal with interleaved string coercions.
     TemplateLiteral {
         /// Cooked string segments. There is exactly one more quasi than expression.
-        quasis: Vec<String>,
+        quasis: Vec<JavaScriptString>,
         /// Substitution values in authored coercion order.
         expressions: Vec<ValueId>,
     },

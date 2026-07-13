@@ -1,7 +1,7 @@
 use fict_hir::{
     BlockId, CallHost, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile,
     HirFunction, HirInstruction, HirInstructionKind, HirScope, HirTerminator, HirValue,
-    ImportPhase, InstructionSemantics, LiteralValue, NumberLiteral, ObjectEntry,
+    ImportPhase, InstructionSemantics, JavaScriptString, LiteralValue, NumberLiteral, ObjectEntry,
     ObjectPropertyKind, Origin, PropertyKey, ScopeId, ScopeKind, StructuredSourceHint,
     StructuredSourceKind, StructuredSwitchCaseHint, TaggedTemplateQuasi, TerminatorKind, ValueId,
     ValueKind, print_hir, verify_hir,
@@ -270,7 +270,7 @@ fn verifier_enforces_template_quasi_expression_arity() {
         .push(HirInstruction {
             result: Some(ValueId::new(2)),
             kind: HirInstructionKind::TemplateLiteral {
-                quasis: vec!["head".to_owned(), "middle".to_owned(), "tail".to_owned()],
+                quasis: vec!["head".into(), "middle".into(), "tail".into()],
                 expressions: vec![ValueId::new(0), ValueId::new(1)],
             },
             semantics: InstructionSemantics::CONSERVATIVE_EAGER,
@@ -296,7 +296,7 @@ fn verifier_enforces_tagged_template_inputs_and_arity() {
     let mut file = empty_file();
     let origin = Origin::source(fict_hir::SourceSpan::empty(0));
     for (index, literal) in [
-        LiteralValue::String("tag".to_owned()),
+        LiteralValue::String("tag".into()),
         LiteralValue::Number(NumberLiteral::from_f64(1.0)),
     ]
     .into_iter()
@@ -330,7 +330,7 @@ fn verifier_enforces_tagged_template_inputs_and_arity() {
                 tag: ValueId::new(0),
                 quasis: vec![
                     TaggedTemplateQuasi {
-                        cooked: Some(vec![u16::from(b'a')]),
+                        cooked: Some(JavaScriptString::from_code_units(vec![u16::from(b'a')])),
                         raw: "a".to_owned(),
                     },
                     TaggedTemplateQuasi {
@@ -364,7 +364,7 @@ fn verifier_enforces_tagged_template_inputs_and_arity() {
         panic!("tagged template fixture")
     };
     quasis.push(TaggedTemplateQuasi {
-        cooked: Some(Vec::new()),
+        cooked: Some(JavaScriptString::default()),
         raw: String::new(),
     });
     *tag = ValueId::new(99);
@@ -380,7 +380,7 @@ fn verifier_checks_dynamic_import_specifier_and_options() {
     let origin = Origin::source(fict_hir::SourceSpan::empty(0));
     for index in 0..2 {
         let value = ValueId::new(index);
-        let literal = LiteralValue::String(format!("input-{index}"));
+        let literal = LiteralValue::String(format!("input-{index}").into());
         file.functions[0].values.push(HirValue {
             id: value,
             kind: ValueKind::Literal(literal.clone()),

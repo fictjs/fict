@@ -1,5 +1,60 @@
 use crate::{BindingId, Origin, SyntaxFragmentId};
 
+/// Exact JavaScript string value represented as UTF-16 code units.
+///
+/// Rust strings cannot contain the lone surrogate code units that JavaScript permits. Keeping the
+/// canonical language representation here avoids lossy replacement characters at adapter and
+/// code-generation boundaries.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct JavaScriptString(Vec<u16>);
+
+impl JavaScriptString {
+    /// Construct a JavaScript string from exact UTF-16 code units.
+    #[must_use]
+    pub const fn from_code_units(code_units: Vec<u16>) -> Self {
+        Self(code_units)
+    }
+
+    /// Borrow the exact UTF-16 code units.
+    #[must_use]
+    pub fn as_code_units(&self) -> &[u16] {
+        &self.0
+    }
+
+    /// Return whether this string has zero UTF-16 code units.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Concatenate two JavaScript strings without Unicode normalization or lossy decoding.
+    #[must_use]
+    pub fn concat(&self, other: &Self) -> Self {
+        let mut code_units = Vec::with_capacity(self.0.len().saturating_add(other.0.len()));
+        code_units.extend_from_slice(&self.0);
+        code_units.extend_from_slice(&other.0);
+        Self(code_units)
+    }
+
+    /// Decode this value when it is a well-formed Unicode string.
+    #[must_use]
+    pub fn to_utf8(&self) -> Option<String> {
+        String::from_utf16(&self.0).ok()
+    }
+}
+
+impl From<&str> for JavaScriptString {
+    fn from(value: &str) -> Self {
+        Self(value.encode_utf16().collect())
+    }
+}
+
+impl From<String> for JavaScriptString {
+    fn from(value: String) -> Self {
+        Self::from(value.as_str())
+    }
+}
+
 /// Exact IEEE-754 payload for a JavaScript number literal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NumberLiteral(u64);
@@ -50,7 +105,7 @@ pub enum LiteralValue {
     /// BigInt digits without evaluation through a host numeric type.
     BigInt(String),
     /// String value after parser escape processing.
-    String(String),
+    String(JavaScriptString),
     /// Regular expression pattern and flags.
     RegExp {
         /// Pattern text.
@@ -130,7 +185,7 @@ pub struct SyntaxFragment {
 
 #[cfg(test)]
 mod tests {
-    use super::NumberLiteral;
+    use super::{JavaScriptString, NumberLiteral};
 
     #[test]
     fn number_literals_preserve_object_is_sensitive_bits() {
@@ -140,5 +195,20 @@ mod tests {
         assert_ne!(positive_zero, negative_zero);
         assert!(negative_zero.is_negative_zero());
         assert_eq!(negative_zero.to_f64().to_bits(), (-0.0_f64).to_bits());
+    }
+
+    #[test]
+    fn javascript_strings_preserve_utf16_and_concatenate_lone_surrogates() {
+        let left = JavaScriptString::from_code_units(vec![u16::from(b'a'), 0xd800]);
+        let right = JavaScriptString::from_code_units(vec![0xdc00, u16::from(b'z')]);
+        let joined = left.concat(&right);
+
+        assert_eq!(joined.as_code_units(), &[0x0061, 0xd800, 0xdc00, 0x007a]);
+        assert_eq!(joined.to_utf8().as_deref(), Some("a𐀀z"));
+        assert!(
+            JavaScriptString::from_code_units(vec![0xd800])
+                .to_utf8()
+                .is_none()
+        );
     }
 }
