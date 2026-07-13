@@ -331,6 +331,23 @@ pub fn verify_regions(
                 ));
             }
         }
+        let expected_control_flow = region.ranges.iter().any(|range| {
+            dependencies.reads.iter().any(|read| {
+                read.controls_flow
+                    && read.location.block == range.block
+                    && read.location.instruction >= range.start
+                    && read.location.instruction < range.end
+            }) && function
+                .blocks
+                .get(range.block.as_usize())
+                .is_some_and(|block| terminator_owns_reactive_control_flow(&block.terminator.kind))
+        });
+        if region.has_control_flow != expected_control_flow {
+            diagnostics.push(region_error(
+                "FICT-REGION-CONTROL-FLOW",
+                "region control-flow flag must match the controlling dependency read",
+            ));
+        }
         for output in &region.outputs {
             if output_owners.insert(*output, region.id).is_some() {
                 diagnostics.push(region_error(
@@ -627,21 +644,12 @@ fn build_region(
                         }
                 )
         });
-    let owns_last_instruction = range.end as usize == block.instructions.len();
-    let has_control_flow = owns_last_instruction
-        && scopes
-            .blocks
-            .iter()
-            .find(|fact| fact.block == block.id)
-            .is_some_and(|fact| !fact.control_flow_reads.is_empty())
-        && matches!(
-            block.terminator.kind,
-            TerminatorKind::Branch { .. }
-                | TerminatorKind::ForIn { .. }
-                | TerminatorKind::ForOf { .. }
-                | TerminatorKind::Switch { .. }
-                | TerminatorKind::Try { .. }
-        );
+    let has_control_flow = dependencies.reads.iter().any(|read| {
+        read.controls_flow
+            && read.location.block == range.block
+            && read.location.instruction >= range.start
+            && read.location.instruction < range.end
+    }) && terminator_owns_reactive_control_flow(&block.terminator.kind);
     let cycle_blocked = outputs.iter().any(|output| cyclic_nodes.contains(output));
     let should_memoize = !function.flags.no_memo
         && !inputs.is_empty()
@@ -666,6 +674,17 @@ fn build_region(
         cycle_blocked,
         should_memoize,
     }
+}
+
+fn terminator_owns_reactive_control_flow(terminator: &TerminatorKind) -> bool {
+    matches!(
+        terminator,
+        TerminatorKind::Branch { .. }
+            | TerminatorKind::ForIn { .. }
+            | TerminatorKind::ForOf { .. }
+            | TerminatorKind::Switch { .. }
+            | TerminatorKind::Try { .. }
+    )
 }
 
 fn assign_hierarchy(

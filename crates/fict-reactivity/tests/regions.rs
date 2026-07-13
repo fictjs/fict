@@ -67,6 +67,36 @@ fn call(result: u32, macro_kind: Option<FictMacroKind>) -> HirInstruction {
     }
 }
 
+fn analyze(function: HirFunction) -> fict_reactivity::RegionAnalysis {
+    let file = HirFile {
+        id: FileId::new(0),
+        source_len: 0,
+        root_function: FunctionId::new(0),
+        scopes: vec![HirScope {
+            id: ScopeId::new(0),
+            parent: None,
+            kind: ScopeKind::Module,
+            origin: origin(),
+        }],
+        bindings: Vec::new(),
+        globals: Vec::new(),
+        functions: vec![function],
+        templates: Vec::new(),
+        syntax_fragments: Vec::new(),
+    };
+    verify_hir(&file).expect("valid region fixture");
+    let function = &file.functions[0];
+    let ssa = analyze_ssa(function).expect("SSA");
+    let dependencies = analyze_dependencies(&file, FunctionId::new(0), &ssa).expect("dependencies");
+    let aliases = analyze_aliases(&file, FunctionId::new(0), &ssa, &dependencies).expect("aliases");
+    let shapes =
+        analyze_shapes(&file, FunctionId::new(0), &ssa, &dependencies, &aliases).expect("shapes");
+    let scopes = analyze_reactive_scopes(&file, FunctionId::new(0), &ssa, &dependencies, &shapes)
+        .expect("scopes");
+    let cycles = analyze_reactive_cycles(function, &scopes).expect("cycles");
+    analyze_regions(&file, function, &ssa, &dependencies, &scopes, &cycles).expect("regions")
+}
+
 #[test]
 fn splits_regions_at_barriers_and_memoizes_only_safe_derived_ranges() {
     let number = || LiteralValue::Number(NumberLiteral::from_f64(1.0));
@@ -198,4 +228,101 @@ fn splits_regions_at_barriers_and_memoizes_only_safe_derived_ranges() {
             .iter()
             .any(|diagnostic| diagnostic.code.as_str() == "FICT-REGION-BARRIER")
     );
+}
+
+#[test]
+fn assigns_control_flow_to_the_region_containing_the_controlling_read() {
+    let number = || LiteralValue::Number(NumberLiteral::from_f64(1.0));
+    let function = HirFunction {
+        id: FunctionId::new(0),
+        binding: None,
+        scope: ScopeId::new(0),
+        kind: FunctionKind::Module,
+        flags: FunctionFlags::default(),
+        parameters: Vec::new(),
+        locals: vec![local(0, "state")],
+        values: vec![
+            value(0, ValueKind::Literal(LiteralValue::Undefined)),
+            value(1, ValueKind::Literal(number())),
+            value(2, ValueKind::InstructionResult),
+            value(3, ValueKind::InstructionResult),
+            value(4, ValueKind::Literal(number())),
+        ],
+        blocks: vec![
+            HirBlock {
+                id: BlockId::new(0),
+                scope: ScopeId::new(0),
+                instructions: vec![
+                    instruction(
+                        Some(0),
+                        HirInstructionKind::Literal(LiteralValue::Undefined),
+                    ),
+                    instruction(Some(1), HirInstructionKind::Literal(number())),
+                    call(2, Some(FictMacroKind::State)),
+                    instruction(
+                        None,
+                        HirInstructionKind::Declare {
+                            local: LocalId::new(0),
+                            declaration_kind: DeclarationKind::Const,
+                            initializer: Some(ValueId::new(2)),
+                        },
+                    ),
+                    instruction(
+                        Some(3),
+                        HirInstructionKind::Read {
+                            place: Place::local(LocalId::new(0)),
+                        },
+                    ),
+                    // This unrelated trailing value keeps the controlling read away from the
+                    // physical end of the block. Control ownership follows the read, not layout.
+                    instruction(Some(4), HirInstructionKind::Literal(number())),
+                ],
+                terminator: HirTerminator {
+                    kind: TerminatorKind::Branch {
+                        test: ValueId::new(3),
+                        consequent: BlockId::new(1),
+                        alternate: BlockId::new(2),
+                    },
+                    origin: origin(),
+                },
+                source_hint: None,
+                origin: origin(),
+            },
+            HirBlock {
+                id: BlockId::new(1),
+                scope: ScopeId::new(0),
+                instructions: Vec::new(),
+                terminator: HirTerminator {
+                    kind: TerminatorKind::Return { value: None },
+                    origin: origin(),
+                },
+                source_hint: None,
+                origin: origin(),
+            },
+            HirBlock {
+                id: BlockId::new(2),
+                scope: ScopeId::new(0),
+                instructions: Vec::new(),
+                terminator: HirTerminator {
+                    kind: TerminatorKind::Return { value: None },
+                    origin: origin(),
+                },
+                source_hint: None,
+                origin: origin(),
+            },
+        ],
+        entry: BlockId::new(0),
+        regions: Vec::new(),
+        origin: origin(),
+    };
+
+    let analysis = analyze(function);
+    let control_region = analysis
+        .regions
+        .iter()
+        .find(|region| region.has_control_flow)
+        .expect("controlling read region");
+    assert_eq!(control_region.ranges[0].start, 3);
+    assert_eq!(control_region.ranges[0].end, 5);
+    assert_eq!(analysis.stats.control_flow_regions, 1);
 }
