@@ -441,8 +441,20 @@ impl EmitOperation {
 
 /// Emit plan for one HIR function.
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmitContext {
+    /// Collision-free function-local context binding.
+    pub local: String,
+    /// Runtime helper used to resolve the active render context.
+    pub helper: RuntimeHelper,
+    /// Source function whose body receives the declaration.
+    pub origin: Origin,
+}
+
+/// Emit plan for one HIR function.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmitFunction {
     pub source: FunctionId,
+    pub context: Option<EmitContext>,
     pub slots: Vec<ReactiveSlot>,
     pub temporaries: Vec<EmitTemporary>,
     pub regions: Vec<RegionId>,

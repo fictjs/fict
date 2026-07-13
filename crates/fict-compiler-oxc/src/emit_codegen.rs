@@ -971,6 +971,7 @@ mod tests {
             }],
             functions: vec![EmitFunction {
                 source: FunctionId::new(0),
+                context: None,
                 slots: vec![ReactiveSlot {
                     id: EmitSlotId::new(0),
                     kind: ReactiveSlotKind::Effect,

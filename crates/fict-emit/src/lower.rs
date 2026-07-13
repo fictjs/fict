@@ -12,9 +12,10 @@ use fict_reactivity::{ReactiveCycleAnalysis, RegionAnalysis, analyze_cfg, struct
 
 use crate::{
     CleanupOwner, ComponentProp, ComponentTarget, DELEGATED_EVENTS, DomBindingKind, DomNamespace,
-    EmitFunction, EmitModulePlan, EmitOperation, EmitProgram, EmitSlotId, EmitTemporary,
-    EmitTemporaryId, EmitValueRef, PropsOperation, ReactiveSlot, ReactiveSlotKind, RuntimeFamily,
-    RuntimeHelper, RuntimeImportIntent, name_allocator::NameAllocator, verify_emit_program,
+    EmitContext, EmitFunction, EmitModulePlan, EmitOperation, EmitProgram, EmitSlotId,
+    EmitTemporary, EmitTemporaryId, EmitValueRef, PropsOperation, ReactiveSlot, ReactiveSlotKind,
+    RuntimeFamily, RuntimeHelper, RuntimeImportIntent, name_allocator::NameAllocator,
+    verify_emit_program,
 };
 
 /// Phase-1 Core lowering configuration.
@@ -124,7 +125,13 @@ fn lower_program(
     }
     let helpers: BTreeSet<_> = functions
         .iter()
-        .flat_map(|function| function.operations.iter().filter_map(EmitOperation::helper))
+        .flat_map(|function| {
+            function
+                .operations
+                .iter()
+                .filter_map(EmitOperation::helper)
+                .chain(function.context.iter().map(|context| context.helper))
+        })
         .collect();
     if options.strict_guarantee
         && functions
@@ -151,7 +158,13 @@ fn lower_program(
             functions
                 .iter()
                 .flat_map(|function| function.temporaries.iter().map(|temp| temp.name.clone())),
-        );
+        )
+        .chain(functions.iter().filter_map(|function| {
+            function
+                .context
+                .as_ref()
+                .map(|context| context.local.clone())
+        }));
     let mut module_names = NameAllocator::new(source_names);
     let imports = helpers
         .into_iter()
@@ -533,14 +546,31 @@ fn lower_function(
             | TerminatorKind::Unreachable => {}
         }
     }
+    let context = operations
+        .iter()
+        .filter_map(EmitOperation::helper)
+        .any(is_scoped_helper)
+        .then(|| EmitContext {
+            local: temporary_names.allocate("__fictCtx"),
+            helper: RuntimeHelper::UseContext,
+            origin: function.origin,
+        });
     Ok(EmitFunction {
         source: function_id,
+        context,
         slots,
         temporaries,
         regions: regions.top_level_regions.clone(),
         control_flow: structurize_cfg(function, &analyze_cfg(function)?)?,
         operations,
     })
+}
+
+fn is_scoped_helper(helper: RuntimeHelper) -> bool {
+    matches!(
+        helper,
+        RuntimeHelper::UseSignal | RuntimeHelper::UseMemo | RuntimeHelper::UseEffect
+    )
 }
 
 #[derive(Debug)]

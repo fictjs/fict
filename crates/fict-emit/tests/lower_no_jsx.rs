@@ -303,6 +303,18 @@ fn selects_hook_context_helpers_inside_components() {
             .any(|intent| intent.helper == RuntimeHelper::UseEffect)
     );
     assert!(
+        program
+            .imports
+            .iter()
+            .any(|intent| intent.helper == RuntimeHelper::UseContext)
+    );
+    let context = program.functions[0]
+        .context
+        .as_ref()
+        .expect("component hook context");
+    assert_eq!(context.helper, RuntimeHelper::UseContext);
+    assert_eq!(context.local, "__fictCtx");
+    assert!(
         !program
             .imports
             .iter()

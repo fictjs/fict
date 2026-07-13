@@ -103,6 +103,32 @@ pub fn verify_emit_program(
                 ));
             }
         }
+        let needs_context = function
+            .operations
+            .iter()
+            .filter_map(EmitOperation::helper)
+            .any(is_scoped_helper);
+        match &function.context {
+            Some(context)
+                if !needs_context
+                    || context.helper != RuntimeHelper::UseContext
+                    || context.origin != hir_function.origin
+                    || !valid_identifier(&context.local)
+                    || import_names.contains(context.local.as_str())
+                    || source_names.contains(context.local.as_str())
+                    || temporary_names.contains(context.local.as_str()) =>
+            {
+                diagnostics.push(emit_error(
+                    "FICT-EMIT-CONTEXT",
+                    "function context must be collision-free and exactly match scoped helper use",
+                ));
+            }
+            None if needs_context => diagnostics.push(emit_error(
+                "FICT-EMIT-CONTEXT",
+                "scoped runtime helpers require a function context plan",
+            )),
+            Some(_) | None => {}
+        }
         if function.regions.windows(2).any(|pair| pair[0] >= pair[1])
             || function.regions.iter().any(|region| {
                 analysis.is_none_or(|analysis| analysis.regions.get(region.as_usize()).is_none())
@@ -137,7 +163,13 @@ fn verify_imports(program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {
     let used: BTreeSet<_> = program
         .functions
         .iter()
-        .flat_map(|function| function.operations.iter().filter_map(EmitOperation::helper))
+        .flat_map(|function| {
+            function
+                .operations
+                .iter()
+                .filter_map(EmitOperation::helper)
+                .chain(function.context.iter().map(|context| context.helper))
+        })
         .collect();
     let imported: BTreeSet<_> = program.imports.iter().map(|intent| intent.helper).collect();
     if imported != used
@@ -237,6 +269,12 @@ fn verify_module_plan(hir: &HirFile, program: &EmitProgram, diagnostics: &mut Di
                 .temporaries
                 .iter()
                 .map(|temporary| temporary.name.as_str())
+                .chain(
+                    function
+                        .context
+                        .iter()
+                        .map(|context| context.local.as_str()),
+                )
         }));
     if required_names.into_iter().any(|name| {
         !program
@@ -250,6 +288,13 @@ fn verify_module_plan(hir: &HirFile, program: &EmitProgram, diagnostics: &mut Di
             "module name plan must reserve every source binding and generated temporary",
         ));
     }
+}
+
+fn is_scoped_helper(helper: RuntimeHelper) -> bool {
+    matches!(
+        helper,
+        RuntimeHelper::UseSignal | RuntimeHelper::UseMemo | RuntimeHelper::UseEffect
+    )
 }
 
 fn verify_operations(

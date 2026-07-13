@@ -9,9 +9,9 @@ mod runtime_abi;
 mod verify;
 
 pub use ir::{
-    CleanupOwner, ComponentProp, ComponentTarget, DomBindingKind, DomNamespace, EmitControlArm,
-    EmitFunction, EmitModulePlan, EmitOperation, EmitProgram, EmitSlotId, EmitTemporary,
-    EmitTemporaryId, EmitValueRef, PropsOperation, ReactiveSlot, ReactiveSlotKind,
+    CleanupOwner, ComponentProp, ComponentTarget, DomBindingKind, DomNamespace, EmitContext,
+    EmitControlArm, EmitFunction, EmitModulePlan, EmitOperation, EmitProgram, EmitSlotId,
+    EmitTemporary, EmitTemporaryId, EmitValueRef, PropsOperation, ReactiveSlot, ReactiveSlotKind,
     RuntimeImportIntent,
 };
 pub use lower::{NoJsxLoweringOptions, lower_core, lower_no_jsx};
