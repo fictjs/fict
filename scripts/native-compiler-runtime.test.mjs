@@ -1191,3 +1191,47 @@ test('Rust compiler reports inline non-event function props at the native bounda
     [['FICT-X003', 'error']],
   )
 })
+
+test('Rust compiler rejects side-effecting memos at the native boundary', () => {
+  const source = `
+    import { $memo } from 'fict'
+    export const value = $memo(() => {
+      fetch('/api')
+      return 1
+    })
+  `
+  const request = {
+    code: source,
+    filename: '/fixtures/memo-side-effect.ts',
+    moduleId: '/fixtures/memo-side-effect.ts',
+  }
+
+  const strict = binding.transformSync(request)
+  assert.equal(strict.code, '')
+  assert.deepEqual(
+    strict.diagnostics.map(diagnostic => [
+      diagnostic.code,
+      diagnostic.severity,
+      diagnostic.guaranteeClass,
+    ]),
+    [['FICT-M003', 'error', 'fallback']],
+  )
+  assert.ok(strict.diagnostics[0].primarySpan)
+
+  const fallback = binding.transformSync({
+    ...request,
+    options: { strictGuarantee: false },
+  })
+  assert.notEqual(fallback.code, '')
+  assert.deepEqual(
+    fallback.diagnostics.map(diagnostic => [diagnostic.code, diagnostic.severity]),
+    [['FICT-M003', 'warning']],
+  )
+
+  const pure = binding.transformSync({
+    ...request,
+    code: "import { $memo } from 'fict'; export const value = $memo(() => Math.max(1, 2));",
+  })
+  assert.notEqual(pure.code, '')
+  assert.ok(pure.diagnostics.every(diagnostic => diagnostic.code !== 'FICT-M003'))
+})

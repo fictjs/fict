@@ -2647,6 +2647,68 @@ mod tests {
     }
 
     #[test]
+    fn enforces_memo_side_effect_guarantee_policy() {
+        let source = "import { $memo } from 'fict'; export const value = $memo(() => { fetch('/api'); return 1; });";
+        let strict = compile(request(source, "memo-side-effect.ts"));
+
+        assert!(strict.has_errors());
+        assert!(strict.code.is_empty());
+        assert_eq!(strict.diagnostics.len(), 1, "{:?}", strict.diagnostics);
+        assert_eq!(strict.diagnostics[0].code.as_str(), "FICT-M003");
+        assert_eq!(strict.diagnostics[0].severity, DiagnosticSeverity::Error);
+        assert_eq!(
+            strict.diagnostics[0].guarantee_class,
+            GuaranteeClass::Fallback
+        );
+        assert!(strict.diagnostics[0].primary_span.is_some());
+
+        let mut fallback_request = request(source, "memo-side-effect-fallback.ts");
+        fallback_request.options.strict_guarantee = false;
+        let fallback = compile(fallback_request);
+        assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
+        assert!(!fallback.code.is_empty());
+        assert_eq!(fallback.diagnostics.len(), 1, "{:?}", fallback.diagnostics);
+        assert_eq!(fallback.diagnostics[0].code.as_str(), "FICT-M003");
+        assert_eq!(
+            fallback.diagnostics[0].severity,
+            DiagnosticSeverity::Warning
+        );
+
+        let mut muted_request = request(source, "memo-side-effect-muted.ts");
+        muted_request.options.strict_guarantee = false;
+        muted_request
+            .options
+            .warning_levels
+            .insert("FICT-M003".into(), WarningLevel::Off);
+        let muted = compile(muted_request);
+        assert!(!muted.has_errors(), "{:?}", muted.diagnostics);
+        assert_eq!(muted.diagnostics[0].severity, DiagnosticSeverity::Info);
+        assert!(!muted.code.is_empty());
+
+        let mut escalated_request = request(source, "memo-side-effect-escalated.ts");
+        escalated_request.options.strict_guarantee = false;
+        escalated_request
+            .options
+            .warning_levels
+            .insert("FICT-M003".into(), WarningLevel::Error);
+        let escalated = compile(escalated_request);
+        assert!(escalated.has_errors());
+        assert!(escalated.code.is_empty());
+
+        let mut attempted_downgrade = request(source, "memo-side-effect-strict.ts");
+        attempted_downgrade
+            .options
+            .warning_levels
+            .insert("FICT-M003".into(), WarningLevel::Warn);
+        let attempted_downgrade = compile(attempted_downgrade);
+        assert!(attempted_downgrade.has_errors());
+        assert_eq!(
+            attempted_downgrade.diagnostics[0].severity,
+            DiagnosticSeverity::Error
+        );
+    }
+
+    #[test]
     fn diagnoses_reactive_callback_escape_shapes() {
         let source = "import { $state } from 'fict'; function sink(value) { return value; } export function App() { const count = $state(0); sink(() => count); const named = () => count; sink(named); function hoisted() { return count; } sink(hoisted); const nested = () => () => count; sink(nested); sink({ read: () => count }); sink([() => count]); const callbacks = { ...{ read: () => count } }; sink(callbacks); return null; }";
         let mut input = request(source, "reactive-callback-escapes.js");

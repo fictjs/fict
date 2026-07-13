@@ -63,6 +63,7 @@ use crate::{
 use super::compile::{convert_diagnostics, sorted, source_type};
 
 mod inline_jsx_functions;
+mod memo_side_effects;
 mod native_jsx_spreads;
 mod reactive_jsx_writes;
 
@@ -987,6 +988,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             }
         }
         let reactive_symbols = self.analyze_reactive_symbols(program, &calls.calls);
+        self.validate_memo_side_effects(program, &calls.calls);
         self.validate_inline_jsx_functions(program);
         self.validate_native_jsx_spreads(program);
         self.validate_dynamic_property_access(program, &reactive_symbols.reactive);
@@ -1160,6 +1162,34 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 )
                 .with_primary_span(span)
                 .with_guarantee_class(GuaranteeClass::Advisory),
+            );
+        }
+    }
+
+    fn validate_memo_side_effects(&mut self, program: &Program<'_>, calls: &[CallFact]) {
+        let memo_calls = calls
+            .iter()
+            .filter(|call| {
+                call.binding
+                    .and_then(|binding| self.macro_bindings.get(&binding))
+                    == Some(&FictMacroKind::Memo)
+            })
+            .map(|call| (call.span.start(), call.span.end()))
+            .collect();
+        let severity = if self.strict_guarantee {
+            DiagnosticSeverity::Error
+        } else {
+            DiagnosticSeverity::Warning
+        };
+        for span in memo_side_effects::collect(program, self.semantic.scoping(), &memo_calls) {
+            self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::new("FICT-M003").expect("diagnostic literal"),
+                    severity,
+                    "Memo should not contain side effects.",
+                )
+                .with_primary_span(span)
+                .with_guarantee_class(GuaranteeClass::Fallback),
             );
         }
     }

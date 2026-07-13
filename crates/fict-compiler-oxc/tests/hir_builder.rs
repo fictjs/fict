@@ -1784,3 +1784,152 @@ fn diagnoses_shallow_inline_non_event_jsx_function_props() {
         ]
     );
 }
+
+fn memo_side_effect_diagnostics(source: &str) -> Vec<fict_diagnostics::Diagnostic> {
+    build_hir(
+        source,
+        options(OxcSourceLanguage::TypeScriptJsx),
+        &HirBuildOptions {
+            strict_guarantee: false,
+            ..HirBuildOptions::default()
+        },
+    )
+    .diagnostics
+    .into_iter()
+    .filter(|diagnostic| diagnostic.code.as_str() == "FICT-M003")
+    .collect()
+}
+
+#[test]
+fn diagnoses_eager_memo_side_effect_evaluation_shapes() {
+    let callbacks = [
+        "() => { count++; return count; }",
+        "function () { fetch('/api'); return 1; }",
+        "() => { fetch('/api'); return 1; }",
+        "() => fetch?.('/api')",
+        "() => console.log?.('side')",
+        "() => items.push?.(1)",
+        "() => JSON.stringify({ get value() { return 1; } })",
+        "() => Array.from([1], value => value)",
+        "() => String({ toString() { return 'x'; } })",
+        "() => [fetch('/api')]",
+        "() => [...fetch('/api')]",
+        "() => ({ value: fetch('/api') })",
+        "() => ({ [fetch('/api')]: 1 })",
+        "() => ({ [fetch('/api')]() { return 1; } })",
+        "() => ({ ...fetch('/api') })",
+        "() => fetch('/api') || 1",
+        "() => fetch('/api') + 1",
+        "() => void fetch('/api')",
+        "() => `${fetch('/api')}`",
+        "() => tag`${fetch('/api')}`",
+        "() => obj[fetch('/api')]",
+        "() => obj?.[fetch('/api')]",
+        "() => obj['method']()",
+        "() => Math.max(fetch('/api'), 1)",
+        "() => wrap(...[fetch('/api')])",
+        "() => class { static value = fetch('/api'); }",
+        "() => class extends fetch('/api') {}",
+        "() => class { [fetch('/api')]() {} }",
+        "() => class { static [fetch('/api')] = 1; }",
+        "() => class { static { fetch('/api'); } }",
+        "() => <div data-x={fetch('/api')} />",
+        "() => <div>{fetch('/api')}</div>",
+        "() => <div {...fetch('/api')} />",
+        "() => <>{fetch('/api')}</>",
+        "() => (() => { fetch('/api'); return 1; })()",
+        "async () => { const value = await fetch('/api'); return value; }",
+        "() => { const value = fetch('/api'); return value; }",
+        "() => { const { value = fetch('/api') } = {}; return value; }",
+        "() => { if (ok) fetch('/api'); return 1; }",
+        "() => { for (const item of [1]) fetch('/api'); return 1; }",
+        "() => { try { fetch('/api'); } catch {} return 1; }",
+        "() => { throw error; }",
+        "() => { delete obj.value; return 1; }",
+        "() => new Date()",
+        "(0, () => { fetch('/api'); return 1; })",
+        "ok ? () => fetch('/api') : () => 1",
+        "ok && (() => fetch('/api'))",
+        "((() => fetch('/api')) as unknown)",
+        "(() => fetch('/api')) satisfies (() => unknown)",
+    ];
+
+    for callback in callbacks {
+        let source =
+            format!("import {{ $memo }} from 'fict'; const value = $memo({callback}); void value;");
+        let diagnostics = memo_side_effect_diagnostics(&source);
+        assert_eq!(diagnostics.len(), 1, "{callback}: {diagnostics:?}");
+        assert_eq!(
+            diagnostics[0].severity,
+            fict_diagnostics::DiagnosticSeverity::Warning,
+            "{callback}"
+        );
+        assert_eq!(
+            diagnostics[0].guarantee_class,
+            fict_diagnostics::GuaranteeClass::Fallback,
+            "{callback}"
+        );
+        let span = diagnostics[0].primary_span.expect("memo callback span");
+        let callback_source = &source[span.start() as usize..span.end() as usize];
+        assert!(
+            callback_source.contains("=>") || callback_source.starts_with("function"),
+            "{callback}: {span:?}"
+        );
+    }
+}
+
+#[test]
+fn accepts_pure_and_lazy_memo_evaluation_shapes() {
+    let callbacks = [
+        "() => Math.abs(-1)",
+        "function () { return Math.abs(-1); }",
+        "() => maybe?.()",
+        "() => JSON.parse('{\"value\":1}')",
+        "() => JSON.stringify({ value: [1, 'x'] })",
+        "() => Object.values({ value: 1 })",
+        "() => Object.entries({ value: 1 })",
+        "() => Array.from([1, 2])",
+        "() => Array.isArray([])",
+        "() => String('x')",
+        "() => Number(1)",
+        "() => parseInt('10')",
+        "() => ({ run() { fetch('/api'); }, get value() { fetch('/api'); return 1; } })",
+        "() => class { field = fetch('/api'); method() { fetch('/api'); } static method() { fetch('/api'); } get value() { fetch('/api'); return 1; } }",
+        "() => <button onClick={() => fetch('/api')}>go</button>",
+        "() => () => fetch('/api')",
+        "() => { const later = () => fetch('/api'); return later; }",
+        "() => { const value = 1; const { other = 2 } = {}; return value + other; }",
+        "() => { if (ok) { const value = 1; } for (const item of [1]) { const copy = item; } return 1; }",
+        "() => (() => 1)()",
+        "() => wrap(1)",
+    ];
+
+    for callback in callbacks {
+        let source =
+            format!("import {{ $memo }} from 'fict'; const value = $memo({callback}); void value;");
+        let diagnostics = memo_side_effect_diagnostics(&source);
+        assert!(diagnostics.is_empty(), "{callback}: {diagnostics:?}");
+    }
+
+    let non_tail = "import { $memo } from 'fict'; const stable = () => 1; const value = $memo((() => fetch('/api'), stable));";
+    assert!(memo_side_effect_diagnostics(non_tail).is_empty());
+}
+
+#[test]
+fn resolves_memo_and_safe_global_bindings_before_side_effect_diagnostics() {
+    let source = r#"
+        import { $memo } from 'fict';
+        import { createMemo as runtimeMemo } from '@fictjs/runtime';
+        const JSON = { stringify(value: unknown) { return String(value); } };
+        const Math = { max(left: number, right: number) { return left + right; } };
+        const first = $memo(() => JSON.stringify({ value: 1 }));
+        const second = $memo(() => Math.max(1, 2));
+        const third = runtimeMemo(() => fetch('/api'));
+        function shadow($memo: (callback: () => unknown) => unknown) {
+            return $memo(() => fetch('/shadowed'));
+        }
+        void first; void second; void third; void shadow;
+    "#;
+    let diagnostics = memo_side_effect_diagnostics(source);
+    assert_eq!(diagnostics.len(), 3, "{diagnostics:?}");
+}
