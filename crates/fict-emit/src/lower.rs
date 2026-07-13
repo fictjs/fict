@@ -1540,11 +1540,11 @@ fn lower_component_operation(
                     reactive_function,
                 });
             }
-            JsxAttribute::Spread { value, .. } => {
-                props.push(ComponentProp::Spread(lower_value(
-                    *value,
-                    value_temporaries,
-                )));
+            JsxAttribute::Spread { value, getter, .. } => {
+                props.push(ComponentProp::Spread {
+                    value: lower_value(*value, value_temporaries),
+                    getter: *getter,
+                });
             }
         }
     }
@@ -1594,7 +1594,13 @@ fn lower_component_operation(
         component,
         prop_helper: props
             .iter()
-            .any(|prop| matches!(prop, ComponentProp::Named { getter: true, .. }))
+            .any(|prop| {
+                matches!(
+                    prop,
+                    ComponentProp::Named { getter: true, .. }
+                        | ComponentProp::Spread { getter: true, .. }
+                )
+            })
             .then_some(RuntimeHelper::PropGetter),
         children_helper: children
             .iter()
@@ -1602,7 +1608,7 @@ fn lower_component_operation(
             .then_some(RuntimeHelper::Prop),
         merge_helper: props
             .iter()
-            .any(|prop| matches!(prop, ComponentProp::Spread(_)))
+            .any(|prop| matches!(prop, ComponentProp::Spread { .. }))
             .then_some(RuntimeHelper::MergeProps),
         non_reactive_helper: (props.iter().any(|prop| {
             matches!(
@@ -2773,6 +2779,7 @@ mod namespace_tests {
     fn spread(value: u32) -> JsxAttribute {
         JsxAttribute::Spread {
             value: ValueId::new(value),
+            getter: false,
             origin: test_origin(),
         }
     }

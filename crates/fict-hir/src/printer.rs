@@ -228,12 +228,20 @@ fn print_jsx(output: &mut String, root: &JsxNode) {
                     stack.push(JsxPrintItem::Node(node, depth + 1));
                 }
             }
-            JsxPrintItem::Attribute(JsxAttribute::Spread { value, origin }, depth) => {
+            JsxPrintItem::Attribute(
+                JsxAttribute::Spread {
+                    value,
+                    getter,
+                    origin,
+                },
+                depth,
+            ) => {
                 writeln!(
                     output,
-                    "{}attribute spread=value{} origin={}",
+                    "{}attribute spread=value{} getter={} origin={}",
                     indentation(depth),
                     value.index(),
+                    getter,
                     print_origin(*origin)
                 )
                 .expect("writing to String cannot fail");

@@ -874,7 +874,7 @@ impl Verifier<'_> {
                                     | JsxAttributeValue::Text(_) => {}
                                 }
                             }
-                            JsxAttribute::Spread { value, origin } => {
+                            JsxAttribute::Spread { value, origin, .. } => {
                                 self.value(owner, *value, *origin);
                                 self.verify_origin(*origin);
                             }

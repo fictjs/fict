@@ -20,15 +20,15 @@ use oxc::{
     allocator::Allocator,
     ast::{
         ast::{
-            ArrowFunctionExpression, AssignmentExpression, AssignmentPattern, AssignmentTarget,
-            BindingIdentifier, BindingPattern, BindingRestElement, CallExpression, ChainElement,
-            Expression, FormalParameters, Function, FunctionBody, IdentifierReference,
-            JSXAttributeItem, JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue,
-            JSXChild as OxcJsxChild, JSXElement, JSXElementName as OxcJsxElementName,
-            JSXExpression, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject,
-            LogicalExpression, MemberExpression, MetaProperty, Program, SimpleAssignmentTarget,
-            Statement, Super, ThisExpression, UpdateExpression, VariableDeclaration,
-            VariableDeclarationKind, VariableDeclarator,
+            ArrayExpressionElement, ArrowFunctionExpression, AssignmentExpression,
+            AssignmentPattern, AssignmentTarget, BindingIdentifier, BindingPattern,
+            BindingRestElement, CallExpression, ChainElement, Expression, FormalParameters,
+            Function, FunctionBody, IdentifierReference, JSXAttributeItem, JSXAttributeName,
+            JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild, JSXElement,
+            JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment, JSXMemberExpression,
+            JSXMemberExpressionObject, LogicalExpression, MemberExpression, MetaProperty,
+            ObjectPropertyKind, Program, SimpleAssignmentTarget, Statement, Super, ThisExpression,
+            UpdateExpression, VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
         },
         ast_kind::AstKind,
     },
@@ -774,6 +774,7 @@ struct Builder<'source, 'semantic> {
     reactive_bindings: BTreeMap<BindingId, ReactiveCallKind>,
     reactive_namespace_sources: BTreeMap<BindingId, String>,
     configured_bindings: BTreeSet<BindingId>,
+    reactive_value_bindings: BTreeSet<BindingId>,
     reactive_functions: BTreeMap<FunctionId, ReactiveScopeKind>,
     strict_guarantee: bool,
     reactive_creation_control_flow_severity: DiagnosticSeverity,
@@ -858,6 +859,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             reactive_bindings,
             reactive_namespace_sources,
             configured_bindings,
+            reactive_value_bindings: BTreeSet::new(),
             reactive_functions: BTreeMap::new(),
             strict_guarantee: options.strict_guarantee,
             reactive_creation_control_flow_severity: options
@@ -1539,7 +1541,18 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             })
             .filter_map(|call| call.direct_variable_binding)
             .collect();
-        let reactive_reads = self.collect_reactive_reads(&reactive_targets);
+        self.reactive_value_bindings = reactive_targets.clone();
+        let mut accessor_read_suppressions = BTreeSet::new();
+        for jsx in jsx_roots {
+            collect_reactive_component_accessor_spans(
+                &jsx.root,
+                &self.symbol_to_binding,
+                &reactive_targets,
+                &mut accessor_read_suppressions,
+            );
+        }
+        let reactive_reads =
+            self.collect_reactive_reads(&reactive_targets, &accessor_read_suppressions);
         let reactive_mutations = self.collect_reactive_mutations(mutations, &reactive_targets);
         for fact in self.function_facts.clone() {
             let mut inputs = Vec::new();
@@ -1803,6 +1816,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
     fn collect_reactive_reads(
         &self,
         reactive_targets: &BTreeSet<BindingId>,
+        suppressions: &BTreeSet<(u32, u32)>,
     ) -> Vec<ReactiveReadFact> {
         let mut reads = Vec::new();
         for (symbol, binding) in &self.symbol_to_binding {
@@ -1815,6 +1829,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     continue;
                 }
                 let span = source_span(self.semantic.reference_span(reference));
+                if suppressions.contains(&(span.start(), span.end())) {
+                    continue;
+                }
                 reads.push(ReactiveReadFact {
                     owner: self.function_owner_for_span(span),
                     binding: *binding,
@@ -1963,6 +1980,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 children,
                 span,
             } => {
+                let is_component = !matches!(name, RawJsxName::Intrinsic(_));
                 let name = match name {
                     RawJsxName::Intrinsic(name) => JsxElementName::Intrinsic(name.clone()),
                     RawJsxName::Component(symbol) => {
@@ -2017,14 +2035,54 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                             },
                             origin: Origin::source(*span),
                         },
-                        RawJsxAttribute::Spread { expression, span } => JsxAttribute::Spread {
-                            value: self.syntax_value(
-                                owner,
-                                *expression,
-                                self.referenced_bindings(*expression),
-                            ),
-                            origin: Origin::source(*span),
-                        },
+                        RawJsxAttribute::Spread {
+                            expression,
+                            kind,
+                            span,
+                        } => {
+                            let referenced = self.referenced_bindings(*expression);
+                            let uses_reactive_value = referenced
+                                .iter()
+                                .any(|binding| self.reactive_value_bindings.contains(binding));
+                            let accessor_is_reactive = match kind {
+                                RawJsxSpreadKind::AccessorCall { callee, .. } => self
+                                    .symbol_to_binding
+                                    .get(callee)
+                                    .is_some_and(|binding| {
+                                        self.reactive_value_bindings.contains(binding)
+                                    }),
+                                RawJsxSpreadKind::Static | RawJsxSpreadKind::Dynamic => false,
+                            };
+                            let dynamic = is_component
+                                && (matches!(kind, RawJsxSpreadKind::Dynamic)
+                                    || matches!(kind, RawJsxSpreadKind::AccessorCall { .. })
+                                        && !accessor_is_reactive);
+                            if dynamic {
+                                self.diagnostics.push(
+                                    Diagnostic::new(
+                                        DiagnosticCode::new("FICT-P005")
+                                            .expect("diagnostic literal"),
+                                        if self.strict_guarantee {
+                                            DiagnosticSeverity::Error
+                                        } else {
+                                            DiagnosticSeverity::Warning
+                                        },
+                                        "dynamic component props spread may not stay reactive",
+                                    )
+                                    .with_primary_span(*expression)
+                                    .with_help(
+                                        "use explicit component props or a stable reactive accessor source",
+                                    )
+                                    .with_guarantee_class(GuaranteeClass::Fallback),
+                                );
+                            }
+                            JsxAttribute::Spread {
+                                value: self.syntax_value(owner, *expression, referenced),
+                                getter: is_component
+                                    && (uses_reactive_value || accessor_is_reactive),
+                                origin: Origin::source(*span),
+                            }
+                        }
                     })
                     .collect();
                 let children = children
@@ -2318,7 +2376,18 @@ enum RawJsxAttribute {
     },
     Spread {
         expression: SourceSpan,
+        kind: RawJsxSpreadKind,
         span: SourceSpan,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RawJsxSpreadKind {
+    Static,
+    Dynamic,
+    AccessorCall {
+        callee: SymbolId,
+        callee_span: SourceSpan,
     },
 }
 
@@ -2376,6 +2445,74 @@ enum RawJsxListReceiver {
         projected: bool,
         known_array: bool,
     },
+}
+
+fn collect_reactive_component_accessor_spans(
+    node: &RawJsxNode,
+    symbol_to_binding: &BTreeMap<SymbolId, BindingId>,
+    reactive_targets: &BTreeSet<BindingId>,
+    spans: &mut BTreeSet<(u32, u32)>,
+) {
+    match node {
+        RawJsxNode::Element {
+            name,
+            attributes,
+            children,
+            ..
+        } => {
+            let is_component = !matches!(name, RawJsxName::Intrinsic(_));
+            for attribute in attributes {
+                match attribute {
+                    RawJsxAttribute::Spread {
+                        kind:
+                            RawJsxSpreadKind::AccessorCall {
+                                callee,
+                                callee_span,
+                            },
+                        ..
+                    } if is_component
+                        && symbol_to_binding
+                            .get(callee)
+                            .is_some_and(|binding| reactive_targets.contains(binding)) =>
+                    {
+                        spans.insert((callee_span.start(), callee_span.end()));
+                    }
+                    RawJsxAttribute::Named {
+                        value: RawJsxAttributeValue::Node(node),
+                        ..
+                    } => collect_reactive_component_accessor_spans(
+                        node,
+                        symbol_to_binding,
+                        reactive_targets,
+                        spans,
+                    ),
+                    RawJsxAttribute::Named { .. } | RawJsxAttribute::Spread { .. } => {}
+                }
+            }
+            for child in children {
+                if let RawJsxChild::Node(node) = child {
+                    collect_reactive_component_accessor_spans(
+                        node,
+                        symbol_to_binding,
+                        reactive_targets,
+                        spans,
+                    );
+                }
+            }
+        }
+        RawJsxNode::Fragment { children, .. } => {
+            for child in children {
+                if let RawJsxChild::Node(node) = child {
+                    collect_reactive_component_accessor_spans(
+                        node,
+                        symbol_to_binding,
+                        reactive_targets,
+                        spans,
+                    );
+                }
+            }
+        }
+    }
 }
 
 struct JsxCollector<'facts> {
@@ -2664,8 +2801,99 @@ fn raw_jsx_attribute(
         },
         JSXAttributeItem::SpreadAttribute(attribute) => RawJsxAttribute::Spread {
             expression: source_span(attribute.argument.span()),
+            kind: raw_jsx_spread_kind(scoping, &attribute.argument),
             span: source_span(attribute.span),
         },
+    }
+}
+
+fn raw_jsx_spread_kind(scoping: &Scoping, expression: &Expression<'_>) -> RawJsxSpreadKind {
+    if let Some((callee, callee_span)) = direct_accessor_call(scoping, expression) {
+        return RawJsxSpreadKind::AccessorCall {
+            callee,
+            callee_span,
+        };
+    }
+    if is_dynamic_props_spread(expression) {
+        RawJsxSpreadKind::Dynamic
+    } else {
+        RawJsxSpreadKind::Static
+    }
+}
+
+fn direct_accessor_call(
+    scoping: &Scoping,
+    expression: &Expression<'_>,
+) -> Option<(SymbolId, SourceSpan)> {
+    let call = match expression.get_inner_expression() {
+        Expression::CallExpression(call) => call.as_ref(),
+        Expression::ChainExpression(chain) => match &chain.expression {
+            ChainElement::CallExpression(call) => call.as_ref(),
+            ChainElement::TSNonNullExpression(_)
+            | ChainElement::ComputedMemberExpression(_)
+            | ChainElement::StaticMemberExpression(_)
+            | ChainElement::PrivateFieldExpression(_) => return None,
+        },
+        _ => return None,
+    };
+    if !call.arguments.is_empty() {
+        return None;
+    }
+    let Expression::Identifier(identifier) = call.callee.get_inner_expression() else {
+        return None;
+    };
+    let symbol = identifier
+        .reference_id
+        .get()
+        .and_then(|reference| scoping.get_reference(reference).symbol_id())?;
+    Some((symbol, source_span(identifier.span)))
+}
+
+fn is_dynamic_props_spread(expression: &Expression<'_>) -> bool {
+    match expression.get_inner_expression() {
+        Expression::CallExpression(_)
+        | Expression::ConditionalExpression(_)
+        | Expression::LogicalExpression(_)
+        | Expression::SequenceExpression(_)
+        | Expression::AssignmentExpression(_)
+        | Expression::UpdateExpression(_)
+        | Expression::AwaitExpression(_)
+        | Expression::ImportExpression(_)
+        | Expression::NewExpression(_)
+        | Expression::YieldExpression(_)
+        | Expression::TemplateLiteral(_)
+        | Expression::TaggedTemplateExpression(_)
+        | Expression::ClassExpression(_) => true,
+        Expression::ChainExpression(_) => true,
+        Expression::ComputedMemberExpression(_) => true,
+        Expression::StaticMemberExpression(member) => {
+            member.optional || !has_static_member_root(&member.object)
+        }
+        Expression::PrivateFieldExpression(member) => {
+            member.optional || !has_static_member_root(&member.object)
+        }
+        Expression::ObjectExpression(object) => object
+            .properties
+            .iter()
+            .any(|property| matches!(property, ObjectPropertyKind::SpreadProperty(_))),
+        Expression::ArrayExpression(array) => array
+            .elements
+            .iter()
+            .any(|element| matches!(element, ArrayExpressionElement::SpreadElement(_))),
+        _ => false,
+    }
+}
+
+fn has_static_member_root(expression: &Expression<'_>) -> bool {
+    match expression.get_inner_expression() {
+        Expression::Identifier(_) => true,
+        Expression::StaticMemberExpression(member) => {
+            !member.optional && has_static_member_root(&member.object)
+        }
+        Expression::PrivateFieldExpression(member) => {
+            !member.optional && has_static_member_root(&member.object)
+        }
+        _ => false,
     }
 }
 

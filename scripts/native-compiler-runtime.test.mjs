@@ -250,6 +250,68 @@ test('Rust compiler output preserves keyed identity, reactive updates, and clean
   container.remove()
 })
 
+test('Rust compiler keeps direct and optional-call component spreads lazy', async () => {
+  const module = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      let replaceProps = () => {}
+
+      function Child(props) {
+        return <span data-value={props.value}>{props.value}:{props.fixed ?? 'none'}</span>
+      }
+
+      function App() {
+        let props = $state({ value: 1 })
+        replaceProps = value => {
+          props = { value }
+        }
+        return (
+          <section>
+            <Child {...props} />
+            <Child {...props?.()} fixed="yes" />
+          </section>
+        )
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+
+      export function update(value) {
+        replaceProps(value)
+      }
+    `,
+    'reactive-component-spreads',
+    /__fictProp\(\(\) => props\?\.\(\)\)/,
+  )
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = module.mount(container)
+  await flushRuntime()
+
+  const initial = [...container.querySelectorAll('span')]
+  assert.deepEqual(
+    initial.map(node => node.textContent),
+    ['1:none', '1:yes'],
+  )
+
+  module.update(2)
+  await flushRuntime()
+
+  const updated = [...container.querySelectorAll('span')]
+  assert.deepEqual(updated, initial)
+  assert.deepEqual(
+    updated.map(node => node.textContent),
+    ['2:none', '2:yes'],
+  )
+
+  dispose()
+  assert.equal(container.childNodes.length, 0)
+  container.remove()
+})
+
 test('Rust compiler output keeps destructured component props reactive', async () => {
   const module = await compileAndImport(
     `

@@ -4402,13 +4402,17 @@ impl<'a> AstRewriter<'a, '_> {
             let planned = planned_props.next();
             match attribute {
                 JSXAttributeItem::SpreadAttribute(spread) => {
-                    if !matches!(planned, Some(ComponentProp::Spread(_))) {
-                        self.diagnostics.push(emit_error(
-                            "FICT-OXC-EMIT-COMPONENT",
-                            "component spread prop does not match its EmitIR plan",
-                            GuaranteeClass::Internal,
-                        ));
-                    }
+                    let getter = match planned {
+                        Some(ComponentProp::Spread { getter, .. }) => getter,
+                        _ => {
+                            self.diagnostics.push(emit_error(
+                                "FICT-OXC-EMIT-COMPONENT",
+                                "component spread prop does not match its EmitIR plan",
+                                GuaranteeClass::Internal,
+                            ));
+                            false
+                        }
+                    };
                     let spread = spread.unbox();
                     if !properties.is_empty() {
                         let bucket =
@@ -4421,6 +4425,33 @@ impl<'a> AstRewriter<'a, '_> {
                     }
                     let mut value = spread.argument;
                     self.visit_expression(&mut value);
+                    if getter {
+                        if let Some(helper) = &component.prop_helper {
+                            let arrow =
+                                zero_parameter_expression_arrow(self.allocator, value, spread.span);
+                            let callee = Expression::new_identifier(
+                                spread.span,
+                                self.allocator.alloc_str(helper),
+                                &AstBuilder::new(self.allocator),
+                            );
+                            let mut arguments = ArenaVec::new_in(&self.allocator);
+                            arguments.push(Argument::from(arrow));
+                            value = Expression::new_call_expression(
+                                spread.span,
+                                callee,
+                                NONE,
+                                arguments,
+                                false,
+                                &AstBuilder::new(self.allocator),
+                            );
+                        } else {
+                            self.diagnostics.push(emit_error(
+                                "FICT-OXC-EMIT-COMPONENT",
+                                "reactive component spread has no runtime prop helper",
+                                GuaranteeClass::Internal,
+                            ));
+                        }
+                    }
                     prop_segments.push(value);
                 }
                 JSXAttributeItem::Attribute(attribute) => {

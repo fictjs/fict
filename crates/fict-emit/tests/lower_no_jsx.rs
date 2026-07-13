@@ -365,6 +365,7 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
                 },
                 JsxAttribute::Spread {
                     value: ValueId::new(0),
+                    getter: false,
                     origin: origin(),
                 },
                 JsxAttribute::Named {
@@ -664,6 +665,7 @@ fn lowers_binding_aware_component_props_spreads_and_children_in_source_order() {
                 },
                 JsxAttribute::Spread {
                     value: ValueId::new(0),
+                    getter: false,
                     origin: origin(),
                 },
                 JsxAttribute::Named {
@@ -708,7 +710,10 @@ fn lowers_binding_aware_component_props_spreads_and_children_in_source_order() {
         fict_emit::ComponentTarget::Binding(binding) if *binding == BindingId::new(0)
     ));
     assert_eq!(props.len(), 3);
-    assert!(matches!(props[1], fict_emit::ComponentProp::Spread(_)));
+    assert!(matches!(
+        props[1],
+        fict_emit::ComponentProp::Spread { getter: false, .. }
+    ));
     assert_eq!(children.len(), 1);
 }
 

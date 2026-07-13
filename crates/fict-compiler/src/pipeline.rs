@@ -1680,6 +1680,114 @@ mod tests {
     }
 
     #[test]
+    fn diagnoses_dynamic_component_spreads_and_keeps_accessors_lazy() {
+        let dynamic_sources = [
+            (
+                "call",
+                "function Child(_props) { return null; } function Parent(props) { return <Child {...props()} />; }",
+            ),
+            (
+                "tagged-template",
+                "function Child(_props) { return null; } function tag(value) { return value; } function Parent() { return <Child {...tag`value`} />; }",
+            ),
+            (
+                "template",
+                "function Child(_props) { return null; } function Parent(value) { return <Child {...`${value}`} />; }",
+            ),
+            (
+                "plain-template",
+                "function Child(_props) { return null; } function Parent() { return <Child {...`value`} />; }",
+            ),
+            (
+                "array-spread",
+                "function Child(_props) { return null; } function Parent(items) { return <Child {...[...items]} />; }",
+            ),
+            (
+                "dynamic-import",
+                "function Child(_props) { return null; } function Parent() { return <Child {...import('./props.js')} />; }",
+            ),
+            (
+                "class-expression",
+                "function Child(_props) { return null; } function Parent() { return <Child {...class Props {}} />; }",
+            ),
+            (
+                "class-static",
+                "function Child(_props) { return null; } function Parent() { return <Child {...class Props { static x = 1; static [String('y')] = 2; static { this.z = 3; } }} />; }",
+            ),
+            (
+                "computed-member",
+                "function Child(_props) { return null; } function Parent(source, key) { return <Child {...source[key]} />; }",
+            ),
+            (
+                "optional-member",
+                "function Child(_props) { return null; } function Parent(source) { return <Child {...source?.value} />; }",
+            ),
+            (
+                "object-spread",
+                "function Child(_props) { return null; } function Parent(source) { return <Child {...{...source}} />; }",
+            ),
+        ];
+
+        for (name, source) in dynamic_sources {
+            let strict = compile(request(source, &format!("dynamic-spread-{name}.tsx")));
+            assert!(strict.has_errors(), "{name}: {:?}", strict.diagnostics);
+            assert!(strict.code.is_empty(), "{name}: {}", strict.code);
+            assert_eq!(
+                strict
+                    .diagnostics
+                    .iter()
+                    .map(|diagnostic| diagnostic.code.as_str())
+                    .collect::<Vec<_>>(),
+                ["FICT-P005"],
+                "{name}: {:?}",
+                strict.diagnostics
+            );
+            assert_eq!(strict.diagnostics[0].severity, DiagnosticSeverity::Error);
+            assert_eq!(
+                strict.diagnostics[0].guarantee_class,
+                GuaranteeClass::Fallback
+            );
+            assert!(strict.diagnostics[0].primary_span.is_some());
+
+            let mut fallback_request = request(source, &format!("dynamic-spread-{name}.tsx"));
+            fallback_request.options.strict_guarantee = false;
+            let fallback = compile(fallback_request);
+            assert!(!fallback.has_errors(), "{name}: {:?}", fallback.diagnostics);
+            assert_eq!(
+                fallback
+                    .diagnostics
+                    .iter()
+                    .map(|diagnostic| (diagnostic.code.as_str(), diagnostic.severity))
+                    .collect::<Vec<_>>(),
+                [("FICT-P005", DiagnosticSeverity::Warning)],
+                "{name}: {:?}",
+                fallback.diagnostics
+            );
+            assert!(!fallback.code.is_empty(), "{name}");
+        }
+
+        let safe = compile(request(
+            "import { $state } from 'fict'; function Child(_props) { return null; } export function Direct() { let props = $state({ value: 1 }); return <Child {...props} />; } export function Called() { let props = $state({ value: 1 }); return <Child {...props()} />; } export function Optional() { let props = $state({ value: 1 }); return <Child {...props?.()} />; } export function Plain(props) { return <Child {...props} />; }",
+            "safe-accessor-spreads.tsx",
+        ));
+        assert!(!safe.has_errors(), "{:?}", safe.diagnostics);
+        assert!(safe.diagnostics.is_empty(), "{:?}", safe.diagnostics);
+        assert_eq!(
+            safe.code.matches("__fictProp(() => props())").count(),
+            2,
+            "{}",
+            safe.code
+        );
+        assert!(
+            safe.code.contains("__fictProp(() => props?.())"),
+            "{}",
+            safe.code
+        );
+        assert!(!safe.code.contains("props()()"), "{}", safe.code);
+        assert!(!safe.code.contains("props()?.()"), "{}", safe.code);
+    }
+
+    #[test]
     fn preserves_store_resource_and_selector_runtime_primitives() {
         let result = compile(request(
             "import { $store, createSelector, render } from 'fict'; import { resource } from 'fict/plus'; const greeting = resource(async (_ctx, name) => `hello ${name}`); export function App() { const model = $store({ selected: 'a', label: 'A' }); const selected = createSelector(() => model.selected); const result = greeting.read('world'); return <main><p>{model.label}</p><i class={selected('a') ? 'selected' : ''}>A</i><b>{result.loading ? 'loading' : result.data}</b></main>; } export function mount(node) { return render(() => <App />, node); }",

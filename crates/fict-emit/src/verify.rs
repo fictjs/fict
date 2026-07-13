@@ -956,12 +956,16 @@ fn verify_helper_semantics(
             fragment_helper,
             ..
         } => {
-            let needs_prop = props
-                .iter()
-                .any(|prop| matches!(prop, crate::ComponentProp::Named { getter: true, .. }));
+            let needs_prop = props.iter().any(|prop| {
+                matches!(
+                    prop,
+                    crate::ComponentProp::Named { getter: true, .. }
+                        | crate::ComponentProp::Spread { getter: true, .. }
+                )
+            });
             let needs_merge = props
                 .iter()
-                .any(|prop| matches!(prop, crate::ComponentProp::Spread(_)));
+                .any(|prop| matches!(prop, crate::ComponentProp::Spread { .. }));
             let needs_children = children
                 .iter()
                 .any(|child| matches!(child, crate::ComponentChild::Value { getter: true, .. }));

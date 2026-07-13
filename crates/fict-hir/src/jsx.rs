@@ -54,6 +54,8 @@ pub enum JsxAttribute {
     Spread {
         /// Spread input value.
         value: ValueId,
+        /// Preserve this spread as a lazy component-prop source.
+        getter: bool,
         /// Source provenance.
         origin: Origin,
     },

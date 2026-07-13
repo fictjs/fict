@@ -188,7 +188,10 @@ pub enum ComponentProp {
         name: String,
         origin: Origin,
     },
-    Spread(EmitValueRef),
+    Spread {
+        value: EmitValueRef,
+        getter: bool,
+    },
 }
 
 /// Scalar or recursively-authored JSX child passed to a component.
@@ -606,9 +609,8 @@ impl EmitOperation {
                 }
                 for prop in props {
                     match prop {
-                        ComponentProp::Named { value, .. } | ComponentProp::Spread(value) => {
-                            visit(value);
-                        }
+                        ComponentProp::Named { value, .. }
+                        | ComponentProp::Spread { value, .. } => visit(value),
                         ComponentProp::Node { .. } => {}
                     }
                 }
