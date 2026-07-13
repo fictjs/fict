@@ -247,6 +247,16 @@ impl Verifier<'_> {
             }
             self.function(template.owner, template.origin);
             self.verify_origin(template.origin);
+            if template.root.contains_fragment() && !template.contains_fragment {
+                self.error(
+                    "FICT-HIR-JSX-FRAGMENT",
+                    format!(
+                        "template{} contains a structural fragment but does not declare it",
+                        template.id.index()
+                    ),
+                    Some(template.origin),
+                );
+            }
             if let Some(owner) = self.file.functions.get(template.owner.as_usize()) {
                 self.verify_jsx(&template.root, owner);
             }

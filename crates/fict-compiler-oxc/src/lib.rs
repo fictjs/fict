@@ -11,6 +11,7 @@ mod emit_codegen;
 mod facts;
 mod frontend;
 mod hir_builder;
+mod jsx_text;
 mod typescript;
 
 pub use compile::{

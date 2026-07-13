@@ -442,7 +442,7 @@ mod tests {
     }
 
     #[test]
-    fn runs_scoped_state_context_reads_and_writes_but_fails_closed_for_jsx() {
+    fn runs_scoped_state_context_reads_and_writes_but_fails_closed_for_fine_grained_jsx() {
         let state = compile(request(
             "import { $state } from 'fict'; function Component() { const __fictCtx = 'user'; let count = $state(0); const assigned = (count = 2); const before = count++; return [__fictCtx, count, assigned, before]; }",
             "state.js",
@@ -468,8 +468,124 @@ mod tests {
         assert!(
             jsx.diagnostics
                 .iter()
-                .any(|diagnostic| diagnostic.code.as_str() == "FICT-OXC-EMIT-JSX")
+                .any(|diagnostic| diagnostic.code.as_str() == "FICT-OXC-EMIT-UNSUPPORTED")
         );
+    }
+
+    #[test]
+    fn emits_typescript_jsx_as_ordered_vnode_fallbacks() {
+        let mut input = request(
+            "type Props = { name: string; value: number; extra: Record<string, unknown> }; const Child = (props: { value: number }) => <em>{props.value}</em>; export function App(props: Props) { return <section id=\"root\" disabled {...props.extra}>Hello {props.name}<Child value={props.value} /></section>; }",
+            "component.tsx",
+        );
+        input.options.fine_grained_dom = false;
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(!result.code.contains("<section"), "{}", result.code);
+        assert!(!result.code.contains("type Props"), "{}", result.code);
+        assert!(result.code.contains("type: \"section\""), "{}", result.code);
+        assert!(result.code.contains("disabled: true"), "{}", result.code);
+        assert!(result.code.contains("...props.extra"), "{}", result.code);
+        assert!(result.code.contains("children:"), "{}", result.code);
+        assert!(result.code.contains("type: Child"), "{}", result.code);
+    }
+
+    #[test]
+    fn rewrites_reactive_vnode_children_and_event_mutations() {
+        let mut input = request(
+            "import { $state } from 'fict'; export function Counter() { let count = $state(0); return <button onClick={() => count++}>{count}</button>; }",
+            "counter.tsx",
+        );
+        input.options.fine_grained_dom = false;
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.code.contains("onClick: () =>"), "{}", result.code);
+        assert!(
+            result.code.contains("count(__fict_previous + 1)"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("children: count()"), "{}", result.code);
+    }
+
+    #[test]
+    fn imports_a_collision_free_runtime_fragment_for_short_syntax() {
+        let mut input = request(
+            "const Fragment = 'local'; export function App() { return <><span>a</span><span>{Fragment}</span></>; }",
+            "fragment.jsx",
+        );
+        input.options.fine_grained_dom = false;
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result.code.contains("Fragment as Fragment_1"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("type: Fragment_1"), "{}", result.code);
+        assert!(
+            result.code.contains("children: Fragment"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn imports_fragments_nested_inside_vnode_expression_values() {
+        let mut input = request(
+            "const View = (props) => props.render; export function App() { return <View render={() => <><i>x</i></>} />; }",
+            "nested-fragment.jsx",
+        );
+        input.options.fine_grained_dom = false;
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result.code.contains("import { Fragment }"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("render: () => ({"), "{}", result.code);
+        assert!(result.code.contains("type: Fragment"), "{}", result.code);
+        assert!(!result.code.contains("<i>"), "{}", result.code);
+    }
+
+    #[test]
+    fn preserves_vnode_key_namespaces_nested_nodes_and_spread_children() {
+        let mut input = request(
+            "const UI = { Card: (_props) => null }; const id = 'card'; const items = ['a', 'b']; export function App() { return <UI.Card key={id} foo:bar=\"&amp;\" node={<svg:path />} __proto__=\"safe\">{...items}</UI.Card>; }",
+            "vnode-edges.jsx",
+        );
+        input.options.fine_grained_dom = false;
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(!result.code.contains("<UI.Card"), "{}", result.code);
+        assert!(result.code.contains("type: UI.Card"), "{}", result.code);
+        assert!(
+            result.code.contains("\"foo:bar\": \"&\""),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("type: \"svg:path\""),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("[\"__proto__\"]: \"safe\""),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("children: [...items]"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("key: id"), "{}", result.code);
     }
 
     #[test]

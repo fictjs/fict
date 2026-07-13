@@ -247,6 +247,7 @@ pub enum EmitOperation {
     CreateVNode {
         template: TemplateId,
         source_result: ValueId,
+        fragment_helper: Option<RuntimeHelper>,
         origin: Origin,
     },
     DeclareTemplate {
@@ -362,12 +363,15 @@ impl EmitOperation {
             | Self::Conditional { helper, .. }
             | Self::KeyedList { helper, .. }
             | Self::ResolveElement { helper, .. } => Some(*helper),
-            Self::ReadReactive { helper, .. } => *helper,
+            Self::ReadReactive { helper, .. }
+            | Self::CreateVNode {
+                fragment_helper: helper,
+                ..
+            } => *helper,
             Self::PreserveHir { .. }
             | Self::TrackRuntimeReactive { .. }
             | Self::WriteReactive { .. }
             | Self::UpdateReactive { .. }
-            | Self::CreateVNode { .. }
             | Self::CloneTemplate { .. }
             | Self::InvokeComponent { .. }
             | Self::Return { .. } => None,

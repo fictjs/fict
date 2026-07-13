@@ -443,17 +443,24 @@ fn verify_operations(
             EmitOperation::CreateVNode {
                 template,
                 source_result,
+                fragment_helper,
                 ..
             } => {
                 verify_source_result(hir_function, *source_result, diagnostics);
-                if hir
-                    .templates
-                    .get(template.as_usize())
-                    .is_none_or(|item| item.owner != function.source)
-                {
+                let template = hir.templates.get(template.as_usize());
+                if template.is_none_or(|item| item.owner != function.source) {
                     diagnostics.push(emit_error(
                         "FICT-EMIT-VNODE",
                         "VNode operation must reference a JSX template owned by its function",
+                    ));
+                }
+                if template.is_some_and(|template| {
+                    template.contains_fragment
+                        != (*fragment_helper == Some(RuntimeHelper::Fragment))
+                }) {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-VNODE-FRAGMENT",
+                        "VNode operation fragment helper must match its JSX template",
                     ));
                 }
             }
@@ -654,6 +661,9 @@ fn verify_helper_semantics(
         EmitOperation::ReadReactive { helper, .. } => {
             helper.is_none_or(|helper| helper == RuntimeHelper::ReactiveGetter)
         }
+        EmitOperation::CreateVNode {
+            fragment_helper, ..
+        } => fragment_helper.is_none_or(|helper| helper == RuntimeHelper::Fragment),
         EmitOperation::ResolveElement { helper, path, .. } => {
             *helper == RuntimeHelper::ResolvePath && !path.is_empty()
         }
@@ -661,7 +671,6 @@ fn verify_helper_semantics(
         | EmitOperation::TrackRuntimeReactive { .. }
         | EmitOperation::WriteReactive { .. }
         | EmitOperation::UpdateReactive { .. }
-        | EmitOperation::CreateVNode { .. }
         | EmitOperation::CloneTemplate { .. }
         | EmitOperation::InvokeComponent { .. }
         | EmitOperation::Return { .. } => true,

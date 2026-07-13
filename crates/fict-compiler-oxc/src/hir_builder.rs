@@ -32,7 +32,7 @@ use oxc::{
         Visit,
         walk::{
             walk_arrow_function_expression, walk_assignment_pattern, walk_binding_rest_element,
-            walk_call_expression, walk_function, walk_variable_declarator,
+            walk_call_expression, walk_function, walk_jsx_element, walk_variable_declarator,
         },
     },
     parser::{ParseOptions, Parser},
@@ -1274,6 +1274,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     id: template,
                     owner: fact.id,
                     root,
+                    contains_fragment: jsx.contains_fragment,
                     origin: Origin::source(jsx.span),
                 });
                 let value = self.push_value(
@@ -1730,6 +1731,7 @@ struct JsxFact {
     owner: FunctionId,
     span: SourceSpan,
     root: RawJsxNode,
+    contains_fragment: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1827,10 +1829,13 @@ impl<'a> Visit<'a> for JsxCollector<'_> {
     }
 
     fn visit_jsx_element(&mut self, element: &JSXElement<'a>) {
+        let mut fragments = FragmentDetector::default();
+        walk_jsx_element(&mut fragments, element);
         self.roots.push(JsxFact {
             owner: *self.stack.last().expect("module JSX owner"),
             span: source_span(element.span),
             root: raw_jsx_element(self.scoping, element),
+            contains_fragment: fragments.found,
         });
     }
 
@@ -1839,7 +1844,19 @@ impl<'a> Visit<'a> for JsxCollector<'_> {
             owner: *self.stack.last().expect("module JSX owner"),
             span: source_span(fragment.span),
             root: raw_jsx_fragment(self.scoping, fragment),
+            contains_fragment: true,
         });
+    }
+}
+
+#[derive(Default)]
+struct FragmentDetector {
+    found: bool,
+}
+
+impl<'a> Visit<'a> for FragmentDetector {
+    fn visit_jsx_fragment(&mut self, _fragment: &JSXFragment<'a>) {
+        self.found = true;
     }
 }
 
@@ -1954,7 +1971,7 @@ fn raw_jsx_attribute_value(
 ) -> RawJsxAttributeValue {
     match value {
         OxcJsxAttributeValue::StringLiteral(literal) => {
-            RawJsxAttributeValue::Text(literal.value.to_string())
+            RawJsxAttributeValue::Text(crate::jsx_text::decode_entities(literal.value.as_str()))
         }
         OxcJsxAttributeValue::ExpressionContainer(container) => container
             .expression
@@ -1973,10 +1990,12 @@ fn raw_jsx_attribute_value(
 
 fn raw_jsx_child(scoping: &Scoping, child: &OxcJsxChild<'_>) -> Option<RawJsxChild> {
     match child {
-        OxcJsxChild::Text(text) => Some(RawJsxChild::Text {
-            value: text.value.to_string(),
-            span: source_span(text.span),
-        }),
+        OxcJsxChild::Text(text) => {
+            crate::jsx_text::normalize_text(text.value.as_str()).map(|value| RawJsxChild::Text {
+                value,
+                span: source_span(text.span),
+            })
+        }
         OxcJsxChild::Element(element) => Some(RawJsxChild::Node(Box::new(raw_jsx_element(
             scoping, element,
         )))),

@@ -11,9 +11,12 @@ use oxc::{
     ast::{
         AstBuilder, NONE,
         ast::{
-            Argument, ArrowFunctionExpression, AssignmentTarget, BindingPattern, Expression,
-            FormalParameter, FormalParameterKind, FormalParameters, Function, FunctionBody,
-            ImportDeclarationSpecifier, ImportOrExportKind, SimpleAssignmentTarget, Statement,
+            Argument, ArrayExpressionElement, ArrowFunctionExpression, AssignmentTarget,
+            BindingPattern, Expression, FormalParameter, FormalParameterKind, FormalParameters,
+            Function, FunctionBody, IdentifierName, ImportDeclarationSpecifier, ImportOrExportKind,
+            JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild, JSXElement,
+            JSXElementName, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject,
+            ObjectPropertyKind, PropertyKey, PropertyKind, SimpleAssignmentTarget, Statement,
         },
     },
     ast_visit::{VisitMut, walk_mut},
@@ -22,6 +25,7 @@ use oxc::{
     semantic::SemanticBuilder,
     span::{GetSpan, SourceType, Span},
     syntax::{
+        identifier::is_identifier_name,
         number::NumberBase,
         operator::{BinaryOperator as OxcBinaryOperator, LogicalOperator as OxcLogicalOperator},
         scope::ScopeFlags,
@@ -45,13 +49,6 @@ pub fn emit_program(
     emit: &EmitProgram,
 ) -> OxcCompileOutput {
     let mut diagnostics = unsupported_operations(emit);
-    if source_type(options).is_jsx() {
-        diagnostics.push(emit_error(
-            "FICT-OXC-EMIT-JSX",
-            "OXC output emission requires JSX to be fully represented by supported EmitIR operations",
-            GuaranteeClass::Unsupported,
-        ));
-    }
     if options.module_kind == OxcModuleKind::Script && !emit.imports.is_empty() {
         diagnostics.push(emit_error(
             "FICT-OXC-EMIT-SCRIPT-IMPORT",
@@ -91,9 +88,11 @@ pub fn emit_program(
     let (rewrites, rewrite_diagnostics) = call_rewrites(emit);
     let (reads, read_diagnostics) = read_rewrites(emit);
     let (mutations, mutation_diagnostics) = mutation_rewrites(emit);
+    let (vnodes, vnode_diagnostics) = vnode_rewrites(emit);
     diagnostics.extend(rewrite_diagnostics);
     diagnostics.extend(read_diagnostics);
     diagnostics.extend(mutation_diagnostics);
+    diagnostics.extend(vnode_diagnostics);
     if !diagnostics.is_empty() {
         return failed_output(diagnostics);
     }
@@ -102,10 +101,15 @@ pub fn emit_program(
         call_rewrites: &rewrites,
         reads: &reads,
         mutations: &mutations,
+        vnodes: &vnodes,
         context_declarations,
         matched_calls: BTreeSet::new(),
         matched_reads: BTreeSet::new(),
         matched_mutations: BTreeSet::new(),
+        matched_vnodes: BTreeSet::new(),
+        vnode_depth: 0,
+        active_fragment_local: None,
+        diagnostics: Vec::new(),
     };
     rewriter.visit_program(&mut program);
     for location in rewrites.keys() {
@@ -152,6 +156,20 @@ pub fn emit_program(
             );
         }
     }
+    for location in vnodes.keys() {
+        if !rewriter.matched_vnodes.contains(location) {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-ORIGIN",
+                    "EmitIR VNode origin does not identify an OXC JSX root expression",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(
+                    SourceSpan::new(location.0, location.1).expect("ordered EmitIR VNode location"),
+                ),
+            );
+        }
+    }
     for location in rewriter.context_declarations.keys() {
         diagnostics.push(
             emit_error(
@@ -164,6 +182,7 @@ pub fn emit_program(
             ),
         );
     }
+    diagnostics.append(&mut rewriter.diagnostics);
     if !diagnostics.is_empty() {
         return failed_output(diagnostics);
     }
@@ -341,8 +360,7 @@ fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
             EmitOperation::UpdateReactive { projections, .. } => !projections.is_empty(),
             _ => matches!(
                 operation,
-                EmitOperation::CreateVNode { .. }
-                    | EmitOperation::DeclareTemplate { .. }
+                EmitOperation::DeclareTemplate { .. }
                     | EmitOperation::CloneTemplate { .. }
                     | EmitOperation::ResolveElement { .. }
                     | EmitOperation::InvokeComponent { .. }
@@ -558,6 +576,74 @@ fn mutation_rewrites(
     (mutations, diagnostics)
 }
 
+#[derive(Debug, Clone)]
+struct VNodeRewrite {
+    fragment_local: Option<String>,
+}
+
+fn vnode_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), VNodeRewrite>, Vec<Diagnostic>) {
+    let helper_names: BTreeMap<_, _> = emit
+        .imports
+        .iter()
+        .map(|intent| (intent.helper, intent.local.as_str()))
+        .collect();
+    let mut rewrites = BTreeMap::new();
+    let mut diagnostics = Vec::new();
+    for operation in emit
+        .functions
+        .iter()
+        .flat_map(|function| &function.operations)
+    {
+        let EmitOperation::CreateVNode {
+            fragment_helper,
+            origin,
+            ..
+        } = operation
+        else {
+            continue;
+        };
+        let Some(span) = origin.primary_span else {
+            diagnostics.push(emit_error(
+                "FICT-OXC-EMIT-ORIGIN",
+                "VNode EmitIR operation requires a source origin",
+                GuaranteeClass::Internal,
+            ));
+            continue;
+        };
+        let fragment_local = match fragment_helper {
+            Some(helper) => {
+                let Some(local) = helper_names.get(helper) else {
+                    diagnostics.push(
+                        emit_error(
+                            "FICT-OXC-EMIT-IMPORT",
+                            "VNode fragment helper has no runtime import intent",
+                            GuaranteeClass::Internal,
+                        )
+                        .with_primary_span(span),
+                    );
+                    continue;
+                };
+                Some((*local).to_owned())
+            }
+            None => None,
+        };
+        if rewrites
+            .insert((span.start(), span.end()), VNodeRewrite { fragment_local })
+            .is_some()
+        {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-ORIGIN",
+                    "multiple VNode operations share the same source origin",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(span),
+            );
+        }
+    }
+    (rewrites, diagnostics)
+}
+
 fn render_runtime_imports(emit: &EmitProgram) -> String {
     let mut output = String::new();
     for intent in &emit.imports {
@@ -666,10 +752,30 @@ struct AstRewriter<'a, 'emit> {
     call_rewrites: &'emit BTreeMap<(u32, u32), CallRewrite>,
     reads: &'emit BTreeSet<(u32, u32)>,
     mutations: &'emit BTreeMap<(u32, u32), MutationRewrite>,
+    vnodes: &'emit BTreeMap<(u32, u32), VNodeRewrite>,
     context_declarations: BTreeMap<(u32, u32), Statement<'a>>,
     matched_calls: BTreeSet<(u32, u32)>,
     matched_reads: BTreeSet<(u32, u32)>,
     matched_mutations: BTreeSet<(u32, u32)>,
+    matched_vnodes: BTreeSet<(u32, u32)>,
+    vnode_depth: usize,
+    active_fragment_local: Option<String>,
+    diagnostics: Vec<Diagnostic>,
+}
+
+enum VNodeChild<'a> {
+    Value(Expression<'a>),
+    Spread(Span, Expression<'a>),
+}
+
+fn jsx_attribute_name(name: JSXAttributeName<'_>) -> (String, Span) {
+    match name {
+        JSXAttributeName::Identifier(identifier) => (identifier.name.to_string(), identifier.span),
+        JSXAttributeName::NamespacedName(name) => (
+            format!("{}:{}", name.namespace.name, name.name.name),
+            name.span,
+        ),
+    }
 }
 
 impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
@@ -695,6 +801,26 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
 
     fn visit_expression(&mut self, expression: &mut Expression<'a>) {
         let location = (expression.span().start, expression.span().end);
+        let vnode = self.vnodes.get(&location).cloned();
+        if matches!(
+            expression,
+            Expression::JSXElement(_) | Expression::JSXFragment(_)
+        ) && (vnode.is_some() || self.vnode_depth > 0)
+        {
+            let previous_fragment = self.active_fragment_local.clone();
+            if let Some(vnode) = &vnode {
+                self.active_fragment_local.clone_from(&vnode.fragment_local);
+            }
+            self.vnode_depth += 1;
+            let original = expression.take_in(&self.allocator);
+            *expression = self.lower_jsx_expression(original);
+            self.vnode_depth -= 1;
+            self.active_fragment_local = previous_fragment;
+            if vnode.is_some() {
+                self.matched_vnodes.insert(location);
+            }
+            return;
+        }
         if let Some(rewrite) = self.mutations.get(&location).copied()
             && self.rewrite_mutation(expression, rewrite)
         {
@@ -745,6 +871,282 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
 }
 
 impl<'a> AstRewriter<'a, '_> {
+    fn lower_jsx_expression(&mut self, expression: Expression<'a>) -> Expression<'a> {
+        match expression {
+            Expression::JSXElement(element) => self.lower_jsx_element(element.unbox()),
+            Expression::JSXFragment(fragment) => self.lower_jsx_fragment(fragment.unbox()),
+            _ => unreachable!("VNode lowering only accepts JSX expressions"),
+        }
+    }
+
+    fn lower_jsx_element(&mut self, element: JSXElement<'a>) -> Expression<'a> {
+        let span = element.span;
+        let opening = element.opening_element.unbox();
+        let element_type = self.lower_jsx_element_name(opening.name);
+        let mut properties = ArenaVec::new_in(&self.allocator);
+        let mut key = None;
+
+        for attribute in opening.attributes {
+            match attribute {
+                JSXAttributeItem::SpreadAttribute(spread) => {
+                    let spread = spread.unbox();
+                    let mut value = spread.argument;
+                    self.visit_expression(&mut value);
+                    properties.push(ObjectPropertyKind::new_spread_property(
+                        spread.span,
+                        value,
+                        &AstBuilder::new(self.allocator),
+                    ));
+                }
+                JSXAttributeItem::Attribute(attribute) => {
+                    let attribute = attribute.unbox();
+                    let (name, name_span) = jsx_attribute_name(attribute.name);
+                    let value = self.lower_jsx_attribute_value(attribute.value, attribute.span);
+                    if name == "key" {
+                        key = Some(value);
+                    } else {
+                        properties.push(self.object_property(name_span, &name, value));
+                    }
+                }
+            }
+        }
+
+        if let Some(children) = self.lower_jsx_children(element.children, span) {
+            properties.push(self.object_property(span, "children", children));
+        }
+
+        let builder = AstBuilder::new(self.allocator);
+        let props = if properties.is_empty() {
+            Expression::new_null_literal(span, &builder)
+        } else {
+            Expression::new_object_expression(span, properties, &builder)
+        };
+        let mut vnode = ArenaVec::new_in(&self.allocator);
+        vnode.push(self.object_property(span, "type", element_type));
+        vnode.push(self.object_property(span, "props", props));
+        if let Some(key) = key {
+            vnode.push(self.object_property(span, "key", key));
+        }
+        Expression::new_object_expression(span, vnode, &builder)
+    }
+
+    fn lower_jsx_fragment(&mut self, fragment: JSXFragment<'a>) -> Expression<'a> {
+        let span = fragment.span;
+        let builder = AstBuilder::new(self.allocator);
+        let element_type = if let Some(local) = &self.active_fragment_local {
+            Expression::new_identifier(span, self.allocator.alloc_str(local), &builder)
+        } else {
+            let mut diagnostic = emit_error(
+                "FICT-OXC-EMIT-FRAGMENT",
+                "JSX fragment lowering requires an EmitIR runtime Fragment helper",
+                GuaranteeClass::Internal,
+            );
+            diagnostic.primary_span = SourceSpan::new(span.start, span.end);
+            self.diagnostics.push(diagnostic);
+            Expression::new_null_literal(span, &builder)
+        };
+        let children = self.lower_jsx_children(fragment.children, span);
+        let props = children.map_or_else(
+            || Expression::new_null_literal(span, &builder),
+            |children| {
+                let mut properties = ArenaVec::new_in(&self.allocator);
+                properties.push(self.object_property(span, "children", children));
+                Expression::new_object_expression(span, properties, &builder)
+            },
+        );
+        let mut vnode = ArenaVec::new_in(&self.allocator);
+        vnode.push(self.object_property(span, "type", element_type));
+        vnode.push(self.object_property(span, "props", props));
+        Expression::new_object_expression(span, vnode, &builder)
+    }
+
+    fn lower_jsx_element_name(&mut self, name: JSXElementName<'a>) -> Expression<'a> {
+        let builder = AstBuilder::new(self.allocator);
+        match name {
+            JSXElementName::Identifier(identifier) => {
+                Expression::new_string_literal(identifier.span, identifier.name, None, &builder)
+            }
+            JSXElementName::IdentifierReference(identifier) => {
+                let mut expression = Expression::Identifier(identifier);
+                self.visit_expression(&mut expression);
+                expression
+            }
+            JSXElementName::NamespacedName(name) => {
+                let value = format!("{}:{}", name.namespace.name, name.name.name);
+                Expression::new_string_literal(
+                    name.span,
+                    self.allocator.alloc_str(&value),
+                    None,
+                    &builder,
+                )
+            }
+            JSXElementName::MemberExpression(member) => {
+                self.lower_jsx_member_expression(member.unbox())
+            }
+            JSXElementName::ThisExpression(expression) => Expression::ThisExpression(expression),
+        }
+    }
+
+    fn lower_jsx_member_expression(&mut self, member: JSXMemberExpression<'a>) -> Expression<'a> {
+        let object = match member.object {
+            JSXMemberExpressionObject::IdentifierReference(identifier) => {
+                let mut expression = Expression::Identifier(identifier);
+                self.visit_expression(&mut expression);
+                expression
+            }
+            JSXMemberExpressionObject::MemberExpression(parent) => {
+                self.lower_jsx_member_expression(parent.unbox())
+            }
+            JSXMemberExpressionObject::ThisExpression(expression) => {
+                Expression::ThisExpression(expression)
+            }
+        };
+        let property = IdentifierName::new(
+            member.property.span,
+            member.property.name,
+            &AstBuilder::new(self.allocator),
+        );
+        Expression::new_static_member_expression(
+            member.span,
+            object,
+            property,
+            false,
+            &AstBuilder::new(self.allocator),
+        )
+    }
+
+    fn lower_jsx_attribute_value(
+        &mut self,
+        value: Option<JSXAttributeValue<'a>>,
+        span: Span,
+    ) -> Expression<'a> {
+        let builder = AstBuilder::new(self.allocator);
+        match value {
+            None => Expression::new_boolean_literal(span, true, &builder),
+            Some(JSXAttributeValue::StringLiteral(literal)) => {
+                let literal = literal.unbox();
+                let decoded = crate::jsx_text::decode_entities(literal.value.as_str());
+                Expression::new_string_literal_with_lone_surrogates(
+                    literal.span,
+                    self.allocator.alloc_str(&decoded),
+                    None,
+                    literal.lone_surrogates,
+                    &builder,
+                )
+            }
+            Some(JSXAttributeValue::ExpressionContainer(container)) => {
+                let container = container.unbox();
+                if container.expression.is_expression() {
+                    let mut expression = container.expression.into_expression();
+                    self.visit_expression(&mut expression);
+                    expression
+                } else {
+                    Expression::new_boolean_literal(span, true, &builder)
+                }
+            }
+            Some(JSXAttributeValue::Element(element)) => self.lower_jsx_element(element.unbox()),
+            Some(JSXAttributeValue::Fragment(fragment)) => {
+                self.lower_jsx_fragment(fragment.unbox())
+            }
+        }
+    }
+
+    fn lower_jsx_children(
+        &mut self,
+        children: ArenaVec<'a, JSXChild<'a>>,
+        span: Span,
+    ) -> Option<Expression<'a>> {
+        let mut lowered = Vec::new();
+        for child in children {
+            match child {
+                JSXChild::Text(text) => {
+                    if let Some(value) = crate::jsx_text::normalize_text(text.value.as_str()) {
+                        lowered.push(VNodeChild::Value(Expression::new_string_literal(
+                            text.span,
+                            self.allocator.alloc_str(&value),
+                            None,
+                            &AstBuilder::new(self.allocator),
+                        )));
+                    }
+                }
+                JSXChild::Element(element) => {
+                    lowered.push(VNodeChild::Value(self.lower_jsx_element(element.unbox())))
+                }
+                JSXChild::Fragment(fragment) => {
+                    lowered.push(VNodeChild::Value(self.lower_jsx_fragment(fragment.unbox())))
+                }
+                JSXChild::ExpressionContainer(container) => {
+                    let container = container.unbox();
+                    if container.expression.is_expression() {
+                        let mut expression = container.expression.into_expression();
+                        self.visit_expression(&mut expression);
+                        lowered.push(VNodeChild::Value(expression));
+                    }
+                }
+                JSXChild::Spread(spread) => {
+                    let spread = spread.unbox();
+                    let mut expression = spread.expression;
+                    self.visit_expression(&mut expression);
+                    lowered.push(VNodeChild::Spread(spread.span, expression));
+                }
+            }
+        }
+        match lowered.as_mut_slice() {
+            [] => None,
+            [VNodeChild::Value(_)] => match lowered.pop().expect("one JSX child") {
+                VNodeChild::Value(value) => Some(value),
+                VNodeChild::Spread(_, _) => unreachable!(),
+            },
+            _ => {
+                let mut elements = ArenaVec::new_in(&self.allocator);
+                for child in lowered {
+                    match child {
+                        VNodeChild::Value(value) => {
+                            elements.push(ArrayExpressionElement::from(value));
+                        }
+                        VNodeChild::Spread(spread_span, value) => {
+                            elements.push(ArrayExpressionElement::new_spread_element(
+                                spread_span,
+                                value,
+                                &AstBuilder::new(self.allocator),
+                            ));
+                        }
+                    }
+                }
+                Some(Expression::new_array_expression(
+                    span,
+                    elements,
+                    &AstBuilder::new(self.allocator),
+                ))
+            }
+        }
+    }
+
+    fn object_property(
+        &self,
+        span: Span,
+        name: &str,
+        value: Expression<'a>,
+    ) -> ObjectPropertyKind<'a> {
+        let builder = AstBuilder::new(self.allocator);
+        let computed = name == "__proto__";
+        let key = if !computed && is_identifier_name(name) {
+            PropertyKey::new_static_identifier(span, self.allocator.alloc_str(name), &builder)
+        } else {
+            PropertyKey::new_string_literal(span, self.allocator.alloc_str(name), None, &builder)
+        };
+        ObjectPropertyKind::new_object_property(
+            span,
+            PropertyKind::Init,
+            key,
+            value,
+            false,
+            false,
+            computed,
+            &builder,
+        )
+    }
+
     fn rewrite_mutation(
         &mut self,
         expression: &mut Expression<'a>,

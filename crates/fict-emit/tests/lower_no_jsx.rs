@@ -392,6 +392,7 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
             ],
             origin: origin(),
         }),
+        contains_fragment: false,
         origin: origin(),
     }];
     verify_hir(&hir).expect("valid JSX fixture");
@@ -475,10 +476,17 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
             EmitOperation::CreateVNode {
                 template,
                 source_result,
+                fragment_helper: None,
                 ..
             } if *template == TemplateId::new(0) && *source_result == ValueId::new(1)
         )
     }));
+    assert!(
+        !vnode
+            .imports
+            .iter()
+            .any(|intent| intent.helper == RuntimeHelper::Fragment)
+    );
     assert!(
         !vnode.functions[0]
             .operations
@@ -493,6 +501,50 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
             .as_slice()
             .iter()
             .any(|diagnostic| diagnostic.code.as_str() == "FICT-EMIT-JSX-STAGE")
+    );
+
+    let JsxNode::Element(root) = &mut hir.templates[0].root else {
+        unreachable!()
+    };
+    root.children
+        .push(JsxChild::Node(Box::new(JsxNode::Fragment {
+            children: vec![JsxChild::Text {
+                value: "fragment".into(),
+                origin: origin(),
+            }],
+            origin: origin(),
+        })));
+    hir.templates[0].contains_fragment = true;
+    verify_hir(&hir).expect("valid nested fragment fixture");
+    let fragment_vnode = lower_core(
+        &hir,
+        &regions,
+        &cycles,
+        NoJsxLoweringOptions {
+            fine_grained_dom: false,
+            ..NoJsxLoweringOptions::default()
+        },
+    )
+    .expect("fragment VNode JSX fallback");
+    assert!(
+        fragment_vnode.functions[0]
+            .operations
+            .iter()
+            .any(|operation| {
+                matches!(
+                    operation,
+                    EmitOperation::CreateVNode {
+                        fragment_helper: Some(RuntimeHelper::Fragment),
+                        ..
+                    }
+                )
+            })
+    );
+    assert!(
+        fragment_vnode
+            .imports
+            .iter()
+            .any(|intent| intent.helper == RuntimeHelper::Fragment)
     );
 }
 
@@ -554,6 +606,7 @@ fn lowers_binding_aware_component_props_spreads_and_children_in_source_order() {
             }],
             origin: origin(),
         }),
+        contains_fragment: false,
         origin: origin(),
     }];
     verify_hir(&hir).expect("valid component JSX fixture");

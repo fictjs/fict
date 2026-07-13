@@ -651,6 +651,9 @@ fn lower_function(
                         operations.push(EmitOperation::CreateVNode {
                             template: *template,
                             source_result,
+                            fragment_helper: hir.templates[template.as_usize()]
+                                .contains_fragment
+                                .then_some(RuntimeHelper::Fragment),
                             origin: instruction.origin,
                         });
                     }

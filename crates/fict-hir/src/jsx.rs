@@ -107,6 +107,31 @@ pub enum JsxNode {
     },
 }
 
+impl JsxNode {
+    /// Whether this tree contains source short-fragment syntax and therefore needs the runtime
+    /// `Fragment` identity when emitted as a VNode.
+    #[must_use]
+    pub fn contains_fragment(&self) -> bool {
+        match self {
+            Self::Fragment { .. } => true,
+            Self::Element(element) => {
+                element.attributes.iter().any(|attribute| {
+                    matches!(
+                        attribute,
+                        JsxAttribute::Named {
+                            value: JsxAttributeValue::Node(node),
+                            ..
+                        } if node.contains_fragment()
+                    )
+                }) || element
+                    .children
+                    .iter()
+                    .any(|child| matches!(child, JsxChild::Node(node) if node.contains_fragment()))
+            }
+        }
+    }
+}
+
 /// JSX template owned by one function.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JsxTemplate {
@@ -116,6 +141,9 @@ pub struct JsxTemplate {
     pub owner: FunctionId,
     /// Template root.
     pub root: JsxNode,
+    /// Whether the complete source expression contains short-fragment syntax, including inside
+    /// embedded child/attribute expressions represented by adapter-owned values.
+    pub contains_fragment: bool,
     /// Source provenance for the complete template.
     pub origin: Origin,
 }
@@ -146,5 +174,26 @@ mod tests {
             panic!("expected element")
         };
         assert_eq!(element.name, JsxElementName::Component(BindingId::new(4)));
+    }
+
+    #[test]
+    fn detects_fragments_nested_in_attributes_and_children() {
+        let origin = Origin::source(SourceSpan::new(0, 7).expect("valid span"));
+        let fragment = || JsxNode::Fragment {
+            children: Vec::new(),
+            origin,
+        };
+        let node = JsxNode::Element(JsxElement {
+            name: JsxElementName::Intrinsic("div".into()),
+            attributes: vec![JsxAttribute::Named {
+                name: "content".into(),
+                value: JsxAttributeValue::Node(Box::new(fragment())),
+                origin,
+            }],
+            children: Vec::new(),
+            origin,
+        });
+
+        assert!(node.contains_fragment());
     }
 }
