@@ -51,6 +51,7 @@ fn shared_legacy_corpus_has_matching_rust_frontend_outcomes() {
     for fixture in fixtures {
         let hir_options = HirBuildOptions {
             reactive_scopes: fixture.reactive_scopes.clone(),
+            ..HirBuildOptions::default()
         };
         let first = build_hir(&fixture.source, options(&fixture), &hir_options);
         let second = build_hir(&fixture.source, options(&fixture), &hir_options);

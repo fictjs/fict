@@ -55,13 +55,24 @@ use crate::{
 use super::compile::{convert_diagnostics, sorted, source_type};
 
 /// Binding-aware frontend controls that affect HIR classification.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HirBuildOptions {
     /// Direct-call hosts whose first callback is a reactive scope.
     ///
     /// Names are resolved once in the file root. Every HIR call and callback
     /// then carries the resolved [`BindingId`], never the spelling.
     pub reactive_scopes: Vec<String>,
+    /// Reject non-guaranteed nested state mutations instead of emitting a fallback warning.
+    pub strict_guarantee: bool,
+}
+
+impl Default for HirBuildOptions {
+    fn default() -> Self {
+        Self {
+            reactive_scopes: Vec::new(),
+            strict_guarantee: true,
+        }
+    }
 }
 
 /// OXC-owned syntax retained outside `fict-hir`.
@@ -422,6 +433,7 @@ struct Builder<'source, 'semantic> {
     reactive_namespace_sources: BTreeMap<BindingId, String>,
     configured_bindings: BTreeSet<BindingId>,
     reactive_functions: BTreeMap<FunctionId, ReactiveScopeKind>,
+    strict_guarantee: bool,
 }
 
 impl<'source, 'semantic> Builder<'source, 'semantic> {
@@ -504,6 +516,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             reactive_namespace_sources,
             configured_bindings,
             reactive_functions: BTreeMap::new(),
+            strict_guarantee: options.strict_guarantee,
         }
     }
 
@@ -1323,24 +1336,42 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
     }
 
     fn collect_reactive_mutations(
-        &self,
+        &mut self,
         mutations: &[MutationFact],
         reactive_targets: &BTreeSet<BindingId>,
     ) -> Vec<ReactiveMutationFact> {
-        let mut facts: Vec<_> = mutations
-            .iter()
-            .filter_map(|mutation| {
-                let binding = self.symbol_to_binding.get(&mutation.symbol).copied()?;
-                reactive_targets
-                    .contains(&binding)
-                    .then(|| ReactiveMutationFact {
-                        owner: self.function_owner_for_span(mutation.span),
-                        binding,
-                        span: mutation.span,
-                        kind: mutation.kind,
-                    })
-            })
-            .collect();
+        let mut facts = Vec::new();
+        for mutation in mutations {
+            let Some(binding) = self.symbol_to_binding.get(&mutation.symbol).copied() else {
+                continue;
+            };
+            if !reactive_targets.contains(&binding) {
+                continue;
+            }
+            if mutation.projected {
+                self.diagnostics.push(
+                    Diagnostic::new(
+                        DiagnosticCode::new("FICT-M001").expect("diagnostic literal"),
+                        if self.strict_guarantee {
+                            DiagnosticSeverity::Error
+                        } else {
+                            DiagnosticSeverity::Warning
+                        },
+                        "nested mutation through a $state value cannot preserve fine-grained reactivity",
+                    )
+                    .with_primary_span(mutation.span)
+                    .with_help("replace the whole state value or use $store for nested mutation")
+                    .with_guarantee_class(GuaranteeClass::Fallback),
+                );
+                continue;
+            }
+            facts.push(ReactiveMutationFact {
+                owner: self.function_owner_for_span(mutation.span),
+                binding,
+                span: mutation.span,
+                kind: mutation.kind,
+            });
+        }
         facts.sort_by_key(|mutation| {
             (
                 mutation.span.start(),
@@ -2002,6 +2033,7 @@ struct ReactiveReadFact {
 #[derive(Debug, Clone, Copy)]
 struct MutationFact {
     symbol: SymbolId,
+    projected: bool,
     span: SourceSpan,
     kind: ReactiveMutationKind,
 }
@@ -2299,7 +2331,8 @@ struct MutationCollector<'semantic> {
 
 impl<'a> Visit<'a> for MutationCollector<'_> {
     fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
-        if let Some(symbol) = assignment_target_symbol(self.scoping, &assignment.left) {
+        if let Some((symbol, projected)) = assignment_target_symbol(self.scoping, &assignment.left)
+        {
             let kind = if assignment.operator == OxcAssignmentOperator::Assign {
                 Some(ReactiveMutationKind::Write {
                     value_span: source_span(assignment.right.span()),
@@ -2315,6 +2348,7 @@ impl<'a> Visit<'a> for MutationCollector<'_> {
             if let Some(kind) = kind {
                 self.facts.push(MutationFact {
                     symbol,
+                    projected,
                     span: source_span(assignment.span),
                     kind,
                 });
@@ -2324,9 +2358,12 @@ impl<'a> Visit<'a> for MutationCollector<'_> {
     }
 
     fn visit_update_expression(&mut self, update: &UpdateExpression<'a>) {
-        if let Some(symbol) = simple_assignment_target_symbol(self.scoping, &update.argument) {
+        if let Some((symbol, projected)) =
+            simple_assignment_target_symbol(self.scoping, &update.argument)
+        {
             self.facts.push(MutationFact {
                 symbol,
+                projected,
                 span: source_span(update.span),
                 kind: ReactiveMutationKind::Update {
                     operator: match update.operator {
@@ -2341,25 +2378,66 @@ impl<'a> Visit<'a> for MutationCollector<'_> {
     }
 }
 
-fn assignment_target_symbol(scoping: &Scoping, target: &AssignmentTarget<'_>) -> Option<SymbolId> {
-    let AssignmentTarget::AssignmentTargetIdentifier(identifier) = target else {
-        return None;
-    };
-    scoping
-        .get_reference(identifier.reference_id.get()?)
-        .symbol_id()
+fn assignment_target_symbol(
+    scoping: &Scoping,
+    target: &AssignmentTarget<'_>,
+) -> Option<(SymbolId, bool)> {
+    match target {
+        AssignmentTarget::AssignmentTargetIdentifier(identifier) => scoping
+            .get_reference(identifier.reference_id.get()?)
+            .symbol_id()
+            .map(|symbol| (symbol, false)),
+        AssignmentTarget::StaticMemberExpression(member) => {
+            expression_root_symbol(scoping, &member.object).map(|symbol| (symbol, true))
+        }
+        AssignmentTarget::ComputedMemberExpression(member) => {
+            expression_root_symbol(scoping, &member.object).map(|symbol| (symbol, true))
+        }
+        AssignmentTarget::PrivateFieldExpression(member) => {
+            expression_root_symbol(scoping, &member.object).map(|symbol| (symbol, true))
+        }
+        _ => None,
+    }
 }
 
 fn simple_assignment_target_symbol(
     scoping: &Scoping,
     target: &SimpleAssignmentTarget<'_>,
-) -> Option<SymbolId> {
-    let SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) = target else {
-        return None;
-    };
-    scoping
-        .get_reference(identifier.reference_id.get()?)
-        .symbol_id()
+) -> Option<(SymbolId, bool)> {
+    match target {
+        SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => scoping
+            .get_reference(identifier.reference_id.get()?)
+            .symbol_id()
+            .map(|symbol| (symbol, false)),
+        SimpleAssignmentTarget::StaticMemberExpression(member) => {
+            expression_root_symbol(scoping, &member.object).map(|symbol| (symbol, true))
+        }
+        SimpleAssignmentTarget::ComputedMemberExpression(member) => {
+            expression_root_symbol(scoping, &member.object).map(|symbol| (symbol, true))
+        }
+        SimpleAssignmentTarget::PrivateFieldExpression(member) => {
+            expression_root_symbol(scoping, &member.object).map(|symbol| (symbol, true))
+        }
+        _ => None,
+    }
+}
+
+fn expression_root_symbol(scoping: &Scoping, expression: &Expression<'_>) -> Option<SymbolId> {
+    match unwrap_transparent_call_expression(expression) {
+        Expression::Identifier(identifier) => scoping
+            .get_reference(identifier.reference_id.get()?)
+            .symbol_id(),
+        Expression::StaticMemberExpression(member) => {
+            expression_root_symbol(scoping, &member.object)
+        }
+        Expression::ComputedMemberExpression(member) => {
+            expression_root_symbol(scoping, &member.object)
+        }
+        Expression::PrivateFieldExpression(member) => {
+            expression_root_symbol(scoping, &member.object)
+        }
+        _ => None,
+    }
 }
 
 fn compound_assignment_operator(

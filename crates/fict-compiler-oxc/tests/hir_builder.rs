@@ -357,6 +357,56 @@ fn materializes_reactive_assignments_compounds_and_updates() {
 }
 
 #[test]
+fn classifies_nested_state_mutation_by_strict_guarantee_policy() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const user = $state({ name: 'Ada' });
+            user.name = 'Grace';
+            return user.name;
+        }
+    "#;
+    let strict = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(strict.hir.is_none());
+    let finding = strict
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code.as_str() == "FICT-M001")
+        .expect("strict nested-mutation diagnostic");
+    assert_eq!(
+        finding.severity,
+        fict_diagnostics::DiagnosticSeverity::Error
+    );
+    assert_eq!(
+        finding.guarantee_class,
+        fict_diagnostics::GuaranteeClass::Fallback
+    );
+
+    let fallback = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions {
+            strict_guarantee: false,
+            ..HirBuildOptions::default()
+        },
+    );
+    assert!(fallback.hir.is_some(), "{:?}", fallback.diagnostics);
+    let finding = fallback
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code.as_str() == "FICT-M001")
+        .expect("fallback nested-mutation warning");
+    assert_eq!(
+        finding.severity,
+        fict_diagnostics::DiagnosticSeverity::Warning
+    );
+}
+
+#[test]
 fn classifies_hooks_and_binding_resolved_reactive_callbacks() {
     let source = r#"
         import { run as render } from './host';
@@ -368,6 +418,7 @@ fn classifies_hooks_and_binding_resolved_reactive_callbacks() {
         options(OxcSourceLanguage::JavaScript),
         &HirBuildOptions {
             reactive_scopes: vec!["render".into()],
+            ..HirBuildOptions::default()
         },
     );
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
@@ -732,6 +783,7 @@ fn configured_reactive_scope_is_a_binding_resolved_state_owner() {
         options(OxcSourceLanguage::JavaScript),
         &HirBuildOptions {
             reactive_scopes: vec!["run".into()],
+            ..HirBuildOptions::default()
         },
     );
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);

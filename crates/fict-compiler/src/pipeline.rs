@@ -126,6 +126,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         oxc_options,
         &HirBuildOptions {
             reactive_scopes: request.options.reactive_scopes.clone(),
+            strict_guarantee: request.options.strict_guarantee,
         },
     );
     result.diagnostics.extend(build.diagnostics);
@@ -342,6 +343,8 @@ fn attach_explain_if_requested(
 
 #[cfg(test)]
 mod tests {
+    use fict_diagnostics::DiagnosticSeverity;
+
     use super::{compile, internal_error_result};
     use crate::{
         COMPILER_PROTOCOL_VERSION, CompileRequest, CompilerExplainEventKind, CompilerOptions,
@@ -480,6 +483,31 @@ mod tests {
         assert!(result.code.contains("seen.push(count())"));
         assert!(result.code.contains("count() + 1"));
         assert!(result.code.contains("return count()"));
+    }
+
+    #[test]
+    fn enforces_nested_state_mutation_guarantees() {
+        let source = "import { $state } from 'fict'; function App() { const user = $state({ name: 'Ada' }); user.name = 'Grace'; return user.name; }";
+        let strict = compile(request(source, "nested.js"));
+        assert!(strict.has_errors());
+        assert!(strict.code.is_empty());
+        assert!(
+            strict
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == "FICT-M001")
+        );
+
+        let mut fallback_request = request(source, "nested.js");
+        fallback_request.options.strict_guarantee = false;
+        let fallback = compile(fallback_request);
+        assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
+        assert!(fallback.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-M001"
+                && diagnostic.severity == DiagnosticSeverity::Warning
+        }));
+        assert!(fallback.code.contains("user().name = \"Grace\""));
+        assert!(fallback.code.contains("return user().name"));
     }
 
     #[test]
