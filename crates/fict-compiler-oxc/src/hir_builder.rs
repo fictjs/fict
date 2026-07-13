@@ -4,7 +4,7 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
 use fict_hir::{
-    BinaryOperator, Binding, BindingId, BindingKind, BlockId, CallArgument, CallHost,
+    ArrayElement, BinaryOperator, Binding, BindingId, BindingKind, BlockId, CallArgument, CallHost,
     CallInstruction, CompoundAssignmentOperator, DeclarationKind, DesugaringKind, EvaluationMode,
     FictMacroKind, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction,
     HirInstruction, HirInstructionKind, HirLocal, HirObjectParameterCheck, HirObjectParameterMode,
@@ -619,6 +619,39 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
                     alternate_has_effects: structured_control_flow::expression_has_effects(
                         &conditional.alternate,
                     ),
+                },
+            }),
+            Expression::ArrayExpression(array) => Some(TypedExpressionFact {
+                span: source_span(array.span),
+                kind: TypedExpressionKind::Array {
+                    elements: array
+                        .elements
+                        .iter()
+                        .map(|element| match element {
+                            ArrayExpressionElement::Elision(elision) => {
+                                TypedArrayElement::Hole(source_span(elision.span))
+                            }
+                            ArrayExpressionElement::SpreadElement(spread) => {
+                                let argument = spread.argument.get_inner_expression();
+                                TypedArrayElement::Spread {
+                                    span: source_span(argument.span()),
+                                    origin: source_span(spread.span),
+                                    has_effects: structured_control_flow::expression_has_effects(
+                                        &spread.argument,
+                                    ),
+                                }
+                            }
+                            element => {
+                                let expression = element.to_expression().get_inner_expression();
+                                TypedArrayElement::Value {
+                                    span: source_span(expression.span()),
+                                    has_effects: structured_control_flow::expression_has_effects(
+                                        expression,
+                                    ),
+                                }
+                            }
+                        })
+                        .collect(),
                 },
             }),
             _ => None,
@@ -2440,6 +2473,13 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 .cloned()
                 .map(EvaluationFact::Call)
                 .chain(
+                    jsx_roots
+                        .iter()
+                        .filter(|jsx| jsx.owner == fact.id)
+                        .cloned()
+                        .map(EvaluationFact::Jsx),
+                )
+                .chain(
                     typed_expressions
                         .iter()
                         .filter(|expression| {
@@ -2486,6 +2526,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     EvaluationFact::Typed(expression) => {
                         self.materialize_typed_expression(fact.id, expression)
                     }
+                    EvaluationFact::Jsx(jsx) => Some(self.materialize_jsx(fact.id, jsx)),
                     EvaluationFact::Call(call) => self.materialize_call(fact.id, call),
                     EvaluationFact::Member(member) => self.materialize_member_read(fact.id, member),
                 };
@@ -2581,26 +2622,6 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         inputs.push(result);
                     }
                 }
-            }
-
-            for jsx in jsx_roots.iter().filter(|jsx| jsx.owner == fact.id) {
-                let root = self.lower_jsx_node(fact.id, &jsx.root);
-                let template = TemplateId::new(count_u32(self.templates.len()));
-                self.templates.push(JsxTemplate {
-                    id: template,
-                    owner: fact.id,
-                    root,
-                    contains_fragment: jsx.contains_fragment,
-                    origin: Origin::source(jsx.span),
-                });
-                let value = self.push_value(
-                    fact.id,
-                    ValueKind::InstructionResult,
-                    Origin::source(jsx.span),
-                    HirInstructionKind::Jsx { template },
-                    InstructionSemantics::PURE_EAGER,
-                );
-                inputs.push(value);
             }
 
             for (_, pattern) in opaque_patterns
@@ -2913,7 +2934,83 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     InstructionSemantics::PURE_EAGER,
                 )
             }
+            TypedExpressionKind::Array { elements } => {
+                let mut materialized = Vec::with_capacity(elements.len());
+                let mut contains_spread = false;
+                for element in elements {
+                    match element {
+                        TypedArrayElement::Hole(span) => {
+                            materialized.push(ArrayElement::Hole(Origin::source(*span)));
+                        }
+                        TypedArrayElement::Value { span, has_effects } => {
+                            let value = self.control_expression_value(
+                                owner,
+                                block,
+                                *span,
+                                true,
+                                *has_effects,
+                            );
+                            if contains_spread {
+                                self.mark_span_deferred(owner, block, *span);
+                            }
+                            materialized.push(ArrayElement::Value(value));
+                        }
+                        TypedArrayElement::Spread {
+                            span,
+                            origin,
+                            has_effects,
+                        } => {
+                            contains_spread = true;
+                            let value = self.control_expression_value(
+                                owner,
+                                block,
+                                *span,
+                                true,
+                                *has_effects,
+                            );
+                            self.mark_span_deferred(owner, block, *span);
+                            materialized.push(ArrayElement::Spread {
+                                value,
+                                origin: Origin::source(*origin),
+                            });
+                        }
+                    }
+                }
+                self.push_value_to_block(
+                    owner,
+                    block,
+                    ValueKind::InstructionResult,
+                    origin,
+                    HirInstructionKind::Array {
+                        elements: materialized,
+                    },
+                    if contains_spread {
+                        InstructionSemantics::CONSERVATIVE_EAGER
+                    } else {
+                        InstructionSemantics::PURE_EAGER
+                    },
+                )
+            }
         })
+    }
+
+    fn materialize_jsx(&mut self, owner: FunctionId, jsx: &JsxFact) -> ValueId {
+        let root = self.lower_jsx_node(owner, &jsx.root);
+        let template = TemplateId::new(count_u32(self.templates.len()));
+        self.templates.push(JsxTemplate {
+            id: template,
+            owner,
+            root,
+            contains_fragment: jsx.contains_fragment,
+            origin: Origin::source(jsx.span),
+        });
+        self.push_value(
+            owner,
+            ValueKind::InstructionResult,
+            Origin::source(jsx.span),
+            HirInstructionKind::Jsx { template },
+            InstructionSemantics::PURE_EAGER,
+        )
     }
 
     fn materialize_variable_declaration(
@@ -5168,6 +5265,23 @@ enum TypedExpressionKind {
         consequent_has_effects: bool,
         alternate_has_effects: bool,
     },
+    Array {
+        elements: Vec<TypedArrayElement>,
+    },
+}
+
+#[derive(Debug, Clone)]
+enum TypedArrayElement {
+    Hole(SourceSpan),
+    Value {
+        span: SourceSpan,
+        has_effects: bool,
+    },
+    Spread {
+        span: SourceSpan,
+        origin: SourceSpan,
+        has_effects: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -5238,6 +5352,7 @@ enum PlannedProjection {
 #[derive(Debug, Clone)]
 enum EvaluationFact {
     Typed(TypedExpressionFact),
+    Jsx(JsxFact),
     Call(CallFact),
     Member(MemberReadFact),
 }
@@ -5246,6 +5361,7 @@ impl EvaluationFact {
     fn span(&self) -> SourceSpan {
         match self {
             Self::Typed(expression) => expression.span,
+            Self::Jsx(jsx) => jsx.span,
             Self::Call(call) => call.span,
             Self::Member(member) => member.span,
         }
@@ -5273,8 +5389,13 @@ impl EvaluationFact {
                 kind: TypedExpressionKind::Conditional { .. },
                 ..
             }) => 4,
-            Self::Member(_) => 5,
-            Self::Call(_) => 6,
+            Self::Typed(TypedExpressionFact {
+                kind: TypedExpressionKind::Array { .. },
+                ..
+            }) => 5,
+            Self::Jsx(_) => 6,
+            Self::Member(_) => 7,
+            Self::Call(_) => 8,
         }
     }
 }

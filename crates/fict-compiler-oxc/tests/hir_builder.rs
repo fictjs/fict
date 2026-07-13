@@ -2,10 +2,10 @@ use fict_compiler_oxc::{
     HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, build_hir,
 };
 use fict_hir::{
-    BinaryOperator, CallHost, CompoundAssignmentOperator, DeclarationKind, EvaluationMode,
-    FictMacroKind, FunctionKind, HirInstructionKind, IterationKind, LiteralValue, MutationEffect,
-    Purity, ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind, TerminatorKind,
-    UnaryOperator, UpdateOperator, ValueKind,
+    ArrayElement, BinaryOperator, CallHost, CompoundAssignmentOperator, DeclarationKind,
+    EvaluationMode, FictMacroKind, FunctionKind, HirInstructionKind, IterationKind, LiteralValue,
+    MutationEffect, Purity, ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind,
+    TerminatorKind, UnaryOperator, UpdateOperator, ValueKind,
 };
 
 fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
@@ -2005,6 +2005,190 @@ fn materializes_logical_and_conditional_expressions_with_lazy_arms() {
             } if local == choice.id && initializer == conditional.result.expect("conditional result")
         )
     }));
+}
+
+#[test]
+fn materializes_array_holes_spreads_and_element_evaluation_order() {
+    let source = r#"
+        function arrays(input, make, tail) {
+            const dense = [1, make('second'), input.value];
+            const sparse = [, 1, ,];
+            const spread = [make('before'), ...make('spread'), make('after'), , ...tail];
+            const nodes = [<div />, input ? <span /> : <p />];
+            return [dense, sparse, spread, nodes];
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified array HIR");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "arrays")
+        })
+        .expect("arrays function");
+    let instructions: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let authored = |instruction: &fict_hir::HirInstruction| {
+        let span = instruction
+            .origin
+            .primary_span
+            .expect("authored expression");
+        &source[span.start() as usize..span.end() as usize]
+    };
+    let instruction = |text: &str| {
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| authored(instruction) == text)
+            .unwrap_or_else(|| panic!("instruction for {text}"))
+    };
+
+    let dense = instruction("[1, make('second'), input.value]");
+    let HirInstructionKind::Array {
+        elements: dense_elements,
+    } = &dense.kind
+    else {
+        panic!("typed dense array")
+    };
+    assert_eq!(dense_elements.len(), 3);
+    assert!(matches!(dense_elements[0], ArrayElement::Value(_)));
+    assert!(matches!(dense_elements[1], ArrayElement::Value(value)
+        if Some(value) == instruction("make('second')").result));
+    assert!(matches!(dense_elements[2], ArrayElement::Value(value)
+        if Some(value) == instruction("input.value").result));
+    assert_eq!(dense.semantics, fict_hir::InstructionSemantics::PURE_EAGER);
+
+    let sparse = instruction("[, 1, ,]");
+    let HirInstructionKind::Array {
+        elements: sparse_elements,
+    } = &sparse.kind
+    else {
+        panic!("typed sparse array")
+    };
+    assert_eq!(sparse_elements.len(), 3);
+    assert!(matches!(sparse_elements[0], ArrayElement::Hole(_)));
+    assert!(matches!(sparse_elements[1], ArrayElement::Value(_)));
+    assert!(matches!(sparse_elements[2], ArrayElement::Hole(_)));
+
+    let spread = instruction("[make('before'), ...make('spread'), make('after'), , ...tail]");
+    let HirInstructionKind::Array {
+        elements: spread_elements,
+    } = &spread.kind
+    else {
+        panic!("typed spread array")
+    };
+    assert_eq!(spread_elements.len(), 5);
+    let before = instruction("make('before')").result.expect("before value");
+    let spread_value = instruction("make('spread')").result.expect("spread value");
+    let after = instruction("make('after')").result.expect("after value");
+    let tail = instruction("tail").result.expect("tail value");
+    assert!(matches!(spread_elements[0], ArrayElement::Value(value) if value == before));
+    assert!(matches!(
+        spread_elements[1],
+        ArrayElement::Spread { value, .. } if value == spread_value
+    ));
+    assert!(matches!(spread_elements[2], ArrayElement::Value(value) if value == after));
+    assert!(matches!(spread_elements[3], ArrayElement::Hole(_)));
+    assert!(matches!(
+        spread_elements[4],
+        ArrayElement::Spread { value, .. } if value == tail
+    ));
+    assert_eq!(
+        spread.semantics,
+        fict_hir::InstructionSemantics::CONSERVATIVE_EAGER
+    );
+    assert_eq!(
+        instruction("make('before')").semantics.evaluation,
+        EvaluationMode::Eager
+    );
+    for text in ["make('spread')", "make('after')", "tail"] {
+        assert_eq!(
+            instruction(text).semantics.evaluation,
+            EvaluationMode::Deferred,
+            "the array node owns evaluation from its first spread: {text}"
+        );
+    }
+
+    let ordered_calls: Vec<_> = instructions
+        .iter()
+        .filter(|instruction| matches!(instruction.kind, HirInstructionKind::Call(_)))
+        .map(|instruction| authored(instruction))
+        .collect();
+    assert_eq!(
+        ordered_calls,
+        [
+            "make('second')",
+            "make('before')",
+            "make('spread')",
+            "make('after')",
+        ]
+    );
+
+    let nodes = instruction("[<div />, input ? <span /> : <p />]");
+    let HirInstructionKind::Array {
+        elements: node_elements,
+    } = &nodes.kind
+    else {
+        panic!("typed JSX array")
+    };
+    let div = instruction("<div />").result.expect("div JSX value");
+    let conditional = instruction("input ? <span /> : <p />");
+    assert!(matches!(node_elements.as_slice(), [
+        ArrayElement::Value(first),
+        ArrayElement::Value(second),
+    ] if *first == div && Some(*second) == conditional.result));
+    let span = instruction("<span />").result.expect("span JSX value");
+    let paragraph = instruction("<p />").result.expect("paragraph JSX value");
+    assert!(matches!(
+        conditional.kind,
+        HirInstructionKind::Conditional {
+            consequent,
+            alternate,
+            ..
+        } if consequent == span && alternate == paragraph
+    ));
+    assert_eq!(
+        instruction("<span />").semantics.evaluation,
+        EvaluationMode::Deferred
+    );
+    assert_eq!(
+        instruction("<p />").semantics.evaluation,
+        EvaluationMode::Deferred
+    );
+
+    for (name, value) in [
+        ("dense", dense),
+        ("sparse", sparse),
+        ("spread", spread),
+        ("nodes", nodes),
+    ] {
+        let local = function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"));
+        assert!(instructions.iter().any(|instruction| {
+            matches!(
+                instruction.kind,
+                HirInstructionKind::Declare {
+                    local: candidate,
+                    initializer: Some(initializer),
+                    ..
+                } if candidate == local.id && Some(initializer) == value.result
+            )
+        }));
+    }
 }
 
 #[test]
