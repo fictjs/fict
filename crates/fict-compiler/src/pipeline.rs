@@ -624,6 +624,53 @@ mod tests {
     }
 
     #[test]
+    fn preserves_authored_fine_grained_spread_and_static_prop_order() {
+        let result = compile(request(
+            "export function View(first, second) { return <div id=\"before\" {...first} class=\"after\" {...second}>child</div>; }",
+            "spread-order.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .code
+                .contains("template(\"<div id=\\\"before\\\">child</div>\")"),
+            "{}",
+            result.code
+        );
+        let first_spread = result.code.find("() => first").expect("first spread");
+        let explicit_class = result.code.find("setClass(").expect("explicit class");
+        let second_spread = result.code.find("() => second").expect("second spread");
+        assert!(
+            first_spread < explicit_class && explicit_class < second_spread,
+            "{}",
+            result.code
+        );
+        assert_eq!(result.code.matches("spread(").count(), 2, "{}", result.code);
+        assert!(result.code.contains(", false, true)"), "{}", result.code);
+    }
+
+    #[test]
+    fn passes_svg_and_mathml_modes_to_fine_grained_spreads() {
+        let result = compile(request(
+            "export function Foreign(svgProps, mathProps) { return <><svg {...svgProps} /><math {...mathProps} /></>; }",
+            "spread-namespace.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result.code.contains("() => svgProps, true, false"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("() => mathProps, \"mathml\", false"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn emits_typescript_jsx_as_ordered_vnode_fallbacks() {
         let mut input = request(
             "type Props = { name: string; value: number; extra: Record<string, unknown> }; const Child = (props: { value: number }) => <em>{props.value}</em>; export function App(props: Props) { return <section id=\"root\" disabled {...props.extra}>Hello {props.name}<Child value={props.value} /></section>; }",

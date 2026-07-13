@@ -5,9 +5,10 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
 use fict_emit::{
-    DomBindingKind, DomNamespace, EmitOperation, EmitProgram, EmitValueRef, RuntimeHelper,
+    DomBindingKind, DomNamespace, EmitOperation, EmitProgram, EmitValueRef, PropsOperation,
+    RuntimeHelper,
 };
-use fict_hir::{CompoundAssignmentOperator, TemplateId, UpdateOperator};
+use fict_hir::{CompoundAssignmentOperator, LiteralValue, TemplateId, UpdateOperator};
 use oxc::{
     allocator::{Allocator, TakeIn, Vec as ArenaVec},
     ast::{
@@ -388,11 +389,13 @@ fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
             EmitOperation::ReadReactive { projections, .. }
             | EmitOperation::WriteReactive { projections, .. } => !projections.is_empty(),
             EmitOperation::UpdateReactive { projections, .. } => !projections.is_empty(),
+            EmitOperation::ApplyProps { operation, .. } => {
+                !matches!(operation, PropsOperation::Spread { .. })
+            }
             _ => matches!(
                 operation,
                 EmitOperation::InvokeComponent { .. }
                     | EmitOperation::CreateElement { .. }
-                    | EmitOperation::ApplyProps { .. }
                     | EmitOperation::BindEvent { .. }
                     | EmitOperation::BindRef { .. }
                     | EmitOperation::Conditional { .. }
@@ -694,7 +697,15 @@ enum FineJsxStep {
         kind: DomBindingKind,
         reactive: bool,
         helper: String,
+        value: FineJsxValue,
+    },
+    Spread {
+        target: String,
+        helper: String,
         value_origin: SourceSpan,
+        namespace: DomNamespace,
+        skip_children: bool,
+        excluded: Vec<String>,
     },
     Insert {
         parent: String,
@@ -704,6 +715,12 @@ enum FineJsxStep {
         namespace: DomNamespace,
         value_origin: SourceSpan,
     },
+}
+
+#[derive(Debug, Clone)]
+enum FineJsxValue {
+    Source(SourceSpan),
+    Literal(LiteralValue),
 }
 
 struct TemplateRewrites {
@@ -936,24 +953,34 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                         ));
                         continue;
                     };
-                    if !matches!(value, EmitValueRef::Hir(_)) {
-                        diagnostics.push(with_operation_span(
-                            emit_error(
-                                "FICT-OXC-EMIT-VALUE",
-                                "DOM binding value is not backed by a source HIR expression",
-                                GuaranteeClass::Internal,
-                            ),
-                            *origin,
-                        ));
-                        continue;
-                    }
-                    let Some(value_origin) = origin.primary_span else {
-                        diagnostics.push(emit_error(
-                            "FICT-OXC-EMIT-ORIGIN",
-                            "DOM binding requires a source expression origin",
-                            GuaranteeClass::Internal,
-                        ));
-                        continue;
+                    let value = match value {
+                        EmitValueRef::Hir(_) => {
+                            let Some(span) = origin.primary_span else {
+                                diagnostics.push(emit_error(
+                                    "FICT-OXC-EMIT-ORIGIN",
+                                    "DOM binding requires a source expression origin",
+                                    GuaranteeClass::Internal,
+                                ));
+                                continue;
+                            };
+                            FineJsxValue::Source(span)
+                        }
+                        EmitValueRef::Literal(value) => FineJsxValue::Literal(value.clone()),
+                        EmitValueRef::Ssa(_)
+                        | EmitValueRef::Slot(_)
+                        | EmitValueRef::Temporary(_)
+                        | EmitValueRef::Function(_)
+                        | EmitValueRef::Binding(_) => {
+                            diagnostics.push(with_operation_span(
+                                emit_error(
+                                    "FICT-OXC-EMIT-VALUE",
+                                    "DOM binding temporary value is not materialized",
+                                    GuaranteeClass::Internal,
+                                ),
+                                *origin,
+                            ));
+                            continue;
+                        }
                     };
                     let Some(helper) = helper_names.get(helper) else {
                         diagnostics.push(with_operation_span(
@@ -971,7 +998,80 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                         kind: kind.clone(),
                         reactive: *reactive,
                         helper: (*helper).to_owned(),
+                        value,
+                    });
+                }
+                EmitOperation::ApplyProps {
+                    target,
+                    operation:
+                        PropsOperation::Spread {
+                            source,
+                            namespace,
+                            skip_children,
+                            excluded,
+                        },
+                    helper,
+                    origin,
+                } => {
+                    let Some(plan) = current.and_then(|location| clones.get_mut(&location)) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-TEMPLATE",
+                                "props spread is not attached to a template clone",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    let Some(target) = temporary_names.get(target) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-TEMP",
+                                "props spread target has no generated local",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    if !matches!(source, EmitValueRef::Hir(_)) {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-VALUE",
+                                "props spread is not backed by a source HIR expression",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    }
+                    let Some(value_origin) = origin.primary_span else {
+                        diagnostics.push(emit_error(
+                            "FICT-OXC-EMIT-ORIGIN",
+                            "props spread requires a source expression origin",
+                            GuaranteeClass::Internal,
+                        ));
+                        continue;
+                    };
+                    let Some(helper) = helper_names.get(helper) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-IMPORT",
+                                "props spread helper has no runtime import intent",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    plan.steps.push(FineJsxStep::Spread {
+                        target: (*target).to_owned(),
+                        helper: (*helper).to_owned(),
                         value_origin,
+                        namespace: *namespace,
+                        skip_children: *skip_children,
+                        excluded: excluded.clone(),
                     });
                 }
                 EmitOperation::Insert {
@@ -1469,19 +1569,36 @@ impl<'a> AstRewriter<'a, '_> {
                     kind,
                     reactive,
                     helper,
-                    value_origin,
+                    value,
                 } => {
-                    let location = (value_origin.start(), value_origin.end());
-                    let Some(mut value) = values.remove(&location) else {
-                        self.diagnostics.push(
-                            emit_error(
-                                "FICT-OXC-EMIT-ORIGIN",
-                                "DOM binding origin does not identify a JSX value expression",
-                                GuaranteeClass::Internal,
-                            )
-                            .with_primary_span(value_origin),
-                        );
-                        continue;
+                    let (mut value, value_origin) = match value {
+                        FineJsxValue::Source(value_origin) => {
+                            let location = (value_origin.start(), value_origin.end());
+                            let Some(value) = values.remove(&location) else {
+                                self.diagnostics.push(
+                                    emit_error(
+                                        "FICT-OXC-EMIT-ORIGIN",
+                                        "DOM binding origin does not identify a JSX value expression",
+                                        GuaranteeClass::Internal,
+                                    )
+                                    .with_primary_span(value_origin),
+                                );
+                                continue;
+                            };
+                            (value, Some(value_origin))
+                        }
+                        FineJsxValue::Literal(value) => {
+                            let Some(value) = dom_literal_expression(self.allocator, &value, span)
+                            else {
+                                self.diagnostics.push(emit_error(
+                                    "FICT-OXC-EMIT-VALUE",
+                                    "DOM binding contains a literal unsupported by JSX lowering",
+                                    GuaranteeClass::Internal,
+                                ));
+                                continue;
+                            };
+                            (value, None)
+                        }
                     };
                     self.visit_expression(&mut value);
                     if reactive {
@@ -1513,18 +1630,92 @@ impl<'a> AstRewriter<'a, '_> {
                         | DomBindingKind::Class
                         | DomBindingKind::Style => {}
                         DomBindingKind::Spread => {
-                            self.diagnostics.push(
-                                emit_error(
-                                    "FICT-OXC-EMIT-BINDING",
-                                    "spread DOM bindings must use ApplyProps EmitIR",
-                                    GuaranteeClass::Internal,
-                                )
-                                .with_primary_span(value_origin),
+                            let mut diagnostic = emit_error(
+                                "FICT-OXC-EMIT-BINDING",
+                                "spread DOM bindings must use ApplyProps EmitIR",
+                                GuaranteeClass::Internal,
                             );
+                            diagnostic.primary_span = value_origin;
+                            self.diagnostics.push(diagnostic);
                             continue;
                         }
                     }
                     arguments.push(Argument::from(value));
+                    let call = Expression::new_call_expression(
+                        span, callee, NONE, arguments, false, &builder,
+                    );
+                    statements.push(Statement::new_expression_statement(span, call, &builder));
+                }
+                FineJsxStep::Spread {
+                    target,
+                    helper,
+                    value_origin,
+                    namespace,
+                    skip_children,
+                    excluded,
+                } => {
+                    let location = (value_origin.start(), value_origin.end());
+                    let Some(mut value) = values.remove(&location) else {
+                        self.diagnostics.push(
+                            emit_error(
+                                "FICT-OXC-EMIT-ORIGIN",
+                                "props spread origin does not identify a JSX value expression",
+                                GuaranteeClass::Internal,
+                            )
+                            .with_primary_span(value_origin),
+                        );
+                        continue;
+                    };
+                    self.visit_expression(&mut value);
+                    let getter = zero_parameter_expression_arrow(self.allocator, value, span);
+                    let callee = Expression::new_identifier(
+                        span,
+                        self.allocator.alloc_str(&helper),
+                        &builder,
+                    );
+                    let target = Expression::new_identifier(
+                        span,
+                        self.allocator.alloc_str(&target),
+                        &builder,
+                    );
+                    let namespace = match namespace {
+                        DomNamespace::Svg => Expression::new_boolean_literal(span, true, &builder),
+                        DomNamespace::MathMl
+                        | DomNamespace::MathMlTextIntegration
+                        | DomNamespace::MathMlAnnotationXml => {
+                            Expression::new_string_literal(span, "mathml", None, &builder)
+                        }
+                        DomNamespace::Html | DomNamespace::Parent => {
+                            Expression::new_boolean_literal(span, false, &builder)
+                        }
+                    };
+                    let mut arguments = ArenaVec::new_in(&self.allocator);
+                    arguments.extend([
+                        Argument::from(target),
+                        Argument::from(getter),
+                        Argument::from(namespace),
+                        Argument::from(Expression::new_boolean_literal(
+                            span,
+                            skip_children,
+                            &builder,
+                        )),
+                    ]);
+                    if !excluded.is_empty() {
+                        let mut exclusions = ArenaVec::new_in(&self.allocator);
+                        for name in excluded {
+                            exclusions.push(ArrayExpressionElement::from(
+                                Expression::new_string_literal(
+                                    span,
+                                    self.allocator.alloc_str(&name),
+                                    None,
+                                    &builder,
+                                ),
+                            ));
+                        }
+                        arguments.push(Argument::from(Expression::new_array_expression(
+                            span, exclusions, &builder,
+                        )));
+                    }
                     let call = Expression::new_call_expression(
                         span, callee, NONE, arguments, false, &builder,
                     );
@@ -2064,6 +2255,30 @@ fn const_statement<'a>(
         false,
         &builder,
     )
+}
+
+fn dom_literal_expression<'a>(
+    allocator: &'a Allocator,
+    value: &LiteralValue,
+    span: Span,
+) -> Option<Expression<'a>> {
+    let builder = AstBuilder::new(allocator);
+    match value {
+        LiteralValue::Boolean(value) => {
+            Some(Expression::new_boolean_literal(span, *value, &builder))
+        }
+        LiteralValue::String(value) => Some(Expression::new_string_literal(
+            span,
+            allocator.alloc_str(value),
+            None,
+            &builder,
+        )),
+        LiteralValue::Null
+        | LiteralValue::Undefined
+        | LiteralValue::Number(_)
+        | LiteralValue::BigInt(_)
+        | LiteralValue::RegExp { .. } => None,
+    }
 }
 
 fn zero_parameter_expression_arrow<'a>(
