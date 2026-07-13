@@ -1,0 +1,341 @@
+use std::collections::{BTreeMap, BTreeSet};
+
+use fict_diagnostics::{Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass};
+use oxc::{
+    allocator::{Allocator, ReplaceWith},
+    ast::{
+        AstBuilder,
+        ast::{BindingIdentifier, Directive, Expression, IdentifierReference, Program, Statement},
+    },
+    ast_visit::{VisitMut, walk_mut},
+    parser::Parser,
+    semantic::Scoping,
+    span::{SourceType, Span},
+    transformer_plugins::ModuleRunnerTransform,
+};
+use oxc_traverse::{Traverse, TraverseCtx, traverse_mut};
+
+const RUNNER_IMPORT: &str = "__vite_ssr_import__";
+const RUNNER_EXPORTS: &str = "__vite_ssr_exports__";
+const RUNNER_EXPORT_ALL: &str = "__vite_ssr_exportAll__";
+const RUNNER_DYNAMIC_IMPORT: &str = "__vite_ssr_dynamic_import__";
+const RUNNER_IMPORT_META: &str = "__vite_ssr_import_meta__";
+
+/// Lower standard ESM declarations in a CommonJS/CTS request after ordinary OXC transforms.
+///
+/// OXC 0.139 lowers TypeScript `import =` and `export =` for CommonJS but intentionally does not
+/// implement Babel's standard ESM-to-CommonJS transform. Its module-runner transform already owns
+/// the difficult binding-aware portion (live imported reads, re-exports, and exported getters), so
+/// this adapter converts that runner protocol into synchronous CommonJS primitives.
+pub(crate) fn lower_standard_esm_to_commonjs<'a>(
+    allocator: &'a Allocator,
+    program: &mut Program<'a>,
+    scoping: Scoping,
+) -> Result<(), Box<Diagnostic>> {
+    if !contains_standard_esm(program) {
+        program.source_type = program.source_type.with_commonjs(true);
+        return Ok(());
+    }
+
+    let original_symbol_names: Vec<_> = scoping.symbol_names().map(str::to_owned).collect();
+    let mut runner = ModuleRunnerTransform::new();
+    let scoping = traverse_mut(&mut runner, allocator, program, scoping, ());
+
+    let mut reserved_names: BTreeSet<String> = scoping
+        .symbol_names()
+        .map(str::to_owned)
+        .chain([
+            "arguments".to_owned(),
+            "exports".to_owned(),
+            "module".to_owned(),
+            "require".to_owned(),
+        ])
+        .collect();
+    let generated_bindings = generated_binding_names(
+        allocator,
+        &scoping,
+        &original_symbol_names,
+        &mut reserved_names,
+    );
+    let require_local = allocate_name(allocator, &mut reserved_names, "__fict_cjs_require");
+    let static_import_local = allocate_name(allocator, &mut reserved_names, "__fict_cjs_load");
+    let exports_local = allocate_name(allocator, &mut reserved_names, "__fict_cjs_exports");
+    let export_all_local = allocate_name(allocator, &mut reserved_names, "__fict_cjs_export_all");
+    let dynamic_import_local =
+        allocate_name(allocator, &mut reserved_names, "__fict_cjs_dynamic_import");
+    let import_meta_local = allocate_name(allocator, &mut reserved_names, "__fict_cjs_import_meta");
+
+    let mut adapter = CommonJsRunnerAdapter {
+        allocator,
+        generated_bindings,
+        require_local,
+        static_import_local,
+        exports_local,
+        export_all_local,
+        dynamic_import_local,
+        import_meta_local,
+        uses_require: false,
+        uses_static_import: false,
+        uses_exports: false,
+        uses_export_all: false,
+        uses_dynamic_import: false,
+        uses_import_meta: false,
+    };
+    let _ = traverse_mut(&mut adapter, allocator, program, scoping, ());
+
+    inject_commonjs_prelude(allocator, program, &adapter)?;
+    program.source_type = program.source_type.with_commonjs(true);
+    Ok(())
+}
+
+fn contains_standard_esm(program: &Program<'_>) -> bool {
+    program.body.iter().any(|statement| {
+        matches!(
+            statement,
+            Statement::ImportDeclaration(_)
+                | Statement::ExportAllDeclaration(_)
+                | Statement::ExportNamedDeclaration(_)
+                | Statement::ExportDefaultDeclaration(_)
+        )
+    })
+}
+
+fn generated_binding_names<'a>(
+    allocator: &'a Allocator,
+    scoping: &Scoping,
+    original_symbol_names: &[String],
+    reserved_names: &mut BTreeSet<String>,
+) -> BTreeMap<usize, &'a str> {
+    let mut names = BTreeMap::new();
+    for symbol_id in scoping.symbol_ids() {
+        let index = symbol_id.index();
+        let current = scoping.symbol_name(symbol_id);
+        let runner_created = index >= original_symbol_names.len();
+        let runner_renamed = original_symbol_names
+            .get(index)
+            .is_some_and(|original| original != current && current.starts_with("__vite_ssr_"));
+        if runner_created || runner_renamed {
+            let preferred = if current.contains("import") {
+                "__fict_cjs_import"
+            } else if current.contains("default") {
+                "__fict_cjs_default"
+            } else {
+                "__fict_cjs_binding"
+            };
+            names.insert(index, allocate_name(allocator, reserved_names, preferred));
+        }
+    }
+    names
+}
+
+fn allocate_name<'a>(
+    allocator: &'a Allocator,
+    reserved_names: &mut BTreeSet<String>,
+    preferred: &str,
+) -> &'a str {
+    if reserved_names.insert(preferred.to_owned()) {
+        return allocator.alloc_str(preferred);
+    }
+    let mut index = 1_u32;
+    loop {
+        let candidate = format!("{preferred}_{index}");
+        if reserved_names.insert(candidate.clone()) {
+            return allocator.alloc_str(&candidate);
+        }
+        index = index.saturating_add(1);
+    }
+}
+
+struct CommonJsRunnerAdapter<'a> {
+    allocator: &'a Allocator,
+    generated_bindings: BTreeMap<usize, &'a str>,
+    require_local: &'a str,
+    static_import_local: &'a str,
+    exports_local: &'a str,
+    export_all_local: &'a str,
+    dynamic_import_local: &'a str,
+    import_meta_local: &'a str,
+    uses_require: bool,
+    uses_static_import: bool,
+    uses_exports: bool,
+    uses_export_all: bool,
+    uses_dynamic_import: bool,
+    uses_import_meta: bool,
+}
+
+impl<'a> Traverse<'a, ()> for CommonJsRunnerAdapter<'a> {
+    fn enter_expression(
+        &mut self,
+        expression: &mut Expression<'a>,
+        _ctx: &mut TraverseCtx<'a, ()>,
+    ) {
+        let Expression::AwaitExpression(awaited) = expression else {
+            return;
+        };
+        let Expression::CallExpression(call) = &awaited.argument else {
+            return;
+        };
+        if !callee_is_runner_import(&call.callee) {
+            return;
+        }
+        expression.replace_with(|expression| {
+            let Expression::AwaitExpression(awaited) = expression else {
+                unreachable!("checked runner await expression")
+            };
+            awaited.unbox().argument
+        });
+    }
+
+    fn enter_binding_identifier(
+        &mut self,
+        identifier: &mut BindingIdentifier<'a>,
+        _ctx: &mut TraverseCtx<'a, ()>,
+    ) {
+        let Some(symbol_id) = identifier.symbol_id.get() else {
+            return;
+        };
+        if let Some(name) = self.generated_bindings.get(&symbol_id.index()) {
+            identifier.name = (*name).into();
+        }
+    }
+
+    fn enter_identifier_reference(
+        &mut self,
+        identifier: &mut IdentifierReference<'a>,
+        ctx: &mut TraverseCtx<'a, ()>,
+    ) {
+        let symbol_id = identifier
+            .reference_id
+            .get()
+            .and_then(|reference_id| ctx.scoping().get_reference(reference_id).symbol_id());
+        if let Some(symbol_id) = symbol_id {
+            if let Some(name) = self.generated_bindings.get(&symbol_id.index()) {
+                identifier.name = (*name).into();
+            }
+            return;
+        }
+
+        let replacement = match identifier.name.as_str() {
+            RUNNER_IMPORT => {
+                self.uses_require = true;
+                self.uses_static_import = true;
+                self.static_import_local
+            }
+            RUNNER_EXPORTS => {
+                self.uses_exports = true;
+                self.exports_local
+            }
+            RUNNER_EXPORT_ALL => {
+                self.uses_exports = true;
+                self.uses_export_all = true;
+                self.export_all_local
+            }
+            RUNNER_DYNAMIC_IMPORT => {
+                self.uses_dynamic_import = true;
+                self.dynamic_import_local
+            }
+            RUNNER_IMPORT_META => {
+                self.uses_require = true;
+                self.uses_import_meta = true;
+                self.import_meta_local
+            }
+            _ => return,
+        };
+        identifier.name = self.allocator.alloc_str(replacement).into();
+        identifier.reference_id.set(None);
+    }
+}
+
+fn callee_is_runner_import(expression: &Expression<'_>) -> bool {
+    matches!(
+        expression,
+        Expression::Identifier(identifier) if identifier.name == RUNNER_IMPORT
+    )
+}
+
+fn inject_commonjs_prelude<'a>(
+    allocator: &'a Allocator,
+    program: &mut Program<'a>,
+    adapter: &CommonJsRunnerAdapter<'a>,
+) -> Result<(), Box<Diagnostic>> {
+    if !program.has_use_strict_directive() {
+        let builder = AstBuilder::new(allocator);
+        program
+            .directives
+            .insert(0, Directive::new_use_strict(&builder));
+    }
+
+    let mut sources = Vec::new();
+    if adapter.uses_require {
+        sources.push(format!("const {} = require;", adapter.require_local));
+    }
+    if adapter.uses_static_import {
+        sources.push(format!(
+            "const {} = (request, metadata) => {{ const value = {}(request); if (!metadata || !metadata.importedNames || !metadata.importedNames.includes(\"default\") || (value && value.__esModule)) return value; const wrapper = Object.create(value !== null && (typeof value === \"object\" || typeof value === \"function\") ? value : null); Object.defineProperty(wrapper, \"default\", {{ enumerable: true, value }}); return wrapper; }};",
+            adapter.static_import_local, adapter.require_local
+        ));
+    }
+    if adapter.uses_exports {
+        sources.push(format!("const {} = exports;", adapter.exports_local));
+        sources.push(format!(
+            "Object.defineProperty({}, \"__esModule\", {{ value: true }});",
+            adapter.exports_local
+        ));
+    }
+    if adapter.uses_export_all {
+        sources.push(format!(
+            "const {} = source => {{ for (const key in source) {{ if (key !== \"default\" && key !== \"__esModule\" && !Object.prototype.hasOwnProperty.call({}, key)) {{ Object.defineProperty({}, key, {{ enumerable: true, configurable: true, get() {{ return source[key]; }} }}); }} }} }};",
+            adapter.export_all_local, adapter.exports_local, adapter.exports_local
+        ));
+    }
+    if adapter.uses_dynamic_import {
+        sources.push(format!(
+            "const {} = (source, options) => options === void 0 ? import(source) : import(source, options);",
+            adapter.dynamic_import_local
+        ));
+    }
+    if adapter.uses_import_meta {
+        sources.push(format!(
+            "const {} = {{ url: {}(\"node:url\").pathToFileURL(__filename).href }};",
+            adapter.import_meta_local, adapter.require_local
+        ));
+    }
+    if sources.is_empty() {
+        return Ok(());
+    }
+
+    let source = allocator.alloc_str(&sources.join("\n"));
+    let parsed = Parser::new(allocator, source, SourceType::cjs()).parse();
+    if !parsed.diagnostics.is_empty() {
+        return Err(Box::new(commonjs_error(
+            "generated CommonJS compatibility prelude did not parse",
+        )));
+    }
+    let mut prelude = parsed.program;
+    ZeroSpans.visit_program(&mut prelude);
+    for statement in prelude.body.into_iter().rev() {
+        program.body.insert(0, statement);
+    }
+    Ok(())
+}
+
+fn commonjs_error(message: &'static str) -> Diagnostic {
+    Diagnostic::new(
+        DiagnosticCode::new("FICT-OXC-CJS").expect("diagnostic literal"),
+        DiagnosticSeverity::Error,
+        message,
+    )
+    .with_guarantee_class(GuaranteeClass::Internal)
+}
+
+struct ZeroSpans;
+
+impl<'a> VisitMut<'a> for ZeroSpans {
+    fn visit_span(&mut self, span: &mut Span) {
+        *span = Span::default();
+    }
+
+    fn visit_program(&mut self, program: &mut Program<'a>) {
+        walk_mut::walk_program(self, program);
+    }
+}

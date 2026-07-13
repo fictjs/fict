@@ -211,6 +211,7 @@ dependencies = [
  "fict-metadata",
  "fict-reactivity",
  "oxc",
+ "oxc_traverse",
  "serde",
  "serde_json",
 ]

@@ -38,6 +38,7 @@ oxc = { version = "=0.139.0", default-features = false, features = [
   "semantic",
   "transformer",
 ] }
+oxc_traverse = "=0.139.0"
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = { version = "=1.0.150" }
 sha2 = { version = "=0.11.0", default-features = false }

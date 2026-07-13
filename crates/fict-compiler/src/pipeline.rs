@@ -382,7 +382,7 @@ mod tests {
     use super::{compile, internal_error_result};
     use crate::{
         COMPILER_PROTOCOL_VERSION, CompileRequest, CompilerExplainEventKind, CompilerOptions,
-        WarningLevel,
+        ModuleKind, WarningLevel,
     };
 
     fn request(code: &str, filename: &str) -> CompileRequest {
@@ -430,6 +430,33 @@ mod tests {
         assert!(result.code.contains("./setup.js"));
         assert!(!result.code.contains("Size["));
         assert!(result.code.contains("value = 1"));
+    }
+
+    #[test]
+    fn emits_reactive_tsx_modules_as_commonjs() {
+        let mut input = request(
+            "import { $state } from 'fict'; export default function App() { let count = $state(0); return <button onClick={() => count++}>{count}</button>; }",
+            "component.tsx",
+        );
+        input.module_kind = Some(ModuleKind::CommonJs);
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result.code.contains("__fict_cjs_load(\"fict/internal\""),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("__fictUseSignal"), "{}", result.code);
+        assert!(
+            result
+                .code
+                .contains("Object.defineProperty(__fict_cjs_exports, \"default\""),
+            "{}",
+            result.code
+        );
+        assert!(!result.code.contains("import {"), "{}", result.code);
+        assert!(!result.code.contains("export default"), "{}", result.code);
     }
 
     #[test]

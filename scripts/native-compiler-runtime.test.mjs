@@ -104,6 +104,87 @@ async function compileAndImport(source, name, expectedCode, settings = {}) {
   }
 }
 
+async function compileAndRequire(source, name, expectedCode) {
+  const result = binding.transformSync({
+    code: source,
+    filename: `/fixtures/${name}.tsx`,
+    moduleId: `/fixtures/${name}.tsx`,
+    moduleKind: 'commonjs',
+  })
+  assert.deepEqual(result.diagnostics, [], result.diagnostics.map(item => item.message).join('\n'))
+  if (expectedCode) {
+    assert.match(result.code, expectedCode)
+  }
+
+  const fixture = path.join(
+    root,
+    'packages',
+    'fict',
+    `.native-runtime-${name}-${process.pid}-${Date.now()}.cjs`,
+  )
+  await writeFile(fixture, result.code, 'utf8')
+  try {
+    const compiled = require(fixture)
+    delete require.cache[require.resolve(fixture)]
+    return compiled
+  } finally {
+    await unlink(fixture)
+  }
+}
+
+test('Rust compiler emits executable CommonJS with live exports and collision-free helpers', async () => {
+  const compiled = await compileAndRequire(
+    `
+      import { $state, render } from 'fict'
+      import path from 'node:path'
+
+      const __fict_cjs_require = 'user-require'
+      let updateCount = () => {}
+      export let renders = 0
+      export const collision = __fict_cjs_require
+      export const separator = path.sep
+
+      function App() {
+        const __fict_cjs_import = 'user-import'
+        let count = $state(0)
+        updateCount = () => count++
+        renders++
+        return <button data-id="commonjs">{__fict_cjs_require}:{__fict_cjs_import}:{count}</button>
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+
+      export function update() {
+        updateCount()
+      }
+    `,
+    'commonjs-module',
+    /const __fict_cjs_require_1 = require/,
+  )
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = compiled.mount(container)
+  await flushRuntime()
+
+  const button = container.querySelector('[data-id="commonjs"]')
+  assert.equal(compiled.collision, 'user-require')
+  assert.equal(compiled.separator, path.sep)
+  assert.equal(compiled.renders, 1)
+  assert.equal(button?.textContent, 'user-require:user-import:0')
+
+  compiled.update()
+  await flushRuntime()
+  assert.equal(container.querySelector('[data-id="commonjs"]'), button)
+  assert.equal(button?.textContent, 'user-require:user-import:1')
+
+  dispose()
+  assert.equal(container.childNodes.length, 0)
+  container.remove()
+})
+
 test('Rust compiler output preserves keyed identity, reactive updates, and cleanup', async () => {
   const module = await compileAndImport(
     `

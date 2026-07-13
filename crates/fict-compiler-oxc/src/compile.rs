@@ -13,6 +13,7 @@ use oxc::{
     transformer::{JsxOptions, Module, TransformOptions, Transformer},
 };
 
+use crate::commonjs::lower_standard_esm_to_commonjs;
 use crate::typescript::{configure_transform, passthrough_blockers, plan_typescript_program};
 
 /// Source grammar supplied by the Fict orchestration layer.
@@ -136,15 +137,24 @@ pub fn compile_passthrough(
     if let Some(plan) = &typescript_plan {
         configure_transform(plan, &options.typescript, &mut transform_options);
     }
+    let scoping = semantic.semantic.into_scoping();
     let transformed = Transformer::new(&allocator, path, &transform_options)
-        .build_with_scoping(semantic.semantic.into_scoping(), &mut program);
+        .build_with_scoping(scoping, &mut program);
     let transform_has_errors = transformed.diagnostics.has_errors();
+    let transformed_scoping = transformed.scoping;
     let mut diagnostics = semantic_diagnostics;
     diagnostics.extend(convert_diagnostics(
         transformed.diagnostics,
         "FICT-TRANSFORM",
     ));
     if transform_has_errors {
+        return failed_output(diagnostics);
+    }
+    if options.module_kind == OxcModuleKind::CommonJs
+        && let Err(diagnostic) =
+            lower_standard_esm_to_commonjs(&allocator, &mut program, transformed_scoping)
+    {
+        diagnostics.push(*diagnostic);
         return failed_output(diagnostics);
     }
 
@@ -319,5 +329,81 @@ mod tests {
         );
         assert!(output.code.is_empty());
         assert_eq!(output.diagnostics[0].code.as_str(), "FICT-NATIVE-JSX");
+    }
+
+    #[test]
+    fn lowers_esm_syntax_to_commonjs_output() {
+        let mut commonjs = options(OxcSourceLanguage::TypeScript);
+        commonjs.module_kind = OxcModuleKind::CommonJs;
+        let output = compile_passthrough(
+            "import { value } from './value'; export const doubled: number = value * 2;",
+            "entry.cts",
+            commonjs,
+        );
+
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert!(
+            output.code.contains("__fict_cjs_load(\"./value\""),
+            "{}",
+            output.code
+        );
+        assert!(
+            output
+                .code
+                .contains("Object.defineProperty(__fict_cjs_exports, \"doubled\"")
+                || output
+                    .code
+                    .contains("Object.defineProperty(__fict_cjs_exports, 'doubled'"),
+            "{}",
+            output.code
+        );
+        assert!(!output.code.contains("import {"), "{}", output.code);
+        assert!(!output.code.contains("export const"), "{}", output.code);
+    }
+
+    #[test]
+    fn preserves_reexports_and_avoids_commonjs_helper_collisions() {
+        let mut commonjs = options(OxcSourceLanguage::TypeScript);
+        commonjs.module_kind = OxcModuleKind::CommonJs;
+        let output = compile_passthrough(
+            concat!(
+                "import primary, { value as imported } from './dependency';\n",
+                "const __fict_cjs_require = 'user';\n",
+                "function probe() { const __fict_cjs_import = 'nested'; return imported + __fict_cjs_import; }\n",
+                "export { imported as live, probe };\n",
+                "export * from './other';\n",
+                "export default primary;",
+            ),
+            "entry.cts",
+            commonjs,
+        );
+
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert!(
+            output.code.contains("const __fict_cjs_require_1 = require"),
+            "{}",
+            output.code
+        );
+        assert!(
+            output.code.contains("const __fict_cjs_require = \"user\"")
+                && output.code.contains("const __fict_cjs_import = \"nested\""),
+            "{}",
+            output.code
+        );
+        assert!(
+            output.code.contains("const __fict_cjs_import_1 =")
+                && output.code.contains("__fict_cjs_export_all"),
+            "{}",
+            output.code
+        );
+        assert!(
+            output.code.contains("\"live\"")
+                && output.code.contains("\"probe\"")
+                && output.code.contains("\"default\""),
+            "{}",
+            output.code
+        );
+        assert!(!output.code.contains("export "), "{}", output.code);
+        assert!(!output.code.contains(" from './"), "{}", output.code);
     }
 }

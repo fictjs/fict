@@ -13,6 +13,7 @@ fict-emit.workspace = true
 fict-hir.workspace = true
 fict-metadata.workspace = true
 oxc.workspace = true
+oxc_traverse.workspace = true
 
 [dev-dependencies]
 fict-reactivity.workspace = true

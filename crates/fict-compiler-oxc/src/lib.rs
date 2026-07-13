@@ -6,6 +6,7 @@
 //! a real workspace member from the first toolchain pin so Cargo resolves and
 //! locks the exact OXC version used by every later compiler milestone.
 
+mod commonjs;
 mod compile;
 mod emit_codegen;
 mod facts;

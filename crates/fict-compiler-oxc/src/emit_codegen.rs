@@ -41,6 +41,7 @@ use oxc::{
     transformer::{JsxOptions, Module, TransformOptions, Transformer},
 };
 
+use crate::commonjs::lower_standard_esm_to_commonjs;
 use crate::{OxcCompileOptions, OxcCompileOutput, OxcModuleKind};
 
 use super::compile::{convert_diagnostics, failed_output, sorted, source_type};
@@ -350,14 +351,23 @@ pub fn emit_program(
     if let Some(plan) = &typescript_plan {
         configure_transform(plan, &options.typescript, &mut transform_options);
     }
+    let scoping = semantic.semantic.into_scoping();
     let transformed = Transformer::new(&allocator, Path::new(filename), &transform_options)
-        .build_with_scoping(semantic.semantic.into_scoping(), &mut program);
+        .build_with_scoping(scoping, &mut program);
     let transform_has_errors = transformed.diagnostics.has_errors();
+    let transformed_scoping = transformed.scoping;
     diagnostics.extend(convert_diagnostics(
         transformed.diagnostics,
         "FICT-TRANSFORM-EMIT",
     ));
     if transform_has_errors {
+        return failed_output(diagnostics);
+    }
+    if options.module_kind == OxcModuleKind::CommonJs
+        && let Err(diagnostic) =
+            lower_standard_esm_to_commonjs(&allocator, &mut program, transformed_scoping)
+    {
+        diagnostics.push(*diagnostic);
         return failed_output(diagnostics);
     }
 
