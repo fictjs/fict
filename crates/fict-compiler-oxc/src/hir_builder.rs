@@ -22,13 +22,14 @@ use oxc::{
         ast::{
             ArrayExpressionElement, ArrowFunctionExpression, AssignmentExpression,
             AssignmentPattern, AssignmentTarget, BindingIdentifier, BindingPattern,
-            BindingRestElement, CallExpression, ChainElement, Expression, FormalParameters,
-            Function, FunctionBody, IdentifierReference, JSXAttributeItem, JSXAttributeName,
-            JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild, JSXElement,
-            JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment, JSXMemberExpression,
-            JSXMemberExpressionObject, LogicalExpression, MemberExpression, MetaProperty,
-            ObjectPropertyKind, Program, SimpleAssignmentTarget, Statement, Super, ThisExpression,
-            UpdateExpression, VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
+            BindingRestElement, CallExpression, ChainElement, ComputedMemberExpression, Expression,
+            FormalParameters, Function, FunctionBody, IdentifierReference, JSXAttributeItem,
+            JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild,
+            JSXElement, JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment,
+            JSXMemberExpression, JSXMemberExpressionObject, LogicalExpression, MemberExpression,
+            MetaProperty, ObjectPropertyKind, Program, SimpleAssignmentTarget, Statement, Super,
+            ThisExpression, UpdateExpression, VariableDeclaration, VariableDeclarationKind,
+            VariableDeclarator,
         },
         ast_kind::AstKind,
     },
@@ -949,6 +950,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 self.functions[root.owner.as_usize()].kind = FunctionKind::Component;
             }
         }
+        self.validate_dynamic_property_access(program, &calls.calls);
         self.validate_component_props_patterns();
         self.apply_call_classification(&calls.calls);
         self.validate_macro_placement(&calls.calls);
@@ -973,6 +975,86 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 self.diagnostics
                     .push(props_pattern_diagnostic(*issue, severity));
             }
+        }
+    }
+
+    fn validate_dynamic_property_access(&mut self, program: &Program<'_>, calls: &[CallFact]) {
+        let binding_to_symbol: BTreeMap<_, _> = self
+            .symbol_to_binding
+            .iter()
+            .map(|(symbol, binding)| (*binding, *symbol))
+            .collect();
+        let mut reactive_symbols: BTreeSet<_> = calls
+            .iter()
+            .filter(|call| {
+                call.reactive_kind.is_some()
+                    || call
+                        .binding
+                        .and_then(|binding| self.macro_bindings.get(&binding))
+                        .is_some_and(|kind| {
+                            matches!(kind, FictMacroKind::State | FictMacroKind::Memo)
+                        })
+            })
+            .filter_map(|call| call.direct_variable_binding)
+            .filter_map(|binding| binding_to_symbol.get(&binding).copied())
+            .collect();
+        reactive_symbols.extend(
+            self.function_facts
+                .iter()
+                .filter(|function| {
+                    self.functions[function.id.as_usize()].kind == FunctionKind::Component
+                })
+                .flat_map(|function| function.parameters.iter())
+                .filter_map(|parameter| parameter.direct_binding),
+        );
+
+        let mut dependencies = ReactiveBindingDependencyCollector {
+            scoping: self.semantic.scoping(),
+            facts: Vec::new(),
+        };
+        dependencies.visit_program(program);
+        loop {
+            let mut changed = false;
+            for fact in &dependencies.facts {
+                if fact
+                    .sources
+                    .iter()
+                    .any(|source| reactive_symbols.contains(source))
+                {
+                    for target in &fact.targets {
+                        changed |= reactive_symbols.insert(*target);
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        let mut dynamic = DynamicReactivePropertyCollector {
+            scoping: self.semantic.scoping(),
+            reactive_symbols: &reactive_symbols,
+            spans: BTreeSet::new(),
+        };
+        dynamic.visit_program(program);
+        for (start, end) in dynamic.spans {
+            let span = SourceSpan::new(start, end).expect("ordered OXC member span");
+            self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::new("FICT-H").expect("diagnostic literal"),
+                    if self.strict_guarantee {
+                        DiagnosticSeverity::Error
+                    } else {
+                        DiagnosticSeverity::Warning
+                    },
+                    "dynamic property access widens dependency tracking",
+                )
+                .with_primary_span(span)
+                .with_help(
+                    "use a static string or numeric property when the reactive shape is known",
+                )
+                .with_guarantee_class(GuaranteeClass::Fallback),
+            );
         }
     }
 
@@ -3746,6 +3828,102 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
 struct MutationCollector<'semantic> {
     scoping: &'semantic Scoping,
     facts: Vec<MutationFact>,
+}
+
+#[derive(Debug)]
+struct ReactiveBindingDependencyFact {
+    targets: Vec<SymbolId>,
+    sources: BTreeSet<SymbolId>,
+}
+
+struct ReactiveBindingDependencyCollector<'semantic> {
+    scoping: &'semantic Scoping,
+    facts: Vec<ReactiveBindingDependencyFact>,
+}
+
+impl ReactiveBindingDependencyCollector<'_> {
+    fn push_fact(&mut self, targets: Vec<SymbolId>, source: &Expression<'_>) {
+        if targets.is_empty() {
+            return;
+        }
+        let mut collector = ResolvedSymbolCollector {
+            scoping: self.scoping,
+            symbols: BTreeSet::new(),
+        };
+        collector.visit_expression(source);
+        if !collector.symbols.is_empty() {
+            self.facts.push(ReactiveBindingDependencyFact {
+                targets,
+                sources: collector.symbols,
+            });
+        }
+    }
+}
+
+impl<'a> Visit<'a> for ReactiveBindingDependencyCollector<'_> {
+    fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
+        if let Some(initializer) = &declarator.init {
+            let mut targets = PatternBindingCollector::default();
+            targets.visit_binding_pattern(&declarator.id);
+            self.push_fact(targets.symbols, initializer);
+        }
+        walk_variable_declarator(self, declarator);
+    }
+
+    fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
+        if let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left
+            && let Some(symbol) = identifier
+                .reference_id
+                .get()
+                .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+        {
+            self.push_fact(vec![symbol], &assignment.right);
+        }
+        oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
+    }
+}
+
+struct ResolvedSymbolCollector<'semantic> {
+    scoping: &'semantic Scoping,
+    symbols: BTreeSet<SymbolId>,
+}
+
+impl<'a> Visit<'a> for ResolvedSymbolCollector<'_> {
+    fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+        if let Some(symbol) = identifier
+            .reference_id
+            .get()
+            .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+        {
+            self.symbols.insert(symbol);
+        }
+    }
+}
+
+struct DynamicReactivePropertyCollector<'semantic, 'reactive> {
+    scoping: &'semantic Scoping,
+    reactive_symbols: &'reactive BTreeSet<SymbolId>,
+    spans: BTreeSet<(u32, u32)>,
+}
+
+impl<'a> Visit<'a> for DynamicReactivePropertyCollector<'_, '_> {
+    fn visit_computed_member_expression(&mut self, member: &ComputedMemberExpression<'a>) {
+        let mut property = &member.expression;
+        while let Expression::ParenthesizedExpression(parenthesized) = property {
+            property = &parenthesized.expression;
+        }
+        let literal_property = matches!(
+            property,
+            Expression::StringLiteral(_) | Expression::NumericLiteral(_)
+        );
+        if !literal_property
+            && expression_root_symbol(self.scoping, &member.object)
+                .is_some_and(|symbol| self.reactive_symbols.contains(&symbol))
+        {
+            self.spans.insert((member.span.start, member.span.end));
+        }
+        oxc::ast_visit::walk::walk_computed_member_expression(self, member);
+    }
 }
 
 impl<'a> Visit<'a> for MutationCollector<'_> {

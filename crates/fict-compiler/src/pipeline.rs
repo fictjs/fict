@@ -1729,6 +1729,11 @@ mod tests {
         ];
 
         for (name, source) in dynamic_sources {
+            let expected_codes: &[&str] = if name == "computed-member" {
+                &["FICT-H", "FICT-P005"]
+            } else {
+                &["FICT-P005"]
+            };
             let strict = compile(request(source, &format!("dynamic-spread-{name}.tsx")));
             assert!(strict.has_errors(), "{name}: {:?}", strict.diagnostics);
             assert!(strict.code.is_empty(), "{name}: {}", strict.code);
@@ -1738,16 +1743,15 @@ mod tests {
                     .iter()
                     .map(|diagnostic| diagnostic.code.as_str())
                     .collect::<Vec<_>>(),
-                ["FICT-P005"],
+                expected_codes,
                 "{name}: {:?}",
                 strict.diagnostics
             );
-            assert_eq!(strict.diagnostics[0].severity, DiagnosticSeverity::Error);
-            assert_eq!(
-                strict.diagnostics[0].guarantee_class,
-                GuaranteeClass::Fallback
-            );
-            assert!(strict.diagnostics[0].primary_span.is_some());
+            assert!(strict.diagnostics.iter().all(|diagnostic| {
+                diagnostic.severity == DiagnosticSeverity::Error
+                    && diagnostic.guarantee_class == GuaranteeClass::Fallback
+                    && diagnostic.primary_span.is_some()
+            }));
 
             let mut fallback_request = request(source, &format!("dynamic-spread-{name}.tsx"));
             fallback_request.options.strict_guarantee = false;
@@ -1759,7 +1763,10 @@ mod tests {
                     .iter()
                     .map(|diagnostic| (diagnostic.code.as_str(), diagnostic.severity))
                     .collect::<Vec<_>>(),
-                [("FICT-P005", DiagnosticSeverity::Warning)],
+                expected_codes
+                    .iter()
+                    .map(|code| (*code, DiagnosticSeverity::Warning))
+                    .collect::<Vec<_>>(),
                 "{name}: {:?}",
                 fallback.diagnostics
             );
@@ -2288,6 +2295,79 @@ mod tests {
         assert_eq!(escalated.diagnostics.len(), 1);
         assert_eq!(escalated.diagnostics[0].code.as_str(), "FICT-M");
         assert_eq!(escalated.diagnostics[0].severity, DiagnosticSeverity::Error);
+    }
+
+    #[test]
+    fn enforces_dynamic_reactive_property_guarantees() {
+        let source = "import { $state, $memo, $store } from 'fict'; export function App(props) { const key = 'value'; const state = $state({ value: 1, nested: { value: 2 } }); const memo = $memo(() => ({ value: 4 })); const alias = state; const nested = state.nested; const bag = { ...state }; const store = $store({ value: 3 }); return <main>{state[key]}:{state?.[key]}:{memo[key]}:{alias[key]}:{nested[key]}:{bag[key]}:{store[key]}:{props[key]}</main>; }";
+        let strict = compile(request(source, "dynamic-properties.tsx"));
+        assert!(strict.has_errors());
+        assert!(strict.code.is_empty());
+        assert_eq!(
+            strict
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-H")
+                .count(),
+            8,
+            "{:?}",
+            strict.diagnostics
+        );
+        assert!(strict.diagnostics.iter().all(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-H"
+                && diagnostic.severity == DiagnosticSeverity::Error
+                && diagnostic.guarantee_class == GuaranteeClass::Fallback
+                && diagnostic.primary_span.is_some()
+        }));
+
+        let mut fallback_request = request(source, "dynamic-properties.tsx");
+        fallback_request.options.strict_guarantee = false;
+        let fallback = compile(fallback_request);
+        assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
+        assert_eq!(
+            fallback
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-H")
+                .count(),
+            8,
+            "{:?}",
+            fallback.diagnostics
+        );
+        assert!(
+            fallback
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.severity == DiagnosticSeverity::Warning)
+        );
+        assert!(fallback.code.contains("state()[key]"), "{}", fallback.code);
+
+        let safe = compile(request(
+            "import { $state } from 'fict'; export function App() { const state = $state({ value: 1, 0: 'zero' }); const plain = { value: 2 }; const key = 'value'; return <main>{state.value}:{state['value']}:{state[0]}:{plain[key]}</main>; }",
+            "static-properties.tsx",
+        ));
+        assert!(!safe.has_errors(), "{:?}", safe.diagnostics);
+        assert!(
+            safe.diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code.as_str() != "FICT-H"),
+            "{:?}",
+            safe.diagnostics
+        );
+
+        let mutation_source = "import { $state } from 'fict'; export function App(key) { const state = $state({ value: 1 }); state[key] = 2; return <main>{state.value}</main>; }";
+        let mut mutation_request = request(mutation_source, "dynamic-mutation.tsx");
+        mutation_request.options.strict_guarantee = false;
+        let mutation = compile(mutation_request);
+        assert!(!mutation.has_errors(), "{:?}", mutation.diagnostics);
+        assert_eq!(
+            mutation
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            ["FICT-H", "FICT-M"]
+        );
     }
 
     #[test]
