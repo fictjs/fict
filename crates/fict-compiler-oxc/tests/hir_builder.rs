@@ -2,9 +2,9 @@ use fict_compiler_oxc::{
     HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, build_hir,
 };
 use fict_hir::{
-    BinaryOperator, CallHost, CompoundAssignmentOperator, EvaluationMode, FictMacroKind,
-    FunctionKind, HirInstructionKind, IterationKind, MutationEffect, Purity, ReactiveCallKind,
-    StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, UpdateOperator,
+    BinaryOperator, CallHost, CompoundAssignmentOperator, DeclarationKind, EvaluationMode,
+    FictMacroKind, FunctionKind, HirInstructionKind, IterationKind, MutationEffect, Purity,
+    ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, UpdateOperator,
 };
 
 fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
@@ -1359,6 +1359,203 @@ fn materializes_plain_local_accesses_in_dependency_safe_source_order() {
         ) && instruction.semantics.mutation == MutationEffect::Local
             && instruction.semantics.purity == Purity::Impure
     }));
+}
+
+#[test]
+fn materializes_variable_initializers_and_opaque_destructuring_in_semantic_order() {
+    let source = r#"
+        function declarations(flag, input, effect, sourceValue, fallback) {
+            var hoisted;
+            if (flag) {
+                var fromVar = effect('var');
+                let fromLet = effect('let');
+                const fromMember = input.value;
+                const { value: picked = fallback(), nested: { item }, ...rest } = sourceValue();
+                return [fromVar, fromLet, fromMember, picked, item, rest];
+            }
+            return hoisted;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.as_ref().expect("verified declaration HIR");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                hir.bindings[binding.as_usize()].display_name == "declarations"
+            })
+        })
+        .expect("declarations function");
+    let local = |name: &str| {
+        function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"))
+            .id
+    };
+    let authored = |instruction: &fict_hir::HirInstruction| {
+        let span = instruction
+            .origin
+            .primary_span
+            .expect("authored instruction");
+        &source[span.start() as usize..span.end() as usize]
+    };
+    let find_result = |text: &str| {
+        function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find(|instruction| authored(instruction) == text)
+            .and_then(|instruction| instruction.result)
+            .unwrap_or_else(|| panic!("result for {text}"))
+    };
+
+    let from_var = local("fromVar");
+    let (var_declaration_block, var_initializer) = function
+        .blocks
+        .iter()
+        .find_map(|block| {
+            block
+                .instructions
+                .iter()
+                .find_map(|instruction| match instruction.kind {
+                    HirInstructionKind::Declare {
+                        local,
+                        declaration_kind: DeclarationKind::Var,
+                        initializer,
+                    } if local == from_var => Some((block.id, initializer)),
+                    _ => None,
+                })
+        })
+        .expect("hoisted var declaration");
+    assert_eq!(var_declaration_block, function.entry);
+    assert_eq!(var_initializer, None);
+    let var_value = find_result("effect('var')");
+    assert!(function.blocks.iter().any(|block| {
+        block.instructions.iter().any(|instruction| {
+            matches!(
+                instruction.kind,
+                HirInstructionKind::Write { place: ref target, value }
+                    if target == &fict_hir::Place::local(from_var) && value == var_value
+            )
+        })
+    }));
+
+    let from_let = local("fromLet");
+    let let_value = find_result("effect('let')");
+    let (let_block, let_call_index, let_declaration_index) = function
+        .blocks
+        .iter()
+        .find_map(|block| {
+            let call = block
+                .instructions
+                .iter()
+                .position(|instruction| instruction.result == Some(let_value))?;
+            let declaration = block.instructions.iter().position(|instruction| {
+                matches!(
+                    instruction.kind,
+                    HirInstructionKind::Declare {
+                        local,
+                        declaration_kind: DeclarationKind::Let,
+                        initializer: Some(value),
+                    } if local == from_let && value == let_value
+                )
+            })?;
+            Some((block.id, call, declaration))
+        })
+        .expect("let declaration linked to its initializer");
+    assert_ne!(let_block, function.entry);
+    assert!(let_call_index < let_declaration_index);
+
+    let from_member = local("fromMember");
+    let member_value = find_result("input.value");
+    assert!(function.blocks.iter().any(|block| {
+        block.instructions.iter().any(|instruction| {
+            matches!(
+                instruction.kind,
+                HirInstructionKind::Declare {
+                    local,
+                    declaration_kind: DeclarationKind::Const,
+                    initializer: Some(value),
+                } if local == from_member && value == member_value
+            )
+        })
+    }));
+
+    let fallback_calls = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter(|instruction| {
+            matches!(instruction.kind, HirInstructionKind::Call(_))
+                && authored(instruction) == "fallback()"
+        })
+        .count();
+    assert_eq!(
+        fallback_calls, 0,
+        "pattern defaults stay deferred inside the adapter-owned fragment"
+    );
+    let source_value = find_result("sourceValue()");
+    let (pattern_value, pattern_fragment) = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find_map(|instruction| match &instruction.kind {
+            HirInstructionKind::SyntaxFragment { fragment, inputs }
+                if hir.syntax_fragments[fragment.as_usize()].kind
+                    == SyntaxFragmentKind::Pattern
+                    && inputs.as_slice() == [source_value] =>
+            {
+                Some((instruction.result?, *fragment))
+            }
+            _ => None,
+        })
+        .expect("opaque destructuring fragment");
+    let pattern = &hir.syntax_fragments[pattern_fragment.as_usize()];
+    let summary = pattern.summary.pattern.as_ref().expect("pattern summary");
+    assert!(summary.has_defaults);
+    assert!(summary.has_rest);
+    assert!(pattern.summary.has_side_effects);
+    assert!(pattern.summary.may_throw);
+    let fallback_binding = hir
+        .bindings
+        .iter()
+        .find(|binding| binding.display_name == "fallback")
+        .expect("fallback parameter binding")
+        .id;
+    assert!(
+        pattern
+            .summary
+            .referenced_bindings
+            .contains(&fallback_binding),
+        "opaque defaults retain their binding-aware dependencies"
+    );
+    assert_eq!(
+        output.syntax_fragments[pattern_fragment.as_usize()].source,
+        "{ value: picked = fallback(), nested: { item }, ...rest }"
+    );
+    let declared = [local("picked"), local("item"), local("rest")];
+    for target in declared {
+        assert!(function.blocks.iter().any(|block| {
+            block.instructions.iter().any(|instruction| {
+                matches!(
+                    instruction.kind,
+                    HirInstructionKind::Declare {
+                        local,
+                        declaration_kind: DeclarationKind::Const,
+                        initializer: Some(value),
+                    } if local == target && value == pattern_value
+                )
+            })
+        }));
+    }
 }
 
 #[test]

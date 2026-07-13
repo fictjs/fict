@@ -522,6 +522,44 @@ mod tests {
         assert!(state.code.contains("count(__fict_previous + 1)"));
         assert!(state.code.contains("count(),"), "{}", state.code);
 
+        let var_state = compile(request(
+            "import { $state } from 'fict'; function Component() { var count = $state(0); return count; }",
+            "var-state.js",
+        ));
+        assert!(!var_state.has_errors(), "{:?}", var_state.diagnostics);
+        assert!(!var_state.code.contains("$state"));
+        assert!(
+            var_state.code.contains("var count = __fictUseSignal("),
+            "{}",
+            var_state.code
+        );
+        assert!(
+            var_state.code.contains("return count()"),
+            "{}",
+            var_state.code
+        );
+
+        let pattern_default = compile(request(
+            "import { $state } from 'fict'; function Component(input) { let count = $state(1); const { value = count, view = <span>{count}</span> } = input; return [value, view]; }",
+            "pattern-default.tsx",
+        ));
+        assert!(
+            !pattern_default.has_errors(),
+            "{:?}",
+            pattern_default.diagnostics
+        );
+        assert!(
+            pattern_default.code.contains("value = count()"),
+            "{}",
+            pattern_default.code
+        );
+        assert!(
+            !pattern_default.code.contains("view = <span>")
+                && pattern_default.code.contains("view = (() =>"),
+            "{}",
+            pattern_default.code
+        );
+
         let jsx = compile(request(
             "export function Component() { return <button>Save</button>; }",
             "component.jsx",

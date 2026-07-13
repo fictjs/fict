@@ -428,9 +428,21 @@ struct PatternBindingCollector {
     symbols: Vec<SymbolId>,
     has_defaults: bool,
     has_rest: bool,
+    contains_await: bool,
+    contains_yield: bool,
+    contains_jsx: bool,
 }
 
 impl<'a> Visit<'a> for PatternBindingCollector {
+    fn enter_node(&mut self, kind: AstKind<'a>) {
+        match kind {
+            AstKind::AwaitExpression(_) => self.contains_await = true,
+            AstKind::YieldExpression(_) => self.contains_yield = true,
+            AstKind::JSXElement(_) | AstKind::JSXFragment(_) => self.contains_jsx = true,
+            _ => {}
+        }
+    }
+
     fn visit_binding_identifier(&mut self, identifier: &BindingIdentifier<'a>) {
         if let Some(symbol) = identifier.symbol_id.get() {
             self.symbols.push(symbol);
@@ -450,6 +462,62 @@ impl<'a> Visit<'a> for PatternBindingCollector {
     fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
 
     fn visit_arrow_function_expression(&mut self, _function: &ArrowFunctionExpression<'a>) {}
+}
+
+#[derive(Default)]
+struct VariableDeclarationCollector {
+    facts: Vec<VariableDeclarationFact>,
+}
+
+impl<'a> Visit<'a> for VariableDeclarationCollector {
+    fn visit_variable_declaration(&mut self, declaration: &VariableDeclaration<'a>) {
+        if !declaration.declare
+            && matches!(
+                declaration.kind,
+                VariableDeclarationKind::Var
+                    | VariableDeclarationKind::Let
+                    | VariableDeclarationKind::Const
+            )
+        {
+            for declarator in &declaration.declarations {
+                let mut pattern = PatternBindingCollector::default();
+                pattern.visit_binding_pattern(&declarator.id);
+                let simple_binding = match &declarator.id {
+                    BindingPattern::BindingIdentifier(binding) => binding.symbol_id.get(),
+                    BindingPattern::ObjectPattern(_)
+                    | BindingPattern::ArrayPattern(_)
+                    | BindingPattern::AssignmentPattern(_) => None,
+                };
+                self.facts.push(VariableDeclarationFact {
+                    declaration_kind: match declaration.kind {
+                        VariableDeclarationKind::Var => DeclarationKind::Var,
+                        VariableDeclarationKind::Let => DeclarationKind::Let,
+                        VariableDeclarationKind::Const => DeclarationKind::Const,
+                        VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing => {
+                            unreachable!("resource declarations are filtered above")
+                        }
+                    },
+                    declarator_span: source_span(declarator.span),
+                    pattern_span: source_span(declarator.id.span()),
+                    initializer_span: declarator
+                        .init
+                        .as_ref()
+                        .map(|initializer| source_span(initializer.span())),
+                    initializer_has_effects: declarator.init.as_ref().is_some_and(|initializer| {
+                        structured_control_flow::expression_has_effects(initializer)
+                    }),
+                    bindings: pattern.symbols,
+                    simple_binding,
+                    has_defaults: pattern.has_defaults,
+                    has_rest: pattern.has_rest,
+                    contains_await: pattern.contains_await,
+                    contains_yield: pattern.contains_yield,
+                    contains_jsx: pattern.contains_jsx,
+                });
+            }
+        }
+        walk_variable_declaration(self, declaration);
+    }
 }
 
 fn parameter_facts(parameters: &FormalParameters<'_>) -> Vec<ParameterFact> {
@@ -944,6 +1012,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         calls.visit_program(program);
         let mut known_arrays = KnownArrayCollector::default();
         known_arrays.visit_program(program);
+        let mut variable_declarations = VariableDeclarationCollector::default();
+        variable_declarations.visit_program(program);
         let binding_to_symbol: BTreeMap<_, _> = self
             .symbol_to_binding
             .iter()
@@ -1028,6 +1098,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         self.validate_hook_placement(&calls.calls);
         self.populate_function_bodies(
             &calls.calls,
+            &variable_declarations.facts,
             &mutations.facts,
             &member_accesses.facts,
             &jsx.roots,
@@ -1741,10 +1812,20 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 })
                 .collect();
             for declaration in declarations {
-                let block = declaration
-                    .origin
-                    .primary_span
-                    .map_or(BlockId::new(0), |span| plan.block_for_span(span));
+                let block = if matches!(
+                    declaration.kind,
+                    HirInstructionKind::Declare {
+                        declaration_kind: DeclarationKind::Var,
+                        ..
+                    }
+                ) {
+                    function.entry
+                } else {
+                    declaration
+                        .origin
+                        .primary_span
+                        .map_or(function.entry, |span| plan.block_for_span(span))
+                };
                 function.blocks[block.as_usize()]
                     .instructions
                     .push(declaration);
@@ -2113,6 +2194,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
     fn populate_function_bodies(
         &mut self,
         calls: &[CallFact],
+        variable_declarations: &[VariableDeclarationFact],
         mutations: &[MutationFact],
         member_reads: &[MemberReadFact],
         jsx_roots: &[JsxFact],
@@ -2127,6 +2209,18 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .filter_map(|call| call.direct_variable_binding)
             .collect();
         self.reactive_value_bindings = reactive_targets.clone();
+        let opaque_patterns: Vec<_> = variable_declarations
+            .iter()
+            .filter(|declaration| {
+                declaration.initializer_span.is_some() && declaration.simple_binding.is_none()
+            })
+            .map(|declaration| {
+                (
+                    self.function_owner_for_span(declaration.declarator_span),
+                    declaration.pattern_span,
+                )
+            })
+            .collect();
         let mut accessor_read_suppressions = BTreeSet::new();
         for jsx in jsx_roots {
             collect_reactive_component_accessor_spans(
@@ -2150,8 +2244,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             &reactive_targets,
             &accessor_read_suppressions,
             &projected_root_suppressions,
+            &opaque_patterns,
         );
-        let local_mutations = self.collect_local_mutations(mutations, &reactive_targets);
+        let local_mutations =
+            self.collect_local_mutations(mutations, &reactive_targets, &opaque_patterns);
         for fact in self.function_facts.clone() {
             let has_structured_control_flow = self.has_structured_control_flow(fact.id);
             let mut inputs = Vec::new();
@@ -2212,13 +2308,39 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
 
             let mut evaluation_facts: Vec<_> = calls
                 .iter()
-                .filter(|call| call.owner == fact.id)
+                .filter(|call| {
+                    call.owner == fact.id
+                        && (!span_is_within_owned_pattern(
+                            call.owner,
+                            call.span,
+                            &opaque_patterns,
+                        ) || call.reactive_kind.is_some()
+                            || call.binding.is_some_and(|binding| {
+                                self.macro_bindings.contains_key(&binding)
+                                    || self.configured_bindings.contains(&binding)
+                            }))
+                })
                 .cloned()
                 .map(EvaluationFact::Call)
                 .chain(
                     member_reads
                         .iter()
-                        .filter(|member| self.function_owner_for_span(member.span) == fact.id)
+                        .filter(|member| {
+                            let owner = self.function_owner_for_span(member.span);
+                            owner == fact.id
+                                && (!span_is_within_owned_pattern(
+                                    owner,
+                                    member.span,
+                                    &opaque_patterns,
+                                ) || matches!(
+                                    member.place.base,
+                                    PlannedPlaceBase::Binding(symbol)
+                                        if self
+                                            .symbol_to_binding
+                                            .get(&symbol)
+                                            .is_some_and(|binding| reactive_targets.contains(binding))
+                                ))
+                        })
                         .cloned()
                         .map(EvaluationFact::Member),
                 )
@@ -2233,6 +2355,17 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     EvaluationFact::Member(member) => self.materialize_member_read(fact.id, member),
                 };
                 inputs.extend(value);
+            }
+
+            let owned_declarations: Vec<_> = variable_declarations
+                .iter()
+                .filter(|declaration| {
+                    self.function_owner_for_span(declaration.declarator_span) == fact.id
+                })
+                .cloned()
+                .collect();
+            for declaration in &owned_declarations {
+                inputs.extend(self.materialize_variable_declaration(fact.id, declaration));
             }
 
             for mutation in local_mutations
@@ -2335,6 +2468,13 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 inputs.push(value);
             }
 
+            for (_, pattern) in opaque_patterns
+                .iter()
+                .filter(|(owner, _)| *owner == fact.id)
+            {
+                self.mark_pattern_children_deferred(fact.id, *pattern);
+            }
+
             if !has_structured_control_flow {
                 let body_summary = SyntaxSummary {
                     referenced_bindings: self.referenced_bindings(fact.body_span),
@@ -2367,6 +2507,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         reactive_targets: &BTreeSet<BindingId>,
         suppressions: &BTreeSet<(u32, u32)>,
         projected_root_suppressions: &BTreeSet<(u32, u32)>,
+        opaque_patterns: &[(FunctionId, SourceSpan)],
     ) -> Vec<LocalReadFact> {
         let mut reads = Vec::new();
         for (symbol, binding) in &self.symbol_to_binding {
@@ -2380,11 +2521,15 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     continue;
                 }
                 let reactive = reactive_targets.contains(binding);
+                let owner = self.function_owner_for_span(span);
+                if !reactive && span_is_within_owned_pattern(owner, span, opaque_patterns) {
+                    continue;
+                }
                 if reactive && suppressions.contains(&(span.start(), span.end())) {
                     continue;
                 }
                 reads.push(LocalReadFact {
-                    owner: self.function_owner_for_span(span),
+                    owner,
                     binding: *binding,
                     span,
                     reactive,
@@ -2399,6 +2544,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         &mut self,
         mutations: &[MutationFact],
         reactive_targets: &BTreeSet<BindingId>,
+        opaque_patterns: &[(FunctionId, SourceSpan)],
     ) -> Vec<LocalMutationFact> {
         let mut facts = Vec::new();
         for mutation in mutations {
@@ -2406,6 +2552,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 continue;
             };
             let reactive = reactive_targets.contains(&binding);
+            let owner = self.function_owner_for_span(mutation.span);
+            if !reactive && span_is_within_owned_pattern(owner, mutation.span, opaque_patterns) {
+                continue;
+            }
             if mutation.projected && reactive {
                 self.diagnostics.push(
                     Diagnostic::new(
@@ -2427,7 +2577,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 continue;
             }
             facts.push(LocalMutationFact {
-                owner: self.function_owner_for_span(mutation.span),
+                owner,
                 binding,
                 place: mutation.place.clone().unwrap_or_else(|| PlannedPlace {
                     base: PlannedPlaceBase::Binding(mutation.symbol),
@@ -2490,6 +2640,144 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             },
             InstructionSemantics::CONSERVATIVE_EAGER,
         )
+    }
+
+    fn materialize_variable_declaration(
+        &mut self,
+        owner: FunctionId,
+        declaration: &VariableDeclarationFact,
+    ) -> Vec<ValueId> {
+        let Some(initializer_span) = declaration.initializer_span else {
+            return Vec::new();
+        };
+        let block = self.planned_block_for_span(owner, declaration.declarator_span);
+        let initializer = self.control_expression_value(
+            owner,
+            block,
+            initializer_span,
+            true,
+            declaration.initializer_has_effects,
+        );
+        let mut materialized = vec![initializer];
+        let binding_value = if declaration.simple_binding.is_some() {
+            initializer
+        } else {
+            let declared_bindings = declaration
+                .bindings
+                .iter()
+                .filter_map(|symbol| self.symbol_to_binding.get(symbol).copied())
+                .collect();
+            let fragment = self.add_fragment(
+                SyntaxFragmentKind::Pattern,
+                declaration.pattern_span,
+                SyntaxSummary {
+                    referenced_bindings: self.referenced_bindings(declaration.pattern_span),
+                    pattern: Some(PatternSummary {
+                        declared_bindings,
+                        assigned_bindings: Vec::new(),
+                        has_defaults: declaration.has_defaults,
+                        has_rest: declaration.has_rest,
+                    }),
+                    has_side_effects: true,
+                    may_throw: true,
+                    contains_await: declaration.contains_await,
+                    contains_yield: declaration.contains_yield,
+                    contains_jsx: declaration.contains_jsx,
+                    ..SyntaxSummary::default()
+                },
+            );
+            let pattern_value = self.push_value_to_block(
+                owner,
+                block,
+                ValueKind::SyntaxFragment(fragment),
+                Origin::source(declaration.pattern_span),
+                HirInstructionKind::SyntaxFragment {
+                    fragment,
+                    inputs: vec![initializer],
+                },
+                InstructionSemantics::CONSERVATIVE_EAGER,
+            );
+            materialized.push(pattern_value);
+            pattern_value
+        };
+
+        for symbol in &declaration.bindings {
+            let Some(binding) = self.symbol_to_binding.get(symbol).copied() else {
+                continue;
+            };
+            let Some(local) = self.functions[owner.as_usize()]
+                .locals
+                .iter()
+                .find(|local| local.binding == Some(binding))
+                .map(|local| local.id)
+            else {
+                continue;
+            };
+            if declaration.declaration_kind == DeclarationKind::Var {
+                self.functions[owner.as_usize()].blocks[block.as_usize()]
+                    .instructions
+                    .push(HirInstruction {
+                        result: None,
+                        kind: HirInstructionKind::Write {
+                            place: fict_hir::Place::local(local),
+                            value: binding_value,
+                        },
+                        semantics: InstructionSemantics {
+                            purity: Purity::Impure,
+                            mutation: MutationEffect::Local,
+                            evaluation: EvaluationMode::Eager,
+                            may_throw: false,
+                        },
+                        origin: Origin::source(declaration.declarator_span),
+                    });
+            } else {
+                self.link_lexical_declaration(owner, local, block, binding_value);
+            }
+        }
+        materialized
+    }
+
+    fn link_lexical_declaration(
+        &mut self,
+        owner: FunctionId,
+        local: LocalId,
+        target_block: BlockId,
+        initializer: ValueId,
+    ) {
+        let function = &mut self.functions[owner.as_usize()];
+        let Some((declaration_block, declaration_index)) =
+            function.blocks.iter().find_map(|block| {
+                block
+                    .instructions
+                    .iter()
+                    .position(|instruction| {
+                        matches!(
+                            instruction.kind,
+                            HirInstructionKind::Declare {
+                                local: candidate,
+                                ..
+                            } if candidate == local
+                        )
+                    })
+                    .map(|index| (block.id, index))
+            })
+        else {
+            return;
+        };
+        let mut declaration = function.blocks[declaration_block.as_usize()]
+            .instructions
+            .remove(declaration_index);
+        let HirInstructionKind::Declare {
+            initializer: target,
+            ..
+        } = &mut declaration.kind
+        else {
+            unreachable!("selected declaration instruction")
+        };
+        *target = Some(initializer);
+        function.blocks[target_block.as_usize()]
+            .instructions
+            .push(declaration);
     }
 
     fn materialize_call(&mut self, owner: FunctionId, call: &CallFact) -> Option<ValueId> {
@@ -2563,9 +2851,6 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 may_throw: true,
             },
         );
-        if let Some(binding) = call.direct_variable_binding {
-            self.link_direct_call_declaration(owner, binding, value);
-        }
         Some(value)
     }
 
@@ -2651,6 +2936,18 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 .is_some_and(|candidate| span_contains(span, candidate))
             {
                 instruction.semantics.evaluation = EvaluationMode::Deferred;
+            }
+        }
+    }
+
+    fn mark_pattern_children_deferred(&mut self, owner: FunctionId, pattern: SourceSpan) {
+        for block in &mut self.functions[owner.as_usize()].blocks {
+            for instruction in &mut block.instructions {
+                if instruction.origin.primary_span.is_some_and(|candidate| {
+                    candidate != pattern && span_contains(pattern, candidate)
+                }) {
+                    instruction.semantics.evaluation = EvaluationMode::Deferred;
+                }
             }
         }
     }
@@ -3111,65 +3408,6 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 InstructionSemantics::PURE_EAGER
             },
         )
-    }
-
-    fn link_direct_call_declaration(
-        &mut self,
-        owner: FunctionId,
-        binding: BindingId,
-        initializer: ValueId,
-    ) {
-        let function = &mut self.functions[owner.as_usize()];
-        let Some(local) = function
-            .locals
-            .iter()
-            .find(|local| local.binding == Some(binding))
-            .map(|local| local.id)
-        else {
-            return;
-        };
-        let Some(target_block) = function.blocks.iter().find_map(|block| {
-            block
-                .instructions
-                .iter()
-                .any(|instruction| instruction.result == Some(initializer))
-                .then_some(block.id)
-        }) else {
-            return;
-        };
-        let Some((declaration_block, declaration_index)) =
-            function.blocks.iter().find_map(|block| {
-                block
-                    .instructions
-                    .iter()
-                    .position(|instruction| {
-                        matches!(
-                            instruction.kind,
-                            HirInstructionKind::Declare {
-                                local: candidate,
-                                ..
-                            } if candidate == local
-                        )
-                    })
-                    .map(|index| (block.id, index))
-            })
-        else {
-            return;
-        };
-        let mut declaration = function.blocks[declaration_block.as_usize()]
-            .instructions
-            .remove(declaration_index);
-        let HirInstructionKind::Declare {
-            initializer: target,
-            ..
-        } = &mut declaration.kind
-        else {
-            unreachable!("selected declaration instruction")
-        };
-        *target = Some(initializer);
-        function.blocks[target_block.as_usize()]
-            .instructions
-            .push(declaration);
     }
 
     fn lower_jsx_node(&mut self, owner: FunctionId, node: &RawJsxNode) -> JsxNode {
@@ -4604,6 +4842,22 @@ struct CallFact {
     pure: bool,
 }
 
+#[derive(Debug, Clone)]
+struct VariableDeclarationFact {
+    declaration_kind: DeclarationKind,
+    declarator_span: SourceSpan,
+    pattern_span: SourceSpan,
+    initializer_span: Option<SourceSpan>,
+    initializer_has_effects: bool,
+    bindings: Vec<SymbolId>,
+    simple_binding: Option<SymbolId>,
+    has_defaults: bool,
+    has_rest: bool,
+    contains_await: bool,
+    contains_yield: bool,
+    contains_jsx: bool,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct LocalReadFact {
     owner: FunctionId,
@@ -5294,6 +5548,16 @@ impl<'a> Visit<'a> for CallbackReferenceCollector<'_> {
 
 fn span_contains(container: SourceSpan, nested: SourceSpan) -> bool {
     container.start() <= nested.start() && nested.end() <= container.end()
+}
+
+fn span_is_within_owned_pattern(
+    owner: FunctionId,
+    span: SourceSpan,
+    patterns: &[(FunctionId, SourceSpan)],
+) -> bool {
+    patterns
+        .iter()
+        .any(|(pattern_owner, pattern)| *pattern_owner == owner && span_contains(*pattern, span))
 }
 
 struct FunctionCaptureCollector<'facts, 'semantic, 'reactive> {

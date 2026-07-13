@@ -4,10 +4,10 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
 use fict_hir::{
-    CallHost, FictMacroKind, FunctionId, FunctionKind, HirFile, HirInstructionKind, ImportedName,
-    JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName, JsxExpressionKind,
-    JsxListExpression, JsxListReceiver, JsxNode, LocalId, PlaceBase, ReactiveCallKind, TemplateId,
-    TerminatorKind, ValueId, ValueKind,
+    CallHost, FictMacroKind, FunctionId, FunctionKind, HirFile, HirFunction, HirInstruction,
+    HirInstructionKind, ImportedName, JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName,
+    JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode, LocalId, PlaceBase,
+    ReactiveCallKind, TemplateId, TerminatorKind, ValueId, ValueKind,
 };
 use fict_reactivity::{ReactiveCycleAnalysis, RegionAnalysis, analyze_cfg, structurize_cfg};
 
@@ -271,6 +271,33 @@ fn module_source_fragment(hir: &HirFile) -> Option<fict_hir::SyntaxFragmentId> {
         })
 }
 
+fn declaration_initializer(
+    function: &HirFunction,
+    instruction: &HirInstruction,
+) -> Option<(ValueId, LocalId)> {
+    match &instruction.kind {
+        HirInstructionKind::Declare {
+            local,
+            initializer: Some(value),
+            ..
+        } => Some((*value, *local)),
+        HirInstructionKind::Write { place, value } if place.projections.is_empty() => {
+            let PlaceBase::Local(local) = &place.base else {
+                return None;
+            };
+            let storage = function.locals.get(local.as_usize())?;
+            if storage.declaration_kind != fict_hir::DeclarationKind::Var {
+                return None;
+            }
+            let write = instruction.origin.primary_span?;
+            let declaration = storage.origin.primary_span?;
+            (write.start() <= declaration.start() && declaration.end() <= write.end())
+                .then_some((*value, *local))
+        }
+        _ => None,
+    }
+}
+
 fn collect_reactive_binding_sites(
     hir: &HirFile,
 ) -> Result<BTreeMap<fict_hir::BindingId, ReactiveBindingSite>, DiagnosticBundle> {
@@ -281,15 +308,11 @@ fn collect_reactive_binding_sites(
             .blocks
             .iter()
             .flat_map(|block| &block.instructions)
-            .filter_map(|instruction| match instruction.kind {
-                HirInstructionKind::Declare {
-                    local,
-                    initializer: Some(initializer),
-                    ..
-                } => function.locals[local.as_usize()]
+            .filter_map(|instruction| {
+                let (initializer, local) = declaration_initializer(function, instruction)?;
+                function.locals[local.as_usize()]
                     .binding
-                    .map(|binding| (initializer, binding)),
-                _ => None,
+                    .map(|binding| (initializer, binding))
             })
             .collect();
         for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
@@ -348,14 +371,7 @@ fn lower_function(
         .blocks
         .iter()
         .flat_map(|block| &block.instructions)
-        .filter_map(|instruction| match &instruction.kind {
-            HirInstructionKind::Declare {
-                local,
-                initializer: Some(value),
-                ..
-            } => Some((*value, *local)),
-            _ => None,
-        })
+        .filter_map(|instruction| declaration_initializer(function, instruction))
         .collect();
     let mut sites = Vec::new();
     for block in &function.blocks {
@@ -598,6 +614,14 @@ fn lower_function(
                 ..
             } = instruction.kind
                 && (macro_results.contains(&initializer) || keyed_results.contains(&initializer))
+            {
+                continue;
+            }
+            if matches!(instruction.kind, HirInstructionKind::Write { .. })
+                && declaration_initializer(function, instruction).is_some_and(|(initializer, _)| {
+                    site_by_result.contains_key(&initializer)
+                        || keyed_results.contains(&initializer)
+                })
             {
                 continue;
             }
