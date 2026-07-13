@@ -1237,6 +1237,41 @@ mod tests {
     }
 
     #[test]
+    fn optimizes_nested_keyed_lists_and_preserves_outer_item_reads() {
+        let result = compile(request(
+            "import { $state } from 'fict'; export function Tree() { let groups = $state([{ id: 1, items: [{ id: 2, tags: [{ id: 3, name: 'A' }] }] }]); return <main>{groups.map(group => <section key={group.id}>{group.items.map(item => <article key={item.id}>{item.tags.map((tag, index) => <i key={tag.id}>{group.id}:{item.id}:{index}:{tag.name}</i>)}</article>)}</section>)}</main>; }",
+            "nested-keyed-map.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result.code.matches("createKeyedList(").count(),
+            3,
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("createKeyedList(() => groups()"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("createKeyedList(() => group().items"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("createKeyedList(() => item().tags"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("() => group().id"), "{}", result.code);
+        assert!(result.code.contains("() => item().id"), "{}", result.code);
+        assert!(result.code.contains("() => index()"), "{}", result.code);
+        assert!(result.code.contains("() => tag().name"), "{}", result.code);
+    }
+
+    #[test]
     fn omits_intrinsic_keys_without_losing_dynamic_key_effects() {
         let result = compile(request(
             "export function Static() { return <p key=\"row\" title=\"ok\" />; } export function Dynamic() { return <div before={before()} key={side()} after={after()} />; }",

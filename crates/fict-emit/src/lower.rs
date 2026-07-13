@@ -112,6 +112,7 @@ fn lower_program(
         )]));
     }
     let reactive_bindings = collect_reactive_binding_sites(hir)?;
+    let list_item_bindings = collect_jsx_list_item_bindings(hir);
     let mut functions = Vec::with_capacity(hir.functions.len());
     for (function_index, function) in hir.functions.iter().enumerate() {
         if !allow_jsx
@@ -134,6 +135,7 @@ fn lower_program(
             FunctionId::new(count_u32(function_index)),
             &regions[function_index],
             &reactive_bindings,
+            &list_item_bindings,
             allow_jsx,
             options.fine_grained_dom,
         )?);
@@ -301,6 +303,7 @@ fn lower_function(
     function_id: FunctionId,
     regions: &RegionAnalysis,
     reactive_bindings: &BTreeMap<fict_hir::BindingId, ReactiveBindingSite>,
+    list_item_bindings: &BTreeSet<fict_hir::BindingId>,
     allow_jsx: bool,
     fine_grained_dom: bool,
 ) -> Result<EmitFunction, DiagnosticBundle> {
@@ -652,6 +655,7 @@ fn lower_function(
                             &mut operations,
                             cleanup,
                             reactive_bindings,
+                            list_item_bindings,
                         )?;
                     } else {
                         let Some(source_result) = instruction.result else {
@@ -797,6 +801,7 @@ fn lower_jsx_instruction(
     operations: &mut Vec<EmitOperation>,
     cleanup: CleanupOwner,
     reactive_bindings: &BTreeMap<fict_hir::BindingId, ReactiveBindingSite>,
+    list_item_bindings: &BTreeSet<fict_hir::BindingId>,
 ) -> Result<(), DiagnosticBundle> {
     let Some(template) = hir.templates.get(template_id.as_usize()) else {
         return Err(DiagnosticBundle::new(vec![lower_error(
@@ -838,7 +843,8 @@ fn lower_jsx_instruction(
     if root_is_component {
         return Ok(());
     }
-    let trusted_lists = trusted_jsx_list_values(&template.root, reactive_bindings);
+    let trusted_lists =
+        trusted_jsx_list_values(&template.root, reactive_bindings, list_item_bindings);
     let serialized = serialize_template_with_lists(&template.root, &trusted_lists)?;
     if declared_templates.insert(template_id) {
         let preferred = format!("__fict_tmpl{}", template_id.index());
@@ -1504,9 +1510,58 @@ fn jsx_node_origin(node: &JsxNode) -> fict_hir::Origin {
     }
 }
 
+fn collect_jsx_list_item_bindings(hir: &HirFile) -> BTreeSet<fict_hir::BindingId> {
+    enum Item<'a> {
+        Node(&'a JsxNode),
+        Child(&'a JsxChild),
+    }
+
+    let mut bindings = BTreeSet::new();
+    for template in &hir.templates {
+        let mut stack = vec![Item::Node(&template.root)];
+        while let Some(item) = stack.pop() {
+            match item {
+                Item::Node(JsxNode::Element(element)) => {
+                    for attribute in &element.attributes {
+                        if let JsxAttribute::Named {
+                            value: JsxAttributeValue::Node(node),
+                            ..
+                        } = attribute
+                        {
+                            stack.push(Item::Node(node));
+                        }
+                    }
+                    stack.extend(element.children.iter().map(Item::Child));
+                }
+                Item::Node(JsxNode::Fragment { children, .. }) => {
+                    stack.extend(children.iter().map(Item::Child));
+                }
+                Item::Child(JsxChild::Expression {
+                    list: Some(list), ..
+                }) => {
+                    if let Some(binding) = hir
+                        .functions
+                        .get(list.callback.as_usize())
+                        .and_then(|function| function.parameters.first())
+                        .and_then(|parameter| parameter.binding)
+                    {
+                        bindings.insert(binding);
+                    }
+                }
+                Item::Child(JsxChild::Node(node)) => stack.push(Item::Node(node)),
+                Item::Child(
+                    JsxChild::Text { .. } | JsxChild::Expression { .. } | JsxChild::Spread { .. },
+                ) => {}
+            }
+        }
+    }
+    bindings
+}
+
 fn trusted_jsx_list_values(
     root: &JsxNode,
     reactive_bindings: &BTreeMap<fict_hir::BindingId, ReactiveBindingSite>,
+    list_item_bindings: &BTreeSet<fict_hir::BindingId>,
 ) -> BTreeSet<ValueId> {
     enum Item<'a> {
         Node(&'a JsxNode),
@@ -1537,7 +1592,7 @@ fn trusted_jsx_list_values(
                 list: Some(list),
                 ..
             }) => {
-                if trusted_jsx_list_receiver(list.receiver, reactive_bindings) {
+                if trusted_jsx_list_receiver(list.receiver, reactive_bindings, list_item_bindings) {
                     trusted.insert(*value);
                 }
             }
@@ -1553,12 +1608,14 @@ fn trusted_jsx_list_values(
 fn trusted_jsx_list_receiver(
     receiver: JsxListReceiver,
     reactive_bindings: &BTreeMap<fict_hir::BindingId, ReactiveBindingSite>,
+    list_item_bindings: &BTreeSet<fict_hir::BindingId>,
 ) -> bool {
     match receiver {
         JsxListReceiver::ArrayLiteral => true,
         JsxListReceiver::Binding {
             known_array: true, ..
         } => true,
+        JsxListReceiver::Binding { root, .. } if list_item_bindings.contains(&root) => true,
         JsxListReceiver::Binding {
             root,
             projected: false,

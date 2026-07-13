@@ -3435,7 +3435,8 @@ impl<'a> AstRewriter<'a, '_> {
             .chain(index_references)
             .map(|origin| (origin.start(), origin.end()))
             .collect();
-        let previous_reads = std::mem::replace(&mut self.active_list_reads, expected_reads.clone());
+        let previous_reads = std::mem::take(&mut self.active_list_reads);
+        self.active_list_reads = previous_reads.union(&expected_reads).copied().collect();
         let previous_matches = std::mem::take(&mut self.matched_list_reads);
         let previous_key_local = self.active_list_key_local.clone();
         let previous_key_origin = self.active_list_key_origin;
@@ -3453,9 +3454,20 @@ impl<'a> AstRewriter<'a, '_> {
         self.prefer_template_clones += 1;
         self.visit_expression(&mut render_callback);
         self.prefer_template_clones -= 1;
-        let matched_reads = std::mem::take(&mut self.matched_list_reads);
+        let nested_matches = std::mem::take(&mut self.matched_list_reads);
+        let matched_reads: BTreeSet<_> = nested_matches
+            .intersection(&expected_reads)
+            .copied()
+            .collect();
+        let propagated_matches: BTreeSet<_> = nested_matches
+            .intersection(&previous_reads)
+            .copied()
+            .collect();
         self.active_list_reads = previous_reads;
-        self.matched_list_reads = previous_matches;
+        self.matched_list_reads = previous_matches
+            .into_iter()
+            .chain(propagated_matches)
+            .collect();
         self.active_list_key_local = previous_key_local;
         self.active_list_key_origin = previous_key_origin;
         self.active_list_key_initializer = previous_key_initializer;
