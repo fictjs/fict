@@ -11,10 +11,10 @@ use fict_hir::{
 use fict_reactivity::{ReactiveCycleAnalysis, RegionAnalysis, analyze_cfg, structurize_cfg};
 
 use crate::{
-    CleanupOwner, ComponentProp, ComponentTarget, DELEGATED_EVENTS, DomBindingKind, DomNamespace,
-    EmitContext, EmitFunction, EmitModulePlan, EmitOperation, EmitProgram, EmitSlotId,
-    EmitTemporary, EmitTemporaryId, EmitValueRef, PropsOperation, ReactiveSlot, ReactiveSlotKind,
-    ReactiveSlotStorage, RuntimeFamily, RuntimeHelper, RuntimeImportIntent,
+    CleanupOwner, ComponentChild, ComponentProp, ComponentTarget, DELEGATED_EVENTS, DomBindingKind,
+    DomNamespace, EmitContext, EmitFunction, EmitModulePlan, EmitOperation, EmitProgram,
+    EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef, PropsOperation, ReactiveSlot,
+    ReactiveSlotKind, ReactiveSlotStorage, RuntimeFamily, RuntimeHelper, RuntimeImportIntent,
     name_allocator::NameAllocator, verify_emit_program,
 };
 
@@ -741,6 +741,12 @@ enum TemplateBinding {
         value: ValueId,
         namespace: DomNamespace,
     },
+    ComponentChild {
+        parent_path: Vec<u32>,
+        marker_path: Vec<u32>,
+        origin: fict_hir::Origin,
+        namespace: DomNamespace,
+    },
     Event {
         path: Vec<u32>,
         event: String,
@@ -786,19 +792,31 @@ fn lower_jsx_instruction(
             GuaranteeClass::Internal,
         )]));
     }
-    if let JsxNode::Element(element) = &template.root
-        && !matches!(element.name, JsxElementName::Intrinsic(_))
-    {
-        return lower_component_jsx(
-            hir,
-            function_id,
-            element,
-            instruction,
-            temporaries,
-            temporary_names,
-            value_temporaries,
-            operations,
-        );
+    let Some(result) = instruction.result else {
+        return Err(DiagnosticBundle::new(vec![lower_error(
+            "FICT-EMIT-JSX-RESULT",
+            "JSX instruction has no HIR result",
+            GuaranteeClass::Internal,
+        )]));
+    };
+    let root_is_component = matches!(
+        &template.root,
+        JsxNode::Element(element) if !matches!(element.name, JsxElementName::Intrinsic(_))
+    );
+    let mut component_targets = BTreeMap::new();
+    register_component_nodes(
+        hir,
+        function_id,
+        &template.root,
+        root_is_component.then_some(result),
+        temporaries,
+        temporary_names,
+        value_temporaries,
+        operations,
+        &mut component_targets,
+    )?;
+    if root_is_component {
+        return Ok(());
     }
     let serialized = serialize_template(&template.root)?;
     if declared_templates.insert(template_id) {
@@ -813,13 +831,6 @@ fn lower_jsx_instruction(
             origin: template.origin,
         });
     }
-    let Some(result) = instruction.result else {
-        return Err(DiagnosticBundle::new(vec![lower_error(
-            "FICT-EMIT-JSX-RESULT",
-            "JSX instruction has no HIR result",
-            GuaranteeClass::Internal,
-        )]));
-    };
     let root = allocate_temporary(
         temporaries,
         temporary_names,
@@ -951,6 +962,55 @@ fn lower_jsx_instruction(
                     origin,
                 });
             }
+            TemplateBinding::ComponentChild {
+                parent_path,
+                marker_path,
+                origin,
+                namespace,
+            } => {
+                let Some(span) = origin.primary_span else {
+                    return Err(DiagnosticBundle::new(vec![lower_error(
+                        "FICT-EMIT-COMPONENT-ORIGIN",
+                        "nested component JSX requires a source origin",
+                        GuaranteeClass::Internal,
+                    )]));
+                };
+                let Some(target) = component_targets.get(&(span.start(), span.end())).copied()
+                else {
+                    return Err(DiagnosticBundle::new(vec![lower_error(
+                        "FICT-EMIT-COMPONENT-PLAN",
+                        "nested component JSX has no recursive component plan",
+                        GuaranteeClass::Internal,
+                    )]));
+                };
+                let parent = resolved_element(
+                    root,
+                    parent_path,
+                    &mut resolved,
+                    temporaries,
+                    temporary_names,
+                    operations,
+                    origin,
+                );
+                let marker = resolved_element(
+                    root,
+                    marker_path,
+                    &mut resolved,
+                    temporaries,
+                    temporary_names,
+                    operations,
+                    origin,
+                );
+                operations.push(EmitOperation::Insert {
+                    parent,
+                    value: EmitValueRef::Temporary(target),
+                    before: Some(marker),
+                    namespace,
+                    helper: RuntimeHelper::Insert,
+                    create_helper: create_element_helper(namespace),
+                    origin,
+                });
+            }
             TemplateBinding::Event {
                 path,
                 event,
@@ -1009,16 +1069,128 @@ fn lower_jsx_instruction(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn lower_component_jsx(
+fn register_component_nodes(
     hir: &HirFile,
     function_id: FunctionId,
-    element: &fict_hir::JsxElement,
-    instruction: &fict_hir::HirInstruction,
+    node: &JsxNode,
+    root_result: Option<ValueId>,
     temporaries: &mut Vec<EmitTemporary>,
     temporary_names: &mut NameAllocator,
     value_temporaries: &mut BTreeMap<ValueId, EmitTemporaryId>,
     operations: &mut Vec<EmitOperation>,
+    component_targets: &mut BTreeMap<(u32, u32), EmitTemporaryId>,
 ) -> Result<(), DiagnosticBundle> {
+    match node {
+        JsxNode::Element(element) => {
+            if !matches!(element.name, JsxElementName::Intrinsic(_)) {
+                let target = lower_component_operation(
+                    hir,
+                    function_id,
+                    element,
+                    root_result,
+                    temporaries,
+                    temporary_names,
+                    value_temporaries,
+                    operations,
+                )?;
+                let Some(span) = element.origin.primary_span else {
+                    return Err(DiagnosticBundle::new(vec![lower_error(
+                        "FICT-EMIT-COMPONENT-ORIGIN",
+                        "component JSX requires a source origin",
+                        GuaranteeClass::Internal,
+                    )]));
+                };
+                if component_targets
+                    .insert((span.start(), span.end()), target)
+                    .is_some()
+                {
+                    return Err(DiagnosticBundle::new(vec![lower_error(
+                        "FICT-EMIT-COMPONENT-ORIGIN",
+                        "component JSX source origins must be unique",
+                        GuaranteeClass::Internal,
+                    )]));
+                }
+            } else if root_result.is_some() {
+                return Err(DiagnosticBundle::new(vec![lower_error(
+                    "FICT-EMIT-COMPONENT-ROOT",
+                    "only a component JSX root can own the component result",
+                    GuaranteeClass::Internal,
+                )]));
+            }
+            for attribute in &element.attributes {
+                if let JsxAttribute::Named {
+                    value: JsxAttributeValue::Node(node),
+                    ..
+                } = attribute
+                {
+                    register_component_nodes(
+                        hir,
+                        function_id,
+                        node,
+                        None,
+                        temporaries,
+                        temporary_names,
+                        value_temporaries,
+                        operations,
+                        component_targets,
+                    )?;
+                }
+            }
+            for child in &element.children {
+                if let JsxChild::Node(node) = child {
+                    register_component_nodes(
+                        hir,
+                        function_id,
+                        node,
+                        None,
+                        temporaries,
+                        temporary_names,
+                        value_temporaries,
+                        operations,
+                        component_targets,
+                    )?;
+                }
+            }
+        }
+        JsxNode::Fragment { children, .. } => {
+            if root_result.is_some() {
+                return Err(DiagnosticBundle::new(vec![lower_error(
+                    "FICT-EMIT-COMPONENT-ROOT",
+                    "a fragment root cannot own a component result",
+                    GuaranteeClass::Internal,
+                )]));
+            }
+            for child in children {
+                if let JsxChild::Node(node) = child {
+                    register_component_nodes(
+                        hir,
+                        function_id,
+                        node,
+                        None,
+                        temporaries,
+                        temporary_names,
+                        value_temporaries,
+                        operations,
+                        component_targets,
+                    )?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_component_operation(
+    hir: &HirFile,
+    function_id: FunctionId,
+    element: &fict_hir::JsxElement,
+    source_result: Option<ValueId>,
+    temporaries: &mut Vec<EmitTemporary>,
+    temporary_names: &mut NameAllocator,
+    value_temporaries: &mut BTreeMap<ValueId, EmitTemporaryId>,
+    operations: &mut Vec<EmitOperation>,
+) -> Result<EmitTemporaryId, DiagnosticBundle> {
     let component = match &element.name {
         JsxElementName::Component(binding) => ComponentTarget::Binding(*binding),
         JsxElementName::Member { root, properties } => ComponentTarget::Member {
@@ -1054,12 +1226,12 @@ fn lower_component_jsx(
                                 ValueKind::Literal(_)
                             ),
                     ),
-                    JsxAttributeValue::Node(_) => {
-                        return Err(DiagnosticBundle::new(vec![lower_error(
-                            "FICT-EMIT-COMPONENT-PROP-NODE",
-                            "node-valued component props require nested JSX lowering",
-                            GuaranteeClass::Unsupported,
-                        )]));
+                    JsxAttributeValue::Node(node) => {
+                        props.push(ComponentProp::Node {
+                            name: name.clone(),
+                            origin: jsx_node_origin(node),
+                        });
+                        continue;
                     }
                 };
                 if name == "key" {
@@ -1081,36 +1253,25 @@ fn lower_component_jsx(
     }
     let mut children = Vec::new();
     for child in &element.children {
-        match child {
-            JsxChild::Text { value, .. } => children.push(EmitValueRef::Literal(
+        let child = match child {
+            JsxChild::Text { value, .. } => ComponentChild::Value(EmitValueRef::Literal(
                 fict_hir::LiteralValue::String(value.clone()),
             )),
             JsxChild::Expression { value, .. } | JsxChild::Spread { value, .. } => {
-                children.push(lower_value(*value, value_temporaries));
+                ComponentChild::Value(lower_value(*value, value_temporaries))
             }
-            JsxChild::Node(_) => {
-                return Err(DiagnosticBundle::new(vec![lower_error(
-                    "FICT-EMIT-COMPONENT-CHILD",
-                    "nested component JSX children require recursive component lowering",
-                    GuaranteeClass::Unsupported,
-                )]));
-            }
-        }
+            JsxChild::Node(node) => ComponentChild::Node(jsx_node_origin(node)),
+        };
+        children.push(child);
     }
-    let Some(result) = instruction.result else {
-        return Err(DiagnosticBundle::new(vec![lower_error(
-            "FICT-EMIT-JSX-RESULT",
-            "component JSX instruction has no HIR result",
-            GuaranteeClass::Internal,
-        )]));
-    };
-    let target = allocate_temporary(
-        temporaries,
-        temporary_names,
-        format!("__fict_component{}", result.index()),
-        instruction.origin,
+    let preferred = source_result.map_or_else(
+        || "__fict_component".to_owned(),
+        |result| format!("__fict_component{}", result.index()),
     );
-    value_temporaries.insert(result, target);
+    let target = allocate_temporary(temporaries, temporary_names, preferred, element.origin);
+    if let Some(result) = source_result {
+        value_temporaries.insert(result, target);
+    }
     operations.push(EmitOperation::InvokeComponent {
         target,
         component,
@@ -1118,11 +1279,21 @@ fn lower_component_jsx(
             .iter()
             .any(|prop| matches!(prop, ComponentProp::Named { getter: true, .. }))
             .then_some(RuntimeHelper::PropGetter),
+        fragment_helper: element
+            .contains_fragment()
+            .then_some(RuntimeHelper::Fragment),
         props,
         children,
-        origin: instruction.origin,
+        origin: element.origin,
     });
-    Ok(())
+    Ok(target)
+}
+
+fn jsx_node_origin(node: &JsxNode) -> fict_hir::Origin {
+    match node {
+        JsxNode::Element(element) => element.origin,
+        JsxNode::Fragment { origin, .. } => *origin,
+    }
 }
 
 fn serialize_template(root: &JsxNode) -> Result<SerializedTemplate, DiagnosticBundle> {
@@ -1339,6 +1510,22 @@ fn serialize_children(
             }
             JsxChild::Node(node) => {
                 previous_static_text = false;
+                if let JsxNode::Element(element) = node.as_ref()
+                    && !matches!(element.name, JsxElementName::Intrinsic(_))
+                {
+                    html.push_str("<!---->");
+                    let mut marker_path = parent_path.clone();
+                    marker_path.push(child_index);
+                    bindings.push(TemplateBinding::ComponentChild {
+                        parent_path: parent_path.clone(),
+                        marker_path,
+                        origin: element.origin,
+                        namespace: child_namespace,
+                    });
+                    child_index += 1;
+                    source_index += 1;
+                    continue;
+                }
                 if child_namespace == DomNamespace::Parent {
                     return Err(DiagnosticBundle::new(vec![lower_error(
                         "FICT-EMIT-NAMESPACE-DYNAMIC",

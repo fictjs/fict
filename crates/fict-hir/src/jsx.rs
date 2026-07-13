@@ -98,6 +98,25 @@ pub struct JsxElement {
     pub origin: Origin,
 }
 
+impl JsxElement {
+    /// Whether this element's attributes or children contain source short-fragment syntax.
+    #[must_use]
+    pub fn contains_fragment(&self) -> bool {
+        self.attributes.iter().any(|attribute| {
+            matches!(
+                attribute,
+                JsxAttribute::Named {
+                    value: JsxAttributeValue::Node(node),
+                    ..
+                } if node.contains_fragment()
+            )
+        }) || self
+            .children
+            .iter()
+            .any(|child| matches!(child, JsxChild::Node(node) if node.contains_fragment()))
+    }
+}
+
 /// JSX tree node.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JsxNode {
@@ -119,20 +138,7 @@ impl JsxNode {
     pub fn contains_fragment(&self) -> bool {
         match self {
             Self::Fragment { .. } => true,
-            Self::Element(element) => {
-                element.attributes.iter().any(|attribute| {
-                    matches!(
-                        attribute,
-                        JsxAttribute::Named {
-                            value: JsxAttributeValue::Node(node),
-                            ..
-                        } if node.contains_fragment()
-                    )
-                }) || element
-                    .children
-                    .iter()
-                    .any(|child| matches!(child, JsxChild::Node(node) if node.contains_fragment()))
-            }
+            Self::Element(element) => element.contains_fragment(),
         }
     }
 }

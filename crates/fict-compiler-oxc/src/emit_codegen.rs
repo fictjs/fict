@@ -5,8 +5,8 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
 use fict_emit::{
-    ComponentProp, DomBindingKind, DomNamespace, EmitOperation, EmitProgram, EmitValueRef,
-    PropsOperation, RuntimeHelper,
+    ComponentChild, ComponentProp, DomBindingKind, DomNamespace, EmitOperation, EmitProgram,
+    EmitValueRef, PropsOperation, RuntimeHelper,
 };
 use fict_hir::{CompoundAssignmentOperator, LiteralValue, TemplateId, UpdateOperator};
 use oxc::{
@@ -692,7 +692,9 @@ fn vnode_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), VNodeRewrite>, Ve
 #[derive(Debug, Clone)]
 struct ComponentRewrite {
     props: Vec<ComponentProp>,
+    children: Vec<ComponentChild>,
     prop_helper: Option<String>,
+    fragment_local: Option<String>,
 }
 
 fn component_rewrites(
@@ -712,7 +714,9 @@ fn component_rewrites(
     {
         let EmitOperation::InvokeComponent {
             props,
+            children,
             prop_helper,
+            fragment_helper,
             origin,
             ..
         } = operation
@@ -744,12 +748,31 @@ fn component_rewrites(
             }
             None => None,
         };
+        let fragment_local = match fragment_helper {
+            Some(helper) => {
+                let Some(local) = helper_names.get(helper) else {
+                    diagnostics.push(
+                        emit_error(
+                            "FICT-OXC-EMIT-IMPORT",
+                            "component fragment helper has no runtime import intent",
+                            GuaranteeClass::Internal,
+                        )
+                        .with_primary_span(span),
+                    );
+                    continue;
+                };
+                Some((*local).to_owned())
+            }
+            None => None,
+        };
         if rewrites
             .insert(
                 (span.start(), span.end()),
                 ComponentRewrite {
                     props: props.clone(),
+                    children: children.clone(),
                     prop_helper,
+                    fragment_local,
                 },
             )
             .is_some()
@@ -905,6 +928,16 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
             .temporaries
             .iter()
             .map(|temporary| (temporary.id, temporary.name.as_str()))
+            .collect();
+        let component_origins: BTreeMap<_, _> = function
+            .operations
+            .iter()
+            .filter_map(|operation| match operation {
+                EmitOperation::InvokeComponent { target, origin, .. } => {
+                    origin.primary_span.map(|span| (*target, span))
+                }
+                _ => None,
+            })
             .collect();
         let mut current = None;
         for operation in &function.operations {
@@ -1383,22 +1416,23 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                         }
                         None => None,
                     };
-                    if !matches!(value, EmitValueRef::Hir(_)) {
+                    let value_origin = match value {
+                        EmitValueRef::Hir(_) => origin.primary_span,
+                        EmitValueRef::Temporary(target) => component_origins.get(target).copied(),
+                        EmitValueRef::Ssa(_)
+                        | EmitValueRef::Slot(_)
+                        | EmitValueRef::Literal(_)
+                        | EmitValueRef::Function(_)
+                        | EmitValueRef::Binding(_) => None,
+                    };
+                    let Some(value_origin) = value_origin else {
                         diagnostics.push(with_operation_span(
                             emit_error(
                                 "FICT-OXC-EMIT-VALUE",
-                                "child insertion value is not backed by a source HIR expression",
+                                "child insertion must reference a source expression or planned component",
                                 GuaranteeClass::Internal,
                             ),
                             *origin,
-                        ));
-                        continue;
-                    }
-                    let Some(value_origin) = origin.primary_span else {
-                        diagnostics.push(emit_error(
-                            "FICT-OXC-EMIT-ORIGIN",
-                            "child insertion requires a source expression origin",
-                            GuaranteeClass::Internal,
                         ));
                         continue;
                     };
@@ -1655,6 +1689,80 @@ fn jsx_attribute_name(name: JSXAttributeName<'_>) -> (String, Span) {
     }
 }
 
+fn jsx_attribute_node_span(value: &Option<JSXAttributeValue<'_>>) -> Option<Span> {
+    match value {
+        Some(JSXAttributeValue::Element(element)) => Some(element.span),
+        Some(JSXAttributeValue::Fragment(fragment)) => Some(fragment.span),
+        Some(JSXAttributeValue::ExpressionContainer(container)) => container
+            .expression
+            .as_expression()
+            .and_then(|expression| match expression.get_inner_expression() {
+                Expression::JSXElement(element) => Some(element.span),
+                Expression::JSXFragment(fragment) => Some(fragment.span),
+                _ => None,
+            }),
+        Some(JSXAttributeValue::StringLiteral(_)) | None => None,
+    }
+}
+
+fn component_node_origin_matches(origin: fict_hir::Origin, span: Span) -> bool {
+    origin
+        .primary_span
+        .is_some_and(|source| source.start() == span.start && source.end() == span.end)
+}
+
+fn component_children_match(children: &[JSXChild<'_>], planned: &[ComponentChild]) -> bool {
+    let mut planned = planned.iter();
+    for child in children {
+        let valid = match child {
+            JSXChild::Text(text) => {
+                let Some(value) = crate::jsx_text::normalize_text(text.value.as_str()) else {
+                    continue;
+                };
+                matches!(
+                    planned.next(),
+                    Some(ComponentChild::Value(EmitValueRef::Literal(
+                        LiteralValue::String(planned_value)
+                    ))) if planned_value == &value
+                )
+            }
+            JSXChild::Element(element) => matches!(
+                planned.next(),
+                Some(ComponentChild::Node(origin))
+                    if component_node_origin_matches(*origin, element.span)
+            ),
+            JSXChild::Fragment(fragment) => matches!(
+                planned.next(),
+                Some(ComponentChild::Node(origin))
+                    if component_node_origin_matches(*origin, fragment.span)
+            ),
+            JSXChild::ExpressionContainer(container) => {
+                let Some(expression) = container.expression.as_expression() else {
+                    continue;
+                };
+                match expression.get_inner_expression() {
+                    Expression::JSXElement(element) => matches!(
+                        planned.next(),
+                        Some(ComponentChild::Node(origin))
+                            if component_node_origin_matches(*origin, element.span)
+                    ),
+                    Expression::JSXFragment(fragment) => matches!(
+                        planned.next(),
+                        Some(ComponentChild::Node(origin))
+                            if component_node_origin_matches(*origin, fragment.span)
+                    ),
+                    _ => matches!(planned.next(), Some(ComponentChild::Value(_))),
+                }
+            }
+            JSXChild::Spread(_) => matches!(planned.next(), Some(ComponentChild::Value(_))),
+        };
+        if !valid {
+            return false;
+        }
+    }
+    planned.next().is_none()
+}
+
 impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
     fn visit_function(&mut self, function: &mut Function<'a>, flags: ScopeFlags) {
         let location = (function.span.start, function.span.end);
@@ -1678,14 +1786,13 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
 
     fn visit_expression(&mut self, expression: &mut Expression<'a>) {
         let location = (expression.span().start, expression.span().end);
-        if let Some(component) = self.components.get(&location).cloned()
+        if self.components.contains_key(&location)
             && matches!(expression, Expression::JSXElement(_))
         {
             let Expression::JSXElement(element) = expression.take_in(&self.allocator) else {
                 unreachable!()
             };
-            *expression = self.lower_component_element(element.unbox(), component);
-            self.matched_components.insert(location);
+            *expression = self.lower_planned_jsx_element(element.unbox());
             return;
         }
         if let Some(clone) = self.clones.get(&location).cloned()
@@ -1791,7 +1898,7 @@ impl<'a> AstRewriter<'a, '_> {
             return clone_call;
         }
 
-        let mut values = jsx_dynamic_values(jsx);
+        let mut values = jsx_dynamic_values(jsx, self.components);
         let mut statements = ArenaVec::new_in(&self.allocator);
         statements.push(const_statement(
             self.allocator,
@@ -2161,12 +2268,32 @@ impl<'a> AstRewriter<'a, '_> {
         block_iife(self.allocator, statements, span)
     }
 
+    fn lower_planned_jsx_element(&mut self, element: JSXElement<'a>) -> Expression<'a> {
+        let location = (element.span.start, element.span.end);
+        let Some(component) = self.components.get(&location).cloned() else {
+            return self.lower_jsx_element(element);
+        };
+        let previous_fragment = self.active_fragment_local.clone();
+        self.active_fragment_local = component.fragment_local.clone();
+        let lowered = self.lower_component_element(element, component);
+        self.active_fragment_local = previous_fragment;
+        self.matched_components.insert(location);
+        lowered
+    }
+
     fn lower_component_element(
         &mut self,
         element: JSXElement<'a>,
         component: ComponentRewrite,
     ) -> Expression<'a> {
         let span = element.span;
+        if !component_children_match(&element.children, &component.children) {
+            self.diagnostics.push(emit_error(
+                "FICT-OXC-EMIT-COMPONENT",
+                "component children do not match their EmitIR plan",
+                GuaranteeClass::Internal,
+            ));
+        }
         let opening = element.opening_element.unbox();
         let element_type = self.lower_jsx_element_name(opening.name);
         let mut planned_props = component.props.into_iter();
@@ -2195,12 +2322,23 @@ impl<'a> AstRewriter<'a, '_> {
                 JSXAttributeItem::Attribute(attribute) => {
                     let attribute = attribute.unbox();
                     let (name, name_span) = jsx_attribute_name(attribute.name);
+                    let source_node_span = jsx_attribute_node_span(&attribute.value);
                     let getter = match planned {
                         Some(ComponentProp::Named {
                             name: planned_name,
                             getter,
                             ..
-                        }) if planned_name == name => getter,
+                        }) if planned_name == name && source_node_span.is_none() => getter,
+                        Some(ComponentProp::Node {
+                            name: planned_name,
+                            origin,
+                        }) if planned_name == name
+                            && source_node_span.is_some_and(|span| {
+                                component_node_origin_matches(origin, span)
+                            }) =>
+                        {
+                            false
+                        }
                         _ => {
                             self.diagnostics.push(emit_error(
                                 "FICT-OXC-EMIT-COMPONENT",
@@ -2274,7 +2412,7 @@ impl<'a> AstRewriter<'a, '_> {
 
     fn lower_jsx_expression(&mut self, expression: Expression<'a>) -> Expression<'a> {
         match expression {
-            Expression::JSXElement(element) => self.lower_jsx_element(element.unbox()),
+            Expression::JSXElement(element) => self.lower_planned_jsx_element(element.unbox()),
             Expression::JSXFragment(fragment) => self.lower_jsx_fragment(fragment.unbox()),
             _ => unreachable!("VNode lowering only accepts JSX expressions"),
         }
@@ -2438,14 +2576,14 @@ impl<'a> AstRewriter<'a, '_> {
             Some(JSXAttributeValue::ExpressionContainer(container)) => {
                 let container = container.unbox();
                 if container.expression.is_expression() {
-                    let mut expression = container.expression.into_expression();
-                    self.visit_expression(&mut expression);
-                    expression
+                    self.lower_jsx_container_expression(container.expression.into_expression())
                 } else {
                     Expression::new_boolean_literal(span, true, &builder)
                 }
             }
-            Some(JSXAttributeValue::Element(element)) => self.lower_jsx_element(element.unbox()),
+            Some(JSXAttributeValue::Element(element)) => {
+                self.lower_planned_jsx_element(element.unbox())
+            }
             Some(JSXAttributeValue::Fragment(fragment)) => {
                 self.lower_jsx_fragment(fragment.unbox())
             }
@@ -2470,18 +2608,18 @@ impl<'a> AstRewriter<'a, '_> {
                         )));
                     }
                 }
-                JSXChild::Element(element) => {
-                    lowered.push(VNodeChild::Value(self.lower_jsx_element(element.unbox())))
-                }
+                JSXChild::Element(element) => lowered.push(VNodeChild::Value(
+                    self.lower_planned_jsx_element(element.unbox()),
+                )),
                 JSXChild::Fragment(fragment) => {
                     lowered.push(VNodeChild::Value(self.lower_jsx_fragment(fragment.unbox())))
                 }
                 JSXChild::ExpressionContainer(container) => {
                     let container = container.unbox();
                     if container.expression.is_expression() {
-                        let mut expression = container.expression.into_expression();
-                        self.visit_expression(&mut expression);
-                        lowered.push(VNodeChild::Value(expression));
+                        lowered.push(VNodeChild::Value(self.lower_jsx_container_expression(
+                            container.expression.into_expression(),
+                        )));
                     }
                 }
                 JSXChild::Spread(spread) => {
@@ -2520,6 +2658,18 @@ impl<'a> AstRewriter<'a, '_> {
                     &AstBuilder::new(self.allocator),
                 ))
             }
+        }
+    }
+
+    fn lower_jsx_container_expression(&mut self, mut expression: Expression<'a>) -> Expression<'a> {
+        if matches!(
+            expression.get_inner_expression(),
+            Expression::JSXElement(_) | Expression::JSXFragment(_)
+        ) {
+            self.lower_jsx_expression(expression.into_inner_expression())
+        } else {
+            self.visit_expression(&mut expression);
+            expression
         }
     }
 
@@ -2641,12 +2791,17 @@ impl<'a> AstRewriter<'a, '_> {
     }
 }
 
-fn jsx_dynamic_values<'a>(jsx: Expression<'a>) -> BTreeMap<(u32, u32), Expression<'a>> {
+fn jsx_dynamic_values<'a>(
+    jsx: Expression<'a>,
+    components: &BTreeMap<(u32, u32), ComponentRewrite>,
+) -> BTreeMap<(u32, u32), Expression<'a>> {
     let mut values = BTreeMap::new();
     match jsx {
-        Expression::JSXElement(element) => collect_jsx_element_values(element.unbox(), &mut values),
+        Expression::JSXElement(element) => {
+            collect_jsx_element_values(element.unbox(), &mut values, components);
+        }
         Expression::JSXFragment(fragment) => {
-            collect_jsx_children_values(fragment.unbox().children, &mut values);
+            collect_jsx_children_values(fragment.unbox().children, &mut values, components);
         }
         _ => unreachable!("template clone source must be JSX"),
     }
@@ -2656,6 +2811,7 @@ fn jsx_dynamic_values<'a>(jsx: Expression<'a>) -> BTreeMap<(u32, u32), Expressio
 fn collect_jsx_element_values<'a>(
     element: JSXElement<'a>,
     values: &mut BTreeMap<(u32, u32), Expression<'a>>,
+    components: &BTreeMap<(u32, u32), ComponentRewrite>,
 ) {
     for attribute in element.opening_element.unbox().attributes {
         match attribute {
@@ -2670,16 +2826,27 @@ fn collect_jsx_element_values<'a>(
                         JSXAttributeValue::ExpressionContainer(container) => {
                             let expression = container.unbox().expression;
                             if expression.is_expression() {
-                                let expression = expression.into_expression();
-                                let span = expression.span();
-                                values.insert((span.start, span.end), expression);
+                                collect_jsx_expression_value(
+                                    expression.into_expression(),
+                                    values,
+                                    components,
+                                );
                             }
                         }
                         JSXAttributeValue::Element(element) => {
-                            collect_jsx_element_values(element.unbox(), values);
+                            let location = (element.span.start, element.span.end);
+                            if components.contains_key(&location) {
+                                values.insert(location, Expression::JSXElement(element));
+                            } else {
+                                collect_jsx_element_values(element.unbox(), values, components);
+                            }
                         }
                         JSXAttributeValue::Fragment(fragment) => {
-                            collect_jsx_children_values(fragment.unbox().children, values);
+                            collect_jsx_children_values(
+                                fragment.unbox().children,
+                                values,
+                                components,
+                            );
                         }
                         JSXAttributeValue::StringLiteral(_) => {}
                     }
@@ -2687,25 +2854,31 @@ fn collect_jsx_element_values<'a>(
             }
         }
     }
-    collect_jsx_children_values(element.children, values);
+    collect_jsx_children_values(element.children, values, components);
 }
 
 fn collect_jsx_children_values<'a>(
     children: ArenaVec<'a, JSXChild<'a>>,
     values: &mut BTreeMap<(u32, u32), Expression<'a>>,
+    components: &BTreeMap<(u32, u32), ComponentRewrite>,
 ) {
     for child in children {
         match child {
-            JSXChild::Element(element) => collect_jsx_element_values(element.unbox(), values),
+            JSXChild::Element(element) => {
+                let location = (element.span.start, element.span.end);
+                if components.contains_key(&location) {
+                    values.insert(location, Expression::JSXElement(element));
+                } else {
+                    collect_jsx_element_values(element.unbox(), values, components);
+                }
+            }
             JSXChild::Fragment(fragment) => {
-                collect_jsx_children_values(fragment.unbox().children, values);
+                collect_jsx_children_values(fragment.unbox().children, values, components);
             }
             JSXChild::ExpressionContainer(container) => {
                 let expression = container.unbox().expression;
                 if expression.is_expression() {
-                    let expression = expression.into_expression();
-                    let span = expression.span();
-                    values.insert((span.start, span.end), expression);
+                    collect_jsx_expression_value(expression.into_expression(), values, components);
                 }
             }
             JSXChild::Spread(spread) => {
@@ -2715,6 +2888,35 @@ fn collect_jsx_children_values<'a>(
             }
             JSXChild::Text(_) => {}
         }
+    }
+}
+
+fn collect_jsx_expression_value<'a>(
+    expression: Expression<'a>,
+    values: &mut BTreeMap<(u32, u32), Expression<'a>>,
+    components: &BTreeMap<(u32, u32), ComponentRewrite>,
+) {
+    if matches!(
+        expression.get_inner_expression(),
+        Expression::JSXElement(_) | Expression::JSXFragment(_)
+    ) {
+        match expression.into_inner_expression() {
+            Expression::JSXElement(element) => {
+                let location = (element.span.start, element.span.end);
+                if components.contains_key(&location) {
+                    values.insert(location, Expression::JSXElement(element));
+                } else {
+                    collect_jsx_element_values(element.unbox(), values, components);
+                }
+            }
+            Expression::JSXFragment(fragment) => {
+                collect_jsx_children_values(fragment.unbox().children, values, components);
+            }
+            _ => unreachable!("inner JSX expression kind was checked"),
+        }
+    } else {
+        let span = expression.span();
+        values.insert((span.start, span.end), expression);
     }
 }
 

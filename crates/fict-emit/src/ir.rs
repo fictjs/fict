@@ -182,7 +182,18 @@ pub enum ComponentProp {
         value: EmitValueRef,
         getter: bool,
     },
+    Node {
+        name: String,
+        origin: Origin,
+    },
     Spread(EmitValueRef),
+}
+
+/// Scalar or recursively-authored JSX child passed to a component.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComponentChild {
+    Value(EmitValueRef),
+    Node(Origin),
 }
 
 /// Verified operation between HIR analysis and output AST construction.
@@ -275,8 +286,9 @@ pub enum EmitOperation {
         target: EmitTemporaryId,
         component: ComponentTarget,
         props: Vec<ComponentProp>,
-        children: Vec<EmitValueRef>,
+        children: Vec<ComponentChild>,
         prop_helper: Option<RuntimeHelper>,
+        fragment_helper: Option<RuntimeHelper>,
         origin: Origin,
     },
     CreateElement {
@@ -371,11 +383,15 @@ impl EmitOperation {
             | Self::CreateVNode {
                 fragment_helper: helper,
                 ..
-            }
-            | Self::InvokeComponent {
-                prop_helper: helper,
-                ..
             } => *helper,
+            Self::InvokeComponent {
+                prop_helper,
+                fragment_helper,
+                ..
+            } => match prop_helper {
+                Some(helper) => Some(*helper),
+                None => *fragment_helper,
+            },
             Self::PreserveHir { .. }
             | Self::TrackRuntimeReactive { .. }
             | Self::WriteReactive { .. }
@@ -390,6 +406,11 @@ impl EmitOperation {
         match self {
             Self::Insert { create_helper, .. } => Some(*create_helper),
             Self::BindEvent { cleanup_helper, .. } => *cleanup_helper,
+            Self::InvokeComponent {
+                prop_helper: Some(_),
+                fragment_helper,
+                ..
+            } => *fragment_helper,
             _ => None,
         }
     }
@@ -446,9 +467,14 @@ impl EmitOperation {
                         ComponentProp::Named { value, .. } | ComponentProp::Spread(value) => {
                             visit(value);
                         }
+                        ComponentProp::Node { .. } => {}
                     }
                 }
-                children.iter().for_each(visit);
+                for child in children {
+                    if let ComponentChild::Value(value) = child {
+                        visit(value);
+                    }
+                }
             }
             Self::Return { value, .. } => value.iter().for_each(visit),
             Self::PreserveHir { .. }

@@ -794,6 +794,69 @@ mod tests {
     }
 
     #[test]
+    fn recursively_emits_component_props_children_and_fragments() {
+        let result = compile(request(
+            "const Shell = (_props) => null; const Item = (_props) => null; export function App(props) { return <Shell header={<Item value={props.header} />}><section><Item value={props.body} /></section><><Item value={props.footer} /></></Shell>; }",
+            "recursive-component.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(!result.code.contains("<Shell"), "{}", result.code);
+        assert_eq!(
+            result.code.matches("type: Item").count(),
+            3,
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("type: \"section\""), "{}", result.code);
+        assert!(
+            result.code.contains("import { Fragment }"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("type: Fragment"), "{}", result.code);
+        assert!(
+            result
+                .code
+                .contains("value: __fictProp(() => props.footer)"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn inserts_nested_components_into_fine_grained_dom_templates() {
+        let result = compile(request(
+            "const Card = (_props) => null; export function App(props) { return <main><Card value={props.first} /><section>{(<Card value={props.second} />)}</section></main>; }",
+            "dom-component-children.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .code
+                .contains("template(\"<main><!----><section><!----></section></main>\")"),
+            "{}",
+            result.code
+        );
+        assert_eq!(result.code.matches("insert(").count(), 2, "{}", result.code);
+        assert_eq!(
+            result.code.matches("type: Card").count(),
+            2,
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("value: __fictProp(() => props.first)")
+                && result
+                    .code
+                    .contains("value: __fictProp(() => props.second)"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn preserves_inline_function_component_props_as_values() {
         let result = compile(request(
             "import { $state } from 'fict'; const Card = (_props) => null; export function App() { let count = $state(0); return <Card onSelect={(() => count++) as () => number} />; }",

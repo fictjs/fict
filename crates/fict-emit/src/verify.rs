@@ -525,7 +525,10 @@ fn verify_operations(
                 ));
             }
             EmitOperation::InvokeComponent {
-                component, props, ..
+                component,
+                props,
+                children,
+                ..
             } => {
                 let target_valid = match component {
                     crate::ComponentTarget::Binding(binding) => {
@@ -540,7 +543,25 @@ fn verify_operations(
                 };
                 if !target_valid
                     || props.iter().any(|prop| {
-                        matches!(prop, crate::ComponentProp::Named { name, .. } if name.is_empty())
+                        matches!(
+                            prop,
+                            crate::ComponentProp::Named { name, .. }
+                                | crate::ComponentProp::Node { name, .. }
+                                if name.is_empty()
+                        )
+                    })
+                    || props.iter().any(|prop| {
+                        matches!(
+                            prop,
+                            crate::ComponentProp::Node { origin, .. }
+                                if origin.primary_span.is_none()
+                        )
+                    })
+                    || children.iter().any(|child| {
+                        matches!(
+                            child,
+                            crate::ComponentChild::Node(origin) if origin.primary_span.is_none()
+                        )
                     })
                 {
                     diagnostics.push(emit_error(
@@ -699,12 +720,16 @@ fn verify_helper_semantics(
             *helper == RuntimeHelper::ResolvePath && !path.is_empty()
         }
         EmitOperation::InvokeComponent {
-            props, prop_helper, ..
+            props,
+            prop_helper,
+            fragment_helper,
+            ..
         } => {
             let needs_helper = props
                 .iter()
                 .any(|prop| matches!(prop, crate::ComponentProp::Named { getter: true, .. }));
             *prop_helper == needs_helper.then_some(RuntimeHelper::PropGetter)
+                && fragment_helper.is_none_or(|helper| helper == RuntimeHelper::Fragment)
         }
         EmitOperation::PreserveHir { .. }
         | EmitOperation::TrackRuntimeReactive { .. }

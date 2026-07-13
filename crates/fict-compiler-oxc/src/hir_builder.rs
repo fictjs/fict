@@ -1983,9 +1983,17 @@ fn raw_jsx_attribute_value(
         OxcJsxAttributeValue::ExpressionContainer(container) => {
             container.expression.as_expression().map_or(
                 RawJsxAttributeValue::ImplicitTrue,
-                |expression| RawJsxAttributeValue::Expression {
-                    span: source_span(expression.span()),
-                    function_like: expression.get_inner_expression().is_function(),
+                |expression| match expression.get_inner_expression() {
+                    Expression::JSXElement(element) => {
+                        RawJsxAttributeValue::Node(Box::new(raw_jsx_element(scoping, element)))
+                    }
+                    Expression::JSXFragment(fragment) => {
+                        RawJsxAttributeValue::Node(Box::new(raw_jsx_fragment(scoping, fragment)))
+                    }
+                    inner => RawJsxAttributeValue::Expression {
+                        span: source_span(expression.span()),
+                        function_like: inner.is_function(),
+                    },
                 },
             )
         }
@@ -2014,9 +2022,17 @@ fn raw_jsx_child(scoping: &Scoping, child: &OxcJsxChild<'_>) -> Option<RawJsxChi
         )))),
         OxcJsxChild::ExpressionContainer(container) => match &container.expression {
             JSXExpression::EmptyExpression(_) => None,
-            expression => expression
-                .as_expression()
-                .map(|expression| RawJsxChild::Expression(source_span(expression.span()))),
+            expression => expression.as_expression().map(|expression| {
+                match expression.get_inner_expression() {
+                    Expression::JSXElement(element) => {
+                        RawJsxChild::Node(Box::new(raw_jsx_element(scoping, element)))
+                    }
+                    Expression::JSXFragment(fragment) => {
+                        RawJsxChild::Node(Box::new(raw_jsx_fragment(scoping, fragment)))
+                    }
+                    _ => RawJsxChild::Expression(source_span(expression.span())),
+                }
+            }),
         },
         OxcJsxChild::Spread(spread) => Some(RawJsxChild::Spread {
             expression: source_span(spread.expression.span()),
