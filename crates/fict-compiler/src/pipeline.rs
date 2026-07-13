@@ -1473,6 +1473,44 @@ mod tests {
     }
 
     #[test]
+    fn lowers_jsx_inside_component_prop_defaults() {
+        let result = compile(request(
+            "import { $state } from 'fict'; export const calls = []; function Child({ label, fallback = (calls.push(label), <span data-id='fallback'>{label}</span>) } = {}) { return <div data-id='host'>{fallback}</div>; } export function App() { let label = $state('A'); return <><Child label={label} /><Child label={label} fallback={<em data-id='custom'>Custom</em>} /><Child label={label} fallback={null} /></>; }",
+            "jsx-prop-default.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .code
+                .contains("template(\"<span data-id=\\\"fallback\\\"><!----></span>\")"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("__fictProps.fallback === void 0 ? (calls.push(label()),"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("insert(__fict_jsx"), "{}", result.code);
+        assert!(result.code.contains("() => label()"), "{}", result.code);
+        assert!(
+            result.code.contains(
+                "const fallback = prop(() => __fictProps.fallback === void 0 ? __fictPropDefault : __fictProps.fallback);"
+            ),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("\"data-id\": \"custom\""),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn omits_intrinsic_keys_without_losing_dynamic_key_effects() {
         let result = compile(request(
             "export function Static() { return <p key=\"row\" title=\"ok\" />; } export function Dynamic() { return <div before={before()} key={side()} after={after()} />; }",

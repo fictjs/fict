@@ -272,6 +272,75 @@ test('Rust compiler output snapshots destructured prop defaults at invocation', 
   container.remove()
 })
 
+test('Rust compiler output materializes JSX prop defaults lazily and reactively', async () => {
+  const module = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      let setLabel = () => {}
+      export const defaultCalls = []
+
+      function Child({ label, fallback = (defaultCalls.push(label), <span data-id="fallback">{label}</span>) } = {}) {
+        return <div data-id="host">{fallback}</div>
+      }
+
+      function App() {
+        let label = $state('A')
+        setLabel = next => {
+          label = next
+        }
+        return (
+          <>
+            <Child label={label} />
+            <Child label={label} fallback={<em data-id="custom">Custom</em>} />
+            <Child label={label} fallback={null} />
+          </>
+        )
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+
+      export function update(next) {
+        setLabel(next)
+      }
+    `,
+    'jsx-prop-default',
+    /__fictProps\.fallback === void 0.*defaultCalls\.push\(label\(\)\)/s,
+  )
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = module.mount(container)
+  await flushRuntime()
+
+  const hosts = [...container.querySelectorAll('[data-id="host"]')]
+  assert.equal(hosts.length, 3)
+  const fallback = container.querySelector('[data-id="fallback"]')
+  const custom = container.querySelector('[data-id="custom"]')
+  assert.ok(fallback)
+  assert.ok(custom)
+  assert.equal(fallback.textContent, 'A')
+  assert.equal(custom.textContent, 'Custom')
+  assert.equal(hosts[2].textContent, '')
+  assert.deepEqual(module.defaultCalls, ['A'])
+
+  module.update('B')
+  await flushRuntime()
+
+  assert.equal(container.querySelector('[data-id="fallback"]'), fallback)
+  assert.equal(container.querySelector('[data-id="custom"]'), custom)
+  assert.equal(fallback.textContent, 'B')
+  assert.equal(custom.textContent, 'Custom')
+  assert.equal(hosts[2].textContent, '')
+  assert.deepEqual(module.defaultCalls, ['A'])
+
+  dispose()
+  assert.equal(container.childNodes.length, 0)
+  container.remove()
+})
+
 test('Rust compiler output applies whole-object parameter defaults with intrinsic undefined', async () => {
   const module = await compileAndImport(
     `
