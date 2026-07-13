@@ -5,6 +5,7 @@
 //! The crate coordinates Fict-owned passes and the OXC adapter without owning
 //! filesystem, network, Node, N-API, or bundler state.
 
+mod diagnostic_policy;
 mod pass_manager;
 mod pipeline;
 mod request;

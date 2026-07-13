@@ -4,7 +4,10 @@ use fict_diagnostics::Diagnostic;
 use fict_metadata::{MetadataValidationError, ResolvedMetadataInput};
 use serde::{Deserialize, Serialize};
 
-use crate::{COMPILER_PROTOCOL_VERSION, RawSourceMap, SourceMapValidationError};
+use crate::{
+    COMPILER_PROTOCOL_VERSION, RawSourceMap, SourceMapValidationError,
+    diagnostic_policy::strict_guarantee_pattern_overlaps,
+};
 
 const DEFAULT_AUTO_EXTRACT_THRESHOLD: u32 = 3;
 
@@ -268,6 +271,18 @@ impl CompileRequest {
             return Err(CompileRequestError::InvalidPreviewThreshold);
         }
 
+        if self.options.strict_guarantee
+            && let Some((pattern, level)) =
+                self.options.warning_levels.iter().find(|(pattern, level)| {
+                    **level != WarningLevel::Error && strict_guarantee_pattern_overlaps(pattern)
+                })
+        {
+            return Err(CompileRequestError::StrictGuaranteeWarningDowngrade {
+                pattern: pattern.clone(),
+                level: *level,
+            });
+        }
+
         let mut requests = BTreeSet::new();
         for (index, metadata) in self.metadata.iter().enumerate() {
             metadata
@@ -344,6 +359,13 @@ pub enum CompileRequestError {
     DuplicateMetadataRequest(String),
     /// Automatic Preview extraction cannot use a zero-node threshold.
     InvalidPreviewThreshold,
+    /// Fail-closed diagnostics cannot be disabled or downgraded.
+    StrictGuaranteeWarningDowngrade {
+        /// Exact code or numeric-prefix pattern.
+        pattern: String,
+        /// Rejected severity override.
+        level: WarningLevel,
+    },
 }
 
 impl std::fmt::Display for CompileRequestError {
@@ -373,7 +395,20 @@ impl std::fmt::Display for CompileRequestError {
             Self::InvalidPreviewThreshold => {
                 formatter.write_str("Preview auto-extract threshold must be greater than zero")
             }
+            Self::StrictGuaranteeWarningDowngrade { pattern, level } => write!(
+                formatter,
+                "strictGuarantee does not allow downgrading {pattern} to \"{}\"",
+                warning_level_name(*level)
+            ),
         }
+    }
+}
+
+const fn warning_level_name(level: WarningLevel) -> &'static str {
+    match level {
+        WarningLevel::Off => "off",
+        WarningLevel::Warn => "warn",
+        WarningLevel::Error => "error",
     }
 }
 

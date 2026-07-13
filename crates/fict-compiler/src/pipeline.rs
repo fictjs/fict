@@ -10,10 +10,11 @@ use fict_diagnostics::{
 use fict_emit::{NoJsxLoweringOptions, RuntimeFamily, lower_core};
 use fict_metadata::MetadataResolutionStatus;
 
+use crate::diagnostic_policy::{apply_diagnostic_policy, configured_diagnostic_severity};
 use crate::{
     CompileRequest, CompileResult, CompilerExplainArtifact, CompilerExplainEvent,
     CompilerExplainEventKind, CompilerStats, CorePassOptions, ModuleKind, NormalizedCompileRequest,
-    RawSourceMap, SourceLanguage, WarningLevel, run_core_passes,
+    RawSourceMap, SourceLanguage, run_core_passes,
 };
 
 /// Execute the currently connected native pipeline and return a complete result.
@@ -99,7 +100,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         );
     }
 
-    finalize_diagnostics(&mut result);
+    finalize_diagnostics(&mut result, &request.options);
     if result.has_errors() {
         attach_explain_if_requested(&mut result, &request, &[]);
         return result;
@@ -136,7 +137,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     );
     result.diagnostics.extend(build.diagnostics);
     let Some(hir) = build.hir else {
-        finalize_diagnostics(&mut result);
+        finalize_diagnostics(&mut result, &request.options);
         if !result.has_errors() {
             result.diagnostics.push(diagnostic(
                 "FICT-I003",
@@ -145,7 +146,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
                 GuaranteeClass::Internal,
             ));
         }
-        finalize_diagnostics(&mut result);
+        finalize_diagnostics(&mut result, &request.options);
         attach_explain_if_requested(&mut result, &request, &[]);
         return result;
     };
@@ -156,10 +157,29 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
             "the OXC frontend returned HIR without its binding summary",
             GuaranteeClass::Internal,
         ));
-        finalize_diagnostics(&mut result);
+        finalize_diagnostics(&mut result, &request.options);
         attach_explain_if_requested(&mut result, &request, &[]);
         return result;
     };
+    if request.options.strict_guarantee
+        && let Some(suppression) = frontend.source_facts.suppressions.first()
+    {
+        result.diagnostics.push(
+            diagnostic(
+                "FICT-STRICT-SUPPRESSION",
+                DiagnosticSeverity::Error,
+                "strictGuarantee does not allow fict-ignore suppression comments",
+                GuaranteeClass::Unsupported,
+            )
+            .with_primary_span(suppression.comment_span)
+            .with_help("remove suppressions to keep fail-closed guarantees"),
+        );
+    }
+    finalize_diagnostics(&mut result, &request.options);
+    if result.has_errors() {
+        attach_explain_if_requested(&mut result, &request, &[]);
+        return result;
+    }
     let core = match run_core_passes(
         &hir,
         CorePassOptions {
@@ -170,7 +190,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         Ok(core) => core,
         Err(diagnostics) => {
             result.diagnostics.extend(diagnostics.into_sorted());
-            finalize_diagnostics(&mut result);
+            finalize_diagnostics(&mut result, &request.options);
             attach_explain_if_requested(&mut result, &request, &[]);
             return result;
         }
@@ -212,7 +232,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         Ok(emit) => emit,
         Err(diagnostics) => {
             result.diagnostics.extend(diagnostics.into_sorted());
-            finalize_diagnostics(&mut result);
+            finalize_diagnostics(&mut result, &request.options);
             attach_explain_if_requested(&mut result, &request, &[]);
             return result;
         }
@@ -224,7 +244,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         .collect();
     let output = emit_program(&request.code, &request.filename, oxc_options, &emit);
     result.diagnostics.extend(output.diagnostics);
-    finalize_diagnostics(&mut result);
+    finalize_diagnostics(&mut result, &request.options);
 
     if !result.has_errors() {
         result.code = output.code;
@@ -250,7 +270,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         }
     }
 
-    finalize_diagnostics(&mut result);
+    finalize_diagnostics(&mut result, &request.options);
     if result.has_errors() {
         result.code.clear();
         result.map = None;
@@ -305,35 +325,8 @@ fn static_code(value: &'static str) -> DiagnosticCode {
     DiagnosticCode::new(value).expect("compiler diagnostic literals must be valid")
 }
 
-fn configured_diagnostic_severity(
-    levels: &std::collections::BTreeMap<String, WarningLevel>,
-    code: &str,
-    default: DiagnosticSeverity,
-) -> DiagnosticSeverity {
-    let level = levels.get(code).or_else(|| {
-        levels
-            .iter()
-            .filter(|(pattern, _)| diagnostic_code_matches(code, pattern))
-            .max_by_key(|(pattern, _)| pattern.len())
-            .map(|(_, level)| level)
-    });
-    match level {
-        Some(WarningLevel::Off) => DiagnosticSeverity::Info,
-        Some(WarningLevel::Warn) => DiagnosticSeverity::Warning,
-        Some(WarningLevel::Error) => DiagnosticSeverity::Error,
-        None => default,
-    }
-}
-
-fn diagnostic_code_matches(code: &str, pattern: &str) -> bool {
-    code == pattern
-        || code
-            .strip_prefix(pattern)
-            .and_then(|suffix| suffix.chars().next())
-            .is_some_and(|character| character.is_ascii_digit())
-}
-
-fn finalize_diagnostics(result: &mut CompileResult) {
+fn finalize_diagnostics(result: &mut CompileResult, options: &crate::CompilerOptions) {
+    apply_diagnostic_policy(options, &mut result.diagnostics);
     result.diagnostics = DiagnosticBundle::new(mem::take(&mut result.diagnostics)).into_sorted();
 }
 
@@ -377,12 +370,12 @@ fn attach_explain_if_requested(
 
 #[cfg(test)]
 mod tests {
-    use fict_diagnostics::{DiagnosticSeverity, GuaranteeClass};
+    use fict_diagnostics::{Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass};
 
     use super::{compile, internal_error_result};
     use crate::{
         COMPILER_PROTOCOL_VERSION, CompileRequest, CompilerExplainEventKind, CompilerOptions,
-        ModuleKind, WarningLevel,
+        ModuleKind, WarningLevel, WarningsAsErrors,
     };
 
     fn request(code: &str, filename: &str) -> CompileRequest {
@@ -1654,6 +1647,36 @@ mod tests {
             assert!(fallback.code.contains(pattern), "{}", fallback.code);
         }
         assert!(!fallback.code.contains("prop(() =>"), "{}", fallback.code);
+
+        let mut escalated_request = request(source, "unsupported-component-props.tsx");
+        escalated_request.options.strict_guarantee = false;
+        escalated_request.options.warnings_as_errors = WarningsAsErrors::Boolean(true);
+        let escalated = compile(escalated_request);
+        assert!(escalated.has_errors());
+        assert!(escalated.code.is_empty());
+        assert!(
+            escalated
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
+        );
+
+        let mut muted_request = request(source, "unsupported-component-props.tsx");
+        muted_request.options.strict_guarantee = false;
+        muted_request.options.warnings_as_errors = WarningsAsErrors::Boolean(true);
+        muted_request
+            .options
+            .warning_levels
+            .insert("FICT-P".into(), WarningLevel::Off);
+        let muted = compile(muted_request);
+        assert!(!muted.has_errors(), "{:?}", muted.diagnostics);
+        assert!(
+            muted
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.severity == DiagnosticSeverity::Info)
+        );
+        assert!(!muted.code.is_empty());
     }
 
     #[test]
@@ -1731,6 +1754,92 @@ mod tests {
             "{}",
             fallback.code
         );
+    }
+
+    #[test]
+    fn applies_native_diagnostic_policy_precedence() {
+        let finding = || {
+            Diagnostic::new(
+                DiagnosticCode::new("FICT-R006").expect("diagnostic code"),
+                DiagnosticSeverity::Warning,
+                "reactive control-flow fallback",
+            )
+            .with_guarantee_class(GuaranteeClass::Fallback)
+        };
+
+        let mut strict_reactivity = request("export const value = 1", "policy.js");
+        strict_reactivity.options.strict_guarantee = false;
+        strict_reactivity.options.strict_reactivity = true;
+        strict_reactivity.integration_diagnostics.push(finding());
+        let strict_reactivity = compile(strict_reactivity);
+        assert!(strict_reactivity.has_errors());
+        assert!(strict_reactivity.code.is_empty());
+        assert_eq!(
+            strict_reactivity.diagnostics[0].severity,
+            DiagnosticSeverity::Error
+        );
+
+        let mut warnings_as_errors = request("export const value = 1", "policy.js");
+        warnings_as_errors.options.strict_guarantee = false;
+        warnings_as_errors.options.warnings_as_errors =
+            WarningsAsErrors::Codes(vec!["FICT-R".into()]);
+        warnings_as_errors.integration_diagnostics.push(finding());
+        assert!(compile(warnings_as_errors).has_errors());
+
+        let mut explicit_off = request("export const value = 1", "policy.js");
+        explicit_off.options.strict_guarantee = false;
+        explicit_off.options.warnings_as_errors = WarningsAsErrors::Boolean(true);
+        explicit_off
+            .options
+            .warning_levels
+            .insert("FICT-R".into(), WarningLevel::Off);
+        explicit_off.integration_diagnostics.push(finding());
+        let explicit_off = compile(explicit_off);
+        assert!(!explicit_off.has_errors(), "{:?}", explicit_off.diagnostics);
+        assert_eq!(
+            explicit_off.diagnostics[0].severity,
+            DiagnosticSeverity::Info
+        );
+        assert!(explicit_off.code.contains("export const value = 1"));
+    }
+
+    #[test]
+    fn enforces_strict_guarantee_configuration_and_suppression_rules() {
+        let mut downgrade = request("export const value = 1", "strict-config.js");
+        downgrade
+            .options
+            .warning_levels
+            .insert("FICT-P".into(), WarningLevel::Warn);
+        let downgrade = compile(downgrade);
+        assert!(downgrade.has_errors());
+        assert_eq!(downgrade.diagnostics[0].code.as_str(), "FICT-REQUEST");
+        assert!(
+            downgrade.diagnostics[0]
+                .message
+                .contains("does not allow downgrading FICT-P")
+        );
+
+        let strict = compile(request(
+            "export const value = 1; // fict-ignore FICT-M",
+            "strict-suppression.js",
+        ));
+        assert!(strict.has_errors());
+        assert!(strict.code.is_empty());
+        assert!(
+            strict
+                .diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.code.as_str() == "FICT-STRICT-SUPPRESSION" })
+        );
+
+        let mut non_strict = request(
+            "export const value = 1; // fict-ignore FICT-M",
+            "strict-suppression.js",
+        );
+        non_strict.options.strict_guarantee = false;
+        let non_strict = compile(non_strict);
+        assert!(!non_strict.has_errors(), "{:?}", non_strict.diagnostics);
+        assert!(non_strict.code.contains("export const value = 1"));
     }
 
     #[test]
