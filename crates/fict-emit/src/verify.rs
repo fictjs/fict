@@ -575,6 +575,8 @@ fn verify_operations(
                 render_key,
                 items,
                 key,
+                key_source,
+                key_alias_initializer,
                 item_references,
                 index_references,
                 cleanup,
@@ -586,6 +588,8 @@ fn verify_operations(
                     || !valid_identifier(render_key)
                     || items.primary_span.is_none()
                     || key.primary_span.is_none()
+                    || key_source.primary_span.is_none()
+                    || key_alias_initializer.is_some_and(|origin| origin.primary_span.is_none())
                     || item_references
                         .iter()
                         .chain(index_references)

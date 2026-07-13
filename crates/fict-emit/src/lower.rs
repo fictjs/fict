@@ -1149,6 +1149,8 @@ fn lower_jsx_instruction(
                     source_result: value,
                     items: list.items,
                     key: list.key,
+                    key_source: list.key_source,
+                    key_alias_initializer: list.key_alias_initializer,
                     render: list.callback,
                     render_key,
                     item_references: list.item_references,

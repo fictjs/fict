@@ -1020,6 +1020,42 @@ mod tests {
     }
 
     #[test]
+    fn constifies_single_callback_local_key_aliases() {
+        let result = compile(request(
+            "import { $state } from 'fict'; export function Aliased() { let rows = $state([{ id: 1, name: 'A' }]); return <ul>{rows.map(row => { const key = makeKey(row); return <li key={key}>{key}:{row.name}</li>; })}</ul>; } export function Mutable() { let rows = $state([{ id: 2 }]); return <ul>{rows.map(row => { let key = row.id; return <li key={key}>{row.id}</li>; })}</ul>; }",
+            "keyed-key-alias.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result.code.matches("createKeyedList(").count(),
+            1,
+            "{}",
+            result.code
+        );
+        assert_eq!(
+            result.code.matches("makeKey(row)").count(),
+            1,
+            "{}",
+            result.code
+        );
+        assert!(!result.code.contains("makeKey(row())"), "{}", result.code);
+        assert!(
+            result.code.contains("const key = __fict_key"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("() => row().name"), "{}", result.code);
+        assert_eq!(
+            result.code.matches("rows().map(").count(),
+            1,
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("let key = row.id"), "{}", result.code);
+    }
+
+    #[test]
     fn emits_array_store_and_svg_keyed_map_receivers() {
         let result = compile(request(
             "import { $store } from 'fict'; export function Lists() { const store = $store({ rows: [{ id: 1 }] }); return <main><ul>{store.rows.map(row => <li key={row.id}>{row.id}</li>)}</ul><svg>{[{ id: 2 }].map(row => <circle key={row.id} cx={row.id} />)}</svg></main>; }",

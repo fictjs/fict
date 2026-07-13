@@ -827,6 +827,10 @@ impl Verifier<'_> {
                     if let Some(list) = list {
                         self.verify_origin(list.items);
                         self.verify_origin(list.key);
+                        self.verify_origin(list.key_source);
+                        if let Some(initializer) = list.key_alias_initializer {
+                            self.verify_origin(initializer);
+                        }
                         self.function(list.callback, *origin);
                         match list.receiver {
                             crate::JsxListReceiver::ArrayLiteral => {}

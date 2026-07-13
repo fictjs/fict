@@ -95,6 +95,10 @@ pub struct JsxListExpression {
     pub callback: FunctionId,
     /// Source range of the returned JSX key expression.
     pub key: Origin,
+    /// Source range evaluated by the runtime key function.
+    pub key_source: Origin,
+    /// Callback-local const initializer replaced by the runtime key, when key aliases are used.
+    pub key_alias_initializer: Option<Origin>,
     /// Exact semantic references to the callback item parameter.
     pub item_references: Vec<Origin>,
     /// Exact semantic references to the callback index parameter.

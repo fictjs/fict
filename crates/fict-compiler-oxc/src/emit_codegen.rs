@@ -24,7 +24,7 @@ use oxc::{
             SimpleAssignmentTarget, Statement, VariableDeclarationKind, VariableDeclarator,
         },
     },
-    ast_visit::{Visit, VisitMut, walk_mut},
+    ast_visit::{Visit, VisitMut, walk, walk_mut},
     codegen::{Codegen, CodegenOptions},
     parser::{ParseOptions, Parser},
     semantic::SemanticBuilder,
@@ -132,6 +132,7 @@ pub fn emit_program(
         matched_list_reads: BTreeSet::new(),
         active_list_key_local: None,
         active_list_key_origin: None,
+        active_list_key_initializer: None,
         suppressed_evaluations: BTreeSet::new(),
         prefer_template_clones: 0,
         vnode_depth: 0,
@@ -958,6 +959,8 @@ enum FineJsxStep {
         value_origin: SourceSpan,
         items_origin: SourceSpan,
         key_origin: SourceSpan,
+        key_source_origin: SourceSpan,
+        key_alias_initializer: Option<SourceSpan>,
         render_key: String,
         item_references: Vec<SourceSpan>,
         index_references: Vec<SourceSpan>,
@@ -1780,6 +1783,8 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                     target,
                     items,
                     key,
+                    key_source,
+                    key_alias_initializer,
                     render_key,
                     item_references,
                     index_references,
@@ -1833,6 +1838,34 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                             *origin,
                         ));
                         continue;
+                    };
+                    let Some(key_source_origin) = key_source.primary_span else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-ORIGIN",
+                                "keyed child key source requires a source origin",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    let key_alias_initializer = match key_alias_initializer {
+                        Some(initializer) => {
+                            let Some(initializer) = initializer.primary_span else {
+                                diagnostics.push(with_operation_span(
+                                    emit_error(
+                                        "FICT-OXC-EMIT-ORIGIN",
+                                        "keyed child key alias requires a source origin",
+                                        GuaranteeClass::Internal,
+                                    ),
+                                    *origin,
+                                ));
+                                continue;
+                            };
+                            Some(initializer)
+                        }
+                        None => None,
                     };
                     let item_references: Option<Vec<_>> = item_references
                         .iter()
@@ -1925,6 +1958,8 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                         value_origin,
                         items_origin,
                         key_origin,
+                        key_source_origin,
+                        key_alias_initializer,
                         render_key: render_key.clone(),
                         item_references,
                         index_references,
@@ -2138,6 +2173,7 @@ struct AstRewriter<'a, 'emit> {
     matched_list_reads: BTreeSet<(u32, u32)>,
     active_list_key_local: Option<String>,
     active_list_key_origin: Option<(u32, u32)>,
+    active_list_key_initializer: Option<(u32, u32)>,
     suppressed_evaluations: BTreeSet<(u32, u32)>,
     prefer_template_clones: usize,
     vnode_depth: usize,
@@ -2230,6 +2266,40 @@ fn clone_direct_jsx_key_expression<'a>(
         }
     }
     None
+}
+
+struct SourceExpressionCloner<'a> {
+    allocator: &'a Allocator,
+    target: (u32, u32),
+    found: Option<Expression<'a>>,
+}
+
+impl<'a> Visit<'a> for SourceExpressionCloner<'a> {
+    fn visit_expression(&mut self, expression: &Expression<'a>) {
+        if self.found.is_some() {
+            return;
+        }
+        let span = expression.span();
+        if (span.start, span.end) == self.target {
+            self.found = Some(expression.clone_in(self.allocator));
+            return;
+        }
+        walk::walk_expression(self, expression);
+    }
+}
+
+fn clone_callback_expression<'a>(
+    allocator: &'a Allocator,
+    callback: &ArrowFunctionExpression<'a>,
+    origin: SourceSpan,
+) -> Option<Expression<'a>> {
+    let mut cloner = SourceExpressionCloner {
+        allocator,
+        target: (origin.start(), origin.end()),
+        found: None,
+    };
+    cloner.visit_arrow_function_expression(callback);
+    cloner.found
 }
 
 fn keyed_list_namespace(namespace: DomNamespace) -> Option<&'static str> {
@@ -2327,6 +2397,16 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
 
     fn visit_expression(&mut self, expression: &mut Expression<'a>) {
         let location = (expression.span().start, expression.span().end);
+        if self.active_list_key_initializer == Some(location)
+            && let Some(local) = &self.active_list_key_local
+        {
+            *expression = Expression::new_identifier(
+                expression.span(),
+                self.allocator.alloc_str(local),
+                &AstBuilder::new(self.allocator),
+            );
+            return;
+        }
         if self.components.contains_key(&location)
             && matches!(expression, Expression::JSXElement(_))
         {
@@ -3004,6 +3084,8 @@ impl<'a> AstRewriter<'a, '_> {
                     value_origin,
                     items_origin,
                     key_origin,
+                    key_source_origin,
+                    key_alias_initializer,
                     render_key,
                     item_references,
                     index_references,
@@ -3032,6 +3114,8 @@ impl<'a> AstRewriter<'a, '_> {
                         namespace,
                         items_origin,
                         key_origin,
+                        key_source_origin,
+                        key_alias_initializer,
                         &render_key,
                         &item_references,
                         &index_references,
@@ -3077,6 +3161,8 @@ impl<'a> AstRewriter<'a, '_> {
         namespace: DomNamespace,
         items_origin: SourceSpan,
         key_origin: SourceSpan,
+        key_source_origin: SourceSpan,
+        key_alias_initializer: Option<SourceSpan>,
         render_key: &str,
         item_references: &[SourceSpan],
         index_references: &[SourceSpan],
@@ -3158,7 +3244,9 @@ impl<'a> AstRewriter<'a, '_> {
             return;
         };
         let Some(mut key_expression) =
-            clone_direct_jsx_key_expression(self.allocator, render_body, key_origin)
+            clone_callback_expression(self.allocator, &render_callback, key_source_origin).or_else(
+                || clone_direct_jsx_key_expression(self.allocator, render_body, key_source_origin),
+            )
         else {
             self.diagnostics.push(
                 emit_error(
@@ -3166,7 +3254,7 @@ impl<'a> AstRewriter<'a, '_> {
                     "keyed child key origin does not identify a direct JSX key",
                     GuaranteeClass::Internal,
                 )
-                .with_primary_span(key_origin),
+                .with_primary_span(key_source_origin),
             );
             return;
         };
@@ -3189,6 +3277,10 @@ impl<'a> AstRewriter<'a, '_> {
         let previous_key_origin = self
             .active_list_key_origin
             .replace((key_origin.start(), key_origin.end()));
+        let previous_key_initializer = std::mem::replace(
+            &mut self.active_list_key_initializer,
+            key_alias_initializer.map(|origin| (origin.start(), origin.end())),
+        );
         let previous_suppressed = self.suppressed_evaluations.clone();
         self.suppressed_evaluations
             .insert((key_origin.start(), key_origin.end()));
@@ -3201,6 +3293,7 @@ impl<'a> AstRewriter<'a, '_> {
         self.matched_list_reads = previous_matches;
         self.active_list_key_local = previous_key_local;
         self.active_list_key_origin = previous_key_origin;
+        self.active_list_key_initializer = previous_key_initializer;
         self.suppressed_evaluations = previous_suppressed;
         if matched_reads != expected_reads {
             self.diagnostics.push(
@@ -4529,10 +4622,10 @@ fn direct_arrow_return_expression<'a, 'callback>(
     if let Some(expression) = callback.get_expression() {
         return Some(expression);
     }
-    if !callback.body.directives.is_empty() || callback.body.statements.len() != 1 {
+    if !callback.body.directives.is_empty() || !(1..=2).contains(&callback.body.statements.len()) {
         return None;
     }
-    let Statement::ReturnStatement(statement) = &callback.body.statements[0] else {
+    let Statement::ReturnStatement(statement) = callback.body.statements.last()? else {
         return None;
     };
     statement.argument.as_ref()

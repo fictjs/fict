@@ -25,7 +25,7 @@ use oxc::{
             JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild, JSXElement,
             JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment, JSXMemberExpression,
             JSXMemberExpressionObject, MemberExpression, Program, SimpleAssignmentTarget,
-            Statement, UpdateExpression, VariableDeclarator,
+            Statement, UpdateExpression, VariableDeclarationKind, VariableDeclarator,
         },
         ast_kind::AstKind,
     },
@@ -1609,6 +1609,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             receiver,
             callback,
             key: Origin::source(list.key),
+            key_source: Origin::source(list.key_source),
+            key_alias_initializer: list.key_alias_initializer.map(Origin::source),
             item_references: list
                 .item_references
                 .iter()
@@ -1865,6 +1867,8 @@ struct RawJsxListExpression {
     receiver: RawJsxListReceiver,
     callback: SourceSpan,
     key: SourceSpan,
+    key_source: SourceSpan,
+    key_alias_initializer: Option<SourceSpan>,
     item_references: Vec<SourceSpan>,
     index_references: Vec<SourceSpan>,
     needs_index: bool,
@@ -2261,11 +2265,29 @@ fn raw_jsx_list_expression(
     } else {
         None
     };
-    let returned = direct_arrow_return_expression(callback)?.get_inner_expression();
-    let Expression::JSXElement(element) = returned else {
+    let returned = analyze_direct_arrow_return(callback)?;
+    let returned_expression = returned.expression.get_inner_expression();
+    let Expression::JSXElement(element) = returned_expression else {
         return None;
     };
     let key = direct_jsx_key_span(element)?;
+    let (key_source, key_alias_initializer) = match returned.key_alias {
+        Some((alias, initializer)) => {
+            let key_expression = direct_jsx_key_expression(element)?.get_inner_expression();
+            let Expression::Identifier(identifier) = key_expression else {
+                return None;
+            };
+            let resolved = scoping
+                .get_reference(identifier.reference_id.get()?)
+                .symbol_id()?;
+            if resolved != alias {
+                return None;
+            }
+            let initializer = source_span(initializer.span());
+            (initializer, Some(initializer))
+        }
+        None => (key, None),
+    };
     let mut references = ListParameterReferenceCollector {
         scoping,
         item,
@@ -2288,31 +2310,72 @@ fn raw_jsx_list_expression(
     references
         .index_references
         .retain(|reference| reference.start() < key.start() || reference.end() > key.end());
+    if let Some(initializer) = key_alias_initializer {
+        references.item_references.retain(|reference| {
+            reference.start() < initializer.start() || reference.end() > initializer.end()
+        });
+        references.index_references.retain(|reference| {
+            reference.start() < initializer.start() || reference.end() > initializer.end()
+        });
+    }
     let receiver = classify_raw_list_receiver(scoping, items)?;
     Some(RawJsxListExpression {
         items: source_span(items.span()),
         receiver,
         callback: source_span(callback.span),
         key,
+        key_source,
+        key_alias_initializer,
         item_references: references.item_references,
         index_references: references.index_references,
         needs_index: index.is_some(),
     })
 }
 
-fn direct_arrow_return_expression<'a, 'callback>(
+struct DirectArrowReturn<'a, 'callback> {
+    expression: &'callback Expression<'a>,
+    key_alias: Option<(SymbolId, &'callback Expression<'a>)>,
+}
+
+fn analyze_direct_arrow_return<'a, 'callback>(
     callback: &'callback ArrowFunctionExpression<'a>,
-) -> Option<&'callback Expression<'a>> {
+) -> Option<DirectArrowReturn<'a, 'callback>> {
     if let Some(expression) = callback.get_expression() {
-        return Some(expression);
+        return Some(DirectArrowReturn {
+            expression,
+            key_alias: None,
+        });
     }
-    if !callback.body.directives.is_empty() || callback.body.statements.len() != 1 {
+    if !callback.body.directives.is_empty() {
         return None;
     }
-    let Statement::ReturnStatement(statement) = &callback.body.statements[0] else {
-        return None;
-    };
-    statement.argument.as_ref()
+    match callback.body.statements.as_slice() {
+        [Statement::ReturnStatement(statement)] => {
+            statement
+                .argument
+                .as_ref()
+                .map(|expression| DirectArrowReturn {
+                    expression,
+                    key_alias: None,
+                })
+        }
+        [
+            Statement::VariableDeclaration(declaration),
+            Statement::ReturnStatement(statement),
+        ] if declaration.kind == VariableDeclarationKind::Const
+            && declaration.declarations.len() == 1 =>
+        {
+            let declarator = &declaration.declarations[0];
+            let BindingPattern::BindingIdentifier(alias) = &declarator.id else {
+                return None;
+            };
+            Some(DirectArrowReturn {
+                expression: statement.argument.as_ref()?,
+                key_alias: Some((alias.symbol_id.get()?, declarator.init.as_ref()?)),
+            })
+        }
+        _ => None,
+    }
 }
 
 fn simple_parameter_symbol(parameters: &FormalParameters<'_>, index: usize) -> Option<SymbolId> {
@@ -2385,6 +2448,28 @@ fn direct_jsx_key_span(element: &JSXElement<'_>) -> Option<SourceSpan> {
             }
             OxcJsxAttributeValue::Element(_) | OxcJsxAttributeValue::Fragment(_) => return None,
         });
+    }
+    key
+}
+
+fn direct_jsx_key_expression<'a, 'element>(
+    element: &'element JSXElement<'a>,
+) -> Option<&'element Expression<'a>> {
+    let mut key = None;
+    for attribute in &element.opening_element.attributes {
+        let JSXAttributeItem::Attribute(attribute) = attribute else {
+            return None;
+        };
+        if !matches!(&attribute.name, JSXAttributeName::Identifier(name) if name.name == "key") {
+            continue;
+        }
+        if key.is_some() {
+            return None;
+        }
+        let OxcJsxAttributeValue::ExpressionContainer(container) = attribute.value.as_ref()? else {
+            return None;
+        };
+        key = container.expression.as_expression();
     }
     key
 }
