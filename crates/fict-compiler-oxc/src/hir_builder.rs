@@ -7,8 +7,8 @@ use fict_hir::{
     ArrayElement, BinaryOperator, Binding, BindingId, BindingKind, BlockId, CallArgument, CallHost,
     CallInstruction, CompoundAssignmentOperator, ContextValueKind, DeclarationKind, DeleteTarget,
     DesugaringKind, EvaluationMode, FictMacroKind, FileId, FunctionFlags, FunctionId, FunctionKind,
-    HirBlock, HirFile, HirFunction, HirInstruction, HirInstructionKind, HirLocal,
-    HirObjectParameterCheck, HirObjectParameterMode, HirObjectParameterProperty,
+    GlobalId, HirBlock, HirFile, HirFunction, HirGlobal, HirInstruction, HirInstructionKind,
+    HirLocal, HirObjectParameterCheck, HirObjectParameterMode, HirObjectParameterProperty,
     HirObjectParameterRest, HirParameter, HirScope, HirTerminator, HirValue, ImportPhase,
     InstructionSemantics, IterationKind, JavaScriptString, JsxAttribute, JsxAttributeValue,
     JsxChild, JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression, JsxListReceiver,
@@ -1367,6 +1367,8 @@ struct Builder<'source, 'semantic> {
     semantic: &'semantic Semantic<'semantic>,
     old_to_new: BTreeMap<u32, BindingId>,
     symbol_to_binding: BTreeMap<SymbolId, BindingId>,
+    global_by_name: BTreeMap<String, GlobalId>,
+    globals: Vec<HirGlobal>,
     functions: Vec<HirFunction>,
     function_facts: Vec<FunctionFact>,
     function_by_span: BTreeMap<(u32, u32), FunctionId>,
@@ -1453,6 +1455,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             semantic,
             old_to_new,
             symbol_to_binding,
+            global_by_name: BTreeMap::new(),
+            globals: Vec::new(),
             functions: Vec::new(),
             function_facts: Vec::new(),
             function_by_span: BTreeMap::new(),
@@ -1629,6 +1633,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         self.validate_macro_placement(&calls.calls);
         self.validate_runtime_reactive_placement(&calls.calls);
         self.validate_hook_placement(&calls.calls);
+        self.preintern_globals(
+            &typed_expressions.facts,
+            &mutations.facts,
+            &member_accesses.facts,
+        );
         self.populate_function_bodies(
             &calls.calls,
             &variable_declarations.facts,
@@ -2769,8 +2778,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .iter()
             .filter_map(|fact| fact.place.root_reference_span)
             .chain(mutations.iter().filter_map(|fact| {
-                let binding = self.symbol_to_binding.get(&fact.symbol)?;
-                let materialized = !fact.projected || !reactive_targets.contains(binding);
+                let reactive = fact
+                    .symbol
+                    .and_then(|symbol| self.symbol_to_binding.get(&symbol))
+                    .is_some_and(|binding| reactive_targets.contains(binding));
+                let materialized = !fact.projected || !reactive;
                 materialized.then_some(fact.place.as_ref()?.root_reference_span?)
             }))
             .chain(typed_expressions.iter().filter_map(|expression| {
@@ -2965,7 +2977,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                             .push(HirInstruction {
                                 result: None,
                                 kind: HirInstructionKind::Write { place, value },
-                                semantics: local_mutation_semantics(mutation.reactive, projected),
+                                semantics: mutation_semantics(
+                                    mutation.reactive,
+                                    projected,
+                                    mutation.binding.is_none(),
+                                ),
                                 origin: Origin::source(mutation.span),
                             });
                         inputs.push(value);
@@ -2994,7 +3010,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                                 update: None,
                                 prefix: false,
                             },
-                            local_mutation_semantics(mutation.reactive, projected),
+                            mutation_semantics(
+                                mutation.reactive,
+                                projected,
+                                mutation.binding.is_none(),
+                            ),
                         );
                         inputs.extend([value, result]);
                     }
@@ -3011,7 +3031,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                                 update: Some(operator),
                                 prefix,
                             },
-                            local_mutation_semantics(mutation.reactive, projected),
+                            mutation_semantics(
+                                mutation.reactive,
+                                projected,
+                                mutation.binding.is_none(),
+                            ),
                         );
                         inputs.push(result);
                     }
@@ -3098,10 +3122,13 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
     ) -> Vec<LocalMutationFact> {
         let mut facts = Vec::new();
         for mutation in mutations {
-            let Some(binding) = self.symbol_to_binding.get(&mutation.symbol).copied() else {
+            let binding = mutation
+                .symbol
+                .and_then(|symbol| self.symbol_to_binding.get(&symbol).copied());
+            if mutation.symbol.is_some() && binding.is_none() {
                 continue;
-            };
-            let reactive = reactive_targets.contains(&binding);
+            }
+            let reactive = binding.is_some_and(|binding| reactive_targets.contains(&binding));
             let owner = self.function_owner_for_span(mutation.span);
             if !reactive && span_is_within_owned_pattern(owner, mutation.span, opaque_patterns) {
                 continue;
@@ -3113,14 +3140,20 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             if mutation.projected && mutation.place.is_none() {
                 continue;
             }
+            let place = mutation.place.clone().or_else(|| {
+                mutation.symbol.map(|symbol| PlannedPlace {
+                    base: PlannedPlaceBase::Binding(symbol),
+                    projections: Vec::new(),
+                    root_reference_span: Some(mutation.target_span),
+                })
+            });
+            let Some(place) = place else {
+                continue;
+            };
             facts.push(LocalMutationFact {
                 owner,
                 binding,
-                place: mutation.place.clone().unwrap_or_else(|| PlannedPlace {
-                    base: PlannedPlaceBase::Binding(mutation.symbol),
-                    projections: Vec::new(),
-                    root_reference_span: Some(mutation.target_span),
-                }),
+                place,
                 span: mutation.span,
                 kind: mutation.kind,
                 reactive,
@@ -3130,7 +3163,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             (
                 mutation.span.start(),
                 mutation.span.end(),
-                mutation.binding.index(),
+                mutation.binding.map_or(u32::MAX, BindingId::index),
             )
         });
         facts
@@ -4012,6 +4045,10 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     .id;
                 fict_hir::PlaceBase::Local(local)
             }
+            PlannedPlaceBase::UnresolvedGlobal { name, span } => {
+                let global = self.intern_global(name, Origin::source(*span));
+                fict_hir::PlaceBase::Global(global)
+            }
             PlannedPlaceBase::Expression { span, has_effects } => {
                 let value = self.control_expression_value(owner, block, *span, true, *has_effects);
                 fict_hir::PlaceBase::Value(value)
@@ -4879,6 +4916,59 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         id
     }
 
+    fn intern_global(&mut self, name: &str, origin: Origin) -> GlobalId {
+        if let Some(id) = self.global_by_name.get(name).copied() {
+            return id;
+        }
+        let id = GlobalId::new(count_u32(self.globals.len()));
+        self.global_by_name.insert(name.to_owned(), id);
+        self.globals.push(HirGlobal {
+            id,
+            name: name.to_owned(),
+            origin,
+        });
+        id
+    }
+
+    fn preintern_globals(
+        &mut self,
+        typed_expressions: &[TypedExpressionFact],
+        mutations: &[MutationFact],
+        member_reads: &[MemberReadFact],
+    ) {
+        let mut references = Vec::new();
+        references.extend(
+            mutations
+                .iter()
+                .filter_map(|fact| fact.place.as_ref())
+                .filter_map(planned_global_reference),
+        );
+        references.extend(
+            member_reads
+                .iter()
+                .filter_map(|fact| planned_global_reference(&fact.place)),
+        );
+        references.extend(typed_expressions.iter().filter_map(|expression| {
+            let TypedExpressionKind::Delete {
+                target: TypedDeleteTarget::Place(place),
+            } = &expression.kind
+            else {
+                return None;
+            };
+            planned_global_reference(place)
+        }));
+        references.sort_unstable_by(|left, right| {
+            (left.1.start(), left.1.end(), &left.0).cmp(&(right.1.start(), right.1.end(), &right.0))
+        });
+
+        let mut seen = BTreeSet::new();
+        for (name, span) in references {
+            if seen.insert(name.clone()) {
+                self.intern_global(&name, Origin::source(span));
+            }
+        }
+    }
+
     fn finish(mut self) -> HirBuildOutput {
         let parameter_symbols: BTreeSet<_> = self
             .function_facts
@@ -4894,6 +4984,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             root_function: FunctionId::new(0),
             scopes,
             bindings,
+            globals: self.globals,
             functions: self.functions,
             templates: self.templates,
             syntax_fragments: self.syntax_fragments,
@@ -6183,7 +6274,7 @@ struct LocalReadFact {
 
 #[derive(Debug, Clone)]
 struct MutationFact {
-    symbol: SymbolId,
+    symbol: Option<SymbolId>,
     projected: bool,
     target_span: SourceSpan,
     place: Option<PlannedPlace>,
@@ -6194,7 +6285,7 @@ struct MutationFact {
 #[derive(Debug, Clone)]
 struct LocalMutationFact {
     owner: FunctionId,
-    binding: BindingId,
+    binding: Option<BindingId>,
     place: PlannedPlace,
     span: SourceSpan,
     kind: ReactiveMutationKind,
@@ -6217,7 +6308,15 @@ struct PlannedPlace {
 #[derive(Debug, Clone)]
 enum PlannedPlaceBase {
     Binding(SymbolId),
+    UnresolvedGlobal { name: String, span: SourceSpan },
     Expression { span: SourceSpan, has_effects: bool },
+}
+
+fn planned_global_reference(place: &PlannedPlace) -> Option<(String, SourceSpan)> {
+    let PlannedPlaceBase::UnresolvedGlobal { name, span } = &place.base else {
+        return None;
+    };
+    Some((name.clone(), *span))
 }
 
 #[derive(Debug, Clone)]
@@ -7663,8 +7762,22 @@ impl<'a> Visit<'a> for DynamicReactivePropertyCollector<'_, '_> {
 
 impl<'a> Visit<'a> for MutationCollector<'_> {
     fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
-        if let Some((symbol, projected)) = assignment_target_symbol(self.scoping, &assignment.left)
-        {
+        let place = planned_assignment_target_place(self.scoping, &assignment.left);
+        let identity = assignment_target_symbol(self.scoping, &assignment.left);
+        let symbol = identity.map(|(symbol, _)| symbol).or_else(|| {
+            match place.as_ref().map(|place| &place.base) {
+                Some(PlannedPlaceBase::Binding(symbol)) => Some(*symbol),
+                Some(
+                    PlannedPlaceBase::UnresolvedGlobal { .. } | PlannedPlaceBase::Expression { .. },
+                )
+                | None => None,
+            }
+        });
+        let projected = identity.is_some_and(|(_, projected)| projected)
+            || place
+                .as_ref()
+                .is_some_and(|place| !place.projections.is_empty());
+        if symbol.is_some() || place.is_some() {
             let target_span = source_span(assignment.left.span());
             let right = assignment.right.get_inner_expression();
             let kind = if assignment.operator == OxcAssignmentOperator::Assign {
@@ -7690,7 +7803,7 @@ impl<'a> Visit<'a> for MutationCollector<'_> {
                     symbol,
                     projected,
                     target_span,
-                    place: planned_assignment_target_place(self.scoping, &assignment.left),
+                    place,
                     span: source_span(assignment.span),
                     kind,
                 });
@@ -7700,15 +7813,28 @@ impl<'a> Visit<'a> for MutationCollector<'_> {
     }
 
     fn visit_update_expression(&mut self, update: &UpdateExpression<'a>) {
-        if let Some((symbol, projected)) =
-            simple_assignment_target_symbol(self.scoping, &update.argument)
-        {
+        let place = planned_simple_assignment_target_place(self.scoping, &update.argument);
+        let identity = simple_assignment_target_symbol(self.scoping, &update.argument);
+        let symbol = identity.map(|(symbol, _)| symbol).or_else(|| {
+            match place.as_ref().map(|place| &place.base) {
+                Some(PlannedPlaceBase::Binding(symbol)) => Some(*symbol),
+                Some(
+                    PlannedPlaceBase::UnresolvedGlobal { .. } | PlannedPlaceBase::Expression { .. },
+                )
+                | None => None,
+            }
+        });
+        let projected = identity.is_some_and(|(_, projected)| projected)
+            || place
+                .as_ref()
+                .is_some_and(|place| !place.projections.is_empty());
+        if symbol.is_some() || place.is_some() {
             let target_span = source_span(update.argument.span());
             self.facts.push(MutationFact {
                 symbol,
                 projected,
                 target_span,
-                place: planned_simple_assignment_target_place(self.scoping, &update.argument),
+                place,
                 span: source_span(update.span),
                 kind: ReactiveMutationKind::Update {
                     operator: match update.operator {
@@ -7751,7 +7877,7 @@ fn planned_assignment_target_place(
 ) -> Option<PlannedPlace> {
     match target {
         AssignmentTarget::AssignmentTargetIdentifier(identifier) => {
-            planned_identifier_place(scoping, identifier)
+            Some(planned_reference_identifier_place(scoping, identifier))
         }
         AssignmentTarget::StaticMemberExpression(member) => {
             planned_static_member_place(scoping, member)
@@ -7805,7 +7931,7 @@ fn planned_simple_assignment_target_place(
 ) -> Option<PlannedPlace> {
     match target {
         SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => {
-            planned_identifier_place(scoping, identifier)
+            Some(planned_reference_identifier_place(scoping, identifier))
         }
         SimpleAssignmentTarget::StaticMemberExpression(member) => {
             planned_static_member_place(scoping, member)
@@ -7838,6 +7964,20 @@ fn planned_identifier_place(
         .symbol_id()?;
     Some(PlannedPlace {
         base: PlannedPlaceBase::Binding(symbol),
+        projections: Vec::new(),
+        root_reference_span: Some(source_span(identifier.span)),
+    })
+}
+
+fn planned_reference_identifier_place(
+    scoping: &Scoping,
+    identifier: &IdentifierReference<'_>,
+) -> PlannedPlace {
+    planned_identifier_place(scoping, identifier).unwrap_or_else(|| PlannedPlace {
+        base: PlannedPlaceBase::UnresolvedGlobal {
+            name: identifier.name.to_string(),
+            span: source_span(identifier.span),
+        },
         projections: Vec::new(),
         root_reference_span: Some(source_span(identifier.span)),
     })
@@ -7898,10 +8038,9 @@ fn planned_expression_place(
     expression: &Expression<'_>,
 ) -> Option<PlannedPlace> {
     match expression.get_inner_expression() {
-        Expression::Identifier(identifier) => Some(
-            planned_identifier_place(scoping, identifier)
-                .unwrap_or_else(|| planned_expression_base(expression)),
-        ),
+        Expression::Identifier(identifier) => {
+            Some(planned_reference_identifier_place(scoping, identifier))
+        }
         Expression::StaticMemberExpression(member) => planned_static_member_place(scoping, member),
         Expression::ComputedMemberExpression(member) => {
             planned_computed_member_place(scoping, member)
@@ -8466,14 +8605,14 @@ fn projected_read_semantics() -> InstructionSemantics {
     }
 }
 
-fn local_mutation_semantics(reactive: bool, projected: bool) -> InstructionSemantics {
+fn mutation_semantics(reactive: bool, projected: bool, external: bool) -> InstructionSemantics {
     InstructionSemantics {
         purity: if reactive {
             Purity::Unknown
         } else {
             Purity::Impure
         },
-        mutation: if reactive || projected {
+        mutation: if reactive || projected || external {
             MutationEffect::Observable
         } else {
             MutationEffect::Local

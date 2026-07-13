@@ -246,6 +246,7 @@ fn propagates_state_into_pure_derived_bindings_and_active_blocks() {
             origin: origin(),
         })
         .collect(),
+        globals: Vec::new(),
         functions: vec![function],
         templates: Vec::new(),
         syntax_fragments: Vec::new(),

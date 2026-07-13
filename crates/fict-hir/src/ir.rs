@@ -1,6 +1,7 @@
 use crate::{
-    BindingId, BlockId, FileId, FunctionId, JavaScriptString, JsxTemplate, LiteralValue, LocalId,
-    Origin, RegionId, ScopeId, SsaName, SyntaxFragment, SyntaxFragmentId, TemplateId, ValueId,
+    BindingId, BlockId, FileId, FunctionId, GlobalId, JavaScriptString, JsxTemplate, LiteralValue,
+    LocalId, Origin, RegionId, ScopeId, SsaName, SyntaxFragment, SyntaxFragmentId, TemplateId,
+    ValueId,
 };
 
 /// Lexical scope category produced by frontend semantic analysis.
@@ -34,6 +35,17 @@ pub struct HirScope {
     /// Scope category.
     pub kind: ScopeKind,
     /// Source provenance.
+    pub origin: Origin,
+}
+
+/// Frontend-unresolved identifier whose runtime identity belongs to the host/global environment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HirGlobal {
+    /// Request-local interned identity.
+    pub id: GlobalId,
+    /// Exact identifier spelling used by runtime lookup.
+    pub name: String,
+    /// First structured place reference used to intern this identity.
     pub origin: Origin,
 }
 
@@ -293,6 +305,8 @@ pub enum PlaceBase {
     Local(LocalId),
     /// SSA-versioned local storage.
     Ssa(SsaName),
+    /// Frontend-unresolved host/global identifier.
+    Global(GlobalId),
     /// Evaluated object used as the base of a projected read or write.
     ///
     /// This keeps member access such as `makeObject().field` structural without
@@ -329,7 +343,7 @@ pub enum Projection {
 /// Assignable/readable location with structural identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Place {
-    /// Root local, SSA identity, or evaluated object value.
+    /// Root local, SSA identity, unresolved global, or evaluated object value.
     pub base: PlaceBase,
     /// Property/index path in evaluation order.
     pub projections: Vec<Projection>,
@@ -348,7 +362,7 @@ impl Place {
     /// Return whether this place directly names local storage.
     #[must_use]
     pub fn is_local(&self) -> bool {
-        self.projections.is_empty()
+        self.projections.is_empty() && matches!(self.base, PlaceBase::Local(_) | PlaceBase::Ssa(_))
     }
 }
 
@@ -1161,6 +1175,8 @@ pub struct HirFile {
     pub scopes: Vec<HirScope>,
     /// Semantic bindings in deterministic ID order.
     pub bindings: Vec<Binding>,
+    /// Frontend-unresolved host/global names in first structured-reference order.
+    pub globals: Vec<HirGlobal>,
     /// Functions in deterministic ID order.
     pub functions: Vec<HirFunction>,
     /// JSX templates in deterministic ID order.

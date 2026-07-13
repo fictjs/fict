@@ -44,6 +44,16 @@ pub fn print_hir(file: &HirFile) -> String {
         )
         .expect("writing to String cannot fail");
     }
+    for global in &file.globals {
+        writeln!(
+            output,
+            "global global{} name={:?} origin={}",
+            global.id.index(),
+            global.name,
+            print_origin(global.origin)
+        )
+        .expect("writing to String cannot fail");
+    }
     for fragment in &file.syntax_fragments {
         writeln!(
             output,

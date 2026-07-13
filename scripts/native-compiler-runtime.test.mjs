@@ -185,6 +185,67 @@ test('Rust compiler emits executable CommonJS with live exports and collision-fr
   container.remove()
 })
 
+test('Rust compiler preserves unresolved host places and temporary member update order', async () => {
+  Object.defineProperty(globalThis, '__fictNativeHostSlot', {
+    configurable: true,
+    value: 1,
+    writable: true,
+  })
+  Object.defineProperty(globalThis, '__fictNativeHostObject', {
+    configurable: true,
+    value: { fixed: 0 },
+    writable: true,
+  })
+
+  try {
+    const module = await compileAndImport(
+      `
+        export function mutate(key, value) {
+          __fictNativeHostSlot = value
+          __fictNativeHostSlot += 2
+          __fictNativeHostSlot++
+          __fictNativeHostObject.fixed = value
+          __fictNativeHostObject[key] = value + 1
+
+          const effects = []
+          const made = { field: 9 }
+          const make = () => {
+            effects.push('make')
+            return made
+          }
+          const previous = make().field--
+          const read = __fictNativeHostObject.fixed
+          return {
+            effects,
+            field: made.field,
+            previous,
+            read,
+            slot: __fictNativeHostSlot,
+          }
+        }
+      `,
+      'host-places',
+      /__fictNativeHostSlot \+= 2/,
+    )
+
+    assert.deepEqual(module.mutate('dynamic', 5), {
+      effects: ['make'],
+      field: 8,
+      previous: 9,
+      read: 5,
+      slot: 8,
+    })
+    assert.deepEqual(globalThis.__fictNativeHostObject, {
+      dynamic: 6,
+      fixed: 5,
+    })
+    assert.equal(globalThis.__fictNativeHostSlot, 8)
+  } finally {
+    delete globalThis.__fictNativeHostObject
+    delete globalThis.__fictNativeHostSlot
+  }
+})
+
 test('Rust compiler output executes structured for-of and for-in loops', async () => {
   const module = await compileAndImport(
     `

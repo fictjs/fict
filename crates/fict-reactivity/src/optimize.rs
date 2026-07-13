@@ -751,7 +751,9 @@ pub fn analyze_constants(
                         let local = match place.base {
                             fict_hir::PlaceBase::Local(local) => local,
                             fict_hir::PlaceBase::Ssa(name) => name.local,
-                            fict_hir::PlaceBase::Value(_) => continue,
+                            fict_hir::PlaceBase::Global(_) | fict_hir::PlaceBase::Value(_) => {
+                                continue;
+                            }
                         };
                         (local, Some(*value))
                     }

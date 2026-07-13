@@ -149,6 +149,34 @@ impl Verifier<'_> {
             }
         }
 
+        let mut global_names = BTreeSet::new();
+        for (index, global) in self.file.globals.iter().enumerate() {
+            if global.id.as_usize() != index {
+                self.error(
+                    "FICT-HIR-ID",
+                    format!(
+                        "global arena index {index} contains global{}",
+                        global.id.index()
+                    ),
+                    Some(global.origin),
+                );
+            }
+            self.verify_origin(global.origin);
+            if global.name.is_empty() {
+                self.error(
+                    "FICT-HIR-GLOBAL",
+                    format!("global{} has an empty runtime name", global.id.index()),
+                    Some(global.origin),
+                );
+            } else if !global_names.insert(global.name.as_str()) {
+                self.error(
+                    "FICT-HIR-GLOBAL",
+                    format!("global name {:?} is interned more than once", global.name),
+                    Some(global.origin),
+                );
+            }
+        }
+
         for (index, fragment) in self.file.syntax_fragments.iter().enumerate() {
             if fragment.id.as_usize() != index {
                 self.error(
@@ -687,6 +715,15 @@ impl Verifier<'_> {
                                 Some(instruction.origin),
                             );
                         }
+                        if place.projections.is_empty()
+                            && matches!(place.base, PlaceBase::Global(_))
+                        {
+                            self.error(
+                                "FICT-HIR-DELETE",
+                                "an unresolved delete operand must use an unresolved-identifier target instead of an unprojected global place",
+                                Some(instruction.origin),
+                            );
+                        }
                         if !place.projections.is_empty()
                             && !instruction.semantics.has_observable_mutation()
                         {
@@ -1133,6 +1170,7 @@ impl Verifier<'_> {
         match place.base {
             PlaceBase::Local(local) => self.local(function, local, origin),
             PlaceBase::Ssa(name) => self.local(function, name.local, origin),
+            PlaceBase::Global(global) => self.global(global, origin),
             PlaceBase::Value(value) => self.value(function, value, origin),
         }
         for projection in &place.projections {
@@ -1323,6 +1361,16 @@ impl Verifier<'_> {
             self.error(
                 "FICT-HIR-REF",
                 format!("binding{} is outside the binding arena", binding.index()),
+                Some(origin),
+            );
+        }
+    }
+
+    fn global(&mut self, global: crate::GlobalId, origin: Origin) {
+        if global.as_usize() >= self.file.globals.len() {
+            self.error(
+                "FICT-HIR-REF",
+                format!("global{} is outside the global arena", global.index()),
                 Some(origin),
             );
         }

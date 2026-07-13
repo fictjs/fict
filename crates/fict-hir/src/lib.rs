@@ -12,14 +12,14 @@ mod verify;
 
 pub use fict_diagnostics::SourceSpan;
 pub use ids::{
-    BindingId, BlockId, FileId, FunctionId, LocalId, RegionId, ScopeId, SsaName, SsaVersion,
-    SyntaxFragmentId, TemplateId, ValueId,
+    BindingId, BlockId, FileId, FunctionId, GlobalId, LocalId, RegionId, ScopeId, SsaName,
+    SsaVersion, SyntaxFragmentId, TemplateId, ValueId,
 };
 pub use ir::{
     ArrayElement, BinaryOperator, Binding, BindingKind, CallArgument, CallHost, CallInstruction,
     CompoundAssignmentOperator, ContextValueKind, DeclarationKind, DeleteTarget, EvaluationMode,
-    FictMacroKind, FunctionFlags, FunctionKind, HirBlock, HirFile, HirFunction, HirInstruction,
-    HirInstructionKind, HirLocal, HirObjectParameterCheck, HirObjectParameterMode,
+    FictMacroKind, FunctionFlags, FunctionKind, HirBlock, HirFile, HirFunction, HirGlobal,
+    HirInstruction, HirInstructionKind, HirLocal, HirObjectParameterCheck, HirObjectParameterMode,
     HirObjectParameterProperty, HirObjectParameterRest, HirParameter, HirScope, HirTerminator,
     HirValue, ImportBinding, ImportKind, ImportPhase, ImportedName, InstructionSemantics,
     IterationKind, LocalKind, MutationEffect, ObjectEntry, ObjectPropertyKind, Place, PlaceBase,

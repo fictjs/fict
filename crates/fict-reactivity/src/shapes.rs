@@ -888,7 +888,7 @@ fn place_local(base: PlaceBase) -> Option<fict_hir::LocalId> {
     match base {
         PlaceBase::Local(local) => Some(local),
         PlaceBase::Ssa(name) => Some(name.local),
-        PlaceBase::Value(_) => None,
+        PlaceBase::Global(_) | PlaceBase::Value(_) => None,
     }
 }
 

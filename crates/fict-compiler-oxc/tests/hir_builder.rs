@@ -4287,6 +4287,200 @@ fn materializes_static_computed_index_and_value_base_projections() {
 }
 
 #[test]
+fn materializes_unresolved_host_places_without_lexical_ssa_or_target_reads() {
+    let source = r#"
+        function mutate(value, key, make) {
+            globalSlot = value;
+            globalSlot += value;
+            globalSlot++;
+            hostObject.fixed = value;
+            hostObject[key] = value;
+            make().field--;
+            const read = hostObject.fixed;
+            return read;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Script,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified host-place HIR");
+    assert_eq!(
+        hir.globals
+            .iter()
+            .map(|global| global.name.as_str())
+            .collect::<Vec<_>>(),
+        ["globalSlot", "hostObject"],
+        "global IDs follow first source reference, not analysis phase order"
+    );
+    let global_slot = hir.globals[0].id;
+    let host_object = hir.globals[1].id;
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "mutate")
+        })
+        .expect("mutate function");
+    let instructions: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let authored = |instruction: &fict_hir::HirInstruction| {
+        let span = instruction.origin.primary_span.expect("source instruction");
+        &source[span.start() as usize..span.end() as usize]
+    };
+    let mutations: Vec<_> = instructions
+        .iter()
+        .copied()
+        .filter(|instruction| {
+            matches!(
+                instruction.kind,
+                HirInstructionKind::Write { .. } | HirInstructionKind::ReadWrite { .. }
+            )
+        })
+        .collect();
+    assert_eq!(
+        mutations
+            .iter()
+            .map(|instruction| authored(instruction))
+            .collect::<Vec<_>>(),
+        [
+            "globalSlot = value",
+            "globalSlot += value",
+            "globalSlot++",
+            "hostObject.fixed = value",
+            "hostObject[key] = value",
+            "make().field--",
+        ]
+    );
+    assert!(mutations.iter().all(|instruction| {
+        instruction.semantics.mutation == MutationEffect::Observable
+            && instruction.semantics.may_throw
+    }));
+
+    for mutation in &mutations[..3] {
+        let place = match &mutation.kind {
+            HirInstructionKind::Write { place, .. }
+            | HirInstructionKind::ReadWrite { place, .. } => place,
+            _ => unreachable!(),
+        };
+        assert_eq!(place.base, fict_hir::PlaceBase::Global(global_slot));
+        assert!(place.projections.is_empty());
+        assert!(!place.is_local());
+    }
+    assert!(matches!(
+        mutations[1].kind,
+        HirInstructionKind::ReadWrite {
+            compound: Some(CompoundAssignmentOperator::Add),
+            update: None,
+            ..
+        }
+    ));
+    assert!(matches!(
+        mutations[2].kind,
+        HirInstructionKind::ReadWrite {
+            update: Some(UpdateOperator::Increment),
+            prefix: false,
+            ..
+        }
+    ));
+
+    let static_write = match &mutations[3].kind {
+        HirInstructionKind::Write { place, .. } => place,
+        _ => panic!("static host write"),
+    };
+    assert!(matches!(
+        (&static_write.base, static_write.projections.as_slice()),
+        (
+            fict_hir::PlaceBase::Global(id),
+            [fict_hir::Projection::StaticProperty {
+                name,
+                optional: false,
+            }]
+        ) if *id == host_object && name == "fixed"
+    ));
+    let computed_write = match &mutations[4].kind {
+        HirInstructionKind::Write { place, .. } => place,
+        _ => panic!("computed host write"),
+    };
+    assert!(matches!(
+        (&computed_write.base, computed_write.projections.as_slice()),
+        (
+            fict_hir::PlaceBase::Global(id),
+            [fict_hir::Projection::ComputedProperty { optional: false, .. }]
+        ) if *id == host_object
+    ));
+
+    let temporary_write = match &mutations[5].kind {
+        HirInstructionKind::ReadWrite { place, .. } => place,
+        _ => panic!("temporary update"),
+    };
+    let fict_hir::PlaceBase::Value(temporary_base) = temporary_write.base else {
+        panic!("temporary member must retain its evaluated value base")
+    };
+    assert!(matches!(
+        temporary_write.projections.as_slice(),
+        [fict_hir::Projection::StaticProperty {
+            name,
+            optional: false,
+        }] if name == "field"
+    ));
+    let call_position = instructions
+        .iter()
+        .position(|instruction| {
+            instruction.result == Some(temporary_base)
+                && matches!(instruction.kind, HirInstructionKind::Call(_))
+                && authored(instruction) == "make()"
+        })
+        .expect("temporary base call");
+    let update_position = instructions
+        .iter()
+        .position(|instruction| std::ptr::eq(*instruction, mutations[5]))
+        .expect("temporary update position");
+    assert!(call_position < update_position);
+
+    let host_reads: Vec<_> = instructions
+        .iter()
+        .copied()
+        .filter(|instruction| {
+            matches!(
+                &instruction.kind,
+                HirInstructionKind::Read { place }
+                    if place.base == fict_hir::PlaceBase::Global(host_object)
+            )
+        })
+        .collect();
+    assert_eq!(
+        host_reads.len(),
+        1,
+        "assignment targets must not synthesize reads"
+    );
+    assert_eq!(authored(host_reads[0]), "hostObject.fixed");
+    assert!(matches!(
+        &host_reads[0].kind,
+        HirInstructionKind::Read { place }
+            if matches!(
+                place.projections.as_slice(),
+                [fict_hir::Projection::StaticProperty {
+                    name,
+                    optional: false,
+                }] if name == "fixed"
+            )
+    ));
+}
+
+#[test]
 fn materializes_reference_aware_delete_targets_without_property_reads() {
     let source = r#"
         function remove(obj, key, effect, local) {

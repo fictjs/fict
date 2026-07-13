@@ -711,7 +711,7 @@ fn place_local(place: &Place) -> Option<LocalId> {
     match place.base {
         PlaceBase::Local(local) => Some(local),
         PlaceBase::Ssa(name) => Some(name.local),
-        PlaceBase::Value(_) => None,
+        PlaceBase::Global(_) | PlaceBase::Value(_) => None,
     }
 }
 

@@ -8,7 +8,7 @@ use fict_hir::{
 };
 use fict_reactivity::{
     DependencyBase, DependencySegment, EscapeKind, ShapeKind, ShapeSource, SsaDefinitionKind,
-    StructuredConstructKind, StructuredLoopKind,
+    SsaDefinitionLocation, StructuredConstructKind, StructuredLoopKind,
 };
 
 fn build_fixture() -> fict_hir::HirFile {
@@ -238,7 +238,7 @@ fn template_results_depend_on_every_substitution_and_remain_primitive() {
         .iter()
         .filter_map(|dependency| match dependency.base {
             DependencyBase::Ssa(name) => Some(name.local),
-            DependencyBase::Value(_) => None,
+            DependencyBase::Global(_) | DependencyBase::Value(_) => None,
         })
         .collect();
     assert_eq!(
@@ -565,6 +565,154 @@ fn projected_delete_tracks_its_reference_write_dependency_and_boolean_shape() {
 }
 
 #[test]
+fn host_places_flow_through_dependencies_without_creating_lexical_ssa_storage() {
+    let source = r#"
+        function mutate(value, key) {
+            globalSlot = value;
+            hostObject[key] = value;
+            const read = hostObject.fixed;
+            return read;
+        }
+    "#;
+    let frontend = build_hir(
+        source,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Script,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified host-place HIR"),
+        CorePassOptions {
+            optimize: false,
+            ..CorePassOptions::default()
+        },
+    )
+    .expect("core passes over host places");
+    let global_slot = output
+        .hir
+        .globals
+        .iter()
+        .find(|global| global.name == "globalSlot")
+        .expect("global slot")
+        .id;
+    let host_object = output
+        .hir
+        .globals
+        .iter()
+        .find(|global| global.name == "hostObject")
+        .expect("host object")
+        .id;
+    let function = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                output.hir.bindings[binding.as_usize()].display_name == "mutate"
+            })
+        })
+        .expect("mutate function");
+    let analysis = &output.functions[function.id.as_usize()];
+    let local = |name: &str| {
+        function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"))
+    };
+
+    let direct_write = analysis
+        .dependencies
+        .writes
+        .iter()
+        .find(|write| {
+            write.path.base == DependencyBase::Global(global_slot) && write.path.segments.is_empty()
+        })
+        .expect("direct global write dependency");
+    assert_eq!(direct_write.mutation, MutationEffect::Observable);
+    assert!(!analysis.ssa.definitions.iter().any(|definition| {
+        definition.location
+            == SsaDefinitionLocation::Instruction {
+                block: direct_write.location.block,
+                instruction: direct_write.location.instruction,
+            }
+            && matches!(
+                definition.kind,
+                SsaDefinitionKind::Write | SsaDefinitionKind::ReadWrite
+            )
+    }));
+
+    let projected_write = analysis
+        .dependencies
+        .writes
+        .iter()
+        .find(|write| write.path.base == DependencyBase::Global(host_object))
+        .expect("projected host write dependency");
+    assert_eq!(projected_write.mutation, MutationEffect::Observable);
+    assert!(matches!(
+        projected_write.path.segments.as_slice(),
+        [DependencySegment::Dynamic {
+            optional: false,
+            ..
+        }]
+    ));
+    assert!(analysis.dependencies.escapes.iter().any(|escape| {
+        escape.kind == EscapeKind::ObservableWrite
+            && matches!(
+                escape.path.base,
+                DependencyBase::Ssa(name) if name.local == local("value").id
+            )
+    }));
+
+    let host_read = analysis
+        .dependencies
+        .reads
+        .iter()
+        .find(|read| read.path.base == DependencyBase::Global(host_object))
+        .expect("host member read dependency");
+    assert!(matches!(
+        host_read.path.segments.as_slice(),
+        [DependencySegment::Static {
+            name,
+            optional: false,
+        }] if name == "fixed"
+    ));
+    let read_value = function.blocks[host_read.location.block.as_usize()].instructions
+        [host_read.location.instruction as usize]
+        .result
+        .expect("host read result");
+    assert!(
+        analysis.dependencies.value_dependencies[read_value.as_usize()]
+            .iter()
+            .any(|path| path == &host_read.path)
+    );
+
+    let global_shape_accesses: Vec<_> = analysis
+        .shapes
+        .property_accesses
+        .iter()
+        .filter(|access| access.path.base == DependencyBase::Global(host_object))
+        .collect();
+    assert_eq!(global_shape_accesses.len(), 2);
+    assert!(
+        analysis
+            .shapes
+            .shapes
+            .iter()
+            .all(|shape| shape.name.local.as_usize() < function.locals.len())
+    );
+}
+
+#[test]
 fn optimizer_folds_non_reference_and_local_delete_results() {
     let frontend = build_hir(
         r#"
@@ -705,7 +853,7 @@ fn tagged_templates_track_tag_substitutions_and_unknown_call_escapes() {
     .iter()
     .filter_map(|dependency| match dependency.base {
         DependencyBase::Ssa(name) => Some(name.local),
-        DependencyBase::Value(_) => None,
+        DependencyBase::Global(_) | DependencyBase::Value(_) => None,
     })
     .collect();
     assert_eq!(
@@ -722,7 +870,7 @@ fn tagged_templates_track_tag_substitutions_and_unknown_call_escapes() {
         .filter(|escape| escape.kind == EscapeKind::UnknownCall)
         .filter_map(|escape| match escape.path.base {
             DependencyBase::Ssa(name) => Some(name.local),
-            DependencyBase::Value(_) => None,
+            DependencyBase::Global(_) | DependencyBase::Value(_) => None,
         })
         .collect();
     assert_eq!(
@@ -815,7 +963,7 @@ fn dynamic_imports_track_inputs_and_produce_promise_object_shapes() {
     .iter()
     .filter_map(|dependency| match dependency.base {
         DependencyBase::Ssa(name) => Some(name.local),
-        DependencyBase::Value(_) => None,
+        DependencyBase::Global(_) | DependencyBase::Value(_) => None,
     })
     .collect();
     assert_eq!(

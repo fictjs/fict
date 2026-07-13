@@ -52,6 +52,7 @@ fn file(function: HirFunction) -> HirFile {
             origin: origin(),
         }],
         bindings: Vec::new(),
+        globals: Vec::new(),
         functions: vec![function],
         templates: Vec::new(),
         syntax_fragments: Vec::new(),

@@ -153,6 +153,7 @@ fn splits_regions_at_barriers_and_memoizes_only_safe_derived_ranges() {
             origin: origin(),
         }],
         bindings: Vec::new(),
+        globals: Vec::new(),
         functions: vec![function],
         templates: Vec::new(),
         syntax_fragments: Vec::new(),

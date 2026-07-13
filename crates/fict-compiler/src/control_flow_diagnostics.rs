@@ -521,7 +521,7 @@ fn value_has_unsafe_control_work(
             DeleteTarget::Place(place) => {
                 let base = match place.base {
                     PlaceBase::Value(value) => Some(value),
-                    PlaceBase::Local(_) | PlaceBase::Ssa(_) => None,
+                    PlaceBase::Local(_) | PlaceBase::Ssa(_) | PlaceBase::Global(_) => None,
                 };
                 base.into_iter()
                     .chain(

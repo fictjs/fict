@@ -71,6 +71,10 @@ define_id!(
     BindingId
 );
 define_id!(
+    /// Identity of one frontend-unresolved host/global name.
+    GlobalId
+);
+define_id!(
     /// Adapter-owned syntax retained outside the compiler core.
     SyntaxFragmentId
 );

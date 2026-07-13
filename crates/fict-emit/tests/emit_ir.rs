@@ -25,6 +25,7 @@ fn hir() -> HirFile {
             origin: origin(),
         }],
         bindings: Vec::new(),
+        globals: Vec::new(),
         functions: vec![HirFunction {
             id: FunctionId::new(0),
             binding: None,

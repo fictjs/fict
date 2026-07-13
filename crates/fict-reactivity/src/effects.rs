@@ -4,9 +4,9 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
 use fict_hir::{
-    ArrayElement, BlockId, CallHost, DeleteTarget, FictMacroKind, FunctionId, HirFile, HirFunction,
-    HirInstruction, HirInstructionKind, JsxAttribute, JsxAttributeValue, JsxChild, JsxNode,
-    LocalId, LocalKind, MutationEffect, ObjectEntry, Place, PlaceBase, Projection, Purity,
+    ArrayElement, BlockId, CallHost, DeleteTarget, FictMacroKind, FunctionId, GlobalId, HirFile,
+    HirFunction, HirInstruction, HirInstructionKind, JsxAttribute, JsxAttributeValue, JsxChild,
+    JsxNode, LocalId, LocalKind, MutationEffect, ObjectEntry, Place, PlaceBase, Projection, Purity,
     ReactiveCallKind, ReactiveScopeKind, SsaName, SsaVersion, TerminatorKind, ValueId, ValueKind,
 };
 
@@ -17,6 +17,8 @@ use crate::{SsaAnalysis, SsaDefinitionLocation, SsaUseKind, SsaUseLocation, veri
 pub enum DependencyBase {
     /// SSA-versioned local storage.
     Ssa(SsaName),
+    /// Frontend-unresolved host/global identity.
+    Global(GlobalId),
     /// Evaluated base object without local storage identity.
     Value(ValueId),
 }
@@ -62,7 +64,7 @@ impl DependencyPath {
     pub const fn local(&self) -> Option<LocalId> {
         match self.base {
             DependencyBase::Ssa(name) => Some(name.local),
-            DependencyBase::Value(_) => None,
+            DependencyBase::Global(_) | DependencyBase::Value(_) => None,
         }
     }
 
@@ -711,15 +713,15 @@ pub fn verify_dependencies(
         .map(|definition| definition.name)
         .collect();
     for read in &analysis.reads {
-        verify_dependency_path(function, &definitions, &read.path, &mut diagnostics);
+        verify_dependency_path(file, function, &definitions, &read.path, &mut diagnostics);
         verify_location(function, read.location, &mut diagnostics);
     }
     for write in &analysis.writes {
-        verify_dependency_path(function, &definitions, &write.path, &mut diagnostics);
+        verify_dependency_path(file, function, &definitions, &write.path, &mut diagnostics);
         verify_location(function, write.location, &mut diagnostics);
     }
     for path in &analysis.control_flow_reads {
-        verify_dependency_path(function, &definitions, path, &mut diagnostics);
+        verify_dependency_path(file, function, &definitions, path, &mut diagnostics);
         if !analysis
             .reads
             .iter()
@@ -732,7 +734,7 @@ pub fn verify_dependencies(
         }
     }
     for escape in &analysis.escapes {
-        verify_dependency_path(function, &definitions, &escape.path, &mut diagnostics);
+        verify_dependency_path(file, function, &definitions, &escape.path, &mut diagnostics);
         if let Some(location) = escape.location {
             verify_location(function, location, &mut diagnostics);
         }
@@ -740,7 +742,7 @@ pub fn verify_dependencies(
     for dependencies in &analysis.value_dependencies {
         let mut previous = None;
         for path in dependencies {
-            verify_dependency_path(function, &definitions, path, &mut diagnostics);
+            verify_dependency_path(file, function, &definitions, path, &mut diagnostics);
             if previous.as_ref().is_some_and(|previous| previous >= path) {
                 diagnostics.push(analysis_error(
                     "FICT-ANALYSIS-ORDER",
@@ -814,6 +816,7 @@ pub fn verify_dependencies(
 }
 
 fn verify_dependency_path(
+    file: &HirFile,
     function: &HirFunction,
     definitions: &BTreeSet<SsaName>,
     path: &DependencyPath,
@@ -830,6 +833,14 @@ fn verify_dependency_path(
                 diagnostics.push(analysis_error(
                     "FICT-ANALYSIS-SSA",
                     "dependency path references an unknown SSA definition",
+                ));
+            }
+        }
+        DependencyBase::Global(global) => {
+            if global.as_usize() >= file.globals.len() {
+                diagnostics.push(analysis_error(
+                    "FICT-ANALYSIS-GLOBAL",
+                    "dependency path global is outside the HIR global arena",
                 ));
             }
         }
@@ -911,6 +922,7 @@ fn dependency_path(
                 .unwrap_or_else(|| SsaName::new(local, SsaVersion::INITIAL)),
         ),
         PlaceBase::Ssa(name) => DependencyBase::Ssa(name),
+        PlaceBase::Global(global) => DependencyBase::Global(global),
         PlaceBase::Value(value) => DependencyBase::Value(value),
     };
     let segments = place
@@ -952,7 +964,7 @@ fn record_write(
         let local = match place.base {
             PlaceBase::Local(local) => local,
             PlaceBase::Ssa(name) => name.local,
-            PlaceBase::Value(_) => return,
+            PlaceBase::Global(_) | PlaceBase::Value(_) => return,
         };
         DependencyPath {
             base: DependencyBase::Ssa(
@@ -1008,7 +1020,7 @@ fn direct_write_path(
     let local = match place.base {
         PlaceBase::Local(local) => local,
         PlaceBase::Ssa(name) => name.local,
-        PlaceBase::Value(_) => return None,
+        PlaceBase::Global(_) | PlaceBase::Value(_) => return None,
     };
     let name = definition_names.get(&(location.block, location.instruction, local))?;
     Some(DependencyPath {

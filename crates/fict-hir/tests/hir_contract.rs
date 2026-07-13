@@ -1,10 +1,11 @@
 use fict_hir::{
-    BlockId, CallHost, DeleteTarget, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock,
-    HirFile, HirFunction, HirInstruction, HirInstructionKind, HirScope, HirTerminator, HirValue,
-    ImportPhase, InstructionSemantics, JavaScriptString, LiteralValue, NumberLiteral, ObjectEntry,
-    ObjectPropertyKind, Origin, Place, PlaceBase, Projection, PropertyKey, ScopeId, ScopeKind,
-    StructuredSourceHint, StructuredSourceKind, StructuredSwitchCaseHint, TaggedTemplateQuasi,
-    TerminatorKind, ValueId, ValueKind, print_hir, verify_hir,
+    BlockId, CallHost, DeleteTarget, FileId, FunctionFlags, FunctionId, FunctionKind, GlobalId,
+    HirBlock, HirFile, HirFunction, HirGlobal, HirInstruction, HirInstructionKind, HirScope,
+    HirTerminator, HirValue, ImportPhase, InstructionSemantics, JavaScriptString, LiteralValue,
+    NumberLiteral, ObjectEntry, ObjectPropertyKind, Origin, Place, PlaceBase, Projection,
+    PropertyKey, ScopeId, ScopeKind, StructuredSourceHint, StructuredSourceKind,
+    StructuredSwitchCaseHint, TaggedTemplateQuasi, TerminatorKind, ValueId, ValueKind, print_hir,
+    verify_hir,
 };
 
 fn empty_file() -> HirFile {
@@ -20,6 +21,7 @@ fn empty_file() -> HirFile {
             origin,
         }],
         bindings: Vec::new(),
+        globals: Vec::new(),
         functions: vec![HirFunction {
             id: FunctionId::new(0),
             binding: None,
@@ -88,6 +90,85 @@ fn verifier_reports_arena_and_span_corruption_without_panicking() {
     assert!(diagnostics.iter().all(|diagnostic| {
         diagnostic.guarantee_class == fict_diagnostics::GuaranteeClass::Internal
     }));
+}
+
+#[test]
+fn verifier_enforces_interned_global_identity_and_place_references() {
+    let mut file = empty_file();
+    let origin = Origin::source(fict_hir::SourceSpan::empty(0));
+    file.globals.push(HirGlobal {
+        id: GlobalId::new(0),
+        name: "hostObject".to_owned(),
+        origin,
+    });
+    file.functions[0].values.push(HirValue {
+        id: ValueId::new(0),
+        kind: ValueKind::InstructionResult,
+        origin,
+    });
+    file.functions[0].blocks[0]
+        .instructions
+        .push(HirInstruction {
+            result: Some(ValueId::new(0)),
+            kind: HirInstructionKind::Read {
+                place: Place {
+                    base: PlaceBase::Global(GlobalId::new(0)),
+                    projections: vec![Projection::StaticProperty {
+                        name: "field".to_owned(),
+                        optional: false,
+                    }],
+                },
+            },
+            semantics: InstructionSemantics::CONSERVATIVE_EAGER,
+            origin,
+        });
+
+    verify_hir(&file).expect("well-formed global place");
+    let HirInstructionKind::Read { place } = &mut file.functions[0].blocks[0].instructions[0].kind
+    else {
+        panic!("global read fixture")
+    };
+    assert!(!place.is_local());
+    place.base = PlaceBase::Global(GlobalId::new(9));
+    let invalid_reference = verify_hir(&file).expect_err("invalid global reference must fail");
+    assert!(invalid_reference.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-REF" && diagnostic.message.contains("global9")
+    }));
+
+    let mut duplicate = empty_file();
+    duplicate.globals.extend([
+        HirGlobal {
+            id: GlobalId::new(0),
+            name: "hostObject".to_owned(),
+            origin,
+        },
+        HirGlobal {
+            id: GlobalId::new(1),
+            name: "hostObject".to_owned(),
+            origin,
+        },
+    ]);
+    let duplicate_name = verify_hir(&duplicate).expect_err("duplicate global name must fail");
+    assert!(duplicate_name.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-GLOBAL"
+            && diagnostic.message.contains("interned more than once")
+    }));
+
+    duplicate.globals[1].name.clear();
+    duplicate.globals[1].id = GlobalId::new(7);
+    let invalid_arena = verify_hir(&duplicate).expect_err("invalid global arena must fail");
+    assert!(
+        invalid_arena
+            .as_slice()
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "FICT-HIR-ID")
+    );
+    assert!(
+        invalid_arena
+            .as_slice()
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "FICT-HIR-GLOBAL")
+    );
 }
 
 #[test]
@@ -245,6 +326,26 @@ fn verifier_enforces_delete_target_references_and_mutation_semantics() {
     assert!(invalid_place.as_slice().iter().any(|diagnostic| {
         diagnostic.code.as_str() == "FICT-HIR-DELETE"
             && diagnostic.message.contains("must use a value target")
+    }));
+
+    file.globals.push(HirGlobal {
+        id: GlobalId::new(0),
+        name: "ambientTarget".to_owned(),
+        origin,
+    });
+    let HirInstructionKind::Delete { target } =
+        &mut file.functions[0].blocks[0].instructions[1].kind
+    else {
+        panic!("delete fixture")
+    };
+    *target = DeleteTarget::Place(Place {
+        base: PlaceBase::Global(GlobalId::new(0)),
+        projections: Vec::new(),
+    });
+    let invalid_global = verify_hir(&file).expect_err("unprojected global delete must fail");
+    assert!(invalid_global.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-DELETE"
+            && diagnostic.message.contains("unresolved-identifier target")
     }));
 }
 
