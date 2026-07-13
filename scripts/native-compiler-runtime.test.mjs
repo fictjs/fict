@@ -110,7 +110,7 @@ async function compileAndImport(source, name, expectedCode, settings = {}) {
   return importCompiledModule(result.code, name, 'rust')
 }
 
-async function compileLegacyAndImport(source, name, settings = {}) {
+function compileLegacySource(source, name, settings = {}) {
   const diagnostics = []
   const result = transformSync(source, {
     filename: `/fixtures/${name}.tsx`,
@@ -135,8 +135,13 @@ async function compileLegacyAndImport(source, name, settings = {}) {
     generatorOpts: { compact: false },
   })
   assert.ok(result?.code, 'legacy compiler must produce code')
+  return { code: result.code, diagnostics }
+}
+
+async function compileLegacyAndImport(source, name, settings = {}) {
+  const result = compileLegacySource(source, name, settings)
   assert.deepEqual(
-    diagnostics.map(diagnostic => diagnostic.code),
+    result.diagnostics.map(diagnostic => diagnostic.code),
     settings.diagnosticCodes ?? [],
   )
   return importCompiledModule(result.code, name, 'legacy')
@@ -253,6 +258,219 @@ test('legacy and Rust compilers preserve the same Core runtime behavior', async 
   const legacySnapshot = await exerciseCoreParityModule(legacy)
   const rustSnapshot = await exerciseCoreParityModule(rust)
   assert.deepEqual(rustSnapshot, legacySnapshot)
+})
+
+function legacyGuaranteeOutcome(source, name, strictGuarantee) {
+  try {
+    const result = compileLegacySource(source, name, { strictGuarantee })
+    return {
+      status: 'success',
+      diagnostics: result.diagnostics.map(diagnostic => [diagnostic.code, 'warning']),
+    }
+  } catch (error) {
+    const codes = [...new Set(String(error?.message ?? error).match(/FICT-[A-Z0-9-]+/g) ?? [])]
+    assert.notDeepEqual(codes, [], `${name}: legacy error must expose a diagnostic code`)
+    return { status: 'error', diagnostics: codes.map(code => [code, 'error']) }
+  }
+}
+
+function rustGuaranteeOutcome(source, name, strictGuarantee) {
+  const result = binding.transformSync({
+    code: source,
+    filename: `/fixtures/${name}.tsx`,
+    moduleId: `/fixtures/${name}.tsx`,
+    options: { strictGuarantee },
+  })
+  return {
+    status: result.code === '' ? 'error' : 'success',
+    diagnostics: result.diagnostics.map(diagnostic => [diagnostic.code, diagnostic.severity]),
+  }
+}
+
+test('legacy and Rust compilers agree on the strict guarantee matrix', () => {
+  const cases = [
+    {
+      name: 'guaranteed-state-handler',
+      code: null,
+      source: `
+        import { $state } from 'fict'
+        export function Counter() {
+          let count = $state(0)
+          const increment = () => { count++ }
+          return <button onClick={increment}>{count}</button>
+        }
+      `,
+    },
+    {
+      name: 'guaranteed-props-pattern',
+      code: null,
+      source: `
+        export function Profile(props) {
+          const { user: { name = 'Ada' } = {}, title = 'Engineer', ...rest } = props
+          return <section data-role={rest.role}>{title}: {name}</section>
+        }
+      `,
+    },
+    {
+      name: 'fallback-control-flow',
+      code: 'FICT-R006',
+      source: `
+        import { $state } from 'fict'
+        export function App() {
+          const count = $state(0)
+          if (count > 0 && maybe()) return <strong>high</strong>
+          return <span>low</span>
+        }
+      `,
+    },
+    {
+      name: 'fallback-callback-host',
+      code: 'FICT-R005',
+      source: `
+        import { $state } from 'fict'
+        function consume(fn) { return fn() }
+        export function App() {
+          const count = $state(0)
+          consume(readCount)
+          function readCount() { return count }
+          return <span>{count}</span>
+        }
+      `,
+    },
+    {
+      name: 'fallback-dynamic-property',
+      code: 'FICT-H',
+      source: `
+        import { $state } from 'fict'
+        export function App({ key = 'name' }) {
+          const user = $state({ name: 'Ada' })
+          return <span>{user[key]}</span>
+        }
+      `,
+    },
+    {
+      name: 'fallback-component-spread',
+      code: 'FICT-P005',
+      source: `
+        function Child(props) { return <span>{props.value}</span> }
+        export function App(props) { return <Child {...props()} /> }
+      `,
+    },
+    {
+      name: 'fallback-nested-state-mutation',
+      code: 'FICT-M',
+      source: `
+        import { $state } from 'fict'
+        export function App() {
+          const user = $state({ name: 'Ada' })
+          user.name = 'Grace'
+          return <span>{user.name}</span>
+        }
+      `,
+    },
+    {
+      name: 'fallback-jsx-write',
+      code: 'FICT-R007',
+      source: `
+        import { $state } from 'fict'
+        export function App() {
+          let count = $state(0)
+          return <span>{count++}</span>
+        }
+      `,
+    },
+    {
+      name: 'fallback-intrinsic-spread',
+      code: 'FICT-J003',
+      source: `
+        export function App(props) { return <main {...props} /> }
+      `,
+    },
+    {
+      name: 'fallback-memo-side-effect',
+      code: 'FICT-M003',
+      source: `
+        import { $memo } from 'fict'
+        export const value = $memo(() => { fetch('/api'); return 1 })
+      `,
+    },
+    {
+      name: 'unsupported-nested-state',
+      level: 'unsupported',
+      rustCode: 'FICT-PLACEMENT-STATE-NESTED',
+      legacyMessage: /cannot be declared inside nested functions/,
+      source: `
+        import { $state } from 'fict'
+        export function App() {
+          const read = () => {
+            const count = $state(0)
+            return count
+          }
+          return <span>{read()}</span>
+        }
+      `,
+    },
+    {
+      name: 'unsupported-loop-effect',
+      level: 'unsupported',
+      rustCode: 'FICT-PLACEMENT-EFFECT-CONTROL',
+      legacyMessage: /cannot be called inside loops or conditionals/,
+      source: `
+        import { $effect } from 'fict'
+        export function App() {
+          while (false) $effect(() => {})
+          return <span />
+        }
+      `,
+    },
+    {
+      name: 'unsupported-module-state',
+      level: 'unsupported',
+      rustCode: 'FICT-PLACEMENT-STATE-OWNER',
+      legacyMessage: /must be declared inside a component or hook function body/,
+      source: `
+        import { $state } from 'fict'
+        export const count = $state(0)
+      `,
+    },
+  ]
+
+  for (const fixture of cases) {
+    if (fixture.level === 'unsupported') {
+      for (const strictGuarantee of [false, true]) {
+        assert.throws(
+          () => compileLegacySource(fixture.source, fixture.name, { strictGuarantee }),
+          fixture.legacyMessage,
+          `${fixture.name}: legacy unsupported`,
+        )
+        assert.deepEqual(
+          rustGuaranteeOutcome(fixture.source, fixture.name, strictGuarantee),
+          { status: 'error', diagnostics: [[fixture.rustCode, 'error']] },
+          `${fixture.name}: Rust unsupported`,
+        )
+      }
+      continue
+    }
+
+    const expectedNonStrict = {
+      status: 'success',
+      diagnostics: fixture.code === null ? [] : [[fixture.code, 'warning']],
+    }
+    const expectedStrict =
+      fixture.code === null
+        ? expectedNonStrict
+        : { status: 'error', diagnostics: [[fixture.code, 'error']] }
+
+    const legacyNonStrict = legacyGuaranteeOutcome(fixture.source, fixture.name, false)
+    const rustNonStrict = rustGuaranteeOutcome(fixture.source, fixture.name, false)
+    assert.deepEqual(legacyNonStrict, expectedNonStrict, `${fixture.name}: legacy non-strict`)
+    assert.deepEqual(rustNonStrict, expectedNonStrict, `${fixture.name}: Rust non-strict`)
+
+    const legacyStrict = legacyGuaranteeOutcome(fixture.source, fixture.name, true)
+    const rustStrict = rustGuaranteeOutcome(fixture.source, fixture.name, true)
+    assert.deepEqual(legacyStrict, expectedStrict, `${fixture.name}: legacy strict`)
+    assert.deepEqual(rustStrict, expectedStrict, `${fixture.name}: Rust strict`)
+  }
 })
 
 async function compileAndRequire(source, name, expectedCode) {
