@@ -42,6 +42,8 @@ pub enum ShapeSource {
     Literal(ValueId),
     /// String produced by an untagged template literal.
     TemplateLiteral(ValueId),
+    /// String produced by `typeof` for a frontend-unresolved name.
+    UnresolvedTypeof(ValueId),
     /// Promise object returned by a dynamic import request.
     DynamicImport(ValueId),
     /// Object literal.
@@ -614,6 +616,17 @@ fn structural_value_shape(
         HirInstructionKind::TemplateLiteral { .. } => ValueShape {
             kind: ShapeKind::Primitive,
             source: ShapeSource::TemplateLiteral(value),
+            known_keys: Vec::new(),
+            mutable_keys: Vec::new(),
+            complete_key_set: true,
+            dynamic_access: false,
+            has_spread: false,
+            escapes: false,
+            array_length: None,
+        },
+        HirInstructionKind::UnresolvedTypeof { .. } => ValueShape {
+            kind: ShapeKind::Primitive,
+            source: ShapeSource::UnresolvedTypeof(value),
             known_keys: Vec::new(),
             mutable_keys: Vec::new(),
             complete_key_set: true,

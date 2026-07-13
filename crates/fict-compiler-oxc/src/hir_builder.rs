@@ -573,10 +573,19 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
             Expression::ImportExpression(import_expression) => {
                 Some(typed_dynamic_import(import_expression))
             }
-            Expression::UnaryExpression(unary)
-                if unary.operator != OxcUnaryOperator::Delete
-                    && !is_unresolved_typeof(self.scoping, unary) =>
-            {
+            Expression::UnaryExpression(unary) if is_unresolved_typeof(self.scoping, unary) => {
+                let Expression::Identifier(identifier) = unary.argument.get_inner_expression()
+                else {
+                    unreachable!("unresolved typeof is guaranteed to contain an identifier")
+                };
+                Some(TypedExpressionFact {
+                    span: source_span(unary.span),
+                    kind: TypedExpressionKind::UnresolvedTypeof {
+                        identifier: identifier.name.to_string(),
+                    },
+                })
+            }
+            Expression::UnaryExpression(unary) if unary.operator != OxcUnaryOperator::Delete => {
                 Some(TypedExpressionFact {
                     span: source_span(unary.span),
                     kind: TypedExpressionKind::Unary {
@@ -3125,6 +3134,16 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 origin,
                 HirInstructionKind::Literal(literal.clone()),
                 InstructionSemantics::PURE_EAGER,
+            ),
+            TypedExpressionKind::UnresolvedTypeof { identifier } => self.push_value_to_block(
+                owner,
+                block,
+                ValueKind::InstructionResult,
+                origin,
+                HirInstructionKind::UnresolvedTypeof {
+                    identifier: identifier.clone(),
+                },
+                InstructionSemantics::CONSERVATIVE_EAGER,
             ),
             TypedExpressionKind::Unary {
                 operator,
@@ -5885,6 +5904,9 @@ struct TypedExpressionFact {
 #[derive(Debug, Clone)]
 enum TypedExpressionKind {
     Literal(LiteralValue),
+    UnresolvedTypeof {
+        identifier: String,
+    },
     Unary {
         operator: UnaryOperator,
         argument: SourceSpan,
@@ -6106,60 +6128,64 @@ impl EvaluationFact {
                 ..
             }) => 0,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Unary { .. },
+                kind: TypedExpressionKind::UnresolvedTypeof { .. },
                 ..
             }) => 1,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Binary { .. },
+                kind: TypedExpressionKind::Unary { .. },
                 ..
             }) => 2,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Logical { .. },
+                kind: TypedExpressionKind::Binary { .. },
                 ..
             }) => 3,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Conditional { .. },
+                kind: TypedExpressionKind::Logical { .. },
                 ..
             }) => 4,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Sequence { .. },
+                kind: TypedExpressionKind::Conditional { .. },
                 ..
             }) => 5,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::TemplateLiteral { .. },
+                kind: TypedExpressionKind::Sequence { .. },
                 ..
             }) => 6,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::TaggedTemplate { .. },
+                kind: TypedExpressionKind::TemplateLiteral { .. },
                 ..
             }) => 7,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::DynamicImport { .. },
+                kind: TypedExpressionKind::TaggedTemplate { .. },
                 ..
             }) => 8,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Await { .. },
+                kind: TypedExpressionKind::DynamicImport { .. },
                 ..
             }) => 9,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Yield { .. },
+                kind: TypedExpressionKind::Await { .. },
                 ..
             }) => 10,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::New { .. },
+                kind: TypedExpressionKind::Yield { .. },
                 ..
             }) => 11,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Array { .. },
+                kind: TypedExpressionKind::New { .. },
                 ..
             }) => 12,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Object { .. },
+                kind: TypedExpressionKind::Array { .. },
                 ..
             }) => 13,
-            Self::Jsx(_) => 14,
-            Self::Member(_) => 15,
-            Self::Call(_) => 16,
+            Self::Typed(TypedExpressionFact {
+                kind: TypedExpressionKind::Object { .. },
+                ..
+            }) => 14,
+            Self::Jsx(_) => 15,
+            Self::Member(_) => 16,
+            Self::Call(_) => 17,
         }
     }
 }
@@ -8354,6 +8380,7 @@ fn instruction_value_inputs(instruction: &HirInstruction) -> Vec<ValueId> {
             ..
         } => inputs.extend(fragment_inputs),
         HirInstructionKind::Literal(_)
+        | HirInstructionKind::UnresolvedTypeof { .. }
         | HirInstructionKind::Function { .. }
         | HirInstructionKind::Jsx { .. }
         | HirInstructionKind::Phi { .. }

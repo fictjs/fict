@@ -1244,6 +1244,7 @@ fn instruction_inputs(instruction: &HirInstruction, file: &HirFile) -> Vec<Value
         }
         HirInstructionKind::Iteration { source, .. } => vec![*source],
         HirInstructionKind::Literal(_)
+        | HirInstructionKind::UnresolvedTypeof { .. }
         | HirInstructionKind::Function { .. }
         | HirInstructionKind::Debugger => Vec::new(),
         HirInstructionKind::Unary { argument, .. } => vec![*argument],

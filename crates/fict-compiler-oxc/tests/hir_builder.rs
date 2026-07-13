@@ -1905,6 +1905,104 @@ fn materializes_exact_utf16_strings_and_template_quasis() {
 }
 
 #[test]
+fn distinguishes_unresolved_typeof_from_binding_reads() {
+    let source = r#"
+        function inspect(local) {
+            const absent = typeof definitelyMissing;
+            const host = typeof console;
+            const bound = typeof local;
+            return [absent, host, bound];
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified typeof HIR");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "inspect")
+        })
+        .expect("inspect function");
+    let instructions: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let authored = |instruction: &fict_hir::HirInstruction| {
+        let span = instruction
+            .origin
+            .primary_span
+            .expect("authored typeof expression");
+        &source[span.start() as usize..span.end() as usize]
+    };
+
+    for identifier in ["definitelyMissing", "console"] {
+        let instruction = instructions
+            .iter()
+            .find(|instruction| {
+                matches!(
+                    &instruction.kind,
+                    HirInstructionKind::UnresolvedTypeof {
+                        identifier: candidate,
+                    } if candidate == identifier
+                )
+            })
+            .unwrap_or_else(|| panic!("typed unresolved typeof for {identifier}"));
+        assert_eq!(
+            instruction.semantics,
+            fict_hir::InstructionSemantics::CONSERVATIVE_EAGER
+        );
+    }
+
+    let bound = instructions
+        .iter()
+        .find(|instruction| authored(instruction) == "typeof local")
+        .expect("bound typeof");
+    assert!(matches!(
+        bound.kind,
+        HirInstructionKind::Unary {
+            operator: UnaryOperator::TypeOf,
+            ..
+        }
+    ));
+    assert_eq!(bound.semantics, fict_hir::InstructionSemantics::PURE_EAGER);
+
+    for name in ["absent", "host", "bound"] {
+        let local = function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"));
+        let initializer = instructions
+            .iter()
+            .find_map(|instruction| match instruction.kind {
+                HirInstructionKind::Declare {
+                    local: candidate,
+                    initializer,
+                    ..
+                } if candidate == local.id => initializer,
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{name} initializer"));
+        let root = instructions
+            .iter()
+            .find(|instruction| instruction.result == Some(initializer))
+            .unwrap_or_else(|| panic!("{name} root instruction"));
+        assert!(
+            !matches!(root.kind, HirInstructionKind::SyntaxFragment { .. }),
+            "{name} must not fall back to adapter-owned syntax"
+        );
+    }
+}
+
+#[test]
 fn materializes_logical_and_conditional_expressions_with_lazy_arms() {
     let source = r#"
         function lazyExpressions(input, inspect, fallback) {

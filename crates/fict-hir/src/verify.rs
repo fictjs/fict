@@ -664,6 +664,15 @@ impl Verifier<'_> {
                 }
             }
             HirInstructionKind::Literal(_) | HirInstructionKind::Debugger => {}
+            HirInstructionKind::UnresolvedTypeof { identifier } => {
+                if identifier.is_empty() {
+                    self.error(
+                        "FICT-HIR-TYPEOF",
+                        "an unresolved typeof instruction must retain a non-empty identifier",
+                        Some(instruction.origin),
+                    );
+                }
+            }
             HirInstructionKind::Unary { argument, .. } => {
                 self.value(function, *argument, instruction.origin);
             }

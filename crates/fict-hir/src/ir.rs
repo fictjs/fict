@@ -787,6 +787,15 @@ pub enum HirInstructionKind {
     },
     /// Materialize a literal value.
     Literal(LiteralValue),
+    /// Evaluate `typeof` for a name without a frontend-resolved lexical binding.
+    ///
+    /// This is distinct from [`Self::Unary`] because evaluating an unresolved identifier as an
+    /// ordinary input would incorrectly introduce a throwing reference read before `typeof` gets
+    /// its special unresolvable-reference behavior.
+    UnresolvedTypeof {
+        /// Normalized identifier name used for host/global environment lookup.
+        identifier: String,
+    },
     /// Apply a unary operator.
     Unary {
         /// Operator.

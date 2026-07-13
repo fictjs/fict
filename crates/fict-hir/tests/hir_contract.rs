@@ -118,6 +118,42 @@ fn verifier_rejects_a_value_definition_that_changes_literal_bits() {
 }
 
 #[test]
+fn verifier_requires_an_identifier_for_unresolved_typeof() {
+    let mut file = empty_file();
+    let origin = Origin::source(fict_hir::SourceSpan::empty(0));
+    file.functions[0].values.push(HirValue {
+        id: ValueId::new(0),
+        kind: ValueKind::InstructionResult,
+        origin,
+    });
+    file.functions[0].blocks[0]
+        .instructions
+        .push(HirInstruction {
+            result: Some(ValueId::new(0)),
+            kind: HirInstructionKind::UnresolvedTypeof {
+                identifier: "ambientValue".to_owned(),
+            },
+            semantics: InstructionSemantics::CONSERVATIVE_EAGER,
+            origin,
+        });
+
+    verify_hir(&file).expect("well-formed unresolved typeof HIR");
+    let HirInstructionKind::UnresolvedTypeof { identifier } =
+        &mut file.functions[0].blocks[0].instructions[0].kind
+    else {
+        panic!("unresolved typeof fixture")
+    };
+    identifier.clear();
+    let diagnostics = verify_hir(&file).expect_err("empty typeof identifier must fail");
+    assert!(
+        diagnostics
+            .as_slice()
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "FICT-HIR-TYPEOF")
+    );
+}
+
+#[test]
 fn verifier_checks_every_typed_conditional_input() {
     let mut file = empty_file();
     let origin = Origin::source(fict_hir::SourceSpan::empty(0));

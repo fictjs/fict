@@ -267,6 +267,88 @@ fn template_results_depend_on_every_substitution_and_remain_primitive() {
 }
 
 #[test]
+fn unresolved_typeof_has_no_false_value_dependency_and_a_primitive_shape() {
+    let frontend = build_hir(
+        r#"
+            export function inspect() {
+                const kind = typeof ambientValue;
+                return kind;
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Module,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified unresolved typeof HIR"),
+        CorePassOptions {
+            optimize: false,
+            ..CorePassOptions::default()
+        },
+    )
+    .expect("core passes over unresolved typeof");
+    let function = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                output.hir.bindings[binding.as_usize()].display_name == "inspect"
+            })
+        })
+        .expect("inspect function");
+    let analysis = &output.functions[function.id.as_usize()];
+    let local = function
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("kind"))
+        .expect("kind local");
+    let value = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find_map(|instruction| match instruction.kind {
+            fict_hir::HirInstructionKind::Declare {
+                local: candidate,
+                initializer,
+                ..
+            } if candidate == local.id => initializer,
+            _ => None,
+        })
+        .expect("kind initializer");
+    assert!(analysis.dependencies.value_dependencies[value.as_usize()].is_empty());
+
+    let definition = analysis
+        .ssa
+        .definitions
+        .iter()
+        .find(|definition| {
+            definition.name.local == local.id && definition.kind == SsaDefinitionKind::Declare
+        })
+        .expect("kind declaration definition");
+    let shape = analysis
+        .shapes
+        .shapes
+        .iter()
+        .find(|shape| shape.name == definition.name)
+        .expect("typeof result shape");
+    assert_eq!(shape.shape.kind, ShapeKind::Primitive);
+    assert!(matches!(
+        shape.shape.source,
+        ShapeSource::UnresolvedTypeof(source) if source == value
+    ));
+}
+
+#[test]
 fn tagged_templates_track_tag_substitutions_and_unknown_call_escapes() {
     let frontend = build_hir(
         r#"
