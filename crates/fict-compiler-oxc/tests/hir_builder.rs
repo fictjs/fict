@@ -687,9 +687,19 @@ fn models_direct_unkeyed_map_callbacks_with_index_identity() {
     let spread = build_hir(
         "import { $state } from 'fict'; export function App() { let rows = $state([{ name: 'A' }]); return <ul>{rows.map(row => <li {...row}>{row.name}</li>)}</ul>; }",
         options(OxcSourceLanguage::JavaScriptJsx),
-        &HirBuildOptions::default(),
+        &HirBuildOptions {
+            strict_guarantee: false,
+            ..HirBuildOptions::default()
+        },
     );
-    assert!(spread.diagnostics.is_empty(), "{:?}", spread.diagnostics);
+    assert_eq!(
+        spread
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        ["FICT-J003"]
+    );
     let spread = spread.hir.expect("verified fallback HIR");
     let fict_hir::JsxNode::Element(root) = &spread.templates[0].root else {
         panic!("intrinsic list root")
@@ -1658,5 +1668,64 @@ fn diagnoses_binding_aware_reactive_writes_in_jsx_children() {
             .all(|diagnostic| {
                 diagnostic.severity == fict_diagnostics::DiagnosticSeverity::Warning
             })
+    );
+}
+
+#[test]
+fn diagnoses_only_intrinsic_jsx_spreads_once_per_element() {
+    let source = r#"
+        function Widget(props) {
+            return <span>{props.title}</span>;
+        }
+        function App(domProps, svgProps, componentProps, UI) {
+            return <>
+                <div {...domProps} title="demo" {...domProps} />
+                <svg:path {...svgProps} />
+                <Widget {...componentProps} />
+                <UI.Widget {...componentProps} />
+            </>;
+        }
+    "#;
+    let strict = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(strict.hir.is_none());
+    let findings = strict
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.as_str() == "FICT-J003")
+        .collect::<Vec<_>>();
+    assert_eq!(findings.len(), 2, "{:?}", strict.diagnostics);
+    assert!(findings.iter().all(|diagnostic| {
+        diagnostic.severity == fict_diagnostics::DiagnosticSeverity::Error
+            && diagnostic.guarantee_class == fict_diagnostics::GuaranteeClass::Fallback
+    }));
+    let finding_sources = findings
+        .iter()
+        .map(|diagnostic| {
+            let span = diagnostic.primary_span.expect("native spread span");
+            &source[span.start() as usize..span.end() as usize]
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(finding_sources, ["{...domProps}", "{...svgProps}"]);
+
+    let fallback = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions {
+            strict_guarantee: false,
+            ..HirBuildOptions::default()
+        },
+    );
+    assert!(fallback.hir.is_some(), "{:?}", fallback.diagnostics);
+    assert_eq!(
+        fallback
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_str() == "FICT-J003")
+            .count(),
+        2
     );
 }

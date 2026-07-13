@@ -679,12 +679,22 @@ mod tests {
 
     #[test]
     fn preserves_authored_fine_grained_spread_and_static_prop_order() {
-        let result = compile(request(
+        let mut input = request(
             "export function View(first, second) { return <div id=\"before\" {...first} class=\"after\" {...second}>child</div>; }",
             "spread-order.tsx",
-        ));
+        );
+        input.options.strict_guarantee = false;
+        let result = compile(input);
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-J003")
+                .count(),
+            1
+        );
         assert!(
             result
                 .code
@@ -706,12 +716,22 @@ mod tests {
 
     #[test]
     fn passes_svg_and_mathml_modes_to_fine_grained_spreads() {
-        let result = compile(request(
+        let mut input = request(
             "export function Foreign(svgProps, mathProps) { return <><svg {...svgProps} /><math {...mathProps} /></>; }",
             "spread-namespace.tsx",
-        ));
+        );
+        input.options.strict_guarantee = false;
+        let result = compile(input);
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-J003")
+                .count(),
+            2
+        );
         assert!(
             result.code.contains("() => svgProps, true, false"),
             "{}",
@@ -1160,12 +1180,22 @@ mod tests {
 
     #[test]
     fn optimizes_safe_unkeyed_maps_with_index_identity() {
-        let result = compile(request(
+        let mut input = request(
             "import { $state } from 'fict'; export function GeneratedIndex() { let rows = $state([{ name: 'A' }]); return <ul>{rows.map(row => <li>{row.name}</li>)}</ul>; } export function SourceIndex() { const rows = [{ name: 'B' }]; return <ol>{rows.map((row, index) => <li data-index={index}>{row.name}</li>)}</ol>; } export function Untrusted(rows) { return <div>{rows.map(row => <span>{row}</span>)}</div>; } export function Spread() { let rows = $state([{ name: 'C' }]); return <section>{rows.map(row => <i {...row}>{row.name}</i>)}</section>; }",
             "unkeyed-map.tsx",
-        ));
+        );
+        input.options.strict_guarantee = false;
+        let result = compile(input);
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-J003")
+                .count(),
+            1
+        );
         assert_eq!(
             result.code.matches("createKeyedList(").count(),
             2,
@@ -2135,9 +2165,18 @@ mod tests {
             "component.tsx",
         );
         input.options.fine_grained_dom = false;
+        input.options.strict_guarantee = false;
         let result = compile(input);
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-J003")
+                .count(),
+            1
+        );
         assert!(!result.code.contains("<section"), "{}", result.code);
         assert!(!result.code.contains("type Props"), "{}", result.code);
         assert!(result.code.contains("type: \"section\""), "{}", result.code);
@@ -2516,6 +2555,51 @@ mod tests {
         let escalated = compile(escalated_request);
         assert!(escalated.has_errors());
         assert!(escalated.code.is_empty());
+    }
+
+    #[test]
+    fn enforces_native_jsx_spread_guarantees() {
+        let source = "function Widget(props) { return <span>{props.title}</span>; } export function App(props) { return <><div {...props} title='demo' {...props} /><Widget {...props} /></>; }";
+        let strict = compile(request(source, "native-jsx-spread.tsx"));
+
+        assert!(strict.has_errors());
+        assert!(strict.code.is_empty());
+        assert_eq!(
+            strict
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            ["FICT-J003"]
+        );
+        assert_eq!(strict.diagnostics[0].severity, DiagnosticSeverity::Error);
+        assert_eq!(
+            strict.diagnostics[0].guarantee_class,
+            GuaranteeClass::Fallback
+        );
+        let spread = strict.diagnostics[0]
+            .primary_span
+            .expect("native spread span");
+        assert_eq!(
+            &source[spread.start() as usize..spread.end() as usize],
+            "{...props}"
+        );
+
+        let mut fallback_request = request(source, "native-jsx-spread.tsx");
+        fallback_request.options.strict_guarantee = false;
+        let fallback = compile(fallback_request);
+        assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
+        assert_eq!(fallback.diagnostics.len(), 1, "{:?}", fallback.diagnostics);
+        assert_eq!(fallback.diagnostics[0].code.as_str(), "FICT-J003");
+        assert_eq!(
+            fallback.diagnostics[0].severity,
+            DiagnosticSeverity::Warning
+        );
+        assert!(
+            fallback.code.contains("spread(__fict_node"),
+            "{}",
+            fallback.code
+        );
     }
 
     #[test]

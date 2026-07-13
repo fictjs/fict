@@ -62,6 +62,7 @@ use crate::{
 
 use super::compile::{convert_diagnostics, sorted, source_type};
 
+mod native_jsx_spreads;
 mod reactive_jsx_writes;
 
 /// Binding-aware frontend controls that affect HIR classification.
@@ -985,6 +986,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             }
         }
         let reactive_symbols = self.analyze_reactive_symbols(program, &calls.calls);
+        self.validate_native_jsx_spreads(program);
         self.validate_dynamic_property_access(program, &reactive_symbols.reactive);
         self.validate_reactive_jsx_writes(program, &reactive_symbols.reactive);
         self.validate_reactive_escapes(
@@ -1122,6 +1124,25 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 .with_help(
                     "use a static string or numeric property when the reactive shape is known",
                 )
+                .with_guarantee_class(GuaranteeClass::Fallback),
+            );
+        }
+    }
+
+    fn validate_native_jsx_spreads(&mut self, program: &Program<'_>) {
+        let severity = if self.strict_guarantee {
+            DiagnosticSeverity::Error
+        } else {
+            DiagnosticSeverity::Warning
+        };
+        for span in native_jsx_spreads::collect(program) {
+            self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::new("FICT-J003").expect("diagnostic literal"),
+                    severity,
+                    "Spread on native element may include unknown props.",
+                )
+                .with_primary_span(span)
                 .with_guarantee_class(GuaranteeClass::Fallback),
             );
         }

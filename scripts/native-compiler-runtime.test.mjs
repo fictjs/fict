@@ -1120,3 +1120,36 @@ test('Rust compiler rejects reactive writes in JSX children at the native bounda
     ],
   )
 })
+
+test('Rust compiler rejects intrinsic JSX spreads at the native boundary', () => {
+  const source = `
+    function Widget(props) {
+      return <span>{props.title}</span>
+    }
+    export function App(props) {
+      return <><div {...props} {...props} /><Widget {...props} /></>
+    }
+  `
+  const request = {
+    code: source,
+    filename: '/fixtures/native-jsx-spread.tsx',
+    moduleId: '/fixtures/native-jsx-spread.tsx',
+  }
+
+  const strict = binding.transformSync(request)
+  assert.equal(strict.code, '')
+  assert.deepEqual(
+    strict.diagnostics.map(diagnostic => [diagnostic.code, diagnostic.severity]),
+    [['FICT-J003', 'error']],
+  )
+
+  const fallback = binding.transformSync({
+    ...request,
+    options: { strictGuarantee: false },
+  })
+  assert.notEqual(fallback.code, '')
+  assert.deepEqual(
+    fallback.diagnostics.map(diagnostic => [diagnostic.code, diagnostic.severity]),
+    [['FICT-J003', 'warning']],
+  )
+})
