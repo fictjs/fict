@@ -306,6 +306,9 @@ impl Verifier<'_> {
             if let Some(binding) = parameter.binding {
                 self.binding(binding, parameter.origin);
             }
+            if let Some(default_value) = parameter.default_value {
+                self.verify_origin(default_value);
+            }
             if let Some(properties) = &parameter.object_properties {
                 let mut bindings = BTreeSet::new();
                 for property in properties {

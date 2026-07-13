@@ -231,6 +231,7 @@ struct ParameterFact {
     span: SourceSpan,
     bindings: Vec<SymbolId>,
     direct_binding: Option<SymbolId>,
+    default_value: Option<SourceSpan>,
     object_properties: Option<Vec<ObjectParameterPropertyFact>>,
     has_default: bool,
     has_rest: bool,
@@ -419,9 +420,11 @@ fn parameter_facts(parameters: &FormalParameters<'_>) -> Vec<ParameterFact> {
                 | BindingPattern::ArrayPattern(_)
                 | BindingPattern::AssignmentPattern(_) => None,
             },
-            object_properties: (parameter.initializer.is_none())
-                .then(|| simple_object_parameter_properties(&parameter.pattern))
-                .flatten(),
+            default_value: parameter
+                .initializer
+                .as_ref()
+                .map(|initializer| source_span(initializer.span())),
+            object_properties: simple_object_parameter_properties(&parameter.pattern),
             has_default: parameter.initializer.is_some() || collector.has_defaults,
             has_rest: collector.has_rest,
         });
@@ -433,6 +436,7 @@ fn parameter_facts(parameters: &FormalParameters<'_>) -> Vec<ParameterFact> {
             span: source_span(rest.span),
             bindings: collector.symbols,
             direct_binding: None,
+            default_value: None,
             object_properties: None,
             has_default: collector.has_defaults,
             has_rest: true,
@@ -782,6 +786,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     local,
                     binding: direct_binding,
                     pattern: fragment,
+                    default_value: parameter.default_value.map(Origin::source),
                     object_properties,
                     origin,
                 });

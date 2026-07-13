@@ -675,11 +675,19 @@ pub struct EmitPropBinding {
     pub origin: Origin,
 }
 
+/// Whole-object default applied before individual prop accessors are created.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmitPropsDefault {
+    pub input: String,
+    pub value: Origin,
+}
+
 /// Function-entry plan for a binding-aware object props parameter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmitPropsPlan {
     pub parameter: Origin,
     pub source: String,
+    pub default: Option<EmitPropsDefault>,
     pub bindings: Vec<EmitPropBinding>,
     pub helper: RuntimeHelper,
 }

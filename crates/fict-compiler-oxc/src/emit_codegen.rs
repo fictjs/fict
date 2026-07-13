@@ -512,8 +512,15 @@ struct PropBindingRewrite {
 }
 
 #[derive(Debug, Clone)]
+struct PropsParameterDefaultRewrite {
+    input: String,
+    value: SourceSpan,
+}
+
+#[derive(Debug, Clone)]
 struct PropsRewrite {
     source: String,
+    default: Option<PropsParameterDefaultRewrite>,
     helper: String,
     bindings: Vec<PropBindingRewrite>,
 }
@@ -555,6 +562,26 @@ fn props_rewrites(emit: &EmitProgram) -> PropsRewrites {
                 .with_primary_span(parameter),
             );
             continue;
+        };
+        let default = match &props.default {
+            Some(default) => {
+                let Some(value) = default.value.primary_span else {
+                    diagnostics.push(
+                        emit_error(
+                            "FICT-OXC-EMIT-PROPS",
+                            "component props parameter default requires a source origin",
+                            GuaranteeClass::Internal,
+                        )
+                        .with_primary_span(parameter),
+                    );
+                    continue;
+                };
+                Some(PropsParameterDefaultRewrite {
+                    input: default.input.clone(),
+                    value,
+                })
+            }
+            None => None,
         };
         let mut bindings = Vec::with_capacity(props.bindings.len());
         let mut valid = true;
@@ -646,6 +673,7 @@ fn props_rewrites(emit: &EmitProgram) -> PropsRewrites {
                 (parameter.start(), parameter.end()),
                 PropsRewrite {
                     source: props.source.clone(),
+                    default,
                     helper: (*helper).to_owned(),
                     bindings,
                 },
@@ -2815,20 +2843,28 @@ impl<'a> AstRewriter<'a, '_> {
             );
             return;
         };
-        if parameter.initializer.is_some() {
-            self.diagnostics.push(
-                emit_error(
-                    "FICT-OXC-EMIT-PROPS",
-                    "component props plan requires a non-defaulted object parameter",
-                    GuaranteeClass::Internal,
-                )
-                .with_primary_span(
-                    SourceSpan::new(location.0, location.1)
-                        .expect("ordered component props parameter"),
-                ),
-            );
-            return;
-        }
+        let parameter_default = match (&plan.default, &parameter.initializer) {
+            (Some(planned), Some(source))
+                if source.span() == Span::new(planned.value.start(), planned.value.end()) =>
+            {
+                Some(source.clone_in(self.allocator).unbox())
+            }
+            (None, None) => None,
+            (Some(_), Some(_)) | (Some(_), None) | (None, Some(_)) => {
+                self.diagnostics.push(
+                    emit_error(
+                        "FICT-OXC-EMIT-PROPS",
+                        "component props parameter default does not match its source expression",
+                        GuaranteeClass::Internal,
+                    )
+                    .with_primary_span(
+                        SourceSpan::new(location.0, location.1)
+                            .expect("ordered component props parameter"),
+                    ),
+                );
+                return;
+            }
+        };
         let mut defaults = BTreeMap::new();
         for property in &object_pattern.properties {
             if let BindingPattern::AssignmentPattern(default) = &property.value {
@@ -2865,12 +2901,42 @@ impl<'a> AstRewriter<'a, '_> {
             return;
         }
         let builder = AstBuilder::new(self.allocator);
+        let parameter_local = plan
+            .default
+            .as_ref()
+            .map_or(plan.source.as_str(), |default| default.input.as_str());
         parameter.pattern = BindingPattern::new_binding_identifier(
             parameter.pattern.span(),
-            self.allocator.alloc_str(&plan.source),
+            self.allocator.alloc_str(parameter_local),
             &builder,
         );
+        parameter.initializer = None;
         let mut insertion_index = 0;
+        if let (Some(default), Some(default_expression)) = (&plan.default, parameter_default) {
+            let default_span = Span::new(default.value.start(), default.value.end());
+            let input = Expression::new_identifier(
+                default_span,
+                self.allocator.alloc_str(&default.input),
+                &builder,
+            );
+            let source_initializer = Expression::new_conditional_expression(
+                default_span,
+                self.identifier_is_undefined(&default.input, default_span),
+                default_expression,
+                input,
+                &builder,
+            );
+            body.statements.insert(
+                insertion_index,
+                const_statement(
+                    self.allocator,
+                    &plan.source,
+                    source_initializer,
+                    default_span,
+                ),
+            );
+            insertion_index += 1;
+        }
         for binding in &plan.bindings {
             let span = Span::new(binding.origin.start(), binding.origin.end());
             if let (Some(default), Some(default_local)) =
@@ -2949,6 +3015,20 @@ impl<'a> AstRewriter<'a, '_> {
         Expression::new_binary_expression(
             span,
             self.prop_member(source, property, span),
+            OxcBinaryOperator::StrictEquality,
+            self.void_zero(span),
+            &AstBuilder::new(self.allocator),
+        )
+    }
+
+    fn identifier_is_undefined(&self, name: &str, span: Span) -> Expression<'a> {
+        Expression::new_binary_expression(
+            span,
+            Expression::new_identifier(
+                span,
+                self.allocator.alloc_str(name),
+                &AstBuilder::new(self.allocator),
+            ),
             OxcBinaryOperator::StrictEquality,
             self.void_zero(span),
             &AstBuilder::new(self.allocator),

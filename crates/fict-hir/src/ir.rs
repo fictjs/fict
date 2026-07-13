@@ -207,6 +207,8 @@ pub struct HirParameter {
     pub binding: Option<BindingId>,
     /// Adapter-owned source pattern for destructuring/default/rest shape.
     pub pattern: SyntaxFragmentId,
+    /// Optional whole-parameter default expression.
+    pub default_value: Option<Origin>,
     /// Statically modeled top-level object properties for safe component-prop lowering.
     pub object_properties: Option<Vec<HirObjectParameterProperty>>,
     /// Source provenance.

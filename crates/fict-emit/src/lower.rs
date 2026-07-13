@@ -14,8 +14,8 @@ use fict_reactivity::{ReactiveCycleAnalysis, RegionAnalysis, analyze_cfg, struct
 use crate::{
     CleanupOwner, ComponentChild, ComponentProp, ComponentTarget, ConditionalKind,
     DELEGATED_EVENTS, DomBindingKind, DomNamespace, EmitContext, EmitFunction, EmitModulePlan,
-    EmitOperation, EmitProgram, EmitPropBinding, EmitPropsPlan, EmitSlotId, EmitTemporary,
-    EmitTemporaryId, EmitValueRef, PropsOperation, ReactiveSlot, ReactiveSlotKind,
+    EmitOperation, EmitProgram, EmitPropBinding, EmitPropsDefault, EmitPropsPlan, EmitSlotId,
+    EmitTemporary, EmitTemporaryId, EmitValueRef, PropsOperation, ReactiveSlot, ReactiveSlotKind,
     ReactiveSlotStorage, RuntimeFamily, RuntimeHelper, RuntimeImportIntent,
     name_allocator::NameAllocator, verify_emit_program,
 };
@@ -206,6 +206,13 @@ fn lower_program(
                     .iter()
                     .filter_map(|binding| binding.default_local.clone())
             })
+        }))
+        .chain(functions.iter().filter_map(|function| {
+            function
+                .props
+                .as_ref()
+                .and_then(|props| props.default.as_ref())
+                .map(|default| default.input.clone())
         }));
     let mut module_names = NameAllocator::new(source_names);
     let imports = helpers
@@ -762,9 +769,15 @@ fn lower_component_props_plan(
             origin: property.origin,
         });
     }
+    let source = names.allocate("__fictProps");
+    let default = parameter.default_value.map(|value| EmitPropsDefault {
+        input: names.allocate("__fictPropsParam"),
+        value,
+    });
     Ok(Some(EmitPropsPlan {
         parameter: parameter.origin,
-        source: names.allocate("__fictProps"),
+        source,
+        default,
         bindings,
         helper: RuntimeHelper::Prop,
     }))

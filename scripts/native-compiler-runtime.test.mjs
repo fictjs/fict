@@ -271,3 +271,41 @@ test('Rust compiler output snapshots destructured prop defaults at invocation', 
   assert.equal(container.childNodes.length, 0)
   container.remove()
 })
+
+test('Rust compiler output applies whole-object parameter defaults with intrinsic undefined', async () => {
+  const module = await compileAndImport(
+    `
+      import { render } from 'fict'
+
+      export const calls = []
+
+      function fallbackProps() {
+        calls.push('default')
+        return { name: 'Anon' }
+      }
+
+      function Greeting({ name } = fallbackProps()) {
+        const undefined = 'shadowed'
+        return <p>{undefined}:{name}</p>
+      }
+
+      export function mount(container) {
+        return render(() => Greeting(undefined), container)
+      }
+    `,
+    'parameter-default-props',
+    /__fictPropsParam === void 0/,
+  )
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = module.mount(container)
+  await flushRuntime()
+
+  assert.equal(container.textContent, 'shadowed:Anon')
+  assert.deepEqual(module.calls, ['default'])
+
+  dispose()
+  assert.equal(container.childNodes.length, 0)
+  container.remove()
+})

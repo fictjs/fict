@@ -849,7 +849,7 @@ fn models_context_free_anonymous_function_map_callbacks() {
 #[test]
 fn models_simple_component_object_props_with_exact_read_origins() {
     let source = r#"
-        function Child({ value: renamed, label = String(renamed) }) {
+        function Child({ value: renamed, label = String(renamed) } = { value: 'fallback' }) {
             return <span>{label}:{renamed}</span>;
         }
         function Method({ value, value: alias }) {
@@ -877,6 +877,14 @@ fn models_simple_component_object_props_with_exact_read_origins() {
         .expect("Child component");
     assert_eq!(child.kind, FunctionKind::Component);
     assert!(child.parameters[0].binding.is_none());
+    let parameter_default = child.parameters[0]
+        .default_value
+        .and_then(|origin| origin.primary_span)
+        .expect("component parameter default expression");
+    assert_eq!(
+        &source[parameter_default.start() as usize..parameter_default.end() as usize],
+        "{ value: 'fallback' }"
+    );
     let properties = child.parameters[0]
         .object_properties
         .as_ref()

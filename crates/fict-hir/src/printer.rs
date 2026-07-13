@@ -84,10 +84,13 @@ pub fn print_hir(file: &HirFile) -> String {
         for parameter in &function.parameters {
             writeln!(
                 output,
-                "  parameter local{} binding={} pattern=fragment{} object_properties={:?} origin={}",
+                "  parameter local{} binding={} pattern=fragment{} default={} object_properties={:?} origin={}",
                 parameter.local.index(),
                 optional_binding(parameter.binding),
                 parameter.pattern.index(),
+                parameter
+                    .default_value
+                    .map_or_else(|| "none".to_owned(), print_origin),
                 parameter.object_properties,
                 print_origin(parameter.origin)
             )

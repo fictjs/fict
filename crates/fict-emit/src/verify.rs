@@ -158,6 +158,8 @@ pub fn verify_emit_program(
                 .and_then(|parameter| parameter.object_properties.as_ref());
             let structurally_valid = expected.is_some_and(|expected| {
                 props.parameter == hir_function.parameters[0].origin
+                    && props.default.as_ref().map(|default| default.value)
+                        == hir_function.parameters[0].default_value
                     && props.bindings.len() == expected.len()
                     && props
                         .bindings
@@ -187,6 +189,18 @@ pub fn verify_emit_program(
                     .context
                     .as_ref()
                     .is_some_and(|context| context.local == props.source)
+                || props.default.as_ref().is_some_and(|default| {
+                    default.value.primary_span.is_none()
+                        || !valid_identifier(&default.input)
+                        || !generated_names.insert(default.input.as_str())
+                        || import_names.contains(default.input.as_str())
+                        || source_names.contains(default.input.as_str())
+                        || temporary_names.contains(default.input.as_str())
+                        || function
+                            .context
+                            .as_ref()
+                            .is_some_and(|context| context.local == default.input)
+                })
                 || props.bindings.iter().any(|binding| {
                     binding.property.is_empty()
                         || !valid_identifier(&binding.local)
@@ -366,6 +380,9 @@ fn verify_module_plan(hir: &HirFile, program: &EmitProgram, diagnostics: &mut Di
                         .map(|context| context.local.as_str()),
                 )
                 .chain(function.props.iter().map(|props| props.source.as_str()))
+                .chain(function.props.iter().filter_map(|props| {
+                    props.default.as_ref().map(|default| default.input.as_str())
+                }))
                 .chain(function.props.iter().flat_map(|props| {
                     props
                         .bindings

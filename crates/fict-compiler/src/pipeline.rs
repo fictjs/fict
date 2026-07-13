@@ -1274,13 +1274,20 @@ mod tests {
     #[test]
     fn lowers_simple_component_object_props_to_reactive_accessors() {
         let result = compile(request(
-            "import { $state } from 'fict'; function Child({ value: renamed, label = String(renamed) }) { return <span>{label}:{renamed}</span>; } const Arrow = ({ value }) => <b>{value}</b>; function Method({ value }) { return <i>{value.toString()}</i>; } function Callable({ onClick }) { return <button onClick={() => onClick()}>go</button>; } export function App() { let value = $state(1); return <main><Child value={value} /><Arrow value={value} /><Method value={value} /><Callable onClick={() => value++} /></main>; }",
+            "import { $state } from 'fict'; function Child({ value: renamed, label = String(renamed) } = { value: 'fallback' }) { return <span>{label}:{renamed}</span>; } const Arrow = ({ value }) => <b>{value}</b>; function Method({ value }) { return <i>{value.toString()}</i>; } function Callable({ onClick }) { return <button onClick={() => onClick()}>go</button>; } export function App() { let value = $state(1); return <main><Child value={value} /><Arrow value={value} /><Method value={value} /><Callable onClick={() => value++} /></main>; }",
             "component-object-props.tsx",
         ));
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
         assert!(
-            result.code.contains("function Child(__fictProps)"),
+            result.code.contains("function Child(__fictPropsParam)"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains(
+                "const __fictProps = __fictPropsParam === void 0 ? { value: \"fallback\" } : __fictPropsParam"
+            ),
             "{}",
             result.code
         );
