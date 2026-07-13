@@ -2674,6 +2674,239 @@ fn materializes_constructor_calls_and_spread_iteration_order() {
 }
 
 #[test]
+fn preserves_call_spread_optional_and_pure_evaluation_boundaries() {
+    let source = r#"
+        function invoke(fn, make, tail, value, object) {
+            const direct = fn(make('first'), () => value, make('third'));
+            const spread = fn(
+                make('before'),
+                ...make('spread'),
+                make('after'),
+                ...tail,
+            );
+            const optional = fn?.(
+                make('optional-first'),
+                () => value,
+                ...make('optional-spread'),
+                make('optional-after'),
+            );
+            const optionalMember = object?.method(make('member-optional'));
+            const continuedMember = object?.nested.method(make('continued-optional'));
+            const groupedMember = (object?.method)(make('grouped-eager'));
+            const pure = /* @__PURE__ */ fn(make('pure'));
+            const pureSpread = /* @__PURE__ */ fn(...make('pure-spread'));
+            return [
+                direct,
+                spread,
+                optional,
+                optionalMember,
+                continuedMember,
+                groupedMember,
+                pure,
+                pureSpread,
+            ];
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified call HIR");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "invoke")
+        })
+        .expect("invoke function");
+    let instructions: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let authored = |instruction: &fict_hir::HirInstruction| {
+        let span = instruction
+            .origin
+            .primary_span
+            .expect("authored expression");
+        &source[span.start() as usize..span.end() as usize]
+    };
+    let instruction = |text: &str| {
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| authored(instruction) == text)
+            .unwrap_or_else(|| panic!("instruction for {text}"))
+    };
+    let call_for_local = |name: &str| {
+        let local = function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"));
+        let initializer = instructions
+            .iter()
+            .find_map(|instruction| match instruction.kind {
+                HirInstructionKind::Declare {
+                    local: candidate,
+                    initializer,
+                    ..
+                } if candidate == local.id => initializer,
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{name} initializer"));
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| instruction.result == Some(initializer))
+            .unwrap_or_else(|| panic!("{name} call instruction"))
+    };
+
+    let direct = call_for_local("direct");
+    let HirInstructionKind::Call(direct_call) = &direct.kind else {
+        panic!("typed direct call")
+    };
+    assert!(!direct_call.optional);
+    assert_eq!(direct_call.arguments.len(), 3);
+    assert!(
+        direct_call
+            .arguments
+            .iter()
+            .all(|argument| !argument.spread)
+    );
+    assert!(matches!(
+        function.values[direct_call.arguments[1].value.as_usize()].kind,
+        ValueKind::Function(_)
+    ));
+    for argument in &direct_call.arguments {
+        assert_eq!(
+            instructions
+                .iter()
+                .find(|instruction| instruction.result == Some(argument.value))
+                .expect("direct call argument instruction")
+                .semantics
+                .evaluation,
+            EvaluationMode::Eager
+        );
+    }
+
+    let spread = call_for_local("spread");
+    let HirInstructionKind::Call(spread_call) = &spread.kind else {
+        panic!("typed spread call")
+    };
+    assert_eq!(
+        spread_call
+            .arguments
+            .iter()
+            .map(|argument| argument.spread)
+            .collect::<Vec<_>>(),
+        [false, true, false, true]
+    );
+    assert_eq!(
+        instruction("make('before')").semantics.evaluation,
+        EvaluationMode::Eager
+    );
+    for text in ["make('spread')", "make('after')", "tail"] {
+        assert_eq!(
+            instruction(text).semantics.evaluation,
+            EvaluationMode::Deferred,
+            "the call owns evaluation from its first spread: {text}"
+        );
+    }
+
+    let optional = call_for_local("optional");
+    let HirInstructionKind::Call(optional_call) = &optional.kind else {
+        panic!("typed optional call")
+    };
+    assert!(optional_call.optional);
+    assert_eq!(optional_call.arguments.len(), 4);
+    assert!(matches!(
+        function.values[optional_call.arguments[1].value.as_usize()].kind,
+        ValueKind::Function(_)
+    ));
+    for argument in &optional_call.arguments {
+        assert_eq!(
+            instructions
+                .iter()
+                .find(|instruction| instruction.result == Some(argument.value))
+                .expect("optional call argument instruction")
+                .semantics
+                .evaluation,
+            EvaluationMode::Deferred,
+            "optional-call arguments must remain lazy"
+        );
+    }
+    for text in [
+        "make('optional-first')",
+        "make('optional-spread')",
+        "make('optional-after')",
+    ] {
+        assert_eq!(
+            instruction(text).semantics.evaluation,
+            EvaluationMode::Deferred
+        );
+    }
+
+    for name in ["optionalMember", "continuedMember"] {
+        let member = call_for_local(name);
+        let HirInstructionKind::Call(member_call) = &member.kind else {
+            panic!("typed optional-member call")
+        };
+        assert!(
+            !member_call.optional,
+            "the member, rather than the call token, starts the optional chain"
+        );
+        assert_eq!(member_call.arguments.len(), 1);
+        assert_eq!(
+            instructions
+                .iter()
+                .find(|instruction| { instruction.result == Some(member_call.arguments[0].value) })
+                .expect("optional-member argument instruction")
+                .semantics
+                .evaluation,
+            EvaluationMode::Deferred,
+            "an earlier optional member controls the rest of its chain"
+        );
+    }
+    assert_eq!(
+        instruction("make('member-optional')").semantics.evaluation,
+        EvaluationMode::Deferred
+    );
+    assert_eq!(
+        instruction("make('continued-optional')")
+            .semantics
+            .evaluation,
+        EvaluationMode::Deferred
+    );
+
+    let grouped = call_for_local("groupedMember");
+    let HirInstructionKind::Call(grouped_call) = &grouped.kind else {
+        panic!("typed grouped-member call")
+    };
+    assert!(!grouped_call.optional);
+    assert_eq!(
+        instruction("make('grouped-eager')").semantics.evaluation,
+        EvaluationMode::Eager,
+        "parentheses terminate the optional chain before the outer call"
+    );
+
+    let pure = call_for_local("pure");
+    assert_eq!(pure.semantics.purity, Purity::Pure);
+    assert_eq!(pure.semantics.mutation, MutationEffect::None);
+    let pure_spread = call_for_local("pureSpread");
+    assert_eq!(pure_spread.semantics.purity, Purity::Unknown);
+    assert_eq!(pure_spread.semantics.mutation, MutationEffect::Unknown);
+    assert_eq!(
+        instruction("make('pure-spread')").semantics.evaluation,
+        EvaluationMode::Deferred
+    );
+}
+
+#[test]
 fn materializes_static_computed_index_and_value_base_projections() {
     let source = r#"
         function project(obj) {

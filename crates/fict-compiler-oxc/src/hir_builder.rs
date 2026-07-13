@@ -3406,20 +3406,38 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
 
     fn materialize_call(&mut self, owner: FunctionId, call: &CallFact) -> Option<ValueId> {
         let block = self.planned_block_for_span(owner, call.span);
-        let callee = self.control_expression_value(owner, block, call.callee_span, true, true);
+        let callee = self.control_expression_value(
+            owner,
+            block,
+            call.callee_span,
+            true,
+            call.callee_has_effects,
+        );
         let mut arguments = Vec::new();
+        let mut owns_evaluation = call.arguments_conditional;
         for argument in &call.arguments {
+            owns_evaluation |= argument.spread;
             let value = if let Some(function) = argument.function {
-                self.push_value(
+                self.push_value_to_block(
                     owner,
+                    block,
                     ValueKind::Function(function),
                     Origin::source(argument.span),
                     HirInstructionKind::Function { function },
                     InstructionSemantics::PURE_EAGER,
                 )
             } else {
-                self.control_expression_value(owner, block, argument.span, true, true)
+                self.control_expression_value(
+                    owner,
+                    block,
+                    argument.span,
+                    true,
+                    argument.has_effects,
+                )
             };
+            if owns_evaluation {
+                self.mark_span_deferred(owner, block, argument.span);
+            }
             arguments.push(CallArgument {
                 value,
                 spread: argument.spread,
@@ -3445,6 +3463,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         } else {
             CallHost::Unknown
         };
+        let pure = call.pure && !call.arguments.iter().any(|argument| argument.spread);
         let value = self.push_value_to_block(
             owner,
             block,
@@ -3461,12 +3480,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 optional: call.optional,
             }),
             InstructionSemantics {
-                purity: if call.pure {
-                    Purity::Pure
-                } else {
-                    Purity::Unknown
-                },
-                mutation: if call.pure {
+                purity: if pure { Purity::Pure } else { Purity::Unknown },
+                mutation: if pure {
                     MutationEffect::None
                 } else {
                     MutationEffect::Unknown
@@ -5440,6 +5455,7 @@ fn trusted_array_returning_method(name: &str) -> bool {
 #[derive(Debug, Clone)]
 struct ArgumentFact {
     span: SourceSpan,
+    has_effects: bool,
     spread: bool,
     function: Option<FunctionId>,
     array_literal: bool,
@@ -5450,6 +5466,7 @@ struct CallFact {
     owner: FunctionId,
     span: SourceSpan,
     callee_span: SourceSpan,
+    callee_has_effects: bool,
     binding: Option<BindingId>,
     reactive_kind: Option<ReactiveCallKind>,
     arguments: Vec<ArgumentFact>,
@@ -5462,8 +5479,40 @@ struct CallFact {
     conditional_or_loop: bool,
     inside_jsx: bool,
     hook: Option<HookCall>,
+    arguments_conditional: bool,
     optional: bool,
     pure: bool,
+}
+
+fn call_arguments_are_conditional(call: &CallExpression<'_>) -> bool {
+    call.optional || callee_continues_optional_chain(&call.callee)
+}
+
+fn callee_continues_optional_chain(expression: &Expression<'_>) -> bool {
+    match expression {
+        Expression::StaticMemberExpression(member) => {
+            member.optional || callee_continues_optional_chain(&member.object)
+        }
+        Expression::ComputedMemberExpression(member) => {
+            member.optional || callee_continues_optional_chain(&member.object)
+        }
+        Expression::PrivateFieldExpression(member) => {
+            member.optional || callee_continues_optional_chain(&member.object)
+        }
+        Expression::CallExpression(call) => {
+            call.optional || callee_continues_optional_chain(&call.callee)
+        }
+        Expression::TSInstantiationExpression(expression) => {
+            callee_continues_optional_chain(&expression.expression)
+        }
+        Expression::TSNonNullExpression(expression) => {
+            callee_continues_optional_chain(&expression.expression)
+        }
+        // Parentheses and an already completed ChainExpression terminate the optional chain.
+        // For example, `(object?.method)(argument)` evaluates `argument` before throwing when
+        // `object` is nullish, unlike `object?.method(argument)`.
+        _ => false,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -5999,24 +6048,31 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             .arguments
             .iter()
             .map(|argument| {
-                let (span, spread, function, array_literal) =
+                let (span, has_effects, spread, function, array_literal) =
                     if let Some(expression) = argument.as_expression() {
+                        let expression = expression.get_inner_expression();
                         (
                             source_span(expression.span()),
+                            structured_control_flow::expression_has_effects(expression),
                             false,
                             self.function_for_expression(expression),
-                            matches!(
-                                expression.get_inner_expression(),
-                                Expression::ArrayExpression(_)
-                            ),
+                            matches!(expression, Expression::ArrayExpression(_)),
                         )
                     } else if let oxc::ast::ast::Argument::SpreadElement(spread) = argument {
-                        (source_span(spread.span), true, None, false)
+                        let expression = spread.argument.get_inner_expression();
+                        (
+                            source_span(expression.span()),
+                            structured_control_flow::expression_has_effects(&spread.argument),
+                            true,
+                            None,
+                            false,
+                        )
                     } else {
                         unreachable!("every call argument is an expression or spread")
                     };
                 ArgumentFact {
                     span,
+                    has_effects,
                     spread,
                     function,
                     array_literal,
@@ -6026,7 +6082,8 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
         self.calls.push(CallFact {
             owner: *self.stack.last().expect("module call owner"),
             span: call_span,
-            callee_span: source_span(call.callee.span()),
+            callee_span: source_span(call.callee.get_inner_expression().span()),
+            callee_has_effects: structured_control_flow::expression_has_effects(&call.callee),
             binding,
             reactive_kind,
             callback: arguments.first().and_then(|argument| argument.function),
@@ -6039,6 +6096,7 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             inside_jsx,
             hook,
             arguments,
+            arguments_conditional: call_arguments_are_conditional(call),
             optional: call.optional,
             pure: call.pure,
         });
