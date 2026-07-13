@@ -58,6 +58,7 @@ fn call(result: u32, macro_kind: Option<FictMacroKind>) -> HirInstruction {
             },
             host: CallHost::Unknown,
             macro_kind,
+            reactive_kind: None,
             optional: false,
         }),
         semantics: InstructionSemantics::CONSERVATIVE_EAGER,

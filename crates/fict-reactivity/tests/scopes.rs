@@ -66,6 +66,7 @@ fn propagates_state_into_pure_derived_bindings_and_active_blocks() {
             arguments,
             host: CallHost::Unknown,
             macro_kind: Some(kind),
+            reactive_kind: None,
             optional: false,
         })
     };

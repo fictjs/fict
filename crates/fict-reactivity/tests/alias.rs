@@ -207,6 +207,7 @@ fn forms_versioned_alias_classes_and_invalidates_every_member() {
                         }],
                         host: CallHost::Unknown,
                         macro_kind: None,
+                        reactive_kind: None,
                         optional: false,
                     }),
                     semantics: InstructionSemantics::CONSERVATIVE_EAGER,

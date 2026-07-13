@@ -543,6 +543,20 @@ impl Verifier<'_> {
                 for argument in &call.arguments {
                     self.value(function, argument.value, instruction.origin);
                 }
+                if call.macro_kind.is_some() && call.reactive_kind.is_some() {
+                    self.error(
+                        "FICT-HIR-CALL-KIND",
+                        "a call cannot be both a compiler macro and a runtime reactive creator",
+                        Some(instruction.origin),
+                    );
+                }
+                if call.reactive_kind.is_some() && !matches!(call.host, CallHost::Binding(_)) {
+                    self.error(
+                        "FICT-HIR-CALL-KIND",
+                        "runtime reactive creators must retain their resolved import binding",
+                        Some(instruction.origin),
+                    );
+                }
                 match call.host {
                     CallHost::Binding(binding) => self.binding(binding, instruction.origin),
                     CallHost::Function(nested) => self.function(nested, instruction.origin),

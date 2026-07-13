@@ -581,6 +581,18 @@ pub enum FictMacroKind {
     Memo,
 }
 
+/// Binding-resolved runtime reactive call whose value needs compiler tracking but whose call is
+/// preserved. Unlike [`FictMacroKind`], these functions have real runtime implementations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ReactiveCallKind {
+    /// Deep proxy returned by `$store`.
+    Store,
+    /// Async resource factory returned by `resource`.
+    Resource,
+    /// Keyed boolean accessor factory returned by `createSelector`.
+    Selector,
+}
+
 /// Configured reactive callback category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ReactiveScopeKind {
@@ -631,6 +643,8 @@ pub struct CallInstruction {
     pub host: CallHost,
     /// Confirmed Fict macro kind, if any.
     pub macro_kind: Option<FictMacroKind>,
+    /// Confirmed runtime reactive creator kind, if any.
+    pub reactive_kind: Option<ReactiveCallKind>,
     /// Whether the call itself is optional.
     pub optional: bool,
 }

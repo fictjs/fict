@@ -257,6 +257,7 @@ fn cse_reuses_pure_values_but_never_crosses_an_unknown_call_barrier() {
                 arguments: Vec::new(),
                 host: CallHost::Unknown,
                 macro_kind: None,
+                reactive_kind: None,
                 optional: false,
             }),
             semantics: InstructionSemantics::CONSERVATIVE_EAGER,

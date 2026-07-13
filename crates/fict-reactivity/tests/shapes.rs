@@ -198,6 +198,7 @@ fn propagates_shape_state_across_aliases() {
                         }],
                         host: CallHost::Unknown,
                         macro_kind: None,
+                        reactive_kind: None,
                         optional: false,
                     }),
                     semantics: InstructionSemantics::CONSERVATIVE_EAGER,

@@ -328,6 +328,7 @@ fn classifies_callback_hosts_captures_and_unknown_argument_escapes() {
             }],
             host,
             macro_kind: None,
+            reactive_kind: None,
             optional: false,
         }),
         semantics: InstructionSemantics::CONSERVATIVE_EAGER,

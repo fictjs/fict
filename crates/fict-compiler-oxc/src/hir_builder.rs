@@ -9,7 +9,7 @@ use fict_hir::{
     FunctionKind, HirBlock, HirFile, HirFunction, HirInstruction, HirInstructionKind, HirLocal,
     HirParameter, HirScope, HirTerminator, HirValue, InstructionSemantics, JsxAttribute,
     JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxNode, JsxTemplate, LocalId,
-    LocalKind, MutationEffect, Origin, PatternSummary, Purity, ReactiveScopeHost,
+    LocalKind, MutationEffect, Origin, PatternSummary, Purity, ReactiveCallKind, ReactiveScopeHost,
     ReactiveScopeKind, RegionId, ScopeId, ScopeKind, SyntaxFragment, SyntaxFragmentId,
     SyntaxFragmentKind, SyntaxSummary, TemplateId, TerminatorKind, ValueId, ValueKind, verify_hir,
 };
@@ -410,6 +410,8 @@ struct Builder<'source, 'semantic> {
     adapter_fragments: Vec<OxcSyntaxFragment>,
     diagnostics: Vec<Diagnostic>,
     macro_bindings: BTreeMap<BindingId, FictMacroKind>,
+    reactive_bindings: BTreeMap<BindingId, ReactiveCallKind>,
+    reactive_namespace_sources: BTreeMap<BindingId, String>,
     configured_bindings: BTreeSet<BindingId>,
     reactive_functions: BTreeMap<FunctionId, ReactiveScopeKind>,
 }
@@ -442,6 +444,29 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     .map(|binding| (binding, import.kind))
             })
             .collect();
+        let mut reactive_bindings = BTreeMap::new();
+        let mut reactive_namespace_sources = BTreeMap::new();
+        for binding in &frontend.bindings {
+            let Some(mapped) = old_to_new.get(&binding.id.index()).copied() else {
+                continue;
+            };
+            let Some(import) = &binding.import else {
+                continue;
+            };
+            match &import.imported {
+                fict_hir::ImportedName::Named(name) => {
+                    if let Some(kind) = runtime_reactive_call_kind(&import.source, name) {
+                        reactive_bindings.insert(mapped, kind);
+                    }
+                }
+                fict_hir::ImportedName::Namespace
+                    if runtime_reactive_namespace_source(&import.source) =>
+                {
+                    reactive_namespace_sources.insert(mapped, import.source.clone());
+                }
+                fict_hir::ImportedName::Default | fict_hir::ImportedName::Namespace => {}
+            }
+        }
         let option_names: BTreeSet<_> = options.reactive_scopes.iter().cloned().collect();
         let configured_bindings = frontend
             .bindings
@@ -467,6 +492,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             adapter_fragments: Vec::new(),
             diagnostics: Vec::new(),
             macro_bindings,
+            reactive_bindings,
+            reactive_namespace_sources,
             configured_bindings,
             reactive_functions: BTreeMap::new(),
         }
@@ -485,6 +512,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
 
         let function_by_span = self.function_by_span.clone();
         let symbol_to_binding = self.symbol_to_binding.clone();
+        let reactive_bindings = self.reactive_bindings.clone();
+        let reactive_namespace_sources = self.reactive_namespace_sources.clone();
         let hook_bindings: BTreeSet<_> = self
             .functions
             .iter()
@@ -515,6 +544,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             symbol_to_binding: &symbol_to_binding,
             hook_bindings: &hook_bindings,
             namespace_imports: &namespace_imports,
+            reactive_bindings: &reactive_bindings,
+            reactive_namespace_sources: &reactive_namespace_sources,
             context: PlacementContext::default(),
             calls: Vec::new(),
         };
@@ -1069,6 +1100,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         macro_kind: call
                             .binding
                             .and_then(|binding| self.macro_bindings.get(&binding).copied()),
+                        reactive_kind: call.reactive_kind,
                         optional: call.optional,
                     }),
                     InstructionSemantics {
@@ -1704,6 +1736,7 @@ struct CallFact {
     span: SourceSpan,
     callee_span: SourceSpan,
     binding: Option<BindingId>,
+    reactive_kind: Option<ReactiveCallKind>,
     arguments: Vec<ArgumentFact>,
     callback: Option<FunctionId>,
     direct_variable: Option<bool>,
@@ -1845,6 +1878,8 @@ struct CallCollector<'facts, 'semantic> {
     symbol_to_binding: &'facts BTreeMap<SymbolId, BindingId>,
     hook_bindings: &'facts BTreeSet<BindingId>,
     namespace_imports: &'facts BTreeSet<BindingId>,
+    reactive_bindings: &'facts BTreeMap<BindingId, ReactiveCallKind>,
+    reactive_namespace_sources: &'facts BTreeMap<BindingId, String>,
     context: PlacementContext,
     calls: Vec<CallFact>,
 }
@@ -1900,8 +1935,18 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             immediate_default_export,
             conditional_or_loop,
         ) = self.context.facts(call_span);
-        let binding = resolved_callee_symbol(self.scoping, &call.callee)
+        let direct_binding = resolved_callee_symbol(self.scoping, &call.callee)
             .and_then(|symbol| self.symbol_to_binding.get(&symbol).copied());
+        let namespace_reactive = namespace_reactive_call_kind(
+            self.scoping,
+            &call.callee,
+            self.symbol_to_binding,
+            self.reactive_namespace_sources,
+        );
+        let binding = direct_binding.or(namespace_reactive.map(|(binding, _)| binding));
+        let reactive_kind = direct_binding
+            .and_then(|binding| self.reactive_bindings.get(&binding).copied())
+            .or(namespace_reactive.map(|(_, kind)| kind));
         let hook = classify_hook_call(
             self.scoping,
             &call.callee,
@@ -1936,6 +1981,7 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             span: call_span,
             callee_span: source_span(call.callee.span()),
             binding,
+            reactive_kind,
             callback: arguments.first().and_then(|argument| argument.function),
             direct_variable,
             immediate_statement,
@@ -1952,21 +1998,97 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
 }
 
 fn resolved_callee_symbol(scoping: &Scoping, expression: &Expression<'_>) -> Option<SymbolId> {
+    let Expression::Identifier(identifier) = unwrap_transparent_call_expression(expression) else {
+        return None;
+    };
+    let reference = scoping.get_reference(identifier.reference_id.get()?);
+    reference.symbol_id()
+}
+
+fn namespace_reactive_call_kind(
+    scoping: &Scoping,
+    expression: &Expression<'_>,
+    symbol_to_binding: &BTreeMap<SymbolId, BindingId>,
+    namespace_sources: &BTreeMap<BindingId, String>,
+) -> Option<(BindingId, ReactiveCallKind)> {
+    let expression = unwrap_transparent_call_expression(expression);
+    let (object, property) = match expression {
+        Expression::StaticMemberExpression(member) => {
+            (&member.object, member.property.name.as_str())
+        }
+        Expression::ComputedMemberExpression(member) => {
+            let Expression::StringLiteral(property) =
+                unwrap_transparent_call_expression(&member.expression)
+            else {
+                return None;
+            };
+            (&member.object, property.value.as_str())
+        }
+        _ => return None,
+    };
+    let Expression::Identifier(object) = unwrap_transparent_call_expression(object) else {
+        return None;
+    };
+    let symbol = scoping
+        .get_reference(object.reference_id.get()?)
+        .symbol_id()?;
+    let binding = symbol_to_binding.get(&symbol)?;
+    runtime_reactive_call_kind(namespace_sources.get(binding)?, property)
+        .map(|kind| (*binding, kind))
+}
+
+fn unwrap_transparent_call_expression<'expression>(
+    expression: &'expression Expression<'_>,
+) -> &'expression Expression<'expression> {
     let mut current = expression;
     loop {
         current = match current {
-            Expression::Identifier(identifier) => {
-                let reference = scoping.get_reference(identifier.reference_id.get()?);
-                return reference.symbol_id();
-            }
             Expression::ParenthesizedExpression(expression) => &expression.expression,
             Expression::TSAsExpression(expression) => &expression.expression,
             Expression::TSSatisfiesExpression(expression) => &expression.expression,
             Expression::TSTypeAssertion(expression) => &expression.expression,
             Expression::TSNonNullExpression(expression) => &expression.expression,
             Expression::TSInstantiationExpression(expression) => &expression.expression,
-            _ => return None,
+            Expression::SequenceExpression(expression) => {
+                let Some(last) = expression.expressions.last() else {
+                    return current;
+                };
+                last
+            }
+            _ => return current,
         };
+    }
+}
+
+fn runtime_reactive_namespace_source(source: &str) -> bool {
+    matches!(
+        source,
+        "fict"
+            | "fict/plus"
+            | "fict/advanced"
+            | "fict/internal"
+            | "@fictjs/runtime/advanced"
+            | "@fictjs/runtime/internal"
+    )
+}
+
+fn runtime_reactive_call_kind(source: &str, imported: &str) -> Option<ReactiveCallKind> {
+    match imported {
+        "$store" if matches!(source, "fict" | "fict/plus") => Some(ReactiveCallKind::Store),
+        "resource" if matches!(source, "fict" | "fict/plus") => Some(ReactiveCallKind::Resource),
+        "createSelector"
+            if matches!(
+                source,
+                "fict"
+                    | "fict/advanced"
+                    | "fict/internal"
+                    | "@fictjs/runtime/advanced"
+                    | "@fictjs/runtime/internal"
+            ) =>
+        {
+            Some(ReactiveCallKind::Selector)
+        }
+        _ => None,
     }
 }
 

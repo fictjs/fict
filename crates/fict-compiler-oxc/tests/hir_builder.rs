@@ -1,7 +1,9 @@
 use fict_compiler_oxc::{
     HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, build_hir,
 };
-use fict_hir::{CallHost, FictMacroKind, FunctionKind, HirInstructionKind, SyntaxFragmentKind};
+use fict_hir::{
+    CallHost, FictMacroKind, FunctionKind, HirInstructionKind, ReactiveCallKind, SyntaxFragmentKind,
+};
 
 fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
     OxcCompileOptions {
@@ -112,6 +114,66 @@ fn alias_and_shadow_calls_keep_distinct_binding_identity() {
         panic!("shadow call")
     };
     assert_ne!(imported, shadow);
+}
+
+#[test]
+fn classifies_runtime_reactive_calls_by_import_identity() {
+    let source = r#"
+        import { $store as store } from 'fict';
+        import { resource } from 'fict/plus';
+        import { createSelector as selector } from '@fictjs/runtime/advanced';
+        import * as F from 'fict';
+        import { $store as fakeStore } from 'third-party';
+
+        const one = store({ value: 1 });
+        const two = resource(() => 2);
+        const three = selector(() => one.value);
+        const four = F.$store({ value: 4 });
+        const five = F['resource'](() => 5);
+        const six = F.createSelector(() => four.value);
+        const ignored = fakeStore({ value: 0 });
+        function shadow(store) { return store({ value: 0 }); }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified reactive-call HIR");
+    let calls: Vec<_> = hir
+        .functions
+        .iter()
+        .flat_map(|function| &function.blocks[0].instructions)
+        .filter_map(|instruction| match &instruction.kind {
+            HirInstructionKind::Call(call) => Some(call),
+            _ => None,
+        })
+        .collect();
+    let kinds: Vec<_> = calls.iter().filter_map(|call| call.reactive_kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            ReactiveCallKind::Store,
+            ReactiveCallKind::Resource,
+            ReactiveCallKind::Selector,
+            ReactiveCallKind::Store,
+            ReactiveCallKind::Resource,
+            ReactiveCallKind::Selector,
+        ]
+    );
+    for call in calls.iter().filter(|call| call.reactive_kind.is_some()) {
+        assert!(matches!(call.host, CallHost::Binding(_)));
+        assert!(call.macro_kind.is_none());
+    }
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call.reactive_kind.is_none())
+            .count(),
+        2,
+        "wrong-module and shadowed same-name calls remain ordinary"
+    );
 }
 
 #[test]
