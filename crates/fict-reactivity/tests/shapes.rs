@@ -252,7 +252,7 @@ fn propagates_shape_state_across_aliases() {
         );
         assert_eq!(shape.mutable_keys, [ShapeKey::Static("y".into())]);
         assert!(shape.dynamic_access);
-        assert!(!shape.complete_key_set);
+        assert!(shape.complete_key_set);
         assert!(shape.escapes);
     }
 
@@ -281,9 +281,9 @@ fn propagates_shape_state_across_aliases() {
         .filter(|fact| fact.name.local == LocalId::new(0))
         .max_by_key(|fact| fact.name.version.index())
         .expect("object shape");
-    object.shape.complete_key_set = true;
+    object.shape.has_spread = true;
     let diagnostics = verify_shapes(&file.functions[0], &ssa, &aliases, &corrupted)
-        .expect_err("dynamic shape cannot be complete");
+        .expect_err("spread shape cannot be complete");
     assert!(
         diagnostics
             .as_slice()

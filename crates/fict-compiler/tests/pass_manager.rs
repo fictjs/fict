@@ -149,6 +149,67 @@ fn classifies_direct_references_to_derived_values_as_reactive_aliases() {
 }
 
 #[test]
+fn keeps_dynamic_reads_closed_and_only_treats_the_first_component_parameter_as_props() {
+    let frontend = build_hir(
+        r#"
+            export function Lookup(props, key) {
+                const model = { a: 1, b: 2 };
+                return props[key] + model[key];
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Module,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions {
+            strict_guarantee: false,
+            ..HirBuildOptions::default()
+        },
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified dynamic shape HIR"),
+        CorePassOptions {
+            optimize: false,
+            ..CorePassOptions::default()
+        },
+    )
+    .expect("core passes over dynamic shape reads");
+    let function = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                output.hir.bindings[binding.as_usize()].display_name == "Lookup"
+            })
+        })
+        .expect("Lookup function");
+    let analysis = &output.functions[function.id.as_usize()];
+    let final_shape = |name: &str| {
+        let local = function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"));
+        &analysis
+            .shapes
+            .shapes
+            .iter()
+            .filter(|fact| fact.name.local == local.id)
+            .max_by_key(|fact| fact.name.version.index())
+            .unwrap_or_else(|| panic!("{name} shape"))
+            .shape
+    };
+
+    assert_eq!(final_shape("props").kind, ShapeKind::Object);
+    assert_ne!(final_shape("key").kind, ShapeKind::Object);
+    assert!(final_shape("model").dynamic_access);
+    assert!(final_shape("model").complete_key_set);
+}
+
+#[test]
 fn optimized_hir_keeps_method_call_references_aligned_with_callee_reads() {
     let frontend = build_hir(
         r#"

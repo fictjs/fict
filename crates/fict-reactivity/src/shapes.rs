@@ -189,8 +189,12 @@ pub fn analyze_shapes(
             || definition.kind == SsaDefinitionKind::Parameter
         {
             let local = &function.locals[definition.name.local.as_usize()];
-            let parameter_object =
-                local.kind == LocalKind::Parameter && function.kind == FunctionKind::Component;
+            let parameter_object = local.kind == LocalKind::Parameter
+                && function.kind == FunctionKind::Component
+                && function
+                    .parameters
+                    .first()
+                    .is_some_and(|parameter| parameter.local == definition.name.local);
             shapes.insert(
                 definition.name,
                 Some(ValueShape {
@@ -429,9 +433,11 @@ pub fn analyze_shapes(
             };
             if access.path.is_dynamic() {
                 shape.dynamic_access = true;
-                shape.complete_key_set = false;
-                if access.kind == PropertyAccessKind::Write && shape.kind == ShapeKind::Array {
-                    shape.array_length = None;
+                if access.kind == PropertyAccessKind::Write {
+                    shape.complete_key_set = false;
+                    if shape.kind == ShapeKind::Array {
+                        shape.array_length = None;
+                    }
                 }
             }
             if access.kind == PropertyAccessKind::Write
@@ -534,10 +540,10 @@ pub fn verify_shapes(
                 "mutable shape keys must also be known keys",
             ));
         }
-        if shape.complete_key_set && (shape.dynamic_access || shape.has_spread) {
+        if shape.complete_key_set && shape.has_spread {
             diagnostics.push(shape_error(
                 "FICT-SHAPE-COMPLETE",
-                "dynamic/spread shapes cannot claim a complete key set",
+                "spread shapes cannot claim a complete key set",
             ));
         }
         if shape.array_length.is_some() && shape.kind != ShapeKind::Array {
