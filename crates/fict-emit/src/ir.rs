@@ -682,6 +682,7 @@ pub struct EmitPropBinding {
 pub enum EmitPropMode {
     Accessor,
     Value,
+    Mutable,
 }
 
 /// Eager nested-object check emitted before a prop binding.

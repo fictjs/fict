@@ -425,6 +425,61 @@ test('Rust compiler output preserves reactive top-level rest props', async () =>
   container.remove()
 })
 
+test('Rust compiler output keeps reassigned destructured props as mutable snapshots', async () => {
+  const module = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      let setReactive = () => {}
+
+      function Child({ reactive, local, count = 1, user: { name }, alias }) {
+        const assigned = (local = 'changed')
+        const before = count++
+        name = name.toUpperCase()
+        ;({ alias } = { alias: 'reassigned' })
+        return <p>{reactive}:{local}:{count}:{assigned}:{before}:{name}:{alias}</p>
+      }
+
+      function App() {
+        let reactive = $state('A')
+        setReactive = next => {
+          reactive = next
+        }
+        return <Child reactive={reactive} local="initial" user={{ name: 'ann' }} alias="initial" />
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+
+      export function update(next) {
+        setReactive(next)
+      }
+    `,
+    'mutated-props',
+    /var local = __fictProps\.local/,
+  )
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = module.mount(container)
+  await flushRuntime()
+
+  const child = container.querySelector('p')
+  assert.ok(child)
+  assert.equal(child.textContent, 'A:changed:2:changed:1:ANN:reassigned')
+
+  module.update('B')
+  await flushRuntime()
+
+  assert.equal(container.querySelector('p'), child)
+  assert.equal(child.textContent, 'B:changed:2:changed:1:ANN:reassigned')
+
+  dispose()
+  assert.equal(container.childNodes.length, 0)
+  container.remove()
+})
+
 test('Rust compiler output snapshots callable props without deactivating value props', async () => {
   const module = await compileAndImport(
     `

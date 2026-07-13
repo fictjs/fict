@@ -1055,9 +1055,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .map(|property| {
                 let binding = self.symbol_to_binding.get(&property.binding).copied()?;
                 let mut references = Vec::new();
+                let mut mutated = false;
                 for reference in self.semantic.symbol_references(property.binding) {
                     if reference.is_write() {
-                        return None;
+                        mutated = true;
+                        continue;
                     }
                     if !reference.is_read() {
                         continue;
@@ -1068,12 +1070,16 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     };
                     references.push(Origin::source(source_span(identifier.span)));
                 }
-                let mode = callable_prop_mode(
-                    self.semantic,
-                    property.binding,
-                    property.default_value.is_some(),
-                );
-                if mode == HirObjectParameterMode::Value {
+                let mode = if mutated {
+                    HirObjectParameterMode::Mutable
+                } else {
+                    callable_prop_mode(
+                        self.semantic,
+                        property.binding,
+                        property.default_value.is_some(),
+                    )
+                };
+                if mode != HirObjectParameterMode::Accessor {
                     references.clear();
                 }
                 Some(HirObjectParameterProperty {

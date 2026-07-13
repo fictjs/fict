@@ -323,12 +323,14 @@ impl Verifier<'_> {
                     if let Some(default_value) = property.default_value {
                         self.verify_origin(default_value);
                     }
-                    if property.mode == crate::HirObjectParameterMode::Value
-                        && (!property.references.is_empty() || property.default_value.is_some())
+                    if (property.mode == crate::HirObjectParameterMode::Value
+                        && (!property.references.is_empty() || property.default_value.is_some()))
+                        || (property.mode == crate::HirObjectParameterMode::Mutable
+                            && !property.references.is_empty())
                     {
                         self.error(
                             "FICT-HIR-PROPS-MODE",
-                            "plain value props cannot carry accessor rewrites or defaults",
+                            "plain value props cannot carry accessor rewrites or defaults, and mutable props cannot carry accessor rewrites",
                             Some(property.origin),
                         );
                     }

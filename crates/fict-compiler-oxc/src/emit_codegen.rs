@@ -3070,41 +3070,74 @@ impl<'a> AstRewriter<'a, '_> {
                 );
                 insertion_index += 1;
             }
+            let mut mutable_default = None;
             if let (Some(default), Some(default_local)) =
                 (binding.default_value, binding.default_local.as_deref())
             {
                 let default_expression = defaults
                     .remove(&(default.start(), default.end()))
                     .expect("validated component prop default expression");
-                let default_initializer = Expression::new_conditional_expression(
-                    span,
-                    self.prop_is_undefined(&plan.source, &binding.path, span),
-                    default_expression,
-                    self.void_zero(span),
-                    &builder,
-                );
+                let default_initializer = if binding.mode == EmitPropMode::Mutable {
+                    mutable_default = Some((default_local, default_expression));
+                    self.prop_member(&plan.source, &binding.path, span)
+                } else {
+                    Expression::new_conditional_expression(
+                        span,
+                        self.prop_is_undefined(&plan.source, &binding.path, span),
+                        default_expression,
+                        self.void_zero(span),
+                        &builder,
+                    )
+                };
                 body.statements.insert(
                     insertion_index,
                     const_statement(self.allocator, default_local, default_initializer, span),
                 );
                 insertion_index += 1;
             }
-            let value = if binding.mode == EmitPropMode::Value {
-                self.prop_member(&plan.source, &binding.path, span)
-            } else if let Some(default_local) = binding.default_local.as_deref() {
-                Expression::new_conditional_expression(
-                    span,
-                    self.prop_is_undefined(&plan.source, &binding.path, span),
-                    Expression::new_identifier(
+            let value = match (binding.mode, mutable_default) {
+                (EmitPropMode::Mutable, Some((default_local, default_expression))) => {
+                    let snapshot = || {
+                        Expression::new_identifier(
+                            span,
+                            self.allocator.alloc_str(default_local),
+                            &builder,
+                        )
+                    };
+                    Expression::new_conditional_expression(
                         span,
-                        self.allocator.alloc_str(default_local),
+                        Expression::new_binary_expression(
+                            span,
+                            snapshot(),
+                            OxcBinaryOperator::StrictEquality,
+                            self.void_zero(span),
+                            &builder,
+                        ),
+                        default_expression,
+                        snapshot(),
                         &builder,
-                    ),
-                    self.prop_member(&plan.source, &binding.path, span),
-                    &builder,
-                )
-            } else {
-                self.prop_member(&plan.source, &binding.path, span)
+                    )
+                }
+                (EmitPropMode::Accessor, _) => {
+                    if let Some(default_local) = binding.default_local.as_deref() {
+                        Expression::new_conditional_expression(
+                            span,
+                            self.prop_is_undefined(&plan.source, &binding.path, span),
+                            Expression::new_identifier(
+                                span,
+                                self.allocator.alloc_str(default_local),
+                                &builder,
+                            ),
+                            self.prop_member(&plan.source, &binding.path, span),
+                            &builder,
+                        )
+                    } else {
+                        self.prop_member(&plan.source, &binding.path, span)
+                    }
+                }
+                (EmitPropMode::Value, _) | (EmitPropMode::Mutable, None) => {
+                    self.prop_member(&plan.source, &binding.path, span)
+                }
             };
             let initializer = if binding.mode == EmitPropMode::Accessor {
                 let getter = zero_parameter_expression_arrow(self.allocator, value, span);
@@ -3125,7 +3158,17 @@ impl<'a> AstRewriter<'a, '_> {
             };
             body.statements.insert(
                 insertion_index,
-                const_statement(self.allocator, &binding.local, initializer, span),
+                variable_statement(
+                    self.allocator,
+                    &binding.local,
+                    initializer,
+                    span,
+                    if binding.mode == EmitPropMode::Mutable {
+                        VariableDeclarationKind::Var
+                    } else {
+                        VariableDeclarationKind::Const
+                    },
+                ),
             );
             insertion_index += 1;
         }
@@ -5101,11 +5144,27 @@ fn const_statement<'a>(
     initializer: Expression<'a>,
     span: Span,
 ) -> Statement<'a> {
+    variable_statement(
+        allocator,
+        name,
+        initializer,
+        span,
+        VariableDeclarationKind::Const,
+    )
+}
+
+fn variable_statement<'a>(
+    allocator: &'a Allocator,
+    name: &str,
+    initializer: Expression<'a>,
+    span: Span,
+    kind: VariableDeclarationKind,
+) -> Statement<'a> {
     let builder = AstBuilder::new(allocator);
     let pattern = BindingPattern::new_binding_identifier(span, allocator.alloc_str(name), &builder);
     let declarator = VariableDeclarator::new(
         span,
-        VariableDeclarationKind::Const,
+        kind,
         pattern,
         NONE,
         Some(initializer),
@@ -5114,13 +5173,7 @@ fn const_statement<'a>(
     );
     let mut declarations = ArenaVec::new_in(&allocator);
     declarations.push(declarator);
-    Statement::new_variable_declaration(
-        span,
-        VariableDeclarationKind::Const,
-        declarations,
-        false,
-        &builder,
-    )
+    Statement::new_variable_declaration(span, kind, declarations, false, &builder)
 }
 
 fn dom_literal_expression<'a>(

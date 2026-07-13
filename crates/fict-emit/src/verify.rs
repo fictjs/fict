@@ -191,6 +191,9 @@ pub fn verify_emit_program(
                                                 fict_hir::HirObjectParameterMode::Value => {
                                                     crate::EmitPropMode::Value
                                                 }
+                                                fict_hir::HirObjectParameterMode::Mutable => {
+                                                    crate::EmitPropMode::Mutable
+                                                }
                                             }
                                         && planned.checks.len() == source.checks.len()
                                         && planned.checks.iter().zip(&source.checks).all(
@@ -248,6 +251,8 @@ pub fn verify_emit_program(
                             && (!binding.references.is_empty()
                                 || binding.default_value.is_some()
                                 || binding.default_local.is_some()))
+                        || (binding.mode == crate::EmitPropMode::Mutable
+                            && !binding.references.is_empty())
                         || binding.checks.iter().any(|check| {
                             check.path.is_empty()
                                 || check.path.iter().any(String::is_empty)

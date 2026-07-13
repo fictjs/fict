@@ -241,6 +241,7 @@ pub struct HirObjectParameterProperty {
 pub enum HirObjectParameterMode {
     Accessor,
     Value,
+    Mutable,
 }
 
 /// Eager object check required by a nested destructuring pattern.

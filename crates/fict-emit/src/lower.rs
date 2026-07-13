@@ -778,6 +778,7 @@ fn lower_component_props_plan(
             mode: match property.mode {
                 fict_hir::HirObjectParameterMode::Accessor => EmitPropMode::Accessor,
                 fict_hir::HirObjectParameterMode::Value => EmitPropMode::Value,
+                fict_hir::HirObjectParameterMode::Mutable => EmitPropMode::Mutable,
             },
             checks: property
                 .checks

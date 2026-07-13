@@ -861,8 +861,15 @@ fn models_simple_component_object_props_with_exact_read_origins() {
         function Rest({ id, title: heading, ...rest }) {
             return <span>{id}:{heading}:{rest.extra}</span>;
         }
+        function Mutated({ reactive, local, count = 1, user: { name }, alias }) {
+            local = 'changed';
+            count++;
+            name = name.toUpperCase();
+            ({ alias } = { alias: 'reassigned' });
+            return <span>{reactive}:{local}:{count}:{name}:{alias}</span>;
+        }
         export function App(value) {
-            return <><Child value={value} label="ok" /><Method value={value} /><Nested user={{ name: 'Ada', profile: {} }} /><Rest id="x" title="Title" extra="ok" /></>;
+            return <><Child value={value} label="ok" /><Method value={value} /><Nested user={{ name: 'Ada', profile: {} }} /><Rest id="x" title="Title" extra="ok" /><Mutated reactive={value} local="initial" user={{ name: 'ann' }} alias="initial" /></>;
         }
     "#;
     let output = build_hir(
@@ -976,6 +983,51 @@ fn models_simple_component_object_props_with_exact_read_origins() {
         hir.bindings[rest_binding.binding.as_usize()].display_name,
         "rest"
     );
+    let mutated = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "Mutated")
+        })
+        .expect("Mutated component");
+    let mutated_properties = mutated.parameters[0]
+        .object_properties
+        .as_ref()
+        .expect("mutated props remain modeled");
+    assert_eq!(mutated_properties.len(), 5);
+    assert_eq!(mutated_properties[0].path, ["reactive"]);
+    assert_eq!(
+        mutated_properties[0].mode,
+        fict_hir::HirObjectParameterMode::Accessor
+    );
+    assert_eq!(mutated_properties[0].references.len(), 1);
+    assert_eq!(mutated_properties[1].path, ["local"]);
+    assert_eq!(
+        mutated_properties[1].mode,
+        fict_hir::HirObjectParameterMode::Mutable
+    );
+    assert!(mutated_properties[1].references.is_empty());
+    assert_eq!(mutated_properties[2].path, ["count"]);
+    assert_eq!(
+        mutated_properties[2].mode,
+        fict_hir::HirObjectParameterMode::Mutable
+    );
+    assert!(mutated_properties[2].references.is_empty());
+    assert!(mutated_properties[2].default_value.is_some());
+    assert_eq!(mutated_properties[3].path, ["user", "name"]);
+    assert_eq!(
+        mutated_properties[3].mode,
+        fict_hir::HirObjectParameterMode::Mutable
+    );
+    assert!(mutated_properties[3].references.is_empty());
+    assert_eq!(mutated_properties[4].path, ["alias"]);
+    assert_eq!(
+        mutated_properties[4].mode,
+        fict_hir::HirObjectParameterMode::Mutable
+    );
+    assert!(mutated_properties[4].references.is_empty());
 
     let callable = build_hir(
         "function Button({ onClick }) { const invoke = onClick; return <button onClick={() => invoke.call(null)}>go</button>; } function Mixed({ label }) { label(); return <span>{String(label)}</span>; } export function App(fn) { return <><Button onClick={fn} /><Mixed label={fn} /></>; }",

@@ -1402,6 +1402,77 @@ mod tests {
     }
 
     #[test]
+    fn lowers_mutated_component_props_to_local_snapshots() {
+        let result = compile(request(
+            "import { $state } from 'fict'; function Child({ reactive, local, count = 1, user: { name }, alias }) { local = 'changed'; count++; name = name.toUpperCase(); ({ alias } = { alias: 'reassigned' }); return <p>{reactive}:{local}:{count}:{name}:{alias}</p>; } export function App() { let reactive = $state('A'); return <Child reactive={reactive} local='initial' user={{ name: 'ann' }} alias='initial' />; }",
+            "mutated-component-props.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .code
+                .contains("const reactive = prop(() => __fictProps.reactive);"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("var local = __fictProps.local;"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("const __fictPropDefault = __fictProps.count;"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("var count = __fictPropDefault === void 0 ? 1 : __fictPropDefault;"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("local = \"changed\";"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("count++;"), "{}", result.code);
+        assert!(
+            result.code.contains("var name = __fictProps.user.name;"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("var alias = __fictProps.alias;"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("name = name.toUpperCase();"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("({alias} = { alias: \"reassigned\" });"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("() => reactive()"), "{}", result.code);
+        assert!(result.code.contains("() => local"), "{}", result.code);
+        assert!(result.code.contains("() => count"), "{}", result.code);
+        assert!(!result.code.contains("local()"), "{}", result.code);
+        assert!(!result.code.contains("count()"), "{}", result.code);
+        assert!(!result.code.contains("name()"), "{}", result.code);
+        assert!(!result.code.contains("alias()"), "{}", result.code);
+    }
+
+    #[test]
     fn omits_intrinsic_keys_without_losing_dynamic_key_effects() {
         let result = compile(request(
             "export function Static() { return <p key=\"row\" title=\"ok\" />; } export function Dynamic() { return <div before={before()} key={side()} after={after()} />; }",
