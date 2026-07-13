@@ -47,6 +47,8 @@ pub enum ShapeSource {
     UnresolvedTypeof(ValueId),
     /// Value read from the current JavaScript execution context.
     ContextValue(ValueId, ContextValueKind),
+    /// Boolean result of a JavaScript `delete` operation.
+    Delete(ValueId),
     /// Promise object returned by a dynamic import request.
     DynamicImport(ValueId),
     /// Object literal.
@@ -654,6 +656,17 @@ fn structural_value_shape(
         HirInstructionKind::Context { kind } => {
             unknown_shape(ShapeSource::ContextValue(value, *kind))
         }
+        HirInstructionKind::Delete { .. } => ValueShape {
+            kind: ShapeKind::Primitive,
+            source: ShapeSource::Delete(value),
+            known_keys: Vec::new(),
+            mutable_keys: Vec::new(),
+            complete_key_set: true,
+            dynamic_access: false,
+            has_spread: false,
+            escapes: false,
+            array_length: None,
+        },
         HirInstructionKind::DynamicImport { .. } => ValueShape {
             kind: ShapeKind::Object,
             source: ShapeSource::DynamicImport(value),

@@ -440,8 +440,6 @@ pub enum UnaryOperator {
     TypeOf,
     /// `void`.
     Void,
-    /// `delete`.
-    Delete,
 }
 
 /// Value read directly from the current JavaScript execution context.
@@ -453,6 +451,19 @@ pub enum ContextValueKind {
     NewTarget,
     /// Per-module metadata object exposed through `import.meta`.
     ImportMeta,
+}
+
+/// Reference or value targeted by JavaScript's `delete` operator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeleteTarget {
+    /// Resolved binding or property reference. Property projections are deleted without reading
+    /// their current value first.
+    Place(Place),
+    /// Identifier without a frontend-resolved lexical binding. The host/global environment may
+    /// still provide a deletable binding at runtime.
+    UnresolvedIdentifier(String),
+    /// Non-reference expression that is evaluated for effects before `delete` returns `true`.
+    Value(ValueId),
 }
 
 /// Binary or logical JavaScript operator.
@@ -811,6 +822,11 @@ pub enum HirInstructionKind {
     Context {
         /// Context slot selected by the authored expression.
         kind: ContextValueKind,
+    },
+    /// Apply JavaScript reference-aware deletion semantics.
+    Delete {
+        /// Reference or ordinary value selected by the operand syntax.
+        target: DeleteTarget,
     },
     /// Apply a unary operator.
     Unary {

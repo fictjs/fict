@@ -1,10 +1,10 @@
 use fict_hir::{
-    BlockId, CallHost, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile,
-    HirFunction, HirInstruction, HirInstructionKind, HirScope, HirTerminator, HirValue,
+    BlockId, CallHost, DeleteTarget, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock,
+    HirFile, HirFunction, HirInstruction, HirInstructionKind, HirScope, HirTerminator, HirValue,
     ImportPhase, InstructionSemantics, JavaScriptString, LiteralValue, NumberLiteral, ObjectEntry,
-    ObjectPropertyKind, Origin, PropertyKey, ScopeId, ScopeKind, StructuredSourceHint,
-    StructuredSourceKind, StructuredSwitchCaseHint, TaggedTemplateQuasi, TerminatorKind, ValueId,
-    ValueKind, print_hir, verify_hir,
+    ObjectPropertyKind, Origin, Place, PlaceBase, Projection, PropertyKey, ScopeId, ScopeKind,
+    StructuredSourceHint, StructuredSourceKind, StructuredSwitchCaseHint, TaggedTemplateQuasi,
+    TerminatorKind, ValueId, ValueKind, print_hir, verify_hir,
 };
 
 fn empty_file() -> HirFile {
@@ -151,6 +151,101 @@ fn verifier_requires_an_identifier_for_unresolved_typeof() {
             .iter()
             .any(|diagnostic| diagnostic.code.as_str() == "FICT-HIR-TYPEOF")
     );
+}
+
+#[test]
+fn verifier_enforces_delete_target_references_and_mutation_semantics() {
+    let mut file = empty_file();
+    let origin = Origin::source(fict_hir::SourceSpan::empty(0));
+    file.functions[0].values.extend([
+        HirValue {
+            id: ValueId::new(0),
+            kind: ValueKind::Literal(LiteralValue::Number(NumberLiteral::from_f64(1.0))),
+            origin,
+        },
+        HirValue {
+            id: ValueId::new(1),
+            kind: ValueKind::InstructionResult,
+            origin,
+        },
+    ]);
+    file.functions[0].blocks[0].instructions.extend([
+        HirInstruction {
+            result: Some(ValueId::new(0)),
+            kind: HirInstructionKind::Literal(LiteralValue::Number(NumberLiteral::from_f64(1.0))),
+            semantics: InstructionSemantics::PURE_EAGER,
+            origin,
+        },
+        HirInstruction {
+            result: Some(ValueId::new(1)),
+            kind: HirInstructionKind::Delete {
+                target: DeleteTarget::Value(ValueId::new(0)),
+            },
+            semantics: InstructionSemantics::PURE_EAGER,
+            origin,
+        },
+    ]);
+
+    verify_hir(&file).expect("well-formed value deletion");
+    let HirInstructionKind::Delete { target } =
+        &mut file.functions[0].blocks[0].instructions[1].kind
+    else {
+        panic!("delete fixture")
+    };
+    *target = DeleteTarget::Value(ValueId::new(99));
+    let invalid_value = verify_hir(&file).expect_err("invalid delete value must fail");
+    assert!(invalid_value.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-REF" && diagnostic.message.contains("value99")
+    }));
+
+    let HirInstructionKind::Delete { target } =
+        &mut file.functions[0].blocks[0].instructions[1].kind
+    else {
+        panic!("delete fixture")
+    };
+    *target = DeleteTarget::UnresolvedIdentifier(String::new());
+    file.functions[0].blocks[0].instructions[1].semantics =
+        InstructionSemantics::CONSERVATIVE_EAGER;
+    let empty_identifier = verify_hir(&file).expect_err("empty delete identifier must fail");
+    assert!(empty_identifier.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-DELETE"
+            && diagnostic.message.contains("non-empty identifier")
+    }));
+
+    let HirInstructionKind::Delete { target } =
+        &mut file.functions[0].blocks[0].instructions[1].kind
+    else {
+        panic!("delete fixture")
+    };
+    *target = DeleteTarget::Place(Place {
+        base: PlaceBase::Value(ValueId::new(0)),
+        projections: vec![Projection::StaticProperty {
+            name: "field".to_owned(),
+            optional: false,
+        }],
+    });
+    file.functions[0].blocks[0].instructions[1].semantics = InstructionSemantics::PURE_EAGER;
+    let missing_mutation = verify_hir(&file).expect_err("pure property delete must fail");
+    assert!(missing_mutation.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-DELETE"
+            && diagnostic.message.contains("observable mutation")
+    }));
+
+    let HirInstructionKind::Delete { target } =
+        &mut file.functions[0].blocks[0].instructions[1].kind
+    else {
+        panic!("delete fixture")
+    };
+    *target = DeleteTarget::Place(Place {
+        base: PlaceBase::Value(ValueId::new(0)),
+        projections: Vec::new(),
+    });
+    file.functions[0].blocks[0].instructions[1].semantics = InstructionSemantics::PURE_EAGER;
+    let invalid_place = verify_hir(&file).expect_err("unprojected value place must fail");
+    assert!(invalid_place.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-DELETE"
+            && diagnostic.message.contains("must use a value target")
+    }));
 }
 
 #[test]

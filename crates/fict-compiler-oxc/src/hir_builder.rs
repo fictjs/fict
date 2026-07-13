@@ -5,18 +5,18 @@ use fict_diagnostics::{
 };
 use fict_hir::{
     ArrayElement, BinaryOperator, Binding, BindingId, BindingKind, BlockId, CallArgument, CallHost,
-    CallInstruction, CompoundAssignmentOperator, ContextValueKind, DeclarationKind, DesugaringKind,
-    EvaluationMode, FictMacroKind, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock,
-    HirFile, HirFunction, HirInstruction, HirInstructionKind, HirLocal, HirObjectParameterCheck,
-    HirObjectParameterMode, HirObjectParameterProperty, HirObjectParameterRest, HirParameter,
-    HirScope, HirTerminator, HirValue, ImportPhase, InstructionSemantics, IterationKind,
-    JavaScriptString, JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName,
-    JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode, JsxTemplate, LiteralValue,
-    LocalId, LocalKind, MutationEffect, NumberLiteral, ObjectEntry, ObjectPropertyKind, Origin,
-    PatternSummary, PropertyKey, Purity, ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind,
-    RegionId, ScopeId, ScopeKind, StructuredSourceHint, SyntaxFragment, SyntaxFragmentId,
-    SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi, TemplateId, TerminatorKind,
-    UnaryOperator, UpdateOperator, ValueId, ValueKind, verify_hir,
+    CallInstruction, CompoundAssignmentOperator, ContextValueKind, DeclarationKind, DeleteTarget,
+    DesugaringKind, EvaluationMode, FictMacroKind, FileId, FunctionFlags, FunctionId, FunctionKind,
+    HirBlock, HirFile, HirFunction, HirInstruction, HirInstructionKind, HirLocal,
+    HirObjectParameterCheck, HirObjectParameterMode, HirObjectParameterProperty,
+    HirObjectParameterRest, HirParameter, HirScope, HirTerminator, HirValue, ImportPhase,
+    InstructionSemantics, IterationKind, JavaScriptString, JsxAttribute, JsxAttributeValue,
+    JsxChild, JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression, JsxListReceiver,
+    JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind, MutationEffect, NumberLiteral,
+    ObjectEntry, ObjectPropertyKind, Origin, PatternSummary, PropertyKey, Purity, ReactiveCallKind,
+    ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind, StructuredSourceHint,
+    SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi,
+    TemplateId, TerminatorKind, UnaryOperator, UpdateOperator, ValueId, ValueKind, verify_hir,
 };
 use oxc::{
     allocator::Allocator,
@@ -585,6 +585,9 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
                     kind: TypedExpressionKind::Context { kind },
                 })
             }
+            Expression::UnaryExpression(unary) if unary.operator == OxcUnaryOperator::Delete => {
+                Some(typed_delete_expression(self.scoping, unary))
+            }
             Expression::UnaryExpression(unary) if is_unresolved_typeof(self.scoping, unary) => {
                 let Expression::Identifier(identifier) = unary.argument.get_inner_expression()
                 else {
@@ -908,6 +911,44 @@ fn context_value_kind(meta_property: &MetaProperty<'_>) -> Option<ContextValueKi
         ("new", "target") => Some(ContextValueKind::NewTarget),
         ("import", "meta") => Some(ContextValueKind::ImportMeta),
         _ => None,
+    }
+}
+
+fn typed_delete_expression(
+    scoping: &Scoping,
+    unary: &oxc::ast::ast::UnaryExpression<'_>,
+) -> TypedExpressionFact {
+    let argument = unary.argument.get_inner_expression();
+    let value_target = || TypedDeleteTarget::Value {
+        span: source_span(argument.span()),
+        has_effects: structured_control_flow::expression_has_effects(&unary.argument),
+    };
+    let target = match argument {
+        Expression::Identifier(identifier) => planned_identifier_place(scoping, identifier)
+            .map_or_else(
+                || TypedDeleteTarget::UnresolvedIdentifier(identifier.name.to_string()),
+                TypedDeleteTarget::Place,
+            ),
+        Expression::StaticMemberExpression(member) => planned_static_member_place(scoping, member)
+            .map_or_else(value_target, TypedDeleteTarget::Place),
+        Expression::ComputedMemberExpression(member) => {
+            planned_computed_member_place(scoping, member)
+                .map_or_else(value_target, TypedDeleteTarget::Place)
+        }
+        Expression::ChainExpression(chain)
+            if matches!(
+                chain.expression,
+                ChainElement::StaticMemberExpression(_) | ChainElement::ComputedMemberExpression(_)
+            ) =>
+        {
+            planned_expression_place(scoping, &unary.argument)
+                .map_or_else(value_target, TypedDeleteTarget::Place)
+        }
+        _ => value_target(),
+    };
+    TypedExpressionFact {
+        span: source_span(unary.span),
+        kind: TypedExpressionKind::Delete { target },
     }
 }
 
@@ -1553,7 +1594,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         mutations.visit_program(program);
         let mut delete_targets = DeleteTargetCollector::default();
         delete_targets.visit_program(program);
-        let mut suppressed_members = delete_targets.spans;
+        let mut suppressed_members = delete_targets.member_spans;
         suppressed_members.extend(mutations.facts.iter().map(|fact| {
             let span = fact.target_span;
             (span.start(), span.end())
@@ -2732,6 +2773,15 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 let materialized = !fact.projected || !reactive_targets.contains(binding);
                 materialized.then_some(fact.place.as_ref()?.root_reference_span?)
             }))
+            .chain(typed_expressions.iter().filter_map(|expression| {
+                let TypedExpressionKind::Delete {
+                    target: TypedDeleteTarget::Place(place),
+                } = &expression.kind
+                else {
+                    return None;
+                };
+                place.root_reference_span
+            }))
             .map(|span| (span.start(), span.end()))
             .collect();
         let local_reads = self.collect_local_reads(
@@ -3057,20 +3107,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 continue;
             }
             if mutation.projected && reactive {
-                self.diagnostics.push(
-                    Diagnostic::new(
-                        DiagnosticCode::new("FICT-M").expect("diagnostic literal"),
-                        if self.strict_guarantee {
-                            DiagnosticSeverity::Error
-                        } else {
-                            DiagnosticSeverity::Warning
-                        },
-                        "nested mutation through a $state value cannot preserve fine-grained reactivity",
-                    )
-                    .with_primary_span(mutation.span)
-                    .with_help("replace the whole state value or use $store for nested mutation")
-                    .with_guarantee_class(GuaranteeClass::Fallback),
-                );
+                self.report_nested_reactive_mutation(mutation.span);
                 continue;
             }
             if mutation.projected && mutation.place.is_none() {
@@ -3097,6 +3134,23 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             )
         });
         facts
+    }
+
+    fn report_nested_reactive_mutation(&mut self, span: SourceSpan) {
+        self.diagnostics.push(
+            Diagnostic::new(
+                DiagnosticCode::new("FICT-M").expect("diagnostic literal"),
+                if self.strict_guarantee {
+                    DiagnosticSeverity::Error
+                } else {
+                    DiagnosticSeverity::Warning
+                },
+                "nested mutation through a $state value cannot preserve fine-grained reactivity",
+            )
+            .with_primary_span(span)
+            .with_help("replace the whole state value or use $store for nested mutation")
+            .with_guarantee_class(GuaranteeClass::Fallback),
+        );
     }
 
     fn function_owner_for_span(&self, span: SourceSpan) -> FunctionId {
@@ -3176,6 +3230,43 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 HirInstructionKind::Context { kind: *kind },
                 context_value_semantics(*kind),
             ),
+            TypedExpressionKind::Delete { target } => {
+                let deletes_nested_reactive_value = matches!(
+                    target,
+                    TypedDeleteTarget::Place(PlannedPlace {
+                        base: PlannedPlaceBase::Binding(symbol),
+                        projections,
+                        ..
+                    }) if !projections.is_empty()
+                        && self
+                            .symbol_to_binding
+                            .get(symbol)
+                            .is_some_and(|binding| self.reactive_value_bindings.contains(binding))
+                );
+                if deletes_nested_reactive_value {
+                    self.report_nested_reactive_mutation(expression.span);
+                }
+                let target = match target {
+                    TypedDeleteTarget::Place(place) => {
+                        DeleteTarget::Place(self.materialize_planned_place(owner, block, place)?)
+                    }
+                    TypedDeleteTarget::UnresolvedIdentifier(identifier) => {
+                        DeleteTarget::UnresolvedIdentifier(identifier.clone())
+                    }
+                    TypedDeleteTarget::Value { span, has_effects } => DeleteTarget::Value(
+                        self.control_expression_value(owner, block, *span, true, *has_effects),
+                    ),
+                };
+                let semantics = delete_expression_semantics(&target);
+                self.push_value_to_block(
+                    owner,
+                    block,
+                    ValueKind::InstructionResult,
+                    origin,
+                    HirInstructionKind::Delete { target },
+                    semantics,
+                )
+            }
             TypedExpressionKind::Unary {
                 operator,
                 argument,
@@ -5941,6 +6032,9 @@ enum TypedExpressionKind {
     Context {
         kind: ContextValueKind,
     },
+    Delete {
+        target: TypedDeleteTarget,
+    },
     Unary {
         operator: UnaryOperator,
         argument: SourceSpan,
@@ -6035,6 +6129,13 @@ enum TypedArrayElement {
         origin: SourceSpan,
         has_effects: bool,
     },
+}
+
+#[derive(Debug, Clone)]
+enum TypedDeleteTarget {
+    Place(PlannedPlace),
+    UnresolvedIdentifier(String),
+    Value { span: SourceSpan, has_effects: bool },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -6169,6 +6270,10 @@ impl EvaluationFact {
                 kind: TypedExpressionKind::Context { .. },
                 ..
             }) => 1,
+            Self::Typed(TypedExpressionFact {
+                kind: TypedExpressionKind::Delete { .. },
+                ..
+            }) => 2,
             Self::Typed(TypedExpressionFact {
                 kind: TypedExpressionKind::Unary { .. },
                 ..
@@ -6663,16 +6768,33 @@ impl<'a> Visit<'a> for MemberAccessCollector<'_> {
 
 #[derive(Default)]
 struct DeleteTargetCollector {
-    spans: BTreeSet<(u32, u32)>,
+    member_spans: BTreeSet<(u32, u32)>,
 }
 
 impl<'a> Visit<'a> for DeleteTargetCollector {
     fn visit_unary_expression(&mut self, expression: &oxc::ast::ast::UnaryExpression<'a>) {
         if expression.operator == OxcUnaryOperator::Delete {
-            let span = source_span(expression.argument.span());
-            self.spans.insert((span.start(), span.end()));
+            let argument = expression.argument.get_inner_expression();
+            if let Some(span) = deleted_member_span(argument) {
+                self.member_spans.insert((span.start(), span.end()));
+            }
         }
         oxc::ast_visit::walk::walk_unary_expression(self, expression);
+    }
+}
+
+fn deleted_member_span(expression: &Expression<'_>) -> Option<SourceSpan> {
+    match expression.get_inner_expression() {
+        Expression::StaticMemberExpression(member) => Some(source_span(member.span)),
+        Expression::ComputedMemberExpression(member) => Some(source_span(member.span)),
+        Expression::ChainExpression(chain) => match &chain.expression {
+            ChainElement::StaticMemberExpression(member) => Some(source_span(member.span)),
+            ChainElement::ComputedMemberExpression(member) => Some(source_span(member.span)),
+            ChainElement::CallExpression(_)
+            | ChainElement::PrivateFieldExpression(_)
+            | ChainElement::TSNonNullExpression(_) => None,
+        },
+        _ => None,
     }
 }
 
@@ -7855,7 +7977,9 @@ fn unary_operator(operator: OxcUnaryOperator) -> UnaryOperator {
         OxcUnaryOperator::BitwiseNot => UnaryOperator::BitNot,
         OxcUnaryOperator::Typeof => UnaryOperator::TypeOf,
         OxcUnaryOperator::Void => UnaryOperator::Void,
-        OxcUnaryOperator::Delete => UnaryOperator::Delete,
+        OxcUnaryOperator::Delete => {
+            unreachable!("delete is materialized as a reference-aware HIR instruction")
+        }
     }
 }
 
@@ -8256,10 +8380,25 @@ fn unary_expression_semantics(operator: UnaryOperator) -> InstructionSemantics {
         UnaryOperator::Not | UnaryOperator::TypeOf | UnaryOperator::Void => {
             InstructionSemantics::PURE_EAGER
         }
-        UnaryOperator::Plus
-        | UnaryOperator::Minus
-        | UnaryOperator::BitNot
-        | UnaryOperator::Delete => coercive_expression_semantics(),
+        UnaryOperator::Plus | UnaryOperator::Minus | UnaryOperator::BitNot => {
+            coercive_expression_semantics()
+        }
+    }
+}
+
+fn delete_expression_semantics(target: &DeleteTarget) -> InstructionSemantics {
+    match target {
+        DeleteTarget::Value(_) => InstructionSemantics::PURE_EAGER,
+        DeleteTarget::Place(place) if place.projections.is_empty() => {
+            InstructionSemantics::PURE_EAGER
+        }
+        DeleteTarget::Place(_) => InstructionSemantics {
+            purity: Purity::Impure,
+            mutation: MutationEffect::Observable,
+            evaluation: EvaluationMode::Eager,
+            may_throw: true,
+        },
+        DeleteTarget::UnresolvedIdentifier(_) => InstructionSemantics::CONSERVATIVE_EAGER,
     }
 }
 
@@ -8375,6 +8514,11 @@ fn instruction_value_inputs(instruction: &HirInstruction) -> Vec<ValueId> {
             inputs.extend(value);
         }
         HirInstructionKind::Iteration { source, .. } => inputs.push(*source),
+        HirInstructionKind::Delete { target } => match target {
+            DeleteTarget::Place(place) => place_value_inputs(place, &mut inputs),
+            DeleteTarget::UnresolvedIdentifier(_) => {}
+            DeleteTarget::Value(value) => inputs.push(*value),
+        },
         HirInstructionKind::Unary { argument, .. } => inputs.push(*argument),
         HirInstructionKind::Binary { left, right, .. } => inputs.extend([*left, *right]),
         HirInstructionKind::Conditional {

@@ -2,10 +2,13 @@ use fict_compiler::{CorePassBudgets, CorePassOptions, run_core_passes};
 use fict_compiler_oxc::{
     HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, build_hir,
 };
-use fict_hir::{ContextValueKind, FunctionKind, StructuredSourceKind};
+use fict_hir::{
+    ContextValueKind, DeleteTarget, FunctionKind, HirInstructionKind, LiteralValue, MutationEffect,
+    StructuredSourceKind,
+};
 use fict_reactivity::{
-    DependencyBase, EscapeKind, ShapeKind, ShapeSource, SsaDefinitionKind, StructuredConstructKind,
-    StructuredLoopKind,
+    DependencyBase, DependencySegment, EscapeKind, ShapeKind, ShapeSource, SsaDefinitionKind,
+    StructuredConstructKind, StructuredLoopKind,
 };
 
 fn build_fixture() -> fict_hir::HirFile {
@@ -438,6 +441,203 @@ fn context_values_have_no_false_local_dependencies_and_keep_runtime_shapes() {
                 if source == value && candidate == kind
         ));
     }
+}
+
+#[test]
+fn projected_delete_tracks_its_reference_write_dependency_and_boolean_shape() {
+    let frontend = build_hir(
+        r#"
+            export function remove(obj, key) {
+                const removed = delete obj[key];
+                return removed;
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Module,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified projected-delete HIR"),
+        CorePassOptions {
+            optimize: false,
+            ..CorePassOptions::default()
+        },
+    )
+    .expect("core passes over projected delete");
+    let function = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                output.hir.bindings[binding.as_usize()].display_name == "remove"
+            })
+        })
+        .expect("remove function");
+    let analysis = &output.functions[function.id.as_usize()];
+    let local = |name: &str| {
+        function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"))
+    };
+    let removed = local("removed");
+    let removed_value = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find_map(|instruction| match instruction.kind {
+            HirInstructionKind::Declare {
+                local, initializer, ..
+            } if local == removed.id => initializer,
+            _ => None,
+        })
+        .expect("removed initializer");
+    let delete_instruction = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| instruction.result == Some(removed_value))
+        .expect("delete instruction");
+    let DeleteTarget::Place(place) = (match &delete_instruction.kind {
+        HirInstructionKind::Delete { target } => target,
+        other => panic!("expected delete instruction, found {other:?}"),
+    }) else {
+        panic!("expected projected delete place")
+    };
+    assert_eq!(place.projections.len(), 1);
+    assert_eq!(
+        delete_instruction.semantics.mutation,
+        MutationEffect::Observable
+    );
+
+    let dependencies = &analysis.dependencies.value_dependencies[removed_value.as_usize()];
+    assert_eq!(dependencies.len(), 1);
+    let path = &dependencies[0];
+    assert!(matches!(
+        path.base,
+        DependencyBase::Ssa(name) if name.local == local("obj").id
+    ));
+    assert!(matches!(
+        path.segments.as_slice(),
+        [DependencySegment::Dynamic {
+            optional: false,
+            ..
+        }]
+    ));
+    assert!(
+        analysis
+            .dependencies
+            .writes
+            .iter()
+            .any(|write| { write.path == *path && write.mutation == MutationEffect::Observable })
+    );
+
+    let definition = analysis
+        .ssa
+        .definitions
+        .iter()
+        .find(|definition| {
+            definition.name.local == removed.id && definition.kind == SsaDefinitionKind::Declare
+        })
+        .expect("removed declaration definition");
+    let shape = analysis
+        .shapes
+        .shapes
+        .iter()
+        .find(|shape| shape.name == definition.name)
+        .expect("delete result shape");
+    assert_eq!(shape.shape.kind, ShapeKind::Primitive);
+    assert!(matches!(
+        shape.shape.source,
+        ShapeSource::Delete(value) if value == removed_value
+    ));
+}
+
+#[test]
+fn optimizer_folds_non_reference_and_local_delete_results() {
+    let frontend = build_hir(
+        r#"
+            function fold(local) {
+                const valueResult = delete 1;
+                const localResult = delete local;
+                return [valueResult, localResult];
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Script,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified foldable-delete HIR"),
+        CorePassOptions::default(),
+    )
+    .expect("optimized core passes over foldable deletes");
+    let function = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                output.hir.bindings[binding.as_usize()].display_name == "fold"
+            })
+        })
+        .expect("fold function");
+    let initializer_literal = |name: &str| {
+        let local = function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"));
+        let initializer = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find_map(|instruction| match instruction.kind {
+                HirInstructionKind::Declare {
+                    local: candidate,
+                    initializer,
+                    ..
+                } if candidate == local.id => initializer,
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{name} initializer"));
+        function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find_map(|instruction| {
+                (instruction.result == Some(initializer)).then_some(&instruction.kind)
+            })
+            .unwrap_or_else(|| panic!("{name} initializer instruction"))
+    };
+    assert!(matches!(
+        initializer_literal("valueResult"),
+        HirInstructionKind::Literal(LiteralValue::Boolean(true))
+    ));
+    assert!(matches!(
+        initializer_literal("localResult"),
+        HirInstructionKind::Literal(LiteralValue::Boolean(false))
+    ));
 }
 
 #[test]

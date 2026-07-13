@@ -4,10 +4,10 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
 use fict_hir::{
-    ArrayElement, BinaryOperator, FunctionId, HirFile, HirFunction, HirInstructionKind,
-    JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName, JsxNode, LiteralValue,
-    NumberLiteral, ObjectEntry, Place, PlaceBase, Projection, PropertyKey, SsaName, TerminatorKind,
-    UnaryOperator, ValueId, ValueKind, verify_hir,
+    ArrayElement, BinaryOperator, DeleteTarget, FunctionId, HirFile, HirFunction,
+    HirInstructionKind, JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName, JsxNode,
+    LiteralValue, NumberLiteral, ObjectEntry, Place, PlaceBase, Projection, PropertyKey, SsaName,
+    TerminatorKind, UnaryOperator, ValueId, ValueKind, verify_hir,
 };
 
 use crate::{
@@ -963,6 +963,16 @@ fn evaluate_instruction(
             left,
             right,
         } => fold_binary(*operator, values.get(left)?, values.get(right)?),
+        HirInstructionKind::Delete {
+            target: DeleteTarget::Value(_),
+        } => Some(LiteralValue::Boolean(true)),
+        HirInstructionKind::Delete {
+            target: DeleteTarget::Place(place),
+        } if place.projections.is_empty()
+            && matches!(place.base, PlaceBase::Local(_) | PlaceBase::Ssa(_)) =>
+        {
+            Some(LiteralValue::Boolean(false))
+        }
         _ => None,
     }
 }
@@ -987,7 +997,6 @@ fn fold_unary(operator: UnaryOperator, value: &LiteralValue) -> Option<LiteralVa
             }
             .into(),
         )),
-        UnaryOperator::Delete => None,
     }
 }
 
@@ -1163,6 +1172,11 @@ fn rewrite_instruction_values(
             }
         }
         HirInstructionKind::Iteration { source, .. } => rewrite_value(source, replacements),
+        HirInstructionKind::Delete { target } => match target {
+            DeleteTarget::Place(place) => rewrite_place(place, replacements),
+            DeleteTarget::Value(value) => rewrite_value(value, replacements),
+            DeleteTarget::UnresolvedIdentifier(_) => {}
+        },
         HirInstructionKind::Unary { argument, .. } => rewrite_value(argument, replacements),
         HirInstructionKind::Binary { left, right, .. } => {
             rewrite_value(left, replacements);
@@ -1313,6 +1327,11 @@ fn instruction_value_inputs(
         | HirInstructionKind::Function { .. }
         | HirInstructionKind::Phi { .. }
         | HirInstructionKind::Debugger => Vec::new(),
+        HirInstructionKind::Delete { target } => match target {
+            DeleteTarget::Place(place) => place_value_inputs(place),
+            DeleteTarget::UnresolvedIdentifier(_) => Vec::new(),
+            DeleteTarget::Value(value) => vec![*value],
+        },
         HirInstructionKind::Unary { argument, .. } => vec![*argument],
         HirInstructionKind::Binary { left, right, .. } => vec![*left, *right],
         HirInstructionKind::Conditional {
@@ -1497,6 +1516,11 @@ fn remap_instruction_values(
             }
         }
         HirInstructionKind::Iteration { source, .. } => remap_value_id(source, remap)?,
+        HirInstructionKind::Delete { target } => match target {
+            DeleteTarget::Place(place) => remap_place_values(place, remap)?,
+            DeleteTarget::Value(value) => remap_value_id(value, remap)?,
+            DeleteTarget::UnresolvedIdentifier(_) => {}
+        },
         HirInstructionKind::Unary { argument, .. } => remap_value_id(argument, remap)?,
         HirInstructionKind::Binary { left, right, .. } => {
             remap_value_id(left, remap)?;

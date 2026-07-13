@@ -5,8 +5,8 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
 use fict_hir::{
-    BlockId, HirFunction, HirInstruction, HirInstructionKind, HirValue, LocalId, LocalKind, Place,
-    PlaceBase, SsaName, SsaVersion, ValueId, ValueKind,
+    BlockId, DeleteTarget, HirFunction, HirInstruction, HirInstructionKind, HirValue, LocalId,
+    LocalKind, Place, PlaceBase, SsaName, SsaVersion, ValueId, ValueKind,
 };
 
 use crate::{CfgAnalysis, analyze_cfg};
@@ -338,6 +338,17 @@ pub fn analyze_ssa(function: &HirFunction) -> Result<SsaAnalysis, DiagnosticBund
                                 );
                             }
                         }
+                        HirInstructionKind::Delete {
+                            target: DeleteTarget::Place(place),
+                        } if !place.projections.is_empty() => {
+                            record_place_use(
+                                place,
+                                SsaUseKind::ProjectedWriteBase,
+                                location,
+                                &stacks,
+                                &mut uses,
+                            );
+                        }
                         HirInstructionKind::Iteration { targets, .. } => {
                             for local in targets {
                                 define_instruction(
@@ -355,6 +366,7 @@ pub fn analyze_ssa(function: &HirFunction) -> Result<SsaAnalysis, DiagnosticBund
                         HirInstructionKind::Literal(_)
                         | HirInstructionKind::UnresolvedTypeof { .. }
                         | HirInstructionKind::Context { .. }
+                        | HirInstructionKind::Delete { .. }
                         | HirInstructionKind::Unary { .. }
                         | HirInstructionKind::Binary { .. }
                         | HirInstructionKind::Conditional { .. }
@@ -662,6 +674,9 @@ fn validate_local_references(function: &HirFunction, cfg: &CfgAnalysis) -> Diagn
                 | HirInstructionKind::ReadWrite { place, .. } => {
                     place_local(place).into_iter().collect()
                 }
+                HirInstructionKind::Delete {
+                    target: DeleteTarget::Place(place),
+                } => place_local(place).into_iter().collect(),
                 HirInstructionKind::Iteration { targets, .. } => targets.clone(),
                 _ => Vec::new(),
             };

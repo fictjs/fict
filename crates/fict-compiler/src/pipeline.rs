@@ -2055,6 +2055,33 @@ mod tests {
     }
 
     #[test]
+    fn diagnoses_property_deletion_inside_reactive_control_flow() {
+        let source = "import { $state } from 'fict'; export function App() { const count = $state(0); const object = { value: 1 }; if (count > 0) { delete object.value; } return <div>{count}</div>; }";
+        let strict = compile(request(source, "delete-control-flow.jsx"));
+        assert!(strict.has_errors());
+        assert!(strict.code.is_empty());
+        assert!(strict.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R006"
+                && diagnostic.severity == DiagnosticSeverity::Error
+                && diagnostic.guarantee_class == GuaranteeClass::Fallback
+        }));
+
+        let mut fallback_request = request(source, "delete-control-flow.jsx");
+        fallback_request.options.strict_guarantee = false;
+        let fallback = compile(fallback_request);
+        assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
+        assert!(fallback.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R006"
+                && diagnostic.severity == DiagnosticSeverity::Warning
+        }));
+        assert!(
+            fallback.code.contains("delete object.value"),
+            "{}",
+            fallback.code
+        );
+    }
+
+    #[test]
     fn checks_the_whole_story_conditional_before_suppressing_r006() {
         let safe_source = "import { $state } from 'fict'; export function App() { const count = $state(0); let heading = 'empty'; if (count > 0) heading = count + ' items'; return <h1>{heading}</h1>; }";
         let safe = compile(request(safe_source, "safe-story.tsx"));

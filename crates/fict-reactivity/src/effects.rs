@@ -4,7 +4,7 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
 use fict_hir::{
-    ArrayElement, BlockId, CallHost, FictMacroKind, FunctionId, HirFile, HirFunction,
+    ArrayElement, BlockId, CallHost, DeleteTarget, FictMacroKind, FunctionId, HirFile, HirFunction,
     HirInstruction, HirInstructionKind, JsxAttribute, JsxAttributeValue, JsxChild, JsxNode,
     LocalId, LocalKind, MutationEffect, ObjectEntry, Place, PlaceBase, Projection, Purity,
     ReactiveCallKind, ReactiveScopeKind, SsaName, SsaVersion, TerminatorKind, ValueId, ValueKind,
@@ -333,6 +333,19 @@ pub fn analyze_dependencies(
                                 direct_dependencies[result_index].insert(path);
                             }
                         }
+                        HirInstructionKind::Delete {
+                            target: DeleteTarget::Place(place),
+                        } if !place.projections.is_empty() => {
+                            if let Some(path) = dependency_path(
+                                place,
+                                block.id,
+                                instruction_index,
+                                SsaUseKind::ProjectedWriteBase,
+                                &use_names,
+                            ) {
+                                direct_dependencies[result_index].insert(path);
+                            }
+                        }
                         HirInstructionKind::Phi { sources, .. } => {
                             direct_dependencies[result_index].extend(sources.iter().map(
                                 |(_, source)| DependencyPath {
@@ -474,6 +487,23 @@ pub fn analyze_dependencies(
                         writes.push(WriteFact {
                             path: direct_write_path(place, location, &definition_names)
                                 .unwrap_or(path),
+                            location,
+                            mutation: instruction.semantics.mutation,
+                        });
+                    }
+                }
+                HirInstructionKind::Delete {
+                    target: DeleteTarget::Place(place),
+                } if !place.projections.is_empty() => {
+                    if let Some(path) = dependency_path(
+                        place,
+                        block.id,
+                        instruction_index,
+                        SsaUseKind::ProjectedWriteBase,
+                        &use_names,
+                    ) {
+                        writes.push(WriteFact {
+                            path,
                             location,
                             mutation: instruction.semantics.mutation,
                         });
@@ -1249,6 +1279,11 @@ fn instruction_inputs(instruction: &HirInstruction, file: &HirFile) -> Vec<Value
         | HirInstructionKind::Function { .. }
         | HirInstructionKind::Debugger => Vec::new(),
         HirInstructionKind::Unary { argument, .. } => vec![*argument],
+        HirInstructionKind::Delete { target } => match target {
+            DeleteTarget::Place(place) => projection_values(place),
+            DeleteTarget::UnresolvedIdentifier(_) => Vec::new(),
+            DeleteTarget::Value(value) => vec![*value],
+        },
         HirInstructionKind::Binary { left, right, .. } => vec![*left, *right],
         HirInstructionKind::Conditional {
             test,

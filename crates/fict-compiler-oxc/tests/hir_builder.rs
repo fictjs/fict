@@ -3,10 +3,10 @@ use fict_compiler_oxc::{
 };
 use fict_hir::{
     ArrayElement, BinaryOperator, CallHost, CompoundAssignmentOperator, ContextValueKind,
-    DeclarationKind, EvaluationMode, FictMacroKind, FunctionKind, HirInstructionKind, ImportPhase,
-    IterationKind, JavaScriptString, LiteralValue, MutationEffect, ObjectEntry, ObjectPropertyKind,
-    PropertyKey, Purity, ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind,
-    TerminatorKind, UnaryOperator, UpdateOperator, ValueKind,
+    DeclarationKind, DeleteTarget, EvaluationMode, FictMacroKind, FunctionKind, HirInstructionKind,
+    ImportPhase, IterationKind, JavaScriptString, LiteralValue, MutationEffect, ObjectEntry,
+    ObjectPropertyKind, PropertyKey, Purity, ReactiveCallKind, StructuredSourceKind,
+    SyntaxFragmentKind, TerminatorKind, UnaryOperator, UpdateOperator, ValueKind,
 };
 
 fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
@@ -4108,22 +4108,27 @@ fn materializes_static_computed_index_and_value_base_projections() {
         .iter()
         .flat_map(|block| &block.instructions)
         .collect();
-    let unprojected_object_reads: Vec<_> = instructions
+    let deletion = instructions
         .iter()
-        .filter(|instruction| {
-            matches!(
-                &instruction.kind,
-                HirInstructionKind::Read { place }
-                    if place.base == fict_hir::PlaceBase::Local(object.id)
-                        && place.projections.is_empty()
-            )
+        .find(|instruction| {
+            instruction.origin.primary_span.is_some_and(|span| {
+                &source[span.start() as usize..span.end() as usize] == "delete obj.ignored"
+            })
         })
-        .collect();
-    assert_eq!(
-        unprojected_object_reads.len(),
-        1,
-        "delete still evaluates its base object"
-    );
+        .expect("typed property deletion");
+    assert!(matches!(
+        &deletion.kind,
+        HirInstructionKind::Delete {
+            target: DeleteTarget::Place(place),
+        } if place.base == fict_hir::PlaceBase::Local(object.id)
+            && matches!(
+                place.projections.as_slice(),
+                [fict_hir::Projection::StaticProperty { name, optional: false }]
+                    if name == "ignored"
+            )
+    ));
+    assert_eq!(deletion.semantics.mutation, MutationEffect::Observable);
+    assert!(deletion.semantics.may_throw);
 
     let authored_projected_reads: Vec<_> = instructions
         .iter()
@@ -4282,6 +4287,236 @@ fn materializes_static_computed_index_and_value_base_projections() {
 }
 
 #[test]
+fn materializes_reference_aware_delete_targets_without_property_reads() {
+    let source = r#"
+        function remove(obj, key, effect, local) {
+            const staticResult = delete obj.fixed;
+            const computedResult = delete obj[key()];
+            const parenthesizedResult = delete (obj.nested);
+            const optionalResult = delete obj?.optional;
+            const valueResult = delete effect();
+            const literalResult = delete 1;
+            const localResult = delete local;
+            const globalResult = delete ambientDeleteTarget;
+            return [
+                staticResult,
+                computedResult,
+                parenthesizedResult,
+                optionalResult,
+                valueResult,
+                literalResult,
+                localResult,
+                globalResult,
+            ];
+        }
+    "#;
+    let output = build_hir(
+        source,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Script,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified delete HIR");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "remove")
+        })
+        .expect("remove function");
+    let instructions: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let instruction_for_result = |value| {
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| instruction.result == Some(value))
+            .unwrap_or_else(|| panic!("instruction for value{}", value.index()))
+    };
+    let initializer = |name: &str| {
+        let local = function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"));
+        instructions
+            .iter()
+            .find_map(|instruction| match instruction.kind {
+                HirInstructionKind::Declare {
+                    local: candidate,
+                    initializer,
+                    ..
+                } if candidate == local.id => initializer,
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{name} initializer"))
+    };
+    let root = |name: &str| instruction_for_result(initializer(name));
+    let object = function
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("obj"))
+        .expect("obj parameter");
+
+    for (name, property, optional) in [
+        ("staticResult", "fixed", false),
+        ("parenthesizedResult", "nested", false),
+        ("optionalResult", "optional", true),
+    ] {
+        let deletion = root(name);
+        assert!(matches!(
+            &deletion.kind,
+            HirInstructionKind::Delete {
+                target: DeleteTarget::Place(place),
+            } if place.base == fict_hir::PlaceBase::Local(object.id)
+                && matches!(
+                    place.projections.as_slice(),
+                    [fict_hir::Projection::StaticProperty {
+                        name: candidate,
+                        optional: candidate_optional,
+                    }] if candidate == property && *candidate_optional == optional
+                )
+        ));
+        assert_eq!(deletion.semantics.mutation, MutationEffect::Observable);
+        assert!(deletion.semantics.may_throw);
+    }
+
+    let computed = root("computedResult");
+    let HirInstructionKind::Delete {
+        target: DeleteTarget::Place(computed_place),
+    } = &computed.kind
+    else {
+        panic!("computed delete place")
+    };
+    let [
+        fict_hir::Projection::ComputedProperty {
+            key,
+            optional: false,
+        },
+    ] = computed_place.projections.as_slice()
+    else {
+        panic!("computed delete key")
+    };
+    let key_call = instruction_for_result(*key);
+    assert!(matches!(key_call.kind, HirInstructionKind::Call(_)));
+    assert!(
+        key_call
+            .origin
+            .primary_span
+            .is_some_and(|span| { &source[span.start() as usize..span.end() as usize] == "key()" })
+    );
+    let position = |instruction: &fict_hir::HirInstruction| {
+        instructions
+            .iter()
+            .position(|candidate| std::ptr::eq(*candidate, instruction))
+            .expect("instruction position")
+    };
+    assert!(position(key_call) < position(computed));
+
+    for (name, operand) in [("valueResult", "effect()"), ("literalResult", "1")] {
+        let deletion = root(name);
+        let HirInstructionKind::Delete {
+            target: DeleteTarget::Value(value),
+        } = deletion.kind
+        else {
+            panic!("ordinary value delete for {name}")
+        };
+        let operand_instruction = instruction_for_result(value);
+        assert!(operand_instruction.origin.primary_span.is_some_and(|span| {
+            &source[span.start() as usize..span.end() as usize] == operand
+        }));
+        assert_eq!(
+            deletion.semantics,
+            fict_hir::InstructionSemantics::PURE_EAGER
+        );
+        assert!(position(operand_instruction) < position(deletion));
+    }
+
+    let local_parameter = function
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("local"))
+        .expect("local parameter");
+    let local_delete = root("localResult");
+    assert!(matches!(
+        &local_delete.kind,
+        HirInstructionKind::Delete {
+            target: DeleteTarget::Place(place),
+        } if place.base == fict_hir::PlaceBase::Local(local_parameter.id)
+            && place.projections.is_empty()
+    ));
+    assert_eq!(
+        local_delete.semantics,
+        fict_hir::InstructionSemantics::PURE_EAGER
+    );
+    assert!(!instructions.iter().any(|instruction| {
+        matches!(
+            &instruction.kind,
+            HirInstructionKind::Read { place }
+                if place.base == fict_hir::PlaceBase::Local(local_parameter.id)
+                    && place.projections.is_empty()
+        )
+    }));
+
+    let global_delete = root("globalResult");
+    assert!(matches!(
+        &global_delete.kind,
+        HirInstructionKind::Delete {
+            target: DeleteTarget::UnresolvedIdentifier(identifier),
+        } if identifier == "ambientDeleteTarget"
+    ));
+    assert_eq!(
+        global_delete.semantics,
+        fict_hir::InstructionSemantics::CONSERVATIVE_EAGER
+    );
+
+    for member in ["obj.fixed", "obj[key()]", "obj.nested", "obj?.optional"] {
+        assert!(
+            !instructions.iter().any(|instruction| {
+                matches!(instruction.kind, HirInstructionKind::Read { .. })
+                    && instruction.origin.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == member
+                    })
+            }),
+            "delete must not read the current value of {member}"
+        );
+    }
+    assert!(!instructions.iter().any(|instruction| {
+        matches!(
+            &instruction.kind,
+            HirInstructionKind::Read { place }
+                if place.base == fict_hir::PlaceBase::Local(object.id)
+                    && place.projections.is_empty()
+        )
+    }));
+    for name in [
+        "staticResult",
+        "computedResult",
+        "parenthesizedResult",
+        "optionalResult",
+        "valueResult",
+        "literalResult",
+        "localResult",
+        "globalResult",
+    ] {
+        assert!(
+            !matches!(root(name).kind, HirInstructionKind::SyntaxFragment { .. }),
+            "{name} must not fall back to adapter-owned syntax"
+        );
+    }
+}
+
+#[test]
 fn classifies_nested_state_mutation_by_strict_guarantee_policy() {
     let source = r#"
         import { $state } from 'fict';
@@ -4329,6 +4564,70 @@ fn classifies_nested_state_mutation_by_strict_guarantee_policy() {
         finding.severity,
         fict_diagnostics::DiagnosticSeverity::Warning
     );
+}
+
+#[test]
+fn classifies_nested_state_deletion_by_strict_guarantee_policy() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const user = $state({ name: 'Ada' });
+            const removed = delete user.name;
+            return removed;
+        }
+    "#;
+    let strict = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(strict.hir.is_none());
+    let finding = strict
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code.as_str() == "FICT-M")
+        .expect("strict nested-deletion diagnostic");
+    assert_eq!(
+        finding.severity,
+        fict_diagnostics::DiagnosticSeverity::Error
+    );
+    assert_eq!(
+        finding.guarantee_class,
+        fict_diagnostics::GuaranteeClass::Fallback
+    );
+
+    let fallback = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions {
+            strict_guarantee: false,
+            ..HirBuildOptions::default()
+        },
+    );
+    let finding = fallback
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code.as_str() == "FICT-M")
+        .expect("fallback nested-deletion warning");
+    assert_eq!(
+        finding.severity,
+        fict_diagnostics::DiagnosticSeverity::Warning
+    );
+    let hir = fallback.hir.expect("fallback nested-deletion HIR");
+    assert!(hir.functions.iter().any(|function| {
+        function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .any(|instruction| {
+                matches!(
+                    &instruction.kind,
+                    HirInstructionKind::Delete {
+                        target: DeleteTarget::Place(place),
+                    } if !place.projections.is_empty()
+                )
+            })
+    }));
 }
 
 #[test]

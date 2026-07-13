@@ -5,12 +5,12 @@ use fict_diagnostics::{
 };
 
 use crate::{
-    ArrayElement, BindingKind, BlockId, CallHost, FunctionId, FunctionKind, HirFile, HirFunction,
-    HirInstruction, HirInstructionKind, HirTerminator, ImportKind, JsxAttribute, JsxAttributeValue,
-    JsxChild, JsxElementName, JsxNode, LiteralValue, LocalId, LocalKind, MutationEffect,
-    ObjectEntry, Origin, OriginKind, Place, PlaceBase, Projection, Purity, ScopeKind, SsaName,
-    StructuredSourceHint, StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, ValueId,
-    ValueKind,
+    ArrayElement, BindingKind, BlockId, CallHost, DeleteTarget, FunctionId, FunctionKind, HirFile,
+    HirFunction, HirInstruction, HirInstructionKind, HirTerminator, ImportKind, JsxAttribute,
+    JsxAttributeValue, JsxChild, JsxElementName, JsxNode, LiteralValue, LocalId, LocalKind,
+    MutationEffect, ObjectEntry, Origin, OriginKind, Place, PlaceBase, Projection, Purity,
+    ScopeKind, SsaName, StructuredSourceHint, StructuredSourceKind, SyntaxFragmentKind,
+    TerminatorKind, ValueId, ValueKind,
 };
 
 const MAX_DIAGNOSTICS: usize = 128;
@@ -671,6 +671,56 @@ impl Verifier<'_> {
                     self.error(
                         "FICT-HIR-TYPEOF",
                         "an unresolved typeof instruction must retain a non-empty identifier",
+                        Some(instruction.origin),
+                    );
+                }
+            }
+            HirInstructionKind::Delete { target } => {
+                match target {
+                    DeleteTarget::Place(place) => {
+                        self.verify_place(function, place, instruction.origin);
+                        if place.projections.is_empty() && matches!(place.base, PlaceBase::Value(_))
+                        {
+                            self.error(
+                                "FICT-HIR-DELETE",
+                                "an evaluated delete operand must use a value target instead of an unprojected place",
+                                Some(instruction.origin),
+                            );
+                        }
+                        if !place.projections.is_empty()
+                            && !instruction.semantics.has_observable_mutation()
+                        {
+                            self.error(
+                                "FICT-HIR-DELETE",
+                                "property deletion must retain observable mutation semantics",
+                                Some(instruction.origin),
+                            );
+                        }
+                    }
+                    DeleteTarget::UnresolvedIdentifier(identifier) => {
+                        if identifier.is_empty() {
+                            self.error(
+                                "FICT-HIR-DELETE",
+                                "an unresolved delete target must retain a non-empty identifier",
+                                Some(instruction.origin),
+                            );
+                        }
+                        if !instruction.semantics.has_observable_mutation() {
+                            self.error(
+                                "FICT-HIR-DELETE",
+                                "unresolved deletion must conservatively retain mutation semantics",
+                                Some(instruction.origin),
+                            );
+                        }
+                    }
+                    DeleteTarget::Value(value) => {
+                        self.value(function, *value, instruction.origin);
+                    }
+                }
+                if instruction.result.is_none() {
+                    self.error(
+                        "FICT-HIR-DELETE",
+                        "a delete instruction must define its boolean result",
                         Some(instruction.origin),
                     );
                 }

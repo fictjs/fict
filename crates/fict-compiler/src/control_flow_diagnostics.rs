@@ -4,8 +4,8 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
 use fict_hir::{
-    BlockId, FunctionKind, HirFile, HirFunction, HirInstruction, HirInstructionKind,
-    MutationEffect, TerminatorKind, ValueId,
+    BlockId, DeleteTarget, FunctionKind, HirFile, HirFunction, HirInstruction, HirInstructionKind,
+    MutationEffect, PlaceBase, Projection, TerminatorKind, ValueId,
 };
 use fict_reactivity::{DependencyPath, StructuredConstruct, StructuredConstructKind};
 
@@ -514,6 +514,31 @@ fn value_has_unsafe_control_work(
                     value_has_unsafe_control_work(file, function, value, visiting)
                 })
         }
+        HirInstructionKind::Delete { target } => match target {
+            DeleteTarget::Value(value) => {
+                value_has_unsafe_control_work(file, function, *value, visiting)
+            }
+            DeleteTarget::Place(place) => {
+                let base = match place.base {
+                    PlaceBase::Value(value) => Some(value),
+                    PlaceBase::Local(_) | PlaceBase::Ssa(_) => None,
+                };
+                base.into_iter()
+                    .chain(
+                        place
+                            .projections
+                            .iter()
+                            .filter_map(|projection| match projection {
+                                Projection::ComputedProperty { key, .. } => Some(*key),
+                                Projection::StaticProperty { .. } | Projection::Index { .. } => {
+                                    None
+                                }
+                            }),
+                    )
+                    .any(|value| value_has_unsafe_control_work(file, function, value, visiting))
+            }
+            DeleteTarget::UnresolvedIdentifier(_) => false,
+        },
         _ => false,
     }
 }
@@ -531,6 +556,7 @@ fn instruction_is_unsafe(file: &HirFile, instruction: &HirInstruction) -> bool {
         HirInstructionKind::Write { .. } | HirInstructionKind::ReadWrite { .. } => {
             instruction.semantics.mutation != MutationEffect::Local
         }
+        HirInstructionKind::Delete { .. } => instruction.semantics.mutation != MutationEffect::None,
         HirInstructionKind::SyntaxFragment { fragment, .. } => file
             .syntax_fragments
             .get(fragment.as_usize())
