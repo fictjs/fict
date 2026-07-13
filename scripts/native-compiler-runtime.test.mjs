@@ -443,6 +443,51 @@ test('Rust compiler output keeps nested destructured props reactive and checked'
   )
 })
 
+test('Rust compiler output reads literal destructuring keys and excludes them from rest props', async () => {
+  const module = await compileAndImport(
+    `
+      import { render } from 'fict'
+
+      function Child({
+        "foo-bar": value,
+        0: first,
+        nested: { "aria-label": label = 'fallback' },
+        ...rest
+      }) {
+        return <span data-id="literal">{value}:{first}:{label}:{String('extra' in rest)}:{String('foo-bar' in rest)}</span>
+      }
+
+      export function mount(container) {
+        return render(() => ({
+          type: Child,
+          props: {
+            "foo-bar": "dash",
+            0: "zero",
+            nested: {},
+            extra: "kept",
+          },
+        }), container)
+      }
+    `,
+    'literal-prop-keys',
+    /__fictProps\["foo-bar"\].*__fictProps\["0"\]/s,
+  )
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = module.mount(container)
+  await flushRuntime()
+
+  assert.equal(
+    container.querySelector('[data-id="literal"]')?.textContent,
+    'dash:zero:fallback:true:false',
+  )
+
+  dispose()
+  assert.equal(container.childNodes.length, 0)
+  container.remove()
+})
+
 test('Rust compiler output preserves reactive top-level rest props', async () => {
   const module = await compileAndImport(
     `

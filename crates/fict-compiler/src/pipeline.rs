@@ -1511,6 +1511,44 @@ mod tests {
     }
 
     #[test]
+    fn lowers_literal_component_prop_keys_to_computed_members() {
+        let result = compile(request(
+            "function Child({ 'foo-bar': value, 0: first, nested: { 'aria-label': label = 'fallback' }, ...rest }) { return <span>{value}:{first}:{label}:{String('extra' in rest)}:{String('foo-bar' in rest)}</span>; } export function App() { return <Child foo-bar='dash' {...{ 0: 'zero', nested: {}, extra: 'kept' }} />; }",
+            "literal-component-props.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .code
+                .contains("const value = prop(() => __fictProps[\"foo-bar\"]);"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("const first = prop(() => __fictProps[\"0\"]);"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("__fictProps.nested[\"aria-label\"] === void 0"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains(
+                "const rest = __fictPropsRest(__fictProps, [\n\t\t\"foo-bar\",\n\t\t\"0\",\n\t\t\"nested\"\n\t]);"
+            ),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn omits_intrinsic_keys_without_losing_dynamic_key_effects() {
         let result = compile(request(
             "export function Static() { return <p key=\"row\" title=\"ok\" />; } export function Dynamic() { return <div before={before()} key={side()} after={after()} />; }",
