@@ -9,7 +9,8 @@ use crate::{
     HirInstruction, HirInstructionKind, HirTerminator, ImportKind, JsxAttribute, JsxAttributeValue,
     JsxChild, JsxElementName, JsxNode, LiteralValue, LocalId, LocalKind, MutationEffect,
     ObjectEntry, Origin, OriginKind, Place, PlaceBase, Projection, Purity, ScopeKind, SsaName,
-    StructuredSourceHint, SyntaxFragmentKind, TerminatorKind, ValueId, ValueKind,
+    StructuredSourceHint, StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, ValueId,
+    ValueKind,
 };
 
 const MAX_DIAGNOSTICS: usize = 128;
@@ -904,6 +905,58 @@ impl Verifier<'_> {
     fn verify_source_hint(&mut self, function: &HirFunction, hint: &StructuredSourceHint) {
         self.verify_origin(hint.origin);
         self.optional_block(function, hint.exit, hint.origin);
+        if matches!(&hint.kind, StructuredSourceKind::Switch) {
+            if hint.exit.is_none() {
+                self.error(
+                    "FICT-HIR-SOURCE-HINT",
+                    "switch source hint requires a normal exit block",
+                    Some(hint.origin),
+                );
+            }
+            let mut tests = BTreeSet::new();
+            let mut bodies = BTreeSet::new();
+            let mut defaults = 0_u32;
+            for case in &hint.switch_cases {
+                self.optional_block(function, case.test, case.origin);
+                self.block(function, case.body, case.origin);
+                self.verify_origin(case.origin);
+                defaults = defaults.saturating_add(u32::from(case.test.is_none()));
+                if case.test.is_some_and(|test| !tests.insert(test)) {
+                    self.error(
+                        "FICT-HIR-SOURCE-HINT",
+                        "switch source clauses require distinct test blocks",
+                        Some(case.origin),
+                    );
+                }
+                if !bodies.insert(case.body) {
+                    self.error(
+                        "FICT-HIR-SOURCE-HINT",
+                        "switch source clauses require distinct body blocks",
+                        Some(case.origin),
+                    );
+                }
+            }
+            if !tests.is_disjoint(&bodies) {
+                self.error(
+                    "FICT-HIR-SOURCE-HINT",
+                    "switch source test and body blocks must be disjoint",
+                    Some(hint.origin),
+                );
+            }
+            if defaults > 1 {
+                self.error(
+                    "FICT-HIR-SOURCE-HINT",
+                    "switch source hint has more than one default clause",
+                    Some(hint.origin),
+                );
+            }
+        } else if !hint.switch_cases.is_empty() {
+            self.error(
+                "FICT-HIR-SOURCE-HINT",
+                "only switch source hints may retain switch clauses",
+                Some(hint.origin),
+            );
+        }
     }
 
     fn verify_place(&mut self, function: &HirFunction, place: &Place, origin: Origin) {

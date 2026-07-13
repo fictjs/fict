@@ -1,8 +1,9 @@
 use fict_hir::{
     BlockId, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction,
     HirInstruction, HirInstructionKind, HirScope, HirTerminator, HirValue, InstructionSemantics,
-    LiteralValue, NumberLiteral, Origin, ScopeId, ScopeKind, TerminatorKind, ValueId, ValueKind,
-    print_hir, verify_hir,
+    LiteralValue, NumberLiteral, Origin, ScopeId, ScopeKind, StructuredSourceHint,
+    StructuredSourceKind, StructuredSwitchCaseHint, TerminatorKind, ValueId, ValueKind, print_hir,
+    verify_hir,
 };
 
 fn empty_file() -> HirFile {
@@ -113,4 +114,64 @@ fn verifier_rejects_a_value_definition_that_changes_literal_bits() {
             .iter()
             .any(|diagnostic| diagnostic.code.as_str() == "FICT-HIR-VALUE")
     );
+}
+
+#[test]
+fn verifier_rejects_overlapping_switch_test_and_body_blocks() {
+    let mut file = empty_file();
+    let origin = Origin::source(fict_hir::SourceSpan::empty(0));
+    file.functions[0].blocks = vec![
+        HirBlock {
+            id: BlockId::new(0),
+            scope: ScopeId::new(0),
+            instructions: Vec::new(),
+            terminator: HirTerminator {
+                kind: TerminatorKind::Goto {
+                    target: BlockId::new(1),
+                },
+                origin,
+            },
+            source_hint: Some(StructuredSourceHint {
+                kind: StructuredSourceKind::Switch,
+                exit: Some(BlockId::new(2)),
+                switch_cases: vec![StructuredSwitchCaseHint {
+                    test: Some(BlockId::new(1)),
+                    body: BlockId::new(1),
+                    origin,
+                }],
+                origin,
+            }),
+            origin,
+        },
+        HirBlock {
+            id: BlockId::new(1),
+            scope: ScopeId::new(0),
+            instructions: Vec::new(),
+            terminator: HirTerminator {
+                kind: TerminatorKind::Goto {
+                    target: BlockId::new(2),
+                },
+                origin,
+            },
+            source_hint: None,
+            origin,
+        },
+        HirBlock {
+            id: BlockId::new(2),
+            scope: ScopeId::new(0),
+            instructions: Vec::new(),
+            terminator: HirTerminator {
+                kind: TerminatorKind::Return { value: None },
+                origin,
+            },
+            source_hint: None,
+            origin,
+        },
+    ];
+
+    let diagnostics = verify_hir(&file).expect_err("overlapping switch blocks must fail");
+    assert!(diagnostics.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-SOURCE-HINT"
+            && diagnostic.message.contains("disjoint")
+    }));
 }

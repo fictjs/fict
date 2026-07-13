@@ -102,7 +102,73 @@ pub(crate) fn reactive_control_flow_diagnostics(core: &CorePassOutput) -> Vec<Di
                         );
                     }
                 }
-                StructuredConstructKind::Switch { .. } | StructuredConstructKind::Try { .. } => {}
+                StructuredConstructKind::Switch { arms, join } => {
+                    let mut reactive_paths = BTreeSet::new();
+                    let mut condition_invokes_user_code = false;
+                    let mut switch_primary_span = None;
+                    for (control, block_id) in switch_control_values(function, construct) {
+                        let paths = reactive_control_paths(
+                            analysis
+                                .dependencies
+                                .value_dependencies
+                                .get(control.as_usize())
+                                .map(Vec::as_slice),
+                            &tracked_locals,
+                        );
+                        if paths.is_empty() {
+                            continue;
+                        }
+                        reactive_paths.extend(paths);
+                        condition_invokes_user_code |= value_has_unsafe_control_work(
+                            &core.hir,
+                            function,
+                            control,
+                            &mut BTreeSet::new(),
+                        );
+                        let block = &function.blocks[block_id.as_usize()];
+                        record_primary_span(
+                            &mut switch_primary_span,
+                            function
+                                .values
+                                .get(control.as_usize())
+                                .and_then(|value| value.origin.primary_span)
+                                .or(block.terminator.origin.primary_span),
+                        );
+                    }
+                    if reactive_paths.is_empty() {
+                        continue;
+                    }
+
+                    let switch_return = arms.iter().any(|arm| arm.is_default)
+                        && arms.iter().all(|arm| {
+                            terminates_before_join(
+                                function,
+                                arm.target,
+                                *join,
+                                &mut BTreeSet::new(),
+                                function.blocks.len(),
+                            )
+                        });
+                    let contains_nested_switch = construct.children.iter().any(|child| {
+                        analysis
+                            .structurize
+                            .constructs
+                            .get(*child as usize)
+                            .is_some_and(|child| {
+                                matches!(child.kind, StructuredConstructKind::Switch { .. })
+                            })
+                    });
+                    let memoizable_story = !function.flags.no_memo
+                        && !contains_nested_switch
+                        && !construct_has_unsafe_control_work(&core.hir, function, construct);
+                    if !condition_invokes_user_code && (switch_return || memoizable_story) {
+                        continue;
+                    }
+
+                    unsupported.extend(reactive_paths);
+                    record_primary_span(&mut primary_span, switch_primary_span);
+                }
+                StructuredConstructKind::Try { .. } => {}
             }
         }
         if unsupported.is_empty() {
@@ -178,6 +244,38 @@ fn loop_control_values(
         if let Some(value) = value {
             controls.push((value, *block_id));
         }
+    }
+    controls.sort_unstable();
+    controls.dedup();
+    controls
+}
+
+fn switch_control_values(
+    function: &HirFunction,
+    construct: &StructuredConstruct,
+) -> Vec<(ValueId, BlockId)> {
+    let mut controls = Vec::new();
+    let header = &function.blocks[construct.header.as_usize()];
+    if let Some(hint) = &header.source_hint
+        && !hint.switch_cases.is_empty()
+    {
+        for test_block in hint.switch_cases.iter().filter_map(|case| case.test) {
+            let block = &function.blocks[test_block.as_usize()];
+            if let TerminatorKind::Branch { test, .. } = block.terminator.kind {
+                controls.push((test, test_block));
+            }
+        }
+    } else if let TerminatorKind::Switch {
+        discriminant,
+        cases,
+    } = &header.terminator.kind
+    {
+        controls.push((*discriminant, construct.header));
+        controls.extend(
+            cases
+                .iter()
+                .filter_map(|case| case.test.map(|test| (test, construct.header))),
+        );
     }
     controls.sort_unstable();
     controls.dedup();

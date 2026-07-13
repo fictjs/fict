@@ -281,3 +281,93 @@ fn analyzes_frontend_for_of_cfg_with_iteration_definitions_and_reactive_source()
     }));
     assert!(analysis.structurize.fallback.is_none());
 }
+
+#[test]
+fn analyzes_frontend_switch_cfg_with_ordered_dispatch_phi_and_reactive_control() {
+    let frontend = build_hir(
+        r#"
+            import { $state } from 'fict';
+            export function App() {
+                let mode = $state(0);
+                let label = $state('zero');
+                switch (mode) {
+                    case 0:
+                        label = 'zero';
+                        break;
+                    case 1:
+                        label = 'one';
+                        break;
+                    default:
+                        label = 'many';
+                }
+                return <span>{label}</span>;
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScriptJsx,
+            module_kind: OxcModuleKind::Module,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified frontend switch CFG"),
+        CorePassOptions::default(),
+    )
+    .expect("core passes over switch CFG");
+    let app = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| function.kind == FunctionKind::Component)
+        .expect("component function");
+    let analysis = &output.functions[app.id.as_usize()];
+    let mode = app
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("mode"))
+        .expect("mode local")
+        .id;
+    let label = app
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("label"))
+        .expect("label local")
+        .id;
+
+    assert!(
+        analysis
+            .dependencies
+            .control_flow_reads
+            .iter()
+            .any(|path| path.local() == Some(mode))
+    );
+    assert!(
+        analysis
+            .ssa
+            .phis
+            .iter()
+            .any(|phi| phi.target.local == label)
+    );
+    assert_eq!(analysis.structurize.stats.switches, 1);
+    assert_eq!(analysis.structurize.stats.conditionals, 0);
+    let switch = analysis
+        .structurize
+        .constructs
+        .iter()
+        .find_map(|construct| match &construct.kind {
+            StructuredConstructKind::Switch { arms, join } => Some((arms, join)),
+            _ => None,
+        })
+        .expect("structured switch");
+    assert_eq!(switch.0.len(), 3);
+    assert_eq!(switch.0.iter().filter(|arm| arm.is_default).count(), 1);
+    assert!(switch.1.is_some());
+    assert!(analysis.structurize.fallback.is_none());
+}

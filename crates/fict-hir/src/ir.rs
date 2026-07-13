@@ -969,6 +969,18 @@ pub enum StructuredSourceKind {
     Labeled(String),
 }
 
+/// One source-order switch clause retained for structured recovery after case tests are lowered to
+/// ordinary CFG branches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StructuredSwitchCaseHint {
+    /// Block that evaluates and compares the case expression, absent for `default`.
+    pub test: Option<BlockId>,
+    /// Clause body entry used both for direct selection and source-order fallthrough.
+    pub body: BlockId,
+    /// Source provenance for the complete clause.
+    pub origin: Origin,
+}
+
 /// Read-only source-shape hint used by structurization and diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructuredSourceHint {
@@ -976,6 +988,8 @@ pub struct StructuredSourceHint {
     pub kind: StructuredSourceKind,
     /// Normal exit block when the source construct has one.
     pub exit: Option<BlockId>,
+    /// Source-order switch clauses. Non-switch hints keep this empty.
+    pub switch_cases: Vec<StructuredSwitchCaseHint>,
     /// Source provenance.
     pub origin: Origin,
 }

@@ -2,9 +2,9 @@ use fict_compiler_oxc::{
     HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, build_hir,
 };
 use fict_hir::{
-    CallHost, CompoundAssignmentOperator, FictMacroKind, FunctionKind, HirInstructionKind,
-    IterationKind, ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind, TerminatorKind,
-    UpdateOperator,
+    BinaryOperator, CallHost, CompoundAssignmentOperator, FictMacroKind, FunctionKind,
+    HirInstructionKind, IterationKind, ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind,
+    TerminatorKind, UpdateOperator,
 };
 
 fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
@@ -170,12 +170,22 @@ fn lowers_throw_values_into_their_conditional_block() {
 }
 
 #[test]
-fn keeps_unimplemented_switch_flow_on_the_conservative_fallback_path() {
+fn lowers_switch_tests_fallthrough_and_breaks_in_exact_evaluation_order() {
     let source = r#"
-        function work(flag) {
-            if (flag) return 1;
-            switch (flag) { case true: flag = false; }
-            return 0;
+        function work(select, mark) {
+            let result = 0;
+            outer: switch (select()) {
+                case mark('a'):
+                    result = 1;
+                    break;
+                case mark('b'):
+                default:
+                    result = 2;
+                    break outer;
+                case mark('c'):
+                    result = 3;
+            }
+            return result;
         }
     "#;
     let output = build_hir(
@@ -184,7 +194,7 @@ fn keeps_unimplemented_switch_flow_on_the_conservative_fallback_path() {
         &HirBuildOptions::default(),
     );
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-    let hir = output.hir.expect("verified conservative fallback HIR");
+    let hir = output.hir.expect("verified switch CFG");
     let work = hir
         .bindings
         .iter()
@@ -197,16 +207,141 @@ fn keeps_unimplemented_switch_flow_on_the_conservative_fallback_path() {
         .find(|function| function.binding == Some(work))
         .expect("work function");
 
-    assert_eq!(function.blocks.len(), 1);
-    assert!(
-        function.blocks[0]
-            .instructions
+    let header = function
+        .blocks
+        .iter()
+        .find(|block| {
+            block
+                .source_hint
+                .as_ref()
+                .is_some_and(|hint| matches!(&hint.kind, StructuredSourceKind::Switch))
+        })
+        .expect("switch source header");
+    let hint = header.source_hint.as_ref().expect("switch hint");
+    assert_eq!(hint.switch_cases.len(), 4);
+    assert_eq!(
+        hint.switch_cases
             .iter()
-            .any(|instruction| match instruction.kind {
+            .filter(|case| case.test.is_none())
+            .count(),
+        1
+    );
+    assert!(hint.exit.is_some());
+
+    let test_blocks: Vec<_> = hint
+        .switch_cases
+        .iter()
+        .filter_map(|case| case.test)
+        .collect();
+    assert_eq!(test_blocks.len(), 3);
+    assert!(matches!(
+        header.terminator.kind,
+        TerminatorKind::Goto { target } if target == test_blocks[0]
+    ));
+
+    let comparisons: Vec<_> = test_blocks
+        .iter()
+        .map(|block| {
+            function.blocks[block.as_usize()]
+                .instructions
+                .iter()
+                .find_map(|instruction| match instruction.kind {
+                    HirInstructionKind::Binary {
+                        operator: BinaryOperator::StrictEqual,
+                        left,
+                        right,
+                    } => Some((left, right)),
+                    _ => None,
+                })
+                .expect("strict switch comparison")
+        })
+        .collect();
+    assert!(
+        comparisons
+            .iter()
+            .all(|(left, _)| *left == comparisons[0].0)
+    );
+    let discriminant = comparisons[0].0;
+    let discriminant_block = function
+        .blocks
+        .iter()
+        .find(|block| {
+            block
+                .instructions
+                .iter()
+                .any(|instruction| instruction.result == Some(discriminant))
+        })
+        .expect("once-evaluated switch discriminant");
+    assert_eq!(discriminant_block.id, header.id);
+    for ((case_index, next_test), test_block) in [
+        (0_usize, Some(test_blocks[1])),
+        (1, Some(test_blocks[2])),
+        (3, None),
+    ]
+    .into_iter()
+    .zip(&test_blocks)
+    {
+        let TerminatorKind::Branch {
+            consequent,
+            alternate,
+            ..
+        } = function.blocks[test_block.as_usize()].terminator.kind
+        else {
+            panic!("switch test must branch")
+        };
+        assert_eq!(consequent, hint.switch_cases[case_index].body);
+        assert_eq!(
+            alternate,
+            next_test.unwrap_or(hint.switch_cases[2].body),
+            "default is selected only after every non-default test fails"
+        );
+        assert!(
+            function.blocks[test_block.as_usize()]
+                .instructions
+                .iter()
+                .any(|instruction| instruction.result
+                    == Some(
+                        comparisons[match case_index {
+                            0 => 0,
+                            1 => 1,
+                            3 => 2,
+                            _ => unreachable!(),
+                        }]
+                        .1
+                    ))
+        );
+    }
+
+    assert!(matches!(
+        function.blocks[hint.switch_cases[1].body.as_usize()]
+            .terminator
+            .kind,
+        TerminatorKind::Goto { target } if target == hint.switch_cases[2].body
+    ));
+    let exit = hint.exit.expect("switch exit");
+    let break_targets = function
+        .blocks
+        .iter()
+        .filter_map(|block| {
+            let span = block.terminator.origin.primary_span?;
+            let text = source.get(span.start() as usize..span.end() as usize)?;
+            text.starts_with("break").then_some(&block.terminator.kind)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(break_targets.len(), 2);
+    assert!(break_targets.iter().all(
+        |terminator| matches!(terminator, TerminatorKind::Goto { target } if *target == exit)
+    ));
+    assert!(
+        function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .all(|instruction| match instruction.kind {
                 HirInstructionKind::SyntaxFragment { fragment, .. } => {
-                    hir.syntax_fragments[fragment.as_usize()].kind == SyntaxFragmentKind::Statement
+                    hir.syntax_fragments[fragment.as_usize()].kind != SyntaxFragmentKind::Statement
                 }
-                _ => false,
+                _ => true,
             })
     );
 }

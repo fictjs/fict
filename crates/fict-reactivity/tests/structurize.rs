@@ -1,6 +1,7 @@
 use fict_hir::{
     BlockId, FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFunction, HirTerminator, Origin,
-    ScopeId, SourceSpan, StructuredSourceHint, StructuredSourceKind, TerminatorKind, ValueId,
+    ScopeId, SourceSpan, StructuredSourceHint, StructuredSourceKind, StructuredSwitchCaseHint,
+    TerminatorKind, ValueId,
 };
 use fict_reactivity::{
     StructuredConstructKind, StructuredLoopKind, StructurizeFallbackReason, analyze_cfg,
@@ -108,6 +109,7 @@ fn recovers_a_reducible_natural_loop_and_source_kind() {
     header.source_hint = Some(StructuredSourceHint {
         kind: StructuredSourceKind::ForOfLoop,
         exit: Some(BlockId::new(3)),
+        switch_cases: Vec::new(),
         origin: origin(),
     });
     let function = function(vec![
@@ -142,6 +144,75 @@ fn recovers_a_reducible_natural_loop_and_source_kind() {
             exits,
             ..
         } if exits == &[BlockId::new(3)]
+    ));
+}
+
+#[test]
+fn recovers_an_ordered_branch_chain_as_one_switch() {
+    let mut header = block(
+        0,
+        TerminatorKind::Goto {
+            target: BlockId::new(1),
+        },
+    );
+    header.source_hint = Some(StructuredSourceHint {
+        kind: StructuredSourceKind::Switch,
+        exit: Some(BlockId::new(4)),
+        switch_cases: vec![
+            StructuredSwitchCaseHint {
+                test: Some(BlockId::new(1)),
+                body: BlockId::new(2),
+                origin: origin(),
+            },
+            StructuredSwitchCaseHint {
+                test: None,
+                body: BlockId::new(3),
+                origin: origin(),
+            },
+        ],
+        origin: origin(),
+    });
+    let function = function(vec![
+        header,
+        block(
+            1,
+            TerminatorKind::Branch {
+                test: ValueId::new(0),
+                consequent: BlockId::new(2),
+                alternate: BlockId::new(3),
+            },
+        ),
+        block(
+            2,
+            TerminatorKind::Goto {
+                target: BlockId::new(3),
+            },
+        ),
+        block(
+            3,
+            TerminatorKind::Goto {
+                target: BlockId::new(4),
+            },
+        ),
+        block(4, TerminatorKind::Return { value: None }),
+    ]);
+
+    let cfg = analyze_cfg(&function).expect("switch CFG");
+    let analysis = structurize_cfg(&function, &cfg).expect("structured switch");
+    assert_eq!(analysis.stats.switches, 1);
+    assert_eq!(analysis.stats.conditionals, 0);
+    assert!(analysis.fallback.is_none());
+    let construct = analysis
+        .constructs
+        .iter()
+        .find(|construct| matches!(construct.kind, StructuredConstructKind::Switch { .. }))
+        .expect("switch construct");
+    assert!(matches!(
+        &construct.kind,
+        StructuredConstructKind::Switch {
+            arms,
+            join: Some(join),
+        } if arms.len() == 2 && arms[1].is_default && *join == BlockId::new(4)
     ));
 }
 

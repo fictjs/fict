@@ -1,11 +1,15 @@
 use std::collections::BTreeMap;
 
 use fict_diagnostics::SourceSpan;
-use fict_hir::{BlockId, FunctionId, IterationKind, ScopeId, StructuredSourceKind};
+use fict_hir::{
+    BlockId, FunctionId, IterationKind, Origin, ScopeId, StructuredSourceKind,
+    StructuredSwitchCaseHint,
+};
 use oxc::{
     ast::ast::{
         ArrowFunctionExpression, AssignmentTargetRest, AssignmentTargetWithDefault, BlockStatement,
         Expression, ForStatementLeft, Function, IdentifierReference, Program, Statement,
+        SwitchStatement,
     },
     ast_visit::{
         Visit,
@@ -47,6 +51,7 @@ pub(super) struct PlannedBlock {
     pub source_kind: Option<StructuredSourceKind>,
     pub source_exit: Option<BlockId>,
     pub source_origin: Option<SourceSpan>,
+    pub source_switch_cases: Vec<StructuredSwitchCaseHint>,
     pub terminator: PlannedTerminator,
 }
 
@@ -79,6 +84,22 @@ pub(super) enum PlannedTerminator {
         target: PlannedIterationTarget,
         body: BlockId,
         exit: BlockId,
+        origin: SourceSpan,
+    },
+    SwitchDispatch {
+        discriminant: SourceSpan,
+        discriminant_has_effects: bool,
+        target: BlockId,
+        origin: SourceSpan,
+    },
+    SwitchCase {
+        discriminant: SourceSpan,
+        discriminant_block: BlockId,
+        discriminant_has_effects: bool,
+        test: SourceSpan,
+        test_has_effects: bool,
+        consequent: BlockId,
+        alternate: BlockId,
         origin: SourceSpan,
     },
     Unreachable {
@@ -191,6 +212,7 @@ impl<'semantic> PlanBuilder<'semantic> {
                 source_kind: None,
                 source_exit: None,
                 source_origin: None,
+                source_switch_cases: Vec::new(),
                 terminator: PlannedTerminator::Unreachable { origin: body_span },
             }],
             owners: Vec::new(),
@@ -262,6 +284,7 @@ impl<'semantic> PlanBuilder<'semantic> {
             Statement::ForStatement(statement) => self.lower_for(statement, current, None),
             Statement::ForInStatement(statement) => self.lower_for_in(statement, current, None),
             Statement::ForOfStatement(statement) => self.lower_for_of(statement, current, None),
+            Statement::SwitchStatement(statement) => self.lower_switch(statement, current, None),
             Statement::LabeledStatement(statement) => self.lower_labeled(statement, current),
             Statement::BreakStatement(statement) => self.lower_break(statement, current),
             Statement::ContinueStatement(statement) => self.lower_continue(statement, current),
@@ -294,9 +317,7 @@ impl<'semantic> PlanBuilder<'semantic> {
                 };
                 None
             }
-            Statement::SwitchStatement(_)
-            | Statement::TryStatement(_)
-            | Statement::WithStatement(_) => {
+            Statement::TryStatement(_) | Statement::WithStatement(_) => {
                 self.supported = false;
                 self.owners.push(SpanOwner {
                     span: source_span(statement.span()),
@@ -375,6 +396,112 @@ impl<'semantic> PlanBuilder<'semantic> {
             };
         }
         Some(join)
+    }
+
+    fn lower_switch(
+        &mut self,
+        statement: &SwitchStatement<'_>,
+        current: BlockId,
+        label: Option<String>,
+    ) -> Option<BlockId> {
+        self.has_control_flow = true;
+        let origin = source_span(statement.span);
+        let parent_scope = self.blocks[current.as_usize()].scope;
+        let switch_scope = statement
+            .scope_id
+            .get()
+            .map_or(parent_scope, |scope| ScopeId::new(count_u32(scope.index())));
+        let bodies: Vec<_> = statement
+            .cases
+            .iter()
+            .map(|case| self.new_block(switch_scope, source_span(case.span)))
+            .collect();
+        let tests: Vec<_> = statement
+            .cases
+            .iter()
+            .map(|case| {
+                case.test
+                    .as_ref()
+                    .map(|test| self.new_block(switch_scope, source_span(test.span())))
+            })
+            .collect();
+        let exit = self.new_block(parent_scope, origin);
+        let discriminant = source_span(statement.discriminant.span());
+        let discriminant_has_effects = expression_has_effects(&statement.discriminant);
+        self.owners.push(SpanOwner {
+            span: discriminant,
+            block: current,
+        });
+        for (case, test_block) in statement.cases.iter().zip(&tests) {
+            if let (Some(test), Some(test_block)) = (&case.test, test_block) {
+                self.owners.push(SpanOwner {
+                    span: source_span(test.span()),
+                    block: *test_block,
+                });
+            }
+        }
+
+        let default_target = statement
+            .cases
+            .iter()
+            .position(|case| case.test.is_none())
+            .map_or(exit, |index| bodies[index]);
+        let mut next_dispatch = default_target;
+        for index in (0..statement.cases.len()).rev() {
+            let (Some(test), Some(test_block)) = (&statement.cases[index].test, tests[index])
+            else {
+                continue;
+            };
+            self.blocks[test_block.as_usize()].terminator = PlannedTerminator::SwitchCase {
+                discriminant,
+                discriminant_block: current,
+                discriminant_has_effects,
+                test: source_span(test.span()),
+                test_has_effects: expression_has_effects(test),
+                consequent: bodies[index],
+                alternate: next_dispatch,
+                origin: source_span(statement.cases[index].span),
+            };
+            next_dispatch = test_block;
+        }
+
+        self.blocks[current.as_usize()].source_kind = Some(StructuredSourceKind::Switch);
+        self.blocks[current.as_usize()].source_exit = Some(exit);
+        self.blocks[current.as_usize()].source_origin = Some(origin);
+        self.blocks[current.as_usize()].source_switch_cases = statement
+            .cases
+            .iter()
+            .enumerate()
+            .map(|(index, case)| StructuredSwitchCaseHint {
+                test: tests[index],
+                body: bodies[index],
+                origin: Origin::source(source_span(case.span)),
+            })
+            .collect();
+        self.blocks[current.as_usize()].terminator = PlannedTerminator::SwitchDispatch {
+            discriminant,
+            discriminant_has_effects,
+            target: next_dispatch,
+            origin,
+        };
+
+        self.control_targets.push(ControlTarget {
+            label,
+            break_target: exit,
+            continue_target: None,
+        });
+        for (index, case) in statement.cases.iter().enumerate() {
+            let end = self.lower_statement_list(&case.consequent, Some(bodies[index]), false);
+            if let Some(end) = end {
+                let target = bodies.get(index + 1).copied().unwrap_or(exit);
+                self.blocks[end.as_usize()].terminator = PlannedTerminator::Goto {
+                    target,
+                    origin: source_span(case.span),
+                };
+            }
+        }
+        self.control_targets.pop();
+        Some(exit)
     }
 
     fn lower_while(
@@ -712,6 +839,9 @@ impl<'semantic> PlanBuilder<'semantic> {
             Statement::ForOfStatement(loop_statement) => {
                 self.lower_for_of(loop_statement, current, label)
             }
+            Statement::SwitchStatement(switch_statement) => {
+                self.lower_switch(switch_statement, current, label)
+            }
             _ => {
                 self.supported = false;
                 self.owners.push(SpanOwner {
@@ -807,6 +937,7 @@ impl<'semantic> PlanBuilder<'semantic> {
             source_kind: None,
             source_exit: None,
             source_origin: None,
+            source_switch_cases: Vec::new(),
             terminator: PlannedTerminator::Unreachable { origin },
         });
         id

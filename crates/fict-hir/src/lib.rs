@@ -24,7 +24,8 @@ pub use ir::{
     ImportKind, ImportedName, InstructionSemantics, IterationKind, LocalKind, MutationEffect,
     ObjectEntry, ObjectPropertyKind, Place, PlaceBase, Projection, PropertyKey, Purity,
     ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind, ScopeKind, StructuredSourceHint,
-    StructuredSourceKind, SwitchCase, TerminatorKind, UnaryOperator, UpdateOperator, ValueKind,
+    StructuredSourceKind, StructuredSwitchCaseHint, SwitchCase, TerminatorKind, UnaryOperator,
+    UpdateOperator, ValueKind,
 };
 pub use jsx::{
     JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxExpressionKind,

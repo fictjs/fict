@@ -4,10 +4,10 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
 use fict_hir::{
-    Binding, BindingId, BindingKind, BlockId, CallArgument, CallHost, CallInstruction,
-    CompoundAssignmentOperator, DeclarationKind, EvaluationMode, FictMacroKind, FileId,
-    FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction, HirInstruction,
-    HirInstructionKind, HirLocal, HirObjectParameterCheck, HirObjectParameterMode,
+    BinaryOperator, Binding, BindingId, BindingKind, BlockId, CallArgument, CallHost,
+    CallInstruction, CompoundAssignmentOperator, DeclarationKind, DesugaringKind, EvaluationMode,
+    FictMacroKind, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction,
+    HirInstruction, HirInstructionKind, HirLocal, HirObjectParameterCheck, HirObjectParameterMode,
     HirObjectParameterProperty, HirObjectParameterRest, HirParameter, HirScope, HirTerminator,
     HirValue, InstructionSemantics, IterationKind, JsxAttribute, JsxAttributeValue, JsxChild,
     JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode,
@@ -1716,6 +1716,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     source_hint: block.source_kind.clone().map(|kind| StructuredSourceHint {
                         kind,
                         exit: block.source_exit,
+                        switch_cases: block.source_switch_cases.clone(),
                         origin: Origin::source(block.source_origin.unwrap_or(block.origin)),
                     }),
                     origin: Origin::source(block.origin),
@@ -2533,6 +2534,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 | structured_control_flow::PlannedTerminator::Goto { origin, .. }
                 | structured_control_flow::PlannedTerminator::Branch { origin, .. }
                 | structured_control_flow::PlannedTerminator::ForEach { origin, .. }
+                | structured_control_flow::PlannedTerminator::SwitchDispatch { origin, .. }
+                | structured_control_flow::PlannedTerminator::SwitchCase { origin, .. }
                 | structured_control_flow::PlannedTerminator::Unreachable { origin } => *origin,
             };
             let kind = match block.terminator {
@@ -2592,6 +2595,64 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                             body,
                             exit,
                         },
+                    }
+                }
+                structured_control_flow::PlannedTerminator::SwitchDispatch {
+                    discriminant,
+                    discriminant_has_effects,
+                    target,
+                    ..
+                } => {
+                    self.control_expression_value(
+                        owner,
+                        block.id,
+                        discriminant,
+                        false,
+                        discriminant_has_effects,
+                    );
+                    TerminatorKind::Goto { target }
+                }
+                structured_control_flow::PlannedTerminator::SwitchCase {
+                    discriminant,
+                    discriminant_block,
+                    discriminant_has_effects,
+                    test,
+                    test_has_effects,
+                    consequent,
+                    alternate,
+                    ..
+                } => {
+                    let discriminant = self.control_expression_value(
+                        owner,
+                        discriminant_block,
+                        discriminant,
+                        true,
+                        discriminant_has_effects,
+                    );
+                    let case_test = self.control_expression_value(
+                        owner,
+                        block.id,
+                        test,
+                        false,
+                        test_has_effects,
+                    );
+                    let comparison_origin = Origin::desugared(test, DesugaringKind::Switch);
+                    let comparison = self.push_value_to_block(
+                        owner,
+                        block.id,
+                        ValueKind::InstructionResult,
+                        comparison_origin,
+                        HirInstructionKind::Binary {
+                            operator: BinaryOperator::StrictEqual,
+                            left: discriminant,
+                            right: case_test,
+                        },
+                        InstructionSemantics::PURE_EAGER,
+                    );
+                    TerminatorKind::Branch {
+                        test: comparison,
+                        consequent,
+                        alternate,
                     }
                 }
                 structured_control_flow::PlannedTerminator::Unreachable { .. } => {

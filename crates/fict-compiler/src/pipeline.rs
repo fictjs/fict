@@ -2046,6 +2046,65 @@ mod tests {
     }
 
     #[test]
+    fn accepts_memoizable_switch_stories_and_total_switch_returns() {
+        let story_source = "import { $state } from 'fict'; export function App() { const mode = $state(0); let label = 'zero'; switch (mode) { case 0: label = 'zero'; break; case 1: label = 'one'; break; default: label = 'many'; } return <span>{label}</span>; }";
+        let story = compile(request(story_source, "switch-story.tsx"));
+        assert!(!story.has_errors(), "{:?}", story.diagnostics);
+        assert!(
+            story
+                .diagnostics
+                .iter()
+                .all(|diagnostic| { diagnostic.code.as_str() != "FICT-R006" })
+        );
+        assert!(story.code.contains("switch (mode())"), "{}", story.code);
+        assert!(story.code.contains("case 0:"), "{}", story.code);
+        assert!(story.code.contains("case 1:"), "{}", story.code);
+        assert!(story.code.contains("default:"), "{}", story.code);
+
+        let returns_source = "import { $state } from 'fict'; export function App() { const mode = $state(0); switch (mode) { case 0: return <Zero />; default: return <Many />; } }";
+        let returns = compile(request(returns_source, "switch-return.tsx"));
+        assert!(!returns.has_errors(), "{:?}", returns.diagnostics);
+        assert!(
+            returns
+                .diagnostics
+                .iter()
+                .all(|diagnostic| { diagnostic.code.as_str() != "FICT-R006" })
+        );
+    }
+
+    #[test]
+    fn enforces_call_based_and_nested_reactive_switch_guarantees() {
+        let call_source = "import { $state } from 'fict'; export function App() { const mode = $state(0); let label = 'none'; switch (mode + choose?.()) { case 0: label = 'zero'; break; default: label = 'many'; } return <span>{label}</span>; }";
+        let strict = compile(request(call_source, "call-switch.tsx"));
+        assert!(strict.has_errors(), "{:?}", strict.diagnostics);
+        assert!(strict.code.is_empty());
+        let finding = strict
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code.as_str() == "FICT-R006")
+            .unwrap_or_else(|| panic!("call-based switch diagnostic: {:?}", strict.diagnostics));
+        assert_eq!(finding.severity, DiagnosticSeverity::Error);
+        assert!(finding.message.contains("mode"));
+
+        let mut fallback_request = request(call_source, "call-switch.tsx");
+        fallback_request.options.strict_guarantee = false;
+        let fallback = compile(fallback_request);
+        assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
+        assert!(fallback.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R006"
+                && diagnostic.severity == DiagnosticSeverity::Warning
+        }));
+
+        let nested_source = "import { $state } from 'fict'; export function App() { const mode = $state(0); let label = 'none'; switch (mode) { case 0: switch (mode) { case 0: label = 'zero'; break; } break; default: label = 'many'; } return <span>{label}</span>; }";
+        let nested = compile(request(nested_source, "nested-switch.tsx"));
+        assert!(nested.has_errors(), "{:?}", nested.diagnostics);
+        assert!(nested.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R006"
+                && diagnostic.severity == DiagnosticSeverity::Error
+        }));
+    }
+
+    #[test]
     fn diagnoses_reactive_classic_and_enumeration_loop_controls() {
         let cases = [
             (

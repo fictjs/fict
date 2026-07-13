@@ -221,6 +221,53 @@ test('Rust compiler output executes structured for-of and for-in loops', async (
   container.remove()
 })
 
+test('Rust compiler output preserves switch test order, deferred default, and fallthrough targets', async () => {
+  const module = await compileAndImport(
+    `
+      import { render } from 'fict'
+
+      function App() {
+        const log = []
+        const mark = value => {
+          log.push(value)
+          return value
+        }
+        let result = ''
+        switch (mark('b')) {
+          case mark('a'):
+            result = 'a'
+            break
+          default:
+            result = 'default'
+            break
+          case mark('b'):
+            result += 'b'
+          case mark('c'):
+            result += 'c'
+        }
+        return <output data-id="switch-order">{log.join(',')}:{result}</output>
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+    `,
+    'switch-order',
+    /switch \(mark\(["']b["']\)\)/,
+  )
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = module.mount(container)
+  await flushRuntime()
+
+  assert.equal(container.querySelector('[data-id="switch-order"]')?.textContent, 'b,a,b:bc')
+
+  dispose()
+  assert.equal(container.childNodes.length, 0)
+  container.remove()
+})
+
 test('Rust compiler output preserves keyed identity, reactive updates, and cleanup', async () => {
   const module = await compileAndImport(
     `

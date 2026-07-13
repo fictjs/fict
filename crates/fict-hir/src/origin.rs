@@ -13,6 +13,8 @@ pub enum DesugaringKind {
     LogicalAssignment,
     /// Loop syntax was normalized into control-flow blocks.
     Loop,
+    /// Switch dispatch was normalized into ordered case-test blocks.
+    Switch,
     /// JSX syntax was normalized into a template and dynamic values.
     Jsx,
     /// A class-related construct was normalized.

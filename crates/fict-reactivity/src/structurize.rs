@@ -172,6 +172,13 @@ pub fn structurize_cfg(
 
     let loops = natural_loops(cfg);
     let loop_headers: BTreeSet<_> = loops.keys().copied().collect();
+    let switch_test_blocks: BTreeSet<_> = function
+        .blocks
+        .iter()
+        .filter_map(|block| block.source_hint.as_ref())
+        .filter(|hint| matches!(&hint.kind, StructuredSourceKind::Switch))
+        .flat_map(|hint| hint.switch_cases.iter().filter_map(|case| case.test))
+        .collect();
     let mut constructs = Vec::new();
     for header in &cfg.reverse_postorder {
         if let Some(loop_blocks) = loops.get(header) {
@@ -202,12 +209,49 @@ pub fn structurize_cfg(
             });
         }
         let block = &function.blocks[header.as_usize()];
+        if let Some(hint) = &block.source_hint
+            && matches!(&hint.kind, StructuredSourceKind::Switch)
+            && !matches!(&block.terminator.kind, TerminatorKind::Switch { .. })
+            && let Some(join) = hint.exit
+        {
+            let arms = hint
+                .switch_cases
+                .iter()
+                .enumerate()
+                .map(|(index, case)| StructuredSwitchArm {
+                    case_index: count_u32(index),
+                    target: case.body,
+                    blocks: blocks_until(case.body, Some(join), *header, cfg)
+                        .into_iter()
+                        .collect(),
+                    is_default: case.test.is_none(),
+                })
+                .collect::<Vec<_>>();
+            let mut blocks = BTreeSet::from([*header]);
+            for case in &hint.switch_cases {
+                if let Some(test) = case.test {
+                    blocks.extend(blocks_until(test, Some(join), *header, cfg));
+                }
+                blocks.extend(blocks_until(case.body, Some(join), *header, cfg));
+            }
+            constructs.push(StructuredConstruct {
+                id: count_u32(constructs.len()),
+                header: *header,
+                kind: StructuredConstructKind::Switch {
+                    arms,
+                    join: Some(join),
+                },
+                blocks: blocks.into_iter().collect(),
+                parent: None,
+                children: Vec::new(),
+            });
+        }
         match &block.terminator.kind {
             TerminatorKind::Branch {
                 consequent,
                 alternate,
                 ..
-            } if !loop_headers.contains(header) => {
+            } if !loop_headers.contains(header) && !switch_test_blocks.contains(header) => {
                 let join = nearest_common_join(&[*consequent, *alternate], *header, cfg);
                 let mut blocks = BTreeSet::from([*header]);
                 blocks.extend(blocks_until(*consequent, join, *header, cfg));
