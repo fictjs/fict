@@ -37,14 +37,16 @@ fn builds_verified_binding_aware_hir_for_tsx_components_and_macros() {
         .find(|function| function.kind == FunctionKind::Component)
         .expect("component function");
     assert_eq!(app.parameters.len(), 1);
-    let call = app.blocks[0]
+    let (call_index, state_result, call) = app.blocks[0]
         .instructions
         .iter()
-        .find_map(|instruction| match &instruction.kind {
-            HirInstructionKind::Call(call) => Some(call),
+        .enumerate()
+        .find_map(|(index, instruction)| match &instruction.kind {
+            HirInstructionKind::Call(call) => Some((index, instruction.result, call)),
             _ => None,
         })
         .expect("state call");
+    let state_result = state_result.expect("state result");
     assert_eq!(call.macro_kind, Some(FictMacroKind::State));
     let CallHost::Binding(callee) = call.host else {
         panic!("state call must carry its imported binding")
@@ -57,6 +59,24 @@ fn builds_verified_binding_aware_hir_for_tsx_components_and_macros() {
             .unwrap()
             .id
     );
+    let count = app
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("count"))
+        .expect("count local");
+    let (declaration_index, initializer) = app.blocks[0]
+        .instructions
+        .iter()
+        .enumerate()
+        .find_map(|(index, instruction)| match instruction.kind {
+            HirInstructionKind::Declare {
+                local, initializer, ..
+            } if local == count.id => Some((index, initializer)),
+            _ => None,
+        })
+        .expect("count declaration");
+    assert_eq!(initializer, Some(state_result));
+    assert!(call_index < declaration_index);
     assert!(
         hir.bindings
             .iter()

@@ -1118,6 +1118,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         may_throw: true,
                     },
                 );
+                if let Some(binding) = call.direct_variable_binding {
+                    self.link_direct_call_declaration(fact.id, binding, value);
+                }
                 inputs.push(value);
             }
 
@@ -1189,6 +1192,45 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             },
             InstructionSemantics::CONSERVATIVE_EAGER,
         )
+    }
+
+    fn link_direct_call_declaration(
+        &mut self,
+        owner: FunctionId,
+        binding: BindingId,
+        initializer: ValueId,
+    ) {
+        let function = &mut self.functions[owner.as_usize()];
+        let Some(local) = function
+            .locals
+            .iter()
+            .find(|local| local.binding == Some(binding))
+            .map(|local| local.id)
+        else {
+            return;
+        };
+        let block = &mut function.blocks[0];
+        let Some(index) = block.instructions.iter().position(|instruction| {
+            matches!(
+                instruction.kind,
+                HirInstructionKind::Declare {
+                    local: candidate,
+                    ..
+                } if candidate == local
+            )
+        }) else {
+            return;
+        };
+        let mut declaration = block.instructions.remove(index);
+        let HirInstructionKind::Declare {
+            initializer: target,
+            ..
+        } = &mut declaration.kind
+        else {
+            unreachable!("selected declaration instruction")
+        };
+        *target = Some(initializer);
+        block.instructions.push(declaration);
     }
 
     fn lower_jsx_node(&mut self, owner: FunctionId, node: &RawJsxNode) -> JsxNode {
@@ -1740,6 +1782,7 @@ struct CallFact {
     arguments: Vec<ArgumentFact>,
     callback: Option<FunctionId>,
     direct_variable: Option<bool>,
+    direct_variable_binding: Option<BindingId>,
     immediate_statement: bool,
     immediate_effect_statement: bool,
     immediate_default_export: bool,
@@ -1764,6 +1807,7 @@ enum HookCall {
 struct VariableContext {
     initializer: Option<SourceSpan>,
     simple_identifier: bool,
+    binding: Option<SymbolId>,
 }
 
 #[derive(Debug, Default)]
@@ -1793,6 +1837,10 @@ impl PlacementContext {
                         declarator.id,
                         BindingPattern::BindingIdentifier(_)
                     ),
+                    binding: match &declarator.id {
+                        BindingPattern::BindingIdentifier(identifier) => identifier.symbol_id.get(),
+                        _ => None,
+                    },
                 });
             }
             AstKind::ExpressionStatement(statement) => self
@@ -1834,7 +1882,7 @@ impl PlacementContext {
         }
     }
 
-    fn facts(&self, call: SourceSpan) -> (Option<bool>, bool, bool, bool, bool) {
+    fn facts(&self, call: SourceSpan) -> (Option<bool>, Option<SymbolId>, bool, bool, bool, bool) {
         let (block_baseline, control_baseline) =
             self.function_baselines.last().copied().unwrap_or_default();
         let conditional_or_loop = self.control_depth > control_baseline;
@@ -1842,12 +1890,18 @@ impl PlacementContext {
         let direct_variable = self.variables.last().and_then(|variable| {
             (variable.initializer == Some(call)).then_some(variable.simple_identifier)
         });
+        let direct_variable_binding = self.variables.last().and_then(|variable| {
+            (variable.initializer == Some(call))
+                .then_some(variable.binding)
+                .flatten()
+        });
         let immediate_effect_statement =
             immediate_statement && self.expression_statements.last().copied() == Some(call);
         let immediate_default_export =
             immediate_statement && self.default_exports.last().copied() == Some(call);
         (
             direct_variable,
+            direct_variable_binding,
             immediate_statement,
             immediate_effect_statement,
             immediate_default_export,
@@ -1930,11 +1984,14 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
         let call_span = source_span(call.span);
         let (
             direct_variable,
+            direct_variable_symbol,
             immediate_statement,
             immediate_effect_statement,
             immediate_default_export,
             conditional_or_loop,
         ) = self.context.facts(call_span);
+        let direct_variable_binding =
+            direct_variable_symbol.and_then(|symbol| self.symbol_to_binding.get(&symbol).copied());
         let direct_binding = resolved_callee_symbol(self.scoping, &call.callee)
             .and_then(|symbol| self.symbol_to_binding.get(&symbol).copied());
         let namespace_reactive = namespace_reactive_call_kind(
@@ -1984,6 +2041,7 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             reactive_kind,
             callback: arguments.first().and_then(|argument| argument.function),
             direct_variable,
+            direct_variable_binding,
             immediate_statement,
             immediate_effect_statement,
             immediate_default_export,
