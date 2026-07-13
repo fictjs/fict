@@ -428,6 +428,9 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
         matches!(operation, EmitOperation::ResolveElement { path, .. } if path == &[1])
     }));
     assert!(program.functions[0].operations.iter().any(|operation| {
+        matches!(operation, EmitOperation::ResolveElement { path, .. } if path == &[1, 0])
+    }));
+    assert!(program.functions[0].operations.iter().any(|operation| {
         matches!(
             operation,
             EmitOperation::BindDom {
@@ -441,6 +444,7 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
             operation,
             EmitOperation::Insert {
                 helper: RuntimeHelper::Insert,
+                before: Some(_),
                 ..
             }
         )

@@ -660,13 +660,7 @@ fn verify_helper_semantics(
             }
         }
         EmitOperation::BindRef { helper, .. } => *helper == RuntimeHelper::BindRef,
-        EmitOperation::Insert { helper, before, .. } => {
-            if before.is_some() {
-                *helper == RuntimeHelper::InsertBetween
-            } else {
-                *helper == RuntimeHelper::Insert
-            }
-        }
+        EmitOperation::Insert { helper, .. } => *helper == RuntimeHelper::Insert,
         EmitOperation::Conditional { helper, .. } => *helper == RuntimeHelper::Conditional,
         EmitOperation::KeyedList { helper, .. } => *helper == RuntimeHelper::KeyedList,
         EmitOperation::ReadReactive { helper, .. } => {

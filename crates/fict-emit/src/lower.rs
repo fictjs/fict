@@ -724,6 +724,7 @@ enum TemplateBinding {
     },
     Child {
         parent_path: Vec<u32>,
+        marker_path: Vec<u32>,
         value: ValueId,
         namespace: DomNamespace,
     },
@@ -877,6 +878,7 @@ fn lower_jsx_instruction(
             }
             TemplateBinding::Child {
                 parent_path,
+                marker_path,
                 value,
                 namespace,
             } => {
@@ -890,10 +892,19 @@ fn lower_jsx_instruction(
                     operations,
                     origin,
                 );
+                let marker = resolved_element(
+                    root,
+                    marker_path,
+                    &mut resolved,
+                    temporaries,
+                    temporary_names,
+                    operations,
+                    origin,
+                );
                 operations.push(EmitOperation::Insert {
                     parent,
                     value: lower_value(value, value_temporaries),
-                    before: None,
+                    before: Some(marker),
                     namespace,
                     helper: RuntimeHelper::Insert,
                     origin,
@@ -1238,8 +1249,11 @@ fn serialize_children(
             JsxChild::Expression { value, .. } | JsxChild::Spread { value, .. } => {
                 previous_static_text = false;
                 html.push_str("<!---->");
+                let mut marker_path = parent_path.clone();
+                marker_path.push(child_index);
                 bindings.push(TemplateBinding::Child {
                     parent_path: parent_path.clone(),
+                    marker_path,
                     value: *value,
                     namespace: child_namespace,
                 });
