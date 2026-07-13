@@ -651,7 +651,7 @@ fn unwrap_transparent_callee<'expression>(
     }
 }
 
-fn macro_kind(source: &str, imported_name: &str) -> Option<FictMacroKind> {
+pub(crate) fn macro_kind(source: &str, imported_name: &str) -> Option<FictMacroKind> {
     match imported_name {
         "$state" if FICT_MACRO_MODULES.contains(&source) => Some(FictMacroKind::State),
         "$effect" if FICT_MACRO_MODULES.contains(&source) => Some(FictMacroKind::Effect),

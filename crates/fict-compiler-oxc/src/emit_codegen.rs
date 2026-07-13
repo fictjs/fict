@@ -7,7 +7,7 @@ use fict_diagnostics::{
 use fict_emit::{EmitOperation, EmitProgram};
 use oxc::{
     allocator::Allocator,
-    ast::ast::Expression,
+    ast::ast::{Expression, ImportDeclarationSpecifier, ImportOrExportKind, Statement},
     ast_visit::{VisitMut, walk_mut},
     codegen::{Codegen, CodegenOptions},
     parser::{ParseOptions, Parser},
@@ -63,6 +63,8 @@ pub fn emit_program(
         return failed_output(convert_diagnostics(parsed.diagnostics, "FICT-PARSE"));
     }
     let mut program = parsed.program;
+
+    strip_compiler_macro_imports(&mut program);
 
     let (rewrites, rewrite_diagnostics) = call_rewrites(emit);
     diagnostics.extend(rewrite_diagnostics);
@@ -207,6 +209,31 @@ pub fn emit_program(
         source_map_json: generated.map.map(|map| map.to_json_string()),
         diagnostics: sorted(diagnostics),
     }
+}
+
+fn strip_compiler_macro_imports(program: &mut oxc::ast::ast::Program<'_>) {
+    program.body.retain_mut(|statement| {
+        let Statement::ImportDeclaration(declaration) = statement else {
+            return true;
+        };
+        if declaration.import_kind == ImportOrExportKind::Type {
+            return true;
+        }
+        let source = declaration.source.value.to_string();
+        let Some(specifiers) = &mut declaration.specifiers else {
+            return true;
+        };
+        let original_len = specifiers.len();
+        specifiers.retain(|specifier| {
+            let ImportDeclarationSpecifier::ImportSpecifier(specifier) = specifier else {
+                return true;
+            };
+            specifier.import_kind == ImportOrExportKind::Type
+                || super::frontend::macro_kind(&source, specifier.imported.name().as_str())
+                    .is_none()
+        });
+        original_len == specifiers.len() || !specifiers.is_empty()
+    });
 }
 
 fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
@@ -501,11 +528,30 @@ mod tests {
         assert!(output.code.contains("@fictjs/runtime/internal"));
         assert!(output.code.contains("createEffect as createEffect_1"));
         assert!(output.code.contains("createEffect_1(() => 1)"));
+        assert!(!output.code.contains("$effect"));
         assert!(!output.code.contains(": number"));
         assert!(output.code.contains("export { value }"));
         let map = output.source_map_json.expect("source map");
         assert!(map.contains("effect.ts"));
         assert!(map.contains("mappings"));
+    }
+
+    #[test]
+    fn erases_only_exact_compiler_macro_import_specifiers() {
+        let source = "import { $effect, batch } from 'fict';\n$effect(() => 1);\nexport { batch };";
+        let emit = effect_program(source);
+
+        let output = emit_program(
+            source,
+            "mixed-import.js",
+            options(OxcSourceLanguage::JavaScript, false),
+            &emit,
+        );
+
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert!(!output.code.contains("$effect"));
+        assert!(output.code.contains("import { batch } from \"fict\""));
+        assert!(output.code.contains("export { batch }"));
     }
 
     #[test]
