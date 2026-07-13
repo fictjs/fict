@@ -414,9 +414,7 @@ fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
             }
             _ => matches!(
                 operation,
-                EmitOperation::CreateElement { .. }
-                    | EmitOperation::Conditional { .. }
-                    | EmitOperation::KeyedList { .. }
+                EmitOperation::CreateElement { .. } | EmitOperation::Conditional { .. }
             ),
         });
     unsupported.map_or_else(Vec::new, |operation| {
@@ -455,7 +453,8 @@ fn call_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), CallRewrite>, Vec<
         for operation in &function.operations {
             let helper = match operation {
                 EmitOperation::CreateReactive { helper, .. }
-                | EmitOperation::RegisterEffect { helper, .. } => Some(*helper),
+                | EmitOperation::RegisterEffect { helper, .. }
+                | EmitOperation::KeyedList { helper, .. } => Some(*helper),
                 _ => None,
             };
             let Some(helper) = helper else {

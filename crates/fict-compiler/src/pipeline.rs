@@ -857,6 +857,28 @@ mod tests {
     }
 
     #[test]
+    fn materializes_binding_aware_keyed_list_calls() {
+        let result = compile(request(
+            "import { createKeyedList as list } from 'fict/internal/list'; export function App(items) { return list(() => items, (item) => item.id, (item) => <span>{item.name}</span>); }",
+            "keyed-list.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result.code.contains("return createKeyedList(() => items"),
+            "{}",
+            result.code
+        );
+        assert!(!result.code.contains("return list("), "{}", result.code);
+        assert!(
+            result.code.contains("template(\"<span><!----></span>\")"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("() => item.name"), "{}", result.code);
+    }
+
+    #[test]
     fn preserves_inline_function_component_props_as_values() {
         let result = compile(request(
             "import { $state } from 'fict'; const Card = (_props) => null; export function App() { let count = $state(0); return <Card onSelect={(() => count++) as () => number} />; }",
