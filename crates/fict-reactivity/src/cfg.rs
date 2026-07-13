@@ -312,6 +312,9 @@ fn terminator_targets(terminator: &TerminatorKind) -> Vec<BlockId> {
             alternate,
             ..
         } => vec![*consequent, *alternate],
+        TerminatorKind::ForIn { body, exit, .. } | TerminatorKind::ForOf { body, exit, .. } => {
+            vec![*body, *exit]
+        }
         TerminatorKind::Switch { cases, .. } => cases.iter().map(|case| case.target).collect(),
         TerminatorKind::Try {
             body,

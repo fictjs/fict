@@ -216,7 +216,10 @@ fn terminates_before_join(
                     )
                 })
         }
-        TerminatorKind::Try { .. } | TerminatorKind::Unreachable => false,
+        TerminatorKind::ForIn { .. }
+        | TerminatorKind::ForOf { .. }
+        | TerminatorKind::Try { .. }
+        | TerminatorKind::Unreachable => false,
     };
     visiting.remove(&block);
     result

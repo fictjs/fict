@@ -9,12 +9,12 @@ use fict_hir::{
     FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction, HirInstruction,
     HirInstructionKind, HirLocal, HirObjectParameterCheck, HirObjectParameterMode,
     HirObjectParameterProperty, HirObjectParameterRest, HirParameter, HirScope, HirTerminator,
-    HirValue, InstructionSemantics, JsxAttribute, JsxAttributeValue, JsxChild, JsxElement,
-    JsxElementName, JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode, JsxTemplate,
-    LocalId, LocalKind, MutationEffect, Origin, PatternSummary, Purity, ReactiveCallKind,
-    ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind, StructuredSourceHint,
-    SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TemplateId,
-    TerminatorKind, UpdateOperator, ValueId, ValueKind, verify_hir,
+    HirValue, InstructionSemantics, IterationKind, JsxAttribute, JsxAttributeValue, JsxChild,
+    JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode,
+    JsxTemplate, LocalId, LocalKind, MutationEffect, Origin, PatternSummary, Purity,
+    ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind,
+    StructuredSourceHint, SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary,
+    TemplateId, TerminatorKind, UpdateOperator, ValueId, ValueKind, verify_hir,
 };
 use oxc::{
     allocator::Allocator,
@@ -887,7 +887,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .collect();
         self.function_facts = collector.functions;
         self.build_function_shells();
-        self.control_flow_plans = structured_control_flow::collect(program, &self.function_by_span);
+        self.control_flow_plans = structured_control_flow::collect(
+            program,
+            &self.function_by_span,
+            self.semantic.scoping(),
+        );
         self.apply_control_flow_plans();
 
         let function_by_span = self.function_by_span.clone();
@@ -2528,6 +2532,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 | structured_control_flow::PlannedTerminator::Throw { origin, .. }
                 | structured_control_flow::PlannedTerminator::Goto { origin, .. }
                 | structured_control_flow::PlannedTerminator::Branch { origin, .. }
+                | structured_control_flow::PlannedTerminator::ForEach { origin, .. }
                 | structured_control_flow::PlannedTerminator::Unreachable { origin } => *origin,
             };
             let kind = match block.terminator {
@@ -2557,6 +2562,38 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     consequent,
                     alternate,
                 },
+                structured_control_flow::PlannedTerminator::ForEach {
+                    kind,
+                    source,
+                    source_block,
+                    source_has_effects,
+                    target,
+                    body,
+                    exit,
+                    ..
+                } => {
+                    let source = self.control_expression_value(
+                        owner,
+                        source_block,
+                        source,
+                        false,
+                        source_has_effects,
+                    );
+                    self.materialize_iteration_target(owner, body, kind, source, target);
+                    match kind {
+                        IterationKind::In => TerminatorKind::ForIn {
+                            object: source,
+                            body,
+                            exit,
+                        },
+                        IterationKind::Of | IterationKind::AwaitOf => TerminatorKind::ForOf {
+                            iterable: source,
+                            r#await: kind == IterationKind::AwaitOf,
+                            body,
+                            exit,
+                        },
+                    }
+                }
                 structured_control_flow::PlannedTerminator::Unreachable { .. } => {
                     TerminatorKind::Unreachable
                 }
@@ -2567,6 +2604,77 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     origin: Origin::source(origin),
                 };
         }
+    }
+
+    fn materialize_iteration_target(
+        &mut self,
+        owner: FunctionId,
+        body: BlockId,
+        kind: IterationKind,
+        source: ValueId,
+        target: structured_control_flow::PlannedIterationTarget,
+    ) {
+        let declared_bindings: Vec<_> = target
+            .declared
+            .iter()
+            .filter_map(|symbol| self.symbol_to_binding.get(symbol).copied())
+            .collect();
+        let assigned_bindings: Vec<_> = target
+            .assigned
+            .iter()
+            .filter_map(|symbol| self.symbol_to_binding.get(symbol).copied())
+            .collect();
+        let mut targets = Vec::new();
+        for binding in declared_bindings.iter().chain(&assigned_bindings) {
+            let Some(local) = self.functions[owner.as_usize()]
+                .locals
+                .iter()
+                .find(|local| local.binding == Some(*binding))
+                .map(|local| local.id)
+            else {
+                continue;
+            };
+            if !targets.contains(&local) {
+                targets.push(local);
+            }
+        }
+        let fragment = self.add_fragment(
+            SyntaxFragmentKind::Pattern,
+            target.span,
+            SyntaxSummary {
+                referenced_bindings: self.referenced_bindings(target.span),
+                pattern: Some(PatternSummary {
+                    declared_bindings,
+                    assigned_bindings,
+                    has_defaults: target.has_defaults,
+                    has_rest: target.has_rest,
+                }),
+                has_side_effects: true,
+                may_throw: true,
+                contains_await: kind == IterationKind::AwaitOf,
+                ..SyntaxSummary::default()
+            },
+        );
+        let block = &mut self.functions[owner.as_usize()].blocks[body.as_usize()];
+        let insertion = block
+            .instructions
+            .iter()
+            .position(|instruction| !matches!(instruction.kind, HirInstructionKind::Declare { .. }))
+            .unwrap_or(block.instructions.len());
+        block.instructions.insert(
+            insertion,
+            HirInstruction {
+                result: None,
+                kind: HirInstructionKind::Iteration {
+                    kind,
+                    source,
+                    pattern: fragment,
+                    targets,
+                },
+                semantics: InstructionSemantics::CONSERVATIVE_EAGER,
+                origin: Origin::source(target.span),
+            },
+        );
     }
 
     fn control_expression_value(
@@ -4563,6 +4671,22 @@ impl<'a> Visit<'a> for ReactiveBindingDependencyCollector<'_> {
             self.push_fact(vec![symbol], &assignment.right);
         }
         oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
+    }
+
+    fn visit_for_in_statement(&mut self, statement: &oxc::ast::ast::ForInStatement<'a>) {
+        let target =
+            structured_control_flow::planned_iteration_target(&statement.left, self.scoping);
+        let targets = target.declared.into_iter().chain(target.assigned).collect();
+        self.push_fact(targets, &statement.right);
+        oxc::ast_visit::walk::walk_for_in_statement(self, statement);
+    }
+
+    fn visit_for_of_statement(&mut self, statement: &oxc::ast::ast::ForOfStatement<'a>) {
+        let target =
+            structured_control_flow::planned_iteration_target(&statement.left, self.scoping);
+        let targets = target.declared.into_iter().chain(target.assigned).collect();
+        self.push_fact(targets, &statement.right);
+        oxc::ast_visit::walk::walk_for_of_statement(self, statement);
     }
 }
 

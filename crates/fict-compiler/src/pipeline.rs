@@ -2078,6 +2078,41 @@ mod tests {
     }
 
     #[test]
+    fn emits_authored_enumeration_loops_from_structured_hir() {
+        let source = "import { $state } from 'fict'; export async function App(values, object) { let total = $state(0); for (const value of values) total += value; for (const key in object) total += key.length; for await (const value of values) { total += await value; } return total; }";
+        let result = compile(request(source, "enumeration-loops.js"));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+        assert!(
+            result.code.contains("for (const value of values)"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("for (const key in object)"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("for await (const value of values)"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("total() + value"), "{}", result.code);
+        assert!(
+            result.code.contains("total() + key.length"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("total() + await value"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn applies_native_diagnostic_policy_precedence() {
         let finding = || {
             Diagnostic::new(

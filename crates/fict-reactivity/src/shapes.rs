@@ -235,6 +235,18 @@ pub fn analyze_shapes(
                     read_sources.insert(result, source);
                 }
             }
+            if let HirInstructionKind::Iteration { targets, .. } = &instruction.kind {
+                for local in targets {
+                    if let Some(target) = definitions_by_location.get(&(
+                        block.id,
+                        count_u32(instruction_index),
+                        *local,
+                    )) {
+                        assigned_values.insert(*target, None);
+                    }
+                }
+                continue;
+            }
             let (local, initializer) = match &instruction.kind {
                 HirInstructionKind::Declare {
                     local, initializer, ..
@@ -684,6 +696,7 @@ fn structural_value_shape(
         | HirInstructionKind::Read { .. }
         | HirInstructionKind::Write { .. }
         | HirInstructionKind::ReadWrite { .. }
+        | HirInstructionKind::Iteration { .. }
         | HirInstructionKind::Unary { .. }
         | HirInstructionKind::Binary { .. }
         | HirInstructionKind::Await { .. }

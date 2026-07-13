@@ -1162,6 +1162,7 @@ fn rewrite_instruction_values(
                 rewrite_value(value, replacements);
             }
         }
+        HirInstructionKind::Iteration { source, .. } => rewrite_value(source, replacements),
         HirInstructionKind::Unary { argument, .. } => rewrite_value(argument, replacements),
         HirInstructionKind::Binary { left, right, .. } => {
             rewrite_value(left, replacements);
@@ -1233,6 +1234,8 @@ fn rewrite_terminator_values(
         }
         TerminatorKind::Throw { value } => rewrite_value(value, replacements),
         TerminatorKind::Branch { test, .. } => rewrite_value(test, replacements),
+        TerminatorKind::ForIn { object, .. } => rewrite_value(object, replacements),
+        TerminatorKind::ForOf { iterable, .. } => rewrite_value(iterable, replacements),
         TerminatorKind::Switch {
             discriminant,
             cases,
@@ -1266,6 +1269,7 @@ fn instruction_value_inputs(
             values.extend(*value);
             values
         }
+        HirInstructionKind::Iteration { source, .. } => vec![*source],
         HirInstructionKind::Literal(_)
         | HirInstructionKind::Function { .. }
         | HirInstructionKind::Phi { .. }
@@ -1331,6 +1335,8 @@ fn terminator_value_inputs(terminator: &TerminatorKind) -> Vec<ValueId> {
         TerminatorKind::Return { value } => value.iter().copied().collect(),
         TerminatorKind::Throw { value } => vec![*value],
         TerminatorKind::Branch { test, .. } => vec![*test],
+        TerminatorKind::ForIn { object, .. } => vec![*object],
+        TerminatorKind::ForOf { iterable, .. } => vec![*iterable],
         TerminatorKind::Switch {
             discriminant,
             cases,
@@ -1434,6 +1440,7 @@ fn remap_instruction_values(
                 remap_value_id(value, remap)?;
             }
         }
+        HirInstructionKind::Iteration { source, .. } => remap_value_id(source, remap)?,
         HirInstructionKind::Unary { argument, .. } => remap_value_id(argument, remap)?,
         HirInstructionKind::Binary { left, right, .. } => {
             remap_value_id(left, remap)?;
@@ -1506,6 +1513,8 @@ fn remap_terminator_values(
         }
         TerminatorKind::Throw { value } => remap_value_id(value, remap)?,
         TerminatorKind::Branch { test, .. } => remap_value_id(test, remap)?,
+        TerminatorKind::ForIn { object, .. } => remap_value_id(object, remap)?,
+        TerminatorKind::ForOf { iterable, .. } => remap_value_id(iterable, remap)?,
         TerminatorKind::Switch {
             discriminant,
             cases,

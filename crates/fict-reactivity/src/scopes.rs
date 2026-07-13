@@ -454,6 +454,19 @@ fn binding_candidates(
                             HirInstructionKind::Write { place, value } if place.is_local() => {
                                 Some(*value)
                             }
+                            HirInstructionKind::Iteration {
+                                source, targets, ..
+                            } if targets.contains(&definition.name.local) => {
+                                paths.extend(
+                                    dependencies
+                                        .value_dependencies
+                                        .get(source.as_usize())
+                                        .into_iter()
+                                        .flatten()
+                                        .cloned(),
+                                );
+                                None
+                            }
                             _ => None,
                         };
                         if let Some(value) = value {

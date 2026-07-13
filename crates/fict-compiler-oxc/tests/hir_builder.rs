@@ -3,7 +3,8 @@ use fict_compiler_oxc::{
 };
 use fict_hir::{
     CallHost, CompoundAssignmentOperator, FictMacroKind, FunctionKind, HirInstructionKind,
-    ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, UpdateOperator,
+    IterationKind, ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind, TerminatorKind,
+    UpdateOperator,
 };
 
 fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
@@ -169,11 +170,11 @@ fn lowers_throw_values_into_their_conditional_block() {
 }
 
 #[test]
-fn keeps_unimplemented_for_of_flow_on_the_conservative_fallback_path() {
+fn keeps_unimplemented_switch_flow_on_the_conservative_fallback_path() {
     let source = r#"
         function work(flag) {
             if (flag) return 1;
-            for (const item of [0]) flag = item;
+            switch (flag) { case true: flag = false; }
             return 0;
         }
     "#;
@@ -319,6 +320,190 @@ fn lowers_classic_loops_and_labeled_control_edges() {
     assert!(matches!(
         terminator_for("break;"),
         Some(TerminatorKind::Goto { target }) if Some(*target) == do_while_loop.1.exit
+    ));
+}
+
+#[test]
+fn lowers_for_in_of_and_await_of_with_once_evaluated_sources_and_iteration_targets() {
+    let source = r#"
+        async function iterate(items, object) {
+            let current;
+            let sum = 0;
+            for (const item of items) {
+                sum += item;
+                if (item < 0) continue;
+            }
+            for (current in object) {
+                if (current === 'stop') break;
+            }
+            outer: for await (const [value, ...rest] of items) {
+                current = value;
+                continue outer;
+            }
+            return sum;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified enumeration-loop HIR");
+    let iterate = hir
+        .bindings
+        .iter()
+        .find(|binding| binding.display_name == "iterate")
+        .expect("iterate binding")
+        .id;
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| function.binding == Some(iterate))
+        .expect("iterate function");
+
+    let headers: Vec<_> = function
+        .blocks
+        .iter()
+        .filter(|block| {
+            block.source_hint.as_ref().is_some_and(|hint| {
+                matches!(
+                    hint.kind,
+                    StructuredSourceKind::ForInLoop
+                        | StructuredSourceKind::ForOfLoop
+                        | StructuredSourceKind::ForAwaitOfLoop
+                )
+            })
+        })
+        .collect();
+    assert_eq!(headers.len(), 3, "{headers:#?}");
+
+    let binding = |name: &str| {
+        hir.bindings
+            .iter()
+            .find(|binding| binding.display_name == name)
+            .expect("loop binding")
+            .id
+    };
+    let local = |name: &str| {
+        function
+            .locals
+            .iter()
+            .find(|local| local.binding == Some(binding(name)))
+            .expect("loop local")
+            .id
+    };
+    let current = local("current");
+    let item = local("item");
+    let value = local("value");
+    let rest = local("rest");
+
+    for header in &headers {
+        let (kind, source_value, body, exit) = match header.terminator.kind {
+            TerminatorKind::ForIn { object, body, exit } => (IterationKind::In, object, body, exit),
+            TerminatorKind::ForOf {
+                iterable,
+                r#await,
+                body,
+                exit,
+            } => (
+                if r#await {
+                    IterationKind::AwaitOf
+                } else {
+                    IterationKind::Of
+                },
+                iterable,
+                body,
+                exit,
+            ),
+            ref other => panic!("unexpected enumeration header: {other:?}"),
+        };
+        assert_eq!(
+            header.source_hint.as_ref().and_then(|hint| hint.exit),
+            Some(exit)
+        );
+        let source_block = function
+            .blocks
+            .iter()
+            .find(|block| {
+                block
+                    .instructions
+                    .iter()
+                    .any(|instruction| instruction.result == Some(source_value))
+            })
+            .expect("once-evaluated enumeration source");
+        assert_ne!(source_block.id, header.id);
+        assert!(matches!(
+            source_block.terminator.kind,
+            TerminatorKind::Goto { target } if target == header.id
+        ));
+
+        let iteration = function.blocks[body.as_usize()]
+            .instructions
+            .iter()
+            .find_map(|instruction| match &instruction.kind {
+                HirInstructionKind::Iteration {
+                    kind: candidate,
+                    source,
+                    pattern,
+                    targets,
+                } if *candidate == kind => Some((*source, *pattern, targets)),
+                _ => None,
+            })
+            .expect("iteration target assignment");
+        assert_eq!(iteration.0, source_value);
+        let fragment = &hir.syntax_fragments[iteration.1.as_usize()];
+        assert_eq!(fragment.kind, SyntaxFragmentKind::Pattern);
+        let summary = fragment.summary.pattern.as_ref().expect("pattern summary");
+        match kind {
+            IterationKind::In => {
+                assert_eq!(iteration.2.as_slice(), [current]);
+                assert_eq!(summary.assigned_bindings.as_slice(), [binding("current")]);
+            }
+            IterationKind::Of => {
+                assert_eq!(iteration.2.as_slice(), [item]);
+                assert_eq!(summary.declared_bindings.as_slice(), [binding("item")]);
+            }
+            IterationKind::AwaitOf => {
+                assert_eq!(iteration.2.as_slice(), [value, rest]);
+                assert_eq!(
+                    summary.declared_bindings.as_slice(),
+                    [binding("value"), binding("rest")]
+                );
+                assert!(summary.has_rest);
+                assert!(fragment.summary.contains_await);
+            }
+        }
+    }
+
+    let terminator_for = |text: &str| {
+        function.blocks.iter().find_map(|block| {
+            let span = block.terminator.origin.primary_span?;
+            (source.get(span.start() as usize..span.end() as usize) == Some(text))
+                .then_some(&block.terminator.kind)
+        })
+    };
+    let for_in = headers
+        .iter()
+        .find(|header| matches!(header.terminator.kind, TerminatorKind::ForIn { .. }))
+        .expect("for-in header");
+    let await_of = headers
+        .iter()
+        .find(|header| {
+            matches!(
+                header.terminator.kind,
+                TerminatorKind::ForOf { r#await: true, .. }
+            )
+        })
+        .expect("for-await-of header");
+    assert!(matches!(
+        terminator_for("break;"),
+        Some(TerminatorKind::Goto { target })
+            if Some(*target) == for_in.source_hint.as_ref().and_then(|hint| hint.exit)
+    ));
+    assert!(matches!(
+        terminator_for("continue outer;"),
+        Some(TerminatorKind::Goto { target }) if *target == await_of.id
     ));
 }
 

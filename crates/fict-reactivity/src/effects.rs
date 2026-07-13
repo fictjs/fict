@@ -260,41 +260,104 @@ pub fn analyze_dependencies(
 
     let use_names = ssa_use_names(ssa);
     let definition_names = ssa_definition_names(ssa);
+    let local_by_binding: BTreeMap<_, _> = function
+        .locals
+        .iter()
+        .filter_map(|local| local.binding.map(|binding| (binding, local.id)))
+        .collect();
+    let mut definitions_by_instruction: BTreeMap<_, Vec<_>> = BTreeMap::new();
+    for definition in &ssa.definitions {
+        if let SsaDefinitionLocation::Instruction { block, instruction } = definition.location {
+            definitions_by_instruction
+                .entry((block, instruction))
+                .or_default()
+                .push((definition.name.local, definition.name));
+        }
+    }
     let mut direct_dependencies = vec![BTreeSet::new(); function.values.len()];
     let mut input_edges = vec![Vec::new(); function.values.len()];
+    let mut fragment_reads: BTreeMap<(BlockId, u32), Vec<DependencyPath>> = BTreeMap::new();
     for block in &function.blocks {
         if !ssa.cfg.reachable[block.id.as_usize()] {
             continue;
         }
+        let mut current_versions = ssa.block_entry[block.id.as_usize()].clone();
+        for phi in ssa.phis.iter().filter(|phi| phi.block == block.id) {
+            current_versions[phi.target.local.as_usize()] = Some(phi.target);
+        }
         for (instruction_index, instruction) in block.instructions.iter().enumerate() {
-            let Some(result) = instruction.result else {
-                continue;
+            let fragment = match &instruction.kind {
+                HirInstructionKind::SyntaxFragment { fragment, .. }
+                | HirInstructionKind::Iteration {
+                    pattern: fragment, ..
+                } => Some(*fragment),
+                _ => None,
             };
-            let result_index = result.as_usize();
-            if result_index >= function.values.len() {
-                continue;
-            }
-            match &instruction.kind {
-                HirInstructionKind::Read { place } => {
-                    if let Some(path) = dependency_path(
-                        place,
-                        block.id,
-                        instruction_index,
-                        SsaUseKind::Read,
-                        &use_names,
-                    ) {
-                        direct_dependencies[result_index].insert(path);
+            let mut implicit_paths = Vec::new();
+            if let Some(fragment) = fragment
+                && let Some(fragment) = file.syntax_fragments.get(fragment.as_usize())
+            {
+                for binding in &fragment.summary.referenced_bindings {
+                    let Some(local) = local_by_binding.get(binding) else {
+                        continue;
+                    };
+                    if let Some(name) = current_versions[local.as_usize()] {
+                        let path = DependencyPath {
+                            base: DependencyBase::Ssa(name),
+                            segments: Vec::new(),
+                        };
+                        if !implicit_paths.contains(&path) {
+                            implicit_paths.push(path);
+                        }
                     }
                 }
-                HirInstructionKind::Phi { sources, .. } => {
-                    direct_dependencies[result_index].extend(sources.iter().map(|(_, source)| {
-                        DependencyPath {
-                            base: DependencyBase::Ssa(*source),
-                            segments: Vec::new(),
+            }
+            if !implicit_paths.is_empty() {
+                fragment_reads.insert(
+                    (block.id, count_u32(instruction_index)),
+                    implicit_paths.clone(),
+                );
+            }
+            if let Some(result) = instruction.result {
+                let result_index = result.as_usize();
+                if result_index < function.values.len() {
+                    match &instruction.kind {
+                        HirInstructionKind::Read { place } => {
+                            if let Some(path) = dependency_path(
+                                place,
+                                block.id,
+                                instruction_index,
+                                SsaUseKind::Read,
+                                &use_names,
+                            ) {
+                                direct_dependencies[result_index].insert(path);
+                            }
                         }
-                    }));
+                        HirInstructionKind::Phi { sources, .. } => {
+                            direct_dependencies[result_index].extend(sources.iter().map(
+                                |(_, source)| DependencyPath {
+                                    base: DependencyBase::Ssa(*source),
+                                    segments: Vec::new(),
+                                },
+                            ));
+                        }
+                        HirInstructionKind::SyntaxFragment { .. } => {
+                            direct_dependencies[result_index]
+                                .extend(implicit_paths.iter().cloned());
+                            input_edges[result_index].extend(instruction_inputs(instruction, file));
+                        }
+                        _ => {
+                            input_edges[result_index].extend(instruction_inputs(instruction, file))
+                        }
+                    }
                 }
-                _ => input_edges[result_index].extend(instruction_inputs(instruction, file)),
+            }
+            if let Some(definitions) =
+                definitions_by_instruction.get(&(block.id, count_u32(instruction_index)))
+            {
+                for (local, name) in definitions {
+                    current_versions[local.as_usize()] = Some(*name);
+                }
             }
         }
     }
@@ -340,6 +403,13 @@ pub fn analyze_dependencies(
                 block: block.id,
                 instruction: count_u32(instruction_index),
             };
+            if let Some(paths) = fragment_reads.get(&(block.id, location.instruction)) {
+                reads.extend(paths.iter().cloned().map(|path| ReadFact {
+                    path,
+                    location,
+                    controls_flow: false,
+                }));
+            }
             match &instruction.kind {
                 HirInstructionKind::Declare {
                     local, initializer, ..
@@ -407,6 +477,31 @@ pub fn analyze_dependencies(
                             location,
                             mutation: instruction.semantics.mutation,
                         });
+                    }
+                }
+                HirInstructionKind::Iteration {
+                    source, targets, ..
+                } => {
+                    add_value_escapes(
+                        *source,
+                        EscapeKind::SyntaxFragment,
+                        Some(location),
+                        &value_dependencies,
+                        &mut escapes,
+                    );
+                    for target in targets {
+                        if let Some(name) =
+                            definition_names.get(&(block.id, count_u32(instruction_index), *target))
+                        {
+                            writes.push(WriteFact {
+                                path: DependencyPath {
+                                    base: DependencyBase::Ssa(*name),
+                                    segments: Vec::new(),
+                                },
+                                location,
+                                mutation: MutationEffect::Local,
+                            });
+                        }
                     }
                 }
                 HirInstructionKind::Call(call) => {
@@ -478,6 +573,12 @@ pub fn analyze_dependencies(
             }
             TerminatorKind::Switch { discriminant, .. } => {
                 mark_control_dependencies(*discriminant, &value_dependencies, &mut reads)
+            }
+            TerminatorKind::ForIn { object, .. } => {
+                mark_control_dependencies(*object, &value_dependencies, &mut reads)
+            }
+            TerminatorKind::ForOf { iterable, .. } => {
+                mark_control_dependencies(*iterable, &value_dependencies, &mut reads)
             }
             TerminatorKind::Goto { .. }
             | TerminatorKind::Try { .. }
@@ -1038,7 +1139,12 @@ fn barrier_fact(
         kinds.insert(BarrierKind::UnknownPurity);
     }
     match instruction.kind {
-        HirInstructionKind::Await { .. } | HirInstructionKind::Yield { .. } => {
+        HirInstructionKind::Await { .. }
+        | HirInstructionKind::Yield { .. }
+        | HirInstructionKind::Iteration {
+            kind: fict_hir::IterationKind::AwaitOf,
+            ..
+        } => {
             kinds.insert(BarrierKind::DeferredExecution);
         }
         HirInstructionKind::SyntaxFragment { fragment, .. }
@@ -1074,6 +1180,7 @@ fn instruction_inputs(instruction: &HirInstruction, file: &HirFile) -> Vec<Value
             values.extend(*value);
             values
         }
+        HirInstructionKind::Iteration { source, .. } => vec![*source],
         HirInstructionKind::Literal(_)
         | HirInstructionKind::Function { .. }
         | HirInstructionKind::Debugger => Vec::new(),

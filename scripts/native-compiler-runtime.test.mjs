@@ -185,6 +185,42 @@ test('Rust compiler emits executable CommonJS with live exports and collision-fr
   container.remove()
 })
 
+test('Rust compiler output executes structured for-of and for-in loops', async () => {
+  const module = await compileAndImport(
+    `
+      import { render } from 'fict'
+
+      function App() {
+        let total = 0
+        for (const value of [1, 2, 3]) {
+          total += value
+        }
+        for (const key in { a: 1, bb: 2 }) {
+          total += key.length
+        }
+        return <output data-id="enumeration">{total}</output>
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+    `,
+    'enumeration-loops',
+    /for \(const value of \[\s*1,\s*2,\s*3\s*\]\)/,
+  )
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = module.mount(container)
+  await flushRuntime()
+
+  assert.equal(container.querySelector('[data-id="enumeration"]')?.textContent, '9')
+
+  dispose()
+  assert.equal(container.childNodes.length, 0)
+  container.remove()
+})
+
 test('Rust compiler output preserves keyed identity, reactive updates, and cleanup', async () => {
   const module = await compileAndImport(
     `

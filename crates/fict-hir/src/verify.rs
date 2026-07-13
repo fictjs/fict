@@ -615,6 +615,53 @@ impl Verifier<'_> {
                     );
                 }
             }
+            HirInstructionKind::Iteration {
+                kind,
+                source,
+                pattern,
+                targets,
+            } => {
+                self.value(function, *source, instruction.origin);
+                self.fragment(*pattern, instruction.origin);
+                if let Some(fragment) = self.file.syntax_fragments.get(pattern.as_usize())
+                    && fragment.kind != SyntaxFragmentKind::Pattern
+                {
+                    self.error(
+                        "FICT-HIR-INSTRUCTION",
+                        "iteration instruction must reference a pattern fragment",
+                        Some(instruction.origin),
+                    );
+                }
+                let mut unique = std::collections::BTreeSet::new();
+                for target in targets {
+                    self.local(function, *target, instruction.origin);
+                    if !unique.insert(*target) {
+                        self.error(
+                            "FICT-HIR-INSTRUCTION",
+                            "iteration instruction repeats a direct local target",
+                            Some(instruction.origin),
+                        );
+                    }
+                }
+                self.require_mutation(instruction, "iteration");
+                if *kind == crate::IterationKind::AwaitOf
+                    && !function.flags.is_async
+                    && function.kind != FunctionKind::Module
+                {
+                    self.error(
+                        "FICT-HIR-FUNCTION",
+                        format!("non-async fn{} contains for-await-of", function.id.index()),
+                        Some(instruction.origin),
+                    );
+                }
+                if instruction.result.is_some() {
+                    self.error(
+                        "FICT-HIR-INSTRUCTION",
+                        "iteration target assignment cannot define a value result",
+                        Some(instruction.origin),
+                    );
+                }
+            }
             HirInstructionKind::Literal(_) | HirInstructionKind::Debugger => {}
             HirInstructionKind::Unary { argument, .. } => {
                 self.value(function, *argument, instruction.origin);
@@ -775,6 +822,42 @@ impl Verifier<'_> {
                 self.value(function, *test, terminator.origin);
                 self.block(function, *consequent, terminator.origin);
                 self.block(function, *alternate, terminator.origin);
+            }
+            TerminatorKind::ForIn { object, body, exit } => {
+                self.value(function, *object, terminator.origin);
+                self.block(function, *body, terminator.origin);
+                self.block(function, *exit, terminator.origin);
+                if body == exit {
+                    self.error(
+                        "FICT-HIR-CFG",
+                        "for-in body and exit targets must be distinct",
+                        Some(terminator.origin),
+                    );
+                }
+            }
+            TerminatorKind::ForOf {
+                iterable,
+                r#await,
+                body,
+                exit,
+            } => {
+                self.value(function, *iterable, terminator.origin);
+                self.block(function, *body, terminator.origin);
+                self.block(function, *exit, terminator.origin);
+                if body == exit {
+                    self.error(
+                        "FICT-HIR-CFG",
+                        "for-of body and exit targets must be distinct",
+                        Some(terminator.origin),
+                    );
+                }
+                if *r#await && !function.flags.is_async && function.kind != FunctionKind::Module {
+                    self.error(
+                        "FICT-HIR-FUNCTION",
+                        format!("non-async fn{} contains for-await-of", function.id.index()),
+                        Some(terminator.origin),
+                    );
+                }
             }
             TerminatorKind::Switch {
                 discriminant,

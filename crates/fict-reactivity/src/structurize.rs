@@ -281,6 +281,8 @@ pub fn structurize_cfg(
             | TerminatorKind::Throw { .. }
             | TerminatorKind::Goto { .. }
             | TerminatorKind::Branch { .. }
+            | TerminatorKind::ForIn { .. }
+            | TerminatorKind::ForOf { .. }
             | TerminatorKind::Unreachable => {}
         }
     }

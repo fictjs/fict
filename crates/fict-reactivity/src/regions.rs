@@ -619,7 +619,12 @@ fn build_region(
             instruction.semantics.evaluation == EvaluationMode::Deferred
                 || matches!(
                     instruction.kind,
-                    HirInstructionKind::Await { .. } | HirInstructionKind::Yield { .. }
+                    HirInstructionKind::Await { .. }
+                        | HirInstructionKind::Yield { .. }
+                        | HirInstructionKind::Iteration {
+                            kind: fict_hir::IterationKind::AwaitOf,
+                            ..
+                        }
                 )
         });
     let owns_last_instruction = range.end as usize == block.instructions.len();
@@ -632,6 +637,8 @@ fn build_region(
         && matches!(
             block.terminator.kind,
             TerminatorKind::Branch { .. }
+                | TerminatorKind::ForIn { .. }
+                | TerminatorKind::ForOf { .. }
                 | TerminatorKind::Switch { .. }
                 | TerminatorKind::Try { .. }
         );

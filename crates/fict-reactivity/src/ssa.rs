@@ -24,6 +24,8 @@ pub enum SsaDefinitionKind {
     Write,
     /// Direct local compound assignment or update.
     ReadWrite,
+    /// Per-step binding or assignment performed by an iteration loop.
+    Iteration,
     /// Dominance-frontier merge.
     Phi,
 }
@@ -336,6 +338,20 @@ pub fn analyze_ssa(function: &HirFunction) -> Result<SsaAnalysis, DiagnosticBund
                                 );
                             }
                         }
+                        HirInstructionKind::Iteration { targets, .. } => {
+                            for local in targets {
+                                define_instruction(
+                                    *local,
+                                    SsaDefinitionKind::Iteration,
+                                    block,
+                                    instruction_index,
+                                    &mut counters,
+                                    &mut stacks,
+                                    &mut definitions,
+                                    &mut pushed,
+                                );
+                            }
+                        }
                         HirInstructionKind::Literal(_)
                         | HirInstructionKind::Unary { .. }
                         | HirInstructionKind::Binary { .. }
@@ -599,7 +615,7 @@ fn place_phis(function: &HirFunction, cfg: &CfgAnalysis) -> (Vec<BTreeSet<LocalI
             continue;
         }
         for instruction in &block.instructions {
-            if let Some(local) = defined_local(instruction) {
+            for local in defined_locals(instruction) {
                 definition_blocks[local.as_usize()].insert(block.id);
             }
         }
@@ -632,14 +648,20 @@ fn validate_local_references(function: &HirFunction, cfg: &CfgAnalysis) -> Diagn
             continue;
         }
         for instruction in &block.instructions {
-            let referenced = match &instruction.kind {
-                HirInstructionKind::Declare { local, .. } => Some(*local),
+            let referenced: Vec<_> = match &instruction.kind {
+                HirInstructionKind::Declare { local, .. } => vec![*local],
                 HirInstructionKind::Read { place }
                 | HirInstructionKind::Write { place, .. }
-                | HirInstructionKind::ReadWrite { place, .. } => place_local(place),
-                _ => None,
+                | HirInstructionKind::ReadWrite { place, .. } => {
+                    place_local(place).into_iter().collect()
+                }
+                HirInstructionKind::Iteration { targets, .. } => targets.clone(),
+                _ => Vec::new(),
             };
-            if referenced.is_some_and(|local| local.as_usize() >= function.locals.len()) {
+            if referenced
+                .iter()
+                .any(|local| local.as_usize() >= function.locals.len())
+            {
                 diagnostics.push(ssa_error(
                     "FICT-SSA-LOCAL",
                     "HIR instruction references a local outside the function arena",
@@ -650,15 +672,16 @@ fn validate_local_references(function: &HirFunction, cfg: &CfgAnalysis) -> Diagn
     diagnostics
 }
 
-fn defined_local(instruction: &HirInstruction) -> Option<LocalId> {
+fn defined_locals(instruction: &HirInstruction) -> Vec<LocalId> {
     match &instruction.kind {
-        HirInstructionKind::Declare { local, .. } => Some(*local),
+        HirInstructionKind::Declare { local, .. } => vec![*local],
         HirInstructionKind::Write { place, .. } | HirInstructionKind::ReadWrite { place, .. }
             if place.is_local() =>
         {
-            place_local(place)
+            place_local(place).into_iter().collect()
         }
-        _ => None,
+        HirInstructionKind::Iteration { targets, .. } => targets.clone(),
+        _ => Vec::new(),
     }
 }
 

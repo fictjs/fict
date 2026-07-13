@@ -1,18 +1,25 @@
 use std::collections::BTreeMap;
 
 use fict_diagnostics::SourceSpan;
-use fict_hir::{BlockId, FunctionId, ScopeId, StructuredSourceKind};
+use fict_hir::{BlockId, FunctionId, IterationKind, ScopeId, StructuredSourceKind};
 use oxc::{
-    ast::ast::{ArrowFunctionExpression, BlockStatement, Expression, Function, Program, Statement},
+    ast::ast::{
+        ArrowFunctionExpression, AssignmentTargetRest, AssignmentTargetWithDefault, BlockStatement,
+        Expression, ForStatementLeft, Function, IdentifierReference, Program, Statement,
+    },
     ast_visit::{
         Visit,
-        walk::{walk_arrow_function_expression, walk_function},
+        walk::{
+            walk_arrow_function_expression, walk_assignment_target_rest,
+            walk_assignment_target_with_default, walk_function,
+        },
     },
+    semantic::Scoping,
     span::GetSpan,
-    syntax::{operator::UnaryOperator, scope::ScopeFlags},
+    syntax::{operator::UnaryOperator, scope::ScopeFlags, symbol::SymbolId},
 };
 
-use super::source_span;
+use super::{PatternBindingCollector, source_span};
 
 #[derive(Debug, Clone)]
 pub(super) struct FunctionControlFlowPlan {
@@ -64,9 +71,28 @@ pub(super) enum PlannedTerminator {
         alternate: BlockId,
         origin: SourceSpan,
     },
+    ForEach {
+        kind: IterationKind,
+        source: SourceSpan,
+        source_block: BlockId,
+        source_has_effects: bool,
+        target: PlannedIterationTarget,
+        body: BlockId,
+        exit: BlockId,
+        origin: SourceSpan,
+    },
     Unreachable {
         origin: SourceSpan,
     },
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct PlannedIterationTarget {
+    pub span: SourceSpan,
+    pub declared: Vec<SymbolId>,
+    pub assigned: Vec<SymbolId>,
+    pub has_defaults: bool,
+    pub has_rest: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -78,9 +104,11 @@ pub(super) struct SpanOwner {
 pub(super) fn collect(
     program: &Program<'_>,
     function_by_span: &BTreeMap<(u32, u32), FunctionId>,
+    scoping: &Scoping,
 ) -> BTreeMap<FunctionId, FunctionControlFlowPlan> {
     let mut collector = PlanCollector {
         function_by_span,
+        scoping,
         plans: BTreeMap::new(),
     };
     collector.visit_program(program);
@@ -89,6 +117,7 @@ pub(super) fn collect(
 
 struct PlanCollector<'facts> {
     function_by_span: &'facts BTreeMap<(u32, u32), FunctionId>,
+    scoping: &'facts Scoping,
     plans: BTreeMap<FunctionId, FunctionControlFlowPlan>,
 }
 
@@ -105,7 +134,8 @@ impl<'a> Visit<'a> for PlanCollector<'_> {
             });
             self.plans.insert(
                 function_id,
-                PlanBuilder::new(scope, source_span(body.span)).build(&body.statements),
+                PlanBuilder::new(scope, source_span(body.span), self.scoping)
+                    .build(&body.statements),
             );
         }
         walk_function(self, function, flags);
@@ -121,10 +151,10 @@ impl<'a> Visit<'a> for PlanCollector<'_> {
                 ScopeId::new(count_u32(scope.index()))
             });
             let plan = if let Some(expression) = function.get_expression() {
-                PlanBuilder::new(scope, source_span(function.body.span))
+                PlanBuilder::new(scope, source_span(function.body.span), self.scoping)
                     .build_expression(expression)
             } else {
-                PlanBuilder::new(scope, source_span(function.body.span))
+                PlanBuilder::new(scope, source_span(function.body.span), self.scoping)
                     .build(&function.body.statements)
             };
             self.plans.insert(function_id, plan);
@@ -133,7 +163,7 @@ impl<'a> Visit<'a> for PlanCollector<'_> {
     }
 }
 
-struct PlanBuilder {
+struct PlanBuilder<'semantic> {
     blocks: Vec<PlannedBlock>,
     owners: Vec<SpanOwner>,
     control_targets: Vec<ControlTarget>,
@@ -141,6 +171,7 @@ struct PlanBuilder {
     has_control_flow: bool,
     function_scope: ScopeId,
     body_span: SourceSpan,
+    scoping: &'semantic Scoping,
 }
 
 #[derive(Debug, Clone)]
@@ -150,8 +181,8 @@ struct ControlTarget {
     continue_target: Option<BlockId>,
 }
 
-impl PlanBuilder {
-    fn new(function_scope: ScopeId, body_span: SourceSpan) -> Self {
+impl<'semantic> PlanBuilder<'semantic> {
+    fn new(function_scope: ScopeId, body_span: SourceSpan, scoping: &'semantic Scoping) -> Self {
         Self {
             blocks: vec![PlannedBlock {
                 id: BlockId::new(0),
@@ -168,6 +199,7 @@ impl PlanBuilder {
             has_control_flow: false,
             function_scope,
             body_span,
+            scoping,
         }
     }
 
@@ -228,6 +260,8 @@ impl PlanBuilder {
             Statement::DoWhileStatement(statement) => self.lower_do_while(statement, current, None),
             Statement::WhileStatement(statement) => self.lower_while(statement, current, None),
             Statement::ForStatement(statement) => self.lower_for(statement, current, None),
+            Statement::ForInStatement(statement) => self.lower_for_in(statement, current, None),
+            Statement::ForOfStatement(statement) => self.lower_for_of(statement, current, None),
             Statement::LabeledStatement(statement) => self.lower_labeled(statement, current),
             Statement::BreakStatement(statement) => self.lower_break(statement, current),
             Statement::ContinueStatement(statement) => self.lower_continue(statement, current),
@@ -260,9 +294,7 @@ impl PlanBuilder {
                 };
                 None
             }
-            Statement::ForInStatement(_)
-            | Statement::ForOfStatement(_)
-            | Statement::SwitchStatement(_)
+            Statement::SwitchStatement(_)
             | Statement::TryStatement(_)
             | Statement::WithStatement(_) => {
                 self.supported = false;
@@ -540,6 +572,124 @@ impl PlanBuilder {
         Some(exit)
     }
 
+    fn lower_for_in(
+        &mut self,
+        statement: &oxc::ast::ast::ForInStatement<'_>,
+        current: BlockId,
+        label: Option<String>,
+    ) -> Option<BlockId> {
+        let parent_scope = self.blocks[current.as_usize()].scope;
+        let loop_scope = statement
+            .scope_id
+            .get()
+            .map_or(parent_scope, |scope| ScopeId::new(count_u32(scope.index())));
+        self.lower_for_each(
+            source_span(statement.span),
+            loop_scope,
+            &statement.left,
+            &statement.right,
+            &statement.body,
+            IterationKind::In,
+            current,
+            label,
+        )
+    }
+
+    fn lower_for_of(
+        &mut self,
+        statement: &oxc::ast::ast::ForOfStatement<'_>,
+        current: BlockId,
+        label: Option<String>,
+    ) -> Option<BlockId> {
+        let parent_scope = self.blocks[current.as_usize()].scope;
+        let loop_scope = statement
+            .scope_id
+            .get()
+            .map_or(parent_scope, |scope| ScopeId::new(count_u32(scope.index())));
+        self.lower_for_each(
+            source_span(statement.span),
+            loop_scope,
+            &statement.left,
+            &statement.right,
+            &statement.body,
+            if statement.r#await {
+                IterationKind::AwaitOf
+            } else {
+                IterationKind::Of
+            },
+            current,
+            label,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_for_each(
+        &mut self,
+        origin: SourceSpan,
+        loop_scope: ScopeId,
+        left: &ForStatementLeft<'_>,
+        source_expression: &Expression<'_>,
+        statement_body: &Statement<'_>,
+        kind: IterationKind,
+        current: BlockId,
+        label: Option<String>,
+    ) -> Option<BlockId> {
+        self.has_control_flow = true;
+        let parent_scope = self.blocks[current.as_usize()].scope;
+        let header = self.new_block(loop_scope, origin);
+        let body = self.new_block(
+            statement_scope(statement_body, loop_scope),
+            source_span(statement_body.span()),
+        );
+        let exit = self.new_block(parent_scope, origin);
+        self.blocks[current.as_usize()].terminator = PlannedTerminator::Goto {
+            target: header,
+            origin,
+        };
+
+        let source = source_span(source_expression.span());
+        self.owners.push(SpanOwner {
+            span: source,
+            block: current,
+        });
+        self.owners.push(SpanOwner {
+            span: source_span(left.span()),
+            block: body,
+        });
+        let target = planned_iteration_target(left, self.scoping);
+        let source_kind = match kind {
+            IterationKind::In => StructuredSourceKind::ForInLoop,
+            IterationKind::Of => StructuredSourceKind::ForOfLoop,
+            IterationKind::AwaitOf => StructuredSourceKind::ForAwaitOfLoop,
+        };
+        self.set_loop_hint(header, source_kind, exit, origin);
+        self.blocks[header.as_usize()].terminator = PlannedTerminator::ForEach {
+            kind,
+            source,
+            source_block: current,
+            source_has_effects: expression_has_effects(source_expression),
+            target,
+            body,
+            exit,
+            origin,
+        };
+
+        self.control_targets.push(ControlTarget {
+            label,
+            break_target: exit,
+            continue_target: Some(header),
+        });
+        let body_end = self.lower_statement(statement_body, body);
+        self.control_targets.pop();
+        if let Some(body_end) = body_end {
+            self.blocks[body_end.as_usize()].terminator = PlannedTerminator::Goto {
+                target: header,
+                origin: source_span(statement_body.span()),
+            };
+        }
+        Some(exit)
+    }
+
     fn lower_labeled(
         &mut self,
         statement: &oxc::ast::ast::LabeledStatement<'_>,
@@ -555,6 +705,12 @@ impl PlanBuilder {
             }
             Statement::ForStatement(loop_statement) => {
                 self.lower_for(loop_statement, current, label)
+            }
+            Statement::ForInStatement(loop_statement) => {
+                self.lower_for_in(loop_statement, current, label)
+            }
+            Statement::ForOfStatement(loop_statement) => {
+                self.lower_for_of(loop_statement, current, label)
             }
             _ => {
                 self.supported = false;
@@ -654,6 +810,76 @@ impl PlanBuilder {
             terminator: PlannedTerminator::Unreachable { origin },
         });
         id
+    }
+}
+
+pub(super) fn planned_iteration_target(
+    left: &ForStatementLeft<'_>,
+    scoping: &Scoping,
+) -> PlannedIterationTarget {
+    let span = source_span(left.span());
+    if let ForStatementLeft::VariableDeclaration(declaration) = left {
+        let mut collector = PatternBindingCollector::default();
+        for declarator in &declaration.declarations {
+            collector.visit_binding_pattern(&declarator.id);
+        }
+        return PlannedIterationTarget {
+            span,
+            declared: collector.symbols,
+            assigned: Vec::new(),
+            has_defaults: collector.has_defaults,
+            has_rest: collector.has_rest,
+        };
+    }
+
+    let mut collector = IterationAssignmentCollector {
+        scoping,
+        assigned: Vec::new(),
+        has_defaults: false,
+        has_rest: false,
+    };
+    collector.visit_for_statement_left(left);
+    PlannedIterationTarget {
+        span,
+        declared: Vec::new(),
+        assigned: collector.assigned,
+        has_defaults: collector.has_defaults,
+        has_rest: collector.has_rest,
+    }
+}
+
+struct IterationAssignmentCollector<'semantic> {
+    scoping: &'semantic Scoping,
+    assigned: Vec<SymbolId>,
+    has_defaults: bool,
+    has_rest: bool,
+}
+
+impl<'a> Visit<'a> for IterationAssignmentCollector<'_> {
+    fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+        let Some(reference) = identifier
+            .reference_id
+            .get()
+            .map(|reference| self.scoping.get_reference(reference))
+        else {
+            return;
+        };
+        if reference.is_write()
+            && let Some(symbol) = reference.symbol_id()
+            && !self.assigned.contains(&symbol)
+        {
+            self.assigned.push(symbol);
+        }
+    }
+
+    fn visit_assignment_target_with_default(&mut self, target: &AssignmentTargetWithDefault<'a>) {
+        self.has_defaults = true;
+        walk_assignment_target_with_default(self, target);
+    }
+
+    fn visit_assignment_target_rest(&mut self, target: &AssignmentTargetRest<'a>) {
+        self.has_rest = true;
+        walk_assignment_target_rest(self, target);
     }
 }
 

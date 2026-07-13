@@ -723,6 +723,8 @@ fn lower_function(
             TerminatorKind::Throw { .. }
             | TerminatorKind::Goto { .. }
             | TerminatorKind::Branch { .. }
+            | TerminatorKind::ForIn { .. }
+            | TerminatorKind::ForOf { .. }
             | TerminatorKind::Switch { .. }
             | TerminatorKind::Try { .. }
             | TerminatorKind::Unreachable => {}

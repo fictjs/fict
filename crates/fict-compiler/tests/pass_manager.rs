@@ -3,6 +3,7 @@ use fict_compiler_oxc::{
     HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, build_hir,
 };
 use fict_hir::{FunctionKind, StructuredSourceKind};
+use fict_reactivity::{SsaDefinitionKind, StructuredConstructKind, StructuredLoopKind};
 
 fn build_fixture() -> fict_hir::HirFile {
     let output = build_hir(
@@ -190,4 +191,93 @@ fn analyzes_frontend_while_cfg_with_a_backedge_and_reactive_phi() {
             .map(|hint| &hint.kind),
         Some(StructuredSourceKind::WhileLoop)
     ));
+}
+
+#[test]
+fn analyzes_frontend_for_of_cfg_with_iteration_definitions_and_reactive_source() {
+    let frontend = build_hir(
+        r#"
+            import { $state } from 'fict';
+            export function App() {
+                let items = $state([1, 2]);
+                let total = $state(0);
+                for (const item of items) {
+                    total += item;
+                }
+                return <span>{total}</span>;
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScriptJsx,
+            module_kind: OxcModuleKind::Module,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified frontend for-of CFG"),
+        CorePassOptions::default(),
+    )
+    .expect("core passes over for-of CFG");
+    let app = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| function.kind == FunctionKind::Component)
+        .expect("component function");
+    let analysis = &output.functions[app.id.as_usize()];
+    let item = app
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("item"))
+        .expect("iteration local")
+        .id;
+    let items = app
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("items"))
+        .expect("iterable local")
+        .id;
+    let total = app
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("total"))
+        .expect("total local")
+        .id;
+
+    assert_eq!(app.blocks.len(), 4);
+    assert_eq!(analysis.ssa.cfg.back_edges.len(), 1);
+    assert!(analysis.ssa.definitions.iter().any(|definition| {
+        definition.name.local == item && definition.kind == SsaDefinitionKind::Iteration
+    }));
+    assert!(
+        analysis
+            .ssa
+            .phis
+            .iter()
+            .any(|phi| phi.target.local == total)
+    );
+    assert!(
+        analysis
+            .dependencies
+            .control_flow_reads
+            .iter()
+            .any(|path| path.local() == Some(items))
+    );
+    assert!(analysis.structurize.constructs.iter().any(|construct| {
+        matches!(
+            construct.kind,
+            StructuredConstructKind::Loop {
+                kind: StructuredLoopKind::ForOf,
+                ..
+            }
+        )
+    }));
+    assert!(analysis.structurize.fallback.is_none());
 }

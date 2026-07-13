@@ -697,6 +697,17 @@ pub struct CallInstruction {
     pub optional: bool,
 }
 
+/// JavaScript enumeration protocol used by a structured iteration loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum IterationKind {
+    /// Enumerate the enumerable string keys of an object (`for ... in`).
+    In,
+    /// Consume a synchronous iterator (`for ... of`).
+    Of,
+    /// Consume an async or sync iterator with per-step awaiting (`for await ... of`).
+    AwaitOf,
+}
+
 /// One operation in a basic block.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HirInstructionKind {
@@ -733,6 +744,20 @@ pub enum HirInstructionKind {
         update: Option<UpdateOperator>,
         /// Whether an update operator is prefix form.
         prefix: bool,
+    },
+    /// Bind the value produced by one successful enumeration step.
+    ///
+    /// The exact declaration/assignment pattern remains adapter-owned while `targets` exposes
+    /// every directly written local to SSA and reactive analysis.
+    Iteration {
+        /// Enumeration protocol used by the containing loop.
+        kind: IterationKind,
+        /// Once-evaluated object or iterable consumed by this step.
+        source: ValueId,
+        /// Exact binding or assignment pattern.
+        pattern: SyntaxFragmentId,
+        /// Direct local writes performed by the pattern in source order.
+        targets: Vec<LocalId>,
     },
     /// Materialize a literal value.
     Literal(LiteralValue),
@@ -861,6 +886,26 @@ pub enum TerminatorKind {
         consequent: BlockId,
         /// Falsy successor.
         alternate: BlockId,
+    },
+    /// Enumerate an object's keys and enter `body` for every successful step.
+    ForIn {
+        /// Once-evaluated object expression.
+        object: ValueId,
+        /// Per-iteration body entry.
+        body: BlockId,
+        /// Normal exhaustion or abrupt-break continuation.
+        exit: BlockId,
+    },
+    /// Consume a sync or async iterator and enter `body` for every successful step.
+    ForOf {
+        /// Once-evaluated iterable expression.
+        iterable: ValueId,
+        /// Whether each iterator step is awaited.
+        r#await: bool,
+        /// Per-iteration body entry.
+        body: BlockId,
+        /// Normal exhaustion or abrupt-break continuation.
+        exit: BlockId,
     },
     /// Multi-way switch.
     Switch {
