@@ -3411,6 +3411,158 @@ fn materializes_template_quasis_coercions_and_lazy_ownership() {
 }
 
 #[test]
+fn materializes_tagged_template_objects_substitutions_and_utf16_cooked_values() {
+    let source = r#"
+        function tags(tag, receiver, make, value) {
+            const escaped = tag`line\n`;
+            const invalid = tag`\u{}`;
+            const surrogate = tag`\uD800${value}`;
+            const dynamic = tag`head ${make('first')} middle ${value} tail`;
+            const member = receiver.tag`member ${value}`;
+            return [escaped, invalid, surrogate, dynamic, member];
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified tagged-template HIR");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "tags")
+        })
+        .expect("tags function");
+    let instructions: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let authored = |instruction: &fict_hir::HirInstruction| {
+        let span = instruction
+            .origin
+            .primary_span
+            .expect("authored tagged-template instruction");
+        &source[span.start() as usize..span.end() as usize]
+    };
+    let instruction_for_result = |value| {
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| instruction.result == Some(value))
+            .unwrap_or_else(|| panic!("instruction for value{}", value.index()))
+    };
+    let local = |name: &str| {
+        function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"))
+    };
+    let initializer = |name: &str| {
+        let local = local(name);
+        instructions
+            .iter()
+            .find_map(|instruction| match instruction.kind {
+                HirInstructionKind::Declare {
+                    local: candidate,
+                    initializer,
+                    ..
+                } if candidate == local.id => initializer,
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{name} initializer"))
+    };
+    let tagged = |name: &str| {
+        let value = initializer(name);
+        let instruction = instruction_for_result(value);
+        let HirInstructionKind::TaggedTemplate {
+            tag,
+            quasis,
+            substitutions,
+            host,
+        } = &instruction.kind
+        else {
+            panic!("typed {name} tagged template")
+        };
+        (instruction, *tag, quasis, substitutions, *host)
+    };
+
+    let (escaped, _, quasis, substitutions, host) = tagged("escaped");
+    assert!(substitutions.is_empty());
+    assert_eq!(quasis.len(), 1);
+    assert_eq!(quasis[0].raw, r"line\n");
+    assert_eq!(
+        quasis[0].cooked,
+        Some("line\n".encode_utf16().collect::<Vec<_>>())
+    );
+    assert_eq!(
+        host,
+        fict_hir::CallHost::Binding(local("tag").binding.expect("tag binding"))
+    );
+    assert_eq!(
+        escaped.semantics,
+        fict_hir::InstructionSemantics::CONSERVATIVE_EAGER
+    );
+
+    let (_, _, quasis, substitutions, _) = tagged("invalid");
+    assert!(substitutions.is_empty());
+    assert_eq!(quasis[0].raw, r"\u{}");
+    assert_eq!(quasis[0].cooked, None);
+
+    let (_, _, quasis, substitutions, _) = tagged("surrogate");
+    assert_eq!(substitutions.len(), 1);
+    assert_eq!(quasis.len(), 2);
+    assert_eq!(quasis[0].raw, r"\uD800");
+    assert_eq!(quasis[0].cooked, Some(vec![0xd800]));
+    assert_eq!(quasis[1].cooked, Some(Vec::new()));
+
+    let (dynamic, tag, quasis, substitutions, _) = tagged("dynamic");
+    assert_eq!(
+        quasis
+            .iter()
+            .map(|quasi| quasi.raw.as_str())
+            .collect::<Vec<_>>(),
+        ["head ", " middle ", " tail"]
+    );
+    assert_eq!(substitutions.len(), 2);
+    assert_eq!(
+        authored(instruction_for_result(substitutions[0])),
+        "make('first')"
+    );
+    assert_eq!(authored(instruction_for_result(substitutions[1])), "value");
+    for substitution in substitutions {
+        assert_eq!(
+            instruction_for_result(*substitution).semantics.evaluation,
+            EvaluationMode::Eager,
+            "tag substitutions are passed without template string coercion"
+        );
+    }
+    let position = |value| {
+        instructions
+            .iter()
+            .position(|instruction| instruction.result == Some(value))
+            .expect("tagged-template value position")
+    };
+    assert!(position(tag) < position(substitutions[0]));
+    assert!(position(substitutions[0]) < position(substitutions[1]));
+    assert!(position(substitutions[1]) < position(initializer("dynamic")));
+    assert!(!instructions.iter().any(|instruction| {
+        matches!(instruction.kind, HirInstructionKind::SyntaxFragment { .. })
+            && instruction.origin.primary_span == dynamic.origin.primary_span
+    }));
+
+    let (_, _, _, substitutions, host) = tagged("member");
+    assert_eq!(substitutions.len(), 1);
+    assert_eq!(host, fict_hir::CallHost::Unknown);
+}
+
+#[test]
 fn materializes_static_computed_index_and_value_base_projections() {
     let source = r#"
         function project(obj) {

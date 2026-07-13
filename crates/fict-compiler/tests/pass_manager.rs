@@ -4,7 +4,7 @@ use fict_compiler_oxc::{
 };
 use fict_hir::{FunctionKind, StructuredSourceKind};
 use fict_reactivity::{
-    DependencyBase, ShapeKind, ShapeSource, SsaDefinitionKind, StructuredConstructKind,
+    DependencyBase, EscapeKind, ShapeKind, ShapeSource, SsaDefinitionKind, StructuredConstructKind,
     StructuredLoopKind,
 };
 
@@ -264,6 +264,116 @@ fn template_results_depend_on_every_substitution_and_remain_primitive() {
         shape.shape.source,
         ShapeSource::TemplateLiteral(value) if value == text_value
     ));
+}
+
+#[test]
+fn tagged_templates_track_tag_substitutions_and_unknown_call_escapes() {
+    let frontend = build_hir(
+        r#"
+            export function render(tag, first, second) {
+                const result = tag`head ${first} middle ${second} tail`;
+                return result;
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Module,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified tagged-template HIR"),
+        CorePassOptions {
+            optimize: false,
+            ..CorePassOptions::default()
+        },
+    )
+    .expect("core passes over tagged templates");
+    let function = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                output.hir.bindings[binding.as_usize()].display_name == "render"
+            })
+        })
+        .expect("render function");
+    let analysis = &output.functions[function.id.as_usize()];
+    let local = |name: &str| {
+        function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"))
+    };
+    let result = local("result");
+    let result_value = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find_map(|instruction| match instruction.kind {
+            fict_hir::HirInstructionKind::Declare {
+                local, initializer, ..
+            } if local == result.id => initializer,
+            _ => None,
+        })
+        .expect("tagged-template result initializer");
+    let dependency_locals: std::collections::BTreeSet<_> = analysis.dependencies.value_dependencies
+        [result_value.as_usize()]
+    .iter()
+    .filter_map(|dependency| match dependency.base {
+        DependencyBase::Ssa(name) => Some(name.local),
+        DependencyBase::Value(_) => None,
+    })
+    .collect();
+    assert_eq!(
+        dependency_locals,
+        [local("tag").id, local("first").id, local("second").id]
+            .into_iter()
+            .collect()
+    );
+
+    let unknown_call_escapes: std::collections::BTreeSet<_> = analysis
+        .dependencies
+        .escapes
+        .iter()
+        .filter(|escape| escape.kind == EscapeKind::UnknownCall)
+        .filter_map(|escape| match escape.path.base {
+            DependencyBase::Ssa(name) => Some(name.local),
+            DependencyBase::Value(_) => None,
+        })
+        .collect();
+    assert_eq!(
+        unknown_call_escapes,
+        [local("first").id, local("second").id]
+            .into_iter()
+            .collect()
+    );
+
+    let definition = analysis
+        .ssa
+        .definitions
+        .iter()
+        .find(|definition| {
+            definition.name.local == result.id && definition.kind == SsaDefinitionKind::Declare
+        })
+        .expect("result declaration definition");
+    let shape = analysis
+        .shapes
+        .shapes
+        .iter()
+        .find(|shape| shape.name == definition.name)
+        .expect("tagged-template result shape");
+    assert_eq!(shape.shape.kind, ShapeKind::Unknown);
+    assert_eq!(shape.shape.source, ShapeSource::UnknownOperation);
 }
 
 #[test]

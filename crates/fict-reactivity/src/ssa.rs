@@ -358,6 +358,7 @@ pub fn analyze_ssa(function: &HirFunction) -> Result<SsaAnalysis, DiagnosticBund
                         | HirInstructionKind::Conditional { .. }
                         | HirInstructionKind::Sequence { .. }
                         | HirInstructionKind::TemplateLiteral { .. }
+                        | HirInstructionKind::TaggedTemplate { .. }
                         | HirInstructionKind::Call(_)
                         | HirInstructionKind::New { .. }
                         | HirInstructionKind::Array { .. }

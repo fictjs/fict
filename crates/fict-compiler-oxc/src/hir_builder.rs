@@ -14,8 +14,8 @@ use fict_hir::{
     JsxTemplate, LiteralValue, LocalId, LocalKind, MutationEffect, NumberLiteral, ObjectEntry,
     ObjectPropertyKind, Origin, PatternSummary, PropertyKey, Purity, ReactiveCallKind,
     ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind, StructuredSourceHint,
-    SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TemplateId,
-    TerminatorKind, UnaryOperator, UpdateOperator, ValueId, ValueKind, verify_hir,
+    SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi,
+    TemplateId, TerminatorKind, UnaryOperator, UpdateOperator, ValueId, ValueKind, verify_hir,
 };
 use oxc::{
     allocator::Allocator,
@@ -566,6 +566,9 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
                 })
             }
             Expression::TemplateLiteral(template) => typed_template_literal(template),
+            Expression::TaggedTemplateExpression(tagged) => {
+                typed_tagged_template(self.scoping, tagged)
+            }
             Expression::UnaryExpression(unary)
                 if unary.operator != OxcUnaryOperator::Delete
                     && !is_unresolved_typeof(self.scoping, unary) =>
@@ -802,6 +805,71 @@ fn typed_template_literal(template: &TemplateLiteral<'_>) -> Option<TypedExpress
                 .collect(),
         },
     })
+}
+
+fn typed_tagged_template(
+    scoping: &Scoping,
+    tagged: &TaggedTemplateExpression<'_>,
+) -> Option<TypedExpressionFact> {
+    let tag = tagged.tag.get_inner_expression();
+    let quasis = tagged
+        .quasi
+        .quasis
+        .iter()
+        .map(|quasi| {
+            let cooked = match quasi.value.cooked.as_ref() {
+                Some(value) => Some(template_cooked_code_units(value, quasi.lone_surrogates)?),
+                None => None,
+            };
+            Some(TaggedTemplateQuasi {
+                cooked,
+                raw: quasi.value.raw.to_string(),
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(TypedExpressionFact {
+        span: source_span(tagged.span),
+        kind: TypedExpressionKind::TaggedTemplate {
+            tag: source_span(tag.span()),
+            tag_has_effects: structured_control_flow::expression_has_effects(&tagged.tag),
+            tag_binding: resolved_callee_symbol(scoping, &tagged.tag),
+            quasis,
+            substitutions: tagged
+                .quasi
+                .expressions
+                .iter()
+                .map(|expression| {
+                    let inner = expression.get_inner_expression();
+                    TypedTemplateExpression {
+                        span: source_span(inner.span()),
+                        has_effects: structured_control_flow::expression_has_effects(expression),
+                    }
+                })
+                .collect(),
+        },
+    })
+}
+
+fn template_cooked_code_units(value: &str, has_lone_surrogates: bool) -> Option<Vec<u16>> {
+    if !has_lone_surrogates {
+        return Some(value.encode_utf16().collect());
+    }
+
+    let mut code_units = Vec::with_capacity(value.len());
+    let mut characters = value.chars();
+    while let Some(character) = characters.next() {
+        if character == '\u{fffd}' {
+            let encoded = characters.by_ref().take(4).collect::<String>();
+            if encoded.len() != 4 {
+                return None;
+            }
+            code_units.push(u16::from_str_radix(&encoded, 16).ok()?);
+        } else {
+            let mut encoded = [0_u16; 2];
+            code_units.extend_from_slice(character.encode_utf16(&mut encoded));
+        }
+    }
+    Some(code_units)
 }
 
 fn typed_object_entries(
@@ -3197,6 +3265,43 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     HirInstructionKind::TemplateLiteral {
                         quasis: quasis.clone(),
                         expressions,
+                    },
+                    InstructionSemantics::CONSERVATIVE_EAGER,
+                )
+            }
+            TypedExpressionKind::TaggedTemplate {
+                tag,
+                tag_has_effects,
+                tag_binding,
+                quasis,
+                substitutions,
+            } => {
+                let tag = self.control_expression_value(owner, block, *tag, true, *tag_has_effects);
+                let substitutions = substitutions
+                    .iter()
+                    .map(|substitution| {
+                        self.control_expression_value(
+                            owner,
+                            block,
+                            substitution.span,
+                            true,
+                            substitution.has_effects,
+                        )
+                    })
+                    .collect();
+                let host = tag_binding
+                    .and_then(|symbol| self.symbol_to_binding.get(&symbol).copied())
+                    .map_or(CallHost::Unknown, CallHost::Binding);
+                self.push_value_to_block(
+                    owner,
+                    block,
+                    ValueKind::InstructionResult,
+                    origin,
+                    HirInstructionKind::TaggedTemplate {
+                        tag,
+                        quasis: quasis.clone(),
+                        substitutions,
+                        host,
                     },
                     InstructionSemantics::CONSERVATIVE_EAGER,
                 )
@@ -5749,6 +5854,13 @@ enum TypedExpressionKind {
         quasis: Vec<String>,
         expressions: Vec<TypedTemplateExpression>,
     },
+    TaggedTemplate {
+        tag: SourceSpan,
+        tag_has_effects: bool,
+        tag_binding: Option<SymbolId>,
+        quasis: Vec<TaggedTemplateQuasi>,
+        substitutions: Vec<TypedTemplateExpression>,
+    },
     Await {
         value: SourceSpan,
         value_has_effects: bool,
@@ -5946,28 +6058,32 @@ impl EvaluationFact {
                 ..
             }) => 6,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Await { .. },
+                kind: TypedExpressionKind::TaggedTemplate { .. },
                 ..
             }) => 7,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Yield { .. },
+                kind: TypedExpressionKind::Await { .. },
                 ..
             }) => 8,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::New { .. },
+                kind: TypedExpressionKind::Yield { .. },
                 ..
             }) => 9,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Array { .. },
+                kind: TypedExpressionKind::New { .. },
                 ..
             }) => 10,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Object { .. },
+                kind: TypedExpressionKind::Array { .. },
                 ..
             }) => 11,
-            Self::Jsx(_) => 12,
-            Self::Member(_) => 13,
-            Self::Call(_) => 14,
+            Self::Typed(TypedExpressionFact {
+                kind: TypedExpressionKind::Object { .. },
+                ..
+            }) => 12,
+            Self::Jsx(_) => 13,
+            Self::Member(_) => 14,
+            Self::Call(_) => 15,
         }
     }
 }
@@ -8113,6 +8229,12 @@ fn instruction_value_inputs(instruction: &HirInstruction) -> Vec<ValueId> {
         } => inputs.extend([*test, *consequent, *alternate]),
         HirInstructionKind::Sequence { values } => inputs.extend(values),
         HirInstructionKind::TemplateLiteral { expressions, .. } => inputs.extend(expressions),
+        HirInstructionKind::TaggedTemplate {
+            tag, substitutions, ..
+        } => {
+            inputs.push(*tag);
+            inputs.extend(substitutions);
+        }
         HirInstructionKind::Call(call) => {
             inputs.push(call.callee);
             inputs.extend(call.arguments.iter().map(|argument| argument.value));

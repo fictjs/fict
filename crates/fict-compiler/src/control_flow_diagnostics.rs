@@ -498,6 +498,14 @@ fn value_has_unsafe_control_work(
         HirInstructionKind::TemplateLiteral { expressions, .. } => expressions
             .iter()
             .any(|value| value_has_unsafe_control_work(file, function, *value, visiting)),
+        HirInstructionKind::TaggedTemplate {
+            tag, substitutions, ..
+        } => {
+            value_has_unsafe_control_work(file, function, *tag, visiting)
+                || substitutions
+                    .iter()
+                    .any(|value| value_has_unsafe_control_work(file, function, *value, visiting))
+        }
         _ => false,
     }
 }
@@ -507,6 +515,7 @@ fn instruction_is_unsafe(file: &HirFile, instruction: &HirInstruction) -> bool {
         HirInstructionKind::Call(_)
         | HirInstructionKind::New { .. }
         | HirInstructionKind::TemplateLiteral { .. }
+        | HirInstructionKind::TaggedTemplate { .. }
         | HirInstructionKind::Await { .. }
         | HirInstructionKind::Yield { .. }
         | HirInstructionKind::Debugger => true,

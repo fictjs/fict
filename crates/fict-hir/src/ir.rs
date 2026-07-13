@@ -701,6 +701,18 @@ pub struct CallInstruction {
     pub optional: bool,
 }
 
+/// One static segment in a tagged template object's cooked and raw arrays.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaggedTemplateQuasi {
+    /// Cooked JavaScript string as exact UTF-16 code units.
+    ///
+    /// This is absent when the source segment contains an escape sequence that is only legal in
+    /// a tagged template. UTF-16 retains lone surrogates that a Rust [`String`] cannot represent.
+    pub cooked: Option<Vec<u16>>,
+    /// Raw template text as exposed through `template.raw`.
+    pub raw: String,
+}
+
 /// JavaScript enumeration protocol used by a structured iteration loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IterationKind {
@@ -801,6 +813,17 @@ pub enum HirInstructionKind {
         quasis: Vec<String>,
         /// Substitution values in authored coercion order.
         expressions: Vec<ValueId>,
+    },
+    /// Invoke a tag with a per-site cached template object and authored substitution values.
+    TaggedTemplate {
+        /// Evaluated tag expression.
+        tag: ValueId,
+        /// Static template segments. There is exactly one more quasi than substitution.
+        quasis: Vec<TaggedTemplateQuasi>,
+        /// Substitution values passed without string coercion, in authored order.
+        substitutions: Vec<ValueId>,
+        /// Binding-aware invocation host classification.
+        host: CallHost,
     },
     /// Invoke a function or method.
     Call(CallInstruction),

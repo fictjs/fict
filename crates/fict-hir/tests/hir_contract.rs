@@ -1,9 +1,10 @@
 use fict_hir::{
-    BlockId, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction,
-    HirInstruction, HirInstructionKind, HirScope, HirTerminator, HirValue, InstructionSemantics,
-    LiteralValue, NumberLiteral, ObjectEntry, ObjectPropertyKind, Origin, PropertyKey, ScopeId,
-    ScopeKind, StructuredSourceHint, StructuredSourceKind, StructuredSwitchCaseHint,
-    TerminatorKind, ValueId, ValueKind, print_hir, verify_hir,
+    BlockId, CallHost, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile,
+    HirFunction, HirInstruction, HirInstructionKind, HirScope, HirTerminator, HirValue,
+    InstructionSemantics, LiteralValue, NumberLiteral, ObjectEntry, ObjectPropertyKind, Origin,
+    PropertyKey, ScopeId, ScopeKind, StructuredSourceHint, StructuredSourceKind,
+    StructuredSwitchCaseHint, TaggedTemplateQuasi, TerminatorKind, ValueId, ValueKind, print_hir,
+    verify_hir,
 };
 
 fn empty_file() -> HirFile {
@@ -287,6 +288,89 @@ fn verifier_enforces_template_quasi_expression_arity() {
     assert!(diagnostics.as_slice().iter().any(|diagnostic| {
         diagnostic.code.as_str() == "FICT-HIR-TEMPLATE"
             && diagnostic.message.contains("one more quasi")
+    }));
+}
+
+#[test]
+fn verifier_enforces_tagged_template_inputs_and_arity() {
+    let mut file = empty_file();
+    let origin = Origin::source(fict_hir::SourceSpan::empty(0));
+    for (index, literal) in [
+        LiteralValue::String("tag".to_owned()),
+        LiteralValue::Number(NumberLiteral::from_f64(1.0)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let value = ValueId::new(index as u32);
+        file.functions[0].values.push(HirValue {
+            id: value,
+            kind: ValueKind::Literal(literal.clone()),
+            origin,
+        });
+        file.functions[0].blocks[0]
+            .instructions
+            .push(HirInstruction {
+                result: Some(value),
+                kind: HirInstructionKind::Literal(literal),
+                semantics: InstructionSemantics::PURE_EAGER,
+                origin,
+            });
+    }
+    file.functions[0].values.push(HirValue {
+        id: ValueId::new(2),
+        kind: ValueKind::InstructionResult,
+        origin,
+    });
+    file.functions[0].blocks[0]
+        .instructions
+        .push(HirInstruction {
+            result: Some(ValueId::new(2)),
+            kind: HirInstructionKind::TaggedTemplate {
+                tag: ValueId::new(0),
+                quasis: vec![
+                    TaggedTemplateQuasi {
+                        cooked: Some(vec![u16::from(b'a')]),
+                        raw: "a".to_owned(),
+                    },
+                    TaggedTemplateQuasi {
+                        cooked: None,
+                        raw: r"\u{}".to_owned(),
+                    },
+                ],
+                substitutions: vec![ValueId::new(1)],
+                host: CallHost::Unknown,
+            },
+            semantics: InstructionSemantics::CONSERVATIVE_EAGER,
+            origin,
+        });
+
+    verify_hir(&file).expect("well-formed tagged template HIR");
+    let HirInstructionKind::TaggedTemplate { quasis, .. } =
+        &mut file.functions[0].blocks[0].instructions[2].kind
+    else {
+        panic!("tagged template fixture")
+    };
+    quasis.pop();
+    let diagnostics = verify_hir(&file).expect_err("tagged template arity mismatch must fail");
+    assert!(diagnostics.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-TAGGED-TEMPLATE"
+            && diagnostic.message.contains("one more quasi")
+    }));
+
+    let HirInstructionKind::TaggedTemplate { tag, quasis, .. } =
+        &mut file.functions[0].blocks[0].instructions[2].kind
+    else {
+        panic!("tagged template fixture")
+    };
+    quasis.push(TaggedTemplateQuasi {
+        cooked: Some(Vec::new()),
+        raw: String::new(),
+    });
+    *tag = ValueId::new(99);
+    let diagnostics = verify_hir(&file).expect_err("invalid tagged template tag must fail");
+    assert!(diagnostics.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-REF" && diagnostic.message.contains("value99")
     }));
 }
 

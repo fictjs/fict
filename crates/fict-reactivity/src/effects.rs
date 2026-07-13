@@ -515,6 +515,22 @@ pub fn analyze_dependencies(
                         &mut escapes,
                     );
                 }
+                HirInstructionKind::TaggedTemplate {
+                    substitutions,
+                    host,
+                    ..
+                } => {
+                    classify_tagged_template_escapes(
+                        file,
+                        function,
+                        *host,
+                        substitutions,
+                        location,
+                        &value_dependencies,
+                        &mut callbacks,
+                        &mut escapes,
+                    );
+                }
                 HirInstructionKind::New { arguments, .. } => {
                     for argument in arguments {
                         add_value_escapes(
@@ -1012,6 +1028,52 @@ fn classify_callbacks_and_call_escapes(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn classify_tagged_template_escapes(
+    file: &HirFile,
+    function: &HirFunction,
+    host: CallHost,
+    substitutions: &[ValueId],
+    location: InstructionLocation,
+    value_dependencies: &[BTreeSet<DependencyPath>],
+    callbacks: &mut Vec<CallbackFact>,
+    escapes: &mut Vec<EscapeFact>,
+) {
+    for (substitution_index, substitution) in substitutions.iter().copied().enumerate() {
+        let nested = function
+            .values
+            .get(substitution.as_usize())
+            .and_then(|value| match value.kind {
+                ValueKind::Function(function) => Some(function),
+                _ => None,
+            });
+        if let Some(nested) = nested {
+            if file.functions.get(nested.as_usize()).is_some() {
+                callbacks.push(CallbackFact {
+                    location,
+                    // Runtime argument zero is the template object.
+                    argument_index: u16::try_from(substitution_index.saturating_add(1))
+                        .unwrap_or(u16::MAX),
+                    function: nested,
+                    disposition: if matches!(host, CallHost::Function(_)) {
+                        CallbackDisposition::Internal
+                    } else {
+                        CallbackDisposition::EscapesUnknown
+                    },
+                });
+            }
+        } else if !matches!(host, CallHost::Function(_)) {
+            add_value_escapes(
+                substitution,
+                EscapeKind::UnknownCall,
+                Some(location),
+                value_dependencies,
+                escapes,
+            );
+        }
+    }
+}
+
 fn callback_disposition(
     call: &fict_hir::CallInstruction,
     argument_index: usize,
@@ -1193,6 +1255,11 @@ fn instruction_inputs(instruction: &HirInstruction, file: &HirFile) -> Vec<Value
         } => vec![*test, *consequent, *alternate],
         HirInstructionKind::Sequence { values } => values.last().copied().into_iter().collect(),
         HirInstructionKind::TemplateLiteral { expressions, .. } => expressions.clone(),
+        HirInstructionKind::TaggedTemplate {
+            tag, substitutions, ..
+        } => std::iter::once(*tag)
+            .chain(substitutions.iter().copied())
+            .collect(),
         HirInstructionKind::Call(call) => std::iter::once(call.callee)
             .chain(call.arguments.iter().map(|argument| argument.value))
             .collect(),

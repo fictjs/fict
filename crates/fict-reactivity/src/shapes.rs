@@ -723,7 +723,8 @@ fn structural_value_shape(
                 unknown_shape(ShapeSource::UnknownOperation)
             }
         }
-        HirInstructionKind::New { .. }
+        HirInstructionKind::TaggedTemplate { .. }
+        | HirInstructionKind::New { .. }
         | HirInstructionKind::Jsx { .. }
         | HirInstructionKind::SyntaxFragment { .. } => unknown_shape(ShapeSource::UnknownOperation),
         HirInstructionKind::Declare { .. }

@@ -707,6 +707,32 @@ impl Verifier<'_> {
                     );
                 }
             }
+            HirInstructionKind::TaggedTemplate {
+                tag,
+                quasis,
+                substitutions,
+                host,
+            } => {
+                self.value(function, *tag, instruction.origin);
+                for substitution in substitutions {
+                    self.value(function, *substitution, instruction.origin);
+                }
+                if quasis.len() != substitutions.len().saturating_add(1) {
+                    self.error(
+                        "FICT-HIR-TAGGED-TEMPLATE",
+                        "a tagged template must contain exactly one more quasi than substitution",
+                        Some(instruction.origin),
+                    );
+                }
+                match host {
+                    CallHost::Binding(binding) => self.binding(*binding, instruction.origin),
+                    CallHost::Function(nested) => self.function(*nested, instruction.origin),
+                    CallHost::ReactiveScope(host) => {
+                        self.binding(host.callee, instruction.origin);
+                    }
+                    CallHost::Unknown => {}
+                }
+            }
             HirInstructionKind::Call(call) => {
                 self.value(function, call.callee, instruction.origin);
                 for argument in &call.arguments {
