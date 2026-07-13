@@ -22,7 +22,9 @@ use oxc::{
     semantic::SemanticBuilder,
     span::{GetSpan, SourceType, Span},
     syntax::{
-        number::NumberBase, operator::BinaryOperator as OxcBinaryOperator, scope::ScopeFlags,
+        number::NumberBase,
+        operator::{BinaryOperator as OxcBinaryOperator, LogicalOperator as OxcLogicalOperator},
+        scope::ScopeFlags,
     },
     transformer::{JsxOptions, Module, TransformOptions, Transformer},
 };
@@ -336,21 +338,7 @@ fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
         .find(|operation| match operation {
             EmitOperation::ReadReactive { projections, .. }
             | EmitOperation::WriteReactive { projections, .. } => !projections.is_empty(),
-            EmitOperation::UpdateReactive {
-                projections,
-                compound,
-                ..
-            } => {
-                !projections.is_empty()
-                    || matches!(
-                        compound,
-                        Some(
-                            CompoundAssignmentOperator::LogicalAnd
-                                | CompoundAssignmentOperator::LogicalOr
-                                | CompoundAssignmentOperator::NullishCoalescing
-                        )
-                    )
-            }
+            EmitOperation::UpdateReactive { projections, .. } => !projections.is_empty(),
             _ => matches!(
                 operation,
                 EmitOperation::DeclareTemplate { .. }
@@ -787,20 +775,28 @@ impl<'a> AstRewriter<'a, '_> {
                 };
                 walk_mut::walk_assignment_expression(self, assignment);
                 let right = assignment.right.take_in(&self.allocator);
-                let Some(binary) = compound_binary_operator(operator) else {
-                    return false;
+                *expression = if let Some(logical) = compound_logical_operator(operator) {
+                    logical_compound_update(
+                        self.allocator,
+                        &signal,
+                        logical,
+                        right,
+                        assignment.span,
+                    )
+                } else {
+                    let binary = compound_binary_operator(operator)
+                        .expect("non-logical compound operator must be binary");
+                    let builder = AstBuilder::new(self.allocator);
+                    let current = getter_call(self.allocator, &signal, assignment.span);
+                    let next = Expression::new_binary_expression(
+                        assignment.span,
+                        current,
+                        binary,
+                        right,
+                        &builder,
+                    );
+                    value_preserving_setter(self.allocator, &signal, next, assignment.span)
                 };
-                let builder = AstBuilder::new(self.allocator);
-                let current = getter_call(self.allocator, &signal, assignment.span);
-                let next = Expression::new_binary_expression(
-                    assignment.span,
-                    current,
-                    binary,
-                    right,
-                    &builder,
-                );
-                *expression =
-                    value_preserving_setter(self.allocator, &signal, next, assignment.span);
                 true
             }
             MutationRewrite::Update { operator, prefix } => {
@@ -875,6 +871,15 @@ fn compound_binary_operator(operator: CompoundAssignmentOperator) -> Option<OxcB
     })
 }
 
+fn compound_logical_operator(operator: CompoundAssignmentOperator) -> Option<OxcLogicalOperator> {
+    match operator {
+        CompoundAssignmentOperator::LogicalAnd => Some(OxcLogicalOperator::And),
+        CompoundAssignmentOperator::LogicalOr => Some(OxcLogicalOperator::Or),
+        CompoundAssignmentOperator::NullishCoalescing => Some(OxcLogicalOperator::Coalesce),
+        _ => None,
+    }
+}
+
 fn update_binary_operator(operator: UpdateOperator) -> OxcBinaryOperator {
     match operator {
         UpdateOperator::Increment => OxcBinaryOperator::Addition,
@@ -927,6 +932,25 @@ fn value_preserving_setter<'a>(
     let arrow = expression_arrow(allocator, parameter, body, span);
     let mut arguments = ArenaVec::new_in(&allocator);
     arguments.push(Argument::from(value));
+    Expression::new_call_expression(span, arrow, NONE, arguments, false, &builder)
+}
+
+fn logical_compound_update<'a>(
+    allocator: &'a Allocator,
+    signal: &str,
+    operator: OxcLogicalOperator,
+    right: Expression<'a>,
+    span: Span,
+) -> Expression<'a> {
+    let parameter = generated_parameter_name(allocator, signal, "__fict_previous");
+    let builder = AstBuilder::new(allocator);
+    let previous = Expression::new_identifier(span, parameter, &builder);
+    let assigned = value_preserving_setter(allocator, signal, right, span);
+    let body = Expression::new_logical_expression(span, previous, operator, assigned, &builder);
+    let arrow = expression_arrow(allocator, parameter, body, span);
+    let current = getter_call(allocator, signal, span);
+    let mut arguments = ArenaVec::new_in(&allocator);
+    arguments.push(Argument::from(current));
     Expression::new_call_expression(span, arrow, NONE, arguments, false, &builder)
 }
 
@@ -1303,7 +1327,7 @@ mod tests {
 
     #[test]
     fn materializes_value_preserving_reactive_writes_and_updates() {
-        let source = "let count = () => 0; export const values = [count = rhs(), count += 2, count++, --count];";
+        let source = "let count = () => 0; export const values = [count = rhs(), count += 2, count++, --count, count &&= rhs(), count ||= rhs(), count ??= rhs()];";
         let mut emit = effect_program("$effect(() => 1)");
         emit.imports.clear();
         emit.functions[0].slots.clear();
@@ -1313,6 +1337,9 @@ mod tests {
             ("count += 2", 1_u8),
             ("count++", 2_u8),
             ("--count", 3_u8),
+            ("count &&= rhs()", 4_u8),
+            ("count ||= rhs()", 5_u8),
+            ("count ??= rhs()", 6_u8),
         ];
         for (authored, kind) in operations {
             let start = u32::try_from(source.find(authored).expect("mutation span")).expect("span");
@@ -1360,6 +1387,22 @@ mod tests {
                     target: None,
                     origin,
                 },
+                4..=6 => EmitOperation::UpdateReactive {
+                    slot: EmitSlotId::new(0),
+                    source_result: Some(ValueId::new(u32::from(kind))),
+                    projections: Vec::new(),
+                    compound: Some(match kind {
+                        4 => CompoundAssignmentOperator::LogicalAnd,
+                        5 => CompoundAssignmentOperator::LogicalOr,
+                        6 => CompoundAssignmentOperator::NullishCoalescing,
+                        _ => unreachable!(),
+                    }),
+                    value: Some(EmitValueRef::Literal(LiteralValue::Undefined)),
+                    update: None,
+                    prefix: false,
+                    target: None,
+                    origin,
+                },
                 _ => unreachable!(),
             };
             emit.functions[0].operations.push(operation);
@@ -1377,6 +1420,9 @@ mod tests {
         assert!(output.code.contains("count() + 2"));
         assert!(output.code.contains("count(__fict_previous + 1)"));
         assert!(output.code.contains("count() - 1"));
+        assert!(output.code.contains("__fict_previous &&"));
+        assert!(output.code.contains("__fict_previous ||"));
+        assert!(output.code.contains("__fict_previous ??"));
     }
 
     #[test]
