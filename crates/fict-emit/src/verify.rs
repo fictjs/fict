@@ -5,6 +5,7 @@ use fict_diagnostics::{
 };
 use fict_hir::HirFile;
 use fict_reactivity::RegionAnalysis;
+use fict_reactivity::{analyze_cfg, verify_structurized_cfg};
 
 use crate::{
     CleanupOwner, DomNamespace, EmitOperation, EmitProgram, EmitValueRef, RuntimeHelper,
@@ -93,6 +94,16 @@ pub fn verify_emit_program(
                 "FICT-EMIT-REGION",
                 "function regions must be sorted known analysis regions",
             ));
+        }
+        match analyze_cfg(hir_function)
+            .and_then(|cfg| verify_structurized_cfg(hir_function, &cfg, &function.control_flow))
+        {
+            Ok(()) => {}
+            Err(bundle) => {
+                for diagnostic in bundle.as_slice() {
+                    diagnostics.push(diagnostic.clone());
+                }
+            }
         }
         verify_operations(hir, hir_function, function, analysis, &mut diagnostics);
     }

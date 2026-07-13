@@ -8,7 +8,7 @@ use fict_hir::{
     JsxAttributeValue, JsxChild, JsxElementName, JsxNode, LocalId, PlaceBase, TemplateId,
     TerminatorKind, ValueId, ValueKind,
 };
-use fict_reactivity::{ReactiveCycleAnalysis, RegionAnalysis};
+use fict_reactivity::{ReactiveCycleAnalysis, RegionAnalysis, analyze_cfg, structurize_cfg};
 
 use crate::{
     CleanupOwner, ComponentProp, ComponentTarget, DELEGATED_EVENTS, DomBindingKind, DomNamespace,
@@ -120,6 +120,17 @@ fn lower_program(
         .iter()
         .flat_map(|function| function.operations.iter().filter_map(EmitOperation::helper))
         .collect();
+    if options.strict_guarantee
+        && functions
+            .iter()
+            .any(|function| function.control_flow.fallback.is_some())
+    {
+        return Err(DiagnosticBundle::new(vec![lower_error(
+            "FICT-R-CONTROL-FALLBACK",
+            "irreducible control flow requires state-machine fallback",
+            GuaranteeClass::Fallback,
+        )]));
+    }
     let imports = helpers
         .into_iter()
         .map(|helper| RuntimeImportIntent {
@@ -373,6 +384,7 @@ fn lower_function(
         slots,
         temporaries,
         regions: regions.top_level_regions.clone(),
+        control_flow: structurize_cfg(function, &analyze_cfg(function)?)?,
         operations,
     })
 }

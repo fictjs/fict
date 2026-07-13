@@ -101,6 +101,11 @@ fn program() -> EmitProgram {
                 origin: origin(),
             }],
             regions: Vec::new(),
+            control_flow: fict_reactivity::structurize_cfg(
+                &hir().functions[0],
+                &fict_reactivity::analyze_cfg(&hir().functions[0]).expect("CFG"),
+            )
+            .expect("structured CFG"),
             operations: vec![
                 EmitOperation::CreateReactive {
                     slot: EmitSlotId::new(0),

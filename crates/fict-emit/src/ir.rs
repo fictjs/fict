@@ -4,6 +4,7 @@ use fict_hir::{
 };
 
 use crate::{RuntimeFamily, RuntimeHelper};
+use fict_reactivity::StructurizeAnalysis;
 
 macro_rules! emit_id {
     ($name:ident) => {
@@ -416,6 +417,7 @@ pub struct EmitFunction {
     pub slots: Vec<ReactiveSlot>,
     pub temporaries: Vec<EmitTemporary>,
     pub regions: Vec<RegionId>,
+    pub control_flow: StructurizeAnalysis,
     pub operations: Vec<EmitOperation>,
 }
 

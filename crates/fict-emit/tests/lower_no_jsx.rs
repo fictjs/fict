@@ -505,3 +505,43 @@ fn lowers_binding_aware_component_props_spreads_and_children_in_source_order() {
     assert!(matches!(props[1], fict_emit::ComponentProp::Spread(_)));
     assert_eq!(children.len(), 1);
 }
+
+#[test]
+fn carries_structured_conditional_plan_into_emit_function() {
+    let mut hir = fixture(FunctionKind::Module);
+    hir.functions[0].blocks[0].terminator.kind = TerminatorKind::Branch {
+        test: ValueId::new(3),
+        consequent: BlockId::new(1),
+        alternate: BlockId::new(2),
+    };
+    for id in [1, 2] {
+        hir.functions[0].blocks.push(HirBlock {
+            id: BlockId::new(id),
+            scope: ScopeId::new(0),
+            instructions: Vec::new(),
+            terminator: HirTerminator {
+                kind: TerminatorKind::Return {
+                    value: Some(ValueId::new(3)),
+                },
+                origin: origin(),
+            },
+            source_hint: None,
+            origin: origin(),
+        });
+    }
+    verify_hir(&hir).expect("valid conditional fixture");
+    let (regions, cycles) = analyses(&hir);
+    let program = lower_core(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
+        .expect("conditional lowering");
+    assert!(
+        program.functions[0]
+            .control_flow
+            .constructs
+            .iter()
+            .any(|construct| matches!(
+                construct.kind,
+                fict_reactivity::StructuredConstructKind::Conditional { .. }
+            ))
+    );
+    assert!(program.functions[0].control_flow.fallback.is_none());
+}
