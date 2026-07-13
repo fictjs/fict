@@ -5,8 +5,9 @@ use fict_diagnostics::{
 };
 use fict_hir::{
     CallHost, FictMacroKind, FunctionId, FunctionKind, HirFile, HirInstructionKind, ImportedName,
-    JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName, JsxExpressionKind, JsxNode, LocalId,
-    PlaceBase, ReactiveCallKind, TemplateId, TerminatorKind, ValueId, ValueKind,
+    JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName, JsxExpressionKind,
+    JsxListExpression, JsxListReceiver, JsxNode, LocalId, PlaceBase, ReactiveCallKind, TemplateId,
+    TerminatorKind, ValueId, ValueKind,
 };
 use fict_reactivity::{ReactiveCycleAnalysis, RegionAnalysis, analyze_cfg, structurize_cfg};
 
@@ -256,13 +257,14 @@ fn collect_reactive_binding_sites(
             let HirInstructionKind::Call(call) = &instruction.kind else {
                 continue;
             };
-            let Some(kind) = call.macro_kind else {
-                continue;
-            };
-            let slot_kind = match kind {
-                FictMacroKind::State => ReactiveSlotKind::Signal,
-                FictMacroKind::Memo => ReactiveSlotKind::Memo,
-                FictMacroKind::Effect => continue,
+            let slot_kind = match (call.macro_kind, call.reactive_kind) {
+                (Some(FictMacroKind::State), _) => ReactiveSlotKind::Signal,
+                (Some(FictMacroKind::Memo), _) => ReactiveSlotKind::Memo,
+                (Some(FictMacroKind::Effect), _) => continue,
+                (None, Some(ReactiveCallKind::Store)) => ReactiveSlotKind::Store,
+                (None, Some(ReactiveCallKind::Resource)) => ReactiveSlotKind::Resource,
+                (None, Some(ReactiveCallKind::Selector)) => ReactiveSlotKind::Selector,
+                (None, None) => continue,
             };
             let Some(binding) = instruction
                 .result
@@ -648,6 +650,7 @@ fn lower_function(
                             &mut value_temporaries,
                             &mut operations,
                             cleanup,
+                            reactive_bindings,
                         )?;
                     } else {
                         let Some(source_result) = instruction.result else {
@@ -754,6 +757,14 @@ enum TemplateBinding {
         contains_fragment: bool,
         namespace: DomNamespace,
     },
+    KeyedList {
+        parent_path: Vec<u32>,
+        start_path: Vec<u32>,
+        end_path: Vec<u32>,
+        value: ValueId,
+        list: JsxListExpression,
+        namespace: DomNamespace,
+    },
     Event {
         path: Vec<u32>,
         event: String,
@@ -784,6 +795,7 @@ fn lower_jsx_instruction(
     value_temporaries: &mut BTreeMap<ValueId, EmitTemporaryId>,
     operations: &mut Vec<EmitOperation>,
     cleanup: CleanupOwner,
+    reactive_bindings: &BTreeMap<fict_hir::BindingId, ReactiveBindingSite>,
 ) -> Result<(), DiagnosticBundle> {
     let Some(template) = hir.templates.get(template_id.as_usize()) else {
         return Err(DiagnosticBundle::new(vec![lower_error(
@@ -825,7 +837,8 @@ fn lower_jsx_instruction(
     if root_is_component {
         return Ok(());
     }
-    let serialized = serialize_template(&template.root)?;
+    let trusted_lists = trusted_jsx_list_values(&template.root, reactive_bindings);
+    let serialized = serialize_template_with_lists(&template.root, &trusted_lists)?;
     if declared_templates.insert(template_id) {
         let preferred = format!("__fict_tmpl{}", template_id.index());
         let local = temporary_names.allocate(&preferred);
@@ -1083,6 +1096,67 @@ fn lower_jsx_instruction(
                     create_helper: create_element_helper(namespace),
                     cleanup_helper: RuntimeHelper::OnDestroy,
                     fragment_helper: contains_fragment.then_some(RuntimeHelper::Fragment),
+                    cleanup,
+                    origin,
+                });
+            }
+            TemplateBinding::KeyedList {
+                parent_path,
+                start_path,
+                end_path,
+                value,
+                list,
+                namespace,
+            } => {
+                let origin = hir.functions[function_id.as_usize()].values[value.as_usize()].origin;
+                let parent = resolved_element(
+                    root,
+                    parent_path,
+                    &mut resolved,
+                    temporaries,
+                    temporary_names,
+                    operations,
+                    origin,
+                );
+                let start = resolved_element(
+                    root,
+                    start_path,
+                    &mut resolved,
+                    temporaries,
+                    temporary_names,
+                    operations,
+                    origin,
+                );
+                let end = resolved_element(
+                    root,
+                    end_path,
+                    &mut resolved,
+                    temporaries,
+                    temporary_names,
+                    operations,
+                    origin,
+                );
+                let target = allocate_temporary(
+                    temporaries,
+                    temporary_names,
+                    format!("__fict_list{}", value.index()),
+                    origin,
+                );
+                operations.push(EmitOperation::KeyedChild {
+                    target,
+                    source_result: value,
+                    items: list.items,
+                    key: list.key,
+                    render: list.callback,
+                    item_references: list.item_references,
+                    index_references: list.index_references,
+                    needs_index: list.needs_index,
+                    parent,
+                    start,
+                    end,
+                    namespace,
+                    helper: RuntimeHelper::KeyedList,
+                    cleanup_helper: RuntimeHelper::OnDestroy,
                     cleanup,
                     origin,
                 });
@@ -1424,7 +1498,82 @@ fn jsx_node_origin(node: &JsxNode) -> fict_hir::Origin {
     }
 }
 
+fn trusted_jsx_list_values(
+    root: &JsxNode,
+    reactive_bindings: &BTreeMap<fict_hir::BindingId, ReactiveBindingSite>,
+) -> BTreeSet<ValueId> {
+    enum Item<'a> {
+        Node(&'a JsxNode),
+        Child(&'a JsxChild),
+    }
+
+    let mut trusted = BTreeSet::new();
+    let mut stack = vec![Item::Node(root)];
+    while let Some(item) = stack.pop() {
+        match item {
+            Item::Node(JsxNode::Element(element)) => {
+                for attribute in &element.attributes {
+                    if let JsxAttribute::Named {
+                        value: JsxAttributeValue::Node(node),
+                        ..
+                    } = attribute
+                    {
+                        stack.push(Item::Node(node));
+                    }
+                }
+                stack.extend(element.children.iter().map(Item::Child));
+            }
+            Item::Node(JsxNode::Fragment { children, .. }) => {
+                stack.extend(children.iter().map(Item::Child));
+            }
+            Item::Child(JsxChild::Expression {
+                value,
+                list: Some(list),
+                ..
+            }) => {
+                if trusted_jsx_list_receiver(list.receiver, reactive_bindings) {
+                    trusted.insert(*value);
+                }
+            }
+            Item::Child(JsxChild::Node(node)) => stack.push(Item::Node(node)),
+            Item::Child(
+                JsxChild::Text { .. } | JsxChild::Expression { .. } | JsxChild::Spread { .. },
+            ) => {}
+        }
+    }
+    trusted
+}
+
+fn trusted_jsx_list_receiver(
+    receiver: JsxListReceiver,
+    reactive_bindings: &BTreeMap<fict_hir::BindingId, ReactiveBindingSite>,
+) -> bool {
+    match receiver {
+        JsxListReceiver::ArrayLiteral => true,
+        JsxListReceiver::Binding {
+            root,
+            projected: false,
+        } => reactive_bindings.get(&root).is_some_and(|site| {
+            matches!(site.kind, ReactiveSlotKind::Signal | ReactiveSlotKind::Memo)
+        }),
+        JsxListReceiver::Binding {
+            root,
+            projected: true,
+        } => reactive_bindings
+            .get(&root)
+            .is_some_and(|site| site.kind == ReactiveSlotKind::Store),
+    }
+}
+
+#[cfg(test)]
 fn serialize_template(root: &JsxNode) -> Result<SerializedTemplate, DiagnosticBundle> {
+    serialize_template_with_lists(root, &BTreeSet::new())
+}
+
+fn serialize_template_with_lists(
+    root: &JsxNode,
+    trusted_lists: &BTreeSet<ValueId>,
+) -> Result<SerializedTemplate, DiagnosticBundle> {
     let namespace = match root {
         JsxNode::Element(element) => match &element.name {
             JsxElementName::Intrinsic(name) => resolve_element_namespace(name, None, true),
@@ -1434,7 +1583,15 @@ fn serialize_template(root: &JsxNode) -> Result<SerializedTemplate, DiagnosticBu
     };
     let mut html = String::new();
     let mut bindings = Vec::new();
-    serialize_node(root, None, true, &mut Vec::new(), &mut html, &mut bindings)?;
+    serialize_node(
+        root,
+        None,
+        true,
+        &mut Vec::new(),
+        &mut html,
+        &mut bindings,
+        trusted_lists,
+    )?;
     if html.is_empty() {
         html.push_str("<!---->");
     }
@@ -1452,6 +1609,7 @@ fn serialize_node(
     path: &mut Vec<u32>,
     html: &mut String,
     bindings: &mut Vec<TemplateBinding>,
+    trusted_lists: &BTreeSet<ValueId>,
 ) -> Result<u32, DiagnosticBundle> {
     match node {
         JsxNode::Fragment { children, .. } => serialize_children(
@@ -1462,6 +1620,7 @@ fn serialize_node(
             None,
             parent_namespace.unwrap_or(DomNamespace::Html),
             parent_namespace.unwrap_or(DomNamespace::Html),
+            trusted_lists,
         ),
         JsxNode::Element(element) => {
             let JsxElementName::Intrinsic(tag) = &element.name else {
@@ -1594,6 +1753,7 @@ fn serialize_node(
                     Some(tag),
                     element_namespace,
                     child_namespace,
+                    trusted_lists,
                 )?;
                 html.push_str("</");
                 html.push_str(tag);
@@ -1613,6 +1773,7 @@ fn serialize_children(
     parent_tag: Option<&str>,
     parent_element_namespace: DomNamespace,
     child_namespace: DomNamespace,
+    trusted_lists: &BTreeSet<ValueId>,
 ) -> Result<u32, DiagnosticBundle> {
     let mut child_index = 0_u32;
     let mut source_index = 0_usize;
@@ -1656,6 +1817,27 @@ fn serialize_children(
                         JsxExpressionKind::Value => unreachable!(),
                     },
                     contains_fragment: *contains_fragment,
+                    namespace: child_namespace,
+                });
+                child_index += 2;
+            }
+            JsxChild::Expression {
+                value,
+                list: Some(list),
+                ..
+            } if trusted_lists.contains(value) => {
+                previous_static_text = false;
+                html.push_str("<!----><!---->");
+                let mut start_path = parent_path.clone();
+                start_path.push(child_index);
+                let mut end_path = parent_path.clone();
+                end_path.push(child_index + 1);
+                bindings.push(TemplateBinding::KeyedList {
+                    parent_path: parent_path.clone(),
+                    start_path,
+                    end_path,
+                    value: *value,
+                    list: list.clone(),
                     namespace: child_namespace,
                 });
                 child_index += 2;
@@ -1728,6 +1910,7 @@ fn serialize_children(
                             parent_path,
                             html,
                             bindings,
+                            trusted_lists,
                         )?;
                         parent_path.pop();
                         row_index += 1;
@@ -1761,6 +1944,7 @@ fn serialize_children(
                             parent_path,
                             html,
                             bindings,
+                            trusted_lists,
                         )?;
                         parent_path.pop();
                         column_index += 1;
@@ -1779,6 +1963,7 @@ fn serialize_children(
                     parent_path,
                     html,
                     bindings,
+                    trusted_lists,
                 )?;
                 parent_path.pop();
                 child_index += node_count;

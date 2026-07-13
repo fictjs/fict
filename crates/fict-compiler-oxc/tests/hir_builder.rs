@@ -626,7 +626,7 @@ fn models_binding_aware_direct_keyed_map_callbacks() {
     };
     assert_eq!(hir.bindings[receiver.as_usize()].display_name, "rows");
     assert!(hir.functions[list.callback.as_usize()].flags.is_arrow);
-    assert_eq!(list.item_references.len(), 2);
+    assert_eq!(list.item_references.len(), 1);
     assert_eq!(list.index_references.len(), 1);
     assert!(list.needs_index);
     let key = list.key.primary_span.expect("source key span");

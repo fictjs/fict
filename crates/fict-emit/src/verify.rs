@@ -569,6 +569,32 @@ fn verify_operations(
             | EmitOperation::Conditional { cleanup, .. } => {
                 verify_cleanup(function, analysis, *cleanup, diagnostics);
             }
+            EmitOperation::KeyedChild {
+                source_result,
+                render,
+                items,
+                key,
+                item_references,
+                index_references,
+                cleanup,
+                ..
+            } => {
+                verify_source_result(hir_function, *source_result, diagnostics);
+                verify_cleanup(function, analysis, *cleanup, diagnostics);
+                if hir.functions.get(render.as_usize()).is_none()
+                    || items.primary_span.is_none()
+                    || key.primary_span.is_none()
+                    || item_references
+                        .iter()
+                        .chain(index_references)
+                        .any(|origin| origin.primary_span.is_none())
+                {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-KEYED-CHILD",
+                        "keyed child references must retain valid functions and source origins",
+                    ));
+                }
+            }
             EmitOperation::KeyedList {
                 source_result,
                 cleanup,
@@ -728,6 +754,11 @@ fn verify_helper_semantics(
                     }
                 }
         }
+        EmitOperation::KeyedChild {
+            helper,
+            cleanup_helper,
+            ..
+        } => *helper == RuntimeHelper::KeyedList && *cleanup_helper == RuntimeHelper::OnDestroy,
         EmitOperation::KeyedList { helper, .. } => *helper == RuntimeHelper::KeyedList,
         EmitOperation::ReadReactive { helper, .. } => {
             helper.is_none_or(|helper| helper == RuntimeHelper::ReactiveGetter)

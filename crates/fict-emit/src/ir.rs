@@ -371,6 +371,25 @@ pub enum EmitOperation {
         cleanup: CleanupOwner,
         origin: Origin,
     },
+    /// Materialize a binding-aware keyed `.map()` child between template-owned markers.
+    KeyedChild {
+        target: EmitTemporaryId,
+        source_result: ValueId,
+        items: Origin,
+        key: Origin,
+        render: FunctionId,
+        item_references: Vec<Origin>,
+        index_references: Vec<Origin>,
+        needs_index: bool,
+        parent: EmitTemporaryId,
+        start: EmitTemporaryId,
+        end: EmitTemporaryId,
+        namespace: DomNamespace,
+        helper: RuntimeHelper,
+        cleanup_helper: RuntimeHelper,
+        cleanup: CleanupOwner,
+        origin: Origin,
+    },
     KeyedList {
         target: EmitTemporaryId,
         source_result: ValueId,
@@ -401,6 +420,7 @@ impl EmitOperation {
             | Self::BindRef { helper, .. }
             | Self::Insert { helper, .. }
             | Self::Conditional { helper, .. }
+            | Self::KeyedChild { helper, .. }
             | Self::KeyedList { helper, .. }
             | Self::ResolveElement { helper, .. } => Some(*helper),
             Self::ReadReactive { helper, .. }
@@ -444,6 +464,7 @@ impl EmitOperation {
             Self::Insert { create_helper, .. } => Some(*create_helper),
             Self::BindEvent { cleanup_helper, .. } => *cleanup_helper,
             Self::Conditional { create_helper, .. } => Some(*create_helper),
+            Self::KeyedChild { cleanup_helper, .. } => Some(*cleanup_helper),
             Self::InvokeComponent {
                 prop_helper: Some(_),
                 fragment_helper,
@@ -532,6 +553,7 @@ impl EmitOperation {
             | Self::InvokeComponent { target, .. }
             | Self::CreateElement { target, .. }
             | Self::Conditional { target, .. }
+            | Self::KeyedChild { target, .. }
             | Self::KeyedList { target, .. } => Some(*target),
             Self::UpdateReactive {
                 target: Some(target),
@@ -592,6 +614,7 @@ impl EmitOperation {
             | Self::CreateVNode { .. }
             | Self::DeclareTemplate { .. }
             | Self::CloneTemplate { .. }
+            | Self::KeyedChild { .. }
             | Self::ResolveElement { .. } => {}
         }
     }
@@ -608,6 +631,13 @@ impl EmitOperation {
                 before.iter().copied().for_each(visit);
             }
             Self::Conditional {
+                parent, start, end, ..
+            } => {
+                visit(*parent);
+                visit(*start);
+                visit(*end);
+            }
+            Self::KeyedChild {
                 parent, start, end, ..
             } => {
                 visit(*parent);

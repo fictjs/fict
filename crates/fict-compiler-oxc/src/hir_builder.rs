@@ -576,6 +576,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         let mut jsx = JsxCollector {
             scoping: self.semantic.scoping(),
             stack: vec![FunctionId::new(0)],
+            scan_owners: Vec::new(),
             function_by_span: &function_by_span,
             roots: Vec::new(),
         };
@@ -1878,8 +1879,72 @@ enum RawJsxListReceiver {
 struct JsxCollector<'facts> {
     scoping: &'facts Scoping,
     stack: Vec<FunctionId>,
+    scan_owners: Vec<FunctionId>,
     function_by_span: &'facts BTreeMap<(u32, u32), FunctionId>,
     roots: Vec<JsxFact>,
+}
+
+impl JsxCollector<'_> {
+    fn scan_jsx_element(&mut self, element: &JSXElement<'_>) {
+        for attribute in &element.opening_element.attributes {
+            match attribute {
+                JSXAttributeItem::SpreadAttribute(spread) => {
+                    self.scan_jsx_expression(&spread.argument);
+                }
+                JSXAttributeItem::Attribute(attribute) => match &attribute.value {
+                    Some(OxcJsxAttributeValue::ExpressionContainer(container)) => {
+                        if let Some(expression) = container.expression.as_expression() {
+                            self.scan_jsx_expression(expression);
+                        }
+                    }
+                    Some(OxcJsxAttributeValue::Element(element)) => {
+                        self.scan_jsx_element(element);
+                    }
+                    Some(OxcJsxAttributeValue::Fragment(fragment)) => {
+                        self.scan_jsx_fragment(fragment);
+                    }
+                    Some(OxcJsxAttributeValue::StringLiteral(_)) | None => {}
+                },
+            }
+        }
+        for child in &element.children {
+            match child {
+                OxcJsxChild::Element(element) => self.scan_jsx_element(element),
+                OxcJsxChild::Fragment(fragment) => self.scan_jsx_fragment(fragment),
+                OxcJsxChild::ExpressionContainer(container) => {
+                    if let Some(expression) = container.expression.as_expression() {
+                        self.scan_jsx_expression(expression);
+                    }
+                }
+                OxcJsxChild::Spread(spread) => self.scan_jsx_expression(&spread.expression),
+                OxcJsxChild::Text(_) => {}
+            }
+        }
+    }
+
+    fn scan_jsx_fragment(&mut self, fragment: &JSXFragment<'_>) {
+        for child in &fragment.children {
+            match child {
+                OxcJsxChild::Element(element) => self.scan_jsx_element(element),
+                OxcJsxChild::Fragment(fragment) => self.scan_jsx_fragment(fragment),
+                OxcJsxChild::ExpressionContainer(container) => {
+                    if let Some(expression) = container.expression.as_expression() {
+                        self.scan_jsx_expression(expression);
+                    }
+                }
+                OxcJsxChild::Spread(spread) => self.scan_jsx_expression(&spread.expression),
+                OxcJsxChild::Text(_) => {}
+            }
+        }
+    }
+
+    fn scan_jsx_expression(&mut self, expression: &Expression<'_>) {
+        match expression.get_inner_expression() {
+            Expression::JSXElement(element) => self.scan_jsx_element(element),
+            Expression::JSXFragment(fragment) => self.scan_jsx_fragment(fragment),
+            _ => self.visit_expression(expression),
+        }
+    }
 }
 
 impl<'a> Visit<'a> for JsxCollector<'_> {
@@ -1910,23 +1975,39 @@ impl<'a> Visit<'a> for JsxCollector<'_> {
     }
 
     fn visit_jsx_element(&mut self, element: &JSXElement<'a>) {
+        let owner = *self.stack.last().expect("module JSX owner");
+        if self.scan_owners.last() == Some(&owner) {
+            self.scan_jsx_element(element);
+            return;
+        }
         let mut fragments = FragmentDetector::default();
         walk_jsx_element(&mut fragments, element);
         self.roots.push(JsxFact {
-            owner: *self.stack.last().expect("module JSX owner"),
+            owner,
             span: source_span(element.span),
             root: raw_jsx_element(self.scoping, element),
             contains_fragment: fragments.found,
         });
+        self.scan_owners.push(owner);
+        self.scan_jsx_element(element);
+        self.scan_owners.pop();
     }
 
     fn visit_jsx_fragment(&mut self, fragment: &JSXFragment<'a>) {
+        let owner = *self.stack.last().expect("module JSX owner");
+        if self.scan_owners.last() == Some(&owner) {
+            self.scan_jsx_fragment(fragment);
+            return;
+        }
         self.roots.push(JsxFact {
-            owner: *self.stack.last().expect("module JSX owner"),
+            owner,
             span: source_span(fragment.span),
             root: raw_jsx_fragment(self.scoping, fragment),
             contains_fragment: true,
         });
+        self.scan_owners.push(owner);
+        self.scan_jsx_fragment(fragment);
+        self.scan_owners.pop();
     }
 }
 
@@ -2185,6 +2266,12 @@ fn raw_jsx_list_expression(
     let Expression::JSXElement(element) = returned else {
         return None;
     };
+    if !matches!(
+        element.opening_element.name,
+        OxcJsxElementName::Identifier(_) | OxcJsxElementName::NamespacedName(_)
+    ) {
+        return None;
+    }
     let key = direct_jsx_key_span(element)?;
     let mut references = ListParameterReferenceCollector {
         scoping,
@@ -2202,6 +2289,12 @@ fn raw_jsx_list_expression(
     references.item_references.dedup();
     references.index_references.sort_unstable();
     references.index_references.dedup();
+    references
+        .item_references
+        .retain(|reference| reference.start() < key.start() || reference.end() > key.end());
+    references
+        .index_references
+        .retain(|reference| reference.start() < key.start() || reference.end() > key.end());
     let receiver = classify_raw_list_receiver(scoping, items)?;
     Some(RawJsxListExpression {
         items: source_span(items.span()),

@@ -928,6 +928,67 @@ mod tests {
     }
 
     #[test]
+    fn emits_binding_aware_keyed_map_children() {
+        let result = compile(request(
+            "import { $state } from 'fict'; export function List() { let items = $state([{ id: 1, name: 'A' }]); return <ul>{items.map((item, index) => <li key={item.id} data-index={index}>{item.name}</li>)}</ul>; }",
+            "keyed-map.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.code.contains("createKeyedList("), "{}", result.code);
+        assert!(!result.code.contains("items.map("), "{}", result.code);
+        assert!(result.code.contains("() => items()"), "{}", result.code);
+        assert!(result.code.contains("=> item.id"), "{}", result.code);
+        assert!(result.code.contains("() => index()"), "{}", result.code);
+        assert!(result.code.contains("() => item().name"), "{}", result.code);
+        assert!(result.code.contains(".flush?.()"), "{}", result.code);
+        assert!(result.code.contains("onDestroy("), "{}", result.code);
+        assert!(result.code.contains(".dispose"), "{}", result.code);
+        assert!(!result.code.contains("\"key\""), "{}", result.code);
+    }
+
+    #[test]
+    fn evaluates_keyed_map_keys_once_and_preserves_shadowing() {
+        let result = compile(request(
+            "import { $state } from 'fict'; export function List() { let items = $state([{ id: 1, name: 'A' }]); return <ul>{items.map(item => <li key={makeKey(item)}>{item.name}{(() => { const item = { name: 'shadow' }; return item.name; })()}</li>)}</ul>; }",
+            "keyed-map-effects.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.code.contains("createKeyedList("), "{}", result.code);
+        assert_eq!(
+            result.code.matches("makeKey(item)").count(),
+            1,
+            "{}",
+            result.code
+        );
+        assert!(!result.code.contains("makeKey(item())"), "{}", result.code);
+        assert!(result.code.contains("() => item().name"), "{}", result.code);
+        assert!(result.code.contains("const item = {"), "{}", result.code);
+        assert!(result.code.contains("return item.name"), "{}", result.code);
+    }
+
+    #[test]
+    fn emits_array_store_and_svg_keyed_map_receivers() {
+        let result = compile(request(
+            "import { $store } from 'fict'; export function Lists() { const store = $store({ rows: [{ id: 1 }] }); return <main><ul>{store.rows.map(row => <li key={row.id}>{row.id}</li>)}</ul><svg>{[{ id: 2 }].map(row => <circle key={row.id} cx={row.id} />)}</svg></main>; }",
+            "keyed-map-receivers.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result.code.matches("createKeyedList(").count(),
+            2,
+            "{}",
+            result.code
+        );
+        assert!(!result.code.contains("store.rows.map("), "{}", result.code);
+        assert!(result.code.contains("() => store.rows"), "{}", result.code);
+        assert!(result.code.contains("\"html\""), "{}", result.code);
+        assert!(result.code.contains("\"svg\""), "{}", result.code);
+    }
+
+    #[test]
     fn omits_intrinsic_keys_without_losing_dynamic_key_effects() {
         let result = compile(request(
             "export function Static() { return <p key=\"row\" title=\"ok\" />; } export function Dynamic() { return <div before={before()} key={side()} after={after()} />; }",

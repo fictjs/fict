@@ -10,18 +10,18 @@ use fict_emit::{
 };
 use fict_hir::{CompoundAssignmentOperator, LiteralValue, TemplateId, UpdateOperator};
 use oxc::{
-    allocator::{Allocator, TakeIn, Vec as ArenaVec},
+    allocator::{Allocator, CloneIn, TakeIn, Vec as ArenaVec},
     ast::{
         AstBuilder, NONE,
         ast::{
             Argument, ArrayExpressionElement, ArrowFunctionExpression, AssignmentTarget,
-            BindingPattern, BindingRestElement, Expression, FormalParameter, FormalParameterKind,
-            FormalParameterRest, FormalParameters, Function, FunctionBody, FunctionType,
-            IdentifierName, IdentifierReference, ImportDeclarationSpecifier, ImportOrExportKind,
-            JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild, JSXElement,
-            JSXElementName, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject,
-            ObjectPropertyKind, PropertyKey, PropertyKind, SimpleAssignmentTarget, Statement,
-            VariableDeclarationKind, VariableDeclarator,
+            BindingPattern, BindingRestElement, ChainElement, Expression, FormalParameter,
+            FormalParameterKind, FormalParameterRest, FormalParameters, Function, FunctionBody,
+            FunctionType, IdentifierName, IdentifierReference, ImportDeclarationSpecifier,
+            ImportOrExportKind, JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild,
+            JSXElement, JSXElementName, JSXFragment, JSXMemberExpression,
+            JSXMemberExpressionObject, ObjectPropertyKind, PropertyKey, PropertyKind,
+            SimpleAssignmentTarget, Statement, VariableDeclarationKind, VariableDeclarator,
         },
     },
     ast_visit::{Visit, VisitMut, walk_mut},
@@ -127,6 +127,11 @@ pub fn emit_program(
         matched_vnodes: BTreeSet::new(),
         matched_components: BTreeSet::new(),
         matched_clones: BTreeSet::new(),
+        vnode_shadowed_clones: BTreeSet::new(),
+        active_list_reads: BTreeSet::new(),
+        matched_list_reads: BTreeSet::new(),
+        suppressed_evaluations: BTreeSet::new(),
+        prefer_template_clones: 0,
         vnode_depth: 0,
         active_fragment_local: None,
         diagnostics: Vec::new(),
@@ -206,7 +211,9 @@ pub fn emit_program(
         }
     }
     for location in templates.clones.keys() {
-        if !rewriter.matched_clones.contains(location) {
+        if !rewriter.matched_clones.contains(location)
+            && !rewriter.vnode_shadowed_clones.contains(location)
+        {
             diagnostics.push(
                 emit_error(
                     "FICT-OXC-EMIT-ORIGIN",
@@ -237,6 +244,21 @@ pub fn emit_program(
         return failed_output(diagnostics);
     }
 
+    let used_template_factories: BTreeSet<_> = rewriter
+        .matched_clones
+        .iter()
+        .filter_map(|location| templates.clones.get(location))
+        .map(|clone| clone.factory.as_str())
+        .collect();
+    let template_declarations: Vec<_> = template_declarations
+        .into_iter()
+        .zip(&templates.sources)
+        .filter_map(|(statement, source)| {
+            used_template_factories
+                .contains(source.local.as_str())
+                .then_some(statement)
+        })
+        .collect();
     for statement in template_declarations.into_iter().rev() {
         program.body.insert(0, statement);
     }
@@ -851,6 +873,7 @@ fn component_rewrites(
 
 #[derive(Debug)]
 struct TemplateSource {
+    local: String,
     source: String,
 }
 
@@ -921,6 +944,21 @@ enum FineJsxStep {
         fragment_local: Option<String>,
         namespace: DomNamespace,
         value_origin: SourceSpan,
+    },
+    KeyedList {
+        target: String,
+        parent: String,
+        start: String,
+        end: String,
+        helper: String,
+        cleanup_helper: String,
+        namespace: DomNamespace,
+        value_origin: SourceSpan,
+        items_origin: SourceSpan,
+        key_origin: SourceSpan,
+        item_references: Vec<SourceSpan>,
+        index_references: Vec<SourceSpan>,
+        needs_index: bool,
     },
 }
 
@@ -994,6 +1032,7 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
             continue;
         };
         sources.push(TemplateSource {
+            local: local.clone(),
             source: format!("const {local} = {call};"),
         });
     }
@@ -1734,6 +1773,159 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                         value_origin,
                     });
                 }
+                EmitOperation::KeyedChild {
+                    target,
+                    items,
+                    key,
+                    item_references,
+                    index_references,
+                    needs_index,
+                    parent,
+                    start,
+                    end,
+                    namespace,
+                    helper,
+                    cleanup_helper,
+                    origin,
+                    ..
+                } => {
+                    let Some(plan) = current.and_then(|location| clones.get_mut(&location)) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-TEMPLATE",
+                                "keyed child is not attached to a template clone",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    let Some(value_origin) = origin.primary_span else {
+                        diagnostics.push(emit_error(
+                            "FICT-OXC-EMIT-ORIGIN",
+                            "keyed child requires a source map expression origin",
+                            GuaranteeClass::Internal,
+                        ));
+                        continue;
+                    };
+                    let Some(items_origin) = items.primary_span else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-ORIGIN",
+                                "keyed child items require a source origin",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    let Some(key_origin) = key.primary_span else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-ORIGIN",
+                                "keyed child key requires a source origin",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    let item_references: Option<Vec<_>> = item_references
+                        .iter()
+                        .map(|origin| origin.primary_span)
+                        .collect();
+                    let index_references: Option<Vec<_>> = index_references
+                        .iter()
+                        .map(|origin| origin.primary_span)
+                        .collect();
+                    let (Some(item_references), Some(index_references)) =
+                        (item_references, index_references)
+                    else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-ORIGIN",
+                                "keyed child parameter references require source origins",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    let mut temporary = |id, description| {
+                        temporary_names.get(id).map_or_else(
+                            || {
+                                diagnostics.push(with_operation_span(
+                                    emit_error(
+                                        "FICT-OXC-EMIT-TEMP",
+                                        description,
+                                        GuaranteeClass::Internal,
+                                    ),
+                                    *origin,
+                                ));
+                                None
+                            },
+                            |name| Some((*name).to_owned()),
+                        )
+                    };
+                    let Some(target) =
+                        temporary(target, "keyed child target has no generated local")
+                    else {
+                        continue;
+                    };
+                    let Some(parent) =
+                        temporary(parent, "keyed child parent has no generated local")
+                    else {
+                        continue;
+                    };
+                    let Some(start) = temporary(start, "keyed child start has no generated local")
+                    else {
+                        continue;
+                    };
+                    let Some(end) = temporary(end, "keyed child end has no generated local") else {
+                        continue;
+                    };
+                    let Some(helper) = helper_names.get(helper).map(|local| (*local).to_owned())
+                    else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-IMPORT",
+                                "keyed child helper has no runtime import intent",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    let Some(cleanup_helper) = helper_names
+                        .get(cleanup_helper)
+                        .map(|local| (*local).to_owned())
+                    else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-IMPORT",
+                                "keyed child cleanup helper has no runtime import intent",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    plan.steps.push(FineJsxStep::KeyedList {
+                        target,
+                        parent,
+                        start,
+                        end,
+                        helper,
+                        cleanup_helper,
+                        namespace: *namespace,
+                        value_origin,
+                        items_origin,
+                        key_origin,
+                        item_references,
+                        index_references,
+                        needs_index: *needs_index,
+                    });
+                }
                 _ => {}
             }
         }
@@ -1936,6 +2128,11 @@ struct AstRewriter<'a, 'emit> {
     matched_vnodes: BTreeSet<(u32, u32)>,
     matched_components: BTreeSet<(u32, u32)>,
     matched_clones: BTreeSet<(u32, u32)>,
+    vnode_shadowed_clones: BTreeSet<(u32, u32)>,
+    active_list_reads: BTreeSet<(u32, u32)>,
+    matched_list_reads: BTreeSet<(u32, u32)>,
+    suppressed_evaluations: BTreeSet<(u32, u32)>,
+    prefer_template_clones: usize,
     vnode_depth: usize,
     active_fragment_local: Option<String>,
     diagnostics: Vec<Diagnostic>,
@@ -1969,6 +2166,61 @@ fn jsx_attribute_node_span(value: &Option<JSXAttributeValue<'_>>) -> Option<Span
                 _ => None,
             }),
         Some(JSXAttributeValue::StringLiteral(_)) | None => None,
+    }
+}
+
+fn clone_direct_jsx_key_expression<'a>(
+    allocator: &'a Allocator,
+    body: &Expression<'a>,
+    key_origin: SourceSpan,
+) -> Option<Expression<'a>> {
+    let Expression::JSXElement(element) = body.get_inner_expression() else {
+        return None;
+    };
+    for attribute in &element.opening_element.attributes {
+        let JSXAttributeItem::Attribute(attribute) = attribute else {
+            continue;
+        };
+        if !matches!(&attribute.name, JSXAttributeName::Identifier(name) if name.name == "key") {
+            continue;
+        }
+        match attribute.value.as_ref()? {
+            JSXAttributeValue::StringLiteral(literal)
+                if (literal.span.start, literal.span.end)
+                    == (key_origin.start(), key_origin.end()) =>
+            {
+                let decoded = crate::jsx_text::decode_entities(literal.value.as_str());
+                return Some(Expression::new_string_literal(
+                    literal.span,
+                    allocator.alloc_str(&decoded),
+                    None,
+                    &AstBuilder::new(allocator),
+                ));
+            }
+            JSXAttributeValue::ExpressionContainer(container) => {
+                let expression = container.expression.as_expression()?;
+                if (expression.span().start, expression.span().end)
+                    == (key_origin.start(), key_origin.end())
+                {
+                    return Some(expression.clone_in(allocator));
+                }
+            }
+            JSXAttributeValue::Element(_)
+            | JSXAttributeValue::Fragment(_)
+            | JSXAttributeValue::StringLiteral(_) => {}
+        }
+    }
+    None
+}
+
+fn keyed_list_namespace(namespace: DomNamespace) -> Option<&'static str> {
+    match namespace {
+        DomNamespace::Html => Some("html"),
+        DomNamespace::Svg => Some("svg"),
+        DomNamespace::MathMl => Some("mathml"),
+        DomNamespace::MathMlTextIntegration => Some("mathmlTextIntegration"),
+        DomNamespace::MathMlAnnotationXml => Some("mathmlAnnotationXml"),
+        DomNamespace::Parent => Some("parent"),
     }
 }
 
@@ -2065,11 +2317,13 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
             *expression = self.lower_planned_jsx_element(element.unbox());
             return;
         }
-        if let Some(clone) = self.clones.get(&location).cloned()
+        let clone = self.clones.get(&location).cloned();
+        if let Some(clone) = clone.clone()
             && matches!(
                 expression,
                 Expression::JSXElement(_) | Expression::JSXFragment(_)
             )
+            && (self.vnode_depth == 0 || self.prefer_template_clones > 0)
         {
             let span = expression.span();
             let jsx = expression.take_in(&self.allocator);
@@ -2095,6 +2349,9 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
             if vnode.is_some() {
                 self.matched_vnodes.insert(location);
             }
+            if clone.is_some() {
+                self.vnode_shadowed_clones.insert(location);
+            }
             return;
         }
         if let Some(rewrite) = self.mutations.get(&location).copied()
@@ -2108,7 +2365,9 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
             return;
         };
         let location = (identifier.span.start, identifier.span.end);
-        if !self.reads.contains(&location) {
+        let list_read = self.active_list_reads.contains(&location);
+        let reactive_read = self.reads.contains(&location);
+        if !list_read && !reactive_read {
             walk_mut::walk_expression(self, expression);
             return;
         }
@@ -2123,7 +2382,12 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
             false,
             &builder,
         );
-        self.matched_reads.insert(location);
+        if list_read {
+            self.matched_list_reads.insert(location);
+        }
+        if reactive_read {
+            self.matched_reads.insert(location);
+        }
     }
 
     fn visit_call_expression(&mut self, call: &mut oxc::ast::ast::CallExpression<'a>) {
@@ -2478,6 +2742,10 @@ impl<'a> AstRewriter<'a, '_> {
                 }
                 FineJsxStep::Evaluate { value_origin } => {
                     let location = (value_origin.start(), value_origin.end());
+                    if self.suppressed_evaluations.contains(&location) {
+                        values.remove(&location);
+                        continue;
+                    }
                     let Some(mut value) = values.remove(&location) else {
                         self.diagnostics.push(
                             emit_error(
@@ -2706,6 +2974,51 @@ impl<'a> AstRewriter<'a, '_> {
                         &builder,
                     ));
                 }
+                FineJsxStep::KeyedList {
+                    target,
+                    parent,
+                    start,
+                    end,
+                    helper,
+                    cleanup_helper,
+                    namespace,
+                    value_origin,
+                    items_origin,
+                    key_origin,
+                    item_references,
+                    index_references,
+                    needs_index,
+                } => {
+                    let location = (value_origin.start(), value_origin.end());
+                    let Some(value) = values.remove(&location) else {
+                        self.diagnostics.push(
+                            emit_error(
+                                "FICT-OXC-EMIT-ORIGIN",
+                                "keyed child origin does not identify its map expression",
+                                GuaranteeClass::Internal,
+                            )
+                            .with_primary_span(value_origin),
+                        );
+                        continue;
+                    };
+                    self.lower_keyed_list_step(
+                        value,
+                        &target,
+                        &parent,
+                        &start,
+                        &end,
+                        &helper,
+                        &cleanup_helper,
+                        namespace,
+                        items_origin,
+                        key_origin,
+                        &item_references,
+                        &index_references,
+                        needs_index,
+                        span,
+                        &mut statements,
+                    );
+                }
             }
         }
         let root =
@@ -2728,6 +3041,239 @@ impl<'a> AstRewriter<'a, '_> {
         self.vnode_depth -= 1;
         self.active_fragment_local = previous_fragment;
         branch
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_keyed_list_step(
+        &mut self,
+        map: Expression<'a>,
+        target: &str,
+        _parent: &str,
+        start: &str,
+        end: &str,
+        helper: &str,
+        cleanup_helper: &str,
+        namespace: DomNamespace,
+        items_origin: SourceSpan,
+        key_origin: SourceSpan,
+        item_references: &[SourceSpan],
+        index_references: &[SourceSpan],
+        needs_index: bool,
+        span: Span,
+        statements: &mut ArenaVec<'a, Statement<'a>>,
+    ) {
+        let Expression::CallExpression(call) = map.into_inner_expression() else {
+            self.diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-KEYED",
+                    "keyed child source is not a direct map call",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(items_origin),
+            );
+            return;
+        };
+        let mut call = call.unbox();
+        let mut items = match call.callee.into_inner_expression() {
+            Expression::StaticMemberExpression(member) => member.unbox().object,
+            Expression::ComputedMemberExpression(member) => member.unbox().object,
+            _ => {
+                self.diagnostics.push(
+                    emit_error(
+                        "FICT-OXC-EMIT-KEYED",
+                        "keyed child map callee is not a static member access",
+                        GuaranteeClass::Internal,
+                    )
+                    .with_primary_span(items_origin),
+                );
+                return;
+            }
+        };
+        if (items.span().start, items.span().end) != (items_origin.start(), items_origin.end()) {
+            self.diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-ORIGIN",
+                    "keyed child items origin does not match its map receiver",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(items_origin),
+            );
+            return;
+        }
+        let Some(callback) = call.arguments.pop() else {
+            self.diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-KEYED",
+                    "keyed child map call has no render callback",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(items_origin),
+            );
+            return;
+        };
+        let Expression::ArrowFunctionExpression(render_callback) =
+            callback.into_expression().into_inner_expression()
+        else {
+            self.diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-KEYED",
+                    "keyed child render callback is not an inline arrow function",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(key_origin),
+            );
+            return;
+        };
+        let Some(render_body) = render_callback.get_expression() else {
+            self.diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-KEYED",
+                    "keyed child render callback has no expression body",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(key_origin),
+            );
+            return;
+        };
+        let Some(mut key_expression) =
+            clone_direct_jsx_key_expression(self.allocator, render_body, key_origin)
+        else {
+            self.diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-KEYED",
+                    "keyed child key origin does not identify a direct JSX key",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(key_origin),
+            );
+            return;
+        };
+        self.visit_expression(&mut items);
+        self.visit_expression(&mut key_expression);
+
+        let mut key_callback = render_callback.clone_in(self.allocator);
+        let Some(key_body) = key_callback.get_expression_mut() else {
+            unreachable!("render callback expression body was validated")
+        };
+        *key_body = key_expression;
+        let key_callback = Expression::ArrowFunctionExpression(key_callback);
+
+        let expected_reads: BTreeSet<_> = item_references
+            .iter()
+            .chain(index_references)
+            .map(|origin| (origin.start(), origin.end()))
+            .collect();
+        let previous_reads = std::mem::replace(&mut self.active_list_reads, expected_reads.clone());
+        let previous_matches = std::mem::take(&mut self.matched_list_reads);
+        let previous_suppressed = self.suppressed_evaluations.clone();
+        self.suppressed_evaluations
+            .insert((key_origin.start(), key_origin.end()));
+        let mut render_callback = Expression::ArrowFunctionExpression(render_callback);
+        self.prefer_template_clones += 1;
+        self.visit_expression(&mut render_callback);
+        self.prefer_template_clones -= 1;
+        let matched_reads = std::mem::take(&mut self.matched_list_reads);
+        self.active_list_reads = previous_reads;
+        self.matched_list_reads = previous_matches;
+        self.suppressed_evaluations = previous_suppressed;
+        if matched_reads != expected_reads {
+            self.diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-KEYED-READ",
+                    "keyed child did not materialize every binding-aware callback read",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(key_origin),
+            );
+            return;
+        }
+
+        let builder = AstBuilder::new(self.allocator);
+        let get_items = zero_parameter_expression_arrow(self.allocator, items, span);
+        let callee = Expression::new_identifier(span, self.allocator.alloc_str(helper), &builder);
+        let mut arguments = ArenaVec::new_in(&self.allocator);
+        arguments.extend([
+            Argument::from(get_items),
+            Argument::from(key_callback),
+            Argument::from(render_callback),
+            Argument::from(Expression::new_boolean_literal(span, needs_index, &builder)),
+            Argument::from(Expression::new_identifier(
+                span,
+                self.allocator.alloc_str(start),
+                &builder,
+            )),
+            Argument::from(Expression::new_identifier(
+                span,
+                self.allocator.alloc_str(end),
+                &builder,
+            )),
+            Argument::from(Expression::new_boolean_literal(span, true, &builder)),
+        ]);
+        if let Some(namespace) = keyed_list_namespace(namespace) {
+            arguments.push(Argument::from(Expression::new_string_literal(
+                span, namespace, None, &builder,
+            )));
+        }
+        let call = Expression::new_call_expression(span, callee, NONE, arguments, false, &builder);
+        statements.push(const_statement(self.allocator, target, call, span));
+
+        let target_expression =
+            Expression::new_identifier(span, self.allocator.alloc_str(target), &builder);
+        let flush = Expression::new_static_member_expression(
+            span,
+            target_expression,
+            IdentifierName::new(span, "flush", &builder),
+            false,
+            &builder,
+        );
+        let flush_call = Expression::new_call_expression(
+            span,
+            flush,
+            NONE,
+            ArenaVec::new_in(&self.allocator),
+            true,
+            &builder,
+        );
+        let Expression::CallExpression(flush_call) = flush_call else {
+            unreachable!("call builder returns a call expression")
+        };
+        let flush_chain = Expression::new_chain_expression(
+            span,
+            ChainElement::CallExpression(flush_call),
+            &builder,
+        );
+        statements.push(Statement::new_expression_statement(
+            span,
+            flush_chain,
+            &builder,
+        ));
+
+        let target_expression =
+            Expression::new_identifier(span, self.allocator.alloc_str(target), &builder);
+        let dispose = Expression::new_static_member_expression(
+            span,
+            target_expression,
+            IdentifierName::new(span, "dispose", &builder),
+            false,
+            &builder,
+        );
+        let cleanup =
+            Expression::new_identifier(span, self.allocator.alloc_str(cleanup_helper), &builder);
+        let mut cleanup_arguments = ArenaVec::new_in(&self.allocator);
+        cleanup_arguments.push(Argument::from(dispose));
+        let cleanup_call = Expression::new_call_expression(
+            span,
+            cleanup,
+            NONE,
+            cleanup_arguments,
+            false,
+            &builder,
+        );
+        statements.push(Statement::new_expression_statement(
+            span,
+            cleanup_call,
+            &builder,
+        ));
     }
 
     fn lower_planned_jsx_element(&mut self, element: JSXElement<'a>) -> Expression<'a> {
@@ -4020,6 +4566,7 @@ fn operation_origin(operation: &EmitOperation) -> fict_hir::Origin {
         | EmitOperation::Evaluate { origin, .. }
         | EmitOperation::Insert { origin, .. }
         | EmitOperation::Conditional { origin, .. }
+        | EmitOperation::KeyedChild { origin, .. }
         | EmitOperation::KeyedList { origin, .. }
         | EmitOperation::Return { origin, .. } => *origin,
     }
