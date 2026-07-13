@@ -2907,6 +2907,120 @@ fn preserves_call_spread_optional_and_pure_evaluation_boundaries() {
 }
 
 #[test]
+fn materializes_await_values_and_suspension_boundaries() {
+    let source = r#"
+        const top = await boot();
+
+        async function run(load, consume, optional) {
+            const direct = await load('direct');
+            const nested = consume(await load('nested'));
+            const deferred = optional?.(await load('optional'));
+            return [direct, nested, deferred];
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified await HIR");
+    let authored = |instruction: &fict_hir::HirInstruction| {
+        let span = instruction
+            .origin
+            .primary_span
+            .expect("authored await instruction");
+        &source[span.start() as usize..span.end() as usize]
+    };
+
+    let module = &hir.functions[0];
+    assert_eq!(module.kind, FunctionKind::Module);
+    let module_instructions: Vec<_> = module
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let top = module_instructions
+        .iter()
+        .copied()
+        .find(|instruction| authored(instruction) == "await boot()")
+        .expect("top-level await instruction");
+    let HirInstructionKind::Await { value: top_input } = top.kind else {
+        panic!("typed top-level await")
+    };
+    assert_eq!(
+        top.semantics,
+        fict_hir::InstructionSemantics::CONSERVATIVE_EAGER
+    );
+    assert!(module_instructions.iter().any(|instruction| {
+        instruction.result == Some(top_input)
+            && authored(instruction) == "boot()"
+            && matches!(instruction.kind, HirInstructionKind::Call(_))
+    }));
+
+    let run = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "run")
+        })
+        .expect("run function");
+    assert!(run.flags.is_async);
+    let instructions: Vec<_> = run
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let instruction = |text: &str| {
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| authored(instruction) == text)
+            .unwrap_or_else(|| panic!("instruction for {text}"))
+    };
+
+    for (await_text, input_text) in [
+        ("await load('direct')", "load('direct')"),
+        ("await load('nested')", "load('nested')"),
+        ("await load('optional')", "load('optional')"),
+    ] {
+        let await_instruction = instruction(await_text);
+        let HirInstructionKind::Await { value } = await_instruction.kind else {
+            panic!("typed await for {await_text}")
+        };
+        assert_eq!(Some(value), instruction(input_text).result);
+        assert_eq!(await_instruction.semantics.purity, Purity::Unknown);
+        assert_eq!(
+            await_instruction.semantics.mutation,
+            MutationEffect::Unknown
+        );
+        assert!(await_instruction.semantics.may_throw);
+    }
+
+    for text in [
+        "load('direct')",
+        "await load('direct')",
+        "load('nested')",
+        "await load('nested')",
+    ] {
+        assert_eq!(
+            instruction(text).semantics.evaluation,
+            EvaluationMode::Eager,
+            "ordinary awaited work remains eager: {text}"
+        );
+    }
+    for text in ["load('optional')", "await load('optional')"] {
+        assert_eq!(
+            instruction(text).semantics.evaluation,
+            EvaluationMode::Deferred,
+            "an optional call owns its await argument: {text}"
+        );
+    }
+}
+
+#[test]
 fn materializes_static_computed_index_and_value_base_projections() {
     let source = r#"
         function project(obj) {

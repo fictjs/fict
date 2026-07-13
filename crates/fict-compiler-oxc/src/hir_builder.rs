@@ -623,6 +623,18 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
                     ),
                 },
             }),
+            Expression::AwaitExpression(await_expression) => {
+                let argument = await_expression.argument.get_inner_expression();
+                Some(TypedExpressionFact {
+                    span: source_span(await_expression.span),
+                    kind: TypedExpressionKind::Await {
+                        value: source_span(argument.span()),
+                        value_has_effects: structured_control_flow::expression_has_effects(
+                            &await_expression.argument,
+                        ),
+                    },
+                })
+            }
             Expression::NewExpression(new_expression) => {
                 let callee = new_expression.callee.get_inner_expression();
                 Some(TypedExpressionFact {
@@ -3059,6 +3071,21 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         alternate,
                     },
                     InstructionSemantics::PURE_EAGER,
+                )
+            }
+            TypedExpressionKind::Await {
+                value,
+                value_has_effects,
+            } => {
+                let value =
+                    self.control_expression_value(owner, block, *value, true, *value_has_effects);
+                self.push_value_to_block(
+                    owner,
+                    block,
+                    ValueKind::InstructionResult,
+                    origin,
+                    HirInstructionKind::Await { value },
+                    InstructionSemantics::CONSERVATIVE_EAGER,
                 )
             }
             TypedExpressionKind::New {
@@ -5567,6 +5594,10 @@ enum TypedExpressionKind {
         consequent_has_effects: bool,
         alternate_has_effects: bool,
     },
+    Await {
+        value: SourceSpan,
+        value_has_effects: bool,
+    },
     New {
         callee: SourceSpan,
         callee_has_effects: bool,
@@ -5735,20 +5766,24 @@ impl EvaluationFact {
                 ..
             }) => 4,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::New { .. },
+                kind: TypedExpressionKind::Await { .. },
                 ..
             }) => 5,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Array { .. },
+                kind: TypedExpressionKind::New { .. },
                 ..
             }) => 6,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Object { .. },
+                kind: TypedExpressionKind::Array { .. },
                 ..
             }) => 7,
-            Self::Jsx(_) => 8,
-            Self::Member(_) => 9,
-            Self::Call(_) => 10,
+            Self::Typed(TypedExpressionFact {
+                kind: TypedExpressionKind::Object { .. },
+                ..
+            }) => 8,
+            Self::Jsx(_) => 9,
+            Self::Member(_) => 10,
+            Self::Call(_) => 11,
         }
     }
 }
