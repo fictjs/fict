@@ -77,6 +77,14 @@ fn runs_complete_core_pipeline_and_materializes_region_ids() {
             }),
         "coercive derived expressions remain reactive while their barrier blocks optimization"
     );
+    assert!(
+        output.functions[app.id.as_usize()]
+            .regions
+            .regions
+            .iter()
+            .any(|region| region.has_jsx),
+        "reactive JSX materialization must belong to an explicit region"
+    );
 }
 
 #[test]

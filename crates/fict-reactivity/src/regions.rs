@@ -136,10 +136,20 @@ pub fn analyze_regions(
     }
     for block in &function.blocks {
         for (index, instruction) in block.instructions.iter().enumerate() {
-            if matches!(
+            let macro_call = matches!(
                 &instruction.kind,
                 HirInstructionKind::Call(call) if call.macro_kind.is_some()
-            ) {
+            );
+            let reactive_jsx = matches!(instruction.kind, HirInstructionKind::Jsx { .. })
+                && instruction.result.is_some_and(|result| {
+                    dependencies
+                        .value_dependencies
+                        .get(result.as_usize())
+                        .is_some_and(|paths| {
+                            paths.iter().any(|path| path_is_tracked(path, &tracked))
+                        })
+                });
+            if macro_call || reactive_jsx {
                 active_by_block
                     .entry(block.id)
                     .or_default()
@@ -346,6 +356,27 @@ pub fn verify_regions(
             diagnostics.push(region_error(
                 "FICT-REGION-CONTROL-FLOW",
                 "region control-flow flag must match the controlling dependency read",
+            ));
+        }
+        let expected_jsx = region.ranges.iter().any(|range| {
+            function
+                .blocks
+                .get(range.block.as_usize())
+                .and_then(|block| {
+                    block
+                        .instructions
+                        .get(range.start as usize..range.end as usize)
+                })
+                .is_some_and(|instructions| {
+                    instructions.iter().any(|instruction| {
+                        matches!(instruction.kind, HirInstructionKind::Jsx { .. })
+                    })
+                })
+        });
+        if region.has_jsx != expected_jsx {
+            diagnostics.push(region_error(
+                "FICT-REGION-JSX",
+                "region JSX flag must match its materialization instructions",
             ));
         }
         for output in &region.outputs {
@@ -591,6 +622,27 @@ fn build_region(
         .map(|read| read.path.clone())
         .filter(|path| !matches!(path.base, DependencyBase::Ssa(name) if outputs.contains(&name)))
         .collect();
+    for instruction in block
+        .instructions
+        .get(range.start as usize..range.end as usize)
+        .unwrap_or(&[])
+    {
+        if matches!(instruction.kind, HirInstructionKind::Jsx { .. })
+            && let Some(result) = instruction.result
+        {
+            inputs.extend(
+                dependencies
+                    .value_dependencies
+                    .get(result.as_usize())
+                    .into_iter()
+                    .flatten()
+                    .filter(|path| {
+                        !matches!(path.base, DependencyBase::Ssa(name) if outputs.contains(&name))
+                    })
+                    .cloned(),
+            );
+        }
+    }
     for output in phi_outputs {
         if let Some(binding) = scopes
             .bindings
