@@ -25,7 +25,7 @@ use oxc::{
             JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild, JSXElement,
             JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment, JSXMemberExpression,
             JSXMemberExpressionObject, MemberExpression, Program, SimpleAssignmentTarget,
-            UpdateExpression, VariableDeclarator,
+            Statement, UpdateExpression, VariableDeclarator,
         },
         ast_kind::AstKind,
     },
@@ -2250,7 +2250,6 @@ fn raw_jsx_list_expression(
         return None;
     };
     if callback.r#async
-        || !callback.expression
         || callback.params.rest.is_some()
         || !(1..=2).contains(&callback.params.items.len())
     {
@@ -2262,7 +2261,7 @@ fn raw_jsx_list_expression(
     } else {
         None
     };
-    let returned = callback.get_expression()?.get_inner_expression();
+    let returned = direct_arrow_return_expression(callback)?.get_inner_expression();
     let Expression::JSXElement(element) = returned else {
         return None;
     };
@@ -2299,6 +2298,21 @@ fn raw_jsx_list_expression(
         index_references: references.index_references,
         needs_index: index.is_some(),
     })
+}
+
+fn direct_arrow_return_expression<'a, 'callback>(
+    callback: &'callback ArrowFunctionExpression<'a>,
+) -> Option<&'callback Expression<'a>> {
+    if let Some(expression) = callback.get_expression() {
+        return Some(expression);
+    }
+    if !callback.body.directives.is_empty() || callback.body.statements.len() != 1 {
+        return None;
+    }
+    let Statement::ReturnStatement(statement) = &callback.body.statements[0] else {
+        return None;
+    };
+    statement.argument.as_ref()
 }
 
 fn simple_parameter_symbol(parameters: &FormalParameters<'_>, index: usize) -> Option<SymbolId> {

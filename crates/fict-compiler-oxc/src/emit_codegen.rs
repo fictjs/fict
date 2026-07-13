@@ -3146,11 +3146,11 @@ impl<'a> AstRewriter<'a, '_> {
             );
             return;
         };
-        let Some(render_body) = render_callback.get_expression() else {
+        let Some(render_body) = direct_arrow_return_expression(&render_callback) else {
             self.diagnostics.push(
                 emit_error(
                     "FICT-OXC-EMIT-KEYED",
-                    "keyed child render callback has no expression body",
+                    "keyed child render callback has no direct return expression",
                     GuaranteeClass::Internal,
                 )
                 .with_primary_span(key_origin),
@@ -3174,10 +3174,7 @@ impl<'a> AstRewriter<'a, '_> {
         self.visit_expression(&mut key_expression);
 
         let mut key_callback = render_callback.clone_in(self.allocator);
-        let Some(key_body) = key_callback.get_expression_mut() else {
-            unreachable!("render callback expression body was validated")
-        };
-        *key_body = key_expression;
+        replace_arrow_body_with_expression(self.allocator, &mut key_callback, key_expression);
         let key_callback = Expression::ArrowFunctionExpression(key_callback);
         append_arrow_parameter(self.allocator, &mut render_callback, render_key, span);
 
@@ -4524,6 +4521,36 @@ fn expression_arrow<'a>(
     Expression::new_arrow_function_expression(
         span, true, false, NONE, parameters, NONE, body, &builder,
     )
+}
+
+fn direct_arrow_return_expression<'a, 'callback>(
+    callback: &'callback ArrowFunctionExpression<'a>,
+) -> Option<&'callback Expression<'a>> {
+    if let Some(expression) = callback.get_expression() {
+        return Some(expression);
+    }
+    if !callback.body.directives.is_empty() || callback.body.statements.len() != 1 {
+        return None;
+    }
+    let Statement::ReturnStatement(statement) = &callback.body.statements[0] else {
+        return None;
+    };
+    statement.argument.as_ref()
+}
+
+fn replace_arrow_body_with_expression<'a>(
+    allocator: &'a Allocator,
+    arrow: &mut oxc::allocator::Box<'a, ArrowFunctionExpression<'a>>,
+    expression: Expression<'a>,
+) {
+    let span = arrow.body.span;
+    let builder = AstBuilder::new(allocator);
+    let mut statements = ArenaVec::new_in(&allocator);
+    statements.push(Statement::new_expression_statement(
+        span, expression, &builder,
+    ));
+    arrow.expression = true;
+    arrow.body = FunctionBody::boxed(span, ArenaVec::new_in(&allocator), statements, &builder);
 }
 
 fn append_arrow_parameter<'a>(

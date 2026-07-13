@@ -996,6 +996,30 @@ mod tests {
     }
 
     #[test]
+    fn optimizes_single_return_block_keyed_maps_only() {
+        let result = compile(request(
+            "import { $state } from 'fict'; export function Direct() { let rows = $state([{ id: 1, name: 'A' }]); return <ul>{rows.map(row => { return <li key={row.id}>{row.name}</li>; })}</ul>; } export function Effectful() { let rows = $state([{ id: 2, name: 'B' }]); return <ul>{rows.map(row => { observe(row); return <li key={row.id}>{row.name}</li>; })}</ul>; }",
+            "keyed-block-map.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result.code.matches("createKeyedList(").count(),
+            1,
+            "{}",
+            result.code
+        );
+        assert_eq!(
+            result.code.matches("rows().map(").count(),
+            1,
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("observe(row)"), "{}", result.code);
+        assert!(result.code.contains("() => row().name"), "{}", result.code);
+    }
+
+    #[test]
     fn emits_array_store_and_svg_keyed_map_receivers() {
         let result = compile(request(
             "import { $store } from 'fict'; export function Lists() { const store = $store({ rows: [{ id: 1 }] }); return <main><ul>{store.rows.map(row => <li key={row.id}>{row.id}</li>)}</ul><svg>{[{ id: 2 }].map(row => <circle key={row.id} cx={row.id} />)}</svg></main>; }",
