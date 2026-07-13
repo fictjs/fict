@@ -113,10 +113,7 @@ fn verifier_enforces_interned_global_identity_and_place_references() {
             kind: HirInstructionKind::Read {
                 place: Place {
                     base: PlaceBase::Global(GlobalId::new(0)),
-                    projections: vec![Projection::StaticProperty {
-                        name: "field".to_owned(),
-                        optional: false,
-                    }],
+                    projections: Vec::new(),
                 },
             },
             semantics: InstructionSemantics::CONSERVATIVE_EAGER,
@@ -133,6 +130,19 @@ fn verifier_enforces_interned_global_identity_and_place_references() {
     let invalid_reference = verify_hir(&file).expect_err("invalid global reference must fail");
     assert!(invalid_reference.as_slice().iter().any(|diagnostic| {
         diagnostic.code.as_str() == "FICT-HIR-REF" && diagnostic.message.contains("global9")
+    }));
+
+    let HirInstructionKind::Read { place } = &mut file.functions[0].blocks[0].instructions[0].kind
+    else {
+        panic!("global read fixture")
+    };
+    place.base = PlaceBase::Global(GlobalId::new(0));
+    file.functions[0].blocks[0].instructions[0].semantics = InstructionSemantics::PURE_EAGER;
+    let unsafe_semantics =
+        verify_hir(&file).expect_err("pure unresolved global read must fail verification");
+    assert!(unsafe_semantics.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-READ"
+            && diagnostic.message.contains("conservative host semantics")
     }));
 
     let mut duplicate = empty_file();

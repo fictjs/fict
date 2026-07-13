@@ -616,6 +616,18 @@ impl Verifier<'_> {
             }
             HirInstructionKind::Read { place } => {
                 self.verify_place(function, place, instruction.origin);
+                if place.projections.is_empty()
+                    && matches!(place.base, PlaceBase::Global(_))
+                    && (instruction.semantics.purity != crate::Purity::Unknown
+                        || instruction.semantics.mutation != crate::MutationEffect::Unknown
+                        || !instruction.semantics.may_throw)
+                {
+                    self.error(
+                        "FICT-HIR-READ",
+                        "a bare unresolved global read must retain conservative host semantics",
+                        Some(instruction.origin),
+                    );
+                }
             }
             HirInstructionKind::Write { place, value } => {
                 self.verify_place(function, place, instruction.origin);

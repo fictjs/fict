@@ -4481,6 +4481,225 @@ fn materializes_unresolved_host_places_without_lexical_ssa_or_target_reads() {
 }
 
 #[test]
+fn materializes_bare_host_reads_without_breaking_special_or_dynamic_references() {
+    let source = r#"
+        function inspect(argument) {
+            const direct = ambientValue;
+            const called = ambientCall(argument);
+            const shorthand = { ambientValue };
+            const tagged = ambientTag`value:${argument}`;
+            const member = ambientObject.field;
+            const kind = typeof missingTypeof;
+            const removed = delete missingDelete;
+            return [direct, called, shorthand, tagged, member, kind, removed];
+        }
+        function shadow(ambientValue, ambientCall) {
+            return ambientCall(ambientValue);
+        }
+        function dynamic(scope) {
+            with (scope) {
+                const read = withOnlyRead;
+                withOnlyWrite = 2;
+                const kind = typeof withOnlyTypeof;
+                const removed = delete withOnlyDelete;
+                return [read, kind, removed];
+            }
+        }
+    "#;
+    let output = build_hir(
+        source,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Script,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified bare host-read HIR");
+    assert_eq!(
+        hir.globals
+            .iter()
+            .map(|global| global.name.as_str())
+            .collect::<Vec<_>>(),
+        ["ambientValue", "ambientCall", "ambientTag", "ambientObject"]
+    );
+    let global = |name: &str| {
+        hir.globals
+            .iter()
+            .find(|global| global.name == name)
+            .unwrap_or_else(|| panic!("{name} global"))
+            .id
+    };
+    let function = |name: &str| {
+        hir.functions
+            .iter()
+            .find(|function| {
+                function
+                    .binding
+                    .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == name)
+            })
+            .unwrap_or_else(|| panic!("{name} function"))
+    };
+    let inspect = function("inspect");
+    let instructions: Vec<_> = inspect
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let authored = |instruction: &fict_hir::HirInstruction| {
+        let span = instruction.origin.primary_span.expect("source instruction");
+        &source[span.start() as usize..span.end() as usize]
+    };
+    let global_reads: Vec<_> = instructions
+        .iter()
+        .copied()
+        .filter(|instruction| {
+            matches!(
+                instruction.kind,
+                HirInstructionKind::Read {
+                    place: fict_hir::Place {
+                        base: fict_hir::PlaceBase::Global(_),
+                        ..
+                    },
+                }
+            )
+        })
+        .collect();
+    assert_eq!(
+        global_reads
+            .iter()
+            .map(|instruction| authored(instruction))
+            .collect::<Vec<_>>(),
+        [
+            "ambientValue",
+            "ambientCall",
+            "ambientValue",
+            "ambientTag",
+            "ambientObject.field",
+        ]
+    );
+    assert!(global_reads[..4].iter().all(|instruction| {
+        instruction.semantics == fict_hir::InstructionSemantics::CONSERVATIVE_EAGER
+    }));
+    assert!(matches!(
+        &global_reads[4].kind,
+        HirInstructionKind::Read { place }
+            if place.base == fict_hir::PlaceBase::Global(global("ambientObject"))
+                && matches!(
+                    place.projections.as_slice(),
+                    [fict_hir::Projection::StaticProperty {
+                        name,
+                        optional: false,
+                    }] if name == "field"
+                )
+    ));
+    assert!(!global_reads.iter().any(|instruction| {
+        matches!(
+            &instruction.kind,
+            HirInstructionKind::Read { place }
+                if place.base == fict_hir::PlaceBase::Global(global("ambientObject"))
+                    && place.projections.is_empty()
+        )
+    }));
+
+    let result_for_authored = |text: &str| {
+        instructions
+            .iter()
+            .find(|instruction| authored(instruction) == text)
+            .and_then(|instruction| instruction.result)
+            .unwrap_or_else(|| panic!("{text} result"))
+    };
+    let ambient_call = result_for_authored("ambientCall");
+    assert!(instructions.iter().any(|instruction| {
+        matches!(
+            &instruction.kind,
+            HirInstructionKind::Call(call) if call.callee == ambient_call
+        )
+    }));
+    let ambient_tag = result_for_authored("ambientTag");
+    assert!(instructions.iter().any(|instruction| {
+        matches!(
+            &instruction.kind,
+            HirInstructionKind::TaggedTemplate { tag, .. } if *tag == ambient_tag
+        )
+    }));
+    assert!(instructions.iter().any(|instruction| {
+        matches!(
+            &instruction.kind,
+            HirInstructionKind::UnresolvedTypeof { identifier }
+                if identifier == "missingTypeof"
+        )
+    }));
+    assert!(instructions.iter().any(|instruction| {
+        matches!(
+            &instruction.kind,
+            HirInstructionKind::Delete {
+                target: DeleteTarget::UnresolvedIdentifier(identifier),
+            } if identifier == "missingDelete"
+        )
+    }));
+    assert!(
+        !hir.globals
+            .iter()
+            .any(|global| global.name == "missingTypeof" || global.name == "missingDelete")
+    );
+
+    let shadow = function("shadow");
+    assert!(
+        shadow
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .filter_map(|instruction| match &instruction.kind {
+                HirInstructionKind::Read { place } => Some(place),
+                _ => None,
+            })
+            .all(|place| matches!(place.base, fict_hir::PlaceBase::Local(_)))
+    );
+
+    let dynamic = function("dynamic");
+    assert!(
+        dynamic
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .all(|instruction| {
+                !matches!(
+                    instruction.kind,
+                    HirInstructionKind::Read {
+                        place: fict_hir::Place {
+                            base: fict_hir::PlaceBase::Global(_),
+                            ..
+                        },
+                    } | HirInstructionKind::Write {
+                        place: fict_hir::Place {
+                            base: fict_hir::PlaceBase::Global(_),
+                            ..
+                        },
+                        ..
+                    } | HirInstructionKind::ReadWrite {
+                        place: fict_hir::Place {
+                            base: fict_hir::PlaceBase::Global(_),
+                            ..
+                        },
+                        ..
+                    }
+                )
+            })
+    );
+    for name in [
+        "withOnlyRead",
+        "withOnlyWrite",
+        "withOnlyTypeof",
+        "withOnlyDelete",
+    ] {
+        assert!(!hir.globals.iter().any(|global| global.name == name));
+    }
+}
+
+#[test]
 fn materializes_reference_aware_delete_targets_without_property_reads() {
     let source = r#"
         function remove(obj, key, effect, local) {

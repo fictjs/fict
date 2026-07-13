@@ -7,8 +7,8 @@ use fict_hir::{
     StructuredSourceKind,
 };
 use fict_reactivity::{
-    DependencyBase, DependencySegment, EscapeKind, ShapeKind, ShapeSource, SsaDefinitionKind,
-    SsaDefinitionLocation, StructuredConstructKind, StructuredLoopKind,
+    BarrierKind, DependencyBase, DependencySegment, EscapeKind, ShapeKind, ShapeSource,
+    SsaDefinitionKind, SsaDefinitionLocation, StructuredConstructKind, StructuredLoopKind,
 };
 
 fn build_fixture() -> fict_hir::HirFile {
@@ -710,6 +710,147 @@ fn host_places_flow_through_dependencies_without_creating_lexical_ssa_storage() 
             .iter()
             .all(|shape| shape.name.local.as_usize() < function.locals.len())
     );
+}
+
+#[test]
+fn bare_host_reads_are_external_dependencies_and_conservative_barriers() {
+    let frontend = build_hir(
+        r#"
+            function inspect(value) {
+                const direct = hostValue;
+                return hostCall(direct, value);
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Script,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified host-read HIR"),
+        CorePassOptions {
+            optimize: false,
+            ..CorePassOptions::default()
+        },
+    )
+    .expect("core passes over bare host reads");
+    let global = |name: &str| {
+        output
+            .hir
+            .globals
+            .iter()
+            .find(|global| global.name == name)
+            .unwrap_or_else(|| panic!("{name} global"))
+            .id
+    };
+    let host_value = global("hostValue");
+    let host_call = global("hostCall");
+    let function = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                output.hir.bindings[binding.as_usize()].display_name == "inspect"
+            })
+        })
+        .expect("inspect function");
+    let analysis = &output.functions[function.id.as_usize()];
+    let local = |name: &str| {
+        function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"))
+    };
+    let host_reads: Vec<_> = analysis
+        .dependencies
+        .reads
+        .iter()
+        .filter(|read| matches!(read.path.base, DependencyBase::Global(_)))
+        .collect();
+    assert_eq!(host_reads.len(), 2);
+    assert_eq!(
+        host_reads
+            .iter()
+            .map(|read| read.path.base)
+            .collect::<Vec<_>>(),
+        [
+            DependencyBase::Global(host_value),
+            DependencyBase::Global(host_call),
+        ]
+    );
+    assert!(host_reads.iter().all(|read| read.path.segments.is_empty()));
+    for read in &host_reads {
+        let instruction = &function.blocks[read.location.block.as_usize()].instructions
+            [read.location.instruction as usize];
+        let result = instruction.result.expect("host read result");
+        assert_eq!(
+            analysis.dependencies.value_dependencies[result.as_usize()].as_slice(),
+            std::slice::from_ref(&read.path)
+        );
+        let barrier = analysis
+            .dependencies
+            .barriers
+            .iter()
+            .find(|barrier| barrier.location == read.location)
+            .expect("host read barrier");
+        assert_eq!(
+            barrier.kinds,
+            [
+                BarrierKind::UnknownMutation,
+                BarrierKind::MayThrow,
+                BarrierKind::UnknownPurity,
+            ]
+        );
+        assert!(!analysis.ssa.definitions.iter().any(|definition| {
+            definition.location
+                == SsaDefinitionLocation::Instruction {
+                    block: read.location.block,
+                    instruction: read.location.instruction,
+                }
+        }));
+    }
+
+    assert!(analysis.dependencies.escapes.iter().any(|escape| {
+        escape.kind == EscapeKind::UnknownCall
+            && matches!(
+                escape.path.base,
+                DependencyBase::Ssa(name) if name.local == local("direct").id
+            )
+    }));
+    assert!(analysis.dependencies.escapes.iter().any(|escape| {
+        escape.kind == EscapeKind::UnknownCall
+            && matches!(
+                escape.path.base,
+                DependencyBase::Ssa(name) if name.local == local("value").id
+            )
+    }));
+    let direct_definition = analysis
+        .ssa
+        .definitions
+        .iter()
+        .find(|definition| {
+            definition.name.local == local("direct").id
+                && definition.kind == SsaDefinitionKind::Declare
+        })
+        .expect("direct declaration definition");
+    let direct_shape = analysis
+        .shapes
+        .shapes
+        .iter()
+        .find(|shape| shape.name == direct_definition.name)
+        .expect("direct host value shape");
+    assert_eq!(direct_shape.shape.kind, ShapeKind::Unknown);
+    assert_eq!(direct_shape.shape.source, ShapeSource::UnknownOperation);
 }
 
 #[test]

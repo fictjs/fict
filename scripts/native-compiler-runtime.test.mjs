@@ -186,6 +186,7 @@ test('Rust compiler emits executable CommonJS with live exports and collision-fr
 })
 
 test('Rust compiler preserves unresolved host places and temporary member update order', async () => {
+  let hostReads = 0
   Object.defineProperty(globalThis, '__fictNativeHostSlot', {
     configurable: true,
     value: 1,
@@ -194,6 +195,18 @@ test('Rust compiler preserves unresolved host places and temporary member update
   Object.defineProperty(globalThis, '__fictNativeHostObject', {
     configurable: true,
     value: { fixed: 0 },
+    writable: true,
+  })
+  Object.defineProperty(globalThis, '__fictNativeHostValue', {
+    configurable: true,
+    get() {
+      hostReads += 1
+      return 11
+    },
+  })
+  Object.defineProperty(globalThis, '__fictNativeHostCall', {
+    configurable: true,
+    value: value => value + 1,
     writable: true,
   })
 
@@ -215,7 +228,11 @@ test('Rust compiler preserves unresolved host places and temporary member update
           }
           const previous = make().field--
           const read = __fictNativeHostObject.fixed
+          const bare = __fictNativeHostValue
+          const called = __fictNativeHostCall(bare)
           return {
+            bare,
+            called,
             effects,
             field: made.field,
             previous,
@@ -229,19 +246,24 @@ test('Rust compiler preserves unresolved host places and temporary member update
     )
 
     assert.deepEqual(module.mutate('dynamic', 5), {
+      bare: 11,
+      called: 12,
       effects: ['make'],
       field: 8,
       previous: 9,
       read: 5,
       slot: 8,
     })
+    assert.equal(hostReads, 1)
     assert.deepEqual(globalThis.__fictNativeHostObject, {
       dynamic: 6,
       fixed: 5,
     })
     assert.equal(globalThis.__fictNativeHostSlot, 8)
   } finally {
+    delete globalThis.__fictNativeHostCall
     delete globalThis.__fictNativeHostObject
+    delete globalThis.__fictNativeHostValue
     delete globalThis.__fictNativeHostSlot
   }
 })

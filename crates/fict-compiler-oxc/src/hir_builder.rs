@@ -55,7 +55,7 @@ use oxc::{
             LogicalOperator as OxcLogicalOperator, UnaryOperator as OxcUnaryOperator,
             UpdateOperator as OxcUpdateOperator,
         },
-        scope::ScopeFlags,
+        scope::{ScopeFlags, ScopeId as OxcScopeId},
         symbol::SymbolId,
     },
 };
@@ -586,7 +586,7 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
                 })
             }
             Expression::UnaryExpression(unary) if unary.operator == OxcUnaryOperator::Delete => {
-                Some(typed_delete_expression(self.scoping, unary))
+                typed_delete_expression(self.scoping, unary)
             }
             Expression::UnaryExpression(unary) if is_unresolved_typeof(self.scoping, unary) => {
                 let Expression::Identifier(identifier) = unary.argument.get_inner_expression()
@@ -597,6 +597,7 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
                     span: source_span(unary.span),
                     kind: TypedExpressionKind::UnresolvedTypeof {
                         identifier: identifier.name.to_string(),
+                        reference_span: source_span(identifier.span),
                     },
                 })
             }
@@ -917,18 +918,26 @@ fn context_value_kind(meta_property: &MetaProperty<'_>) -> Option<ContextValueKi
 fn typed_delete_expression(
     scoping: &Scoping,
     unary: &oxc::ast::ast::UnaryExpression<'_>,
-) -> TypedExpressionFact {
+) -> Option<TypedExpressionFact> {
     let argument = unary.argument.get_inner_expression();
     let value_target = || TypedDeleteTarget::Value {
         span: source_span(argument.span()),
         has_effects: structured_control_flow::expression_has_effects(&unary.argument),
     };
     let target = match argument {
-        Expression::Identifier(identifier) => planned_identifier_place(scoping, identifier)
-            .map_or_else(
-                || TypedDeleteTarget::UnresolvedIdentifier(identifier.name.to_string()),
+        Expression::Identifier(identifier) => {
+            let reference = scoping.get_reference(identifier.reference_id.get()?);
+            if reference_is_inside_with(scoping, reference.scope_id()) {
+                return None;
+            }
+            planned_identifier_place(scoping, identifier).map_or_else(
+                || TypedDeleteTarget::UnresolvedIdentifier {
+                    identifier: identifier.name.to_string(),
+                    reference_span: source_span(identifier.span),
+                },
                 TypedDeleteTarget::Place,
-            ),
+            )
+        }
         Expression::StaticMemberExpression(member) => planned_static_member_place(scoping, member)
             .map_or_else(value_target, TypedDeleteTarget::Place),
         Expression::ComputedMemberExpression(member) => {
@@ -946,10 +955,10 @@ fn typed_delete_expression(
         }
         _ => value_target(),
     };
-    TypedExpressionFact {
+    Some(TypedExpressionFact {
         span: source_span(unary.span),
         kind: TypedExpressionKind::Delete { target },
-    }
+    })
 }
 
 fn oxc_javascript_string(value: &str, has_lone_surrogates: bool) -> Option<JavaScriptString> {
@@ -1633,11 +1642,6 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         self.validate_macro_placement(&calls.calls);
         self.validate_runtime_reactive_placement(&calls.calls);
         self.validate_hook_placement(&calls.calls);
-        self.preintern_globals(
-            &typed_expressions.facts,
-            &mutations.facts,
-            &member_accesses.facts,
-        );
         self.populate_function_bodies(
             &calls.calls,
             &variable_declarations.facts,
@@ -2785,23 +2789,20 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 let materialized = !fact.projected || !reactive;
                 materialized.then_some(fact.place.as_ref()?.root_reference_span?)
             }))
-            .chain(typed_expressions.iter().filter_map(|expression| {
-                let TypedExpressionKind::Delete {
-                    target: TypedDeleteTarget::Place(place),
-                } = &expression.kind
-                else {
-                    return None;
-                };
-                place.root_reference_span
-            }))
+            .chain(
+                typed_expressions
+                    .iter()
+                    .filter_map(typed_expression_reference_suppression),
+            )
             .map(|span| (span.start(), span.end()))
             .collect();
-        let local_reads = self.collect_local_reads(
+        let reads = self.collect_reads(
             &reactive_targets,
             &accessor_read_suppressions,
             &projected_root_suppressions,
             &opaque_patterns,
         );
+        self.preintern_globals(typed_expressions, mutations, member_reads, &reads);
         let local_mutations =
             self.collect_local_mutations(mutations, &reactive_targets, &opaque_patterns);
         for fact in self.function_facts.clone() {
@@ -2837,27 +2838,27 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 inputs.push(value);
             }
 
-            for read in local_reads.iter().filter(|read| read.owner == fact.id) {
-                let Some(local) = self.functions[fact.id.as_usize()]
-                    .locals
-                    .iter()
-                    .find(|local| local.binding == Some(read.binding))
-                    .map(|local| local.id)
+            for read in reads.iter().filter(|read| read.owner == fact.id) {
+                let block = self.planned_block_for_span(fact.id, read.span);
+                let semantics = match read.place.base {
+                    PlannedPlaceBase::Binding(_) if read.reactive => reactive_read_semantics(),
+                    PlannedPlaceBase::Binding(_) => InstructionSemantics::PURE_EAGER,
+                    PlannedPlaceBase::UnresolvedGlobal { .. }
+                    | PlannedPlaceBase::Expression { .. } => {
+                        InstructionSemantics::CONSERVATIVE_EAGER
+                    }
+                };
+                let Some(place) = self.materialize_planned_place(fact.id, block, &read.place)
                 else {
                     continue;
                 };
-                let value = self.push_value(
+                let value = self.push_value_to_block(
                     fact.id,
+                    block,
                     ValueKind::InstructionResult,
                     Origin::source(read.span),
-                    HirInstructionKind::Read {
-                        place: fict_hir::Place::local(local),
-                    },
-                    if read.reactive {
-                        reactive_read_semantics()
-                    } else {
-                        InstructionSemantics::PURE_EAGER
-                    },
+                    HirInstructionKind::Read { place },
+                    semantics,
                 );
                 inputs.push(value);
             }
@@ -3076,18 +3077,21 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         }
     }
 
-    fn collect_local_reads(
+    fn collect_reads(
         &self,
         reactive_targets: &BTreeSet<BindingId>,
         suppressions: &BTreeSet<(u32, u32)>,
         projected_root_suppressions: &BTreeSet<(u32, u32)>,
         opaque_patterns: &[(FunctionId, SourceSpan)],
-    ) -> Vec<LocalReadFact> {
+    ) -> Vec<ReadFact> {
         let mut reads = Vec::new();
         for (symbol, binding) in &self.symbol_to_binding {
             for reference in self.semantic.scoping().get_resolved_reference_ids(*symbol) {
                 let reference = self.semantic.scoping().get_reference(*reference);
-                if !reference.is_read() || reference.is_write() {
+                if !reference.is_read()
+                    || reference.is_write()
+                    || reference_is_inside_with(self.semantic.scoping(), reference.scope_id())
+                {
                     continue;
                 }
                 let span = source_span(self.semantic.reference_span(reference));
@@ -3102,15 +3106,53 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 if reactive && suppressions.contains(&(span.start(), span.end())) {
                     continue;
                 }
-                reads.push(LocalReadFact {
+                reads.push(ReadFact {
                     owner,
-                    binding: *binding,
+                    place: PlannedPlace {
+                        base: PlannedPlaceBase::Binding(*symbol),
+                        projections: Vec::new(),
+                        root_reference_span: Some(span),
+                    },
                     span,
                     reactive,
                 });
             }
         }
-        reads.sort_by_key(|read| (read.span.start(), read.span.end(), read.binding.index()));
+        for (name, reference_ids) in self.semantic.scoping().root_unresolved_references() {
+            for reference_id in reference_ids {
+                let reference = self.semantic.scoping().get_reference(*reference_id);
+                if !reference.is_read()
+                    || reference.is_write()
+                    || reference_is_inside_with(self.semantic.scoping(), reference.scope_id())
+                {
+                    continue;
+                }
+                let span = source_span(self.semantic.reference_span(reference));
+                if projected_root_suppressions.contains(&(span.start(), span.end()))
+                    || suppressions.contains(&(span.start(), span.end()))
+                {
+                    continue;
+                }
+                let owner = self.function_owner_for_span(span);
+                if span_is_within_owned_pattern(owner, span, opaque_patterns) {
+                    continue;
+                }
+                reads.push(ReadFact {
+                    owner,
+                    place: PlannedPlace {
+                        base: PlannedPlaceBase::UnresolvedGlobal {
+                            name: name.to_string(),
+                            span,
+                        },
+                        projections: Vec::new(),
+                        root_reference_span: Some(span),
+                    },
+                    span,
+                    reactive: false,
+                });
+            }
+        }
+        reads.sort_by_key(|read| (read.span.start(), read.span.end()));
         reads
     }
 
@@ -3245,7 +3287,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 HirInstructionKind::Literal(literal.clone()),
                 InstructionSemantics::PURE_EAGER,
             ),
-            TypedExpressionKind::UnresolvedTypeof { identifier } => self.push_value_to_block(
+            TypedExpressionKind::UnresolvedTypeof { identifier, .. } => self.push_value_to_block(
                 owner,
                 block,
                 ValueKind::InstructionResult,
@@ -3283,7 +3325,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     TypedDeleteTarget::Place(place) => {
                         DeleteTarget::Place(self.materialize_planned_place(owner, block, place)?)
                     }
-                    TypedDeleteTarget::UnresolvedIdentifier(identifier) => {
+                    TypedDeleteTarget::UnresolvedIdentifier { identifier, .. } => {
                         DeleteTarget::UnresolvedIdentifier(identifier.clone())
                     }
                     TypedDeleteTarget::Value { span, has_effects } => DeleteTarget::Value(
@@ -4935,6 +4977,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         typed_expressions: &[TypedExpressionFact],
         mutations: &[MutationFact],
         member_reads: &[MemberReadFact],
+        reads: &[ReadFact],
     ) {
         let mut references = Vec::new();
         references.extend(
@@ -4945,6 +4988,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         );
         references.extend(
             member_reads
+                .iter()
+                .filter_map(|fact| planned_global_reference(&fact.place)),
+        );
+        references.extend(
+            reads
                 .iter()
                 .filter_map(|fact| planned_global_reference(&fact.place)),
         );
@@ -6119,6 +6167,7 @@ enum TypedExpressionKind {
     Literal(LiteralValue),
     UnresolvedTypeof {
         identifier: String,
+        reference_span: SourceSpan,
     },
     Context {
         kind: ContextValueKind,
@@ -6225,8 +6274,27 @@ enum TypedArrayElement {
 #[derive(Debug, Clone)]
 enum TypedDeleteTarget {
     Place(PlannedPlace),
-    UnresolvedIdentifier(String),
-    Value { span: SourceSpan, has_effects: bool },
+    UnresolvedIdentifier {
+        identifier: String,
+        reference_span: SourceSpan,
+    },
+    Value {
+        span: SourceSpan,
+        has_effects: bool,
+    },
+}
+
+fn typed_expression_reference_suppression(expression: &TypedExpressionFact) -> Option<SourceSpan> {
+    match &expression.kind {
+        TypedExpressionKind::UnresolvedTypeof { reference_span, .. }
+        | TypedExpressionKind::Delete {
+            target: TypedDeleteTarget::UnresolvedIdentifier { reference_span, .. },
+        } => Some(*reference_span),
+        TypedExpressionKind::Delete {
+            target: TypedDeleteTarget::Place(place),
+        } => place.root_reference_span,
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -6264,10 +6332,10 @@ enum TypedObjectKey {
     },
 }
 
-#[derive(Debug, Clone, Copy)]
-struct LocalReadFact {
+#[derive(Debug, Clone)]
+struct ReadFact {
     owner: FunctionId,
-    binding: BindingId,
+    place: PlannedPlace,
     span: SourceSpan,
     reactive: bool,
 }
@@ -6317,6 +6385,18 @@ fn planned_global_reference(place: &PlannedPlace) -> Option<(String, SourceSpan)
         return None;
     };
     Some((name.clone(), *span))
+}
+
+fn reference_is_inside_with(scoping: &Scoping, mut scope: OxcScopeId) -> bool {
+    loop {
+        if scoping.scope_flags(scope).is_with() {
+            return true;
+        }
+        let Some(parent) = scoping.scope_parent_id(scope) else {
+            return false;
+        };
+        scope = parent;
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -7854,10 +7934,9 @@ fn assignment_target_symbol(
     target: &AssignmentTarget<'_>,
 ) -> Option<(SymbolId, bool)> {
     match target {
-        AssignmentTarget::AssignmentTargetIdentifier(identifier) => scoping
-            .get_reference(identifier.reference_id.get()?)
-            .symbol_id()
-            .map(|symbol| (symbol, false)),
+        AssignmentTarget::AssignmentTargetIdentifier(identifier) => {
+            identifier_symbol(scoping, identifier).map(|symbol| (symbol, false))
+        }
         AssignmentTarget::StaticMemberExpression(member) => {
             expression_root_symbol(scoping, &member.object).map(|symbol| (symbol, true))
         }
@@ -7877,7 +7956,7 @@ fn planned_assignment_target_place(
 ) -> Option<PlannedPlace> {
     match target {
         AssignmentTarget::AssignmentTargetIdentifier(identifier) => {
-            Some(planned_reference_identifier_place(scoping, identifier))
+            planned_reference_identifier_place(scoping, identifier)
         }
         AssignmentTarget::StaticMemberExpression(member) => {
             planned_static_member_place(scoping, member)
@@ -7908,10 +7987,9 @@ fn simple_assignment_target_symbol(
     target: &SimpleAssignmentTarget<'_>,
 ) -> Option<(SymbolId, bool)> {
     match target {
-        SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => scoping
-            .get_reference(identifier.reference_id.get()?)
-            .symbol_id()
-            .map(|symbol| (symbol, false)),
+        SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => {
+            identifier_symbol(scoping, identifier).map(|symbol| (symbol, false))
+        }
         SimpleAssignmentTarget::StaticMemberExpression(member) => {
             expression_root_symbol(scoping, &member.object).map(|symbol| (symbol, true))
         }
@@ -7931,7 +8009,7 @@ fn planned_simple_assignment_target_place(
 ) -> Option<PlannedPlace> {
     match target {
         SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => {
-            Some(planned_reference_identifier_place(scoping, identifier))
+            planned_reference_identifier_place(scoping, identifier)
         }
         SimpleAssignmentTarget::StaticMemberExpression(member) => {
             planned_static_member_place(scoping, member)
@@ -7959,9 +8037,7 @@ fn planned_identifier_place(
     scoping: &Scoping,
     identifier: &IdentifierReference<'_>,
 ) -> Option<PlannedPlace> {
-    let symbol = scoping
-        .get_reference(identifier.reference_id.get()?)
-        .symbol_id()?;
+    let symbol = identifier_symbol(scoping, identifier)?;
     Some(PlannedPlace {
         base: PlannedPlaceBase::Binding(symbol),
         projections: Vec::new(),
@@ -7972,8 +8048,15 @@ fn planned_identifier_place(
 fn planned_reference_identifier_place(
     scoping: &Scoping,
     identifier: &IdentifierReference<'_>,
-) -> PlannedPlace {
-    planned_identifier_place(scoping, identifier).unwrap_or_else(|| PlannedPlace {
+) -> Option<PlannedPlace> {
+    if let Some(place) = planned_identifier_place(scoping, identifier) {
+        return Some(place);
+    }
+    let reference = scoping.get_reference(identifier.reference_id.get()?);
+    if reference_is_inside_with(scoping, reference.scope_id()) {
+        return None;
+    }
+    Some(PlannedPlace {
         base: PlannedPlaceBase::UnresolvedGlobal {
             name: identifier.name.to_string(),
             span: source_span(identifier.span),
@@ -8039,7 +8122,8 @@ fn planned_expression_place(
 ) -> Option<PlannedPlace> {
     match expression.get_inner_expression() {
         Expression::Identifier(identifier) => {
-            Some(planned_reference_identifier_place(scoping, identifier))
+            planned_reference_identifier_place(scoping, identifier)
+                .or_else(|| Some(planned_expression_base(expression)))
         }
         Expression::StaticMemberExpression(member) => planned_static_member_place(scoping, member),
         Expression::ComputedMemberExpression(member) => {
@@ -8075,9 +8159,7 @@ fn planned_expression_base(expression: &Expression<'_>) -> PlannedPlace {
 
 fn expression_root_symbol(scoping: &Scoping, expression: &Expression<'_>) -> Option<SymbolId> {
     match unwrap_transparent_call_expression(expression) {
-        Expression::Identifier(identifier) => scoping
-            .get_reference(identifier.reference_id.get()?)
-            .symbol_id(),
+        Expression::Identifier(identifier) => identifier_symbol(scoping, identifier),
         Expression::StaticMemberExpression(member) => {
             expression_root_symbol(scoping, &member.object)
         }
@@ -8091,6 +8173,13 @@ fn expression_root_symbol(scoping: &Scoping, expression: &Expression<'_>) -> Opt
     }
 }
 
+fn identifier_symbol(scoping: &Scoping, identifier: &IdentifierReference<'_>) -> Option<SymbolId> {
+    let reference = scoping.get_reference(identifier.reference_id.get()?);
+    (!reference_is_inside_with(scoping, reference.scope_id()))
+        .then(|| reference.symbol_id())
+        .flatten()
+}
+
 fn is_unresolved_typeof(
     scoping: &Scoping,
     expression: &oxc::ast::ast::UnaryExpression<'_>,
@@ -8101,11 +8190,11 @@ fn is_unresolved_typeof(
     let Expression::Identifier(identifier) = expression.argument.get_inner_expression() else {
         return false;
     };
-    identifier
-        .reference_id
-        .get()
-        .and_then(|reference| scoping.get_reference(reference).symbol_id())
-        .is_none()
+    let Some(reference) = identifier.reference_id.get() else {
+        return false;
+    };
+    let reference = scoping.get_reference(reference);
+    reference.symbol_id().is_none() && !reference_is_inside_with(scoping, reference.scope_id())
 }
 
 fn unary_operator(operator: OxcUnaryOperator) -> UnaryOperator {
