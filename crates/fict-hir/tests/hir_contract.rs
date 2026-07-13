@@ -239,6 +239,58 @@ fn verifier_requires_a_nontrivial_sequence_and_checks_every_value() {
 }
 
 #[test]
+fn verifier_enforces_template_quasi_expression_arity() {
+    let mut file = empty_file();
+    let origin = Origin::source(fict_hir::SourceSpan::empty(0));
+    for index in 0..2 {
+        let value = ValueId::new(index);
+        let literal = LiteralValue::Number(NumberLiteral::from_f64(f64::from(index)));
+        file.functions[0].values.push(HirValue {
+            id: value,
+            kind: ValueKind::Literal(literal.clone()),
+            origin,
+        });
+        file.functions[0].blocks[0]
+            .instructions
+            .push(HirInstruction {
+                result: Some(value),
+                kind: HirInstructionKind::Literal(literal),
+                semantics: InstructionSemantics::PURE_EAGER,
+                origin,
+            });
+    }
+    file.functions[0].values.push(HirValue {
+        id: ValueId::new(2),
+        kind: ValueKind::InstructionResult,
+        origin,
+    });
+    file.functions[0].blocks[0]
+        .instructions
+        .push(HirInstruction {
+            result: Some(ValueId::new(2)),
+            kind: HirInstructionKind::TemplateLiteral {
+                quasis: vec!["head".to_owned(), "middle".to_owned(), "tail".to_owned()],
+                expressions: vec![ValueId::new(0), ValueId::new(1)],
+            },
+            semantics: InstructionSemantics::CONSERVATIVE_EAGER,
+            origin,
+        });
+
+    verify_hir(&file).expect("well-formed template HIR");
+    let HirInstructionKind::TemplateLiteral { quasis, .. } =
+        &mut file.functions[0].blocks[0].instructions[2].kind
+    else {
+        panic!("template fixture")
+    };
+    quasis.pop();
+    let diagnostics = verify_hir(&file).expect_err("template arity mismatch must fail");
+    assert!(diagnostics.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-TEMPLATE"
+            && diagnostic.message.contains("one more quasi")
+    }));
+}
+
+#[test]
 fn verifier_enforces_object_prototype_setter_invariants() {
     let mut file = empty_file();
     let origin = Origin::source(fict_hir::SourceSpan::empty(0));

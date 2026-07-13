@@ -31,8 +31,8 @@ use oxc::{
             LogicalExpression, MemberExpression, MetaProperty, NewExpression,
             ObjectPropertyKind as OxcObjectPropertyKind, Program, PropertyKey as OxcPropertyKey,
             PropertyKind, SimpleAssignmentTarget, Statement, Super, TaggedTemplateExpression,
-            ThisExpression, UpdateExpression, VariableDeclaration, VariableDeclarationKind,
-            VariableDeclarator,
+            TemplateLiteral, ThisExpression, UpdateExpression, VariableDeclaration,
+            VariableDeclarationKind, VariableDeclarator,
         },
         ast_kind::AstKind,
     },
@@ -565,6 +565,7 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
                     )),
                 })
             }
+            Expression::TemplateLiteral(template) => typed_template_literal(template),
             Expression::UnaryExpression(unary)
                 if unary.operator != OxcUnaryOperator::Delete
                     && !is_unresolved_typeof(self.scoping, unary) =>
@@ -761,6 +762,46 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
         }
         walk_expression(self, expression);
     }
+}
+
+fn typed_template_literal(template: &TemplateLiteral<'_>) -> Option<TypedExpressionFact> {
+    let quasis: Option<Vec<_>> = template
+        .quasis
+        .iter()
+        .map(|quasi| {
+            if quasi.lone_surrogates {
+                // HIR strings are valid UTF-8. Keep exact UTF-16 surrogate spelling in the
+                // adapter-owned syntax fragment instead of replacing a JavaScript code unit.
+                None
+            } else {
+                quasi.value.cooked.as_ref().map(ToString::to_string)
+            }
+        })
+        .collect();
+    let quasis = quasis?;
+    if template.expressions.is_empty() {
+        return quasis.into_iter().next().map(|value| TypedExpressionFact {
+            span: source_span(template.span),
+            kind: TypedExpressionKind::Literal(LiteralValue::String(value)),
+        });
+    }
+    Some(TypedExpressionFact {
+        span: source_span(template.span),
+        kind: TypedExpressionKind::TemplateLiteral {
+            quasis,
+            expressions: template
+                .expressions
+                .iter()
+                .map(|expression| {
+                    let inner = expression.get_inner_expression();
+                    TypedTemplateExpression {
+                        span: source_span(inner.span()),
+                        has_effects: structured_control_flow::expression_has_effects(expression),
+                    }
+                })
+                .collect(),
+        },
+    })
 }
 
 fn typed_object_entries(
@@ -3128,6 +3169,36 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     origin,
                     HirInstructionKind::Sequence { values },
                     InstructionSemantics::PURE_EAGER,
+                )
+            }
+            TypedExpressionKind::TemplateLiteral {
+                quasis,
+                expressions,
+            } => {
+                let expressions = expressions
+                    .iter()
+                    .map(|expression| {
+                        let value = self.control_expression_value(
+                            owner,
+                            block,
+                            expression.span,
+                            true,
+                            expression.has_effects,
+                        );
+                        self.mark_span_deferred(owner, block, expression.span);
+                        value
+                    })
+                    .collect();
+                self.push_value_to_block(
+                    owner,
+                    block,
+                    ValueKind::InstructionResult,
+                    origin,
+                    HirInstructionKind::TemplateLiteral {
+                        quasis: quasis.clone(),
+                        expressions,
+                    },
+                    InstructionSemantics::CONSERVATIVE_EAGER,
                 )
             }
             TypedExpressionKind::Await {
@@ -5674,6 +5745,10 @@ enum TypedExpressionKind {
     Sequence {
         values: Vec<TypedSequenceValue>,
     },
+    TemplateLiteral {
+        quasis: Vec<String>,
+        expressions: Vec<TypedTemplateExpression>,
+    },
     Await {
         value: SourceSpan,
         value_has_effects: bool,
@@ -5698,6 +5773,12 @@ enum TypedExpressionKind {
 
 #[derive(Debug, Clone, Copy)]
 struct TypedSequenceValue {
+    span: SourceSpan,
+    has_effects: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TypedTemplateExpression {
     span: SourceSpan,
     has_effects: bool,
 }
@@ -5861,28 +5942,32 @@ impl EvaluationFact {
                 ..
             }) => 5,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Await { .. },
+                kind: TypedExpressionKind::TemplateLiteral { .. },
                 ..
             }) => 6,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Yield { .. },
+                kind: TypedExpressionKind::Await { .. },
                 ..
             }) => 7,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::New { .. },
+                kind: TypedExpressionKind::Yield { .. },
                 ..
             }) => 8,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Array { .. },
+                kind: TypedExpressionKind::New { .. },
                 ..
             }) => 9,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Object { .. },
+                kind: TypedExpressionKind::Array { .. },
                 ..
             }) => 10,
-            Self::Jsx(_) => 11,
-            Self::Member(_) => 12,
-            Self::Call(_) => 13,
+            Self::Typed(TypedExpressionFact {
+                kind: TypedExpressionKind::Object { .. },
+                ..
+            }) => 11,
+            Self::Jsx(_) => 12,
+            Self::Member(_) => 13,
+            Self::Call(_) => 14,
         }
     }
 }
@@ -8027,6 +8112,7 @@ fn instruction_value_inputs(instruction: &HirInstruction) -> Vec<ValueId> {
             alternate,
         } => inputs.extend([*test, *consequent, *alternate]),
         HirInstructionKind::Sequence { values } => inputs.extend(values),
+        HirInstructionKind::TemplateLiteral { expressions, .. } => inputs.extend(expressions),
         HirInstructionKind::Call(call) => {
             inputs.push(call.callee);
             inputs.extend(call.arguments.iter().map(|argument| argument.value));

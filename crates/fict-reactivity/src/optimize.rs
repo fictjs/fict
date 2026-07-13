@@ -1182,6 +1182,11 @@ fn rewrite_instruction_values(
                 rewrite_value(value, replacements);
             }
         }
+        HirInstructionKind::TemplateLiteral { expressions, .. } => {
+            for expression in expressions {
+                rewrite_value(expression, replacements);
+            }
+        }
         HirInstructionKind::Call(call) => {
             rewrite_value(&mut call.callee, replacements);
             for argument in &mut call.arguments {
@@ -1296,6 +1301,7 @@ fn instruction_value_inputs(
             alternate,
         } => vec![*test, *consequent, *alternate],
         HirInstructionKind::Sequence { values } => values.clone(),
+        HirInstructionKind::TemplateLiteral { expressions, .. } => expressions.clone(),
         HirInstructionKind::Call(call) => std::iter::once(call.callee)
             .chain(call.arguments.iter().map(|argument| argument.value))
             .collect(),
@@ -1478,6 +1484,11 @@ fn remap_instruction_values(
         HirInstructionKind::Sequence { values } => {
             for value in values {
                 remap_value_id(value, remap)?;
+            }
+        }
+        HirInstructionKind::TemplateLiteral { expressions, .. } => {
+            for expression in expressions {
+                remap_value_id(expression, remap)?;
             }
         }
         HirInstructionKind::Call(call) => {

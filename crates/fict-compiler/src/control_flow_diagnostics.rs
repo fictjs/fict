@@ -495,6 +495,9 @@ fn value_has_unsafe_control_work(
         HirInstructionKind::Sequence { values } => values
             .iter()
             .any(|value| value_has_unsafe_control_work(file, function, *value, visiting)),
+        HirInstructionKind::TemplateLiteral { expressions, .. } => expressions
+            .iter()
+            .any(|value| value_has_unsafe_control_work(file, function, *value, visiting)),
         _ => false,
     }
 }
@@ -503,6 +506,7 @@ fn instruction_is_unsafe(file: &HirFile, instruction: &HirInstruction) -> bool {
     match &instruction.kind {
         HirInstructionKind::Call(_)
         | HirInstructionKind::New { .. }
+        | HirInstructionKind::TemplateLiteral { .. }
         | HirInstructionKind::Await { .. }
         | HirInstructionKind::Yield { .. }
         | HirInstructionKind::Debugger => true,

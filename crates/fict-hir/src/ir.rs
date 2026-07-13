@@ -795,6 +795,13 @@ pub enum HirInstructionKind {
         /// Values in authored evaluation order. A valid sequence contains at least two values.
         values: Vec<ValueId>,
     },
+    /// Build an untagged template literal with interleaved string coercions.
+    TemplateLiteral {
+        /// Cooked string segments. There is exactly one more quasi than expression.
+        quasis: Vec<String>,
+        /// Substitution values in authored coercion order.
+        expressions: Vec<ValueId>,
+    },
     /// Invoke a function or method.
     Call(CallInstruction),
     /// Construct a value with `new`.

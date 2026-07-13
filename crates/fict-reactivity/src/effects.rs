@@ -1192,6 +1192,7 @@ fn instruction_inputs(instruction: &HirInstruction, file: &HirFile) -> Vec<Value
             alternate,
         } => vec![*test, *consequent, *alternate],
         HirInstructionKind::Sequence { values } => values.last().copied().into_iter().collect(),
+        HirInstructionKind::TemplateLiteral { expressions, .. } => expressions.clone(),
         HirInstructionKind::Call(call) => std::iter::once(call.callee)
             .chain(call.arguments.iter().map(|argument| argument.value))
             .collect(),

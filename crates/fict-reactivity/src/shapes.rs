@@ -40,6 +40,8 @@ pub enum ShapeSource {
     Parameter,
     /// Literal scalar.
     Literal(ValueId),
+    /// String produced by an untagged template literal.
+    TemplateLiteral(ValueId),
     /// Object literal.
     ObjectLiteral(ValueId),
     /// Array literal.
@@ -599,6 +601,17 @@ fn structural_value_shape(
         HirInstructionKind::Literal(_) => ValueShape {
             kind: ShapeKind::Primitive,
             source: ShapeSource::Literal(value),
+            known_keys: Vec::new(),
+            mutable_keys: Vec::new(),
+            complete_key_set: true,
+            dynamic_access: false,
+            has_spread: false,
+            escapes: false,
+            array_length: None,
+        },
+        HirInstructionKind::TemplateLiteral { .. } => ValueShape {
+            kind: ShapeKind::Primitive,
+            source: ShapeSource::TemplateLiteral(value),
             known_keys: Vec::new(),
             mutable_keys: Vec::new(),
             complete_key_set: true,

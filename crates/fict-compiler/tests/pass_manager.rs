@@ -4,7 +4,8 @@ use fict_compiler_oxc::{
 };
 use fict_hir::{FunctionKind, StructuredSourceKind};
 use fict_reactivity::{
-    DependencyBase, ShapeKind, SsaDefinitionKind, StructuredConstructKind, StructuredLoopKind,
+    DependencyBase, ShapeKind, ShapeSource, SsaDefinitionKind, StructuredConstructKind,
+    StructuredLoopKind,
 };
 
 fn build_fixture() -> fict_hir::HirFile {
@@ -166,6 +167,103 @@ fn sequence_results_depend_on_and_inherit_shape_from_only_the_final_value() {
         .expect("shaped sequence shape");
     assert_eq!(shaped_shape.shape.kind, ShapeKind::Array);
     assert_eq!(shaped_shape.shape.array_length, Some(2));
+}
+
+#[test]
+fn template_results_depend_on_every_substitution_and_remain_primitive() {
+    let frontend = build_hir(
+        r#"
+            export function format(first, second) {
+                const text = `head ${first} middle ${second} tail`;
+                return text;
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Module,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified template HIR"),
+        CorePassOptions {
+            optimize: false,
+            ..CorePassOptions::default()
+        },
+    )
+    .expect("core passes over templates");
+    let function = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                output.hir.bindings[binding.as_usize()].display_name == "format"
+            })
+        })
+        .expect("format function");
+    let analysis = &output.functions[function.id.as_usize()];
+    let local = |name: &str| {
+        function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"))
+    };
+    let text = local("text");
+    let text_value = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find_map(|instruction| match instruction.kind {
+            fict_hir::HirInstructionKind::Declare {
+                local, initializer, ..
+            } if local == text.id => initializer,
+            _ => None,
+        })
+        .expect("text initializer");
+    let dependencies = &analysis.dependencies.value_dependencies[text_value.as_usize()];
+    assert_eq!(dependencies.len(), 2);
+    let dependency_locals: std::collections::BTreeSet<_> = dependencies
+        .iter()
+        .filter_map(|dependency| match dependency.base {
+            DependencyBase::Ssa(name) => Some(name.local),
+            DependencyBase::Value(_) => None,
+        })
+        .collect();
+    assert_eq!(
+        dependency_locals,
+        [local("first").id, local("second").id]
+            .into_iter()
+            .collect()
+    );
+
+    let definition = analysis
+        .ssa
+        .definitions
+        .iter()
+        .find(|definition| {
+            definition.name.local == text.id && definition.kind == SsaDefinitionKind::Declare
+        })
+        .expect("text declaration definition");
+    let shape = analysis
+        .shapes
+        .shapes
+        .iter()
+        .find(|shape| shape.name == definition.name)
+        .expect("template result shape");
+    assert_eq!(shape.shape.kind, ShapeKind::Primitive);
+    assert!(matches!(
+        shape.shape.source,
+        ShapeSource::TemplateLiteral(value) if value == text_value
+    ));
 }
 
 #[test]

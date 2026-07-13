@@ -692,6 +692,21 @@ impl Verifier<'_> {
                     );
                 }
             }
+            HirInstructionKind::TemplateLiteral {
+                quasis,
+                expressions,
+            } => {
+                for expression in expressions {
+                    self.value(function, *expression, instruction.origin);
+                }
+                if quasis.len() != expressions.len().saturating_add(1) {
+                    self.error(
+                        "FICT-HIR-TEMPLATE",
+                        "an untagged template must contain exactly one more quasi than expression",
+                        Some(instruction.origin),
+                    );
+                }
+            }
             HirInstructionKind::Call(call) => {
                 self.value(function, call.callee, instruction.origin);
                 for argument in &call.arguments {

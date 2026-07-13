@@ -3281,6 +3281,136 @@ fn materializes_sequence_values_in_authored_evaluation_order() {
 }
 
 #[test]
+fn materializes_template_quasis_coercions_and_lazy_ownership() {
+    let source = r#"
+        function templates(make, optional, value) {
+            const empty = ``;
+            const escaped = `line\n`;
+            const dynamic = `head ${make('first')} middle ${value} tail`;
+            const lazy = optional?.(`lazy ${make('optional')} tail`);
+            return [empty, escaped, dynamic, lazy];
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified template HIR");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "templates")
+        })
+        .expect("templates function");
+    let instructions: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let authored = |instruction: &fict_hir::HirInstruction| {
+        let span = instruction
+            .origin
+            .primary_span
+            .expect("authored template instruction");
+        &source[span.start() as usize..span.end() as usize]
+    };
+    let instruction_for_result = |value| {
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| instruction.result == Some(value))
+            .unwrap_or_else(|| panic!("instruction for value{}", value.index()))
+    };
+    let initializer = |name: &str| {
+        let local = function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"));
+        instructions
+            .iter()
+            .find_map(|instruction| match instruction.kind {
+                HirInstructionKind::Declare {
+                    local: candidate,
+                    initializer,
+                    ..
+                } if candidate == local.id => initializer,
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{name} initializer"))
+    };
+
+    for (name, expected) in [("empty", ""), ("escaped", "line\n")] {
+        let instruction = instruction_for_result(initializer(name));
+        assert_eq!(
+            instruction.kind,
+            HirInstructionKind::Literal(LiteralValue::String(expected.to_owned()))
+        );
+        assert_eq!(
+            instruction.semantics,
+            fict_hir::InstructionSemantics::PURE_EAGER
+        );
+    }
+
+    let dynamic = instruction_for_result(initializer("dynamic"));
+    let HirInstructionKind::TemplateLiteral {
+        quasis,
+        expressions,
+    } = &dynamic.kind
+    else {
+        panic!("typed dynamic template")
+    };
+    assert_eq!(quasis, &["head ", " middle ", " tail"]);
+    assert_eq!(expressions.len(), 2);
+    assert_eq!(
+        authored(instruction_for_result(expressions[0])),
+        "make('first')"
+    );
+    assert_eq!(authored(instruction_for_result(expressions[1])), "value");
+    for expression in expressions {
+        assert_eq!(
+            instruction_for_result(*expression).semantics.evaluation,
+            EvaluationMode::Deferred,
+            "the template owns interleaved substitution coercion"
+        );
+    }
+    assert_eq!(
+        dynamic.semantics,
+        fict_hir::InstructionSemantics::CONSERVATIVE_EAGER
+    );
+
+    let lazy_call = instruction_for_result(initializer("lazy"));
+    let HirInstructionKind::Call(call) = &lazy_call.kind else {
+        panic!("typed optional template call")
+    };
+    assert!(call.optional);
+    assert_eq!(call.arguments.len(), 1);
+    let lazy_template = instruction_for_result(call.arguments[0].value);
+    let HirInstructionKind::TemplateLiteral { expressions, .. } = &lazy_template.kind else {
+        panic!("typed lazy template")
+    };
+    assert_eq!(expressions.len(), 1);
+    assert_eq!(
+        authored(instruction_for_result(expressions[0])),
+        "make('optional')"
+    );
+    assert_eq!(
+        lazy_template.semantics.evaluation,
+        EvaluationMode::Deferred,
+        "the optional call owns the entire template operation"
+    );
+    assert_eq!(
+        instruction_for_result(expressions[0]).semantics.evaluation,
+        EvaluationMode::Deferred
+    );
+}
+
+#[test]
 fn materializes_static_computed_index_and_value_base_projections() {
     let source = r#"
         function project(obj) {
