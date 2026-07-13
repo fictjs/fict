@@ -693,6 +693,7 @@ struct ComponentRewrite {
     props: Vec<ComponentProp>,
     children: Vec<ComponentChild>,
     prop_helper: Option<String>,
+    children_helper: Option<String>,
     merge_helper: Option<String>,
     non_reactive_helper: Option<String>,
     fragment_local: Option<String>,
@@ -717,6 +718,7 @@ fn component_rewrites(
             props,
             children,
             prop_helper,
+            children_helper,
             merge_helper,
             non_reactive_helper,
             fragment_helper,
@@ -741,6 +743,23 @@ fn component_rewrites(
                         emit_error(
                             "FICT-OXC-EMIT-IMPORT",
                             "component prop helper has no runtime import intent",
+                            GuaranteeClass::Internal,
+                        )
+                        .with_primary_span(span),
+                    );
+                    continue;
+                };
+                Some((*local).to_owned())
+            }
+            None => None,
+        };
+        let children_helper = match children_helper {
+            Some(helper) => {
+                let Some(local) = helper_names.get(helper) else {
+                    diagnostics.push(
+                        emit_error(
+                            "FICT-OXC-EMIT-IMPORT",
+                            "component children helper has no runtime import intent",
                             GuaranteeClass::Internal,
                         )
                         .with_primary_span(span),
@@ -809,6 +828,7 @@ fn component_rewrites(
                     props: props.clone(),
                     children: children.clone(),
                     prop_helper,
+                    children_helper,
                     merge_helper,
                     non_reactive_helper,
                     fragment_local,
@@ -1912,9 +1932,10 @@ fn component_children_match(children: &[JSXChild<'_>], planned: &[ComponentChild
                 };
                 matches!(
                     planned.next(),
-                    Some(ComponentChild::Value(EmitValueRef::Literal(
-                        LiteralValue::String(planned_value)
-                    ))) if planned_value == &value
+                    Some(ComponentChild::Value {
+                        value: EmitValueRef::Literal(LiteralValue::String(planned_value)),
+                        ..
+                    }) if planned_value == &value
                 )
             }
             JSXChild::Element(element) => matches!(
@@ -1942,10 +1963,12 @@ fn component_children_match(children: &[JSXChild<'_>], planned: &[ComponentChild
                         Some(ComponentChild::Node(origin))
                             if component_node_origin_matches(*origin, fragment.span)
                     ),
-                    _ => matches!(planned.next(), Some(ComponentChild::Value(_))),
+                    _ => matches!(planned.next(), Some(ComponentChild::Value { .. })),
                 }
             }
-            JSXChild::Spread(_) => matches!(planned.next(), Some(ComponentChild::Value(_))),
+            JSXChild::Spread(_) => {
+                matches!(planned.next(), Some(ComponentChild::Value { .. }))
+            }
         };
         if !valid {
             return false;
@@ -2784,7 +2807,32 @@ impl<'a> AstRewriter<'a, '_> {
                 GuaranteeClass::Internal,
             ));
         }
-        if let Some(children) = self.lower_jsx_children(element.children, span) {
+        if let Some(mut children) = self.lower_jsx_children(
+            element.children,
+            span,
+            Some((
+                &component.children,
+                component.non_reactive_helper.as_deref(),
+            )),
+        ) {
+            if let Some(helper) = &component.children_helper {
+                let getter = zero_parameter_expression_arrow(self.allocator, children, span);
+                let callee = Expression::new_identifier(
+                    span,
+                    self.allocator.alloc_str(helper),
+                    &AstBuilder::new(self.allocator),
+                );
+                let mut arguments = ArenaVec::new_in(&self.allocator);
+                arguments.push(Argument::from(getter));
+                children = Expression::new_call_expression(
+                    span,
+                    callee,
+                    NONE,
+                    arguments,
+                    false,
+                    &AstBuilder::new(self.allocator),
+                );
+            }
             properties.push(self.object_property(span, "children", children));
         }
 
@@ -2864,7 +2912,7 @@ impl<'a> AstRewriter<'a, '_> {
             }
         }
 
-        if let Some(children) = self.lower_jsx_children(element.children, span) {
+        if let Some(children) = self.lower_jsx_children(element.children, span, None) {
             properties.push(self.object_property(span, "children", children));
         }
 
@@ -2898,7 +2946,7 @@ impl<'a> AstRewriter<'a, '_> {
             self.diagnostics.push(diagnostic);
             Expression::new_null_literal(span, &builder)
         };
-        let children = self.lower_jsx_children(fragment.children, span);
+        let children = self.lower_jsx_children(fragment.children, span, None);
         let props = children.map_or_else(
             || Expression::new_null_literal(span, &builder),
             |children| {
@@ -3008,12 +3056,18 @@ impl<'a> AstRewriter<'a, '_> {
         &mut self,
         children: ArenaVec<'a, JSXChild<'a>>,
         span: Span,
+        component: Option<(&[ComponentChild], Option<&str>)>,
     ) -> Option<Expression<'a>> {
+        let (mut planned, non_reactive_helper) = component
+            .map_or((None, None), |(planned, helper)| {
+                (Some(planned.iter()), helper)
+            });
         let mut lowered = Vec::new();
         for child in children {
             match child {
                 JSXChild::Text(text) => {
                     if let Some(value) = crate::jsx_text::normalize_text(text.value.as_str()) {
+                        let _ = planned.as_mut().and_then(Iterator::next);
                         lowered.push(VNodeChild::Value(Expression::new_string_literal(
                             text.span,
                             self.allocator.alloc_str(&value),
@@ -3022,24 +3076,41 @@ impl<'a> AstRewriter<'a, '_> {
                         )));
                     }
                 }
-                JSXChild::Element(element) => lowered.push(VNodeChild::Value(
-                    self.lower_planned_jsx_element(element.unbox()),
-                )),
+                JSXChild::Element(element) => {
+                    let _ = planned.as_mut().and_then(Iterator::next);
+                    lowered.push(VNodeChild::Value(
+                        self.lower_planned_jsx_element(element.unbox()),
+                    ));
+                }
                 JSXChild::Fragment(fragment) => {
+                    let _ = planned.as_mut().and_then(Iterator::next);
                     lowered.push(VNodeChild::Value(self.lower_jsx_fragment(fragment.unbox())))
                 }
                 JSXChild::ExpressionContainer(container) => {
                     let container = container.unbox();
                     if container.expression.is_expression() {
-                        lowered.push(VNodeChild::Value(self.lower_jsx_container_expression(
-                            container.expression.into_expression(),
+                        let plan = planned.as_mut().and_then(Iterator::next);
+                        let expression = self
+                            .lower_jsx_container_expression(container.expression.into_expression());
+                        lowered.push(VNodeChild::Value(self.wrap_non_reactive_component_child(
+                            expression,
+                            plan,
+                            non_reactive_helper,
+                            container.span,
                         )));
                     }
                 }
                 JSXChild::Spread(spread) => {
                     let spread = spread.unbox();
+                    let plan = planned.as_mut().and_then(Iterator::next);
                     let mut expression = spread.expression;
                     self.visit_expression(&mut expression);
+                    let expression = self.wrap_non_reactive_component_child(
+                        expression,
+                        plan,
+                        non_reactive_helper,
+                        spread.span,
+                    );
                     lowered.push(VNodeChild::Spread(spread.span, expression));
                 }
             }
@@ -3075,6 +3146,37 @@ impl<'a> AstRewriter<'a, '_> {
         }
     }
 
+    fn wrap_non_reactive_component_child(
+        &mut self,
+        value: Expression<'a>,
+        plan: Option<&ComponentChild>,
+        helper: Option<&str>,
+        span: Span,
+    ) -> Expression<'a> {
+        if !matches!(
+            plan,
+            Some(ComponentChild::Value {
+                non_reactive: true,
+                ..
+            })
+        ) {
+            return value;
+        }
+        let Some(helper) = helper else {
+            self.diagnostics.push(emit_error(
+                "FICT-OXC-EMIT-COMPONENT",
+                "function component child has no non-reactive runtime helper",
+                GuaranteeClass::Internal,
+            ));
+            return value;
+        };
+        let builder = AstBuilder::new(self.allocator);
+        let callee = Expression::new_identifier(span, self.allocator.alloc_str(helper), &builder);
+        let mut arguments = ArenaVec::new_in(&self.allocator);
+        arguments.push(Argument::from(value));
+        Expression::new_call_expression(span, callee, NONE, arguments, false, &builder)
+    }
+
     fn lower_jsx_container_expression(&mut self, mut expression: Expression<'a>) -> Expression<'a> {
         if matches!(
             expression.get_inner_expression(),
@@ -3082,7 +3184,9 @@ impl<'a> AstRewriter<'a, '_> {
         ) {
             self.lower_jsx_expression(expression.into_inner_expression())
         } else {
+            self.vnode_depth += 1;
             self.visit_expression(&mut expression);
+            self.vnode_depth -= 1;
             expression
         }
     }

@@ -793,7 +793,7 @@ mod tests {
             result.code
         );
         assert!(
-            result.code.contains("children: [\"hello "),
+            result.code.contains("children: prop(() => [\"hello "),
             "{}",
             result.code
         );
@@ -982,6 +982,33 @@ mod tests {
             "{}",
             result.code
         );
+    }
+
+    #[test]
+    fn preserves_component_child_laziness_and_function_values() {
+        let result = compile(request(
+            "const Card = (_props) => null; export function Dynamic(props) { return <Card>hello {props.value}<b>x</b></Card>; } export function Callback(props) { return <Card>{() => props.value}</Card>; } export function Branch(props) { return <Card>{props.show ? <><b>x</b></> : null}</Card>; } export function Render(props) { return <Card view={props.show ? <><i>x</i></> : null} />; }",
+            "component-children.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result.code.contains("children: prop(() => [")
+                && result.code.contains("\"hello \"")
+                && result.code.contains("props.value"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("children: nonReactive(() => props.value)"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("type: Fragment"), "{}", result.code);
+        assert!(!result.code.contains("<b>"), "{}", result.code);
+        assert!(!result.code.contains("<i>"), "{}", result.code);
     }
 
     #[test]

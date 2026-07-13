@@ -738,7 +738,9 @@ fn verify_helper_semantics(
         }
         EmitOperation::InvokeComponent {
             props,
+            children,
             prop_helper,
+            children_helper,
             merge_helper,
             non_reactive_helper,
             fragment_helper,
@@ -750,10 +752,21 @@ fn verify_helper_semantics(
             let needs_merge = props
                 .iter()
                 .any(|prop| matches!(prop, crate::ComponentProp::Spread(_)));
+            let needs_children = children
+                .iter()
+                .any(|child| matches!(child, crate::ComponentChild::Value { getter: true, .. }));
             let needs_non_reactive = props.iter().any(|prop| {
                 matches!(
                     prop,
                     crate::ComponentProp::Named {
+                        non_reactive: true,
+                        ..
+                    }
+                )
+            }) || children.iter().any(|child| {
+                matches!(
+                    child,
+                    crate::ComponentChild::Value {
                         non_reactive: true,
                         ..
                     }
@@ -768,9 +781,19 @@ fn verify_helper_semantics(
                         ..
                     }
                 )
+            }) && children.iter().all(|child| {
+                !matches!(
+                    child,
+                    crate::ComponentChild::Value {
+                        getter: true,
+                        non_reactive: true,
+                        ..
+                    }
+                )
             });
             wrappers_exclusive
                 && *prop_helper == needs_prop.then_some(RuntimeHelper::PropGetter)
+                && *children_helper == needs_children.then_some(RuntimeHelper::Prop)
                 && *merge_helper == needs_merge.then_some(RuntimeHelper::MergeProps)
                 && *non_reactive_helper == needs_non_reactive.then_some(RuntimeHelper::NonReactive)
                 && fragment_helper.is_none_or(|helper| helper == RuntimeHelper::Fragment)

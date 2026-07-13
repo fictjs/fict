@@ -31,6 +31,8 @@ pub enum JsxAttributeValue {
         value: ValueId,
         /// Whether the authored expression directly defines a function.
         function_like: bool,
+        /// Whether the expression contains source short-fragment syntax.
+        contains_fragment: bool,
     },
     /// Nested JSX node used as an attribute value.
     Node(Box<JsxNode>),
@@ -86,6 +88,8 @@ pub enum JsxChild {
         kind: JsxExpressionKind,
         /// Whether the expression contains source short-fragment syntax.
         contains_fragment: bool,
+        /// Whether the authored expression directly defines a function.
+        function_like: bool,
         /// Source provenance.
         origin: Origin,
     },
@@ -117,18 +121,30 @@ impl JsxElement {
     /// Whether this element's attributes or children contain source short-fragment syntax.
     #[must_use]
     pub fn contains_fragment(&self) -> bool {
-        self.attributes.iter().any(|attribute| {
-            matches!(
-                attribute,
-                JsxAttribute::Named {
-                    value: JsxAttributeValue::Node(node),
-                    ..
-                } if node.contains_fragment()
-            )
-        }) || self
-            .children
-            .iter()
-            .any(|child| matches!(child, JsxChild::Node(node) if node.contains_fragment()))
+        self.attributes.iter().any(|attribute| match attribute {
+            JsxAttribute::Named {
+                value: JsxAttributeValue::Node(node),
+                ..
+            } => node.contains_fragment(),
+            JsxAttribute::Named {
+                value:
+                    JsxAttributeValue::Expression {
+                        contains_fragment: true,
+                        ..
+                    },
+                ..
+            } => true,
+            JsxAttribute::Named { .. } | JsxAttribute::Spread { .. } => false,
+        }) || self.children.iter().any(|child| {
+            matches!(child, JsxChild::Node(node) if node.contains_fragment())
+                || matches!(
+                    child,
+                    JsxChild::Expression {
+                        contains_fragment: true,
+                        ..
+                    }
+                )
+        })
     }
 }
 
@@ -192,6 +208,7 @@ mod tests {
                 value: JsxAttributeValue::Expression {
                     value: ValueId::new(2),
                     function_like: false,
+                    contains_fragment: false,
                 },
                 origin,
             }],

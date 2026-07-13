@@ -193,7 +193,11 @@ pub enum ComponentProp {
 /// Scalar or recursively-authored JSX child passed to a component.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ComponentChild {
-    Value(EmitValueRef),
+    Value {
+        value: EmitValueRef,
+        getter: bool,
+        non_reactive: bool,
+    },
     Node(Origin),
 }
 
@@ -296,6 +300,7 @@ pub enum EmitOperation {
         props: Vec<ComponentProp>,
         children: Vec<ComponentChild>,
         prop_helper: Option<RuntimeHelper>,
+        children_helper: Option<RuntimeHelper>,
         merge_helper: Option<RuntimeHelper>,
         non_reactive_helper: Option<RuntimeHelper>,
         fragment_helper: Option<RuntimeHelper>,
@@ -402,17 +407,21 @@ impl EmitOperation {
             } => *helper,
             Self::InvokeComponent {
                 prop_helper,
+                children_helper,
                 merge_helper,
                 non_reactive_helper,
                 fragment_helper,
                 ..
             } => match prop_helper {
                 Some(helper) => Some(*helper),
-                None => match merge_helper {
+                None => match children_helper {
                     Some(helper) => Some(*helper),
-                    None => match non_reactive_helper {
+                    None => match merge_helper {
                         Some(helper) => Some(*helper),
-                        None => *fragment_helper,
+                        None => match non_reactive_helper {
+                            Some(helper) => Some(*helper),
+                            None => *fragment_helper,
+                        },
                     },
                 },
             },
@@ -463,16 +472,17 @@ impl EmitOperation {
         match self {
             Self::InvokeComponent {
                 prop_helper,
+                children_helper,
                 merge_helper,
                 non_reactive_helper,
                 fragment_helper,
                 ..
             } => [
                 *prop_helper,
+                *children_helper,
                 *merge_helper,
                 *non_reactive_helper,
                 *fragment_helper,
-                None,
                 None,
                 None,
                 None,
@@ -562,7 +572,7 @@ impl EmitOperation {
                     }
                 }
                 for child in children {
-                    if let ComponentChild::Value(value) = child {
+                    if let ComponentChild::Value { value, .. } = child {
                         visit(value);
                     }
                 }

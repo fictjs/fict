@@ -1282,6 +1282,7 @@ fn lower_component_operation(
                     JsxAttributeValue::Expression {
                         value,
                         function_like,
+                        ..
                     } => (
                         lower_value(*value, value_temporaries),
                         !function_like
@@ -1321,12 +1322,32 @@ fn lower_component_operation(
     let mut children = Vec::new();
     for child in &element.children {
         let child = match child {
-            JsxChild::Text { value, .. } => ComponentChild::Value(EmitValueRef::Literal(
-                fict_hir::LiteralValue::String(value.clone()),
-            )),
-            JsxChild::Expression { value, .. } | JsxChild::Spread { value, .. } => {
-                ComponentChild::Value(lower_value(*value, value_temporaries))
-            }
+            JsxChild::Text { value, .. } => ComponentChild::Value {
+                value: EmitValueRef::Literal(fict_hir::LiteralValue::String(value.clone())),
+                getter: false,
+                non_reactive: false,
+            },
+            JsxChild::Expression {
+                value,
+                function_like,
+                ..
+            } => ComponentChild::Value {
+                value: lower_value(*value, value_temporaries),
+                getter: !function_like
+                    && !matches!(
+                        hir.functions[function_id.as_usize()].values[value.as_usize()].kind,
+                        ValueKind::Literal(_)
+                    ),
+                non_reactive: *function_like,
+            },
+            JsxChild::Spread { value, .. } => ComponentChild::Value {
+                value: lower_value(*value, value_temporaries),
+                getter: !matches!(
+                    hir.functions[function_id.as_usize()].values[value.as_usize()].kind,
+                    ValueKind::Literal(_)
+                ),
+                non_reactive: false,
+            },
             JsxChild::Node(node) => ComponentChild::Node(jsx_node_origin(node)),
         };
         children.push(child);
@@ -1346,22 +1367,32 @@ fn lower_component_operation(
             .iter()
             .any(|prop| matches!(prop, ComponentProp::Named { getter: true, .. }))
             .then_some(RuntimeHelper::PropGetter),
+        children_helper: children
+            .iter()
+            .any(|child| matches!(child, ComponentChild::Value { getter: true, .. }))
+            .then_some(RuntimeHelper::Prop),
         merge_helper: props
             .iter()
             .any(|prop| matches!(prop, ComponentProp::Spread(_)))
             .then_some(RuntimeHelper::MergeProps),
-        non_reactive_helper: props
-            .iter()
-            .any(|prop| {
-                matches!(
-                    prop,
-                    ComponentProp::Named {
-                        non_reactive: true,
-                        ..
-                    }
-                )
-            })
-            .then_some(RuntimeHelper::NonReactive),
+        non_reactive_helper: (props.iter().any(|prop| {
+            matches!(
+                prop,
+                ComponentProp::Named {
+                    non_reactive: true,
+                    ..
+                }
+            )
+        }) || children.iter().any(|child| {
+            matches!(
+                child,
+                ComponentChild::Value {
+                    non_reactive: true,
+                    ..
+                }
+            )
+        }))
+        .then_some(RuntimeHelper::NonReactive),
         fragment_helper: element
             .contains_fragment()
             .then_some(RuntimeHelper::Fragment),
@@ -2303,6 +2334,7 @@ mod namespace_tests {
             value: ValueId::new(value),
             kind: fict_hir::JsxExpressionKind::Value,
             contains_fragment: false,
+            function_like: false,
             origin: test_origin(),
         }
     }
@@ -2326,6 +2358,7 @@ mod namespace_tests {
                             value: JsxAttributeValue::Expression {
                                 value: ValueId::new(9),
                                 function_like: false,
+                                contains_fragment: false,
                             },
                             origin: test_origin(),
                         },
@@ -2412,6 +2445,7 @@ mod namespace_tests {
                         value: JsxAttributeValue::Expression {
                             value: ValueId::new(11),
                             function_like: false,
+                            contains_fragment: false,
                         },
                         origin: test_origin(),
                     }],

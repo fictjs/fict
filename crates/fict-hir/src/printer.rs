@@ -247,13 +247,14 @@ fn print_jsx(output: &mut String, root: &JsxNode) {
                     value,
                     kind,
                     contains_fragment,
+                    function_like,
                     origin,
                 },
                 depth,
             ) => {
                 writeln!(
                     output,
-                    "{}child expression=value{} kind={kind:?} fragment={contains_fragment} origin={}",
+                    "{}child expression=value{} kind={kind:?} fragment={contains_fragment} function_like={function_like} origin={}",
                     indentation(depth),
                     value.index(),
                     print_origin(*origin)
@@ -299,8 +300,9 @@ fn print_jsx_attribute_value(value: &JsxAttributeValue) -> String {
         JsxAttributeValue::Expression {
             value,
             function_like,
+            contains_fragment,
         } => format!(
-            "expression(value{}, function_like={function_like})",
+            "expression(value{}, function_like={function_like}, fragment={contains_fragment})",
             value.index()
         ),
         JsxAttributeValue::Node(_) => "node".into(),

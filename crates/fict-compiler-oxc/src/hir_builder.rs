@@ -1512,6 +1512,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                                 RawJsxAttributeValue::Expression {
                                     span,
                                     function_like,
+                                    contains_fragment,
                                 } => JsxAttributeValue::Expression {
                                     value: self.syntax_value(
                                         owner,
@@ -1519,6 +1520,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                                         self.referenced_bindings(*span),
                                     ),
                                     function_like: *function_like,
+                                    contains_fragment: *contains_fragment,
                                 },
                                 RawJsxAttributeValue::Node(node) => JsxAttributeValue::Node(
                                     Box::new(self.lower_jsx_node(owner, node)),
@@ -1567,10 +1569,12 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 span,
                 kind,
                 contains_fragment,
+                function_like,
             } => JsxChild::Expression {
                 value: self.syntax_value(owner, *span, self.referenced_bindings(*span)),
                 kind: *kind,
                 contains_fragment: *contains_fragment,
+                function_like: *function_like,
                 origin: Origin::source(*span),
             },
             RawJsxChild::Node(node) => JsxChild::Node(Box::new(self.lower_jsx_node(owner, node))),
@@ -1790,6 +1794,7 @@ enum RawJsxAttributeValue {
     Expression {
         span: SourceSpan,
         function_like: bool,
+        contains_fragment: bool,
     },
     Node(Box<RawJsxNode>),
 }
@@ -1804,6 +1809,7 @@ enum RawJsxChild {
         span: SourceSpan,
         kind: JsxExpressionKind,
         contains_fragment: bool,
+        function_like: bool,
     },
     Node(Box<RawJsxNode>),
     Spread {
@@ -2001,10 +2007,15 @@ fn raw_jsx_attribute_value(
                     Expression::JSXFragment(fragment) => {
                         RawJsxAttributeValue::Node(Box::new(raw_jsx_fragment(scoping, fragment)))
                     }
-                    inner => RawJsxAttributeValue::Expression {
-                        span: source_span(expression.span()),
-                        function_like: inner.is_function(),
-                    },
+                    inner => {
+                        let mut fragments = FragmentDetector::default();
+                        fragments.visit_expression(expression);
+                        RawJsxAttributeValue::Expression {
+                            span: source_span(expression.span()),
+                            function_like: inner.is_function(),
+                            contains_fragment: fragments.found,
+                        }
+                    }
                 },
             )
         }
@@ -2057,6 +2068,7 @@ fn raw_jsx_child(scoping: &Scoping, child: &OxcJsxChild<'_>) -> Option<RawJsxChi
                             span: source_span(expression.span()),
                             kind,
                             contains_fragment: fragments.found,
+                            function_like: inner.is_function(),
                         }
                     }
                 }

@@ -377,6 +377,7 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
                     value: JsxAttributeValue::Expression {
                         value: ValueId::new(0),
                         function_like: false,
+                        contains_fragment: false,
                     },
                     origin: origin(),
                 },
@@ -385,6 +386,7 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
                     value: JsxAttributeValue::Expression {
                         value: ValueId::new(0),
                         function_like: false,
+                        contains_fragment: false,
                     },
                     origin: origin(),
                 },
@@ -393,6 +395,7 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
                     value: JsxAttributeValue::Expression {
                         value: ValueId::new(0),
                         function_like: false,
+                        contains_fragment: false,
                     },
                     origin: origin(),
                 },
@@ -409,6 +412,7 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
                         value: ValueId::new(0),
                         kind: JsxExpressionKind::Value,
                         contains_fragment: false,
+                        function_like: false,
                         origin: origin(),
                     }],
                     origin: origin(),
@@ -666,6 +670,7 @@ fn lowers_binding_aware_component_props_spreads_and_children_in_source_order() {
                     value: JsxAttributeValue::Expression {
                         value: ValueId::new(0),
                         function_like: false,
+                        contains_fragment: false,
                     },
                     origin: origin(),
                 },
