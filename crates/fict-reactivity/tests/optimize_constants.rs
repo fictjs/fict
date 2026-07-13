@@ -218,6 +218,94 @@ fn fails_closed_when_the_fixed_point_budget_is_exhausted() {
 }
 
 #[test]
+fn tracks_assignment_expression_constants_without_removing_the_write() {
+    let mut file = file();
+    let two = LiteralValue::Number(NumberLiteral::from_f64(2.0));
+    file.functions[0].locals[0].declaration_kind = DeclarationKind::Let;
+    file.functions[0].values = vec![
+        HirValue {
+            id: ValueId::new(0),
+            kind: ValueKind::Literal(two.clone()),
+            origin: origin(),
+        },
+        HirValue {
+            id: ValueId::new(1),
+            kind: ValueKind::InstructionResult,
+            origin: origin(),
+        },
+        HirValue {
+            id: ValueId::new(2),
+            kind: ValueKind::InstructionResult,
+            origin: origin(),
+        },
+    ];
+    file.functions[0].blocks[0].instructions = vec![
+        instruction(Some(0), HirInstructionKind::Literal(two)),
+        instruction(
+            None,
+            HirInstructionKind::Declare {
+                local: LocalId::new(0),
+                declaration_kind: DeclarationKind::Let,
+                initializer: Some(ValueId::new(0)),
+            },
+        ),
+        HirInstruction {
+            result: Some(ValueId::new(1)),
+            kind: HirInstructionKind::Write {
+                place: Place::local(LocalId::new(0)),
+                value: ValueId::new(0),
+            },
+            semantics: InstructionSemantics {
+                mutation: fict_hir::MutationEffect::Local,
+                ..InstructionSemantics::CONSERVATIVE_EAGER
+            },
+            origin: origin(),
+        },
+        instruction(
+            Some(2),
+            HirInstructionKind::Binary {
+                operator: BinaryOperator::Add,
+                left: ValueId::new(1),
+                right: ValueId::new(0),
+            },
+        ),
+    ];
+    file.functions[0].blocks[0].terminator.kind = TerminatorKind::Return {
+        value: Some(ValueId::new(2)),
+    };
+    verify_hir(&file).expect("valid assignment constant fixture");
+    let ssa = analyze_ssa(&file.functions[0]).expect("SSA");
+    let analysis = analyze_constants(
+        &file.functions[0],
+        &ssa,
+        ConstantPropagationOptions::default(),
+    )
+    .expect("assignment constants");
+
+    assert!(analysis.values.iter().any(|fact| {
+        fact.value == ValueId::new(1)
+            && matches!(fact.literal, LiteralValue::Number(number) if number.to_f64() == 2.0)
+    }));
+    assert!(analysis.values.iter().any(|fact| {
+        fact.value == ValueId::new(2)
+            && matches!(fact.literal, LiteralValue::Number(number) if number.to_f64() == 4.0)
+    }));
+    assert!(!analysis.foldable_values.contains(&ValueId::new(1)));
+    assert!(analysis.foldable_values.contains(&ValueId::new(2)));
+
+    let optimized = apply_constant_folding(&file, FunctionId::new(0), &analysis)
+        .expect("folded assignment HIR");
+    assert!(matches!(
+        optimized.functions[0].blocks[0].instructions[2].kind,
+        HirInstructionKind::Write { .. }
+    ));
+    assert!(matches!(
+        optimized.functions[0].blocks[0].instructions[3].kind,
+        HirInstructionKind::Literal(LiteralValue::Number(number)) if number.to_f64() == 4.0
+    ));
+}
+
+#[test]
 fn cse_reuses_pure_values_but_never_crosses_an_unknown_call_barrier() {
     let mut file = file();
     let zero = LiteralValue::Number(NumberLiteral::from_f64(0.0));

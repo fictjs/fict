@@ -236,10 +236,16 @@ pub fn analyze_shapes(
                 if let Some(shape) = structural_value_shape(result, instruction) {
                     structural_values.insert(result, shape);
                 }
-                if let HirInstructionKind::Sequence { values } = &instruction.kind
-                    && let Some(value) = values.last()
-                {
-                    value_sources.insert(result, *value);
+                match &instruction.kind {
+                    HirInstructionKind::Sequence { values } => {
+                        if let Some(value) = values.last() {
+                            value_sources.insert(result, *value);
+                        }
+                    }
+                    HirInstructionKind::Write { value, .. } => {
+                        value_sources.insert(result, *value);
+                    }
+                    _ => {}
                 }
                 if matches!(instruction.kind, HirInstructionKind::Read { .. })
                     && let Some([path]) = dependencies

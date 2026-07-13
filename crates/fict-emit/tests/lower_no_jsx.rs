@@ -79,6 +79,7 @@ fn fixture(kind: FunctionKind) -> HirFile {
             value(4, ValueKind::Literal(number())),
             value(5, ValueKind::InstructionResult),
             value(6, ValueKind::InstructionResult),
+            value(7, ValueKind::InstructionResult),
         ],
         blocks: vec![HirBlock {
             id: BlockId::new(0),
@@ -113,7 +114,7 @@ fn fixture(kind: FunctionKind) -> HirFile {
                 ),
                 instruction(Some(4), HirInstructionKind::Literal(number())),
                 HirInstruction {
-                    result: None,
+                    result: Some(ValueId::new(7)),
                     kind: HirInstructionKind::Write {
                         place: Place::local(LocalId::new(0)),
                         value: ValueId::new(4),
@@ -150,7 +151,7 @@ fn fixture(kind: FunctionKind) -> HirFile {
             ],
             terminator: HirTerminator {
                 kind: TerminatorKind::Return {
-                    value: Some(ValueId::new(5)),
+                    value: Some(ValueId::new(7)),
                 },
                 origin: origin(),
             },
@@ -264,12 +265,28 @@ fn lowers_module_state_reads_writes_updates_and_effects() {
             .iter()
             .any(|operation| matches!(operation, EmitOperation::ReadReactive { .. }))
     );
-    assert!(
-        program.functions[0]
-            .operations
-            .iter()
-            .any(|operation| matches!(operation, EmitOperation::WriteReactive { .. }))
-    );
+    let write = program.functions[0]
+        .operations
+        .iter()
+        .find(|operation| matches!(operation, EmitOperation::WriteReactive { .. }))
+        .expect("reactive write operation");
+    let write_target = match write {
+        EmitOperation::WriteReactive {
+            source_result: Some(source_result),
+            target: Some(target),
+            ..
+        } if *source_result == ValueId::new(7) => *target,
+        _ => panic!("result-bearing write must define its EmitIR temporary"),
+    };
+    assert!(program.functions[0].operations.iter().any(|operation| {
+        matches!(
+            operation,
+            EmitOperation::Return {
+                value: Some(fict_emit::EmitValueRef::Temporary(target)),
+                ..
+            } if *target == write_target
+        )
+    }));
     assert!(
         program.functions[0]
             .operations

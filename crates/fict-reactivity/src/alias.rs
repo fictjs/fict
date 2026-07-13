@@ -104,7 +104,7 @@ pub fn analyze_aliases(
             SsaDefinitionLocation::Entry | SsaDefinitionLocation::Phi(_) => None,
         })
         .collect();
-    let direct_read_sources = direct_read_sources(function, dependencies);
+    let direct_value_sources = direct_value_sources(function, dependencies);
     let mut parents = BTreeMap::new();
     for block in &function.blocks {
         if !ssa.cfg.reachable[block.id.as_usize()] {
@@ -124,7 +124,7 @@ pub fn analyze_aliases(
                 _ => continue,
             };
             let Some(source) =
-                initializer.and_then(|value| direct_read_sources.get(&value).copied())
+                initializer.and_then(|value| direct_value_sources.get(&value).copied())
             else {
                 continue;
             };
@@ -330,28 +330,53 @@ pub fn verify_aliases(
     }
 }
 
-fn direct_read_sources(
+fn direct_value_sources(
     function: &fict_hir::HirFunction,
     dependencies: &DependencyAnalysis,
 ) -> BTreeMap<ValueId, SsaName> {
     let mut sources = BTreeMap::new();
+    let mut forwarded_values = BTreeMap::new();
     for block in &function.blocks {
         for instruction in &block.instructions {
             let Some(result) = instruction.result else {
                 continue;
             };
-            if !matches!(instruction.kind, HirInstructionKind::Read { .. }) {
-                continue;
+            match &instruction.kind {
+                HirInstructionKind::Read { .. } => {
+                    let Some(paths) = dependencies.value_dependencies.get(result.as_usize()) else {
+                        continue;
+                    };
+                    if let [path] = paths.as_slice()
+                        && path.segments.is_empty()
+                        && let DependencyBase::Ssa(name) = path.base
+                    {
+                        sources.insert(result, name);
+                    }
+                }
+                HirInstructionKind::Write { value, .. } => {
+                    forwarded_values.insert(result, *value);
+                }
+                HirInstructionKind::Sequence { values } => {
+                    if let Some(value) = values.last() {
+                        forwarded_values.insert(result, *value);
+                    }
+                }
+                _ => {}
             }
-            let Some(paths) = dependencies.value_dependencies.get(result.as_usize()) else {
-                continue;
+        }
+    }
+    for result in forwarded_values.keys().copied().collect::<Vec<_>>() {
+        let mut value = result;
+        let mut visited = BTreeSet::new();
+        while visited.insert(value) {
+            if let Some(source) = sources.get(&value).copied() {
+                sources.insert(result, source);
+                break;
+            }
+            let Some(next) = forwarded_values.get(&value).copied() else {
+                break;
             };
-            if let [path] = paths.as_slice()
-                && path.segments.is_empty()
-                && let DependencyBase::Ssa(name) = path.base
-            {
-                sources.insert(result, name);
-            }
+            value = next;
         }
     }
     sources

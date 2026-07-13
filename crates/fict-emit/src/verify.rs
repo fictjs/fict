@@ -589,7 +589,11 @@ fn verify_operations(
                     diagnostics,
                 );
             }
-            EmitOperation::WriteReactive { slot, .. }
+            EmitOperation::WriteReactive {
+                slot,
+                source_result: None,
+                ..
+            }
             | EmitOperation::UpdateReactive {
                 slot,
                 source_result: None,
@@ -597,7 +601,12 @@ fn verify_operations(
             } => {
                 verify_slot(function, *slot, diagnostics);
             }
-            EmitOperation::UpdateReactive {
+            EmitOperation::WriteReactive {
+                slot,
+                source_result: Some(source_result),
+                ..
+            }
+            | EmitOperation::UpdateReactive {
                 slot,
                 source_result: Some(source_result),
                 ..

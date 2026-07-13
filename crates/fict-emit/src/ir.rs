@@ -255,8 +255,10 @@ pub enum EmitOperation {
     },
     WriteReactive {
         slot: EmitSlotId,
+        source_result: Option<ValueId>,
         projections: Vec<Projection>,
         value: EmitValueRef,
+        target: Option<EmitTemporaryId>,
         origin: Origin,
     },
     UpdateReactive {
@@ -570,6 +572,10 @@ impl EmitOperation {
             | Self::KeyedChild { target, .. }
             | Self::KeyedList { target, .. } => Some(*target),
             Self::UpdateReactive {
+                target: Some(target),
+                ..
+            } => Some(*target),
+            Self::WriteReactive {
                 target: Some(target),
                 ..
             } => Some(*target),

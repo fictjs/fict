@@ -2924,6 +2924,13 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         .cloned()
                         .map(EvaluationFact::Member),
                 )
+                .chain(
+                    local_mutations
+                        .iter()
+                        .filter(|mutation| mutation.owner == fact.id)
+                        .cloned()
+                        .map(EvaluationFact::Mutation),
+                )
                 .collect();
             evaluation_facts.sort_by_key(|event| {
                 let span = event.span();
@@ -2937,6 +2944,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     EvaluationFact::Jsx(jsx) => Some(self.materialize_jsx(fact.id, jsx)),
                     EvaluationFact::Call(call) => self.materialize_call(fact.id, call),
                     EvaluationFact::Member(member) => self.materialize_member_read(fact.id, member),
+                    EvaluationFact::Mutation(mutation) => {
+                        self.materialize_mutation(fact.id, mutation)
+                    }
                 };
                 inputs.extend(value);
             }
@@ -2950,98 +2960,6 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 .collect();
             for declaration in &owned_declarations {
                 inputs.extend(self.materialize_variable_declaration(fact.id, declaration));
-            }
-
-            for mutation in local_mutations
-                .iter()
-                .filter(|mutation| mutation.owner == fact.id)
-            {
-                let block = self.planned_block_for_span(fact.id, mutation.span);
-                let Some(place) = self.materialize_planned_place(fact.id, block, &mutation.place)
-                else {
-                    continue;
-                };
-                let projected = !place.projections.is_empty();
-                match mutation.kind {
-                    ReactiveMutationKind::Write {
-                        value_span,
-                        value_has_effects,
-                    } => {
-                        let value = self.control_expression_value(
-                            fact.id,
-                            block,
-                            value_span,
-                            true,
-                            value_has_effects,
-                        );
-                        self.functions[fact.id.as_usize()].blocks[block.as_usize()]
-                            .instructions
-                            .push(HirInstruction {
-                                result: None,
-                                kind: HirInstructionKind::Write { place, value },
-                                semantics: mutation_semantics(
-                                    mutation.reactive,
-                                    projected,
-                                    mutation.binding.is_none(),
-                                ),
-                                origin: Origin::source(mutation.span),
-                            });
-                        inputs.push(value);
-                    }
-                    ReactiveMutationKind::Compound {
-                        operator,
-                        value_span,
-                        value_has_effects,
-                    } => {
-                        let value = self.control_expression_value(
-                            fact.id,
-                            block,
-                            value_span,
-                            true,
-                            value_has_effects,
-                        );
-                        let result = self.push_value_to_block(
-                            fact.id,
-                            block,
-                            ValueKind::InstructionResult,
-                            Origin::source(mutation.span),
-                            HirInstructionKind::ReadWrite {
-                                place,
-                                compound: Some(operator),
-                                value: Some(value),
-                                update: None,
-                                prefix: false,
-                            },
-                            mutation_semantics(
-                                mutation.reactive,
-                                projected,
-                                mutation.binding.is_none(),
-                            ),
-                        );
-                        inputs.extend([value, result]);
-                    }
-                    ReactiveMutationKind::Update { operator, prefix } => {
-                        let result = self.push_value_to_block(
-                            fact.id,
-                            block,
-                            ValueKind::InstructionResult,
-                            Origin::source(mutation.span),
-                            HirInstructionKind::ReadWrite {
-                                place,
-                                compound: None,
-                                value: None,
-                                update: Some(operator),
-                                prefix,
-                            },
-                            mutation_semantics(
-                                mutation.reactive,
-                                projected,
-                                mutation.binding.is_none(),
-                            ),
-                        );
-                        inputs.push(result);
-                    }
-                }
             }
 
             for (_, pattern) in opaque_patterns
@@ -4063,6 +3981,71 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             },
         );
         Some(value)
+    }
+
+    fn materialize_mutation(
+        &mut self,
+        owner: FunctionId,
+        mutation: &LocalMutationFact,
+    ) -> Option<ValueId> {
+        let block = self.planned_block_for_span(owner, mutation.span);
+        let place = self.materialize_planned_place(owner, block, &mutation.place)?;
+        let projected = !place.projections.is_empty();
+        let semantics =
+            mutation_semantics(mutation.reactive, projected, mutation.binding.is_none());
+        let kind = match mutation.kind {
+            ReactiveMutationKind::Write {
+                value_span,
+                value_has_effects,
+            } => {
+                let value = self.control_expression_value(
+                    owner,
+                    block,
+                    value_span,
+                    true,
+                    value_has_effects,
+                );
+                HirInstructionKind::Write { place, value }
+            }
+            ReactiveMutationKind::Compound {
+                operator,
+                value_span,
+                value_has_effects,
+            } => {
+                let value = self.control_expression_value(
+                    owner,
+                    block,
+                    value_span,
+                    true,
+                    value_has_effects,
+                );
+                if compound_assignment_is_conditional(operator) {
+                    self.mark_span_deferred(owner, block, value_span);
+                }
+                HirInstructionKind::ReadWrite {
+                    place,
+                    compound: Some(operator),
+                    value: Some(value),
+                    update: None,
+                    prefix: false,
+                }
+            }
+            ReactiveMutationKind::Update { operator, prefix } => HirInstructionKind::ReadWrite {
+                place,
+                compound: None,
+                value: None,
+                update: Some(operator),
+                prefix,
+            },
+        };
+        Some(self.push_value_to_block(
+            owner,
+            block,
+            ValueKind::InstructionResult,
+            Origin::source(mutation.span),
+            kind,
+            semantics,
+        ))
     }
 
     fn materialize_member_read(
@@ -6436,6 +6419,7 @@ enum EvaluationFact {
     Jsx(JsxFact),
     Call(CallFact),
     Member(MemberReadFact),
+    Mutation(LocalMutationFact),
 }
 
 impl EvaluationFact {
@@ -6445,6 +6429,7 @@ impl EvaluationFact {
             Self::Jsx(jsx) => jsx.span,
             Self::Call(call) => call.span,
             Self::Member(member) => member.span,
+            Self::Mutation(mutation) => mutation.span,
         }
     }
 
@@ -6521,6 +6506,7 @@ impl EvaluationFact {
             Self::Jsx(_) => 15,
             Self::Member(_) => 16,
             Self::Call(_) => 17,
+            Self::Mutation(_) => 18,
         }
     }
 }
@@ -8732,6 +8718,15 @@ fn mutation_semantics(reactive: bool, projected: bool, external: bool) -> Instru
         evaluation: EvaluationMode::Eager,
         may_throw: true,
     }
+}
+
+fn compound_assignment_is_conditional(operator: CompoundAssignmentOperator) -> bool {
+    matches!(
+        operator,
+        CompoundAssignmentOperator::LogicalAnd
+            | CompoundAssignmentOperator::LogicalOr
+            | CompoundAssignmentOperator::NullishCoalescing
+    )
 }
 
 fn instruction_source_order_key(

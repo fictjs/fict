@@ -663,10 +663,23 @@ fn lower_function(
                         preserve(&mut operations, block.id, instruction_index, instruction);
                         continue;
                     };
+                    let value = lower_value(*value, &value_temporaries);
+                    let target = instruction.result.map(|result| {
+                        let target = allocate_temporary(
+                            &mut temporaries,
+                            &mut temporary_names,
+                            format!("__fict_v{}", result.index()),
+                            instruction.origin,
+                        );
+                        value_temporaries.insert(result, target);
+                        target
+                    });
                     operations.push(EmitOperation::WriteReactive {
                         slot,
+                        source_result: instruction.result,
                         projections: place.projections.clone(),
-                        value: lower_value(*value, &value_temporaries),
+                        value,
+                        target,
                         origin: instruction.origin,
                     });
                 }

@@ -794,6 +794,9 @@ pub enum HirInstructionKind {
         place: Place,
     },
     /// Plain assignment to a place.
+    ///
+    /// An authored assignment expression defines an instruction result equal to `value`;
+    /// declaration-initialization bookkeeping may use the same instruction without a result.
     Write {
         /// Written location.
         place: Place,

@@ -242,6 +242,108 @@ fn sequence_results_depend_on_and_inherit_shape_from_only_the_final_value() {
 }
 
 #[test]
+fn plain_assignment_results_inherit_their_rhs_shape() {
+    let frontend = build_hir(
+        r#"
+            export function assign(target) {
+                const object = { value: 1 };
+                const assigned = (target = object);
+                return assigned;
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Module,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified assignment HIR"),
+        CorePassOptions {
+            optimize: false,
+            ..CorePassOptions::default()
+        },
+    )
+    .expect("core passes over assignment result");
+    let function = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                output.hir.bindings[binding.as_usize()].display_name == "assign"
+            })
+        })
+        .expect("assign function");
+    let assigned = function
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("assigned"))
+        .expect("assigned local");
+    let object = function
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("object"))
+        .expect("object local");
+    let target = function
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("target"))
+        .expect("target local");
+    let analysis = &output.functions[function.id.as_usize()];
+    let definition = analysis
+        .ssa
+        .definitions
+        .iter()
+        .find(|definition| {
+            definition.name.local == assigned.id && definition.kind == SsaDefinitionKind::Declare
+        })
+        .expect("assigned declaration definition");
+    let shape = analysis
+        .shapes
+        .shapes
+        .iter()
+        .find(|shape| shape.name == definition.name)
+        .expect("assigned object shape");
+    assert_eq!(shape.shape.kind, ShapeKind::Object);
+    let object_definition = analysis
+        .ssa
+        .definitions
+        .iter()
+        .find(|definition| {
+            definition.name.local == object.id && definition.kind == SsaDefinitionKind::Declare
+        })
+        .expect("object declaration definition");
+    assert_eq!(
+        shape.shape.source,
+        ShapeSource::Alias(object_definition.name)
+    );
+    let target_definition = analysis
+        .ssa
+        .definitions
+        .iter()
+        .find(|definition| {
+            definition.name.local == target.id && definition.kind == SsaDefinitionKind::Write
+        })
+        .expect("target write definition");
+    let alias_class = analysis
+        .aliases
+        .classes
+        .iter()
+        .find(|class| class.members.contains(&definition.name))
+        .expect("assigned alias class");
+    assert!(alias_class.members.contains(&object_definition.name));
+    assert!(alias_class.members.contains(&target_definition.name));
+}
+
+#[test]
 fn template_results_depend_on_every_substitution_and_remain_primitive() {
     let frontend = build_hir(
         r#"

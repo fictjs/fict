@@ -6284,11 +6284,13 @@ mod tests {
             .operations
             .push(EmitOperation::WriteReactive {
                 slot: EmitSlotId::new(0),
+                source_result: None,
                 projections: vec![Projection::StaticProperty {
                     name: "value".into(),
                     optional: false,
                 }],
                 value: EmitValueRef::Literal(LiteralValue::Undefined),
+                target: None,
                 origin: Origin::source(SourceSpan::empty(0)),
             });
         let output = emit_program(
@@ -6441,8 +6443,10 @@ mod tests {
             let operation = match kind {
                 0 => EmitOperation::WriteReactive {
                     slot: EmitSlotId::new(0),
+                    source_result: None,
                     projections: Vec::new(),
                     value: EmitValueRef::Literal(LiteralValue::Undefined),
+                    target: None,
                     origin,
                 },
                 1 => EmitOperation::UpdateReactive {

@@ -947,6 +947,13 @@ fn evaluate_instruction(
     bindings: &BTreeMap<SsaName, LiteralValue>,
     read_sources: &BTreeMap<ValueId, SsaName>,
 ) -> Option<LiteralValue> {
+    match &instruction.kind {
+        HirInstructionKind::Write { value, .. } => return values.get(value).cloned(),
+        HirInstructionKind::Sequence { values: sequence } => {
+            return sequence.last().and_then(|value| values.get(value)).cloned();
+        }
+        _ => {}
+    }
     if instruction.semantics != fict_hir::InstructionSemantics::PURE_EAGER {
         return None;
     }

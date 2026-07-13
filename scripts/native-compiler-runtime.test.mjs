@@ -350,6 +350,72 @@ test('Rust compiler preserves method tag receivers and evaluates tag references 
   })
 })
 
+test('Rust compiler preserves assignment results and logical-assignment laziness', async () => {
+  const module = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      export let evaluate = () => null
+
+      function App() {
+        let value = $state(0)
+        evaluate = initial => {
+          const effects = []
+          value = initial
+          const make = (label, next) => {
+            effects.push(label)
+            return next
+          }
+          const assigned = (value = make('assign', 2))
+          const compound = (value += make('compound', 3))
+          const skippedAnd = (value = 0, value &&= make('and', 9))
+          const skippedOr = (value = 1, value ||= make('or', 9))
+          const skippedNullish = (value = 'set', value ??= make('nullish', 9))
+          const takenNullish = (value = null, value ??= make('taken', 7))
+          return {
+            assigned,
+            compound,
+            skippedAnd,
+            skippedOr,
+            skippedNullish,
+            takenNullish,
+            value,
+            effects,
+          }
+        }
+        return <output data-id="assignment-value">{value}</output>
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+    `,
+    'assignment-results',
+    /value\(__fict_value\)/,
+  )
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = module.mount(container)
+  await flushRuntime()
+
+  assert.deepEqual(module.evaluate(1), {
+    assigned: 2,
+    compound: 5,
+    skippedAnd: 0,
+    skippedOr: 1,
+    skippedNullish: 'set',
+    takenNullish: 7,
+    value: 7,
+    effects: ['assign', 'compound', 'taken'],
+  })
+  await flushRuntime()
+  assert.equal(container.querySelector('[data-id="assignment-value"]')?.textContent, '7')
+
+  dispose()
+  container.remove()
+})
+
 test('Rust compiler output executes structured for-of and for-in loops', async () => {
   const module = await compileAndImport(
     `

@@ -1208,6 +1208,12 @@ fn materializes_reactive_assignments_compounds_and_updates() {
         .collect();
 
     assert_eq!(mutations.len(), 4);
+    assert!(
+        mutations
+            .iter()
+            .all(|instruction| instruction.result.is_some()),
+        "authored mutation expressions must define their JavaScript result value"
+    );
     assert!(mutations.iter().all(|instruction| {
         instruction.semantics.mutation == MutationEffect::Observable
             && instruction.semantics.purity == Purity::Unknown
@@ -1251,6 +1257,41 @@ fn materializes_reactive_assignments_compounds_and_updates() {
         authored,
         ["count = next()", "count += delta()", "count++", "--count"]
     );
+    for (name, mutation) in [
+        ("assigned", mutations[0]),
+        ("compound", mutations[1]),
+        ("postfix", mutations[2]),
+        ("prefix", mutations[3]),
+    ] {
+        let local = app
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"));
+        assert!(app.blocks[0].instructions.iter().any(|instruction| {
+            matches!(
+                instruction.kind,
+                HirInstructionKind::Declare {
+                    local: candidate,
+                    initializer: Some(initializer),
+                    ..
+                } if candidate == local.id && Some(initializer) == mutation.result
+            )
+        }));
+    }
+    assert!(
+        app.blocks[0].instructions.iter().all(|instruction| {
+            !matches!(instruction.kind, HirInstructionKind::SyntaxFragment { .. })
+                || !authored.contains(
+                    &instruction
+                        .origin
+                        .primary_span
+                        .map(|span| &source[span.start() as usize..span.end() as usize])
+                        .unwrap_or_default(),
+                )
+        }),
+        "ordinary assignment expressions must not fall back to syntax fragments"
+    );
 
     let shadow = hir
         .functions
@@ -1272,6 +1313,11 @@ fn materializes_reactive_assignments_compounds_and_updates() {
         })
         .collect();
     assert_eq!(plain_mutations.len(), 2, "plain writes are explicit HIR");
+    assert!(
+        plain_mutations
+            .iter()
+            .all(|instruction| instruction.result.is_some())
+    );
     assert_eq!(
         plain_mutations
             .iter()
@@ -1285,6 +1331,216 @@ fn materializes_reactive_assignments_compounds_and_updates() {
             .collect::<Vec<_>>(),
         ["count += 1", "count++"]
     );
+}
+
+#[test]
+fn preserves_assignment_results_projected_order_and_logical_rhs_laziness() {
+    let source = r#"
+        function assign(value, object, key, make, invoke) {
+            const simple = (value = make('simple'));
+            const projected = (object[key()] = make('projected'));
+            const andResult = (value &&= make('and'));
+            const orResult = (value ||= make('or'));
+            const nullishResult = (value ??= make('nullish'));
+            const argument = invoke(value = make('argument'));
+            return [simple, projected, andResult, orResult, nullishResult, argument, value];
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified assignment-result HIR");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "assign")
+        })
+        .expect("assign function");
+    let instructions: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let authored = |instruction: &fict_hir::HirInstruction| {
+        let span = instruction
+            .origin
+            .primary_span
+            .expect("authored assignment instruction");
+        &source[span.start() as usize..span.end() as usize]
+    };
+    let instruction = |text: &str| {
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| authored(instruction) == text)
+            .unwrap_or_else(|| panic!("instruction for {text}"))
+    };
+    let instruction_for_result = |value| {
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| instruction.result == Some(value))
+            .unwrap_or_else(|| panic!("instruction for {value:?}"))
+    };
+    let initializer = |name: &str| {
+        let local = function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"));
+        instructions
+            .iter()
+            .find_map(|instruction| match instruction.kind {
+                HirInstructionKind::Declare {
+                    local: candidate,
+                    initializer,
+                    ..
+                } if candidate == local.id => initializer,
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{name} initializer"))
+    };
+
+    let assignment_roots: Vec<_> = [
+        "simple",
+        "projected",
+        "andResult",
+        "orResult",
+        "nullishResult",
+    ]
+    .into_iter()
+    .map(|name| instruction_for_result(initializer(name)))
+    .collect();
+    assert!(assignment_roots.iter().all(|instruction| matches!(
+        instruction.kind,
+        HirInstructionKind::Write { .. } | HirInstructionKind::ReadWrite { .. }
+    )));
+    assert!(
+        assignment_roots
+            .iter()
+            .all(|instruction| instruction.result.is_some())
+    );
+    assert!(instructions.iter().all(|instruction| {
+        !matches!(instruction.kind, HirInstructionKind::SyntaxFragment { .. })
+            || ![
+                "value = make('simple')",
+                "object[key()] = make('projected')",
+                "value &&= make('and')",
+                "value ||= make('or')",
+                "value ??= make('nullish')",
+                "value = make('argument')",
+            ]
+            .contains(&authored(instruction))
+    }));
+
+    let simple = instruction_for_result(initializer("simple"));
+    let HirInstructionKind::Write { value, .. } = simple.kind else {
+        panic!("simple assignment must be a typed write")
+    };
+    assert_eq!(authored(instruction_for_result(value)), "make('simple')");
+
+    let projected = instruction_for_result(initializer("projected"));
+    let HirInstructionKind::Write { place, value } = &projected.kind else {
+        panic!("projected assignment must be a typed write")
+    };
+    let [
+        Projection::ComputedProperty {
+            key,
+            optional: false,
+        },
+    ] = place.projections.as_slice()
+    else {
+        panic!("projected assignment must retain its computed key")
+    };
+    assert_eq!(authored(instruction_for_result(*key)), "key()");
+    assert_eq!(
+        authored(instruction_for_result(*value)),
+        "make('projected')"
+    );
+    assert_eq!(
+        instructions
+            .iter()
+            .filter(|instruction| authored(instruction) == "key()")
+            .count(),
+        1,
+        "computed assignment keys are evaluated once"
+    );
+    let position = |value| {
+        instructions
+            .iter()
+            .position(|instruction| instruction.result == Some(value))
+            .expect("result position")
+    };
+    assert!(position(*key) < position(*value));
+    assert!(position(*value) < position(projected.result.expect("projected result")));
+
+    for (name, operator, rhs) in [
+        (
+            "andResult",
+            CompoundAssignmentOperator::LogicalAnd,
+            "make('and')",
+        ),
+        (
+            "orResult",
+            CompoundAssignmentOperator::LogicalOr,
+            "make('or')",
+        ),
+        (
+            "nullishResult",
+            CompoundAssignmentOperator::NullishCoalescing,
+            "make('nullish')",
+        ),
+    ] {
+        let root = instruction_for_result(initializer(name));
+        let HirInstructionKind::ReadWrite {
+            compound: Some(candidate),
+            value: Some(value),
+            update: None,
+            ..
+        } = root.kind
+        else {
+            panic!("{name} logical assignment")
+        };
+        assert_eq!(candidate, operator);
+        assert_eq!(authored(instruction_for_result(value)), rhs);
+        assert_eq!(root.semantics.evaluation, EvaluationMode::Eager);
+        assert_eq!(
+            instruction_for_result(value).semantics.evaluation,
+            EvaluationMode::Deferred,
+            "logical-assignment RHS must remain lazy: {name}"
+        );
+    }
+    for text in ["'and'", "'or'", "'nullish'"] {
+        assert_eq!(
+            instruction(text).semantics.evaluation,
+            EvaluationMode::Deferred,
+            "every logical-assignment RHS descendant must remain lazy: {text}"
+        );
+    }
+    for text in ["make('simple')", "make('projected')", "make('argument')"] {
+        assert_eq!(
+            instruction(text).semantics.evaluation,
+            EvaluationMode::Eager,
+            "plain assignment RHS must remain eager: {text}"
+        );
+    }
+
+    let argument_assignment = instruction("value = make('argument')");
+    let argument_result = argument_assignment
+        .result
+        .expect("argument assignment result");
+    let invocation = instruction("invoke(value = make('argument'))");
+    let HirInstructionKind::Call(call) = &invocation.kind else {
+        panic!("outer invocation")
+    };
+    assert_eq!(call.arguments.len(), 1);
+    assert_eq!(call.arguments[0].value, argument_result);
 }
 
 #[test]
