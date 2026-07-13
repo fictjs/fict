@@ -4,8 +4,9 @@ use fict_compiler_oxc::{
 use fict_hir::{
     ArrayElement, BinaryOperator, CallHost, CompoundAssignmentOperator, DeclarationKind,
     EvaluationMode, FictMacroKind, FunctionKind, HirInstructionKind, IterationKind, LiteralValue,
-    MutationEffect, Purity, ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind,
-    TerminatorKind, UnaryOperator, UpdateOperator, ValueKind,
+    MutationEffect, ObjectEntry, ObjectPropertyKind, PropertyKey, Purity, ReactiveCallKind,
+    StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, UnaryOperator, UpdateOperator,
+    ValueKind,
 };
 
 fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
@@ -2188,6 +2189,315 @@ fn materializes_array_holes_spreads_and_element_evaluation_order() {
                 } if candidate == local.id && Some(initializer) == value.result
             )
         }));
+    }
+}
+
+#[test]
+fn materializes_object_keys_entries_and_definition_order() {
+    let source = r#"
+        function objects(shorthand, make, value, __proto__) {
+            const plain = {
+                alpha: 1,
+                "2": make('two'),
+                0x3: value,
+                shorthand,
+                __proto__() { return 'method-proto'; },
+            };
+            const complex = {
+                before: make('before'),
+                [make('key')]: make('computed-value'),
+                afterComputed: make('after-computed'),
+                ...make('spread'),
+                afterSpread: make('after-spread'),
+                method(arg) { return arg; },
+                get current() { return value; },
+                set current(next) { void next; },
+                ["__proto__"]: make('data-proto'),
+            };
+            const prototype = { "__proto__": null, safe: 1 };
+            const shorthandProto = { __proto__ };
+            const numericKeys = { 1e21: value, 1e-7: value, 1e-6: value };
+            return [plain, complex, prototype, shorthandProto, numericKeys];
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified object HIR");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "objects")
+        })
+        .expect("objects function");
+    let instructions: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let authored = |instruction: &fict_hir::HirInstruction| {
+        let span = instruction
+            .origin
+            .primary_span
+            .expect("authored expression");
+        &source[span.start() as usize..span.end() as usize]
+    };
+    let instruction = |text: &str| {
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| authored(instruction) == text)
+            .unwrap_or_else(|| panic!("instruction for {text}"))
+    };
+    let object_for_local = |name: &str| {
+        let local = function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"));
+        let initializer = instructions
+            .iter()
+            .find_map(|instruction| match instruction.kind {
+                HirInstructionKind::Declare {
+                    local: candidate,
+                    initializer,
+                    ..
+                } if candidate == local.id => initializer,
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{name} initializer"));
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| instruction.result == Some(initializer))
+            .unwrap_or_else(|| panic!("{name} object instruction"))
+    };
+
+    let plain = object_for_local("plain");
+    let HirInstructionKind::Object {
+        entries: plain_entries,
+    } = &plain.kind
+    else {
+        panic!("typed plain object")
+    };
+    assert_eq!(plain.semantics, fict_hir::InstructionSemantics::PURE_EAGER);
+    assert_eq!(plain_entries.len(), 5);
+    assert!(matches!(
+        &plain_entries[0],
+        ObjectEntry::Property {
+            key: PropertyKey::Static(name),
+            kind: ObjectPropertyKind::Init,
+            prototype_setter: false,
+            ..
+        } if name == "alpha"
+    ));
+    assert!(matches!(
+        plain_entries[1],
+        ObjectEntry::Property {
+            key: PropertyKey::Index(2),
+            ..
+        }
+    ));
+    assert!(matches!(
+        plain_entries[2],
+        ObjectEntry::Property {
+            key: PropertyKey::Index(3),
+            ..
+        }
+    ));
+    assert!(matches!(
+        &plain_entries[3],
+        ObjectEntry::Property {
+            key: PropertyKey::Static(name),
+            shorthand: true,
+            prototype_setter: false,
+            ..
+        } if name == "shorthand"
+    ));
+    let ObjectEntry::Property {
+        key: PropertyKey::Static(method_name),
+        value: plain_method,
+        kind: ObjectPropertyKind::Method,
+        prototype_setter: false,
+        ..
+    } = &plain_entries[4]
+    else {
+        panic!("__proto__ method is an ordinary method")
+    };
+    assert_eq!(method_name, "__proto__");
+    assert!(matches!(
+        function.values[plain_method.as_usize()].kind,
+        ValueKind::Function(_)
+    ));
+    assert_eq!(
+        instructions
+            .iter()
+            .find(|candidate| candidate.result == Some(*plain_method))
+            .expect("plain method function instruction")
+            .semantics
+            .evaluation,
+        EvaluationMode::Eager
+    );
+
+    let complex = object_for_local("complex");
+    let HirInstructionKind::Object {
+        entries: complex_entries,
+    } = &complex.kind
+    else {
+        panic!("typed complex object")
+    };
+    assert_eq!(complex_entries.len(), 9);
+    assert_eq!(
+        complex.semantics,
+        fict_hir::InstructionSemantics::CONSERVATIVE_EAGER
+    );
+    let ObjectEntry::Property {
+        key: PropertyKey::Computed(computed_key),
+        kind: ObjectPropertyKind::Init,
+        ..
+    } = complex_entries[1]
+    else {
+        panic!("computed object property")
+    };
+    assert_eq!(Some(computed_key), instruction("make('key')").result);
+    assert!(
+        matches!(complex_entries[3], ObjectEntry::Spread { value, .. }
+        if Some(value) == instruction("make('spread')").result)
+    );
+    for (index, kind) in [
+        (5, ObjectPropertyKind::Method),
+        (6, ObjectPropertyKind::Get),
+        (7, ObjectPropertyKind::Set),
+    ] {
+        let ObjectEntry::Property {
+            value,
+            kind: candidate,
+            prototype_setter: false,
+            ..
+        } = complex_entries[index]
+        else {
+            panic!("object callable entry {index}")
+        };
+        assert_eq!(candidate, kind);
+        assert!(matches!(
+            function.values[value.as_usize()].kind,
+            ValueKind::Function(_)
+        ));
+        assert_eq!(
+            instructions
+                .iter()
+                .find(|instruction| instruction.result == Some(value))
+                .expect("callable property function instruction")
+                .semantics
+                .evaluation,
+            EvaluationMode::Deferred
+        );
+    }
+    assert!(matches!(
+        complex_entries[8],
+        ObjectEntry::Property {
+            key: PropertyKey::Computed(_),
+            prototype_setter: false,
+            ..
+        }
+    ));
+
+    assert_eq!(
+        instruction("make('two')").semantics.evaluation,
+        EvaluationMode::Eager
+    );
+    assert_eq!(
+        instruction("make('before')").semantics.evaluation,
+        EvaluationMode::Eager
+    );
+    for text in [
+        "make('key')",
+        "make('computed-value')",
+        "make('after-computed')",
+        "make('spread')",
+        "make('after-spread')",
+        "make('data-proto')",
+    ] {
+        assert_eq!(
+            instruction(text).semantics.evaluation,
+            EvaluationMode::Deferred,
+            "the object node owns evaluation from its first computed key: {text}"
+        );
+    }
+
+    let prototype = object_for_local("prototype");
+    let HirInstructionKind::Object {
+        entries: prototype_entries,
+    } = &prototype.kind
+    else {
+        panic!("typed prototype object")
+    };
+    assert_eq!(
+        prototype.semantics,
+        fict_hir::InstructionSemantics::PURE_EAGER
+    );
+    assert!(matches!(
+        &prototype_entries[0],
+        ObjectEntry::Property {
+            key: PropertyKey::Static(name),
+            kind: ObjectPropertyKind::Init,
+            shorthand: false,
+            prototype_setter: true,
+            ..
+        } if name == "__proto__"
+    ));
+    assert!(matches!(
+        &prototype_entries[1],
+        ObjectEntry::Property {
+            key: PropertyKey::Static(name),
+            prototype_setter: false,
+            ..
+        } if name == "safe"
+    ));
+
+    let shorthand_proto = object_for_local("shorthandProto");
+    let HirInstructionKind::Object {
+        entries: shorthand_proto_entries,
+    } = &shorthand_proto.kind
+    else {
+        panic!("typed shorthand __proto__ object")
+    };
+    assert!(matches!(
+        &shorthand_proto_entries[0],
+        ObjectEntry::Property {
+            key: PropertyKey::Static(name),
+            kind: ObjectPropertyKind::Init,
+            shorthand: true,
+            prototype_setter: false,
+            ..
+        } if name == "__proto__"
+    ));
+
+    let numeric_keys = object_for_local("numericKeys");
+    let HirInstructionKind::Object {
+        entries: numeric_key_entries,
+    } = &numeric_keys.kind
+    else {
+        panic!("typed numeric-key object")
+    };
+    for (entry, expected) in numeric_key_entries
+        .iter()
+        .zip(["1e+21", "1e-7", "0.000001"])
+    {
+        assert!(matches!(
+            entry,
+            ObjectEntry::Property {
+                key: PropertyKey::Static(name),
+                prototype_setter: false,
+                ..
+            } if name == expected
+        ));
     }
 }
 

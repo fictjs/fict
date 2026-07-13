@@ -162,6 +162,7 @@ fn forms_versioned_alias_classes_and_invalidates_every_member() {
                             value: ValueId::new(0),
                             kind: ObjectPropertyKind::Init,
                             shorthand: false,
+                            prototype_setter: false,
                             origin: origin(),
                         }],
                     },

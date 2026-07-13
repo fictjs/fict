@@ -11,11 +11,11 @@ use fict_hir::{
     HirObjectParameterProperty, HirObjectParameterRest, HirParameter, HirScope, HirTerminator,
     HirValue, InstructionSemantics, IterationKind, JsxAttribute, JsxAttributeValue, JsxChild,
     JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode,
-    JsxTemplate, LiteralValue, LocalId, LocalKind, MutationEffect, NumberLiteral, Origin,
-    PatternSummary, Purity, ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind, RegionId,
-    ScopeId, ScopeKind, StructuredSourceHint, SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind,
-    SyntaxSummary, TemplateId, TerminatorKind, UnaryOperator, UpdateOperator, ValueId, ValueKind,
-    verify_hir,
+    JsxTemplate, LiteralValue, LocalId, LocalKind, MutationEffect, NumberLiteral, ObjectEntry,
+    ObjectPropertyKind, Origin, PatternSummary, PropertyKey, Purity, ReactiveCallKind,
+    ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind, StructuredSourceHint,
+    SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TemplateId,
+    TerminatorKind, UnaryOperator, UpdateOperator, ValueId, ValueKind, verify_hir,
 };
 use oxc::{
     allocator::Allocator,
@@ -28,8 +28,9 @@ use oxc::{
             JSXAttributeItem, JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue,
             JSXChild as OxcJsxChild, JSXElement, JSXElementName as OxcJsxElementName,
             JSXExpression, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject,
-            LogicalExpression, MemberExpression, MetaProperty, NewExpression, ObjectPropertyKind,
-            Program, SimpleAssignmentTarget, Statement, Super, TaggedTemplateExpression,
+            LogicalExpression, MemberExpression, MetaProperty, NewExpression,
+            ObjectPropertyKind as OxcObjectPropertyKind, Program, PropertyKey as OxcPropertyKey,
+            PropertyKind, SimpleAssignmentTarget, Statement, Super, TaggedTemplateExpression,
             ThisExpression, UpdateExpression, VariableDeclaration, VariableDeclarationKind,
             VariableDeclarator,
         },
@@ -47,6 +48,7 @@ use oxc::{
     semantic::{Scoping, Semantic, SemanticBuilder},
     span::{GetSpan, Span},
     syntax::{
+        number::ToJsString as _,
         operator::{
             AssignmentOperator as OxcAssignmentOperator, BinaryOperator as OxcBinaryOperator,
             LogicalOperator as OxcLogicalOperator, UnaryOperator as OxcUnaryOperator,
@@ -654,6 +656,12 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
                         .collect(),
                 },
             }),
+            Expression::ObjectExpression(object) => {
+                typed_object_entries(object).map(|entries| TypedExpressionFact {
+                    span: source_span(object.span),
+                    kind: TypedExpressionKind::Object { entries },
+                })
+            }
             _ => None,
         };
         if let Some(fact) = fact {
@@ -661,6 +669,80 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
         }
         walk_expression(self, expression);
     }
+}
+
+fn typed_object_entries(
+    object: &oxc::ast::ast::ObjectExpression<'_>,
+) -> Option<Vec<TypedObjectEntry>> {
+    object
+        .properties
+        .iter()
+        .map(|entry| match entry {
+            OxcObjectPropertyKind::SpreadProperty(spread) => {
+                let value = spread.argument.get_inner_expression();
+                Some(TypedObjectEntry::Spread {
+                    value: source_span(value.span()),
+                    value_has_effects: structured_control_flow::expression_has_effects(
+                        &spread.argument,
+                    ),
+                    origin: source_span(spread.span),
+                })
+            }
+            OxcObjectPropertyKind::ObjectProperty(property) => {
+                let key = if property.computed {
+                    let expression = property.key.as_expression()?.get_inner_expression();
+                    TypedObjectKey::Computed {
+                        expression: source_span(expression.span()),
+                        expression_has_effects: structured_control_flow::expression_has_effects(
+                            expression,
+                        ),
+                    }
+                } else {
+                    typed_static_object_key(&property.key)?
+                };
+                let kind = match property.kind {
+                    PropertyKind::Get => ObjectPropertyKind::Get,
+                    PropertyKind::Set => ObjectPropertyKind::Set,
+                    PropertyKind::Init if property.method => ObjectPropertyKind::Method,
+                    PropertyKind::Init => ObjectPropertyKind::Init,
+                };
+                let prototype_setter = kind == ObjectPropertyKind::Init
+                    && !property.computed
+                    && !property.shorthand
+                    && matches!(&key, TypedObjectKey::Static(name) if name == "__proto__");
+                let value = property.value.get_inner_expression();
+                Some(TypedObjectEntry::Property {
+                    key,
+                    value: source_span(value.span()),
+                    value_has_effects: structured_control_flow::expression_has_effects(
+                        &property.value,
+                    ),
+                    kind,
+                    shorthand: property.shorthand,
+                    prototype_setter,
+                    origin: source_span(property.span),
+                })
+            }
+        })
+        .collect()
+}
+
+fn typed_static_object_key(key: &OxcPropertyKey<'_>) -> Option<TypedObjectKey> {
+    if matches!(key, OxcPropertyKey::StringLiteral(literal) if literal.lone_surrogates) {
+        return None;
+    }
+    let name = match key {
+        OxcPropertyKey::NumericLiteral(literal) if literal.value == 0.0 => "0".to_owned(),
+        OxcPropertyKey::NumericLiteral(literal) => literal.value.to_js_string(),
+        _ => key.static_name()?.into_owned(),
+    };
+    name.parse::<u32>()
+        .ok()
+        .filter(|index| index.to_string() == name)
+        .map_or_else(
+            || Some(TypedObjectKey::Static(name)),
+            |index| Some(TypedObjectKey::Index(index)),
+        )
 }
 
 fn parameter_facts(parameters: &FormalParameters<'_>) -> Vec<ParameterFact> {
@@ -2991,6 +3073,94 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     },
                 )
             }
+            TypedExpressionKind::Object { entries } => {
+                let mut materialized = Vec::with_capacity(entries.len());
+                let mut owns_evaluation = false;
+                for entry in entries {
+                    match entry {
+                        TypedObjectEntry::Property {
+                            key,
+                            value,
+                            value_has_effects,
+                            kind,
+                            shorthand,
+                            prototype_setter,
+                            origin,
+                        } => {
+                            let key = match key {
+                                TypedObjectKey::Static(name) => PropertyKey::Static(name.clone()),
+                                TypedObjectKey::Index(index) => PropertyKey::Index(*index),
+                                TypedObjectKey::Computed {
+                                    expression,
+                                    expression_has_effects,
+                                } => {
+                                    owns_evaluation = true;
+                                    let key = self.control_expression_value(
+                                        owner,
+                                        block,
+                                        *expression,
+                                        true,
+                                        *expression_has_effects,
+                                    );
+                                    self.mark_span_deferred(owner, block, *expression);
+                                    PropertyKey::Computed(key)
+                                }
+                            };
+                            let property_value = self.control_expression_value(
+                                owner,
+                                block,
+                                *value,
+                                true,
+                                *value_has_effects,
+                            );
+                            if owns_evaluation {
+                                self.mark_span_deferred(owner, block, *value);
+                            }
+                            materialized.push(ObjectEntry::Property {
+                                key,
+                                value: property_value,
+                                kind: *kind,
+                                shorthand: *shorthand,
+                                prototype_setter: *prototype_setter,
+                                origin: Origin::source(*origin),
+                            });
+                        }
+                        TypedObjectEntry::Spread {
+                            value,
+                            value_has_effects,
+                            origin,
+                        } => {
+                            owns_evaluation = true;
+                            let spread_value = self.control_expression_value(
+                                owner,
+                                block,
+                                *value,
+                                true,
+                                *value_has_effects,
+                            );
+                            self.mark_span_deferred(owner, block, *value);
+                            materialized.push(ObjectEntry::Spread {
+                                value: spread_value,
+                                origin: Origin::source(*origin),
+                            });
+                        }
+                    }
+                }
+                self.push_value_to_block(
+                    owner,
+                    block,
+                    ValueKind::InstructionResult,
+                    origin,
+                    HirInstructionKind::Object {
+                        entries: materialized,
+                    },
+                    if owns_evaluation {
+                        InstructionSemantics::CONSERVATIVE_EAGER
+                    } else {
+                        InstructionSemantics::PURE_EAGER
+                    },
+                )
+            }
         })
     }
 
@@ -4701,7 +4871,7 @@ fn is_dynamic_props_spread(expression: &Expression<'_>) -> bool {
         Expression::ObjectExpression(object) => object
             .properties
             .iter()
-            .any(|property| matches!(property, ObjectPropertyKind::SpreadProperty(_))),
+            .any(|property| matches!(property, OxcObjectPropertyKind::SpreadProperty(_))),
         Expression::ArrayExpression(array) => array
             .elements
             .iter()
@@ -5268,6 +5438,9 @@ enum TypedExpressionKind {
     Array {
         elements: Vec<TypedArrayElement>,
     },
+    Object {
+        entries: Vec<TypedObjectEntry>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -5281,6 +5454,34 @@ enum TypedArrayElement {
         span: SourceSpan,
         origin: SourceSpan,
         has_effects: bool,
+    },
+}
+
+#[derive(Debug, Clone)]
+enum TypedObjectEntry {
+    Property {
+        key: TypedObjectKey,
+        value: SourceSpan,
+        value_has_effects: bool,
+        kind: ObjectPropertyKind,
+        shorthand: bool,
+        prototype_setter: bool,
+        origin: SourceSpan,
+    },
+    Spread {
+        value: SourceSpan,
+        value_has_effects: bool,
+        origin: SourceSpan,
+    },
+}
+
+#[derive(Debug, Clone)]
+enum TypedObjectKey {
+    Static(String),
+    Index(u32),
+    Computed {
+        expression: SourceSpan,
+        expression_has_effects: bool,
     },
 }
 
@@ -5393,9 +5594,13 @@ impl EvaluationFact {
                 kind: TypedExpressionKind::Array { .. },
                 ..
             }) => 5,
-            Self::Jsx(_) => 6,
-            Self::Member(_) => 7,
-            Self::Call(_) => 8,
+            Self::Typed(TypedExpressionFact {
+                kind: TypedExpressionKind::Object { .. },
+                ..
+            }) => 6,
+            Self::Jsx(_) => 7,
+            Self::Member(_) => 8,
+            Self::Call(_) => 9,
         }
     }
 }
@@ -6147,7 +6352,7 @@ impl CallbackPropertyCollector<'_> {
 
     fn push_object(&mut self, target: SymbolId, object: &oxc::ast::ast::ObjectExpression<'_>) {
         for property in &object.properties {
-            let ObjectPropertyKind::ObjectProperty(property) = property else {
+            let OxcObjectPropertyKind::ObjectProperty(property) = property else {
                 continue;
             };
             let Some(name) = property.key.static_name() else {

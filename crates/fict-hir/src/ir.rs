@@ -581,6 +581,10 @@ pub enum ObjectEntry {
         kind: ObjectPropertyKind,
         /// Whether identifier shorthand was authored.
         shorthand: bool,
+        /// Whether this is the special non-computed `__proto__` prototype setter.
+        ///
+        /// This is distinct from a computed or shorthand `__proto__` data property.
+        prototype_setter: bool,
         /// Source provenance.
         origin: Origin,
     },

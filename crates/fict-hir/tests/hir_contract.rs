@@ -1,9 +1,9 @@
 use fict_hir::{
     BlockId, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction,
     HirInstruction, HirInstructionKind, HirScope, HirTerminator, HirValue, InstructionSemantics,
-    LiteralValue, NumberLiteral, Origin, ScopeId, ScopeKind, StructuredSourceHint,
-    StructuredSourceKind, StructuredSwitchCaseHint, TerminatorKind, ValueId, ValueKind, print_hir,
-    verify_hir,
+    LiteralValue, NumberLiteral, ObjectEntry, ObjectPropertyKind, Origin, PropertyKey, ScopeId,
+    ScopeKind, StructuredSourceHint, StructuredSourceKind, StructuredSwitchCaseHint,
+    TerminatorKind, ValueId, ValueKind, print_hir, verify_hir,
 };
 
 fn empty_file() -> HirFile {
@@ -174,6 +174,76 @@ fn verifier_checks_every_typed_conditional_input() {
             .any(|diagnostic| diagnostic.code.as_str() == "FICT-HIR-REF"
                 && diagnostic.message.contains("value99"))
     );
+}
+
+#[test]
+fn verifier_enforces_object_prototype_setter_invariants() {
+    let mut file = empty_file();
+    let origin = Origin::source(fict_hir::SourceSpan::empty(0));
+    file.functions[0].values.extend([
+        HirValue {
+            id: ValueId::new(0),
+            kind: ValueKind::Literal(LiteralValue::Null),
+            origin,
+        },
+        HirValue {
+            id: ValueId::new(1),
+            kind: ValueKind::InstructionResult,
+            origin,
+        },
+    ]);
+    file.functions[0].blocks[0].instructions.extend([
+        HirInstruction {
+            result: Some(ValueId::new(0)),
+            kind: HirInstructionKind::Literal(LiteralValue::Null),
+            semantics: InstructionSemantics::PURE_EAGER,
+            origin,
+        },
+        HirInstruction {
+            result: Some(ValueId::new(1)),
+            kind: HirInstructionKind::Object {
+                entries: vec![ObjectEntry::Property {
+                    key: PropertyKey::Static("__proto__".to_owned()),
+                    value: ValueId::new(0),
+                    kind: ObjectPropertyKind::Init,
+                    shorthand: false,
+                    prototype_setter: true,
+                    origin,
+                }],
+            },
+            semantics: InstructionSemantics::PURE_EAGER,
+            origin,
+        },
+    ]);
+
+    verify_hir(&file).expect("one well-formed prototype setter is valid");
+    let HirInstructionKind::Object { entries } =
+        &mut file.functions[0].blocks[0].instructions[1].kind
+    else {
+        panic!("object fixture")
+    };
+    entries.push(entries[0].clone());
+    let duplicate = verify_hir(&file).expect_err("duplicate prototype setters must fail");
+    assert!(duplicate.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-OBJECT"
+            && diagnostic.message.contains("multiple __proto__")
+    }));
+
+    let HirInstructionKind::Object { entries } =
+        &mut file.functions[0].blocks[0].instructions[1].kind
+    else {
+        panic!("object fixture")
+    };
+    entries.truncate(1);
+    let ObjectEntry::Property { shorthand, .. } = &mut entries[0] else {
+        panic!("property fixture")
+    };
+    *shorthand = true;
+    let malformed = verify_hir(&file).expect_err("shorthand prototype setter must fail");
+    assert!(malformed.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-OBJECT"
+            && diagnostic.message.contains("non-shorthand")
+    }));
 }
 
 #[test]

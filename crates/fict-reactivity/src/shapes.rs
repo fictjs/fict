@@ -601,15 +601,24 @@ fn structural_value_shape(
             let mut has_spread = false;
             for entry in entries {
                 match entry {
-                    ObjectEntry::Property { key, .. } => match key {
-                        PropertyKey::Static(key) => {
-                            insert_sorted(&mut known_keys, ShapeKey::Static(key.clone()));
+                    ObjectEntry::Property {
+                        key,
+                        prototype_setter,
+                        ..
+                    } => {
+                        if *prototype_setter {
+                            continue;
                         }
-                        PropertyKey::Index(index) => {
-                            insert_sorted(&mut known_keys, ShapeKey::Index(*index));
+                        match key {
+                            PropertyKey::Static(key) => {
+                                insert_sorted(&mut known_keys, ShapeKey::Static(key.clone()));
+                            }
+                            PropertyKey::Index(index) => {
+                                insert_sorted(&mut known_keys, ShapeKey::Index(*index));
+                            }
+                            PropertyKey::Computed(_) => dynamic_access = true,
                         }
-                        PropertyKey::Computed(_) => dynamic_access = true,
-                    },
+                    }
                     ObjectEntry::Spread { .. } => has_spread = true,
                 }
             }

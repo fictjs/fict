@@ -110,13 +110,24 @@ fn propagates_shape_state_across_aliases() {
                 instruction(
                     Some(1),
                     HirInstructionKind::Object {
-                        entries: vec![ObjectEntry::Property {
-                            key: PropertyKey::Static("x".into()),
-                            value: ValueId::new(0),
-                            kind: ObjectPropertyKind::Init,
-                            shorthand: false,
-                            origin: origin(),
-                        }],
+                        entries: vec![
+                            ObjectEntry::Property {
+                                key: PropertyKey::Static("x".into()),
+                                value: ValueId::new(0),
+                                kind: ObjectPropertyKind::Init,
+                                shorthand: false,
+                                prototype_setter: false,
+                                origin: origin(),
+                            },
+                            ObjectEntry::Property {
+                                key: PropertyKey::Static("__proto__".into()),
+                                value: ValueId::new(0),
+                                kind: ObjectPropertyKind::Init,
+                                shorthand: false,
+                                prototype_setter: true,
+                                origin: origin(),
+                            },
+                        ],
                     },
                 ),
                 declare(0, 1),
@@ -352,6 +363,7 @@ fn phi_join_keeps_object_kind_but_opens_different_key_sets() {
         value: ValueId::new(0),
         kind: ObjectPropertyKind::Init,
         shorthand: false,
+        prototype_setter: false,
         origin: origin(),
     };
     let function = HirFunction {

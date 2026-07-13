@@ -727,22 +727,51 @@ impl Verifier<'_> {
                 }
             }
             HirInstructionKind::Object { entries } => {
+                let mut prototype_setters = 0_u32;
                 for entry in entries {
                     match entry {
                         ObjectEntry::Property {
-                            key, value, origin, ..
+                            key,
+                            value,
+                            kind,
+                            shorthand,
+                            prototype_setter,
+                            origin,
                         } => {
                             if let crate::PropertyKey::Computed(key) = key {
                                 self.value(function, *key, *origin);
                             }
                             self.value(function, *value, *origin);
                             self.verify_origin(*origin);
+                            let must_set_prototype = *kind == crate::ObjectPropertyKind::Init
+                                && !*shorthand
+                                && matches!(
+                                    key,
+                                    crate::PropertyKey::Static(name) if name == "__proto__"
+                                );
+                            if *prototype_setter {
+                                prototype_setters = prototype_setters.saturating_add(1);
+                            }
+                            if *prototype_setter != must_set_prototype {
+                                self.error(
+                                    "FICT-HIR-OBJECT",
+                                    "a non-shorthand static __proto__ initializer must be marked as the object prototype setter",
+                                    Some(*origin),
+                                );
+                            }
                         }
                         ObjectEntry::Spread { value, origin } => {
                             self.value(function, *value, *origin);
                             self.verify_origin(*origin);
                         }
                     }
+                }
+                if prototype_setters > 1 {
+                    self.error(
+                        "FICT-HIR-OBJECT",
+                        "an object literal cannot contain multiple __proto__ prototype setters",
+                        Some(instruction.origin),
+                    );
                 }
             }
             HirInstructionKind::Function { function: nested } => {
