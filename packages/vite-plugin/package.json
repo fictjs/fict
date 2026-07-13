@@ -44,14 +44,14 @@
     "vite": ">=7.0.0"
   },
   "dependencies": {
-    "@babel/core": "^7.29.7",
-    "@babel/generator": "^7.29.1",
-    "@babel/parser": "^7.29.0",
-    "@babel/plugin-syntax-jsx": "^7.28.6",
-    "@babel/plugin-transform-typescript": "^7.28.5",
-    "@babel/plugin-transform-react-jsx": "^7.28.6",
-    "@babel/traverse": "^7.29.0",
-    "@babel/types": "^7.29.0",
+    "@babel/core": "^8.0.1",
+    "@babel/generator": "^8.0.0",
+    "@babel/parser": "^8.0.4",
+    "@babel/plugin-syntax-jsx": "^8.0.1",
+    "@babel/plugin-transform-typescript": "^8.0.1",
+    "@babel/plugin-transform-react-jsx": "^8.0.1",
+    "@babel/traverse": "^8.0.4",
+    "@babel/types": "^8.0.4",
     "@fictjs/compiler": "workspace:*"
   },
   "devDependencies": {
@@ -59,7 +59,7 @@
     "@types/babel__generator": "^7.6.8",
     "@types/babel__traverse": "^7.20.6",
     "tsdown": "^0.22.3",
-    "vite": "^7.3.6"
+    "vite": "^8.1.4"
   },
   "keywords": [
     "fict",

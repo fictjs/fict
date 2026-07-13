@@ -68,11 +68,11 @@
     "release:compiler:verify": "pnpm --filter @fictjs/runtime build && pnpm --filter fict build && pnpm --dir packages/compiler lint && pnpm --dir packages/compiler typecheck && pnpm --dir packages/compiler test && pnpm guardrails:compiler-complexity && pnpm guardrails:hir && pnpm bench:optimizer:guard"
   },
   "devDependencies": {
-    "@babel/core": "^7.29.7",
-    "@babel/plugin-syntax-jsx": "^7.28.6",
-    "@babel/plugin-transform-react-jsx": "^7.28.6",
-    "@babel/preset-typescript": "^7.26.0",
-    "@babel/types": "^7.29.0",
+    "@babel/core": "^8.0.1",
+    "@babel/plugin-syntax-jsx": "^8.0.1",
+    "@babel/plugin-transform-react-jsx": "^8.0.1",
+    "@babel/preset-typescript": "^8.0.1",
+    "@babel/types": "^8.0.4",
     "@changesets/cli": "^2.29.8",
     "@commitlint/cli": "^20.4.2",
     "@commitlint/config-conventional": "^20.4.2",
@@ -96,7 +96,7 @@
     "prettier": "^3.8.1",
     "size-limit": "^12.0.0",
     "turbo": "^2.8.10",
-    "typescript": "^5.9.3",
+    "typescript": "^7.0.2",
     "typescript-eslint": "^8.56.0",
     "vitest": "^4.0.18"
   },
