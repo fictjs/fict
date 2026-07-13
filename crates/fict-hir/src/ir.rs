@@ -889,6 +889,9 @@ pub enum HirInstructionKind {
     TaggedTemplate {
         /// Evaluated tag expression.
         tag: ValueId,
+        /// Property reference used to obtain a method tag, preserving its receiver identity and
+        /// evaluated base/key values. Direct value tags keep this absent.
+        tag_reference: Option<Place>,
         /// Static template segments. There is exactly one more quasi than substitution.
         quasis: Vec<TaggedTemplateQuasi>,
         /// Substitution values passed without string coercion, in authored order.

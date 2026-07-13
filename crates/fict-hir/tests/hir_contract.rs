@@ -657,6 +657,7 @@ fn verifier_enforces_tagged_template_inputs_and_arity() {
             result: Some(ValueId::new(2)),
             kind: HirInstructionKind::TaggedTemplate {
                 tag: ValueId::new(0),
+                tag_reference: None,
                 quasis: vec![
                     TaggedTemplateQuasi {
                         cooked: Some(JavaScriptString::from_code_units(vec![u16::from(b'a')])),
@@ -700,6 +701,81 @@ fn verifier_enforces_tagged_template_inputs_and_arity() {
     let diagnostics = verify_hir(&file).expect_err("invalid tagged template tag must fail");
     assert!(diagnostics.as_slice().iter().any(|diagnostic| {
         diagnostic.code.as_str() == "FICT-HIR-REF" && diagnostic.message.contains("value99")
+    }));
+}
+
+#[test]
+fn verifier_requires_method_tags_to_retain_the_exact_tag_read_reference() {
+    let mut file = empty_file();
+    let origin = Origin::source(fict_hir::SourceSpan::empty(0));
+    let method = Place {
+        base: PlaceBase::Global(GlobalId::new(0)),
+        projections: vec![Projection::StaticProperty {
+            name: "tag".to_owned(),
+            optional: false,
+        }],
+    };
+    file.globals.push(HirGlobal {
+        id: GlobalId::new(0),
+        name: "hostObject".to_owned(),
+        origin,
+    });
+    file.functions[0].values.extend([
+        HirValue {
+            id: ValueId::new(0),
+            kind: ValueKind::InstructionResult,
+            origin,
+        },
+        HirValue {
+            id: ValueId::new(1),
+            kind: ValueKind::InstructionResult,
+            origin,
+        },
+    ]);
+    file.functions[0].blocks[0].instructions.extend([
+        HirInstruction {
+            result: Some(ValueId::new(0)),
+            kind: HirInstructionKind::Read {
+                place: method.clone(),
+            },
+            semantics: InstructionSemantics::CONSERVATIVE_EAGER,
+            origin,
+        },
+        HirInstruction {
+            result: Some(ValueId::new(1)),
+            kind: HirInstructionKind::TaggedTemplate {
+                tag: ValueId::new(0),
+                tag_reference: Some(method),
+                quasis: vec![TaggedTemplateQuasi {
+                    cooked: Some(JavaScriptString::from("value")),
+                    raw: "value".to_owned(),
+                }],
+                substitutions: Vec::new(),
+                host: CallHost::Unknown,
+            },
+            semantics: InstructionSemantics::CONSERVATIVE_EAGER,
+            origin,
+        },
+    ]);
+
+    verify_hir(&file).expect("well-formed method-tag reference");
+
+    let HirInstructionKind::TaggedTemplate { tag_reference, .. } =
+        &mut file.functions[0].blocks[0].instructions[1].kind
+    else {
+        panic!("method-tag fixture")
+    };
+    *tag_reference = Some(Place {
+        base: PlaceBase::Global(GlobalId::new(0)),
+        projections: vec![Projection::StaticProperty {
+            name: "other".to_owned(),
+            optional: false,
+        }],
+    });
+    let diagnostics = verify_hir(&file).expect_err("mismatched method-tag reference must fail");
+    assert!(diagnostics.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-TAG-REFERENCE"
+            && diagnostic.message.contains("match the read")
     }));
 }
 

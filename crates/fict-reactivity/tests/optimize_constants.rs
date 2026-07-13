@@ -3,7 +3,7 @@ use fict_hir::{
     FunctionId, FunctionKind, HirBlock, HirFile, HirFunction, HirInstruction, HirInstructionKind,
     HirLocal, HirScope, HirTerminator, HirValue, InstructionSemantics, LiteralValue, LocalId,
     LocalKind, NumberLiteral, Origin, Place, PlaceBase, Projection, ScopeId, ScopeKind, SourceSpan,
-    TerminatorKind, UnaryOperator, ValueId, ValueKind, verify_hir,
+    TaggedTemplateQuasi, TerminatorKind, UnaryOperator, ValueId, ValueKind, verify_hir,
 };
 use fict_reactivity::{
     ConstantPropagationOptions, analyze_aliases, analyze_constants, analyze_cse, analyze_dce,
@@ -464,6 +464,143 @@ fn cse_and_dce_remap_method_call_references_with_their_callee_reads() {
     };
     assert_eq!(call.callee, ValueId::new(3));
     assert_eq!(call.callee_reference.as_ref(), Some(read_place));
+    assert!(matches!(read_place.base, PlaceBase::Value(value) if value == ValueId::new(1)));
+    assert!(matches!(
+        read_place.projections.as_slice(),
+        [Projection::ComputedProperty {
+            key,
+            optional: false,
+        }] if *key == ValueId::new(2)
+    ));
+}
+
+#[test]
+fn cse_and_dce_remap_method_tag_references_with_their_tag_reads() {
+    let mut file = file();
+    let zero = LiteralValue::Number(NumberLiteral::from_f64(0.0));
+    let key = LiteralValue::Boolean(true);
+    file.functions[0].locals.clear();
+    file.functions[0].values = vec![
+        HirValue {
+            id: ValueId::new(0),
+            kind: ValueKind::Literal(zero.clone()),
+            origin: origin(),
+        },
+        HirValue {
+            id: ValueId::new(1),
+            kind: ValueKind::InstructionResult,
+            origin: origin(),
+        },
+        HirValue {
+            id: ValueId::new(2),
+            kind: ValueKind::InstructionResult,
+            origin: origin(),
+        },
+        HirValue {
+            id: ValueId::new(3),
+            kind: ValueKind::Literal(key.clone()),
+            origin: origin(),
+        },
+        HirValue {
+            id: ValueId::new(4),
+            kind: ValueKind::InstructionResult,
+            origin: origin(),
+        },
+        HirValue {
+            id: ValueId::new(5),
+            kind: ValueKind::InstructionResult,
+            origin: origin(),
+        },
+    ];
+    let duplicate_base = || HirInstructionKind::Binary {
+        operator: BinaryOperator::Add,
+        left: ValueId::new(0),
+        right: ValueId::new(0),
+    };
+    let tag = Place {
+        base: PlaceBase::Value(ValueId::new(2)),
+        projections: vec![Projection::ComputedProperty {
+            key: ValueId::new(3),
+            optional: false,
+        }],
+    };
+    file.functions[0].blocks[0].instructions = vec![
+        instruction(Some(0), HirInstructionKind::Literal(zero)),
+        instruction(Some(1), duplicate_base()),
+        instruction(Some(2), duplicate_base()),
+        instruction(Some(3), HirInstructionKind::Literal(key)),
+        instruction(Some(4), HirInstructionKind::Read { place: tag.clone() }),
+        HirInstruction {
+            result: Some(ValueId::new(5)),
+            kind: HirInstructionKind::TaggedTemplate {
+                tag: ValueId::new(4),
+                tag_reference: Some(tag),
+                quasis: vec![TaggedTemplateQuasi {
+                    cooked: Some("value".into()),
+                    raw: "value".to_owned(),
+                }],
+                substitutions: Vec::new(),
+                host: CallHost::Unknown,
+            },
+            semantics: InstructionSemantics::CONSERVATIVE_EAGER,
+            origin: origin(),
+        },
+    ];
+    file.functions[0].blocks[0].terminator.kind = TerminatorKind::Return {
+        value: Some(ValueId::new(5)),
+    };
+    verify_hir(&file).expect("valid method-tag optimizer fixture");
+
+    let ssa = analyze_ssa(&file.functions[0]).expect("SSA");
+    let dependencies = analyze_dependencies(&file, FunctionId::new(0), &ssa).expect("dependencies");
+    let cse = analyze_cse(&file.functions[0], &ssa, &dependencies).expect("CSE");
+    assert!(cse.replacements.iter().any(|replacement| {
+        replacement.duplicate == ValueId::new(2) && replacement.canonical == ValueId::new(1)
+    }));
+    let rewritten =
+        apply_cse_rewrites(&file, FunctionId::new(0), &cse).expect("verified CSE rewrite");
+    let read_place = match &rewritten.functions[0].blocks[0].instructions[4].kind {
+        HirInstructionKind::Read { place } => place,
+        _ => panic!("tag read"),
+    };
+    let (tag, tag_reference) = match &rewritten.functions[0].blocks[0].instructions[5].kind {
+        HirInstructionKind::TaggedTemplate {
+            tag, tag_reference, ..
+        } => (*tag, tag_reference),
+        _ => panic!("tagged template"),
+    };
+    assert_eq!(tag, ValueId::new(4));
+    assert_eq!(tag_reference.as_ref(), Some(read_place));
+    assert!(matches!(read_place.base, PlaceBase::Value(value) if value == ValueId::new(1)));
+
+    let ssa = analyze_ssa(&rewritten.functions[0]).expect("rewritten SSA");
+    let dependencies =
+        analyze_dependencies(&rewritten, FunctionId::new(0), &ssa).expect("rewritten dependencies");
+    let aliases = analyze_aliases(&rewritten, FunctionId::new(0), &ssa, &dependencies)
+        .expect("rewritten aliases");
+    let dce = analyze_dce(
+        &rewritten,
+        FunctionId::new(0),
+        &ssa,
+        &dependencies,
+        &aliases,
+    )
+    .expect("DCE");
+    assert!(dce.dead_values.contains(&ValueId::new(2)));
+    let compacted =
+        apply_dce(&rewritten, FunctionId::new(0), &dce).expect("verified compact DCE result");
+    let read_place = match &compacted.functions[0].blocks[0].instructions[3].kind {
+        HirInstructionKind::Read { place } => place,
+        _ => panic!("compacted tag read"),
+    };
+    let (tag, tag_reference) = match &compacted.functions[0].blocks[0].instructions[4].kind {
+        HirInstructionKind::TaggedTemplate {
+            tag, tag_reference, ..
+        } => (*tag, tag_reference),
+        _ => panic!("compacted tagged template"),
+    };
+    assert_eq!(tag, ValueId::new(3));
+    assert_eq!(tag_reference.as_ref(), Some(read_place));
     assert!(matches!(read_place.base, PlaceBase::Value(value) if value == ValueId::new(1)));
     assert!(matches!(
         read_place.projections.as_slice(),

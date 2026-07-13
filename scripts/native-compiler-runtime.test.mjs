@@ -313,6 +313,43 @@ test('Rust compiler preserves method receivers and evaluates computed call refer
   assert.equal(module.invokeOptional(null, 3), undefined)
 })
 
+test('Rust compiler preserves method tag receivers and evaluates tag references once', async () => {
+  const module = await compileAndImport(
+    `
+      export function invoke(object, key, value) {
+        const effects = []
+        const computedKey = () => {
+          effects.push('key')
+          return key
+        }
+        const make = () => {
+          effects.push('make')
+          return object
+        }
+        const staticResult = object.tag\`static \${value}\`
+        const computedResult = object[computedKey()]\`computed \${value}\`
+        const temporaryResult = make().tag\`temporary \${value}\`
+        return { staticResult, computedResult, temporaryResult, effects }
+      }
+    `,
+    'method-tag-references',
+    /object\[computedKey\(\)\]`computed/,
+  )
+
+  const object = {
+    base: 5,
+    tag(strings, value) {
+      return `${this.base}:${strings.raw[0]}:${value}`
+    },
+  }
+  assert.deepEqual(module.invoke(object, 'tag', 2), {
+    staticResult: '5:static :2',
+    computedResult: '5:computed :2',
+    temporaryResult: '5:temporary :2',
+    effects: ['key', 'make'],
+  })
+})
+
 test('Rust compiler output executes structured for-of and for-in loops', async () => {
   const module = await compileAndImport(
     `

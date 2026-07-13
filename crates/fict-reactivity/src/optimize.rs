@@ -1204,9 +1204,15 @@ fn rewrite_instruction_values(
             }
         }
         HirInstructionKind::TaggedTemplate {
-            tag, substitutions, ..
+            tag,
+            tag_reference,
+            substitutions,
+            ..
         } => {
             rewrite_value(tag, replacements);
+            if let Some(reference) = tag_reference {
+                rewrite_place(reference, replacements);
+            }
             for substitution in substitutions {
                 rewrite_value(substitution, replacements);
             }
@@ -1551,9 +1557,15 @@ fn remap_instruction_values(
             }
         }
         HirInstructionKind::TaggedTemplate {
-            tag, substitutions, ..
+            tag,
+            tag_reference,
+            substitutions,
+            ..
         } => {
             remap_value_id(tag, remap)?;
+            if let Some(reference) = tag_reference {
+                remap_place_values(reference, remap)?;
+            }
             for substitution in substitutions {
                 remap_value_id(substitution, remap)?;
             }

@@ -3939,13 +3939,15 @@ fn materializes_template_quasis_coercions_and_lazy_ownership() {
 #[test]
 fn materializes_tagged_template_objects_substitutions_and_utf16_cooked_values() {
     let source = r#"
-        function tags(tag, receiver, make, value) {
+        function tags(tag, receiver, make, key, value) {
             const escaped = tag`line\n`;
             const invalid = tag`\u{}`;
             const surrogate = tag`\uD800${value}`;
             const dynamic = tag`head ${make('first')} middle ${value} tail`;
             const member = receiver.tag`member ${value}`;
-            return [escaped, invalid, surrogate, dynamic, member];
+            const computed = receiver[key()]`computed ${value}`;
+            const temporary = make('receiver').tag`temporary ${value}`;
+            return [escaped, invalid, surrogate, dynamic, member, computed, temporary];
         }
     "#;
     let output = build_hir(
@@ -4009,6 +4011,7 @@ fn materializes_tagged_template_objects_substitutions_and_utf16_cooked_values() 
         let instruction = instruction_for_result(value);
         let HirInstructionKind::TaggedTemplate {
             tag,
+            tag_reference,
             quasis,
             substitutions,
             host,
@@ -4016,10 +4019,18 @@ fn materializes_tagged_template_objects_substitutions_and_utf16_cooked_values() 
         else {
             panic!("typed {name} tagged template")
         };
-        (instruction, *tag, quasis, substitutions, *host)
+        (
+            instruction,
+            *tag,
+            tag_reference.clone(),
+            quasis,
+            substitutions,
+            *host,
+        )
     };
 
-    let (escaped, _, quasis, substitutions, host) = tagged("escaped");
+    let (escaped, _, reference, quasis, substitutions, host) = tagged("escaped");
+    assert!(reference.is_none());
     assert!(substitutions.is_empty());
     assert_eq!(quasis.len(), 1);
     assert_eq!(quasis[0].raw, r"line\n");
@@ -4033,12 +4044,12 @@ fn materializes_tagged_template_objects_substitutions_and_utf16_cooked_values() 
         fict_hir::InstructionSemantics::CONSERVATIVE_EAGER
     );
 
-    let (_, _, quasis, substitutions, _) = tagged("invalid");
+    let (_, _, _, quasis, substitutions, _) = tagged("invalid");
     assert!(substitutions.is_empty());
     assert_eq!(quasis[0].raw, r"\u{}");
     assert_eq!(quasis[0].cooked, None);
 
-    let (_, _, quasis, substitutions, _) = tagged("surrogate");
+    let (_, _, _, quasis, substitutions, _) = tagged("surrogate");
     assert_eq!(substitutions.len(), 1);
     assert_eq!(quasis.len(), 2);
     assert_eq!(quasis[0].raw, r"\uD800");
@@ -4048,7 +4059,8 @@ fn materializes_tagged_template_objects_substitutions_and_utf16_cooked_values() 
     );
     assert_eq!(quasis[1].cooked, Some(JavaScriptString::default()));
 
-    let (dynamic, tag, quasis, substitutions, _) = tagged("dynamic");
+    let (dynamic, tag, reference, quasis, substitutions, _) = tagged("dynamic");
+    assert!(reference.is_none());
     assert_eq!(
         quasis
             .iter()
@@ -4083,9 +4095,80 @@ fn materializes_tagged_template_objects_substitutions_and_utf16_cooked_values() 
             && instruction.origin.primary_span == dynamic.origin.primary_span
     }));
 
-    let (_, _, _, substitutions, host) = tagged("member");
+    let (_, member_tag, member_reference, _, substitutions, host) = tagged("member");
     assert_eq!(substitutions.len(), 1);
     assert_eq!(host, fict_hir::CallHost::Unknown);
+    let member_reference = member_reference.expect("member tag reference");
+    assert!(matches!(member_reference.base, PlaceBase::Local(_)));
+    assert!(matches!(
+        member_reference.projections.as_slice(),
+        [Projection::StaticProperty {
+            name,
+            optional: false,
+        }] if name == "tag"
+    ));
+    assert!(instructions.iter().any(|instruction| {
+        instruction.result == Some(member_tag)
+            && matches!(
+                &instruction.kind,
+                HirInstructionKind::Read { place } if place == &member_reference
+            )
+    }));
+
+    let (_, computed_tag, computed_reference, _, _, host) = tagged("computed");
+    assert_eq!(host, fict_hir::CallHost::Unknown);
+    let computed_reference = computed_reference.expect("computed tag reference");
+    let [
+        Projection::ComputedProperty {
+            key: computed_key,
+            optional: false,
+        },
+    ] = computed_reference.projections.as_slice()
+    else {
+        panic!("computed tag projection")
+    };
+    assert_eq!(authored(instruction_for_result(*computed_key)), "key()");
+    assert!(instructions.iter().any(|instruction| {
+        instruction.result == Some(computed_tag)
+            && matches!(
+                &instruction.kind,
+                HirInstructionKind::Read { place } if place == &computed_reference
+            )
+    }));
+    assert_eq!(
+        instructions
+            .iter()
+            .filter(|instruction| authored(instruction) == "key()")
+            .count(),
+        1,
+        "a computed tag key must be evaluated exactly once"
+    );
+
+    let (_, temporary_tag, temporary_reference, _, _, host) = tagged("temporary");
+    assert_eq!(host, fict_hir::CallHost::Unknown);
+    let temporary_reference = temporary_reference.expect("temporary tag reference");
+    let PlaceBase::Value(receiver) = temporary_reference.base else {
+        panic!("temporary tag receiver")
+    };
+    assert_eq!(
+        authored(instruction_for_result(receiver)),
+        "make('receiver')"
+    );
+    assert!(instructions.iter().any(|instruction| {
+        instruction.result == Some(temporary_tag)
+            && matches!(
+                &instruction.kind,
+                HirInstructionKind::Read { place } if place == &temporary_reference
+            )
+    }));
+    assert_eq!(
+        instructions
+            .iter()
+            .filter(|instruction| authored(instruction) == "make('receiver')")
+            .count(),
+        1,
+        "a temporary tag receiver must be evaluated exactly once"
+    );
 }
 
 #[test]

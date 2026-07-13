@@ -859,6 +859,7 @@ fn typed_tagged_template(
         kind: TypedExpressionKind::TaggedTemplate {
             tag: source_span(tag.span()),
             tag_has_effects: structured_control_flow::expression_has_effects(&tagged.tag),
+            tag_reference: planned_invocation_reference(scoping, &tagged.tag),
             tag_binding: resolved_callee_symbol(scoping, &tagged.tag),
             quasis,
             substitutions: tagged
@@ -3517,11 +3518,15 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             TypedExpressionKind::TaggedTemplate {
                 tag,
                 tag_has_effects,
+                tag_reference,
                 tag_binding,
                 quasis,
                 substitutions,
             } => {
                 let tag = self.control_expression_value(owner, block, *tag, true, *tag_has_effects);
+                let tag_reference = tag_reference
+                    .as_ref()
+                    .and_then(|place| self.materialize_planned_place(owner, block, place));
                 let substitutions = substitutions
                     .iter()
                     .map(|substitution| {
@@ -3544,6 +3549,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     origin,
                     HirInstructionKind::TaggedTemplate {
                         tag,
+                        tag_reference,
                         quasis: quasis.clone(),
                         substitutions,
                         host,
@@ -6218,6 +6224,7 @@ enum TypedExpressionKind {
     TaggedTemplate {
         tag: SourceSpan,
         tag_has_effects: bool,
+        tag_reference: Option<PlannedPlace>,
         tag_binding: Option<SymbolId>,
         quasis: Vec<TaggedTemplateQuasi>,
         substitutions: Vec<TypedTemplateExpression>,
@@ -6849,7 +6856,7 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             span: call_span,
             callee_span: source_span(call.callee.get_inner_expression().span()),
             callee_has_effects: structured_control_flow::expression_has_effects(&call.callee),
-            callee_reference: planned_call_callee_reference(self.scoping, &call.callee),
+            callee_reference: planned_invocation_reference(self.scoping, &call.callee),
             binding,
             reactive_kind,
             callback: arguments.first().and_then(|argument| argument.function),
@@ -8123,11 +8130,11 @@ fn planned_computed_member_place(
     Some(place)
 }
 
-fn planned_call_callee_reference(
+fn planned_invocation_reference(
     scoping: &Scoping,
-    callee: &Expression<'_>,
+    expression: &Expression<'_>,
 ) -> Option<PlannedPlace> {
-    let place = planned_expression_place(scoping, callee)?;
+    let place = planned_expression_place(scoping, expression)?;
     (!place.projections.is_empty()).then_some(place)
 }
 

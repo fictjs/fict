@@ -41,6 +41,28 @@ enum DefinitionKind {
     Syntax(crate::SyntaxFragmentId),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InvocationReferenceKind {
+    Call,
+    TaggedTemplate,
+}
+
+impl InvocationReferenceKind {
+    const fn code(self) -> &'static str {
+        match self {
+            Self::Call => "FICT-HIR-CALL-REFERENCE",
+            Self::TaggedTemplate => "FICT-HIR-TAG-REFERENCE",
+        }
+    }
+
+    const fn description(self) -> &'static str {
+        match self {
+            Self::Call => "call callee",
+            Self::TaggedTemplate => "tagged-template tag",
+        }
+    }
+}
+
 struct Verifier<'file> {
     file: &'file HirFile,
     diagnostics: DiagnosticBundle,
@@ -831,11 +853,22 @@ impl Verifier<'_> {
             }
             HirInstructionKind::TaggedTemplate {
                 tag,
+                tag_reference,
                 quasis,
                 substitutions,
                 host,
             } => {
                 self.value(function, *tag, instruction.origin);
+                if let Some(reference) = tag_reference {
+                    self.verify_invocation_reference(
+                        function,
+                        *tag,
+                        reference,
+                        instruction.origin,
+                        read_definitions,
+                        InvocationReferenceKind::TaggedTemplate,
+                    );
+                }
                 for substitution in substitutions {
                     self.value(function, *substitution, instruction.origin);
                 }
@@ -864,25 +897,14 @@ impl Verifier<'_> {
             HirInstructionKind::Call(call) => {
                 self.value(function, call.callee, instruction.origin);
                 if let Some(reference) = &call.callee_reference {
-                    self.verify_place(function, reference, instruction.origin);
-                    if reference.projections.is_empty() {
-                        self.error(
-                            "FICT-HIR-CALL-REFERENCE",
-                            "a call callee reference must retain at least one property projection",
-                            Some(instruction.origin),
-                        );
-                    }
-                    let matching_read = read_definitions
-                        .get(call.callee.as_usize())
-                        .and_then(|definition| *definition)
-                        .is_some_and(|place| place == reference);
-                    if !matching_read {
-                        self.error(
-                            "FICT-HIR-CALL-REFERENCE",
-                            "a call callee reference must match the read that defines its callee value",
-                            Some(instruction.origin),
-                        );
-                    }
+                    self.verify_invocation_reference(
+                        function,
+                        call.callee,
+                        reference,
+                        instruction.origin,
+                        read_definitions,
+                        InvocationReferenceKind::Call,
+                    );
                 }
                 for argument in &call.arguments {
                     self.value(function, argument.value, instruction.origin);
@@ -1222,6 +1244,42 @@ impl Verifier<'_> {
             if let Projection::ComputedProperty { key, .. } = projection {
                 self.value(function, *key, origin);
             }
+        }
+    }
+
+    fn verify_invocation_reference(
+        &mut self,
+        function: &HirFunction,
+        invoked: ValueId,
+        reference: &Place,
+        origin: Origin,
+        read_definitions: &[Option<&Place>],
+        kind: InvocationReferenceKind,
+    ) {
+        self.verify_place(function, reference, origin);
+        if reference.projections.is_empty() {
+            self.error(
+                kind.code(),
+                format!(
+                    "a {} reference must retain at least one property projection",
+                    kind.description()
+                ),
+                Some(origin),
+            );
+        }
+        let matching_read = read_definitions
+            .get(invoked.as_usize())
+            .and_then(|definition| *definition)
+            .is_some_and(|place| place == reference);
+        if !matching_read {
+            self.error(
+                kind.code(),
+                format!(
+                    "a {} reference must match the read that defines its invoked value",
+                    kind.description()
+                ),
+                Some(origin),
+            );
         }
     }
 
