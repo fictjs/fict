@@ -897,6 +897,9 @@ enum FineJsxStep {
         helper: String,
         reference_origin: SourceSpan,
     },
+    Evaluate {
+        value_origin: SourceSpan,
+    },
     Insert {
         parent: String,
         before: Option<String>,
@@ -1440,6 +1443,39 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                         helper: (*helper).to_owned(),
                         reference_origin,
                     });
+                }
+                EmitOperation::Evaluate { value, origin } => {
+                    let Some(plan) = current.and_then(|location| clones.get_mut(&location)) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-TEMPLATE",
+                                "discarded JSX value is not attached to a template clone",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    if !matches!(value, EmitValueRef::Hir(_)) {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-VALUE",
+                                "discarded JSX value is not backed by a source expression",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    }
+                    let Some(value_origin) = origin.primary_span else {
+                        diagnostics.push(emit_error(
+                            "FICT-OXC-EMIT-ORIGIN",
+                            "discarded JSX value requires a source origin",
+                            GuaranteeClass::Internal,
+                        ));
+                        continue;
+                    };
+                    plan.steps.push(FineJsxStep::Evaluate { value_origin });
                 }
                 EmitOperation::Insert {
                     parent,
@@ -2439,6 +2475,22 @@ impl<'a> AstRewriter<'a, '_> {
                         span, callee, NONE, arguments, false, &builder,
                     );
                     statements.push(Statement::new_expression_statement(span, call, &builder));
+                }
+                FineJsxStep::Evaluate { value_origin } => {
+                    let location = (value_origin.start(), value_origin.end());
+                    let Some(mut value) = values.remove(&location) else {
+                        self.diagnostics.push(
+                            emit_error(
+                                "FICT-OXC-EMIT-ORIGIN",
+                                "discarded JSX value origin does not identify an expression",
+                                GuaranteeClass::Internal,
+                            )
+                            .with_primary_span(value_origin),
+                        );
+                        continue;
+                    };
+                    self.visit_expression(&mut value);
+                    statements.push(Statement::new_expression_statement(span, value, &builder));
                 }
                 FineJsxStep::Insert {
                     parent,
@@ -3965,6 +4017,7 @@ fn operation_origin(operation: &EmitOperation) -> fict_hir::Origin {
         | EmitOperation::ApplyProps { origin, .. }
         | EmitOperation::BindEvent { origin, .. }
         | EmitOperation::BindRef { origin, .. }
+        | EmitOperation::Evaluate { origin, .. }
         | EmitOperation::Insert { origin, .. }
         | EmitOperation::Conditional { origin, .. }
         | EmitOperation::KeyedList { origin, .. }

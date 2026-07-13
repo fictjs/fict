@@ -804,6 +804,7 @@ fn verify_helper_semantics(
         | EmitOperation::TrackRuntimeReactive { .. }
         | EmitOperation::WriteReactive { .. }
         | EmitOperation::UpdateReactive { .. }
+        | EmitOperation::Evaluate { .. }
         | EmitOperation::CloneTemplate { .. }
         | EmitOperation::Return { .. } => true,
     };

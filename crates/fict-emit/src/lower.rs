@@ -723,6 +723,9 @@ enum TemplateBinding {
         value: fict_hir::LiteralValue,
         origin: fict_hir::Origin,
     },
+    Evaluate {
+        value: ValueId,
+    },
     Spread {
         path: Vec<u32>,
         value: ValueId,
@@ -900,6 +903,13 @@ fn lower_jsx_instruction(
                     value: EmitValueRef::Literal(value),
                     reactive: false,
                     helper,
+                    origin,
+                });
+            }
+            TemplateBinding::Evaluate { value } => {
+                let origin = hir.functions[function_id.as_usize()].values[value.as_usize()].origin;
+                operations.push(EmitOperation::Evaluate {
+                    value: lower_value(value, value_temporaries),
                     origin,
                 });
             }
@@ -1489,6 +1499,12 @@ fn serialize_node(
                                 "JSX attribute contains unsafe markup characters",
                                 GuaranteeClass::Unsupported,
                             )]));
+                        }
+                        if name == "key" {
+                            if let JsxAttributeValue::Expression { value, .. } = value {
+                                bindings.push(TemplateBinding::Evaluate { value: *value });
+                            }
+                            continue;
                         }
                         match value {
                             JsxAttributeValue::ImplicitTrue => {

@@ -928,6 +928,30 @@ mod tests {
     }
 
     #[test]
+    fn omits_intrinsic_keys_without_losing_dynamic_key_effects() {
+        let result = compile(request(
+            "export function Static() { return <p key=\"row\" title=\"ok\" />; } export function Dynamic() { return <div before={before()} key={side()} after={after()} />; }",
+            "intrinsic-key.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .code
+                .contains("template(\"<p title=\\\"ok\\\"></p>\")"),
+            "{}",
+            result.code
+        );
+        assert!(!result.code.contains("row"), "{}", result.code);
+        assert!(!result.code.contains("\"key\""), "{}", result.code);
+        assert_eq!(result.code.matches("side()").count(), 1, "{}", result.code);
+        let before = result.code.find("before()").expect("before expression");
+        let key = result.code.find("side()").expect("key expression");
+        let after = result.code.find("after()").expect("after expression");
+        assert!(before < key && key < after, "{}", result.code);
+    }
+
+    #[test]
     fn emits_fine_grained_ternary_and_logical_conditions() {
         let result = compile(request(
             "import { $state } from 'fict'; const Yes = () => null; const No = () => null; export function App() { let show = $state(true); return <main>{show ? <><Yes /></> : <No />}{show && <span>{show}</span>}</main>; }",

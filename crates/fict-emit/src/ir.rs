@@ -344,6 +344,8 @@ pub enum EmitOperation {
         cleanup: CleanupOwner,
         origin: Origin,
     },
+    /// Evaluate a source expression for its observable effects without exposing its value.
+    Evaluate { value: EmitValueRef, origin: Origin },
     Insert {
         parent: EmitTemporaryId,
         value: EmitValueRef,
@@ -430,6 +432,7 @@ impl EmitOperation {
             | Self::TrackRuntimeReactive { .. }
             | Self::WriteReactive { .. }
             | Self::UpdateReactive { .. }
+            | Self::Evaluate { .. }
             | Self::CloneTemplate { .. }
             | Self::Return { .. } => None,
         }
@@ -547,6 +550,7 @@ impl EmitOperation {
             Self::CreateElement { tag, .. }
             | Self::BindDom { value: tag, .. }
             | Self::BindRef { reference: tag, .. }
+            | Self::Evaluate { value: tag, .. }
             | Self::Insert { value: tag, .. }
             | Self::Conditional { source: tag, .. }
             | Self::KeyedList { items: tag, .. } => visit(tag),
