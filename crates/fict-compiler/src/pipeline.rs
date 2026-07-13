@@ -708,6 +708,65 @@ mod tests {
     }
 
     #[test]
+    fn permits_imported_signal_writes_and_rejects_imported_memo_store_writes() {
+        let metadata = |name: &str, kind: ReactiveExportKind| ResolvedMetadataInput {
+            request: "./dep".into(),
+            resolved_id: Some("/src/dep.ts".into()),
+            status: MetadataResolutionStatus::Resolved,
+            metadata: Some(ModuleReactiveMetadata {
+                exports: BTreeMap::from([(name.into(), kind)]),
+                ..ModuleReactiveMetadata::new()
+            }),
+            fingerprint: format!("sha256:{name}"),
+        };
+
+        let mut signal = request(
+            "import { count } from './dep'; export function App() { count++; count = 2; return count; }",
+            "signal-write.js",
+        );
+        signal.metadata = vec![metadata("count", ReactiveExportKind::Signal)];
+        let signal = compile(signal);
+        assert!(!signal.has_errors(), "{:?}", signal.diagnostics);
+        assert!(
+            signal.code.contains("count(__fict_value)"),
+            "{}",
+            signal.code
+        );
+        assert!(!signal.code.contains("count++"), "{}", signal.code);
+        assert!(signal.code.contains("return count()"), "{}", signal.code);
+
+        let mut memo = request(
+            "import { total } from './dep'; export function App() { total += 1; return total; }",
+            "memo-write.js",
+        );
+        memo.metadata = vec![metadata("total", ReactiveExportKind::Memo)];
+        let memo = compile(memo);
+        assert!(memo.has_errors());
+        assert!(memo.code.is_empty());
+        assert!(memo.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-METADATA-READONLY"
+                && diagnostic
+                    .message
+                    .contains("imported memo binding \"total\"")
+        }));
+
+        let mut store = request(
+            "import { state } from './dep'; export function App() { [state] = []; return state; }",
+            "store-write.js",
+        );
+        store.metadata = vec![metadata("state", ReactiveExportKind::Store)];
+        let store = compile(store);
+        assert!(store.has_errors());
+        assert!(store.code.is_empty());
+        assert!(store.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-METADATA-READONLY"
+                && diagnostic
+                    .message
+                    .contains("imported store binding \"state\"")
+        }));
+    }
+
+    #[test]
     fn removes_ambiguous_star_exports_and_reports_missing_snapshots() {
         let metadata = |request: &str, resolved_id: &str, names: &[(&str, ReactiveExportKind)]| {
             ResolvedMetadataInput {

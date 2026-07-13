@@ -1827,6 +1827,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             pattern_assignments: Vec::new(),
         };
         mutations.visit_program(program);
+        self.validate_imported_reactive_writes(&mutations);
         let mut delete_targets = DeleteTargetCollector::default();
         delete_targets.visit_program(program);
         let mut suppressed_members = delete_targets.member_spans;
@@ -1898,6 +1899,79 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     .push(props_pattern_diagnostic(*issue, severity));
             }
         }
+    }
+
+    fn validate_imported_reactive_writes(&mut self, mutations: &MutationCollector<'_>) {
+        let mut readonly_targets = Vec::new();
+        for mutation in &mutations.facts {
+            if mutation.projected {
+                continue;
+            }
+            let Some(binding) = mutation
+                .symbol
+                .and_then(|symbol| self.symbol_to_binding.get(&symbol).copied())
+            else {
+                continue;
+            };
+            if let Some(kind @ (ImportedReactiveKind::Memo | ImportedReactiveKind::Store)) =
+                self.imported_reactive_kind(binding)
+            {
+                readonly_targets.push((binding, kind, mutation.target_span));
+            }
+        }
+        for assignment in &mutations.pattern_assignments {
+            for target in &assignment.targets {
+                let Some(binding) = self.symbol_to_binding.get(&target.symbol).copied() else {
+                    continue;
+                };
+                if let Some(kind @ (ImportedReactiveKind::Memo | ImportedReactiveKind::Store)) =
+                    self.imported_reactive_kind(binding)
+                {
+                    readonly_targets.push((binding, kind, target.span));
+                }
+            }
+        }
+        readonly_targets.sort_by_key(|(binding, kind, span)| {
+            (span.start(), span.end(), binding.index(), *kind)
+        });
+        readonly_targets.dedup();
+
+        for (binding, kind, span) in readonly_targets {
+            let name = self.frontend.bindings.iter().find(|candidate| {
+                self.old_to_new.get(&candidate.id.index()).copied() == Some(binding)
+            });
+            let name = name.map_or("<import>", |binding| binding.display_name.as_str());
+            let (kind, help) = match kind {
+                ImportedReactiveKind::Memo => (
+                    "memo",
+                    "derive a new local value instead of assigning to the imported memo accessor",
+                ),
+                ImportedReactiveKind::Store => (
+                    "store",
+                    "mutate a store property or replace the value in the exporting module",
+                ),
+                ImportedReactiveKind::Signal => unreachable!("signals remain writable"),
+            };
+            self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::new("FICT-METADATA-READONLY").expect("diagnostic literal"),
+                    DiagnosticSeverity::Error,
+                    format!("cannot write to imported {kind} binding {name:?}"),
+                )
+                .with_primary_span(span)
+                .with_help(help)
+                .with_guarantee_class(GuaranteeClass::Unsupported),
+            );
+        }
+    }
+
+    fn imported_reactive_kind(&self, binding: BindingId) -> Option<ImportedReactiveKind> {
+        self.frontend
+            .bindings
+            .iter()
+            .find(|candidate| self.old_to_new.get(&candidate.id.index()).copied() == Some(binding))
+            .and_then(|binding| binding.import.as_ref())
+            .and_then(|import| import.reactive)
     }
 
     fn analyze_reactive_symbols(
@@ -2981,7 +3055,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         let decorators = typed_expression_collector.decorators.as_slice();
         let mutations = mutation_collector.facts.as_slice();
         let pattern_assignments = mutation_collector.pattern_assignments.as_slice();
-        let reactive_targets: BTreeSet<_> = calls
+        let mut reactive_targets: BTreeSet<_> = calls
             .iter()
             .filter(|call| {
                 call.binding
@@ -2990,6 +3064,15 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             })
             .filter_map(|call| call.direct_variable_binding)
             .collect();
+        reactive_targets.extend(self.frontend.bindings.iter().filter_map(|binding| {
+            let reactive = binding.import.as_ref().and_then(|import| import.reactive)?;
+            matches!(
+                reactive,
+                ImportedReactiveKind::Signal | ImportedReactiveKind::Memo
+            )
+            .then(|| self.old_to_new.get(&binding.id.index()).copied())
+            .flatten()
+        }));
         self.reactive_value_bindings = reactive_targets.clone();
         let mut opaque_patterns: Vec<_> = variable_declarations
             .iter()
