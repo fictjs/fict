@@ -5,17 +5,23 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
 use fict_emit::{EmitOperation, EmitProgram, RuntimeHelper};
+use fict_hir::{CompoundAssignmentOperator, UpdateOperator};
 use oxc::{
     allocator::{Allocator, TakeIn, Vec as ArenaVec},
     ast::{
         AstBuilder, NONE,
-        ast::{Expression, ImportDeclarationSpecifier, ImportOrExportKind, Statement},
+        ast::{
+            Argument, AssignmentTarget, BindingPattern, Expression, FormalParameter,
+            FormalParameterKind, FormalParameters, FunctionBody, ImportDeclarationSpecifier,
+            ImportOrExportKind, SimpleAssignmentTarget, Statement,
+        },
     },
     ast_visit::{VisitMut, walk_mut},
     codegen::{Codegen, CodegenOptions},
     parser::{ParseOptions, Parser},
     semantic::SemanticBuilder,
-    span::{SourceType, Span},
+    span::{GetSpan, SourceType, Span},
+    syntax::{number::NumberBase, operator::BinaryOperator as OxcBinaryOperator},
     transformer::{JsxOptions, Module, TransformOptions, Transformer},
 };
 
@@ -71,8 +77,10 @@ pub fn emit_program(
 
     let (rewrites, rewrite_diagnostics) = call_rewrites(emit);
     let (reads, read_diagnostics) = read_rewrites(emit);
+    let (mutations, mutation_diagnostics) = mutation_rewrites(emit);
     diagnostics.extend(rewrite_diagnostics);
     diagnostics.extend(read_diagnostics);
+    diagnostics.extend(mutation_diagnostics);
     if !diagnostics.is_empty() {
         return failed_output(diagnostics);
     }
@@ -80,8 +88,10 @@ pub fn emit_program(
         allocator: &allocator,
         call_rewrites: &rewrites,
         reads: &reads,
+        mutations: &mutations,
         matched_calls: BTreeSet::new(),
         matched_reads: BTreeSet::new(),
+        matched_mutations: BTreeSet::new(),
     };
     rewriter.visit_program(&mut program);
     for location in rewrites.keys() {
@@ -109,6 +119,21 @@ pub fn emit_program(
                 )
                 .with_primary_span(
                     SourceSpan::new(location.0, location.1).expect("ordered EmitIR read location"),
+                ),
+            );
+        }
+    }
+    for location in mutations.keys() {
+        if !rewriter.matched_mutations.contains(location) {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-ORIGIN",
+                    "EmitIR reactive-mutation origin does not identify a supported OXC assignment or update expression",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(
+                    SourceSpan::new(location.0, location.1)
+                        .expect("ordered EmitIR mutation location"),
                 ),
             );
         }
@@ -287,12 +312,27 @@ fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
         .functions
         .iter()
         .flat_map(|function| &function.operations)
-        .find(|operation| {
-            matches!(
+        .find(|operation| match operation {
+            EmitOperation::ReadReactive { projections, .. }
+            | EmitOperation::WriteReactive { projections, .. } => !projections.is_empty(),
+            EmitOperation::UpdateReactive {
+                projections,
+                compound,
+                ..
+            } => {
+                !projections.is_empty()
+                    || matches!(
+                        compound,
+                        Some(
+                            CompoundAssignmentOperator::LogicalAnd
+                                | CompoundAssignmentOperator::LogicalOr
+                                | CompoundAssignmentOperator::NullishCoalescing
+                        )
+                    )
+            }
+            _ => matches!(
                 operation,
-                EmitOperation::WriteReactive { .. }
-                    | EmitOperation::UpdateReactive { .. }
-                    | EmitOperation::DeclareTemplate { .. }
+                EmitOperation::DeclareTemplate { .. }
                     | EmitOperation::CloneTemplate { .. }
                     | EmitOperation::ResolveElement { .. }
                     | EmitOperation::InvokeComponent { .. }
@@ -304,10 +344,7 @@ fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
                     | EmitOperation::Insert { .. }
                     | EmitOperation::Conditional { .. }
                     | EmitOperation::KeyedList { .. }
-            ) || matches!(
-                operation,
-                EmitOperation::ReadReactive { projections, .. } if !projections.is_empty()
-            )
+            ),
         });
     unsupported.map_or_else(Vec::new, |operation| {
         let mut diagnostic = emit_error(
@@ -407,6 +444,74 @@ fn read_rewrites(emit: &EmitProgram) -> (BTreeSet<(u32, u32)>, Vec<Diagnostic>) 
     (reads, diagnostics)
 }
 
+#[derive(Debug, Clone, Copy)]
+enum MutationRewrite {
+    Write,
+    Compound(CompoundAssignmentOperator),
+    Update {
+        operator: UpdateOperator,
+        prefix: bool,
+    },
+}
+
+fn mutation_rewrites(
+    emit: &EmitProgram,
+) -> (BTreeMap<(u32, u32), MutationRewrite>, Vec<Diagnostic>) {
+    let mut mutations = BTreeMap::new();
+    let mut diagnostics = Vec::new();
+    for operation in emit
+        .functions
+        .iter()
+        .flat_map(|function| &function.operations)
+    {
+        let (origin, rewrite) = match operation {
+            EmitOperation::WriteReactive { origin, .. } => (origin, MutationRewrite::Write),
+            EmitOperation::UpdateReactive {
+                origin,
+                compound: Some(operator),
+                update: None,
+                ..
+            } => (origin, MutationRewrite::Compound(*operator)),
+            EmitOperation::UpdateReactive {
+                origin,
+                compound: None,
+                update: Some(operator),
+                prefix,
+                ..
+            } => (
+                origin,
+                MutationRewrite::Update {
+                    operator: *operator,
+                    prefix: *prefix,
+                },
+            ),
+            _ => continue,
+        };
+        let Some(span) = origin.primary_span else {
+            diagnostics.push(emit_error(
+                "FICT-OXC-EMIT-ORIGIN",
+                "reactive-mutation EmitIR operation requires a source origin",
+                GuaranteeClass::Internal,
+            ));
+            continue;
+        };
+        if mutations
+            .insert((span.start(), span.end()), rewrite)
+            .is_some()
+        {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-ORIGIN",
+                    "multiple reactive-mutation operations share the same source origin",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(span),
+            );
+        }
+    }
+    (mutations, diagnostics)
+}
+
 fn render_runtime_imports(emit: &EmitProgram) -> String {
     let mut output = String::new();
     for intent in &emit.imports {
@@ -427,12 +532,21 @@ struct AstRewriter<'a, 'emit> {
     allocator: &'a Allocator,
     call_rewrites: &'emit BTreeMap<(u32, u32), String>,
     reads: &'emit BTreeSet<(u32, u32)>,
+    mutations: &'emit BTreeMap<(u32, u32), MutationRewrite>,
     matched_calls: BTreeSet<(u32, u32)>,
     matched_reads: BTreeSet<(u32, u32)>,
+    matched_mutations: BTreeSet<(u32, u32)>,
 }
 
 impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
     fn visit_expression(&mut self, expression: &mut Expression<'a>) {
+        let location = (expression.span().start, expression.span().end);
+        if let Some(rewrite) = self.mutations.get(&location).copied()
+            && self.rewrite_mutation(expression, rewrite)
+        {
+            self.matched_mutations.insert(location);
+            return;
+        }
         let Expression::Identifier(identifier) = expression else {
             walk_mut::walk_expression(self, expression);
             return;
@@ -465,6 +579,266 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
         }
         walk_mut::walk_call_expression(self, call);
     }
+}
+
+impl<'a> AstRewriter<'a, '_> {
+    fn rewrite_mutation(
+        &mut self,
+        expression: &mut Expression<'a>,
+        rewrite: MutationRewrite,
+    ) -> bool {
+        match rewrite {
+            MutationRewrite::Write => {
+                let Expression::AssignmentExpression(assignment) = expression else {
+                    return false;
+                };
+                if assignment.operator != oxc::syntax::operator::AssignmentOperator::Assign {
+                    return false;
+                }
+                let Some(signal) = assignment_target_name(&assignment.left) else {
+                    return false;
+                };
+                walk_mut::walk_assignment_expression(self, assignment);
+                let right = assignment.right.take_in(&self.allocator);
+                let span = assignment.span;
+                *expression = value_preserving_setter(self.allocator, &signal, right, span);
+                true
+            }
+            MutationRewrite::Compound(operator) => {
+                let Expression::AssignmentExpression(assignment) = expression else {
+                    return false;
+                };
+                let Some(signal) = assignment_target_name(&assignment.left) else {
+                    return false;
+                };
+                walk_mut::walk_assignment_expression(self, assignment);
+                let right = assignment.right.take_in(&self.allocator);
+                let Some(binary) = compound_binary_operator(operator) else {
+                    return false;
+                };
+                let builder = AstBuilder::new(self.allocator);
+                let current = getter_call(self.allocator, &signal, assignment.span);
+                let next = Expression::new_binary_expression(
+                    assignment.span,
+                    current,
+                    binary,
+                    right,
+                    &builder,
+                );
+                *expression =
+                    value_preserving_setter(self.allocator, &signal, next, assignment.span);
+                true
+            }
+            MutationRewrite::Update { operator, prefix } => {
+                let Expression::UpdateExpression(update) = expression else {
+                    return false;
+                };
+                if update.prefix != prefix {
+                    return false;
+                }
+                let Some(signal) = simple_assignment_target_name(&update.argument) else {
+                    return false;
+                };
+                walk_mut::walk_update_expression(self, update);
+                *expression = if prefix {
+                    let builder = AstBuilder::new(self.allocator);
+                    let current = getter_call(self.allocator, &signal, update.span);
+                    let one = Expression::new_numeric_literal(
+                        update.span,
+                        1.0,
+                        None,
+                        NumberBase::Decimal,
+                        &builder,
+                    );
+                    let next = Expression::new_binary_expression(
+                        update.span,
+                        current,
+                        update_binary_operator(operator),
+                        one,
+                        &builder,
+                    );
+                    value_preserving_setter(self.allocator, &signal, next, update.span)
+                } else {
+                    postfix_update(self.allocator, &signal, operator, update.span)
+                };
+                true
+            }
+        }
+    }
+}
+
+fn assignment_target_name(target: &AssignmentTarget<'_>) -> Option<String> {
+    let AssignmentTarget::AssignmentTargetIdentifier(identifier) = target else {
+        return None;
+    };
+    Some(identifier.name.to_string())
+}
+
+fn simple_assignment_target_name(target: &SimpleAssignmentTarget<'_>) -> Option<String> {
+    let SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) = target else {
+        return None;
+    };
+    Some(identifier.name.to_string())
+}
+
+fn compound_binary_operator(operator: CompoundAssignmentOperator) -> Option<OxcBinaryOperator> {
+    Some(match operator {
+        CompoundAssignmentOperator::Add => OxcBinaryOperator::Addition,
+        CompoundAssignmentOperator::Subtract => OxcBinaryOperator::Subtraction,
+        CompoundAssignmentOperator::Multiply => OxcBinaryOperator::Multiplication,
+        CompoundAssignmentOperator::Divide => OxcBinaryOperator::Division,
+        CompoundAssignmentOperator::Remainder => OxcBinaryOperator::Remainder,
+        CompoundAssignmentOperator::Exponent => OxcBinaryOperator::Exponential,
+        CompoundAssignmentOperator::ShiftLeft => OxcBinaryOperator::ShiftLeft,
+        CompoundAssignmentOperator::ShiftRight => OxcBinaryOperator::ShiftRight,
+        CompoundAssignmentOperator::ShiftRightUnsigned => OxcBinaryOperator::ShiftRightZeroFill,
+        CompoundAssignmentOperator::BitOr => OxcBinaryOperator::BitwiseOR,
+        CompoundAssignmentOperator::BitXor => OxcBinaryOperator::BitwiseXOR,
+        CompoundAssignmentOperator::BitAnd => OxcBinaryOperator::BitwiseAnd,
+        CompoundAssignmentOperator::LogicalAnd
+        | CompoundAssignmentOperator::LogicalOr
+        | CompoundAssignmentOperator::NullishCoalescing => return None,
+    })
+}
+
+fn update_binary_operator(operator: UpdateOperator) -> OxcBinaryOperator {
+    match operator {
+        UpdateOperator::Increment => OxcBinaryOperator::Addition,
+        UpdateOperator::Decrement => OxcBinaryOperator::Subtraction,
+    }
+}
+
+fn getter_call<'a>(allocator: &'a Allocator, signal: &str, span: Span) -> Expression<'a> {
+    let builder = AstBuilder::new(allocator);
+    let callee = Expression::new_identifier(span, allocator.alloc_str(signal), &builder);
+    Expression::new_call_expression(
+        span,
+        callee,
+        NONE,
+        ArenaVec::new_in(&allocator),
+        false,
+        &builder,
+    )
+}
+
+fn setter_call<'a>(
+    allocator: &'a Allocator,
+    signal: &str,
+    value: Expression<'a>,
+    span: Span,
+) -> Expression<'a> {
+    let builder = AstBuilder::new(allocator);
+    let callee = Expression::new_identifier(span, allocator.alloc_str(signal), &builder);
+    let mut arguments = ArenaVec::new_in(&allocator);
+    arguments.push(Argument::from(value));
+    Expression::new_call_expression(span, callee, NONE, arguments, false, &builder)
+}
+
+fn value_preserving_setter<'a>(
+    allocator: &'a Allocator,
+    signal: &str,
+    value: Expression<'a>,
+    span: Span,
+) -> Expression<'a> {
+    let parameter = generated_parameter_name(allocator, signal, "__fict_value");
+    let parameter_value = || {
+        let builder = AstBuilder::new(allocator);
+        Expression::new_identifier(span, parameter, &builder)
+    };
+    let setter = setter_call(allocator, signal, parameter_value(), span);
+    let mut sequence = ArenaVec::new_in(&allocator);
+    sequence.extend([setter, parameter_value()]);
+    let builder = AstBuilder::new(allocator);
+    let body = Expression::new_sequence_expression(span, sequence, &builder);
+    let arrow = expression_arrow(allocator, parameter, body, span);
+    let mut arguments = ArenaVec::new_in(&allocator);
+    arguments.push(Argument::from(value));
+    Expression::new_call_expression(span, arrow, NONE, arguments, false, &builder)
+}
+
+fn postfix_update<'a>(
+    allocator: &'a Allocator,
+    signal: &str,
+    operator: UpdateOperator,
+    span: Span,
+) -> Expression<'a> {
+    let parameter = generated_parameter_name(allocator, signal, "__fict_previous");
+    let parameter_value = || {
+        let builder = AstBuilder::new(allocator);
+        Expression::new_identifier(span, parameter, &builder)
+    };
+    let builder = AstBuilder::new(allocator);
+    let one = Expression::new_numeric_literal(span, 1.0, None, NumberBase::Decimal, &builder);
+    let next = Expression::new_binary_expression(
+        span,
+        parameter_value(),
+        update_binary_operator(operator),
+        one,
+        &builder,
+    );
+    let setter = setter_call(allocator, signal, next, span);
+    let mut sequence = ArenaVec::new_in(&allocator);
+    sequence.extend([setter, parameter_value()]);
+    let body = Expression::new_sequence_expression(span, sequence, &builder);
+    let arrow = expression_arrow(allocator, parameter, body, span);
+    let current = getter_call(allocator, signal, span);
+    let mut arguments = ArenaVec::new_in(&allocator);
+    arguments.push(Argument::from(current));
+    Expression::new_call_expression(span, arrow, NONE, arguments, false, &builder)
+}
+
+fn expression_arrow<'a>(
+    allocator: &'a Allocator,
+    parameter: &'a str,
+    expression: Expression<'a>,
+    span: Span,
+) -> Expression<'a> {
+    let builder = AstBuilder::new(allocator);
+    let pattern = BindingPattern::new_binding_identifier(span, parameter, &builder);
+    let parameter = FormalParameter::new(
+        span,
+        ArenaVec::new_in(&allocator),
+        pattern,
+        NONE,
+        NONE,
+        false,
+        None,
+        false,
+        false,
+        &builder,
+    );
+    let mut items = ArenaVec::new_in(&allocator);
+    items.push(parameter);
+    let parameters = FormalParameters::boxed(
+        span,
+        FormalParameterKind::ArrowFormalParameters,
+        items,
+        NONE,
+        &builder,
+    );
+    let mut statements = ArenaVec::new_in(&allocator);
+    statements.push(Statement::new_expression_statement(
+        span, expression, &builder,
+    ));
+    let body = FunctionBody::boxed(span, ArenaVec::new_in(&allocator), statements, &builder);
+    Expression::new_arrow_function_expression(
+        span, true, false, NONE, parameters, NONE, body, &builder,
+    )
+}
+
+fn generated_parameter_name<'a>(
+    allocator: &'a Allocator,
+    signal: &str,
+    preferred: &str,
+) -> &'a str {
+    if signal != preferred {
+        return allocator.alloc_str(preferred);
+    }
+    let mut candidate = format!("{preferred}_1");
+    while candidate == signal {
+        candidate.push('_');
+    }
+    allocator.alloc_str(&candidate)
 }
 
 fn rename_callee<'a>(expression: &mut Expression<'a>, local: &'a str) -> bool {
@@ -558,7 +932,10 @@ mod tests {
         EmitValueRef, ReactiveSlot, ReactiveSlotKind, RuntimeFamily, RuntimeHelper,
         RuntimeImportIntent,
     };
-    use fict_hir::{FunctionId, LiteralValue, Origin, SourceSpan, ValueId};
+    use fict_hir::{
+        CompoundAssignmentOperator, FunctionId, LiteralValue, Origin, Projection, SourceSpan,
+        UpdateOperator, ValueId,
+    };
     use fict_reactivity::{StructurizeAnalysis, StructurizeStats};
 
     use super::emit_program;
@@ -669,7 +1046,10 @@ mod tests {
             .operations
             .push(EmitOperation::WriteReactive {
                 slot: EmitSlotId::new(0),
-                projections: Vec::new(),
+                projections: vec![Projection::StaticProperty {
+                    name: "value".into(),
+                    optional: false,
+                }],
                 value: EmitValueRef::Literal(LiteralValue::Undefined),
                 origin: Origin::source(SourceSpan::empty(0)),
             });
@@ -743,6 +1123,84 @@ mod tests {
 
         assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
         assert!(output.code.contains("value = memo() + memo()"));
+    }
+
+    #[test]
+    fn materializes_value_preserving_reactive_writes_and_updates() {
+        let source = "let count = () => 0; export const values = [count = rhs(), count += 2, count++, --count];";
+        let mut emit = effect_program("$effect(() => 1)");
+        emit.imports.clear();
+        emit.functions[0].slots.clear();
+        emit.functions[0].operations.clear();
+        let operations = [
+            ("count = rhs()", 0_u8),
+            ("count += 2", 1_u8),
+            ("count++", 2_u8),
+            ("--count", 3_u8),
+        ];
+        for (authored, kind) in operations {
+            let start = u32::try_from(source.find(authored).expect("mutation span")).expect("span");
+            let origin = Origin::source(
+                SourceSpan::new(start, start + u32::try_from(authored.len()).expect("span"))
+                    .expect("ordered span"),
+            );
+            let operation = match kind {
+                0 => EmitOperation::WriteReactive {
+                    slot: EmitSlotId::new(0),
+                    projections: Vec::new(),
+                    value: EmitValueRef::Literal(LiteralValue::Undefined),
+                    origin,
+                },
+                1 => EmitOperation::UpdateReactive {
+                    slot: EmitSlotId::new(0),
+                    source_result: Some(ValueId::new(0)),
+                    projections: Vec::new(),
+                    compound: Some(CompoundAssignmentOperator::Add),
+                    value: Some(EmitValueRef::Literal(LiteralValue::Undefined)),
+                    update: None,
+                    prefix: false,
+                    target: None,
+                    origin,
+                },
+                2 => EmitOperation::UpdateReactive {
+                    slot: EmitSlotId::new(0),
+                    source_result: Some(ValueId::new(1)),
+                    projections: Vec::new(),
+                    compound: None,
+                    value: None,
+                    update: Some(UpdateOperator::Increment),
+                    prefix: false,
+                    target: None,
+                    origin,
+                },
+                3 => EmitOperation::UpdateReactive {
+                    slot: EmitSlotId::new(0),
+                    source_result: Some(ValueId::new(2)),
+                    projections: Vec::new(),
+                    compound: None,
+                    value: None,
+                    update: Some(UpdateOperator::Decrement),
+                    prefix: true,
+                    target: None,
+                    origin,
+                },
+                _ => unreachable!(),
+            };
+            emit.functions[0].operations.push(operation);
+        }
+
+        let output = emit_program(
+            source,
+            "writes.js",
+            options(OxcSourceLanguage::JavaScript, false),
+            &emit,
+        );
+
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert!(output.code.contains("count(__fict_value)"));
+        assert!(output.code.contains("count() + 2"));
+        assert!(output.code.contains("count(__fict_previous + 1)"));
+        assert!(output.code.contains("count() - 1"));
     }
 
     #[test]
