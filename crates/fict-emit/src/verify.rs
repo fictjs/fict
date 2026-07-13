@@ -160,6 +160,18 @@ pub fn verify_emit_program(
                 props.parameter == hir_function.parameters[0].origin
                     && props.default.as_ref().map(|default| default.value)
                         == hir_function.parameters[0].default_value
+                    && match (&props.rest, &hir_function.parameters[0].object_rest) {
+                        (Some(planned), Some(source)) => hir
+                            .bindings
+                            .get(source.binding.as_usize())
+                            .is_some_and(|binding| {
+                                planned.local == binding.display_name
+                                    && planned.excluded == source.excluded
+                                    && planned.origin == source.origin
+                            }),
+                        (None, None) => true,
+                        (Some(_), None) | (None, Some(_)) => false,
+                    }
                     && props.bindings.len() == expected.len()
                     && props
                         .bindings
@@ -187,7 +199,7 @@ pub fn verify_emit_program(
                         })
             });
             if hir_function.kind != fict_hir::FunctionKind::Component
-                || props.helper != RuntimeHelper::Prop
+                || props.helper != (!props.bindings.is_empty()).then_some(RuntimeHelper::Prop)
                 || !valid_identifier(&props.source)
                 || import_names.contains(props.source.as_str())
                 || source_names.contains(props.source.as_str())
@@ -207,6 +219,12 @@ pub fn verify_emit_program(
                             .context
                             .as_ref()
                             .is_some_and(|context| context.local == default.input)
+                })
+                || props.rest.as_ref().is_some_and(|rest| {
+                    rest.helper != RuntimeHelper::PropsRest
+                        || !valid_identifier(&rest.local)
+                        || rest.excluded.iter().any(String::is_empty)
+                        || rest.origin.primary_span.is_none()
                 })
                 || props.bindings.iter().any(|binding| {
                     binding.path.is_empty()
@@ -293,7 +311,13 @@ fn verify_imports(program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {
                 .iter()
                 .flat_map(|operation| operation.helper_slots().into_iter().flatten())
                 .chain(function.context.iter().map(|context| context.helper))
-                .chain(function.props.iter().map(|props| props.helper))
+                .chain(function.props.iter().filter_map(|props| props.helper))
+                .chain(
+                    function
+                        .props
+                        .iter()
+                        .filter_map(|props| props.rest.as_ref().map(|rest| rest.helper)),
+                )
         })
         .collect();
     let imported: BTreeSet<_> = program.imports.iter().map(|intent| intent.helper).collect();

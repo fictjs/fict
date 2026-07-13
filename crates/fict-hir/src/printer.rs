@@ -84,7 +84,7 @@ pub fn print_hir(file: &HirFile) -> String {
         for parameter in &function.parameters {
             writeln!(
                 output,
-                "  parameter local{} binding={} pattern=fragment{} default={} object_properties={:?} origin={}",
+                "  parameter local{} binding={} pattern=fragment{} default={} object_properties={:?} object_rest={:?} origin={}",
                 parameter.local.index(),
                 optional_binding(parameter.binding),
                 parameter.pattern.index(),
@@ -92,6 +92,7 @@ pub fn print_hir(file: &HirFile) -> String {
                     .default_value
                     .map_or_else(|| "none".to_owned(), print_origin),
                 parameter.object_properties,
+                parameter.object_rest,
                 print_origin(parameter.origin)
             )
             .expect("writing to String cannot fail");

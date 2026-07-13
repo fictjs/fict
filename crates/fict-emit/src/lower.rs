@@ -15,9 +15,9 @@ use crate::{
     CleanupOwner, ComponentChild, ComponentProp, ComponentTarget, ConditionalKind,
     DELEGATED_EVENTS, DomBindingKind, DomNamespace, EmitContext, EmitFunction, EmitModulePlan,
     EmitOperation, EmitProgram, EmitPropBinding, EmitPropCheck, EmitPropsDefault, EmitPropsPlan,
-    EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef, PropsOperation, ReactiveSlot,
-    ReactiveSlotKind, ReactiveSlotStorage, RuntimeFamily, RuntimeHelper, RuntimeImportIntent,
-    name_allocator::NameAllocator, verify_emit_program,
+    EmitPropsRest, EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef, PropsOperation,
+    ReactiveSlot, ReactiveSlotKind, ReactiveSlotStorage, RuntimeFamily, RuntimeHelper,
+    RuntimeImportIntent, name_allocator::NameAllocator, verify_emit_program,
 };
 
 /// Phase-1 Core lowering configuration.
@@ -149,7 +149,13 @@ fn lower_program(
                 .iter()
                 .flat_map(|operation| operation.helper_slots().into_iter().flatten())
                 .chain(function.context.iter().map(|context| context.helper))
-                .chain(function.props.iter().map(|props| props.helper))
+                .chain(function.props.iter().filter_map(|props| props.helper))
+                .chain(
+                    function
+                        .props
+                        .iter()
+                        .filter_map(|props| props.rest.as_ref().map(|rest| rest.helper)),
+                )
         })
         .collect();
     if options.strict_guarantee
@@ -791,12 +797,30 @@ fn lower_component_props_plan(
         input: names.allocate("__fictPropsParam"),
         value,
     });
+    let rest = if let Some(rest) = &parameter.object_rest {
+        let Some(binding) = hir.bindings.get(rest.binding.as_usize()) else {
+            return Err(DiagnosticBundle::new(vec![lower_error(
+                "FICT-EMIT-PROPS-REST-BINDING",
+                "component props rest plan references an unknown binding",
+                GuaranteeClass::Internal,
+            )]));
+        };
+        Some(EmitPropsRest {
+            local: binding.display_name.clone(),
+            excluded: rest.excluded.clone(),
+            helper: RuntimeHelper::PropsRest,
+            origin: rest.origin,
+        })
+    } else {
+        None
+    };
     Ok(Some(EmitPropsPlan {
         parameter: parameter.origin,
         source,
         default,
         bindings,
-        helper: RuntimeHelper::Prop,
+        rest,
+        helper: (!properties.is_empty()).then_some(RuntimeHelper::Prop),
     }))
 }
 

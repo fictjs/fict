@@ -349,6 +349,27 @@ impl Verifier<'_> {
                     }
                 }
             }
+            if let Some(rest) = &parameter.object_rest {
+                self.binding(rest.binding, rest.origin);
+                self.verify_origin(rest.origin);
+                if parameter.object_properties.is_none()
+                    || rest.excluded.iter().any(String::is_empty)
+                    || parameter
+                        .object_properties
+                        .as_ref()
+                        .is_some_and(|properties| {
+                            properties
+                                .iter()
+                                .any(|property| property.binding == rest.binding)
+                        })
+                {
+                    self.error(
+                        "FICT-HIR-PROPS-REST",
+                        "modeled props rest requires non-empty excluded keys and a distinct binding",
+                        Some(rest.origin),
+                    );
+                }
+            }
             self.verify_origin(parameter.origin);
             if !parameter_locals.insert(parameter.local) {
                 self.error(

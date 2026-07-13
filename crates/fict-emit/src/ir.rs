@@ -691,6 +691,15 @@ pub struct EmitPropsDefault {
     pub value: Origin,
 }
 
+/// Top-level reactive props-rest declaration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmitPropsRest {
+    pub local: String,
+    pub excluded: Vec<String>,
+    pub helper: RuntimeHelper,
+    pub origin: Origin,
+}
+
 /// Function-entry plan for a binding-aware object props parameter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmitPropsPlan {
@@ -698,7 +707,8 @@ pub struct EmitPropsPlan {
     pub source: String,
     pub default: Option<EmitPropsDefault>,
     pub bindings: Vec<EmitPropBinding>,
-    pub helper: RuntimeHelper,
+    pub rest: Option<EmitPropsRest>,
+    pub helper: Option<RuntimeHelper>,
 }
 
 /// Emit plan for one HIR function.

@@ -373,3 +373,54 @@ test('Rust compiler output keeps nested destructured props reactive and checked'
     /Cannot destructure prop "user" because it is nullish/,
   )
 })
+
+test('Rust compiler output preserves reactive top-level rest props', async () => {
+  const module = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      let setData = () => {}
+
+      function Child({ id, ...rest }) {
+        return <p>{String('id' in rest)}:{id}:{rest.title}:{rest.count}</p>
+      }
+
+      function App() {
+        let data = $state({ title: 'A', count: 1 })
+        setData = next => {
+          data = next
+        }
+        return <Child id="row" title={data.title} count={data.count} />
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+
+      export function update(next) {
+        setData(next)
+      }
+    `,
+    'rest-props',
+    /const rest = __fictPropsRest\(__fictProps, \["id"\]\)/,
+  )
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = module.mount(container)
+  await flushRuntime()
+
+  const child = container.querySelector('p')
+  assert.ok(child)
+  assert.equal(child.textContent, 'false:row:A:1')
+
+  module.update({ title: 'B', count: 2 })
+  await flushRuntime()
+
+  assert.equal(container.querySelector('p'), child)
+  assert.equal(child.textContent, 'false:row:B:2')
+
+  dispose()
+  assert.equal(container.childNodes.length, 0)
+  container.remove()
+})

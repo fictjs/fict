@@ -858,8 +858,11 @@ fn models_simple_component_object_props_with_exact_read_origins() {
         function Nested({ user: { name, profile: { age = 18 } } }) {
             return <span>{name}:{age}</span>;
         }
+        function Rest({ id, title: heading, ...rest }) {
+            return <span>{id}:{heading}:{rest.extra}</span>;
+        }
         export function App(value) {
-            return <><Child value={value} label="ok" /><Method value={value} /><Nested user={{ name: 'Ada', profile: {} }} /></>;
+            return <><Child value={value} label="ok" /><Method value={value} /><Nested user={{ name: 'Ada', profile: {} }} /><Rest id="x" title="Title" extra="ok" /></>;
         }
     "#;
     let output = build_hir(
@@ -955,6 +958,24 @@ fn models_simple_component_object_props_with_exact_read_origins() {
     assert_eq!(nested_properties[1].checks.len(), 1);
     assert_eq!(nested_properties[1].checks[0].path, ["user", "profile"]);
     assert!(nested_properties[1].default_value.is_some());
+    let rest = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "Rest")
+        })
+        .expect("Rest component");
+    let rest_binding = rest.parameters[0]
+        .object_rest
+        .as_ref()
+        .expect("top-level props rest remains modeled");
+    assert_eq!(rest_binding.excluded, ["id", "title"]);
+    assert_eq!(
+        hir.bindings[rest_binding.binding.as_usize()].display_name,
+        "rest"
+    );
 
     let callable = build_hir(
         "function Button({ onClick }) { return <button onClick={() => onClick()}>go</button>; } export function App(fn) { return <Button onClick={fn} />; }",

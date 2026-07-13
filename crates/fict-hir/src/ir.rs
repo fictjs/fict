@@ -211,6 +211,8 @@ pub struct HirParameter {
     pub default_value: Option<Origin>,
     /// Statically modeled top-level object properties for safe component-prop lowering.
     pub object_properties: Option<Vec<HirObjectParameterProperty>>,
+    /// Optional top-level rest binding for reactive props lowering.
+    pub object_rest: Option<HirObjectParameterRest>,
     /// Source provenance.
     pub origin: Origin,
 }
@@ -236,6 +238,14 @@ pub struct HirObjectParameterProperty {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HirObjectParameterCheck {
     pub path: Vec<String>,
+    pub origin: Origin,
+}
+
+/// Top-level rest binding and its statically excluded property names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HirObjectParameterRest {
+    pub binding: BindingId,
+    pub excluded: Vec<String>,
     pub origin: Origin,
 }
 

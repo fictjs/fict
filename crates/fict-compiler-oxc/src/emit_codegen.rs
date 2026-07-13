@@ -526,10 +526,19 @@ struct PropsParameterDefaultRewrite {
 }
 
 #[derive(Debug, Clone)]
+struct PropsRestRewrite {
+    local: String,
+    excluded: Vec<String>,
+    helper: String,
+    origin: SourceSpan,
+}
+
+#[derive(Debug, Clone)]
 struct PropsRewrite {
     source: String,
     default: Option<PropsParameterDefaultRewrite>,
-    helper: String,
+    rest: Option<PropsRestRewrite>,
+    helper: Option<String>,
     bindings: Vec<PropBindingRewrite>,
 }
 
@@ -560,16 +569,22 @@ fn props_rewrites(emit: &EmitProgram) -> PropsRewrites {
             ));
             continue;
         };
-        let Some(helper) = helper_names.get(&props.helper) else {
-            diagnostics.push(
-                emit_error(
-                    "FICT-OXC-EMIT-IMPORT",
-                    "component props helper has no runtime import intent",
-                    GuaranteeClass::Internal,
-                )
-                .with_primary_span(parameter),
-            );
-            continue;
+        let helper = match props.helper {
+            Some(helper) => {
+                let Some(local) = helper_names.get(&helper) else {
+                    diagnostics.push(
+                        emit_error(
+                            "FICT-OXC-EMIT-IMPORT",
+                            "component props helper has no runtime import intent",
+                            GuaranteeClass::Internal,
+                        )
+                        .with_primary_span(parameter),
+                    );
+                    continue;
+                };
+                Some((*local).to_owned())
+            }
+            None => None,
         };
         let default = match &props.default {
             Some(default) => {
@@ -587,6 +602,39 @@ fn props_rewrites(emit: &EmitProgram) -> PropsRewrites {
                 Some(PropsParameterDefaultRewrite {
                     input: default.input.clone(),
                     value,
+                })
+            }
+            None => None,
+        };
+        let rest = match &props.rest {
+            Some(rest) => {
+                let Some(origin) = rest.origin.primary_span else {
+                    diagnostics.push(
+                        emit_error(
+                            "FICT-OXC-EMIT-PROPS",
+                            "component props rest requires a source origin",
+                            GuaranteeClass::Internal,
+                        )
+                        .with_primary_span(parameter),
+                    );
+                    continue;
+                };
+                let Some(helper) = helper_names.get(&rest.helper) else {
+                    diagnostics.push(
+                        emit_error(
+                            "FICT-OXC-EMIT-IMPORT",
+                            "component props rest helper has no runtime import intent",
+                            GuaranteeClass::Internal,
+                        )
+                        .with_primary_span(origin),
+                    );
+                    continue;
+                };
+                Some(PropsRestRewrite {
+                    local: rest.local.clone(),
+                    excluded: rest.excluded.clone(),
+                    helper: (*helper).to_owned(),
+                    origin,
                 })
             }
             None => None,
@@ -706,7 +754,8 @@ fn props_rewrites(emit: &EmitProgram) -> PropsRewrites {
                 PropsRewrite {
                     source: props.source.clone(),
                     default,
-                    helper: (*helper).to_owned(),
+                    rest,
+                    helper,
                     bindings,
                 },
             )
@@ -2943,6 +2992,20 @@ impl<'a> AstRewriter<'a, '_> {
             );
             return;
         }
+        if !plan.bindings.is_empty() && plan.helper.is_none() {
+            self.diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-PROPS",
+                    "component prop bindings require a runtime accessor helper",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(
+                    SourceSpan::new(location.0, location.1)
+                        .expect("ordered component props parameter"),
+                ),
+            );
+            return;
+        }
         let builder = AstBuilder::new(self.allocator);
         let parameter_local = plan
             .default
@@ -3035,8 +3098,15 @@ impl<'a> AstRewriter<'a, '_> {
                 self.prop_member(&plan.source, &binding.path, span)
             };
             let getter = zero_parameter_expression_arrow(self.allocator, value, span);
-            let helper =
-                Expression::new_identifier(span, self.allocator.alloc_str(&plan.helper), &builder);
+            let helper = Expression::new_identifier(
+                span,
+                self.allocator.alloc_str(
+                    plan.helper
+                        .as_deref()
+                        .expect("validated component prop accessor helper"),
+                ),
+                &builder,
+            );
             let mut arguments = ArenaVec::new_in(&self.allocator);
             arguments.push(Argument::from(getter));
             let initializer =
@@ -3046,6 +3116,13 @@ impl<'a> AstRewriter<'a, '_> {
                 const_statement(self.allocator, &binding.local, initializer, span),
             );
             insertion_index += 1;
+        }
+        if let Some(rest) = &plan.rest {
+            let span = Span::new(rest.origin.start(), rest.origin.end());
+            body.statements.insert(
+                insertion_index,
+                self.props_rest_statement(&plan.source, rest, span),
+            );
         }
         self.matched_props.insert(location);
     }
@@ -3120,6 +3197,39 @@ impl<'a> AstRewriter<'a, '_> {
             None,
             &builder,
         )
+    }
+
+    fn props_rest_statement(
+        &self,
+        source: &str,
+        rest: &PropsRestRewrite,
+        span: Span,
+    ) -> Statement<'a> {
+        let builder = AstBuilder::new(self.allocator);
+        let mut excluded = ArenaVec::new_in(&self.allocator);
+        for key in &rest.excluded {
+            excluded.push(ArrayExpressionElement::from(
+                Expression::new_string_literal(span, self.allocator.alloc_str(key), None, &builder),
+            ));
+        }
+        let mut arguments = ArenaVec::new_in(&self.allocator);
+        arguments.push(Argument::from(Expression::new_identifier(
+            span,
+            self.allocator.alloc_str(source),
+            &builder,
+        )));
+        arguments.push(Argument::from(Expression::new_array_expression(
+            span, excluded, &builder,
+        )));
+        let initializer = Expression::new_call_expression(
+            span,
+            Expression::new_identifier(span, self.allocator.alloc_str(&rest.helper), &builder),
+            NONE,
+            arguments,
+            false,
+            &builder,
+        );
+        const_statement(self.allocator, &rest.local, initializer, span)
     }
 
     fn identifier_is_undefined(&self, name: &str, span: Span) -> Expression<'a> {
