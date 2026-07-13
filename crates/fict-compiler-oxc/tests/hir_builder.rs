@@ -742,6 +742,53 @@ fn traces_trusted_array_method_chains_to_their_base_receiver() {
 }
 
 #[test]
+fn distinguishes_optional_map_members_from_optional_calls() {
+    let source = r#"
+        import { $state } from 'fict';
+        export function App() {
+            let rows = $state([{ id: 1 }]);
+            return <ul>{rows?.map(row => <li key={row.id}>{row.id}</li>)}</ul>;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+    let fict_hir::JsxNode::Element(root) = &hir.templates[0].root else {
+        panic!("intrinsic list root")
+    };
+    let fict_hir::JsxChild::Expression {
+        list: Some(list), ..
+    } = &root.children[0]
+    else {
+        panic!("optional map metadata")
+    };
+    assert!(list.optional);
+
+    let optional_call = build_hir(
+        "import { $state } from 'fict'; export function App() { let rows = $state([{ id: 1 }]); return <ul>{rows.map?.(row => <li key={row.id}>{row.id}</li>)}</ul>; }",
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        optional_call.diagnostics.is_empty(),
+        "{:?}",
+        optional_call.diagnostics
+    );
+    let optional_call = optional_call.hir.expect("verified fallback HIR");
+    let fict_hir::JsxNode::Element(root) = &optional_call.templates[0].root else {
+        panic!("intrinsic list root")
+    };
+    assert!(matches!(
+        &root.children[0],
+        fict_hir::JsxChild::Expression { list: None, .. }
+    ));
+}
+
+#[test]
 fn assigns_dense_function_local_storage_and_outer_captures_without_name_identity() {
     let source = r#"
         const outer = 1;

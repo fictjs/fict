@@ -20,13 +20,13 @@ use oxc::{
     ast::{
         ast::{
             ArrowFunctionExpression, AssignmentExpression, AssignmentPattern, AssignmentTarget,
-            BindingIdentifier, BindingPattern, BindingRestElement, CallExpression, Expression,
-            FormalParameters, Function, IdentifierReference, JSXAttributeItem, JSXAttributeName,
-            JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild, JSXElement,
-            JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment, JSXMemberExpression,
-            JSXMemberExpressionObject, MemberExpression, Program, SimpleAssignmentTarget,
-            Statement, UpdateExpression, VariableDeclaration, VariableDeclarationKind,
-            VariableDeclarator,
+            BindingIdentifier, BindingPattern, BindingRestElement, CallExpression, ChainElement,
+            Expression, FormalParameters, Function, IdentifierReference, JSXAttributeItem,
+            JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild,
+            JSXElement, JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment,
+            JSXMemberExpression, JSXMemberExpressionObject, MemberExpression, Program,
+            SimpleAssignmentTarget, Statement, UpdateExpression, VariableDeclaration,
+            VariableDeclarationKind, VariableDeclarator,
         },
         ast_kind::AstKind,
     },
@@ -1616,6 +1616,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         };
         Some(JsxListExpression {
             items: Origin::source(list.items),
+            optional: list.optional,
             receiver,
             callback,
             key: list.key.map(Origin::source),
@@ -1874,6 +1875,7 @@ enum RawJsxChild {
 #[derive(Debug, Clone)]
 struct RawJsxListExpression {
     items: SourceSpan,
+    optional: bool,
     receiver: RawJsxListReceiver,
     callback: SourceSpan,
     key: Option<SourceSpan>,
@@ -2292,24 +2294,29 @@ fn raw_jsx_list_expression(
     known_arrays: &BTreeSet<SymbolId>,
     expression: &Expression<'_>,
 ) -> Option<RawJsxListExpression> {
-    let Expression::CallExpression(call) = expression.get_inner_expression() else {
-        return None;
+    let call = match expression.get_inner_expression() {
+        Expression::CallExpression(call) => call.as_ref(),
+        Expression::ChainExpression(chain) => match &chain.expression {
+            ChainElement::CallExpression(call) => call.as_ref(),
+            ChainElement::TSNonNullExpression(_)
+            | ChainElement::ComputedMemberExpression(_)
+            | ChainElement::StaticMemberExpression(_)
+            | ChainElement::PrivateFieldExpression(_) => return None,
+        },
+        _ => return None,
     };
     if call.optional || call.arguments.len() != 1 {
         return None;
     }
-    let items = match call.callee.get_inner_expression() {
-        Expression::StaticMemberExpression(member)
-            if !member.optional && member.property.name == "map" =>
-        {
-            &member.object
+    let (items, optional) = match call.callee.get_inner_expression() {
+        Expression::StaticMemberExpression(member) if member.property.name == "map" => {
+            (&member.object, member.optional)
         }
         Expression::ComputedMemberExpression(member)
-            if !member.optional
-                && matches!(member.expression.get_inner_expression(),
+            if matches!(member.expression.get_inner_expression(),
                     Expression::StringLiteral(property) if property.value == "map") =>
         {
-            &member.object
+            (&member.object, member.optional)
         }
         _ => return None,
     };
@@ -2388,6 +2395,7 @@ fn raw_jsx_list_expression(
     let receiver = classify_raw_list_receiver(scoping, known_arrays, items)?;
     Some(RawJsxListExpression {
         items: source_span(items.span()),
+        optional,
         receiver,
         callback: source_span(callback.span),
         key,

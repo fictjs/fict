@@ -958,6 +958,7 @@ enum FineJsxStep {
         namespace: DomNamespace,
         value_origin: SourceSpan,
         items_origin: SourceSpan,
+        optional: bool,
         key_origin: Option<SourceSpan>,
         key_source_origin: Option<SourceSpan>,
         key_alias_initializer: Option<SourceSpan>,
@@ -1782,6 +1783,7 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                 EmitOperation::KeyedChild {
                     target,
                     items,
+                    optional,
                     key,
                     key_source,
                     key_alias_initializer,
@@ -1991,6 +1993,7 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                         namespace: *namespace,
                         value_origin,
                         items_origin,
+                        optional: *optional,
                         key_origin,
                         key_source_origin,
                         key_alias_initializer,
@@ -3117,6 +3120,7 @@ impl<'a> AstRewriter<'a, '_> {
                     namespace,
                     value_origin,
                     items_origin,
+                    optional,
                     key_origin,
                     key_source_origin,
                     key_alias_initializer,
@@ -3147,6 +3151,7 @@ impl<'a> AstRewriter<'a, '_> {
                         &cleanup_helper,
                         namespace,
                         items_origin,
+                        optional,
                         key_origin,
                         key_source_origin,
                         key_alias_initializer,
@@ -3194,6 +3199,7 @@ impl<'a> AstRewriter<'a, '_> {
         cleanup_helper: &str,
         namespace: DomNamespace,
         items_origin: SourceSpan,
+        optional: bool,
         key_origin: Option<SourceSpan>,
         key_source_origin: Option<SourceSpan>,
         key_alias_initializer: Option<SourceSpan>,
@@ -3231,21 +3237,58 @@ impl<'a> AstRewriter<'a, '_> {
             return;
         }
         let diagnostic_origin = explicit_key.map_or(items_origin, |(key, _)| key);
-        let Expression::CallExpression(call) = map.into_inner_expression() else {
+        let call = match map.into_inner_expression() {
+            Expression::CallExpression(call) => call,
+            Expression::ChainExpression(chain) => match chain.unbox().expression {
+                ChainElement::CallExpression(call) => call,
+                ChainElement::TSNonNullExpression(_)
+                | ChainElement::ComputedMemberExpression(_)
+                | ChainElement::StaticMemberExpression(_)
+                | ChainElement::PrivateFieldExpression(_) => {
+                    self.diagnostics.push(
+                        emit_error(
+                            "FICT-OXC-EMIT-KEYED",
+                            "keyed child chain does not contain a direct map call",
+                            GuaranteeClass::Internal,
+                        )
+                        .with_primary_span(items_origin),
+                    );
+                    return;
+                }
+            },
+            _ => {
+                self.diagnostics.push(
+                    emit_error(
+                        "FICT-OXC-EMIT-KEYED",
+                        "keyed child source is not a direct map call",
+                        GuaranteeClass::Internal,
+                    )
+                    .with_primary_span(items_origin),
+                );
+                return;
+            }
+        };
+        let mut call = call.unbox();
+        if call.optional {
             self.diagnostics.push(
                 emit_error(
                     "FICT-OXC-EMIT-KEYED",
-                    "keyed child source is not a direct map call",
+                    "optional map calls are not supported by direct list lowering",
                     GuaranteeClass::Internal,
                 )
                 .with_primary_span(items_origin),
             );
             return;
-        };
-        let mut call = call.unbox();
-        let mut items = match call.callee.into_inner_expression() {
-            Expression::StaticMemberExpression(member) => member.unbox().object,
-            Expression::ComputedMemberExpression(member) => member.unbox().object,
+        }
+        let (mut items, source_optional) = match call.callee.into_inner_expression() {
+            Expression::StaticMemberExpression(member) => {
+                let member = member.unbox();
+                (member.object, member.optional)
+            }
+            Expression::ComputedMemberExpression(member) => {
+                let member = member.unbox();
+                (member.object, member.optional)
+            }
             _ => {
                 self.diagnostics.push(
                     emit_error(
@@ -3258,6 +3301,17 @@ impl<'a> AstRewriter<'a, '_> {
                 return;
             }
         };
+        if source_optional != optional {
+            self.diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-KEYED",
+                    "keyed child optionality does not match its map member",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(items_origin),
+            );
+            return;
+        }
         if (items.span().start, items.span().end) != (items_origin.start(), items_origin.end()) {
             self.diagnostics.push(
                 emit_error(
@@ -3305,6 +3359,22 @@ impl<'a> AstRewriter<'a, '_> {
             return;
         };
         self.visit_expression(&mut items);
+        if optional {
+            let items_span = items.span();
+            let builder = AstBuilder::new(self.allocator);
+            let empty = Expression::new_array_expression(
+                items_span,
+                ArenaVec::new_in(&self.allocator),
+                &builder,
+            );
+            items = Expression::new_logical_expression(
+                items_span,
+                items,
+                OxcLogicalOperator::Coalesce,
+                empty,
+                &builder,
+            );
+        }
 
         let mut key_callback = render_callback.clone_in(self.allocator);
         if let Some((_, key_source_origin)) = explicit_key {

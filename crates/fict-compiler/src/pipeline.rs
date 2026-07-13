@@ -1177,6 +1177,35 @@ mod tests {
     }
 
     #[test]
+    fn optimizes_optional_map_members_with_nullish_array_fallbacks() {
+        let result = compile(request(
+            "import { $state, $store } from 'fict'; export function StateList() { let rows = $state([{ id: 1 }]); return <ul>{rows?.map(row => <li key={row.id}>{row.id}</li>)}</ul>; } export function StoreList() { const store = $store({ rows: [{ id: 2 }] }); return <main>{store.rows?.map((row, index) => <span>{index}:{row.id}</span>)}</main>; } export function OptionalCall() { let rows = $state([{ id: 3 }]); return <aside>{rows.map?.(row => <i key={row.id}>{row.id}</i>)}</aside>; }",
+            "optional-map.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result.code.matches("createKeyedList(").count(),
+            2,
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("createKeyedList(() => rows() ?? []"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("createKeyedList(() => store.rows ?? []"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("rows().map?.("), "{}", result.code);
+    }
+
+    #[test]
     fn omits_intrinsic_keys_without_losing_dynamic_key_effects() {
         let result = compile(request(
             "export function Static() { return <p key=\"row\" title=\"ok\" />; } export function Dynamic() { return <div before={before()} key={side()} after={after()} />; }",

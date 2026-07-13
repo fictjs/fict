@@ -376,6 +376,7 @@ pub enum EmitOperation {
         target: EmitTemporaryId,
         source_result: ValueId,
         items: Origin,
+        optional: bool,
         key: Option<Origin>,
         key_source: Option<Origin>,
         key_alias_initializer: Option<Origin>,

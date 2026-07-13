@@ -91,6 +91,8 @@ pub enum JsxListReceiver {
 pub struct JsxListExpression {
     /// Source range of the expression before `.map(...)`.
     pub items: Origin,
+    /// Whether the authored map member short-circuits on a nullish receiver.
+    pub optional: bool,
     /// Receiver proof used by EmitIR to decide whether Array map specialization is sound.
     pub receiver: JsxListReceiver,
     /// HIR function that owns the inline render callback.
