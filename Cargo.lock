@@ -185,6 +185,7 @@ dependencies = [
  "fict-hir",
  "fict-metadata",
  "fict-reactivity",
+ "oxc_sourcemap",
  "serde",
  "serde_json",
  "sha2",

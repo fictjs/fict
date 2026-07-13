@@ -24,3 +24,6 @@ serde_json.workspace = true
 
 [build-dependencies]
 sha2.workspace = true
+
+[dev-dependencies]
+oxc_sourcemap.workspace = true
