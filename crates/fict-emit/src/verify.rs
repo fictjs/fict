@@ -50,12 +50,30 @@ pub fn verify_emit_program(
             "EmitIR functions must match the HIR function arena",
         ));
     }
+    verify_module_plan(hir, program, &mut diagnostics);
     verify_imports(program, &mut diagnostics);
     let import_names: BTreeSet<_> = program
         .imports
         .iter()
         .map(|intent| intent.local.as_str())
         .collect();
+    let source_names: BTreeSet<_> = hir
+        .bindings
+        .iter()
+        .map(|binding| binding.display_name.as_str())
+        .chain(hir.functions.iter().flat_map(|function| {
+            function
+                .locals
+                .iter()
+                .filter_map(|local| local.debug_name.as_deref())
+        }))
+        .collect();
+    if import_names.iter().any(|name| source_names.contains(name)) {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-IMPORT-COLLISION",
+            "generated runtime import locals must not collide with any source binding",
+        ));
+    }
     for function in &program.functions {
         let Some(hir_function) = hir.functions.get(function.source.as_usize()) else {
             continue;
@@ -77,6 +95,7 @@ pub fn verify_emit_program(
                 || !valid_identifier(&temporary.name)
                 || !temporary_names.insert(temporary.name.as_str())
                 || import_names.contains(temporary.name.as_str())
+                || source_names.contains(temporary.name.as_str())
             {
                 diagnostics.push(emit_error(
                     "FICT-EMIT-TEMP",
@@ -135,10 +154,20 @@ fn verify_imports(program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {
     }
     let mut names = BTreeSet::new();
     for intent in &program.imports {
+        let spec = intent.helper.spec();
         if !valid_identifier(&intent.local) || !names.insert(intent.local.as_str()) {
             diagnostics.push(emit_error(
                 "FICT-EMIT-IMPORT-NAME",
                 "runtime import locals must be unique valid identifiers",
+            ));
+        }
+        if intent.imported != spec.export
+            || intent.module_request != spec.module_request(program.runtime_family)
+            || !program.module.reserved_names.contains(&intent.local)
+        {
+            diagnostics.push(emit_error(
+                "FICT-EMIT-IMPORT-ABI",
+                "runtime import source/export must match its ABI family and reserve its local",
             ));
         }
         if !program.preview && intent.helper.spec().stability == RuntimeHelperStability::Preview {
@@ -147,6 +176,79 @@ fn verify_imports(program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {
                 "Core EmitIR cannot import a Preview-only helper",
             ));
         }
+    }
+}
+
+fn verify_module_plan(hir: &HirFile, program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {
+    if program
+        .module
+        .reserved_names
+        .windows(2)
+        .any(|pair| pair[0] >= pair[1])
+        || program.module.reserved_names.iter().any(String::is_empty)
+    {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-MODULE-NAMES",
+            "module reserved names must be non-empty, sorted, and unique",
+        ));
+    }
+    let expected_fragment = hir
+        .functions
+        .get(hir.root_function.as_usize())
+        .and_then(|function| {
+            function
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .rev()
+                .find_map(|instruction| match instruction.kind {
+                    fict_hir::HirInstructionKind::SyntaxFragment { fragment, .. }
+                        if instruction.result.is_none() =>
+                    {
+                        Some(fragment)
+                    }
+                    _ => None,
+                })
+        });
+    if program.module.source_fragment != expected_fragment
+        || program.module.source_fragment.is_some_and(|fragment| {
+            hir.syntax_fragments
+                .get(fragment.as_usize())
+                .is_none_or(|fragment| fragment.kind != fict_hir::SyntaxFragmentKind::Statement)
+        })
+    {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-MODULE-SOURCE",
+            "module plan must preserve the root adapter-owned statement fragment",
+        ));
+    }
+    let required_names = hir
+        .bindings
+        .iter()
+        .map(|binding| binding.display_name.as_str())
+        .chain(hir.functions.iter().flat_map(|function| {
+            function
+                .locals
+                .iter()
+                .filter_map(|local| local.debug_name.as_deref())
+        }))
+        .chain(program.functions.iter().flat_map(|function| {
+            function
+                .temporaries
+                .iter()
+                .map(|temporary| temporary.name.as_str())
+        }));
+    if required_names.into_iter().any(|name| {
+        !program
+            .module
+            .reserved_names
+            .iter()
+            .any(|item| item == name)
+    }) {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-MODULE-NAMES",
+            "module name plan must reserve every source binding and generated temporary",
+        ));
     }
 }
 

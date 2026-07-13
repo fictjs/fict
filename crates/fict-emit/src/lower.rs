@@ -12,9 +12,9 @@ use fict_reactivity::{ReactiveCycleAnalysis, RegionAnalysis, analyze_cfg, struct
 
 use crate::{
     CleanupOwner, ComponentProp, ComponentTarget, DELEGATED_EVENTS, DomBindingKind, DomNamespace,
-    EmitFunction, EmitOperation, EmitProgram, EmitSlotId, EmitTemporary, EmitTemporaryId,
-    EmitValueRef, PropsOperation, ReactiveSlot, ReactiveSlotKind, RuntimeFamily, RuntimeHelper,
-    RuntimeImportIntent, verify_emit_program,
+    EmitFunction, EmitModulePlan, EmitOperation, EmitProgram, EmitSlotId, EmitTemporary,
+    EmitTemporaryId, EmitValueRef, PropsOperation, ReactiveSlot, ReactiveSlotKind, RuntimeFamily,
+    RuntimeHelper, RuntimeImportIntent, name_allocator::NameAllocator, verify_emit_program,
 };
 
 /// Phase-1 Core lowering configuration.
@@ -137,22 +137,62 @@ fn lower_program(
             GuaranteeClass::Fallback,
         )]));
     }
+    let source_names = hir
+        .bindings
+        .iter()
+        .map(|binding| binding.display_name.clone())
+        .chain(hir.functions.iter().flat_map(|function| {
+            function
+                .locals
+                .iter()
+                .filter_map(|local| local.debug_name.clone())
+        }))
+        .chain(
+            functions
+                .iter()
+                .flat_map(|function| function.temporaries.iter().map(|temp| temp.name.clone())),
+        );
+    let mut module_names = NameAllocator::new(source_names);
     let imports = helpers
         .into_iter()
-        .map(|helper| RuntimeImportIntent {
-            helper,
-            local: helper.spec().preferred_local.to_owned(),
+        .map(|helper| {
+            let spec = helper.spec();
+            RuntimeImportIntent {
+                helper,
+                module_request: spec.module_request(options.runtime_family).to_owned(),
+                imported: spec.export.to_owned(),
+                local: module_names.allocate(spec.preferred_local),
+            }
         })
         .collect();
     let program = EmitProgram {
         runtime_family: options.runtime_family,
         preview: options.preview,
         strict_rejected: false,
+        module: EmitModulePlan {
+            source_fragment: module_source_fragment(hir),
+            reserved_names: module_names.names(),
+        },
         imports,
         functions,
     };
     verify_emit_program(hir, regions, &program)?;
     Ok(program)
+}
+
+fn module_source_fragment(hir: &HirFile) -> Option<fict_hir::SyntaxFragmentId> {
+    hir.functions
+        .get(hir.root_function.as_usize())?
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .rev()
+        .find_map(|instruction| match instruction.kind {
+            HirInstructionKind::SyntaxFragment { fragment, .. } if instruction.result.is_none() => {
+                Some(fragment)
+            }
+            _ => None,
+        })
 }
 
 fn lower_function(
@@ -253,6 +293,17 @@ fn lower_function(
             origin: reactive_site_origin(function, site.result),
         })
         .collect();
+    let mut temporary_names = NameAllocator::new(
+        hir.bindings
+            .iter()
+            .map(|binding| binding.display_name.clone())
+            .chain(
+                function
+                    .locals
+                    .iter()
+                    .filter_map(|local| local.debug_name.clone()),
+            ),
+    );
     let mut temporaries = Vec::new();
     let mut value_temporaries = BTreeMap::new();
     let mut operations = Vec::new();
@@ -347,6 +398,7 @@ fn lower_function(
                     })?;
                 let target = allocate_temporary(
                     &mut temporaries,
+                    &mut temporary_names,
                     format!("__fict_list{}", result.index()),
                     instruction.origin,
                 );
@@ -388,6 +440,7 @@ fn lower_function(
                     };
                     let target = allocate_temporary(
                         &mut temporaries,
+                        &mut temporary_names,
                         format!("__fict_v{}", result.index()),
                         instruction.origin,
                     );
@@ -431,6 +484,7 @@ fn lower_function(
                     let target = instruction.result.map(|result| {
                         let target = allocate_temporary(
                             &mut temporaries,
+                            &mut temporary_names,
                             format!("__fict_v{}", result.index()),
                             instruction.origin,
                         );
@@ -457,6 +511,7 @@ fn lower_function(
                         instruction,
                         &mut declared_templates,
                         &mut temporaries,
+                        &mut temporary_names,
                         &mut value_temporaries,
                         &mut operations,
                         cleanup,
@@ -531,6 +586,7 @@ fn lower_jsx_instruction(
     instruction: &fict_hir::HirInstruction,
     declared_templates: &mut BTreeSet<TemplateId>,
     temporaries: &mut Vec<EmitTemporary>,
+    temporary_names: &mut NameAllocator,
     value_temporaries: &mut BTreeMap<ValueId, EmitTemporaryId>,
     operations: &mut Vec<EmitOperation>,
     cleanup: CleanupOwner,
@@ -558,6 +614,7 @@ fn lower_jsx_instruction(
             element,
             instruction,
             temporaries,
+            temporary_names,
             value_temporaries,
             operations,
         );
@@ -581,6 +638,7 @@ fn lower_jsx_instruction(
     };
     let root = allocate_temporary(
         temporaries,
+        temporary_names,
         format!("__fict_jsx{}", result.index()),
         instruction.origin,
     );
@@ -600,6 +658,7 @@ fn lower_jsx_instruction(
                     path,
                     &mut resolved,
                     temporaries,
+                    temporary_names,
                     operations,
                     instruction.origin,
                 );
@@ -628,6 +687,7 @@ fn lower_jsx_instruction(
                     path,
                     &mut resolved,
                     temporaries,
+                    temporary_names,
                     operations,
                     instruction.origin,
                 );
@@ -653,6 +713,7 @@ fn lower_jsx_instruction(
                     parent_path,
                     &mut resolved,
                     temporaries,
+                    temporary_names,
                     operations,
                     instruction.origin,
                 );
@@ -675,6 +736,7 @@ fn lower_jsx_instruction(
                     path,
                     &mut resolved,
                     temporaries,
+                    temporary_names,
                     operations,
                     instruction.origin,
                 );
@@ -699,6 +761,7 @@ fn lower_jsx_instruction(
                     path,
                     &mut resolved,
                     temporaries,
+                    temporary_names,
                     operations,
                     instruction.origin,
                 );
@@ -715,12 +778,14 @@ fn lower_jsx_instruction(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_component_jsx(
     hir: &HirFile,
     function_id: FunctionId,
     element: &fict_hir::JsxElement,
     instruction: &fict_hir::HirInstruction,
     temporaries: &mut Vec<EmitTemporary>,
+    temporary_names: &mut NameAllocator,
     value_temporaries: &mut BTreeMap<ValueId, EmitTemporaryId>,
     operations: &mut Vec<EmitOperation>,
 ) -> Result<(), DiagnosticBundle> {
@@ -804,6 +869,7 @@ fn lower_component_jsx(
     };
     let target = allocate_temporary(
         temporaries,
+        temporary_names,
         format!("__fict_component{}", result.index()),
         instruction.origin,
     );
@@ -1399,6 +1465,7 @@ fn resolved_element(
     path: Vec<u32>,
     resolved: &mut BTreeMap<Vec<u32>, EmitTemporaryId>,
     temporaries: &mut Vec<EmitTemporary>,
+    temporary_names: &mut NameAllocator,
     operations: &mut Vec<EmitOperation>,
     origin: fict_hir::Origin,
 ) -> EmitTemporaryId {
@@ -1410,6 +1477,7 @@ fn resolved_element(
     }
     let target = allocate_temporary(
         temporaries,
+        temporary_names,
         format!("__fict_node{}", temporaries.len()),
         origin,
     );
@@ -1570,10 +1638,12 @@ fn lower_value(value: ValueId, temporaries: &BTreeMap<ValueId, EmitTemporaryId>)
 
 fn allocate_temporary(
     temporaries: &mut Vec<EmitTemporary>,
-    name: String,
+    names: &mut NameAllocator,
+    preferred: String,
     origin: fict_hir::Origin,
 ) -> EmitTemporaryId {
     let id = EmitTemporaryId::new(count_u32(temporaries.len()));
+    let name = names.allocate(&preferred);
     temporaries.push(EmitTemporary { id, name, origin });
     id
 }

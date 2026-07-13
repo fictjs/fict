@@ -1,6 +1,6 @@
 use fict_hir::{
     BindingId, BlockId, CompoundAssignmentOperator, FunctionId, LiteralValue, LocalId, Origin,
-    Projection, RegionId, SsaName, TemplateId, UpdateOperator, ValueId,
+    Projection, RegionId, SsaName, SyntaxFragmentId, TemplateId, UpdateOperator, ValueId,
 };
 
 use crate::{RuntimeFamily, RuntimeHelper};
@@ -35,7 +35,18 @@ emit_id!(EmitTemporaryId);
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RuntimeImportIntent {
     pub helper: RuntimeHelper,
+    pub module_request: String,
+    pub imported: String,
     pub local: String,
+}
+
+/// Preserved module syntax and names reserved before generated imports/temporaries are allocated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmitModulePlan {
+    /// Adapter-owned full module/script body. Synthetic unit fixtures may omit it.
+    pub source_fragment: Option<SyntaxFragmentId>,
+    /// Sorted unique source and generated module names.
+    pub reserved_names: Vec<String>,
 }
 
 /// Function-local generated temporary declaration.
@@ -445,6 +456,7 @@ pub struct EmitProgram {
     pub runtime_family: RuntimeFamily,
     pub preview: bool,
     pub strict_rejected: bool,
+    pub module: EmitModulePlan,
     pub imports: Vec<RuntimeImportIntent>,
     pub functions: Vec<EmitFunction>,
 }

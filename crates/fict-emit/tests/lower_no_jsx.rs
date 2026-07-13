@@ -9,8 +9,8 @@ use fict_hir::{
     HirValue, ImportBinding, ImportKind, ImportedName, InstructionSemantics, JsxAttribute,
     JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxNode, JsxTemplate, LiteralValue,
     LocalId, LocalKind, MutationEffect, NumberLiteral, Origin, Place, ReactiveCallKind, ScopeId,
-    ScopeKind, SourceSpan, TemplateId, TerminatorKind, UpdateOperator, ValueId, ValueKind,
-    verify_hir,
+    ScopeKind, SourceSpan, SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary,
+    TemplateId, TerminatorKind, UpdateOperator, ValueId, ValueKind, verify_hir,
 };
 use fict_reactivity::{
     ReactiveCycleAnalysis, RegionAnalysis, analyze_aliases, analyze_dependencies,
@@ -857,4 +857,81 @@ fn tracks_preserved_store_resource_and_selector_calls() {
             .any(|intent| intent.helper == RuntimeHelper::CreateSelector),
         "preserved runtime calls must not request replacement helpers"
     );
+}
+
+#[test]
+fn allocates_collision_free_module_helpers_and_temporaries() {
+    let mut hir = fixture(FunctionKind::Module);
+    hir.functions[0].locals[0].debug_name = Some("__fict_v3".into());
+    hir.bindings = ["createSignal", "createSignal_1"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, name)| Binding {
+            id: BindingId::new(u32::try_from(index).expect("binding id")),
+            scope: ScopeId::new(0),
+            kind: BindingKind::Const,
+            display_name: name.into(),
+            import: None,
+            origin: origin(),
+        })
+        .collect();
+    hir.syntax_fragments = vec![SyntaxFragment {
+        id: SyntaxFragmentId::new(0),
+        kind: SyntaxFragmentKind::Statement,
+        summary: SyntaxSummary::default(),
+        origin: origin(),
+    }];
+    hir.functions[0].blocks[0].instructions.push(instruction(
+        None,
+        HirInstructionKind::SyntaxFragment {
+            fragment: SyntaxFragmentId::new(0),
+            inputs: Vec::new(),
+        },
+    ));
+    verify_hir(&hir).expect("valid collision fixture");
+    let (regions, cycles) = analyses(&hir);
+    let program = lower_no_jsx(
+        &hir,
+        &regions,
+        &cycles,
+        NoJsxLoweringOptions {
+            runtime_family: RuntimeFamily::Runtime,
+            ..NoJsxLoweringOptions::default()
+        },
+    )
+    .expect("collision-free lowering");
+    let signal = program
+        .imports
+        .iter()
+        .find(|intent| intent.helper == RuntimeHelper::Signal)
+        .expect("signal import");
+    assert_eq!(signal.module_request, "@fictjs/runtime/internal");
+    assert_eq!(signal.imported, "createSignal");
+    assert_eq!(signal.local, "createSignal_2");
+    assert!(
+        program.functions[0]
+            .temporaries
+            .iter()
+            .any(|temporary| { temporary.name == "__fict_v3_1" })
+    );
+    assert_eq!(
+        program.module.source_fragment,
+        Some(SyntaxFragmentId::new(0))
+    );
+    for reserved in [
+        "createSignal",
+        "createSignal_1",
+        "createSignal_2",
+        "__fict_v3",
+        "__fict_v3_1",
+        "undefined",
+    ] {
+        assert!(
+            program
+                .module
+                .reserved_names
+                .iter()
+                .any(|name| name == reserved)
+        );
+    }
 }

@@ -1,7 +1,7 @@
 use fict_emit::{
-    DomBindingKind, DomNamespace, EmitFunction, EmitOperation, EmitProgram, EmitSlotId,
-    EmitTemporary, EmitTemporaryId, EmitValueRef, ReactiveSlot, ReactiveSlotKind, RuntimeFamily,
-    RuntimeHelper, RuntimeImportIntent, verify_emit_program,
+    DomBindingKind, DomNamespace, EmitFunction, EmitModulePlan, EmitOperation, EmitProgram,
+    EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef, ReactiveSlot, ReactiveSlotKind,
+    RuntimeFamily, RuntimeHelper, RuntimeImportIntent, verify_emit_program,
 };
 use fict_hir::{
     BlockId, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction,
@@ -72,17 +72,32 @@ fn program() -> EmitProgram {
         runtime_family: RuntimeFamily::Runtime,
         preview: false,
         strict_rejected: false,
+        module: EmitModulePlan {
+            source_fragment: None,
+            reserved_names: vec![
+                "createElement".into(),
+                "createSignal".into(),
+                "element".into(),
+                "setText".into(),
+            ],
+        },
         imports: vec![
             RuntimeImportIntent {
                 helper: RuntimeHelper::Signal,
+                module_request: "@fictjs/runtime/internal".into(),
+                imported: "createSignal".into(),
                 local: "createSignal".into(),
             },
             RuntimeImportIntent {
                 helper: RuntimeHelper::CreateElement,
+                module_request: "@fictjs/runtime/internal".into(),
+                imported: "createElement".into(),
                 local: "createElement".into(),
             },
             RuntimeImportIntent {
                 helper: RuntimeHelper::SetText,
+                module_request: "@fictjs/runtime/internal".into(),
+                imported: "setText".into(),
                 local: "setText".into(),
             },
         ],
@@ -151,6 +166,8 @@ fn rejects_partial_strict_output_and_preview_helper_leaks() {
     program.preview = false;
     program.imports[0] = RuntimeImportIntent {
         helper: RuntimeHelper::Qrl,
+        module_request: "@fictjs/runtime/internal".into(),
+        imported: "__fictQrl".into(),
         local: "__fictQrl".into(),
     };
     let EmitOperation::CreateReactive { helper, .. } = &mut program.functions[0].operations[0]
