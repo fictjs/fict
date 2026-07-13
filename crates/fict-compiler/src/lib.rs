@@ -7,6 +7,7 @@
 
 mod control_flow_diagnostics;
 mod diagnostic_policy;
+mod metadata_analysis;
 mod pass_manager;
 mod pipeline;
 mod request;

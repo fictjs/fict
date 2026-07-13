@@ -12,6 +12,7 @@ use fict_metadata::MetadataResolutionStatus;
 
 use crate::control_flow_diagnostics::reactive_control_flow_diagnostics;
 use crate::diagnostic_policy::{apply_diagnostic_policy, configured_diagnostic_severity};
+use crate::metadata_analysis::generate_module_metadata;
 use crate::{
     CompileRequest, CompileResult, CompilerExplainArtifact, CompilerExplainEvent,
     CompilerExplainEventKind, CompilerStats, CorePassOptions, ModuleKind, NormalizedCompileRequest,
@@ -162,6 +163,17 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         attach_explain_if_requested(&mut result, &request, &[]);
         return result;
     };
+    let Some(module_plan) = build.module_plan else {
+        result.diagnostics.push(diagnostic(
+            "FICT-I005",
+            DiagnosticSeverity::Error,
+            "the OXC frontend returned HIR without its owned module plan",
+            GuaranteeClass::Internal,
+        ));
+        finalize_diagnostics(&mut result, &request.options);
+        attach_explain_if_requested(&mut result, &request, &[]);
+        return result;
+    };
     if request.options.strict_guarantee
         && let Some(suppression) = frontend.source_facts.suppressions.first()
     {
@@ -196,6 +208,11 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
             return result;
         }
     };
+    let metadata = generate_module_metadata(&core, &module_plan, &frontend, &request.metadata);
+    result.module_metadata = metadata.metadata;
+    result.metadata_dependencies = metadata.dependencies;
+    result.unresolved_metadata_requests = metadata.unresolved_requests;
+    result.metadata_incomplete = metadata.incomplete;
     result
         .diagnostics
         .extend(reactive_control_flow_diagnostics(&core));
@@ -379,7 +396,13 @@ fn attach_explain_if_requested(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use fict_diagnostics::{Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass};
+    use fict_metadata::{
+        HookReturnInfo, MetadataResolutionStatus, ModuleReactiveMetadata, ReactiveExportKind,
+        ResolvedMetadataInput,
+    };
 
     use super::{compile, internal_error_result};
     use crate::{
@@ -502,6 +525,194 @@ mod tests {
             result.explain.expect("native explanation").helpers,
             ["memo"]
         );
+    }
+
+    #[test]
+    fn generates_binding_aware_local_reactive_metadata() {
+        let result = compile(request(
+            r#"
+                import { $memo, $store } from 'fict';
+                import { createSignal } from 'fict/advanced';
+                const count = createSignal(0);
+                export const doubled = $memo(() => count * 2);
+                export const state = $store({ count: 0 });
+                export const alias = count;
+                export { count as "__proto__" };
+                export default count;
+            "#,
+            "local-metadata.ts",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result.module_metadata.exports,
+            BTreeMap::from([
+                ("__proto__".into(), ReactiveExportKind::Signal),
+                ("alias".into(), ReactiveExportKind::Memo),
+                ("default".into(), ReactiveExportKind::Signal),
+                ("doubled".into(), ReactiveExportKind::Memo),
+                ("state".into(), ReactiveExportKind::Store),
+            ])
+        );
+
+        let direct = compile(request(
+            "import { createSignal } from 'fict/advanced'; export default createSignal(1);",
+            "default-metadata.ts",
+        ));
+        assert!(!direct.has_errors(), "{:?}", direct.diagnostics);
+        assert_eq!(
+            direct.module_metadata.exports.get("default"),
+            Some(&ReactiveExportKind::Signal)
+        );
+    }
+
+    #[test]
+    fn generates_inferred_and_annotated_hook_return_metadata() {
+        let result = compile(request(
+            r#"
+                import { $memo, $state } from 'fict';
+                export function useCounter() {
+                    const count = $state(0);
+                    const doubled = $memo(() => count * 2);
+                    return { count, doubled };
+                }
+                /** @fictReturn [0: store, 2: 'signal'] */
+                function useAnnotated(input) { return input; }
+                export { useAnnotated as "__proto__" };
+            "#,
+            "hook-metadata.ts",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result.module_metadata.hooks.get("useCounter"),
+            Some(&HookReturnInfo {
+                object_props: BTreeMap::from([
+                    ("count".into(), ReactiveExportKind::Signal),
+                    ("doubled".into(), ReactiveExportKind::Memo),
+                ]),
+                ..HookReturnInfo::default()
+            })
+        );
+        assert_eq!(
+            result.module_metadata.hooks.get("__proto__"),
+            Some(&HookReturnInfo {
+                array_props: BTreeMap::from([
+                    ("0".into(), ReactiveExportKind::Store),
+                    ("2".into(), ReactiveExportKind::Signal),
+                ]),
+                ..HookReturnInfo::default()
+            })
+        );
+    }
+
+    #[test]
+    fn propagates_resolved_reexports_and_namespace_metadata() {
+        let mut input = request(
+            r#"
+                export { count as renamed, default as dependencyDefault } from './dep';
+                export * as dependencyNamespace from './dep';
+                export * from './dep';
+            "#,
+            "barrel.ts",
+        );
+        input.metadata.push(ResolvedMetadataInput {
+            request: "./dep".into(),
+            resolved_id: Some("/src/dep.ts?client".into()),
+            status: MetadataResolutionStatus::Resolved,
+            metadata: Some(ModuleReactiveMetadata {
+                exports: BTreeMap::from([
+                    ("count".into(), ReactiveExportKind::Signal),
+                    ("default".into(), ReactiveExportKind::Store),
+                ]),
+                hooks: BTreeMap::from([(
+                    "useCount".into(),
+                    HookReturnInfo {
+                        direct_accessor: Some(ReactiveExportKind::Signal),
+                        ..HookReturnInfo::default()
+                    },
+                )]),
+                ..ModuleReactiveMetadata::new()
+            }),
+            fingerprint: "sha256:dep".into(),
+        });
+
+        let result = compile(input);
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result.module_metadata.exports,
+            BTreeMap::from([
+                ("count".into(), ReactiveExportKind::Signal),
+                ("dependencyDefault".into(), ReactiveExportKind::Store),
+                ("renamed".into(), ReactiveExportKind::Signal),
+            ])
+        );
+        assert!(result.module_metadata.hooks.contains_key("useCount"));
+        assert_eq!(
+            result
+                .module_metadata
+                .namespaces
+                .get("dependencyNamespace")
+                .and_then(|metadata| metadata.exports.get("count")),
+            Some(&ReactiveExportKind::Signal)
+        );
+        assert_eq!(result.metadata_dependencies, ["/src/dep.ts?client"]);
+        assert!(result.unresolved_metadata_requests.is_empty());
+    }
+
+    #[test]
+    fn removes_ambiguous_star_exports_and_reports_missing_snapshots() {
+        let metadata = |request: &str, resolved_id: &str, names: &[(&str, ReactiveExportKind)]| {
+            ResolvedMetadataInput {
+                request: request.into(),
+                resolved_id: Some(resolved_id.into()),
+                status: MetadataResolutionStatus::Resolved,
+                metadata: Some(ModuleReactiveMetadata {
+                    exports: names
+                        .iter()
+                        .map(|(name, kind)| ((*name).into(), *kind))
+                        .collect(),
+                    ..ModuleReactiveMetadata::new()
+                }),
+                fingerprint: format!("sha256:{request}"),
+            }
+        };
+        let mut input = request(
+            "export * from './a'; export * from './b'; export { keep } from './a'; export * from './not-scanned';",
+            "ambiguous-barrel.ts",
+        );
+        input.metadata = vec![
+            metadata(
+                "./a",
+                "/src/a.ts",
+                &[
+                    ("shared", ReactiveExportKind::Signal),
+                    ("keep", ReactiveExportKind::Memo),
+                    ("onlyA", ReactiveExportKind::Store),
+                ],
+            ),
+            metadata(
+                "./b",
+                "/src/b.ts",
+                &[
+                    ("shared", ReactiveExportKind::Memo),
+                    ("onlyB", ReactiveExportKind::Signal),
+                ],
+            ),
+        ];
+
+        let result = compile(input);
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result.module_metadata.exports,
+            BTreeMap::from([
+                ("keep".into(), ReactiveExportKind::Memo),
+                ("onlyA".into(), ReactiveExportKind::Store),
+                ("onlyB".into(), ReactiveExportKind::Signal),
+            ])
+        );
+        assert_eq!(result.metadata_dependencies, ["/src/a.ts", "/src/b.ts"]);
+        assert_eq!(result.unresolved_metadata_requests, ["./not-scanned"]);
     }
 
     #[test]
