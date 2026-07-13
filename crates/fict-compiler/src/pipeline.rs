@@ -1129,6 +1129,54 @@ mod tests {
     }
 
     #[test]
+    fn optimizes_maps_over_trusted_array_method_chains() {
+        let result = compile(request(
+            "import { $state, $store } from 'fict'; export function StateList() { let rows = $state([{ id: 1, visible: true }]); return <ul>{rows.filter(row => row.visible).map(row => <li key={row.id}>{row.id}</li>)}</ul>; } export function LiteralList() { return <ol>{[1, 2, 3].slice(1).map((value, index) => <li>{index}:{value}</li>)}</ol>; } export function StoreList() { const store = $store({ rows: [{ id: 2 }] }); return <main>{store.rows.toReversed().map(row => <span key={row.id}>{row.id}</span>)}</main>; } export function NestedMap() { const rows = [{ id: 3 }]; return <div>{rows.map(row => ({ ...row })).map(row => <b key={row.id}>{row.id}</b>)}</div>; } export function Fallback(rows) { return <section>{rows.filter(Boolean).map(row => <i key={row.id}>{row.id}</i>)}</section>; } export function Unsupported() { let rows = $state([[{ id: 4 }]]); return <aside>{rows.flat().map(row => <u key={row.id}>{row.id}</u>)}</aside>; }",
+            "array-chain-map.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result.code.matches("createKeyedList(").count(),
+            4,
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("() => rows().filter((row) => row.visible)"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("].slice(1), (value, index) => index"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("() => store.rows.toReversed()"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("() => rows.map((row) => ({"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("rows.filter(Boolean).map("),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("rows().flat().map("),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn omits_intrinsic_keys_without_losing_dynamic_key_effects() {
         let result = compile(request(
             "export function Static() { return <p key=\"row\" title=\"ok\" />; } export function Dynamic() { return <div before={before()} key={side()} after={after()} />; }",

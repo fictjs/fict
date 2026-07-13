@@ -701,6 +701,47 @@ fn models_direct_unkeyed_map_callbacks_with_index_identity() {
 }
 
 #[test]
+fn traces_trusted_array_method_chains_to_their_base_receiver() {
+    let source = r#"
+        import { $state } from 'fict';
+        export function App() {
+            let rows = $state([{ id: 1, visible: true }]);
+            return <ul>{rows.filter(row => row.visible).map(row => <li key={row.id}>{row.id}</li>)}</ul>;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+    let fict_hir::JsxNode::Element(root) = &hir.templates[0].root else {
+        panic!("intrinsic list root")
+    };
+    let fict_hir::JsxChild::Expression {
+        list: Some(list), ..
+    } = &root.children[0]
+    else {
+        panic!("array chain map metadata")
+    };
+    let fict_hir::JsxListReceiver::Binding {
+        root: receiver,
+        projected: false,
+        ..
+    } = list.receiver
+    else {
+        panic!("array chain base binding")
+    };
+    assert_eq!(hir.bindings[receiver.as_usize()].display_name, "rows");
+    let items = list.items.primary_span.expect("array chain items origin");
+    assert_eq!(
+        &source[items.start() as usize..items.end() as usize],
+        "rows.filter(row => row.visible)"
+    );
+}
+
+#[test]
 fn assigns_dense_function_local_storage_and_outer_captures_without_name_identity() {
     let source = r#"
         const outer = 1;

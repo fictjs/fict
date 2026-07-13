@@ -2565,8 +2565,32 @@ fn classify_raw_list_receiver(
                 known_array: false,
             })
         }
+        Expression::CallExpression(call) if !call.optional => {
+            let receiver = match call.callee.get_inner_expression() {
+                Expression::StaticMemberExpression(member)
+                    if !member.optional
+                        && trusted_array_returning_method(member.property.name.as_str()) =>
+                {
+                    &member.object
+                }
+                Expression::ComputedMemberExpression(member)
+                    if !member.optional
+                        && matches!(member.expression.get_inner_expression(),
+                            Expression::StringLiteral(property)
+                                if trusted_array_returning_method(property.value.as_str())) =>
+                {
+                    &member.object
+                }
+                _ => return None,
+            };
+            classify_raw_list_receiver(scoping, known_arrays, receiver)
+        }
         _ => None,
     }
+}
+
+fn trusted_array_returning_method(name: &str) -> bool {
+    matches!(name, "filter" | "map" | "slice" | "toReversed" | "toSorted")
 }
 
 #[derive(Debug, Clone)]
