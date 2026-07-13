@@ -723,10 +723,17 @@ enum TemplateBinding {
         name: String,
         value: ValueId,
     },
+    StaticAttribute {
+        path: Vec<u32>,
+        name: String,
+        value: fict_hir::LiteralValue,
+        origin: fict_hir::Origin,
+    },
     Spread {
         path: Vec<u32>,
         value: ValueId,
         namespace: DomNamespace,
+        skip_children: bool,
     },
     Child {
         parent_path: Vec<u32>,
@@ -855,10 +862,37 @@ fn lower_jsx_instruction(
                     origin,
                 });
             }
+            TemplateBinding::StaticAttribute {
+                path,
+                name,
+                value,
+                origin,
+            } => {
+                let element = resolved_element(
+                    root,
+                    path,
+                    &mut resolved,
+                    temporaries,
+                    temporary_names,
+                    operations,
+                    origin,
+                );
+                let kind = dom_binding_kind(&name);
+                let helper = dom_binding_helper(&kind, false);
+                operations.push(EmitOperation::BindDom {
+                    element,
+                    kind,
+                    value: EmitValueRef::Literal(value),
+                    reactive: false,
+                    helper,
+                    origin,
+                });
+            }
             TemplateBinding::Spread {
                 path,
                 value,
                 namespace,
+                skip_children,
             } => {
                 let origin = hir.functions[function_id.as_usize()].values[value.as_usize()].origin;
                 let element = resolved_element(
@@ -875,7 +909,7 @@ fn lower_jsx_instruction(
                     operation: PropsOperation::Spread {
                         source: lower_value(value, value_temporaries),
                         namespace,
-                        skip_children: false,
+                        skip_children,
                         excluded: Vec::new(),
                     },
                     helper: RuntimeHelper::Spread,
@@ -1139,9 +1173,14 @@ fn serialize_node(
             }
             html.push('<');
             html.push_str(tag);
+            let mut seen_spread = false;
             for attribute in &element.attributes {
                 match attribute {
-                    JsxAttribute::Named { name, value, .. } => {
+                    JsxAttribute::Named {
+                        name,
+                        value,
+                        origin,
+                    } => {
                         let name = normalize_attribute_name(tag, name, element_namespace);
                         if !valid_markup_name(&name) {
                             return Err(DiagnosticBundle::new(vec![lower_error(
@@ -1152,15 +1191,33 @@ fn serialize_node(
                         }
                         match value {
                             JsxAttributeValue::ImplicitTrue => {
-                                html.push(' ');
-                                html.push_str(&name);
+                                if seen_spread {
+                                    bindings.push(TemplateBinding::StaticAttribute {
+                                        path: path.clone(),
+                                        name,
+                                        value: fict_hir::LiteralValue::Boolean(true),
+                                        origin: *origin,
+                                    });
+                                } else {
+                                    html.push(' ');
+                                    html.push_str(&name);
+                                }
                             }
                             JsxAttributeValue::Text(value) => {
-                                html.push(' ');
-                                html.push_str(&name);
-                                html.push_str("=\"");
-                                escape_attribute(value, html);
-                                html.push('"');
+                                if seen_spread {
+                                    bindings.push(TemplateBinding::StaticAttribute {
+                                        path: path.clone(),
+                                        name,
+                                        value: fict_hir::LiteralValue::String(value.clone()),
+                                        origin: *origin,
+                                    });
+                                } else {
+                                    html.push(' ');
+                                    html.push_str(&name);
+                                    html.push_str("=\"");
+                                    escape_attribute(value, html);
+                                    html.push('"');
+                                }
                             }
                             JsxAttributeValue::Expression(value) => {
                                 if name == "ref" {
@@ -1192,10 +1249,12 @@ fn serialize_node(
                         }
                     }
                     JsxAttribute::Spread { value, .. } => {
+                        seen_spread = true;
                         bindings.push(TemplateBinding::Spread {
                             path: path.clone(),
                             value: *value,
                             namespace: element_namespace,
+                            skip_children: element.children.iter().any(renderable_child),
                         });
                     }
                 }

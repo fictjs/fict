@@ -362,6 +362,15 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
                     value: JsxAttributeValue::Text("<&\"".into()),
                     origin: origin(),
                 },
+                JsxAttribute::Spread {
+                    value: ValueId::new(0),
+                    origin: origin(),
+                },
+                JsxAttribute::Named {
+                    name: "data-after".into(),
+                    value: JsxAttributeValue::Text("after".into()),
+                    origin: origin(),
+                },
                 JsxAttribute::Named {
                     name: "data-value".into(),
                     value: JsxAttributeValue::Expression(ValueId::new(0)),
@@ -414,10 +423,42 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
         .expect("template declaration");
     assert_eq!(*declare.1, DomNamespace::Html);
     assert!(declare.0.contains("title=\"&lt;&amp;&quot;\""));
+    assert!(!declare.0.contains("data-after"));
     assert!(declare.0.contains("&lt;hello&gt;"));
     assert!(program.functions[0].operations.iter().any(|operation| {
         matches!(operation, EmitOperation::CloneTemplate { source_result, .. } if *source_result == ValueId::new(1))
     }));
+    let spread_index = program.functions[0]
+        .operations
+        .iter()
+        .position(|operation| {
+            matches!(
+                operation,
+                EmitOperation::ApplyProps {
+                    operation: fict_emit::PropsOperation::Spread {
+                        skip_children: true,
+                        ..
+                    },
+                    ..
+                }
+            )
+        })
+        .expect("ordered spread binding");
+    let trailing_static_index = program.functions[0]
+        .operations
+        .iter()
+        .position(|operation| {
+            matches!(
+                operation,
+                EmitOperation::BindDom {
+                    kind: fict_emit::DomBindingKind::Attribute(name),
+                    reactive: false,
+                    ..
+                } if name == "data-after"
+            )
+        })
+        .expect("trailing static binding");
+    assert!(spread_index < trailing_static_index);
     assert!(program.functions[0].operations.iter().any(|operation| {
         matches!(
             operation,
