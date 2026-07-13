@@ -3021,6 +3021,115 @@ fn materializes_await_values_and_suspension_boundaries() {
 }
 
 #[test]
+fn materializes_yield_values_delegation_and_lazy_arguments() {
+    let source = r#"
+        function* generate(make, consume, optional) {
+            const resumed = yield;
+            const sent = yield make('value');
+            const nested = consume(yield make('nested'));
+            const delegated = yield* make('iterator');
+            const deferred = optional?.(yield make('optional'));
+            return [resumed, sent, nested, delegated, deferred];
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified yield HIR");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "generate")
+        })
+        .expect("generate function");
+    assert!(function.flags.is_generator);
+    let instructions: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let authored = |instruction: &fict_hir::HirInstruction| {
+        let span = instruction
+            .origin
+            .primary_span
+            .expect("authored yield instruction");
+        &source[span.start() as usize..span.end() as usize]
+    };
+    let instruction = |text: &str| {
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| authored(instruction) == text)
+            .unwrap_or_else(|| panic!("instruction for {text}"))
+    };
+
+    let bare = instruction("yield");
+    assert!(matches!(
+        bare.kind,
+        HirInstructionKind::Yield {
+            value: None,
+            delegate: false
+        }
+    ));
+    assert_eq!(
+        bare.semantics,
+        fict_hir::InstructionSemantics::CONSERVATIVE_EAGER
+    );
+
+    for (yield_text, input_text, delegate) in [
+        ("yield make('value')", "make('value')", false),
+        ("yield make('nested')", "make('nested')", false),
+        ("yield* make('iterator')", "make('iterator')", true),
+        ("yield make('optional')", "make('optional')", false),
+    ] {
+        let yield_instruction = instruction(yield_text);
+        let HirInstructionKind::Yield {
+            value: Some(value),
+            delegate: actual_delegate,
+        } = yield_instruction.kind
+        else {
+            panic!("typed yield for {yield_text}")
+        };
+        assert_eq!(actual_delegate, delegate);
+        assert_eq!(Some(value), instruction(input_text).result);
+        assert_eq!(yield_instruction.semantics.purity, Purity::Unknown);
+        assert_eq!(
+            yield_instruction.semantics.mutation,
+            MutationEffect::Unknown
+        );
+        assert!(yield_instruction.semantics.may_throw);
+    }
+
+    for text in [
+        "make('value')",
+        "yield make('value')",
+        "make('nested')",
+        "yield make('nested')",
+        "make('iterator')",
+        "yield* make('iterator')",
+    ] {
+        assert_eq!(
+            instruction(text).semantics.evaluation,
+            EvaluationMode::Eager,
+            "ordinary yielded work remains eager: {text}"
+        );
+    }
+    for text in ["make('optional')", "yield make('optional')"] {
+        assert_eq!(
+            instruction(text).semantics.evaluation,
+            EvaluationMode::Deferred,
+            "an optional call owns its yield argument: {text}"
+        );
+    }
+}
+
+#[test]
 fn materializes_static_computed_index_and_value_base_projections() {
     let source = r#"
         function project(obj) {

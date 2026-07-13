@@ -635,6 +635,23 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
                     },
                 })
             }
+            Expression::YieldExpression(yield_expression) => {
+                let value = yield_expression
+                    .argument
+                    .as_ref()
+                    .map(Expression::get_inner_expression);
+                Some(TypedExpressionFact {
+                    span: source_span(yield_expression.span),
+                    kind: TypedExpressionKind::Yield {
+                        value: value.map(|value| source_span(value.span())),
+                        value_has_effects: yield_expression
+                            .argument
+                            .as_ref()
+                            .is_some_and(structured_control_flow::expression_has_effects),
+                        delegate: yield_expression.delegate,
+                    },
+                })
+            }
             Expression::NewExpression(new_expression) => {
                 let callee = new_expression.callee.get_inner_expression();
                 Some(TypedExpressionFact {
@@ -3085,6 +3102,26 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     ValueKind::InstructionResult,
                     origin,
                     HirInstructionKind::Await { value },
+                    InstructionSemantics::CONSERVATIVE_EAGER,
+                )
+            }
+            TypedExpressionKind::Yield {
+                value,
+                value_has_effects,
+                delegate,
+            } => {
+                let value = value.map(|value| {
+                    self.control_expression_value(owner, block, value, true, *value_has_effects)
+                });
+                self.push_value_to_block(
+                    owner,
+                    block,
+                    ValueKind::InstructionResult,
+                    origin,
+                    HirInstructionKind::Yield {
+                        value,
+                        delegate: *delegate,
+                    },
                     InstructionSemantics::CONSERVATIVE_EAGER,
                 )
             }
@@ -5598,6 +5635,11 @@ enum TypedExpressionKind {
         value: SourceSpan,
         value_has_effects: bool,
     },
+    Yield {
+        value: Option<SourceSpan>,
+        value_has_effects: bool,
+        delegate: bool,
+    },
     New {
         callee: SourceSpan,
         callee_has_effects: bool,
@@ -5770,20 +5812,24 @@ impl EvaluationFact {
                 ..
             }) => 5,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::New { .. },
+                kind: TypedExpressionKind::Yield { .. },
                 ..
             }) => 6,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Array { .. },
+                kind: TypedExpressionKind::New { .. },
                 ..
             }) => 7,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Object { .. },
+                kind: TypedExpressionKind::Array { .. },
                 ..
             }) => 8,
-            Self::Jsx(_) => 9,
-            Self::Member(_) => 10,
-            Self::Call(_) => 11,
+            Self::Typed(TypedExpressionFact {
+                kind: TypedExpressionKind::Object { .. },
+                ..
+            }) => 9,
+            Self::Jsx(_) => 10,
+            Self::Member(_) => 11,
+            Self::Call(_) => 12,
         }
     }
 }
