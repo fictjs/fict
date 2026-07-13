@@ -1009,6 +1009,16 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
     }
 
     fn populate_function_bodies(&mut self, calls: &[CallFact], jsx_roots: &[JsxFact]) {
+        let reactive_targets: BTreeSet<_> = calls
+            .iter()
+            .filter(|call| {
+                call.binding
+                    .and_then(|binding| self.macro_bindings.get(&binding))
+                    .is_some_and(|kind| matches!(kind, FictMacroKind::State | FictMacroKind::Memo))
+            })
+            .filter_map(|call| call.direct_variable_binding)
+            .collect();
+        let reactive_reads = self.collect_reactive_reads(&reactive_targets);
         for fact in self.function_facts.clone() {
             let mut inputs = Vec::new();
             let call_argument_functions: BTreeSet<_> = calls
@@ -1124,6 +1134,32 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 inputs.push(value);
             }
 
+            for read in reactive_reads.iter().filter(|read| read.owner == fact.id) {
+                let Some(local) = self.functions[fact.id.as_usize()]
+                    .locals
+                    .iter()
+                    .find(|local| local.binding == Some(read.binding))
+                    .map(|local| local.id)
+                else {
+                    continue;
+                };
+                let value = self.push_value(
+                    fact.id,
+                    ValueKind::InstructionResult,
+                    Origin::source(read.span),
+                    HirInstructionKind::Read {
+                        place: fict_hir::Place::local(local),
+                    },
+                    InstructionSemantics {
+                        purity: Purity::Unknown,
+                        mutation: MutationEffect::None,
+                        evaluation: EvaluationMode::Eager,
+                        may_throw: true,
+                    },
+                );
+                inputs.push(value);
+            }
+
             for jsx in jsx_roots.iter().filter(|jsx| jsx.owner == fact.id) {
                 let root = self.lower_jsx_node(fact.id, &jsx.root);
                 let template = TemplateId::new(count_u32(self.templates.len()));
@@ -1164,6 +1200,47 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     origin: Origin::source(fact.body_span),
                 });
         }
+    }
+
+    fn collect_reactive_reads(
+        &self,
+        reactive_targets: &BTreeSet<BindingId>,
+    ) -> Vec<ReactiveReadFact> {
+        let mut reads = Vec::new();
+        for (symbol, binding) in &self.symbol_to_binding {
+            if !reactive_targets.contains(binding) {
+                continue;
+            }
+            for reference in self.semantic.scoping().get_resolved_reference_ids(*symbol) {
+                let reference = self.semantic.scoping().get_reference(*reference);
+                if !reference.is_read() || reference.is_write() {
+                    continue;
+                }
+                let span = source_span(self.semantic.reference_span(reference));
+                reads.push(ReactiveReadFact {
+                    owner: self.function_owner_for_span(span),
+                    binding: *binding,
+                    span,
+                });
+            }
+        }
+        reads.sort_by_key(|read| (read.span.start(), read.span.end(), read.binding.index()));
+        reads
+    }
+
+    fn function_owner_for_span(&self, span: SourceSpan) -> FunctionId {
+        self.function_facts
+            .iter()
+            .filter(|function| {
+                function.body_span.start() <= span.start() && function.body_span.end() >= span.end()
+            })
+            .min_by_key(|function| {
+                function
+                    .body_span
+                    .end()
+                    .saturating_sub(function.body_span.start())
+            })
+            .map_or(FunctionId::new(0), |function| function.id)
     }
 
     fn syntax_value(
@@ -1790,6 +1867,13 @@ struct CallFact {
     hook: Option<HookCall>,
     optional: bool,
     pure: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ReactiveReadFact {
+    owner: FunctionId,
+    binding: BindingId,
+    span: SourceSpan,
 }
 
 #[derive(Debug, Clone)]

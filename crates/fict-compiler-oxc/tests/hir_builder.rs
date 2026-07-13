@@ -197,6 +197,64 @@ fn classifies_runtime_reactive_calls_by_import_identity() {
 }
 
 #[test]
+fn materializes_binding_resolved_macro_reads_in_hir() {
+    let source = r#"
+        import { $memo as memo } from 'fict';
+        const doubled = memo(() => 2);
+        export const result = doubled + doubled;
+        function shadow(doubled) { return doubled; }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified reactive-read HIR");
+    let module = &hir.functions[hir.root_function.as_usize()];
+    let doubled = module
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("doubled"))
+        .expect("memo local");
+    let reads: Vec<_> = module.blocks[0]
+        .instructions
+        .iter()
+        .filter(|instruction| {
+            matches!(
+                &instruction.kind,
+                HirInstructionKind::Read { place }
+                    if place == &fict_hir::Place::local(doubled.id)
+            )
+        })
+        .collect();
+
+    assert_eq!(reads.len(), 2);
+    for read in reads {
+        let span = read.origin.primary_span.expect("read source span");
+        assert_eq!(
+            &source[span.start() as usize..span.end() as usize],
+            "doubled"
+        );
+    }
+    let shadow = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "shadow")
+        })
+        .expect("shadow function");
+    assert!(
+        shadow.blocks[0]
+            .instructions
+            .iter()
+            .all(|instruction| { !matches!(instruction.kind, HirInstructionKind::Read { .. }) })
+    );
+}
+
+#[test]
 fn classifies_hooks_and_binding_resolved_reactive_callbacks() {
     let source = r#"
         import { run as render } from './host';
