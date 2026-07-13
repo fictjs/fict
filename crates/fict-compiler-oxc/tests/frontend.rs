@@ -3,7 +3,7 @@ use fict_compiler_oxc::{
     OxcSourceLanguage, PureCommentKind, PureTargetKind, ReactiveValueKind, SuppressionMode,
     analyze_frontend,
 };
-use fict_hir::FictMacroKind;
+use fict_hir::{FictMacroKind, ImportedName, ModuleExport, ModuleLocalExport};
 
 fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
     OxcCompileOptions {
@@ -146,6 +146,126 @@ fn preserves_type_only_bindings_but_marks_them_non_runtime() {
         shape.import.as_ref().expect("import identity").source,
         "./shape"
     );
+}
+
+#[test]
+fn owns_runtime_module_exports_without_type_or_arena_identity() {
+    let frontend = summary(
+        r#"
+            import type { Shape } from './types';
+            import { sourceValue as forwarded } from './dep';
+            import * as localNamespace from './namespace';
+            export const value: Shape | null = null;
+            export { value as renamed, forwarded, localNamespace };
+            export default value;
+            export { default as dependencyDefault } from './dep';
+            export * as dependencyNamespace from './dep';
+            export * from './more';
+            export type { Shape };
+            export type { Remote } from './types';
+            export type * from './type-star';
+        "#,
+        OxcSourceLanguage::TypeScript,
+    );
+
+    assert!(frontend.has_module_syntax);
+    assert_eq!(frontend.module_exports.len(), 8);
+
+    let value = frontend
+        .bindings
+        .iter()
+        .find(|binding| binding.display_name == "value")
+        .expect("value binding");
+    let namespace = frontend
+        .bindings
+        .iter()
+        .find(|binding| binding.display_name == "localNamespace")
+        .expect("namespace binding");
+
+    assert!(matches!(
+        &frontend.module_exports[0],
+        ModuleExport::Local {
+            exported,
+            target: ModuleLocalExport::Binding(binding),
+            ..
+        } if exported == "value" && *binding == value.id
+    ));
+    assert!(matches!(
+        &frontend.module_exports[1],
+        ModuleExport::Local {
+            exported,
+            target: ModuleLocalExport::Binding(binding),
+            ..
+        } if exported == "renamed" && *binding == value.id
+    ));
+    assert!(matches!(
+        &frontend.module_exports[2],
+        ModuleExport::ReExport {
+            exported,
+            source,
+            imported: ImportedName::Named(imported),
+            ..
+        } if exported == "forwarded" && source == "./dep" && imported == "sourceValue"
+    ));
+    assert!(matches!(
+        &frontend.module_exports[3],
+        ModuleExport::Local {
+            exported,
+            target: ModuleLocalExport::Binding(binding),
+            ..
+        } if exported == "localNamespace" && *binding == namespace.id
+    ));
+    assert!(
+        matches!(
+            &frontend.module_exports[4],
+            ModuleExport::Local {
+                exported,
+                target: ModuleLocalExport::Binding(binding),
+                ..
+            } if exported == "default" && *binding == value.id
+        ),
+        "{:?}",
+        frontend.module_exports
+    );
+    assert!(matches!(
+        &frontend.module_exports[5],
+        ModuleExport::ReExport {
+            exported,
+            source,
+            imported: ImportedName::Default,
+            ..
+        } if exported == "dependencyDefault" && source == "./dep"
+    ));
+    assert!(matches!(
+        &frontend.module_exports[6],
+        ModuleExport::ReExport {
+            exported,
+            source,
+            imported: ImportedName::Namespace,
+            ..
+        } if exported == "dependencyNamespace" && source == "./dep"
+    ));
+    assert!(matches!(
+        &frontend.module_exports[7],
+        ModuleExport::Star { source, .. } if source == "./more"
+    ));
+    assert!(
+        frontend.module_exports.iter().all(|export| !matches!(
+            export,
+            ModuleExport::Local { exported, .. } if exported == "Shape"
+        )),
+        "type-only exports must not enter the runtime module plan"
+    );
+
+    let anonymous = summary("export default 42;", OxcSourceLanguage::JavaScript);
+    assert!(matches!(
+        anonymous.module_exports.as_slice(),
+        [ModuleExport::Local {
+            exported,
+            target: ModuleLocalExport::DefaultExpression,
+            ..
+        }] if exported == "default"
+    ));
 }
 
 #[test]

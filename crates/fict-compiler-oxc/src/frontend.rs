@@ -3,7 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use fict_diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
-use fict_hir::{BindingId, FictMacroKind, ImportBinding, ImportKind, ImportedName, ScopeId};
+use fict_hir::{
+    BindingId, FictMacroKind, ImportBinding, ImportKind, ImportedName, ModuleExport,
+    ModuleLocalExport, Origin, ScopeId,
+};
 use oxc::{
     allocator::Allocator,
     ast::ast::{
@@ -14,7 +17,13 @@ use oxc::{
     parser::{ParseOptions, Parser},
     semantic::{Scoping, Semantic, SemanticBuilder},
     span::{GetSpan, Span},
-    syntax::{reference::ReferenceId, scope::ScopeFlags, symbol::SymbolFlags, symbol::SymbolId},
+    syntax::{
+        module_record::{ExportExportName, ExportImportName, ModuleRecord},
+        reference::ReferenceId,
+        scope::ScopeFlags,
+        symbol::SymbolFlags,
+        symbol::SymbolId,
+    },
 };
 
 use crate::{OxcCompileOptions, OxcModuleKind, OxcSourceLanguage};
@@ -227,6 +236,10 @@ pub struct FrontendSummary {
     pub scopes: Vec<FrontendScope>,
     /// Bindings in deterministic semantic order.
     pub bindings: Vec<FrontendBinding>,
+    /// Whether the parser observed ECMAScript module syntax.
+    pub has_module_syntax: bool,
+    /// Runtime module exports in deterministic source order using frontend binding identities.
+    pub module_exports: Vec<ModuleExport>,
     /// Binding-confirmed macro imports.
     pub macro_imports: Vec<FrontendMacroImport>,
     /// Binding-confirmed macro calls in source order.
@@ -278,6 +291,7 @@ pub fn analyze_frontend(source: &str, options: OxcCompileOptions) -> FrontendOut
         };
     }
 
+    let module_record = parsed.module_record;
     let program = parsed.program;
     let semantic_result = SemanticBuilder::new()
         .with_build_nodes(true)
@@ -297,7 +311,14 @@ pub fn analyze_frontend(source: &str, options: OxcCompileOptions) -> FrontendOut
     }
 
     let semantic = semantic_result.semantic;
-    let summary = build_summary(source, source_len, options, &program, &semantic);
+    let summary = build_summary(
+        source,
+        source_len,
+        options,
+        &program,
+        &module_record,
+        &semantic,
+    );
     FrontendOutput {
         summary: Some(summary),
         diagnostics,
@@ -309,6 +330,7 @@ fn build_summary(
     source_len: u32,
     options: OxcCompileOptions,
     program: &oxc::ast::ast::Program<'_>,
+    module_record: &ModuleRecord<'_>,
     semantic: &Semantic<'_>,
 ) -> FrontendSummary {
     let mut import_collector = ImportCollector::default();
@@ -327,6 +349,8 @@ fn build_summary(
         .enumerate()
         .map(|(index, symbol)| (symbol, binding_id(index)))
         .collect();
+    let module_exports =
+        build_module_exports(module_record, scoping, &symbol_to_binding, &bindings);
 
     let mut direct_macros = BTreeMap::new();
     let mut namespace_macros = BTreeMap::new();
@@ -413,10 +437,116 @@ fn build_summary(
         source_facts: collect_source_facts(source_text, program),
         scopes,
         bindings,
+        has_module_syntax: module_record.has_module_syntax,
+        module_exports,
         macro_imports,
         macro_calls: macro_collector.calls,
         macro_value_uses,
         namespace_macro_calls: macro_collector.namespace_calls,
+    }
+}
+
+fn build_module_exports(
+    module_record: &ModuleRecord<'_>,
+    scoping: &Scoping,
+    symbol_to_binding: &BTreeMap<SymbolId, BindingId>,
+    bindings: &[FrontendBinding],
+) -> Vec<ModuleExport> {
+    let mut exports = Vec::new();
+
+    for entry in &module_record.local_export_entries {
+        if entry.is_type {
+            continue;
+        }
+        let Some(exported) = export_name(&entry.export_name) else {
+            continue;
+        };
+        let target = if let Some(local_name) = entry.local_name.name() {
+            let Some(symbol) = scoping.get_root_binding(local_name.as_str().into()) else {
+                continue;
+            };
+            let Some(binding) = symbol_to_binding.get(&symbol).copied() else {
+                continue;
+            };
+            if !bindings
+                .get(binding.as_usize())
+                .is_some_and(|binding| binding.is_runtime)
+            {
+                continue;
+            }
+            ModuleLocalExport::Binding(binding)
+        } else {
+            ModuleLocalExport::DefaultExpression
+        };
+        exports.push(ModuleExport::Local {
+            exported,
+            target,
+            origin: Origin::source(source_span(entry.span)),
+        });
+    }
+
+    for entry in &module_record.indirect_export_entries {
+        if entry.is_type {
+            continue;
+        }
+        let (Some(exported), Some(module_request), Some(imported)) = (
+            export_name(&entry.export_name),
+            entry.module_request.as_ref(),
+            re_export_import(&entry.import_name),
+        ) else {
+            continue;
+        };
+        exports.push(ModuleExport::ReExport {
+            exported,
+            source: module_request.name.to_string(),
+            imported,
+            origin: Origin::source(source_span(entry.span)),
+        });
+    }
+
+    for entry in &module_record.star_export_entries {
+        if entry.is_type {
+            continue;
+        }
+        let Some(module_request) = entry.module_request.as_ref() else {
+            continue;
+        };
+        exports.push(ModuleExport::Star {
+            source: module_request.name.to_string(),
+            origin: Origin::source(source_span(entry.span)),
+        });
+    }
+
+    exports.sort_by_key(|export| {
+        let span = export.origin().primary_span;
+        let rank = match export {
+            ModuleExport::Local { .. } => 0_u8,
+            ModuleExport::ReExport { .. } => 1,
+            ModuleExport::Star { .. } => 2,
+        };
+        (
+            span.map_or(u32::MAX, SourceSpan::start),
+            span.map_or(u32::MAX, SourceSpan::end),
+            rank,
+        )
+    });
+    exports
+}
+
+fn export_name(name: &ExportExportName<'_>) -> Option<String> {
+    match name {
+        ExportExportName::Name(name) => Some(name.name.to_string()),
+        ExportExportName::Default(_) => Some("default".into()),
+        ExportExportName::Null => None,
+    }
+}
+
+fn re_export_import(name: &ExportImportName<'_>) -> Option<ImportedName> {
+    match name {
+        ExportImportName::Name(name) if name.name == "default" => Some(ImportedName::Default),
+        ExportImportName::Name(name) => Some(ImportedName::Named(name.name.to_string())),
+        ExportImportName::All => Some(ImportedName::Namespace),
+        ExportImportName::AllButDefault | ExportImportName::Null => None,
     }
 }
 

@@ -3,11 +3,12 @@ use fict_hir::{
     DeleteTarget, FileId, FunctionFlags, FunctionId, FunctionKind, GlobalId, HirBlock, HirFile,
     HirFunction, HirGlobal, HirInstruction, HirInstructionKind, HirLocal, HirPatternWrite,
     HirScope, HirTerminator, HirValue, ImportPhase, InstructionSemantics, JavaScriptString,
-    LiteralValue, LocalId, LocalKind, NumberLiteral, ObjectEntry, ObjectPropertyKind, Origin,
-    PatternSummary, Place, PlaceBase, Projection, PropertyKey, ScopeId, ScopeKind,
-    StructuredSourceHint, StructuredSourceKind, StructuredSwitchCaseHint, SyntaxFragment,
-    SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi, TerminatorKind,
-    ValueId, ValueKind, print_hir, verify_hir,
+    LiteralValue, LocalId, LocalKind, ModuleExport, ModuleLocalExport, ModulePlan, NumberLiteral,
+    ObjectEntry, ObjectPropertyKind, Origin, PatternSummary, Place, PlaceBase, Projection,
+    PropertyKey, ScopeId, ScopeKind, StructuredSourceHint, StructuredSourceKind,
+    StructuredSwitchCaseHint, SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary,
+    TaggedTemplateQuasi, TerminatorKind, ValueId, ValueKind, print_hir, verify_hir,
+    verify_module_plan,
 };
 
 fn empty_file() -> HirFile {
@@ -89,6 +90,50 @@ fn verifier_reports_arena_and_span_corruption_without_panicking() {
 
     assert!(codes.contains(&"FICT-HIR-ID"));
     assert!(codes.contains(&"FICT-HIR-SPAN"));
+    assert!(diagnostics.iter().all(|diagnostic| {
+        diagnostic.guarantee_class == fict_diagnostics::GuaranteeClass::Internal
+    }));
+}
+
+#[test]
+fn module_plan_verifier_fails_closed_on_invalid_ownership() {
+    let mut file = empty_file();
+    file.source_len = 4;
+    let plan = ModulePlan {
+        has_module_syntax: false,
+        exports: vec![
+            ModuleExport::Local {
+                exported: "named".into(),
+                target: ModuleLocalExport::DefaultExpression,
+                origin: Origin::source(
+                    fict_hir::SourceSpan::new(0, 2).expect("module export span"),
+                ),
+            },
+            ModuleExport::Local {
+                exported: "missing".into(),
+                target: ModuleLocalExport::Binding(BindingId::new(7)),
+                origin: Origin::source(
+                    fict_hir::SourceSpan::new(2, 4).expect("module export span"),
+                ),
+            },
+            ModuleExport::Star {
+                source: String::new(),
+                origin: Origin::source(
+                    fict_hir::SourceSpan::new(4, 5).expect("out-of-file export span"),
+                ),
+            },
+        ],
+    };
+
+    let diagnostics = verify_module_plan(&file, &plan)
+        .expect_err("invalid module ownership must fail")
+        .into_sorted();
+    assert!(diagnostics.len() >= 5, "{diagnostics:?}");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code.as_str() == "FICT-HIR-MODULE")
+    );
     assert!(diagnostics.iter().all(|diagnostic| {
         diagnostic.guarantee_class == fict_diagnostics::GuaranteeClass::Internal
     }));

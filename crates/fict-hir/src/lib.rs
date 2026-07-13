@@ -5,6 +5,7 @@
 mod ids;
 mod ir;
 mod jsx;
+mod module;
 mod origin;
 mod printer;
 mod syntax;
@@ -31,6 +32,9 @@ pub use ir::{
 pub use jsx::{
     JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxExpressionKind,
     JsxListExpression, JsxListReceiver, JsxNode, JsxTemplate,
+};
+pub use module::{
+    ModuleExport, ModuleLocalExport, ModulePlan, print_module_plan, verify_module_plan,
 };
 pub use origin::{DesugaringKind, GeneratedOrigin, Origin, OriginKind};
 pub use printer::print_hir;

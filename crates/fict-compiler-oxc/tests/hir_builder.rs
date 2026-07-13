@@ -4,10 +4,10 @@ use fict_compiler_oxc::{
 use fict_hir::{
     ArrayElement, BinaryOperator, CallHost, CompoundAssignmentOperator, ContextValueKind,
     DeclarationKind, DeleteTarget, EvaluationMode, FictMacroKind, FunctionKind, HirInstructionKind,
-    ImportPhase, IterationKind, JavaScriptString, LiteralValue, MutationEffect, ObjectEntry,
-    ObjectPropertyKind, PlaceBase, Projection, PropertyKey, Purity, ReactiveCallKind,
-    StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, UnaryOperator, UpdateOperator,
-    ValueKind,
+    ImportPhase, IterationKind, JavaScriptString, LiteralValue, ModuleExport, ModuleLocalExport,
+    MutationEffect, ObjectEntry, ObjectPropertyKind, PlaceBase, Projection, PropertyKey, Purity,
+    ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, UnaryOperator,
+    UpdateOperator, ValueKind, verify_module_plan,
 };
 use fict_reactivity::{
     ReactiveBindingKind, SsaDefinitionKind, analyze_aliases, analyze_dependencies,
@@ -21,6 +21,53 @@ fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
         typescript: Default::default(),
         sourcemap: false,
     }
+}
+
+#[test]
+fn remaps_owned_module_exports_after_typescript_runtime_erasure() {
+    let output = build_hir(
+        r#"
+            import type { Shape } from './types';
+            const value: Shape | null = null;
+            export { value as publicValue };
+            export default value;
+            export { sourceValue as forwarded } from './dep';
+        "#,
+        options(OxcSourceLanguage::TypeScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+    let module_plan = output.module_plan.expect("verified module plan");
+    verify_module_plan(&hir, &module_plan).expect("module plan must own valid HIR identities");
+
+    let value = hir
+        .bindings
+        .iter()
+        .find(|binding| binding.display_name == "value")
+        .expect("runtime value binding");
+    assert_eq!(hir.bindings.len(), 1, "type-only binding must be erased");
+    assert!(matches!(
+        &module_plan.exports[0],
+        ModuleExport::Local {
+            exported,
+            target: ModuleLocalExport::Binding(binding),
+            ..
+        } if exported == "publicValue" && *binding == value.id
+    ));
+    assert!(matches!(
+        &module_plan.exports[1],
+        ModuleExport::Local {
+            exported,
+            target: ModuleLocalExport::Binding(binding),
+            ..
+        } if exported == "default" && *binding == value.id
+    ));
+    assert!(matches!(
+        &module_plan.exports[2],
+        ModuleExport::ReExport { exported, source, .. }
+            if exported == "forwarded" && source == "./dep"
+    ));
 }
 
 #[test]

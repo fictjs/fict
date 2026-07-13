@@ -12,12 +12,13 @@ use fict_hir::{
     HirObjectParameterRest, HirParameter, HirPatternWrite, HirScope, HirTerminator, HirValue,
     ImportPhase, InstructionSemantics, IterationKind, JavaScriptString, JsxAttribute,
     JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression,
-    JsxListReceiver, JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind, MutationEffect,
-    NumberLiteral, ObjectEntry, ObjectPropertyKind, Origin, PatternSummary, PropertyKey, Purity,
-    ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind,
-    StructuredSourceHint, SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary,
-    TaggedTemplateQuasi, TemplateId, TerminatorKind, UnaryOperator, UpdateOperator, ValueId,
-    ValueKind, verify_hir,
+    JsxListReceiver, JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind, ModuleExport,
+    ModuleLocalExport, ModulePlan, MutationEffect, NumberLiteral, ObjectEntry, ObjectPropertyKind,
+    Origin, PatternSummary, PropertyKey, Purity, ReactiveCallKind, ReactiveScopeHost,
+    ReactiveScopeKind, RegionId, ScopeId, ScopeKind, StructuredSourceHint, SyntaxFragment,
+    SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi, TemplateId,
+    TerminatorKind, UnaryOperator, UpdateOperator, ValueId, ValueKind, verify_hir,
+    verify_module_plan,
 };
 use oxc::{
     allocator::Allocator,
@@ -120,6 +121,8 @@ pub struct HirBuildOutput {
     pub hir: Option<HirFile>,
     /// Owned frontend facts produced from the same source contract.
     pub frontend: Option<FrontendSummary>,
+    /// Verified OXC-independent module linkage facts using runtime HIR binding identities.
+    pub module_plan: Option<ModulePlan>,
     /// Adapter-owned source required by controlled syntax fragments.
     pub syntax_fragments: Vec<OxcSyntaxFragment>,
     /// Structured diagnostics in deterministic order.
@@ -138,6 +141,7 @@ pub fn build_hir(
         return HirBuildOutput {
             hir: None,
             frontend: None,
+            module_plan: None,
             syntax_fragments: Vec::new(),
             diagnostics: frontend_output.diagnostics,
         };
@@ -148,6 +152,7 @@ pub fn build_hir(
         return HirBuildOutput {
             hir: None,
             frontend: Some(frontend),
+            module_plan: None,
             syntax_fragments: Vec::new(),
             diagnostics: sorted(policy_diagnostics),
         };
@@ -162,6 +167,7 @@ pub fn build_hir(
             return HirBuildOutput {
                 hir: None,
                 frontend: Some(frontend),
+                module_plan: None,
                 syntax_fragments: Vec::new(),
                 diagnostics: compatibility.diagnostics,
             };
@@ -180,6 +186,7 @@ pub fn build_hir(
         return HirBuildOutput {
             hir: None,
             frontend: Some(frontend),
+            module_plan: None,
             syntax_fragments: Vec::new(),
             diagnostics: sorted(convert_diagnostics(parsed.diagnostics, "FICT-PARSE")),
         };
@@ -195,6 +202,7 @@ pub fn build_hir(
         return HirBuildOutput {
             hir: None,
             frontend: Some(frontend),
+            module_plan: None,
             syntax_fragments: Vec::new(),
             diagnostics: sorted(convert_diagnostics(
                 semantic_result.diagnostics,
@@ -5455,6 +5463,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .collect();
         let scopes = build_hir_scopes(self.semantic.scoping(), self.frontend.source.source_len);
         let bindings = build_hir_bindings(&self.frontend, &self.old_to_new, &parameter_symbols);
+        let module_plan = build_module_plan(&self.frontend, &self.old_to_new);
         let hir = HirFile {
             id: FileId::new(0),
             source_len: self.frontend.source.source_len,
@@ -5469,13 +5478,22 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         if let Err(verification) = verify_hir(&hir) {
             self.diagnostics.extend(verification.into_sorted());
         }
+        if let Err(verification) = verify_module_plan(&hir, &module_plan) {
+            self.diagnostics.extend(verification.into_sorted());
+        }
         let has_errors = self
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error);
+        let (hir, module_plan) = if has_errors {
+            (None, None)
+        } else {
+            (Some(hir), Some(module_plan))
+        };
         HirBuildOutput {
-            hir: (!has_errors).then_some(hir),
+            hir,
             frontend: Some(self.frontend),
+            module_plan,
             syntax_fragments: self.adapter_fragments,
             diagnostics: sorted(self.diagnostics),
         }
@@ -9498,6 +9516,54 @@ fn build_hir_bindings(
             origin: Origin::source(binding.declaration_span),
         })
         .collect()
+}
+
+fn build_module_plan(
+    frontend: &FrontendSummary,
+    old_to_new: &BTreeMap<u32, BindingId>,
+) -> ModulePlan {
+    let exports = frontend
+        .module_exports
+        .iter()
+        .map(|export| match export {
+            ModuleExport::Local {
+                exported,
+                target,
+                origin,
+            } => ModuleExport::Local {
+                exported: exported.clone(),
+                target: match target {
+                    ModuleLocalExport::Binding(binding) => ModuleLocalExport::Binding(
+                        old_to_new
+                            .get(&binding.index())
+                            .copied()
+                            .unwrap_or_else(|| BindingId::new(u32::MAX)),
+                    ),
+                    ModuleLocalExport::DefaultExpression => ModuleLocalExport::DefaultExpression,
+                },
+                origin: *origin,
+            },
+            ModuleExport::ReExport {
+                exported,
+                source,
+                imported,
+                origin,
+            } => ModuleExport::ReExport {
+                exported: exported.clone(),
+                source: source.clone(),
+                imported: imported.clone(),
+                origin: *origin,
+            },
+            ModuleExport::Star { source, origin } => ModuleExport::Star {
+                source: source.clone(),
+                origin: *origin,
+            },
+        })
+        .collect();
+    ModulePlan {
+        has_module_syntax: frontend.has_module_syntax,
+        exports,
+    }
 }
 
 fn classify_named_function(name: Option<&str>) -> FunctionKind {
