@@ -248,7 +248,15 @@ pub fn analyze_shapes(
     for block in &function.blocks {
         for (instruction_index, instruction) in block.instructions.iter().enumerate() {
             if let Some(result) = instruction.result {
-                if let Some(shape) = structural_value_shape(result, instruction) {
+                let imported_member = match &instruction.kind {
+                    HirInstructionKind::Read { place } => {
+                        imported_reactive_member_kind(file, function, place)
+                    }
+                    _ => None,
+                };
+                if let Some(kind) = imported_member {
+                    structural_values.insert(result, imported_reactive_shape(kind));
+                } else if let Some(shape) = structural_value_shape(result, instruction) {
                     structural_values.insert(result, shape);
                 }
                 match &instruction.kind {
@@ -902,6 +910,39 @@ fn unknown_shape(source: ShapeSource) -> ValueShape {
     ValueShape {
         kind: ShapeKind::Unknown,
         source,
+        known_keys: Vec::new(),
+        mutable_keys: Vec::new(),
+        complete_key_set: false,
+        dynamic_access: false,
+        has_spread: false,
+        escapes: false,
+        array_length: None,
+    }
+}
+
+fn imported_reactive_member_kind(
+    file: &HirFile,
+    function: &fict_hir::HirFunction,
+    place: &fict_hir::Place,
+) -> Option<ImportedReactiveKind> {
+    let local = match place.base {
+        PlaceBase::Local(local) => local,
+        PlaceBase::Ssa(name) => name.local,
+        PlaceBase::Global(_) | PlaceBase::Value(_) => return None,
+    };
+    let binding = function.locals.get(local.as_usize())?.binding?;
+    file.bindings
+        .get(binding.as_usize())?
+        .import
+        .as_ref()?
+        .resolve_reactive_member(&place.projections)
+        .map(|resolved| resolved.kind)
+}
+
+fn imported_reactive_shape(kind: ImportedReactiveKind) -> ValueShape {
+    ValueShape {
+        kind: ShapeKind::Reactive,
+        source: ShapeSource::ImportedReactive(kind),
         known_keys: Vec::new(),
         mutable_keys: Vec::new(),
         complete_key_set: false,

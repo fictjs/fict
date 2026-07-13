@@ -6,6 +6,9 @@ use fict_hir::{
     ContextValueKind, DeleteTarget, FunctionKind, HirInstructionKind, LiteralValue, MutationEffect,
     StructuredSourceKind,
 };
+use fict_metadata::{
+    MetadataResolutionStatus, ModuleReactiveMetadata, ReactiveExportKind, ResolvedMetadataInput,
+};
 use fict_reactivity::{
     BarrierKind, DependencyBase, DependencySegment, EscapeKind, ReactiveBindingKind, ShapeKind,
     ShapeSource, SsaDefinitionKind, SsaDefinitionLocation, StructuredConstructKind,
@@ -146,6 +149,125 @@ fn classifies_direct_references_to_derived_values_as_reactive_aliases() {
     assert_eq!(kinds["count"], ReactiveBindingKind::State);
     assert_eq!(kinds["active"], ReactiveBindingKind::Derived);
     assert_eq!(kinds["alias"], ReactiveBindingKind::Alias);
+}
+
+#[test]
+fn propagates_recursive_import_metadata_into_scopes_and_regions() {
+    let frontend = build_hir(
+        r#"
+            import * as dep from './dep';
+            export function App() {
+                const derived = dep.state.value === 2;
+                const plain = dep.plain === 2;
+                return [derived, plain];
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Module,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions {
+            resolved_metadata: vec![ResolvedMetadataInput {
+                request: "./dep".into(),
+                resolved_id: Some("/src/dep.ts".into()),
+                status: MetadataResolutionStatus::Resolved,
+                metadata: Some(ModuleReactiveMetadata {
+                    exports: [("state".into(), ReactiveExportKind::Store)]
+                        .into_iter()
+                        .collect(),
+                    ..ModuleReactiveMetadata::new()
+                }),
+                fingerprint: "sha256:dep".into(),
+            }],
+            ..HirBuildOptions::default()
+        },
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified namespace metadata HIR"),
+        CorePassOptions {
+            optimize: false,
+            ..CorePassOptions::default()
+        },
+    )
+    .expect("core passes over namespace metadata");
+    let function = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                output.hir.bindings[binding.as_usize()].display_name == "App"
+            })
+        })
+        .expect("App function");
+    let analysis = &output.functions[function.id.as_usize()];
+    let derived = function
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("derived"))
+        .expect("derived local");
+    let plain = function
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("plain"))
+        .expect("plain local");
+    let derived_binding = analysis
+        .scopes
+        .bindings
+        .iter()
+        .find(|binding| binding.name.local == derived.id)
+        .expect("derived namespace binding");
+
+    assert_eq!(derived_binding.kind, ReactiveBindingKind::Derived);
+    assert!(derived_binding.dependencies.iter().any(|path| {
+        path.segments.as_slice()
+            == [
+                DependencySegment::Static {
+                    name: "state".into(),
+                    optional: false,
+                },
+                DependencySegment::Static {
+                    name: "value".into(),
+                    optional: false,
+                },
+            ]
+    }));
+    assert!(
+        analysis
+            .scopes
+            .bindings
+            .iter()
+            .all(|binding| binding.name.local != plain.id)
+    );
+    assert!(analysis.regions.regions.iter().any(|region| {
+        region.inputs.iter().any(|path| {
+            path.segments.as_slice()
+                == [
+                    DependencySegment::Static {
+                        name: "state".into(),
+                        optional: false,
+                    },
+                    DependencySegment::Static {
+                        name: "value".into(),
+                        optional: false,
+                    },
+                ]
+        })
+    }));
+    assert!(analysis.regions.regions.iter().all(|region| {
+        region.inputs.iter().all(|path| {
+            !path.segments.iter().any(|segment| {
+                matches!(segment, DependencySegment::Static { name, .. } if name == "plain")
+            })
+        })
+    }));
 }
 
 #[test]

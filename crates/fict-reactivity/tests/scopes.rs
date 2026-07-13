@@ -245,6 +245,7 @@ fn propagates_state_into_pure_derived_bindings_and_active_blocks() {
                 imported: ImportedName::Named(name.into()),
                 kind: ImportKind::Value,
                 reactive: None,
+                reactive_members: Vec::new(),
             }),
             origin: origin(),
         })

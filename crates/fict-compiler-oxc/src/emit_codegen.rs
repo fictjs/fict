@@ -873,6 +873,8 @@ fn call_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), CallRewrite>, Vec<
 #[derive(Debug, Clone, Copy)]
 struct ReadRewrite {
     projected: bool,
+    accessor_depth: u16,
+    projection_count: usize,
 }
 
 fn read_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), ReadRewrite>, Vec<Diagnostic>) {
@@ -885,6 +887,7 @@ fn read_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), ReadRewrite>, Vec<
     {
         let EmitOperation::ReadReactive {
             projections,
+            accessor_depth,
             origin,
             ..
         } = operation
@@ -899,11 +902,24 @@ fn read_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), ReadRewrite>, Vec<
             ));
             continue;
         };
+        if usize::from(*accessor_depth) > projections.len() {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-READ",
+                    "reactive-read accessor depth exceeds its projected place",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(span),
+            );
+            continue;
+        }
         if reads
             .insert(
                 (span.start(), span.end()),
                 ReadRewrite {
                     projected: !projections.is_empty(),
+                    accessor_depth: *accessor_depth,
+                    projection_count: projections.len(),
                 },
             )
             .is_some()
@@ -2940,13 +2956,16 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
             self.matched_mutations.insert(location);
             return;
         }
-        if self
-            .reads
-            .get(&location)
-            .is_some_and(|rewrite| rewrite.projected)
-        {
+        if let Some(rewrite) = self.reads.get(&location).copied().filter(|rewrite| {
+            !self.matched_reads.contains(&location)
+                && (rewrite.projected || rewrite.accessor_depth > 0)
+        }) {
             let root = projected_read_root_location(expression);
-            if rewrite_projected_read_root(expression, self.allocator) {
+            if rewrite_reactive_accessor(
+                expression,
+                usize::from(rewrite.accessor_depth),
+                self.allocator,
+            ) {
                 self.matched_reads.insert(location);
                 let suppressed_list_read = root.filter(|root| self.active_list_reads.remove(root));
                 if let Some(root) = suppressed_list_read {
@@ -2966,7 +2985,8 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
         let location = (identifier.span.start, identifier.span.end);
         let list_read = self.active_list_reads.contains(&location);
         let prop_read = self.prop_reads.contains(&location);
-        let reactive_read = self.reads.contains_key(&location);
+        let reactive_read =
+            self.reads.contains_key(&location) && !self.matched_reads.contains(&location);
         if !list_read && !prop_read && !reactive_read {
             walk_mut::walk_expression(self, expression);
             return;
@@ -3008,6 +3028,15 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
                 call.arguments.insert(0, Argument::from(context));
             }
             self.matched_calls.insert(location);
+        }
+        let callee_span = call.callee.span();
+        let callee_location = (callee_span.start, callee_span.end);
+        if self
+            .reads
+            .get(&callee_location)
+            .is_some_and(|rewrite| usize::from(rewrite.accessor_depth) == rewrite.projection_count)
+        {
+            self.matched_reads.insert(callee_location);
         }
         walk_mut::walk_call_expression(self, call);
     }
@@ -5925,33 +5954,174 @@ fn getter_call<'a>(allocator: &'a Allocator, signal: &str, span: Span) -> Expres
     )
 }
 
-fn rewrite_projected_read_root<'a>(
+fn rewrite_reactive_accessor<'a>(
     expression: &mut Expression<'a>,
+    accessor_depth: usize,
     allocator: &'a Allocator,
 ) -> bool {
+    if accessor_depth == 0 {
+        return rewrite_reactive_root(expression, allocator);
+    }
+    let Some(total_depth) = expression_projection_depth(expression) else {
+        return false;
+    };
+    if accessor_depth > total_depth {
+        return false;
+    }
+    rewrite_reactive_accessor_with_depth(expression, accessor_depth, total_depth, allocator)
+}
+
+fn rewrite_reactive_accessor_with_depth<'a>(
+    expression: &mut Expression<'a>,
+    accessor_depth: usize,
+    total_depth: usize,
+    allocator: &'a Allocator,
+) -> bool {
+    if total_depth == accessor_depth {
+        let span = expression.span();
+        let callee = expression.take_in(&allocator);
+        *expression = Expression::new_call_expression(
+            span,
+            callee,
+            NONE,
+            ArenaVec::new_in(&allocator),
+            false,
+            &AstBuilder::new(allocator),
+        );
+        return true;
+    }
     match expression {
-        Expression::StaticMemberExpression(member) => {
-            rewrite_reactive_root(&mut member.object, allocator)
-        }
-        Expression::ComputedMemberExpression(member) => {
-            rewrite_reactive_root(&mut member.object, allocator)
-        }
+        Expression::StaticMemberExpression(member) => rewrite_reactive_accessor_with_depth(
+            &mut member.object,
+            accessor_depth,
+            total_depth.saturating_sub(1),
+            allocator,
+        ),
+        Expression::ComputedMemberExpression(member) => rewrite_reactive_accessor_with_depth(
+            &mut member.object,
+            accessor_depth,
+            total_depth.saturating_sub(1),
+            allocator,
+        ),
+        Expression::PrivateFieldExpression(member) => rewrite_reactive_accessor_with_depth(
+            &mut member.object,
+            accessor_depth,
+            total_depth.saturating_sub(1),
+            allocator,
+        ),
         Expression::ChainExpression(chain) => match &mut chain.expression {
-            ChainElement::StaticMemberExpression(member) => {
-                rewrite_reactive_root(&mut member.object, allocator)
-            }
-            ChainElement::ComputedMemberExpression(member) => {
-                rewrite_reactive_root(&mut member.object, allocator)
-            }
-            ChainElement::PrivateFieldExpression(member) => {
-                rewrite_reactive_root(&mut member.object, allocator)
-            }
-            ChainElement::TSNonNullExpression(expression) => {
-                rewrite_reactive_root(&mut expression.expression, allocator)
-            }
+            ChainElement::StaticMemberExpression(member) => rewrite_reactive_accessor_with_depth(
+                &mut member.object,
+                accessor_depth,
+                total_depth.saturating_sub(1),
+                allocator,
+            ),
+            ChainElement::ComputedMemberExpression(member) => rewrite_reactive_accessor_with_depth(
+                &mut member.object,
+                accessor_depth,
+                total_depth.saturating_sub(1),
+                allocator,
+            ),
+            ChainElement::PrivateFieldExpression(member) => rewrite_reactive_accessor_with_depth(
+                &mut member.object,
+                accessor_depth,
+                total_depth.saturating_sub(1),
+                allocator,
+            ),
+            ChainElement::TSNonNullExpression(expression) => rewrite_reactive_accessor_with_depth(
+                &mut expression.expression,
+                accessor_depth,
+                total_depth,
+                allocator,
+            ),
             ChainElement::CallExpression(_) => false,
         },
+        Expression::ParenthesizedExpression(expression) => rewrite_reactive_accessor_with_depth(
+            &mut expression.expression,
+            accessor_depth,
+            total_depth,
+            allocator,
+        ),
+        Expression::TSAsExpression(expression) => rewrite_reactive_accessor_with_depth(
+            &mut expression.expression,
+            accessor_depth,
+            total_depth,
+            allocator,
+        ),
+        Expression::TSSatisfiesExpression(expression) => rewrite_reactive_accessor_with_depth(
+            &mut expression.expression,
+            accessor_depth,
+            total_depth,
+            allocator,
+        ),
+        Expression::TSTypeAssertion(expression) => rewrite_reactive_accessor_with_depth(
+            &mut expression.expression,
+            accessor_depth,
+            total_depth,
+            allocator,
+        ),
+        Expression::TSNonNullExpression(expression) => rewrite_reactive_accessor_with_depth(
+            &mut expression.expression,
+            accessor_depth,
+            total_depth,
+            allocator,
+        ),
+        Expression::TSInstantiationExpression(expression) => rewrite_reactive_accessor_with_depth(
+            &mut expression.expression,
+            accessor_depth,
+            total_depth,
+            allocator,
+        ),
         _ => false,
+    }
+}
+
+fn expression_projection_depth(expression: &Expression<'_>) -> Option<usize> {
+    match expression {
+        Expression::Identifier(_) => Some(0),
+        Expression::StaticMemberExpression(member) => {
+            expression_projection_depth(&member.object).map(|depth| depth.saturating_add(1))
+        }
+        Expression::ComputedMemberExpression(member) => {
+            expression_projection_depth(&member.object).map(|depth| depth.saturating_add(1))
+        }
+        Expression::PrivateFieldExpression(member) => {
+            expression_projection_depth(&member.object).map(|depth| depth.saturating_add(1))
+        }
+        Expression::ChainExpression(chain) => match &chain.expression {
+            ChainElement::StaticMemberExpression(member) => {
+                expression_projection_depth(&member.object).map(|depth| depth.saturating_add(1))
+            }
+            ChainElement::ComputedMemberExpression(member) => {
+                expression_projection_depth(&member.object).map(|depth| depth.saturating_add(1))
+            }
+            ChainElement::PrivateFieldExpression(member) => {
+                expression_projection_depth(&member.object).map(|depth| depth.saturating_add(1))
+            }
+            ChainElement::TSNonNullExpression(expression) => {
+                expression_projection_depth(&expression.expression)
+            }
+            ChainElement::CallExpression(_) => None,
+        },
+        Expression::ParenthesizedExpression(expression) => {
+            expression_projection_depth(&expression.expression)
+        }
+        Expression::TSAsExpression(expression) => {
+            expression_projection_depth(&expression.expression)
+        }
+        Expression::TSSatisfiesExpression(expression) => {
+            expression_projection_depth(&expression.expression)
+        }
+        Expression::TSTypeAssertion(expression) => {
+            expression_projection_depth(&expression.expression)
+        }
+        Expression::TSNonNullExpression(expression) => {
+            expression_projection_depth(&expression.expression)
+        }
+        Expression::TSInstantiationExpression(expression) => {
+            expression_projection_depth(&expression.expression)
+        }
+        _ => None,
     }
 }
 
@@ -6658,6 +6828,7 @@ mod tests {
                     slot: EmitSlotId::new(0),
                     source_result: ValueId::new(u32::try_from(index).expect("value")),
                     projections: Vec::new(),
+                    accessor_depth: 0,
                     target: fict_emit::EmitTemporaryId::new(
                         u32::try_from(index).expect("temporary"),
                     ),
@@ -6701,6 +6872,7 @@ mod tests {
                         name: "placeholder".into(),
                         optional: false,
                     }],
+                    accessor_depth: 0,
                     target: fict_emit::EmitTemporaryId::new(
                         u32::try_from(index).expect("temporary"),
                     ),

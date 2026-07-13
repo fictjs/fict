@@ -872,6 +872,7 @@ fn lowers_only_binding_aware_runtime_keyed_list_calls() {
             imported: ImportedName::Named("createKeyedList".into()),
             kind: ImportKind::Value,
             reactive: None,
+            reactive_members: Vec::new(),
         }),
         origin: origin(),
     }];
@@ -1007,6 +1008,7 @@ fn tracks_preserved_store_resource_and_selector_calls() {
             imported: ImportedName::Named(name.into()),
             kind: ImportKind::Value,
             reactive: None,
+            reactive_members: Vec::new(),
         }),
         origin: origin(),
     })

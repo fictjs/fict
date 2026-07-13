@@ -708,6 +708,188 @@ mod tests {
     }
 
     #[test]
+    fn consumes_recursive_namespace_metadata_for_static_member_reads() {
+        let mut input = request(
+            r#"
+                import * as dep from './dep?client';
+                import { group as named } from './dep?client';
+                export function App(key) {
+                    const called = dep.count();
+                    const derived = dep.state.value * 2;
+                    return [
+                        dep.count,
+                        dep["doubled"],
+                        dep.group.inner,
+                        named.deep.value,
+                        dep.group.deep.value.extra,
+                        dep.state.value,
+                        dep.plain,
+                        dep[key],
+                        called,
+                        derived,
+                    ];
+                }
+            "#,
+            "namespace-consumer.jsx",
+        );
+        input.metadata.push(ResolvedMetadataInput {
+            request: "./dep?client".into(),
+            resolved_id: Some("/src/dep.ts?client".into()),
+            status: MetadataResolutionStatus::Resolved,
+            metadata: Some(ModuleReactiveMetadata {
+                exports: BTreeMap::from([
+                    ("count".into(), ReactiveExportKind::Signal),
+                    ("doubled".into(), ReactiveExportKind::Memo),
+                    ("state".into(), ReactiveExportKind::Store),
+                ]),
+                namespaces: BTreeMap::from([(
+                    "group".into(),
+                    ModuleReactiveMetadata {
+                        exports: BTreeMap::from([("inner".into(), ReactiveExportKind::Memo)]),
+                        namespaces: BTreeMap::from([(
+                            "deep".into(),
+                            ModuleReactiveMetadata {
+                                exports: BTreeMap::from([(
+                                    "value".into(),
+                                    ReactiveExportKind::Signal,
+                                )]),
+                                ..ModuleReactiveMetadata::new()
+                            },
+                        )]),
+                        ..ModuleReactiveMetadata::new()
+                    },
+                )]),
+                ..ModuleReactiveMetadata::new()
+            }),
+            fingerprint: "sha256:dep-client".into(),
+        });
+
+        let result = compile(input);
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.code.contains("dep.count()"), "{}", result.code);
+        assert!(
+            result.code.contains("dep[\"doubled\"]()"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("dep.group.inner()"), "{}", result.code);
+        assert!(
+            result.code.contains("named.deep.value()"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("dep.group.deep.value().extra"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("dep.state.value"), "{}", result.code);
+        assert!(result.code.contains("dep.plain"), "{}", result.code);
+        assert!(result.code.contains("dep[key]"), "{}", result.code);
+        assert!(!result.code.contains("dep.count()()"), "{}", result.code);
+        assert_eq!(result.metadata_dependencies, ["/src/dep.ts?client"]);
+    }
+
+    #[test]
+    fn enforces_namespace_reactive_member_write_and_delete_policy() {
+        let snapshot = || ResolvedMetadataInput {
+            request: "./dep".into(),
+            resolved_id: Some("/src/dep.ts".into()),
+            status: MetadataResolutionStatus::Resolved,
+            metadata: Some(ModuleReactiveMetadata {
+                exports: BTreeMap::from([
+                    ("count".into(), ReactiveExportKind::Signal),
+                    ("total".into(), ReactiveExportKind::Memo),
+                    ("state".into(), ReactiveExportKind::Store),
+                ]),
+                ..ModuleReactiveMetadata::new()
+            }),
+            fingerprint: "sha256:dep".into(),
+        };
+
+        let source = r#"
+            import * as dep from './dep';
+            export function App() {
+                dep.count = 2;
+                dep.count++;
+                const removed = delete dep.count;
+                dep.state.value = 3;
+                dep.total.value = 4;
+                const removedMemo = delete dep.total.value;
+                const removedStore = delete dep.state.value;
+                return [dep.count, dep.state.value, removed, removedMemo, removedStore];
+            }
+        "#;
+        let mut fallback = request(source, "namespace-write-fallback.js");
+        fallback.options.strict_guarantee = false;
+        fallback.metadata = vec![snapshot()];
+        let fallback = compile(fallback);
+        assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
+        assert!(fallback.code.contains("dep.count = 2"), "{}", fallback.code);
+        assert!(fallback.code.contains("dep.count++"), "{}", fallback.code);
+        assert!(
+            fallback.code.contains("delete dep.count"),
+            "{}",
+            fallback.code
+        );
+        assert!(fallback.code.contains("dep.count()"), "{}", fallback.code);
+        assert!(
+            fallback.code.contains("dep.state.value = 3"),
+            "{}",
+            fallback.code
+        );
+        assert!(
+            fallback.code.contains("dep.total.value = 4"),
+            "{}",
+            fallback.code
+        );
+        assert!(
+            fallback.code.contains("delete dep.total.value"),
+            "{}",
+            fallback.code
+        );
+        assert!(
+            fallback.code.contains("delete dep.state.value"),
+            "{}",
+            fallback.code
+        );
+        assert_eq!(
+            fallback
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-M")
+                .count(),
+            5
+        );
+
+        let mut strict = request(source, "namespace-write-strict.js");
+        strict.metadata = vec![snapshot()];
+        let strict = compile(strict);
+        assert!(strict.has_errors());
+        assert!(strict.code.is_empty());
+
+        for (target, kind) in [("dep.total = 1", "memo"), ("[dep.state] = []", "store")] {
+            let mut readonly = request(
+                &format!(
+                    "import * as dep from './dep'; export function App() {{ {target}; return 1; }}"
+                ),
+                "namespace-readonly.js",
+            );
+            readonly.options.strict_guarantee = false;
+            readonly.metadata = vec![snapshot()];
+            let readonly = compile(readonly);
+            assert!(readonly.has_errors());
+            assert!(readonly.code.is_empty());
+            assert!(readonly.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-METADATA-READONLY"
+                    && diagnostic
+                        .message
+                        .contains(&format!("imported {kind} binding"))
+            }));
+        }
+    }
+
+    #[test]
     fn permits_imported_signal_writes_and_rejects_imported_memo_store_writes() {
         let metadata = |name: &str, kind: ReactiveExportKind| ResolvedMetadataInput {
             request: "./dep".into(),

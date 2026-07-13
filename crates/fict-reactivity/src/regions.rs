@@ -8,6 +8,7 @@ use fict_hir::{
     ScopeId, SsaName, TerminatorKind,
 };
 
+use crate::effects::imported_reactive_dependency;
 use crate::{
     DependencyAnalysis, DependencyBase, DependencyPath, InstructionLocation, ReactiveCycleAnalysis,
     ReactiveScopeAnalysis, SsaAnalysis, SsaDefinitionLocation, verify_reactive_cycles,
@@ -119,7 +120,7 @@ pub fn analyze_regions(
         }
     }
     for read in &dependencies.reads {
-        if path_is_tracked(&read.path, &tracked) {
+        if path_is_reactive(file, function, &read.path, &tracked) {
             active_by_block
                 .entry(read.location.block)
                 .or_default()
@@ -127,7 +128,7 @@ pub fn analyze_regions(
         }
     }
     for write in &dependencies.writes {
-        if path_is_tracked(&write.path, &tracked) {
+        if path_is_reactive(file, function, &write.path, &tracked) {
             active_by_block
                 .entry(write.location.block)
                 .or_default()
@@ -146,7 +147,9 @@ pub fn analyze_regions(
                         .value_dependencies
                         .get(result.as_usize())
                         .is_some_and(|paths| {
-                            paths.iter().any(|path| path_is_tracked(path, &tracked))
+                            paths
+                                .iter()
+                                .any(|path| path_is_reactive(file, function, path, &tracked))
                         })
                 });
             if macro_call || reactive_jsx {
@@ -832,8 +835,14 @@ fn maximum_depth(regions: &[ReactiveRegion]) -> u32 {
         .unwrap_or(0)
 }
 
-fn path_is_tracked(path: &DependencyPath, tracked: &BTreeSet<SsaName>) -> bool {
+fn path_is_reactive(
+    file: &HirFile,
+    function: &HirFunction,
+    path: &DependencyPath,
+    tracked: &BTreeSet<SsaName>,
+) -> bool {
     matches!(path.base, DependencyBase::Ssa(name) if tracked.contains(&name))
+        || imported_reactive_dependency(file, function, path)
 }
 
 fn region_error(code: &'static str, message: impl Into<String>) -> Diagnostic {

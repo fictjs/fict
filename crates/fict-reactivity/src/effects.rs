@@ -1465,6 +1465,38 @@ fn mark_control_dependencies(
     }
 }
 
+pub(crate) fn imported_reactive_dependency(
+    file: &HirFile,
+    function: &HirFunction,
+    path: &DependencyPath,
+) -> bool {
+    let DependencyBase::Ssa(name) = path.base else {
+        return false;
+    };
+    let Some(import) = function
+        .locals
+        .get(name.local.as_usize())
+        .and_then(|local| local.binding)
+        .and_then(|binding| file.bindings.get(binding.as_usize()))
+        .and_then(|binding| binding.import.as_ref())
+    else {
+        return false;
+    };
+    if import.reactive.is_some() {
+        return true;
+    }
+
+    let mut member_path = Vec::new();
+    for segment in &path.segments {
+        match segment {
+            DependencySegment::Static { name, .. } => member_path.push(name.clone()),
+            DependencySegment::Index { index, .. } => member_path.push(index.to_string()),
+            DependencySegment::Dynamic { .. } => break,
+        }
+    }
+    import.resolve_reactive_member_path(&member_path).is_some()
+}
+
 fn analysis_error(code: &'static str, message: impl Into<String>) -> Diagnostic {
     Diagnostic::new(
         DiagnosticCode::new(code).expect("analysis diagnostic literal"),

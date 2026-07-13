@@ -108,12 +108,17 @@ pub fn verify_emit_program(
                     ));
                 }
             }
-            if slot.storage == crate::ReactiveSlotStorage::Imported {
-                let imported_kind = slot
+            if let crate::ReactiveSlotStorage::Imported { member } = slot.storage {
+                let import = slot
                     .binding
                     .and_then(|binding| hir.bindings.get(binding.as_usize()))
-                    .and_then(|binding| binding.import.as_ref())
-                    .and_then(|import| import.reactive);
+                    .and_then(|binding| binding.import.as_ref());
+                let imported_kind = match member {
+                    None => import.and_then(|import| import.reactive),
+                    Some(member) => import
+                        .and_then(|import| import.reactive_members.get(member as usize))
+                        .map(|member| member.kind),
+                };
                 let kind_matches = matches!(
                     (imported_kind, slot.kind),
                     (
@@ -593,15 +598,26 @@ fn verify_operations(
                 slot,
                 source_result,
                 ..
-            }
-            | EmitOperation::ReadReactive {
-                slot,
-                source_result,
-                ..
             } => {
                 verify_slot(function, *slot, diagnostics);
                 verify_source_result(hir_function, *source_result, diagnostics);
             }
+            EmitOperation::ReadReactive {
+                slot,
+                source_result,
+                projections,
+                accessor_depth,
+                ..
+            } => verify_reactive_read(
+                hir,
+                hir_function,
+                function,
+                *slot,
+                *source_result,
+                projections,
+                *accessor_depth,
+                diagnostics,
+            ),
             EmitOperation::TrackRuntimeReactive {
                 slot,
                 source_result,
@@ -884,6 +900,66 @@ fn verify_source_result(
         diagnostics.push(emit_error(
             "FICT-EMIT-SOURCE-RESULT",
             "lowered operation references a missing source HIR result",
+        ));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_reactive_read(
+    hir: &HirFile,
+    hir_function: &fict_hir::HirFunction,
+    function: &crate::EmitFunction,
+    slot_id: crate::EmitSlotId,
+    source_result: fict_hir::ValueId,
+    projections: &[fict_hir::Projection],
+    accessor_depth: u16,
+    diagnostics: &mut DiagnosticBundle,
+) {
+    verify_slot(function, slot_id, diagnostics);
+    verify_source_result(hir_function, source_result, diagnostics);
+    let source_place = hir_function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| instruction.result == Some(source_result))
+        .and_then(|instruction| match &instruction.kind {
+            fict_hir::HirInstructionKind::Read { place } => Some(place),
+            _ => None,
+        });
+    let slot = function.slots.get(slot_id.as_usize());
+    let basic_valid = source_place.is_some_and(|place| place.projections == projections)
+        && usize::from(accessor_depth) <= projections.len();
+    let storage_valid = match slot.map(|slot| slot.storage) {
+        Some(crate::ReactiveSlotStorage::Imported {
+            member: Some(member),
+        }) => {
+            let root_binding = source_place.and_then(|place| {
+                let local = match place.base {
+                    fict_hir::PlaceBase::Local(local) => local,
+                    fict_hir::PlaceBase::Ssa(name) => name.local,
+                    fict_hir::PlaceBase::Global(_) | fict_hir::PlaceBase::Value(_) => return None,
+                };
+                hir_function.locals.get(local.as_usize())?.binding
+            });
+            let resolved = root_binding
+                .and_then(|binding| hir.bindings.get(binding.as_usize()))
+                .and_then(|binding| binding.import.as_ref())
+                .and_then(|import| import.resolve_reactive_member(projections));
+            resolved.is_some_and(|resolved| {
+                resolved.member_index == member as usize
+                    && resolved.accessor_depth == usize::from(accessor_depth)
+                    && slot.is_some_and(|slot| slot.binding == root_binding)
+            })
+        }
+        Some(crate::ReactiveSlotStorage::Imported { member: None })
+        | Some(crate::ReactiveSlotStorage::Owned)
+        | Some(crate::ReactiveSlotStorage::Captured { .. }) => accessor_depth == 0,
+        None => false,
+    };
+    if !basic_valid || !storage_valid {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-REACTIVE-READ",
+            "reactive reads must match their source place, slot storage, and accessor depth",
         ));
     }
 }

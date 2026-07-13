@@ -170,6 +170,24 @@ impl Verifier<'_> {
                             Some(binding.origin),
                         );
                     }
+                    if import
+                        .reactive_members
+                        .iter()
+                        .any(|member| member.path.is_empty())
+                        || import
+                            .reactive_members
+                            .windows(2)
+                            .any(|pair| pair[0].path >= pair[1].path)
+                    {
+                        self.error(
+                            "FICT-HIR-BINDING",
+                            format!(
+                                "import binding{} has non-canonical reactive member paths",
+                                binding.id.index()
+                            ),
+                            Some(binding.origin),
+                        );
+                    }
                 }
                 (_, Some(_)) => self.error(
                     "FICT-HIR-BINDING",

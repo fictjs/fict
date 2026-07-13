@@ -23,11 +23,12 @@ pub use ir::{
     HirInstruction, HirInstructionKind, HirLocal, HirObjectParameterCheck, HirObjectParameterMode,
     HirObjectParameterProperty, HirObjectParameterRest, HirParameter, HirPatternWrite, HirScope,
     HirTerminator, HirValue, ImportBinding, ImportKind, ImportPhase, ImportedName,
-    ImportedReactiveKind, InstructionSemantics, IterationKind, LocalKind, MutationEffect,
-    ObjectEntry, ObjectPropertyKind, Place, PlaceBase, Projection, PropertyKey, Purity,
-    ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind, ScopeKind, StructuredSourceHint,
-    StructuredSourceKind, StructuredSwitchCaseHint, SwitchCase, TaggedTemplateQuasi,
-    TerminatorKind, UnaryOperator, UpdateOperator, ValueKind,
+    ImportedReactiveKind, ImportedReactiveMember, ImportedReactiveMemberMatch,
+    InstructionSemantics, IterationKind, LocalKind, MutationEffect, ObjectEntry,
+    ObjectPropertyKind, Place, PlaceBase, Projection, PropertyKey, Purity, ReactiveCallKind,
+    ReactiveScopeHost, ReactiveScopeKind, ScopeKind, StructuredSourceHint, StructuredSourceKind,
+    StructuredSwitchCaseHint, SwitchCase, TaggedTemplateQuasi, TerminatorKind, UnaryOperator,
+    UpdateOperator, ValueKind,
 };
 pub use jsx::{
     JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxExpressionKind,

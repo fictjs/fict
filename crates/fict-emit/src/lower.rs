@@ -476,6 +476,57 @@ fn lower_function(
             )
         })
         .collect();
+    let mut imported_member_uses = BTreeMap::new();
+    for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
+        let HirInstructionKind::Read { place } = &instruction.kind else {
+            continue;
+        };
+        let Some((local, binding, resolved)) = imported_reactive_member(hir, function, place)
+        else {
+            continue;
+        };
+        imported_member_uses
+            .entry((local, resolved.member_index))
+            .or_insert((
+                binding,
+                match resolved.kind {
+                    ImportedReactiveKind::Signal => ReactiveSlotKind::Signal,
+                    ImportedReactiveKind::Memo => ReactiveSlotKind::Memo,
+                    ImportedReactiveKind::Store => ReactiveSlotKind::Store,
+                },
+                resolved.accessor_depth,
+                instruction.origin,
+            ));
+    }
+    let imported_member_sites: Vec<_> = imported_member_uses
+        .into_iter()
+        .enumerate()
+        .map(
+            |(index, ((local, member_index), (binding, kind, accessor_depth, origin)))| {
+                (
+                    local,
+                    member_index,
+                    binding,
+                    kind,
+                    accessor_depth,
+                    origin,
+                    EmitSlotId::new(count_u32(
+                        sites
+                            .len()
+                            .saturating_add(captured_sites.len())
+                            .saturating_add(imported_sites.len())
+                            .saturating_add(index),
+                    )),
+                )
+            },
+        )
+        .collect();
+    let imported_member_slots: BTreeMap<_, _> = imported_member_sites
+        .iter()
+        .map(|(local, member_index, _, kind, accessor_depth, _, slot)| {
+            ((*local, *member_index), (*slot, *kind, *accessor_depth))
+        })
+        .collect();
     let mut slot_by_local: BTreeMap<_, _> = sites
         .iter()
         .filter_map(|site| {
@@ -539,12 +590,24 @@ fn lower_function(
             .map(|(_, binding, kind, origin, slot)| ReactiveSlot {
                 id: *slot,
                 kind: *kind,
-                storage: ReactiveSlotStorage::Imported,
+                storage: ReactiveSlotStorage::Imported { member: None },
                 binding: Some(*binding),
                 control_path: Vec::new(),
                 origin: *origin,
             }),
     );
+    slots.extend(imported_member_sites.iter().map(
+        |(_, member_index, binding, kind, _, origin, slot)| ReactiveSlot {
+            id: *slot,
+            kind: *kind,
+            storage: ReactiveSlotStorage::Imported {
+                member: Some(count_u32(*member_index)),
+            },
+            binding: Some(*binding),
+            control_path: Vec::new(),
+            origin: *origin,
+        },
+    ));
     let mut temporary_names = NameAllocator::new(
         hir.bindings
             .iter()
@@ -686,11 +749,32 @@ fn lower_function(
             }
             match &instruction.kind {
                 HirInstructionKind::Read { place } => {
-                    let Some(slot) = place_local(place.base)
+                    let direct_slot = place_local(place.base)
                         .and_then(|local| slot_by_local.get(&local).copied())
-                    else {
+                        .map(|slot| (slot, 0_usize));
+                    let member_slot = imported_reactive_member(hir, function, place).and_then(
+                        |(local, _, resolved)| {
+                            imported_member_slots
+                                .get(&(local, resolved.member_index))
+                                .filter(|(_, kind, _)| {
+                                    matches!(
+                                        kind,
+                                        ReactiveSlotKind::Signal | ReactiveSlotKind::Memo
+                                    )
+                                })
+                                .map(|(slot, _, accessor_depth)| (*slot, *accessor_depth))
+                        },
+                    );
+                    let Some((slot, accessor_depth)) = direct_slot.or(member_slot) else {
                         preserve(&mut operations, block.id, instruction_index, instruction);
                         continue;
+                    };
+                    let Ok(accessor_depth) = u16::try_from(accessor_depth) else {
+                        return Err(DiagnosticBundle::new(vec![lower_error(
+                            "FICT-EMIT-IMPORTED-DEPTH",
+                            "imported reactive member depth exceeds the EmitIR limit",
+                            GuaranteeClass::Internal,
+                        )]));
                     };
                     let Some(result) = instruction.result else {
                         return Err(DiagnosticBundle::new(vec![lower_error(
@@ -710,6 +794,7 @@ fn lower_function(
                         slot,
                         source_result: result,
                         projections: place.projections.clone(),
+                        accessor_depth,
                         target,
                         helper: None,
                         origin: instruction.origin,
@@ -2825,6 +2910,26 @@ fn place_local(base: PlaceBase) -> Option<LocalId> {
         PlaceBase::Ssa(name) => Some(name.local),
         PlaceBase::Global(_) | PlaceBase::Value(_) => None,
     }
+}
+
+fn imported_reactive_member(
+    hir: &HirFile,
+    function: &HirFunction,
+    place: &fict_hir::Place,
+) -> Option<(
+    LocalId,
+    fict_hir::BindingId,
+    fict_hir::ImportedReactiveMemberMatch,
+)> {
+    let local = place_local(place.base)?;
+    let binding = function.locals.get(local.as_usize())?.binding?;
+    let resolved = hir
+        .bindings
+        .get(binding.as_usize())?
+        .import
+        .as_ref()?
+        .resolve_reactive_member(&place.projections)?;
+    Some((local, binding, resolved))
 }
 
 fn lower_value(value: ValueId, temporaries: &BTreeMap<ValueId, EmitTemporaryId>) -> EmitValueRef {

@@ -107,6 +107,26 @@ pub enum ImportedReactiveKind {
     Store,
 }
 
+/// One statically addressable reactive member below an imported namespace value.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ImportedReactiveMember {
+    /// Static property path relative to the imported namespace binding.
+    pub path: Vec<String>,
+    /// Runtime representation at this path.
+    pub kind: ImportedReactiveKind,
+}
+
+/// Resolved imported member semantics for one projected place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImportedReactiveMemberMatch {
+    /// Index in [`ImportBinding::reactive_members`].
+    pub member_index: usize,
+    /// Number of place projections that form the accessor or store value.
+    pub accessor_depth: usize,
+    /// Runtime representation at the matched path.
+    pub kind: ImportedReactiveKind,
+}
+
 /// Module and exported-symbol identity for an import binding.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ImportBinding {
@@ -118,6 +138,8 @@ pub struct ImportBinding {
     pub kind: ImportKind,
     /// Authoritative cross-module reactive semantics, when supplied by the graph host.
     pub reactive: Option<ImportedReactiveKind>,
+    /// Sorted static reactive paths below an imported namespace value.
+    pub reactive_members: Vec<ImportedReactiveMember>,
 }
 
 /// Semantic binding. `display_name` is never an identity key.
@@ -351,6 +373,47 @@ pub enum Projection {
         /// Whether this segment came from optional chaining.
         optional: bool,
     },
+}
+
+impl ImportBinding {
+    /// Resolve the first statically proven reactive namespace prefix of a projected place.
+    #[must_use]
+    pub fn resolve_reactive_member(
+        &self,
+        projections: &[Projection],
+    ) -> Option<ImportedReactiveMemberMatch> {
+        let mut path = Vec::new();
+        for projection in projections {
+            path.push(match projection {
+                Projection::StaticProperty { name, .. } => name.clone(),
+                Projection::Index { index, .. } => index.to_string(),
+                Projection::ComputedProperty { .. } => break,
+            });
+        }
+        self.resolve_reactive_member_path(&path)
+    }
+
+    /// Resolve the first reactive prefix in a canonical static property path.
+    #[must_use]
+    pub fn resolve_reactive_member_path(
+        &self,
+        path: &[String],
+    ) -> Option<ImportedReactiveMemberMatch> {
+        for index in 0..path.len() {
+            let prefix = &path[..=index];
+            if let Ok(member_index) = self
+                .reactive_members
+                .binary_search_by(|member| member.path.as_slice().cmp(prefix))
+            {
+                return Some(ImportedReactiveMemberMatch {
+                    member_index,
+                    accessor_depth: index.saturating_add(1),
+                    kind: self.reactive_members[member_index].kind,
+                });
+            }
+        }
+        None
+    }
 }
 
 /// Assignable/readable location with structural identity.

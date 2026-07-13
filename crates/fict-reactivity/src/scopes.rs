@@ -8,6 +8,7 @@ use fict_hir::{
     ImportedReactiveKind, MutationEffect, ReactiveCallKind, SsaName,
 };
 
+use crate::effects::imported_reactive_dependency;
 use crate::{
     AliasAnalysis, DependencyAnalysis, DependencyBase, DependencyPath, ShapeAnalysis, ShapeKind,
     ShapeSource, SsaAnalysis, SsaDefinitionLocation, verify_aliases, verify_dependencies,
@@ -204,6 +205,7 @@ pub fn analyze_reactive_scopes(
             }
             if candidate.dependencies.iter().any(|path| {
                 matches!(path.base, DependencyBase::Ssa(source) if previous.contains_key(&source))
+                    || imported_reactive_dependency(file, function, path)
             }) || candidate
                 .phi_sources
                 .iter()
@@ -257,6 +259,8 @@ pub fn analyze_reactive_scopes(
                 .filter(|read| read.location.block == block.id)
                 .map(|read| &read.path),
             &tracked,
+            file,
+            function,
         );
         let writes = paths_in_block(
             dependencies
@@ -265,6 +269,8 @@ pub fn analyze_reactive_scopes(
                 .filter(|write| write.location.block == block.id)
                 .map(|write| &write.path),
             &tracked,
+            file,
+            function,
         );
         let control_flow_reads = paths_in_block(
             dependencies
@@ -273,6 +279,8 @@ pub fn analyze_reactive_scopes(
                 .filter(|read| read.location.block == block.id && read.controls_flow)
                 .map(|read| &read.path),
             &tracked,
+            file,
+            function,
         );
         let declarations = definitions_by_block
             .get(&block.id)
@@ -590,9 +598,14 @@ fn effect_blocks(
 fn paths_in_block<'a>(
     paths: impl Iterator<Item = &'a DependencyPath>,
     tracked: &BTreeSet<SsaName>,
+    file: &HirFile,
+    function: &fict_hir::HirFunction,
 ) -> Vec<DependencyPath> {
     paths
-        .filter(|path| matches!(path.base, DependencyBase::Ssa(name) if tracked.contains(&name)))
+        .filter(|path| {
+            matches!(path.base, DependencyBase::Ssa(name) if tracked.contains(&name))
+                || imported_reactive_dependency(file, function, path)
+        })
         .cloned()
         .collect::<BTreeSet<_>>()
         .into_iter()

@@ -10,17 +10,19 @@ use fict_hir::{
     GlobalId, HirBlock, HirFile, HirFunction, HirGlobal, HirInstruction, HirInstructionKind,
     HirLocal, HirObjectParameterCheck, HirObjectParameterMode, HirObjectParameterProperty,
     HirObjectParameterRest, HirParameter, HirPatternWrite, HirScope, HirTerminator, HirValue,
-    ImportPhase, ImportedReactiveKind, InstructionSemantics, IterationKind, JavaScriptString,
-    JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxExpressionKind,
-    JsxListExpression, JsxListReceiver, JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind,
-    ModuleExport, ModuleLocalExport, ModulePlan, MutationEffect, NumberLiteral, ObjectEntry,
-    ObjectPropertyKind, Origin, PatternSummary, PropertyKey, Purity, ReactiveCallKind,
-    ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind, StructuredSourceHint,
-    SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi,
-    TemplateId, TerminatorKind, UnaryOperator, UpdateOperator, ValueId, ValueKind, verify_hir,
-    verify_module_plan,
+    ImportPhase, ImportedReactiveKind, ImportedReactiveMember, ImportedReactiveMemberMatch,
+    InstructionSemantics, IterationKind, JavaScriptString, JsxAttribute, JsxAttributeValue,
+    JsxChild, JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression, JsxListReceiver,
+    JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind, ModuleExport, ModuleLocalExport,
+    ModulePlan, MutationEffect, NumberLiteral, ObjectEntry, ObjectPropertyKind, Origin,
+    PatternSummary, PropertyKey, Purity, ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind,
+    RegionId, ScopeId, ScopeKind, StructuredSourceHint, SyntaxFragment, SyntaxFragmentId,
+    SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi, TemplateId, TerminatorKind,
+    UnaryOperator, UpdateOperator, ValueId, ValueKind, verify_hir, verify_module_plan,
 };
-use fict_metadata::{MetadataResolutionStatus, ReactiveExportKind, ResolvedMetadataInput};
+use fict_metadata::{
+    MetadataResolutionStatus, ModuleReactiveMetadata, ReactiveExportKind, ResolvedMetadataInput,
+};
 use oxc::{
     allocator::Allocator,
     ast::{
@@ -1598,20 +1600,54 @@ fn apply_resolved_import_metadata(
         if import.kind != fict_hir::ImportKind::Value {
             continue;
         }
-        let exported = match &import.imported {
-            fict_hir::ImportedName::Default => "default",
-            fict_hir::ImportedName::Named(exported) => exported,
-            fict_hir::ImportedName::Namespace => continue,
+        let Some(metadata) = snapshot.get(import.source.as_str()).copied() else {
+            continue;
         };
-        import.reactive = snapshot
-            .get(import.source.as_str())
-            .and_then(|metadata| metadata.exports.get(exported))
-            .map(|kind| match kind {
-                ReactiveExportKind::Signal => ImportedReactiveKind::Signal,
-                ReactiveExportKind::Memo => ImportedReactiveKind::Memo,
-                ReactiveExportKind::Store => ImportedReactiveKind::Store,
-            });
+        let exported = match &import.imported {
+            fict_hir::ImportedName::Default => Some("default"),
+            fict_hir::ImportedName::Named(exported) => Some(exported.as_str()),
+            fict_hir::ImportedName::Namespace => None,
+        };
+        import.reactive = exported
+            .and_then(|exported| metadata.exports.get(exported))
+            .map(imported_reactive_kind);
+        let namespace = match &import.imported {
+            fict_hir::ImportedName::Namespace => Some(metadata),
+            fict_hir::ImportedName::Default => metadata.namespaces.get("default"),
+            fict_hir::ImportedName::Named(exported) => metadata.namespaces.get(exported),
+        };
+        import.reactive_members = namespace.map_or_else(Vec::new, flatten_reactive_members);
     }
+}
+
+const fn imported_reactive_kind(kind: &ReactiveExportKind) -> ImportedReactiveKind {
+    match kind {
+        ReactiveExportKind::Signal => ImportedReactiveKind::Signal,
+        ReactiveExportKind::Memo => ImportedReactiveKind::Memo,
+        ReactiveExportKind::Store => ImportedReactiveKind::Store,
+    }
+}
+
+fn flatten_reactive_members(metadata: &ModuleReactiveMetadata) -> Vec<ImportedReactiveMember> {
+    let mut members = Vec::new();
+    let mut stack = vec![(Vec::new(), metadata)];
+    while let Some((path, metadata)) = stack.pop() {
+        for (exported, kind) in &metadata.exports {
+            let mut member_path = path.clone();
+            member_path.push(exported.clone());
+            members.push(ImportedReactiveMember {
+                path: member_path,
+                kind: imported_reactive_kind(kind),
+            });
+        }
+        for (name, namespace) in &metadata.namespaces {
+            let mut namespace_path = path.clone();
+            namespace_path.push(name.clone());
+            stack.push((namespace_path, namespace));
+        }
+    }
+    members.sort_unstable_by(|left, right| left.path.cmp(&right.path));
+    members
 }
 
 impl<'source, 'semantic> Builder<'source, 'semantic> {
@@ -1827,7 +1863,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             pattern_assignments: Vec::new(),
         };
         mutations.visit_program(program);
-        self.validate_imported_reactive_writes(&mutations);
+        self.validate_imported_reactive_writes(&mutations, &typed_expressions.facts);
         let mut delete_targets = DeleteTargetCollector::default();
         delete_targets.visit_program(program);
         let mut suppressed_members = delete_targets.member_spans;
@@ -1901,10 +1937,42 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         }
     }
 
-    fn validate_imported_reactive_writes(&mut self, mutations: &MutationCollector<'_>) {
+    fn validate_imported_reactive_writes(
+        &mut self,
+        mutations: &MutationCollector<'_>,
+        typed_expressions: &[TypedExpressionFact],
+    ) {
         let mut readonly_targets = Vec::new();
+        let mut unsafe_member_operations = Vec::new();
         for mutation in &mutations.facts {
             if mutation.projected {
+                let Some((name, resolved)) = mutation
+                    .place
+                    .as_ref()
+                    .and_then(|place| self.planned_imported_reactive_member(place))
+                else {
+                    continue;
+                };
+                let exact_target = resolved.accessor_depth
+                    == mutation
+                        .place
+                        .as_ref()
+                        .map_or(0, |place| place.projections.len());
+                match resolved.kind {
+                    ImportedReactiveKind::Signal => {
+                        unsafe_member_operations.push((mutation.target_span, name, "mutating"));
+                    }
+                    ImportedReactiveKind::Memo if exact_target => {
+                        readonly_targets.push((name, resolved.kind, mutation.target_span));
+                    }
+                    ImportedReactiveKind::Memo => {
+                        unsafe_member_operations.push((mutation.target_span, name, "mutating"));
+                    }
+                    ImportedReactiveKind::Store if exact_target => {
+                        readonly_targets.push((name, resolved.kind, mutation.target_span));
+                    }
+                    ImportedReactiveKind::Store => {}
+                }
                 continue;
             }
             let Some(binding) = mutation
@@ -1916,7 +1984,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             if let Some(kind @ (ImportedReactiveKind::Memo | ImportedReactiveKind::Store)) =
                 self.imported_reactive_kind(binding)
             {
-                readonly_targets.push((binding, kind, mutation.target_span));
+                readonly_targets.push((
+                    self.binding_display_name(binding).to_owned(),
+                    kind,
+                    mutation.target_span,
+                ));
             }
         }
         for assignment in &mutations.pattern_assignments {
@@ -1927,20 +1999,61 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 if let Some(kind @ (ImportedReactiveKind::Memo | ImportedReactiveKind::Store)) =
                     self.imported_reactive_kind(binding)
                 {
-                    readonly_targets.push((binding, kind, target.span));
+                    readonly_targets.push((
+                        self.binding_display_name(binding).to_owned(),
+                        kind,
+                        target.span,
+                    ));
+                }
+            }
+            for target in &assignment.projected_targets {
+                let Some((name, resolved)) = self.planned_imported_reactive_member(&target.place)
+                else {
+                    continue;
+                };
+                let exact_target = resolved.accessor_depth == target.place.projections.len();
+                match resolved.kind {
+                    ImportedReactiveKind::Signal => {
+                        unsafe_member_operations.push((target.span, name, "mutating"));
+                    }
+                    ImportedReactiveKind::Memo if exact_target => {
+                        readonly_targets.push((name, resolved.kind, target.span));
+                    }
+                    ImportedReactiveKind::Memo => {
+                        unsafe_member_operations.push((target.span, name, "mutating"));
+                    }
+                    ImportedReactiveKind::Store if exact_target => {
+                        readonly_targets.push((name, resolved.kind, target.span));
+                    }
+                    ImportedReactiveKind::Store => {}
                 }
             }
         }
-        readonly_targets.sort_by_key(|(binding, kind, span)| {
-            (span.start(), span.end(), binding.index(), *kind)
+        for expression in typed_expressions {
+            let TypedExpressionKind::Delete {
+                target: TypedDeleteTarget::Place(place),
+            } = &expression.kind
+            else {
+                continue;
+            };
+            if let Some((name, resolved)) = self.planned_imported_reactive_member(place) {
+                let exact_target = resolved.accessor_depth == place.projections.len();
+                if resolved.kind != ImportedReactiveKind::Store || exact_target {
+                    unsafe_member_operations.push((expression.span, name, "deleting"));
+                }
+            }
+        }
+
+        readonly_targets.sort_by(|left, right| {
+            (left.2.start(), left.2.end(), &left.0, left.1).cmp(&(
+                right.2.start(),
+                right.2.end(),
+                &right.0,
+                right.1,
+            ))
         });
         readonly_targets.dedup();
-
-        for (binding, kind, span) in readonly_targets {
-            let name = self.frontend.bindings.iter().find(|candidate| {
-                self.old_to_new.get(&candidate.id.index()).copied() == Some(binding)
-            });
-            let name = name.map_or("<import>", |binding| binding.display_name.as_str());
+        for (name, kind, span) in readonly_targets {
             let (kind, help) = match kind {
                 ImportedReactiveKind::Memo => (
                     "memo",
@@ -1963,6 +2076,36 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 .with_guarantee_class(GuaranteeClass::Unsupported),
             );
         }
+
+        unsafe_member_operations.sort_by(|left, right| {
+            (left.0.start(), left.0.end(), &left.1, left.2).cmp(&(
+                right.0.start(),
+                right.0.end(),
+                &right.1,
+                right.2,
+            ))
+        });
+        unsafe_member_operations.dedup();
+        for (span, name, operation) in unsafe_member_operations {
+            self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::new("FICT-M").expect("diagnostic literal"),
+                    if self.strict_guarantee {
+                        DiagnosticSeverity::Error
+                    } else {
+                        DiagnosticSeverity::Warning
+                    },
+                    format!(
+                        "{operation} imported reactive namespace member {name:?} cannot preserve accessor semantics"
+                    ),
+                )
+                .with_primary_span(span)
+                .with_help(
+                    "import a writable signal directly, or perform the update in the exporting module",
+                )
+                .with_guarantee_class(GuaranteeClass::Fallback),
+            );
+        }
     }
 
     fn imported_reactive_kind(&self, binding: BindingId) -> Option<ImportedReactiveKind> {
@@ -1972,6 +2115,44 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .find(|candidate| self.old_to_new.get(&candidate.id.index()).copied() == Some(binding))
             .and_then(|binding| binding.import.as_ref())
             .and_then(|import| import.reactive)
+    }
+
+    fn planned_imported_reactive_member(
+        &self,
+        place: &PlannedPlace,
+    ) -> Option<(String, ImportedReactiveMemberMatch)> {
+        let PlannedPlaceBase::Binding(symbol) = place.base else {
+            return None;
+        };
+        let binding = self.symbol_to_binding.get(&symbol).copied()?;
+        let frontend = self.frontend.bindings.iter().find(|candidate| {
+            self.old_to_new.get(&candidate.id.index()).copied() == Some(binding)
+        })?;
+        let import = frontend.import.as_ref()?;
+        let mut path = Vec::new();
+        for projection in &place.projections {
+            match projection {
+                PlannedProjection::Static { name, .. } => path.push(name.clone()),
+                PlannedProjection::Index { index, .. } => path.push(index.to_string()),
+                PlannedProjection::Computed { .. } => break,
+            }
+        }
+        let resolved = import.resolve_reactive_member_path(&path)?;
+        let member = import.reactive_members.get(resolved.member_index)?;
+        let mut name = frontend.display_name.clone();
+        for segment in &member.path {
+            name.push('.');
+            name.push_str(segment);
+        }
+        Some((name, resolved))
+    }
+
+    fn binding_display_name(&self, binding: BindingId) -> &str {
+        self.frontend
+            .bindings
+            .iter()
+            .find(|candidate| self.old_to_new.get(&candidate.id.index()).copied() == Some(binding))
+            .map_or("<import>", |binding| binding.display_name.as_str())
     }
 
     fn analyze_reactive_symbols(

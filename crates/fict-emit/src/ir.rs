@@ -89,7 +89,8 @@ pub enum ReactiveSlotStorage {
     /// The function closes over a reactive binding created by another HIR function.
     Captured { owner: FunctionId },
     /// The slot refers to an accessor or store owned by another module.
-    Imported,
+    /// `member` identifies a static namespace path; `None` denotes a direct import.
+    Imported { member: Option<u32> },
 }
 
 /// One direct reactive identifier target inside an object or array assignment pattern.
@@ -251,6 +252,8 @@ pub enum EmitOperation {
         slot: EmitSlotId,
         source_result: ValueId,
         projections: Vec<Projection>,
+        /// Number of projections included in the callable accessor expression.
+        accessor_depth: u16,
         target: EmitTemporaryId,
         helper: Option<RuntimeHelper>,
         origin: Origin,

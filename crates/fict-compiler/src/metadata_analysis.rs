@@ -184,7 +184,7 @@ pub(crate) fn generate_module_metadata(
         .bindings
         .iter()
         .filter_map(|binding| binding.import.as_ref())
-        .filter(|import| import.reactive.is_some())
+        .filter(|import| import.reactive.is_some() || !import.reactive_members.is_empty())
     {
         let _ = builder.resolve(&import.source);
     }

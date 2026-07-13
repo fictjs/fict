@@ -27,10 +27,10 @@ fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
 }
 
 #[test]
-fn annotates_direct_runtime_imports_from_exact_resolved_metadata() {
+fn annotates_direct_and_namespace_imports_from_exact_resolved_metadata() {
     let output = build_hir(
         r#"
-            import primary, { count as localCount, doubled, state, plain } from './dep?client';
+            import primary, { count as localCount, doubled, state, plain, group as namedNamespace } from './dep?client';
             import { count as differentRequest } from './dep';
             import * as namespace from './dep?client';
             import { hidden } from './opaque';
@@ -49,6 +49,28 @@ fn annotates_direct_runtime_imports_from_exact_resolved_metadata() {
                             ("doubled".into(), ReactiveExportKind::Memo),
                             ("state".into(), ReactiveExportKind::Store),
                         ]
+                        .into_iter()
+                        .collect(),
+                        namespaces: [(
+                            "group".into(),
+                            ModuleReactiveMetadata {
+                                exports: [("inner".into(), ReactiveExportKind::Memo)]
+                                    .into_iter()
+                                    .collect(),
+                                namespaces: [(
+                                    "deep".into(),
+                                    ModuleReactiveMetadata {
+                                        exports: [("value".into(), ReactiveExportKind::Signal)]
+                                            .into_iter()
+                                            .collect(),
+                                        ..ModuleReactiveMetadata::new()
+                                    },
+                                )]
+                                .into_iter()
+                                .collect(),
+                                ..ModuleReactiveMetadata::new()
+                            },
+                        )]
                         .into_iter()
                         .collect(),
                         ..ModuleReactiveMetadata::new()
@@ -86,6 +108,47 @@ fn annotates_direct_runtime_imports_from_exact_resolved_metadata() {
     assert_eq!(reactive("differentRequest"), None);
     assert_eq!(reactive("namespace"), None);
     assert_eq!(reactive("hidden"), None);
+
+    let members = |name: &str| {
+        hir.bindings
+            .iter()
+            .find(|binding| binding.display_name == name)
+            .unwrap_or_else(|| panic!("missing import {name}"))
+            .import
+            .as_ref()
+            .expect("import identity")
+            .reactive_members
+            .iter()
+            .map(|member| (member.path.clone(), member.kind))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        members("namespace"),
+        vec![
+            (vec!["count".into()], ImportedReactiveKind::Signal),
+            (vec!["default".into()], ImportedReactiveKind::Signal),
+            (vec!["doubled".into()], ImportedReactiveKind::Memo),
+            (
+                vec!["group".into(), "deep".into(), "value".into()],
+                ImportedReactiveKind::Signal,
+            ),
+            (
+                vec!["group".into(), "inner".into()],
+                ImportedReactiveKind::Memo,
+            ),
+            (vec!["state".into()], ImportedReactiveKind::Store),
+        ]
+    );
+    assert_eq!(
+        members("namedNamespace"),
+        vec![
+            (
+                vec!["deep".into(), "value".into()],
+                ImportedReactiveKind::Signal,
+            ),
+            (vec!["inner".into()], ImportedReactiveKind::Memo),
+        ]
+    );
 }
 
 #[test]

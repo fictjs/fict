@@ -587,6 +587,7 @@ fn build_bindings(
                     ImportKind::Value
                 },
                 reactive: None,
+                reactive_members: Vec::new(),
             });
             FrontendBinding {
                 id: binding_id(index),
