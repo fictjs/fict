@@ -438,19 +438,22 @@ mod tests {
     }
 
     #[test]
-    fn fails_closed_for_unmaterialized_scoped_context_and_jsx() {
+    fn runs_scoped_state_context_reads_and_writes_but_fails_closed_for_jsx() {
         let state = compile(request(
-            "import { $state } from 'fict'; function Component() { let count = $state(0); return count; }",
+            "import { $state } from 'fict'; function Component() { const __fictCtx = 'user'; let count = $state(0); const assigned = (count = 2); const before = count++; return [__fictCtx, count, assigned, before]; }",
             "state.js",
         ));
-        assert!(state.has_errors());
-        assert!(state.code.is_empty());
+        assert!(!state.has_errors(), "{:?}", state.diagnostics);
+        assert!(!state.code.contains("$state"));
         assert!(
             state
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code.as_str() == "FICT-OXC-EMIT-CONTEXT")
+                .code
+                .contains("const __fictCtx_1 = __fictUseContext()")
         );
+        assert!(state.code.contains("__fictUseSignal(__fictCtx_1, 0)"));
+        assert!(state.code.contains("count(__fict_value)"));
+        assert!(state.code.contains("count(__fict_previous + 1)"));
+        assert!(state.code.contains("count(),"), "{}", state.code);
 
         let jsx = compile(request(
             "export function Component() { return <button>Save</button>; }",

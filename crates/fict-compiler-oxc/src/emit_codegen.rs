@@ -11,9 +11,9 @@ use oxc::{
     ast::{
         AstBuilder, NONE,
         ast::{
-            Argument, AssignmentTarget, BindingPattern, Expression, FormalParameter,
-            FormalParameterKind, FormalParameters, FunctionBody, ImportDeclarationSpecifier,
-            ImportOrExportKind, SimpleAssignmentTarget, Statement,
+            Argument, ArrowFunctionExpression, AssignmentTarget, BindingPattern, Expression,
+            FormalParameter, FormalParameterKind, FormalParameters, Function, FunctionBody,
+            ImportDeclarationSpecifier, ImportOrExportKind, SimpleAssignmentTarget, Statement,
         },
     },
     ast_visit::{VisitMut, walk_mut},
@@ -21,7 +21,9 @@ use oxc::{
     parser::{ParseOptions, Parser},
     semantic::SemanticBuilder,
     span::{GetSpan, SourceType, Span},
-    syntax::{number::NumberBase, operator::BinaryOperator as OxcBinaryOperator},
+    syntax::{
+        number::NumberBase, operator::BinaryOperator as OxcBinaryOperator, scope::ScopeFlags,
+    },
     transformer::{JsxOptions, Module, TransformOptions, Transformer},
 };
 
@@ -60,6 +62,11 @@ pub fn emit_program(
     }
 
     let import_source = render_runtime_imports(emit);
+    let (context_sources, context_diagnostics) = render_context_sources(emit);
+    diagnostics.extend(context_diagnostics);
+    if !diagnostics.is_empty() {
+        return failed_output(diagnostics);
+    }
     let allocator = Allocator::default();
     let input_source_type = source_type(options);
     let parsed = Parser::new(&allocator, source, input_source_type)
@@ -72,6 +79,10 @@ pub fn emit_program(
         return failed_output(convert_diagnostics(parsed.diagnostics, "FICT-PARSE"));
     }
     let mut program = parsed.program;
+    let context_declarations = match parse_context_declarations(&allocator, &context_sources) {
+        Ok(declarations) => declarations,
+        Err(findings) => return failed_output(findings),
+    };
 
     strip_compiler_macro_imports(&mut program);
 
@@ -89,6 +100,7 @@ pub fn emit_program(
         call_rewrites: &rewrites,
         reads: &reads,
         mutations: &mutations,
+        context_declarations,
         matched_calls: BTreeSet::new(),
         matched_reads: BTreeSet::new(),
         matched_mutations: BTreeSet::new(),
@@ -137,6 +149,18 @@ pub fn emit_program(
                 ),
             );
         }
+    }
+    for location in rewriter.context_declarations.keys() {
+        diagnostics.push(
+            emit_error(
+                "FICT-OXC-EMIT-CONTEXT",
+                "EmitIR function context origin does not identify a function body",
+                GuaranteeClass::Internal,
+            )
+            .with_primary_span(
+                SourceSpan::new(location.0, location.1).expect("ordered EmitIR context location"),
+            ),
+        );
     }
     if !diagnostics.is_empty() {
         return failed_output(diagnostics);
@@ -283,29 +307,26 @@ fn strip_compiler_macro_imports(program: &mut oxc::ast::ast::Program<'_>) {
 }
 
 fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
-    let unsupported_scoped_helper = emit
-        .functions
-        .iter()
-        .flat_map(|function| &function.operations)
-        .find(|operation| {
-            matches!(
-                operation,
-                EmitOperation::CreateReactive {
-                    helper: RuntimeHelper::UseSignal | RuntimeHelper::UseMemo,
-                    ..
-                } | EmitOperation::RegisterEffect {
-                    helper: RuntimeHelper::UseEffect,
-                    ..
-                }
-            )
-        });
-    if let Some(operation) = unsupported_scoped_helper {
+    let unsupported_scoped_helper = emit.functions.iter().find(|function| {
+        function.context.is_none()
+            && function
+                .operations
+                .iter()
+                .filter_map(EmitOperation::helper)
+                .any(is_scoped_helper)
+    });
+    if let Some(function) = unsupported_scoped_helper {
         let mut diagnostic = emit_error(
             "FICT-OXC-EMIT-CONTEXT",
-            "component and hook runtime helpers require a compiler context argument that is not yet materialized",
+            "component and hook runtime helpers require a function context plan",
             GuaranteeClass::Unsupported,
         );
-        diagnostic.primary_span = operation_origin(operation).primary_span;
+        diagnostic.primary_span = function.operations.iter().find_map(|operation| {
+            operation
+                .helper()
+                .filter(|helper| is_scoped_helper(*helper))
+                .and(operation_origin(operation).primary_span)
+        });
         return vec![diagnostic];
     }
     let unsupported = emit
@@ -357,7 +378,20 @@ fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
     })
 }
 
-fn call_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), String>, Vec<Diagnostic>) {
+fn is_scoped_helper(helper: RuntimeHelper) -> bool {
+    matches!(
+        helper,
+        RuntimeHelper::UseSignal | RuntimeHelper::UseMemo | RuntimeHelper::UseEffect
+    )
+}
+
+#[derive(Debug, Clone)]
+struct CallRewrite {
+    local: String,
+    context: Option<String>,
+}
+
+fn call_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), CallRewrite>, Vec<Diagnostic>) {
     let helper_names: BTreeMap<_, _> = emit
         .imports
         .iter()
@@ -365,47 +399,70 @@ fn call_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), String>, Vec<Diagn
         .collect();
     let mut rewrites = BTreeMap::new();
     let mut diagnostics = Vec::new();
-    for operation in emit
-        .functions
-        .iter()
-        .flat_map(|function| &function.operations)
-    {
-        let helper = match operation {
-            EmitOperation::CreateReactive { helper, .. }
-            | EmitOperation::RegisterEffect { helper, .. } => Some(*helper),
-            _ => None,
-        };
-        let Some(helper) = helper else {
-            continue;
-        };
-        let Some(span) = operation_origin(operation).primary_span else {
-            diagnostics.push(emit_error(
-                "FICT-OXC-EMIT-ORIGIN",
-                "call-lowering EmitIR operation requires a source origin",
-                GuaranteeClass::Internal,
-            ));
-            continue;
-        };
-        let Some(local) = helper_names.get(&helper) else {
-            diagnostics.push(emit_error(
-                "FICT-OXC-EMIT-IMPORT",
-                "call-lowering helper has no runtime import intent",
-                GuaranteeClass::Internal,
-            ));
-            continue;
-        };
-        if rewrites
-            .insert((span.start(), span.end()), (*local).to_owned())
-            .is_some()
-        {
-            diagnostics.push(
-                emit_error(
+    for function in &emit.functions {
+        for operation in &function.operations {
+            let helper = match operation {
+                EmitOperation::CreateReactive { helper, .. }
+                | EmitOperation::RegisterEffect { helper, .. } => Some(*helper),
+                _ => None,
+            };
+            let Some(helper) = helper else {
+                continue;
+            };
+            let Some(span) = operation_origin(operation).primary_span else {
+                diagnostics.push(emit_error(
                     "FICT-OXC-EMIT-ORIGIN",
-                    "multiple call-lowering operations share the same source origin",
+                    "call-lowering EmitIR operation requires a source origin",
                     GuaranteeClass::Internal,
+                ));
+                continue;
+            };
+            let Some(local) = helper_names.get(&helper) else {
+                diagnostics.push(emit_error(
+                    "FICT-OXC-EMIT-IMPORT",
+                    "call-lowering helper has no runtime import intent",
+                    GuaranteeClass::Internal,
+                ));
+                continue;
+            };
+            let context = is_scoped_helper(helper)
+                .then(|| {
+                    function
+                        .context
+                        .as_ref()
+                        .map(|context| context.local.clone())
+                })
+                .flatten();
+            if is_scoped_helper(helper) && context.is_none() {
+                diagnostics.push(
+                    emit_error(
+                        "FICT-OXC-EMIT-CONTEXT",
+                        "scoped call-lowering helper has no function context plan",
+                        GuaranteeClass::Internal,
+                    )
+                    .with_primary_span(span),
+                );
+                continue;
+            }
+            if rewrites
+                .insert(
+                    (span.start(), span.end()),
+                    CallRewrite {
+                        local: (*local).to_owned(),
+                        context,
+                    },
                 )
-                .with_primary_span(span),
-            );
+                .is_some()
+            {
+                diagnostics.push(
+                    emit_error(
+                        "FICT-OXC-EMIT-ORIGIN",
+                        "multiple call-lowering operations share the same source origin",
+                        GuaranteeClass::Internal,
+                    )
+                    .with_primary_span(span),
+                );
+            }
         }
     }
     (rewrites, diagnostics)
@@ -528,17 +585,125 @@ fn render_runtime_imports(emit: &EmitProgram) -> String {
     output
 }
 
+#[derive(Debug)]
+struct ContextSource {
+    location: (u32, u32),
+    source: String,
+}
+
+fn render_context_sources(emit: &EmitProgram) -> (Vec<ContextSource>, Vec<Diagnostic>) {
+    let helper_names: BTreeMap<_, _> = emit
+        .imports
+        .iter()
+        .map(|intent| (intent.helper, intent.local.as_str()))
+        .collect();
+    let mut sources = Vec::new();
+    let mut diagnostics = Vec::new();
+    let mut locations = BTreeSet::new();
+    for context in emit
+        .functions
+        .iter()
+        .filter_map(|function| function.context.as_ref())
+    {
+        let Some(span) = context.origin.primary_span else {
+            diagnostics.push(emit_error(
+                "FICT-OXC-EMIT-CONTEXT",
+                "function context plan requires a source function origin",
+                GuaranteeClass::Internal,
+            ));
+            continue;
+        };
+        let location = (span.start(), span.end());
+        if !locations.insert(location) {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-CONTEXT",
+                    "multiple function context plans share the same source origin",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(span),
+            );
+            continue;
+        }
+        let Some(helper) = helper_names.get(&context.helper) else {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-IMPORT",
+                    "function context helper has no runtime import intent",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(span),
+            );
+            continue;
+        };
+        sources.push(ContextSource {
+            location,
+            source: format!("const {} = {}();", context.local, helper),
+        });
+    }
+    (sources, diagnostics)
+}
+
+fn parse_context_declarations<'a>(
+    allocator: &'a Allocator,
+    sources: &'a [ContextSource],
+) -> Result<BTreeMap<(u32, u32), Statement<'a>>, Vec<Diagnostic>> {
+    let mut declarations = BTreeMap::new();
+    for source in sources {
+        let parsed = Parser::new(allocator, &source.source, SourceType::mjs()).parse();
+        if !parsed.diagnostics.is_empty() {
+            return Err(convert_diagnostics(
+                parsed.diagnostics,
+                "FICT-OXC-EMIT-CONTEXT",
+            ));
+        }
+        let mut program = parsed.program;
+        if program.body.len() != 1 {
+            return Err(vec![emit_error(
+                "FICT-OXC-EMIT-CONTEXT",
+                "generated function context declaration did not parse as one statement",
+                GuaranteeClass::Internal,
+            )]);
+        }
+        ZeroSpans.visit_program(&mut program);
+        let statement = program.body.pop().expect("one context statement");
+        declarations.insert(source.location, statement);
+    }
+    Ok(declarations)
+}
+
 struct AstRewriter<'a, 'emit> {
     allocator: &'a Allocator,
-    call_rewrites: &'emit BTreeMap<(u32, u32), String>,
+    call_rewrites: &'emit BTreeMap<(u32, u32), CallRewrite>,
     reads: &'emit BTreeSet<(u32, u32)>,
     mutations: &'emit BTreeMap<(u32, u32), MutationRewrite>,
+    context_declarations: BTreeMap<(u32, u32), Statement<'a>>,
     matched_calls: BTreeSet<(u32, u32)>,
     matched_reads: BTreeSet<(u32, u32)>,
     matched_mutations: BTreeSet<(u32, u32)>,
 }
 
 impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
+    fn visit_function(&mut self, function: &mut Function<'a>, flags: ScopeFlags) {
+        let location = (function.span.start, function.span.end);
+        if let Some(body) = &mut function.body
+            && let Some(declaration) = self.context_declarations.remove(&location)
+        {
+            body.statements.insert(0, declaration);
+        }
+        walk_mut::walk_function(self, function, flags);
+    }
+
+    fn visit_arrow_function_expression(&mut self, function: &mut ArrowFunctionExpression<'a>) {
+        let location = (function.span.start, function.span.end);
+        if !function.expression
+            && let Some(declaration) = self.context_declarations.remove(&location)
+        {
+            function.body.statements.insert(0, declaration);
+        }
+        walk_mut::walk_arrow_function_expression(self, function);
+    }
+
     fn visit_expression(&mut self, expression: &mut Expression<'a>) {
         let location = (expression.span().start, expression.span().end);
         if let Some(rewrite) = self.mutations.get(&location).copied()
@@ -572,9 +737,18 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
 
     fn visit_call_expression(&mut self, call: &mut oxc::ast::ast::CallExpression<'a>) {
         let location = (call.span.start, call.span.end);
-        if let Some(local) = self.call_rewrites.get(&location)
-            && rename_callee(&mut call.callee, self.allocator.alloc_str(local))
+        if let Some(rewrite) = self.call_rewrites.get(&location)
+            && rename_callee(&mut call.callee, self.allocator.alloc_str(&rewrite.local))
         {
+            if let Some(context) = &rewrite.context {
+                let builder = AstBuilder::new(self.allocator);
+                let context = Expression::new_identifier(
+                    call.span,
+                    self.allocator.alloc_str(context),
+                    &builder,
+                );
+                call.arguments.insert(0, Argument::from(context));
+            }
             self.matched_calls.insert(location);
         }
         walk_mut::walk_call_expression(self, call);
@@ -928,8 +1102,8 @@ fn emit_error(
 #[cfg(test)]
 mod tests {
     use fict_emit::{
-        CleanupOwner, EmitFunction, EmitModulePlan, EmitOperation, EmitProgram, EmitSlotId,
-        EmitValueRef, ReactiveSlot, ReactiveSlotKind, RuntimeFamily, RuntimeHelper,
+        CleanupOwner, EmitContext, EmitFunction, EmitModulePlan, EmitOperation, EmitProgram,
+        EmitSlotId, EmitValueRef, ReactiveSlot, ReactiveSlotKind, RuntimeFamily, RuntimeHelper,
         RuntimeImportIntent,
     };
     use fict_hir::{
@@ -1226,5 +1400,49 @@ mod tests {
 
         assert!(output.code.is_empty());
         assert_eq!(output.diagnostics[0].code.as_str(), "FICT-OXC-EMIT-CONTEXT");
+    }
+
+    #[test]
+    fn injects_scoped_contexts_and_prepends_helper_arguments() {
+        let source = "function App() { $effect(() => 1); }";
+        let mut scoped = effect_program(source);
+        let function_origin = Origin::source(
+            SourceSpan::new(0, u32::try_from(source.len()).expect("span")).expect("ordered span"),
+        );
+        let EmitOperation::RegisterEffect { helper, .. } = &mut scoped.functions[0].operations[0]
+        else {
+            unreachable!()
+        };
+        *helper = RuntimeHelper::UseEffect;
+        scoped.functions[0].context = Some(EmitContext {
+            local: "__fictCtx".into(),
+            helper: RuntimeHelper::UseContext,
+            origin: function_origin,
+        });
+        scoped.imports = vec![
+            RuntimeImportIntent {
+                helper: RuntimeHelper::UseContext,
+                module_request: "@fictjs/runtime/internal".into(),
+                imported: "__fictUseContext".into(),
+                local: "__fictUseContext".into(),
+            },
+            RuntimeImportIntent {
+                helper: RuntimeHelper::UseEffect,
+                module_request: "@fictjs/runtime/internal".into(),
+                imported: "__fictUseEffect".into(),
+                local: "__fictUseEffect".into(),
+            },
+        ];
+
+        let output = emit_program(
+            source,
+            "scoped-valid.js",
+            options(OxcSourceLanguage::JavaScript, false),
+            &scoped,
+        );
+
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert!(output.code.contains("const __fictCtx = __fictUseContext()"));
+        assert!(output.code.contains("__fictUseEffect(__fictCtx, () => 1)"));
     }
 }
