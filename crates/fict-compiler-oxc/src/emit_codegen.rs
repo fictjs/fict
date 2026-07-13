@@ -3334,13 +3334,14 @@ impl<'a> AstRewriter<'a, '_> {
             );
             return;
         };
-        let Expression::ArrowFunctionExpression(mut render_callback) =
-            callback.into_expression().into_inner_expression()
-        else {
+        let Some(mut render_callback) = into_list_render_arrow(
+            self.allocator,
+            callback.into_expression().into_inner_expression(),
+        ) else {
             self.diagnostics.push(
                 emit_error(
                     "FICT-OXC-EMIT-KEYED",
-                    "keyed child render callback is not an inline arrow function",
+                    "keyed child render callback is not a supported inline function",
                     GuaranteeClass::Internal,
                 )
                 .with_primary_span(diagnostic_origin),
@@ -4793,6 +4794,41 @@ fn direct_arrow_return_expression<'a, 'callback>(
         return None;
     };
     statement.argument.as_ref()
+}
+
+fn into_list_render_arrow<'a>(
+    allocator: &'a Allocator,
+    callback: Expression<'a>,
+) -> Option<oxc::allocator::Box<'a, ArrowFunctionExpression<'a>>> {
+    match callback {
+        Expression::ArrowFunctionExpression(callback) => Some(callback),
+        Expression::FunctionExpression(callback) => {
+            let mut callback = callback.unbox();
+            if callback.r#async
+                || callback.generator
+                || callback.id.is_some()
+                || callback.this_param.is_some()
+            {
+                return None;
+            }
+            callback.params.kind = FormalParameterKind::ArrowFormalParameters;
+            let expression = Expression::new_arrow_function_expression(
+                callback.span,
+                false,
+                false,
+                callback.type_parameters,
+                callback.params,
+                callback.return_type,
+                callback.body?,
+                &AstBuilder::new(allocator),
+            );
+            let Expression::ArrowFunctionExpression(callback) = expression else {
+                unreachable!("arrow builder returns an arrow expression")
+            };
+            Some(callback)
+        }
+        _ => None,
+    }
 }
 
 fn replace_arrow_body_with_expression<'a>(

@@ -1206,6 +1206,37 @@ mod tests {
     }
 
     #[test]
+    fn optimizes_context_free_anonymous_function_map_callbacks() {
+        let result = compile(request(
+            "import { $state } from 'fict'; export function Keyed() { let rows = $state([{ id: 1, name: 'A' }]); return <ul>{rows.map(function (row, index) { return <li key={row.id}>{index}:{row.name}</li>; })}</ul>; } export function Unkeyed() { let rows = $state([{ name: 'B' }]); return <main>{rows.map(function (row) { return <span>{row.name}</span>; })}</main>; } export function Aliased() { let rows = $state([{ id: 2 }]); return <ol>{rows.map(function (row) { const key = row.id; return <li key={key}>{key}</li>; })}</ol>; } export function UsesThis() { let rows = $state([{ id: 3 }]); return <div>{rows.map(function (row) { return <i key={row.id}>{this.label}</i>; })}</div>; } export function UsesArguments() { let rows = $state([{ id: 4 }]); return <section>{rows.map(function (row) { return <b key={row.id}>{arguments.length}</b>; })}</section>; } export function Named() { let rows = $state([{ id: 5 }]); return <aside>{rows.map(function render(row) { return <u key={row.id}>{row.id}</u>; })}</aside>; }",
+            "function-map.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result.code.matches("createKeyedList(").count(),
+            3,
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("() => row().name"), "{}", result.code);
+        assert!(result.code.contains("() => index()"), "{}", result.code);
+        assert!(
+            result.code.contains("const key = __fict_key"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("function(row)"), "{}", result.code);
+        assert!(
+            result.code.contains("function render(row)"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("this.label"), "{}", result.code);
+        assert!(result.code.contains("arguments.length"), "{}", result.code);
+    }
+
+    #[test]
     fn omits_intrinsic_keys_without_losing_dynamic_key_effects() {
         let result = compile(request(
             "export function Static() { return <p key=\"row\" title=\"ok\" />; } export function Dynamic() { return <div before={before()} key={side()} after={after()} />; }",

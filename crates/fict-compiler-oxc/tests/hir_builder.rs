@@ -789,6 +789,64 @@ fn distinguishes_optional_map_members_from_optional_calls() {
 }
 
 #[test]
+fn models_context_free_anonymous_function_map_callbacks() {
+    let source = r#"
+        import { $state } from 'fict';
+        export function App() {
+            let rows = $state([{ id: 1, name: 'A' }]);
+            return <ul>{rows.map(function (row, index) { return <li key={row.id}>{index}:{row.name}</li>; })}</ul>;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+    let fict_hir::JsxNode::Element(root) = &hir.templates[0].root else {
+        panic!("intrinsic list root")
+    };
+    let fict_hir::JsxChild::Expression {
+        list: Some(list), ..
+    } = &root.children[0]
+    else {
+        panic!("function map metadata")
+    };
+    assert!(!hir.functions[list.callback.as_usize()].flags.is_arrow);
+    assert_eq!(list.item_references.len(), 1);
+    assert_eq!(list.index_references.len(), 1);
+
+    for callback in [
+        "function (row) { return <li key={row.id}>{this.label}</li>; }",
+        "function (row) { return <li key={row.id}>{arguments.length}</li>; }",
+        "function render(row) { return <li key={row.id}>{row.id}</li>; }",
+    ] {
+        let fallback_source = format!(
+            "import {{ $state }} from 'fict'; export function App() {{ let rows = $state([{{ id: 1 }}]); return <ul>{{rows.map({callback})}}</ul>; }}"
+        );
+        let fallback = build_hir(
+            &fallback_source,
+            options(OxcSourceLanguage::JavaScriptJsx),
+            &HirBuildOptions::default(),
+        );
+        assert!(
+            fallback.diagnostics.is_empty(),
+            "{:?}",
+            fallback.diagnostics
+        );
+        let fallback = fallback.hir.expect("verified fallback HIR");
+        let fict_hir::JsxNode::Element(root) = &fallback.templates[0].root else {
+            panic!("intrinsic list root")
+        };
+        assert!(matches!(
+            &root.children[0],
+            fict_hir::JsxChild::Expression { list: None, .. }
+        ));
+    }
+}
+
+#[test]
 fn assigns_dense_function_local_storage_and_outer_captures_without_name_identity() {
     let source = r#"
         const outer = 1;

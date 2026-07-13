@@ -21,12 +21,13 @@ use oxc::{
         ast::{
             ArrowFunctionExpression, AssignmentExpression, AssignmentPattern, AssignmentTarget,
             BindingIdentifier, BindingPattern, BindingRestElement, CallExpression, ChainElement,
-            Expression, FormalParameters, Function, IdentifierReference, JSXAttributeItem,
-            JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild,
-            JSXElement, JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment,
-            JSXMemberExpression, JSXMemberExpressionObject, MemberExpression, Program,
-            SimpleAssignmentTarget, Statement, UpdateExpression, VariableDeclaration,
-            VariableDeclarationKind, VariableDeclarator,
+            Expression, FormalParameters, Function, FunctionBody, IdentifierReference,
+            JSXAttributeItem, JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue,
+            JSXChild as OxcJsxChild, JSXElement, JSXElementName as OxcJsxElementName,
+            JSXExpression, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject,
+            MemberExpression, MetaProperty, Program, SimpleAssignmentTarget, Statement, Super,
+            ThisExpression, UpdateExpression, VariableDeclaration, VariableDeclarationKind,
+            VariableDeclarator,
         },
         ast_kind::AstKind,
     },
@@ -2321,22 +2322,35 @@ fn raw_jsx_list_expression(
         _ => return None,
     };
     let callback = call.arguments[0].as_expression()?.get_inner_expression();
-    let Expression::ArrowFunctionExpression(callback) = callback else {
-        return None;
+    let (parameters, returned, function_expression) = match callback {
+        Expression::ArrowFunctionExpression(callback) if !callback.r#async => (
+            &callback.params,
+            analyze_direct_arrow_return(callback)?,
+            false,
+        ),
+        Expression::FunctionExpression(callback)
+            if !callback.r#async
+                && !callback.generator
+                && callback.id.is_none()
+                && callback.this_param.is_none() =>
+        {
+            (
+                &callback.params,
+                analyze_direct_function_return(callback)?,
+                true,
+            )
+        }
+        _ => return None,
     };
-    if callback.r#async
-        || callback.params.rest.is_some()
-        || !(1..=2).contains(&callback.params.items.len())
-    {
+    if parameters.rest.is_some() || !(1..=2).contains(&parameters.items.len()) {
         return None;
     }
-    let item = simple_parameter_symbol(&callback.params, 0)?;
-    let index = if callback.params.items.len() == 2 {
-        Some(simple_parameter_symbol(&callback.params, 1)?)
+    let item = simple_parameter_symbol(parameters, 0)?;
+    let index = if parameters.items.len() == 2 {
+        Some(simple_parameter_symbol(parameters, 1)?)
     } else {
         None
     };
-    let returned = analyze_direct_arrow_return(callback)?;
     let returned_expression = returned.expression.get_inner_expression();
     let Expression::JSXElement(element) = returned_expression else {
         return None;
@@ -2367,9 +2381,14 @@ fn raw_jsx_list_expression(
         item_references: Vec::new(),
         index_references: Vec::new(),
         readonly: true,
+        uses_arguments: false,
+        context_sensitive: false,
     };
-    references.visit_arrow_function_expression(callback);
-    if !references.readonly {
+    references.visit_expression(callback);
+    if !references.readonly
+        || references.uses_arguments
+        || function_expression && references.context_sensitive
+    {
         return None;
     }
     references.item_references.sort_unstable();
@@ -2397,7 +2416,7 @@ fn raw_jsx_list_expression(
         items: source_span(items.span()),
         optional,
         receiver,
-        callback: source_span(callback.span),
+        callback: source_span(callback.span()),
         key,
         key_source,
         key_alias_initializer,
@@ -2407,29 +2426,41 @@ fn raw_jsx_list_expression(
     })
 }
 
-struct DirectArrowReturn<'a, 'callback> {
+struct DirectCallbackReturn<'a, 'callback> {
     expression: &'callback Expression<'a>,
     key_alias: Option<(SymbolId, &'callback Expression<'a>)>,
 }
 
 fn analyze_direct_arrow_return<'a, 'callback>(
     callback: &'callback ArrowFunctionExpression<'a>,
-) -> Option<DirectArrowReturn<'a, 'callback>> {
+) -> Option<DirectCallbackReturn<'a, 'callback>> {
     if let Some(expression) = callback.get_expression() {
-        return Some(DirectArrowReturn {
+        return Some(DirectCallbackReturn {
             expression,
             key_alias: None,
         });
     }
-    if !callback.body.directives.is_empty() {
+    analyze_direct_callback_body(&callback.body)
+}
+
+fn analyze_direct_function_return<'a, 'callback>(
+    callback: &'callback Function<'a>,
+) -> Option<DirectCallbackReturn<'a, 'callback>> {
+    analyze_direct_callback_body(callback.body.as_ref()?)
+}
+
+fn analyze_direct_callback_body<'a, 'callback>(
+    body: &'callback FunctionBody<'a>,
+) -> Option<DirectCallbackReturn<'a, 'callback>> {
+    if !body.directives.is_empty() {
         return None;
     }
-    match callback.body.statements.as_slice() {
+    match body.statements.as_slice() {
         [Statement::ReturnStatement(statement)] => {
             statement
                 .argument
                 .as_ref()
-                .map(|expression| DirectArrowReturn {
+                .map(|expression| DirectCallbackReturn {
                     expression,
                     key_alias: None,
                 })
@@ -2444,7 +2475,7 @@ fn analyze_direct_arrow_return<'a, 'callback>(
             let BindingPattern::BindingIdentifier(alias) = &declarator.id else {
                 return None;
             };
-            Some(DirectArrowReturn {
+            Some(DirectCallbackReturn {
                 expression: statement.argument.as_ref()?,
                 key_alias: Some((alias.symbol_id.get()?, declarator.init.as_ref()?)),
             })
@@ -2471,10 +2502,15 @@ struct ListParameterReferenceCollector<'scoping> {
     item_references: Vec<SourceSpan>,
     index_references: Vec<SourceSpan>,
     readonly: bool,
+    uses_arguments: bool,
+    context_sensitive: bool,
 }
 
 impl<'a> Visit<'a> for ListParameterReferenceCollector<'_> {
     fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+        if identifier.name == "arguments" {
+            self.uses_arguments = true;
+        }
         let Some(reference) = identifier
             .reference_id
             .get()
@@ -2501,6 +2537,18 @@ impl<'a> Visit<'a> for ListParameterReferenceCollector<'_> {
         if reference.is_read() {
             target.push(source_span(identifier.span));
         }
+    }
+
+    fn visit_this_expression(&mut self, _expression: &ThisExpression) {
+        self.context_sensitive = true;
+    }
+
+    fn visit_meta_property(&mut self, _property: &MetaProperty<'a>) {
+        self.context_sensitive = true;
+    }
+
+    fn visit_super(&mut self, _super: &Super) {
+        self.context_sensitive = true;
     }
 }
 
