@@ -6,10 +6,10 @@ use fict_hir::{
     Binding, BindingId, BindingKind, BlockId, CallArgument, CallHost, CallInstruction,
     DeclarationKind, FictMacroKind, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock,
     HirFile, HirFunction, HirInstruction, HirInstructionKind, HirLocal, HirScope, HirTerminator,
-    HirValue, InstructionSemantics, JsxAttribute, JsxAttributeValue, JsxChild, JsxElement,
-    JsxElementName, JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind, MutationEffect,
-    NumberLiteral, Origin, Place, ScopeId, ScopeKind, SourceSpan, TemplateId, TerminatorKind,
-    UpdateOperator, ValueId, ValueKind, verify_hir,
+    HirValue, ImportBinding, ImportKind, ImportedName, InstructionSemantics, JsxAttribute,
+    JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxNode, JsxTemplate, LiteralValue,
+    LocalId, LocalKind, MutationEffect, NumberLiteral, Origin, Place, ScopeId, ScopeKind,
+    SourceSpan, TemplateId, TerminatorKind, UpdateOperator, ValueId, ValueKind, verify_hir,
 };
 use fict_reactivity::{
     ReactiveCycleAnalysis, RegionAnalysis, analyze_aliases, analyze_dependencies,
@@ -175,18 +175,54 @@ fn fixture(kind: FunctionKind) -> HirFile {
 }
 
 fn analyses(hir: &HirFile) -> (Vec<RegionAnalysis>, Vec<ReactiveCycleAnalysis>) {
-    let function_id = FunctionId::new(0);
-    let function = &hir.functions[0];
-    let ssa = analyze_ssa(function).expect("SSA");
-    let dependencies = analyze_dependencies(hir, function_id, &ssa).expect("dependencies");
-    let aliases = analyze_aliases(hir, function_id, &ssa, &dependencies).expect("aliases");
-    let shapes = analyze_shapes(hir, function_id, &ssa, &dependencies, &aliases).expect("shapes");
-    let scopes =
-        analyze_reactive_scopes(hir, function_id, &ssa, &dependencies, &shapes).expect("scopes");
-    let cycles = analyze_reactive_cycles(function, &scopes).expect("cycles");
-    let regions =
-        analyze_regions(hir, function, &ssa, &dependencies, &scopes, &cycles).expect("regions");
-    (vec![regions], vec![cycles])
+    let mut all_regions = Vec::with_capacity(hir.functions.len());
+    let mut all_cycles = Vec::with_capacity(hir.functions.len());
+    for (index, function) in hir.functions.iter().enumerate() {
+        let function_id = FunctionId::new(u32::try_from(index).expect("function id fits u32"));
+        let ssa = analyze_ssa(function).expect("SSA");
+        let dependencies = analyze_dependencies(hir, function_id, &ssa).expect("dependencies");
+        let aliases = analyze_aliases(hir, function_id, &ssa, &dependencies).expect("aliases");
+        let shapes =
+            analyze_shapes(hir, function_id, &ssa, &dependencies, &aliases).expect("shapes");
+        let scopes = analyze_reactive_scopes(hir, function_id, &ssa, &dependencies, &shapes)
+            .expect("scopes");
+        let cycles = analyze_reactive_cycles(function, &scopes).expect("cycles");
+        let regions =
+            analyze_regions(hir, function, &ssa, &dependencies, &scopes, &cycles).expect("regions");
+        all_regions.push(regions);
+        all_cycles.push(cycles);
+    }
+    (all_regions, all_cycles)
+}
+
+fn empty_nested_function(id: u32, scope: u32) -> HirFunction {
+    HirFunction {
+        id: FunctionId::new(id),
+        binding: None,
+        scope: ScopeId::new(scope),
+        kind: FunctionKind::Plain,
+        flags: FunctionFlags {
+            is_arrow: true,
+            ..FunctionFlags::default()
+        },
+        parameters: Vec::new(),
+        locals: Vec::new(),
+        values: Vec::new(),
+        blocks: vec![HirBlock {
+            id: BlockId::new(0),
+            scope: ScopeId::new(scope),
+            instructions: Vec::new(),
+            terminator: HirTerminator {
+                kind: TerminatorKind::Return { value: None },
+                origin: origin(),
+            },
+            source_hint: None,
+            origin: origin(),
+        }],
+        entry: BlockId::new(0),
+        regions: Vec::new(),
+        origin: origin(),
+    }
 }
 
 #[test]
@@ -544,4 +580,131 @@ fn carries_structured_conditional_plan_into_emit_function() {
             ))
     );
     assert!(program.functions[0].control_flow.fallback.is_none());
+}
+
+#[test]
+fn lowers_only_binding_aware_runtime_keyed_list_calls() {
+    let mut hir = fixture(FunctionKind::Module);
+    hir.scopes.extend([1, 2].map(|id| HirScope {
+        id: ScopeId::new(id),
+        parent: Some(ScopeId::new(0)),
+        kind: ScopeKind::Function,
+        origin: origin(),
+    }));
+    hir.bindings = vec![Binding {
+        id: BindingId::new(0),
+        scope: ScopeId::new(0),
+        kind: BindingKind::Import,
+        display_name: "list".into(),
+        import: Some(ImportBinding {
+            source: "fict/internal/list".into(),
+            imported: ImportedName::Named("createKeyedList".into()),
+            kind: ImportKind::Value,
+        }),
+        origin: origin(),
+    }];
+    hir.functions[0].locals.clear();
+    hir.functions[0].values = vec![
+        value(0, ValueKind::Literal(LiteralValue::Undefined)),
+        value(
+            1,
+            ValueKind::Literal(LiteralValue::Number(NumberLiteral::from_f64(1.0))),
+        ),
+        value(2, ValueKind::Function(FunctionId::new(1))),
+        value(3, ValueKind::Function(FunctionId::new(2))),
+        value(4, ValueKind::InstructionResult),
+    ];
+    hir.functions[0].blocks[0].instructions = vec![
+        instruction(
+            Some(0),
+            HirInstructionKind::Literal(LiteralValue::Undefined),
+        ),
+        instruction(
+            Some(1),
+            HirInstructionKind::Literal(LiteralValue::Number(NumberLiteral::from_f64(1.0))),
+        ),
+        instruction(
+            Some(2),
+            HirInstructionKind::Function {
+                function: FunctionId::new(1),
+            },
+        ),
+        instruction(
+            Some(3),
+            HirInstructionKind::Function {
+                function: FunctionId::new(2),
+            },
+        ),
+        HirInstruction {
+            result: Some(ValueId::new(4)),
+            kind: HirInstructionKind::Call(CallInstruction {
+                callee: ValueId::new(0),
+                arguments: vec![
+                    CallArgument {
+                        value: ValueId::new(1),
+                        spread: false,
+                    },
+                    CallArgument {
+                        value: ValueId::new(2),
+                        spread: false,
+                    },
+                    CallArgument {
+                        value: ValueId::new(3),
+                        spread: false,
+                    },
+                ],
+                host: CallHost::Binding(BindingId::new(0)),
+                macro_kind: None,
+                optional: false,
+            }),
+            semantics: InstructionSemantics::CONSERVATIVE_EAGER,
+            origin: origin(),
+        },
+    ];
+    hir.functions[0].blocks[0].terminator.kind = TerminatorKind::Return {
+        value: Some(ValueId::new(4)),
+    };
+    hir.functions.push(empty_nested_function(1, 1));
+    hir.functions.push(empty_nested_function(2, 2));
+    verify_hir(&hir).expect("valid keyed-list fixture");
+
+    let (regions, cycles) = analyses(&hir);
+    let program = lower_core(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
+        .expect("keyed-list lowering");
+    assert!(
+        program
+            .imports
+            .iter()
+            .any(|intent| intent.helper == RuntimeHelper::KeyedList)
+    );
+    assert!(program.functions[0].operations.iter().any(|operation| {
+        matches!(
+            operation,
+            EmitOperation::KeyedList {
+                source_result,
+                key: Some(key),
+                render,
+                ..
+            } if *source_result == ValueId::new(4)
+                && *key == FunctionId::new(1)
+                && *render == FunctionId::new(2)
+        )
+    }));
+
+    hir.bindings[0].import.as_mut().expect("import").source = "third-party/list".into();
+    let (regions, cycles) = analyses(&hir);
+    let spoofed = lower_core(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
+        .expect("same-named third-party helper remains ordinary HIR");
+    assert!(
+        !spoofed
+            .imports
+            .iter()
+            .any(|intent| intent.helper == RuntimeHelper::KeyedList)
+    );
+    assert!(
+        spoofed.functions[0]
+            .operations
+            .iter()
+            .any(|operation| matches!(operation, EmitOperation::PreserveHir { .. }))
+    );
 }

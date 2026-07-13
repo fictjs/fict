@@ -4,9 +4,9 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
 use fict_hir::{
-    FictMacroKind, FunctionId, FunctionKind, HirFile, HirInstructionKind, JsxAttribute,
-    JsxAttributeValue, JsxChild, JsxElementName, JsxNode, LocalId, PlaceBase, TemplateId,
-    TerminatorKind, ValueId, ValueKind,
+    CallHost, FictMacroKind, FunctionId, FunctionKind, HirFile, HirInstructionKind, ImportedName,
+    JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName, JsxNode, LocalId, PlaceBase,
+    TemplateId, TerminatorKind, ValueId, ValueKind,
 };
 use fict_reactivity::{ReactiveCycleAnalysis, RegionAnalysis, analyze_cfg, structurize_cfg};
 
@@ -194,6 +194,19 @@ fn lower_function(
         }
     }
     let site_by_result: BTreeMap<_, _> = sites.iter().map(|site| (site.result, *site)).collect();
+    let keyed_results: BTreeSet<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter_map(|instruction| {
+            let HirInstructionKind::Call(call) = &instruction.kind else {
+                return None;
+            };
+            is_runtime_helper_call(hir, call, RuntimeHelper::KeyedList)
+                .then_some(instruction.result)
+                .flatten()
+        })
+        .collect();
     let slot_by_local: BTreeMap<_, _> = sites
         .iter()
         .filter_map(|site| site.local.map(|local| (local, site.slot)))
@@ -219,6 +232,11 @@ fn lower_function(
     let mut value_temporaries = BTreeMap::new();
     let mut operations = Vec::new();
     let mut declared_templates = BTreeSet::new();
+    let cleanup = regions
+        .top_level_regions
+        .first()
+        .copied()
+        .map_or(CleanupOwner::Function, CleanupOwner::Region);
     for block in &function.blocks {
         for (instruction_index, instruction) in block.instructions.iter().enumerate() {
             if let HirInstructionKind::Call(call) = &instruction.kind
@@ -260,11 +278,58 @@ fn lower_function(
                 }
                 continue;
             }
+            if let HirInstructionKind::Call(call) = &instruction.kind
+                && instruction
+                    .result
+                    .is_some_and(|result| keyed_results.contains(&result))
+            {
+                let result = instruction.result.expect("keyed result selected");
+                if call.arguments.len() < 3 {
+                    return Err(DiagnosticBundle::new(vec![lower_error(
+                        "FICT-EMIT-KEYED-ARGS",
+                        "createKeyedList requires items, key, and render inputs",
+                        GuaranteeClass::Unsupported,
+                    )]));
+                }
+                let key = function_value(function, call.arguments[1].value).ok_or_else(|| {
+                    DiagnosticBundle::new(vec![lower_error(
+                        "FICT-EMIT-KEYED-KEY",
+                        "keyed list key input must be a statically known function",
+                        GuaranteeClass::Unsupported,
+                    )])
+                })?;
+                let render =
+                    function_value(function, call.arguments[2].value).ok_or_else(|| {
+                        DiagnosticBundle::new(vec![lower_error(
+                            "FICT-EMIT-KEYED-RENDER",
+                            "keyed list render input must be a statically known function",
+                            GuaranteeClass::Unsupported,
+                        )])
+                    })?;
+                let target = allocate_temporary(
+                    &mut temporaries,
+                    format!("__fict_list{}", result.index()),
+                    instruction.origin,
+                );
+                value_temporaries.insert(result, target);
+                operations.push(EmitOperation::KeyedList {
+                    target,
+                    source_result: result,
+                    items: lower_value(call.arguments[0].value, &value_temporaries),
+                    key: Some(key),
+                    render,
+                    helper: RuntimeHelper::KeyedList,
+                    cleanup,
+                    origin: instruction.origin,
+                });
+                continue;
+            }
             if let HirInstructionKind::Declare {
                 initializer: Some(initializer),
                 ..
             } = instruction.kind
-                && site_by_result.contains_key(&initializer)
+                && (site_by_result.contains_key(&initializer)
+                    || keyed_results.contains(&initializer))
             {
                 continue;
             }
@@ -356,11 +421,7 @@ fn lower_function(
                         &mut temporaries,
                         &mut value_temporaries,
                         &mut operations,
-                        regions
-                            .top_level_regions
-                            .first()
-                            .copied()
-                            .map_or(CleanupOwner::Function, CleanupOwner::Region),
+                        cleanup,
                     )?;
                 }
                 _ => preserve(&mut operations, block.id, instruction_index, instruction),
@@ -962,6 +1023,38 @@ fn creation_helper(kind: FunctionKind, macro_kind: FictMacroKind) -> RuntimeHelp
         (FictMacroKind::Memo, false) => RuntimeHelper::Memo,
         (FictMacroKind::Memo, true) => RuntimeHelper::UseMemo,
         (FictMacroKind::Effect, _) => unreachable!("effect has a dedicated helper"),
+    }
+}
+
+fn is_runtime_helper_call(
+    hir: &HirFile,
+    call: &fict_hir::CallInstruction,
+    helper: RuntimeHelper,
+) -> bool {
+    let CallHost::Binding(binding) = call.host else {
+        return false;
+    };
+    let Some(import) = hir
+        .bindings
+        .get(binding.as_usize())
+        .and_then(|binding| binding.import.as_ref())
+    else {
+        return false;
+    };
+    let ImportedName::Named(name) = &import.imported else {
+        return false;
+    };
+    let spec = helper.spec();
+    name == spec.export
+        && [RuntimeFamily::Fict, RuntimeFamily::Runtime]
+            .into_iter()
+            .any(|family| import.source == spec.module_request(family))
+}
+
+fn function_value(function: &fict_hir::HirFunction, value: ValueId) -> Option<FunctionId> {
+    match function.values.get(value.as_usize())?.kind {
+        ValueKind::Function(function) => Some(function),
+        _ => None,
     }
 }
 

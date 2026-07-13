@@ -324,8 +324,15 @@ fn verify_operations(
             }
             EmitOperation::BindEvent { cleanup, .. }
             | EmitOperation::BindRef { cleanup, .. }
-            | EmitOperation::Conditional { cleanup, .. }
-            | EmitOperation::KeyedList { cleanup, .. } => {
+            | EmitOperation::Conditional { cleanup, .. } => {
+                verify_cleanup(function, analysis, *cleanup, diagnostics);
+            }
+            EmitOperation::KeyedList {
+                source_result,
+                cleanup,
+                ..
+            } => {
+                verify_source_result(hir_function, *source_result, diagnostics);
                 verify_cleanup(function, analysis, *cleanup, diagnostics);
             }
             _ => {}

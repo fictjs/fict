@@ -290,6 +290,7 @@ pub enum EmitOperation {
     },
     KeyedList {
         target: EmitTemporaryId,
+        source_result: ValueId,
         items: EmitValueRef,
         key: Option<FunctionId>,
         render: FunctionId,
