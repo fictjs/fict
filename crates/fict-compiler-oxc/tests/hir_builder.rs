@@ -978,7 +978,7 @@ fn models_simple_component_object_props_with_exact_read_origins() {
     );
 
     let callable = build_hir(
-        "function Button({ onClick }) { return <button onClick={() => onClick()}>go</button>; } export function App(fn) { return <Button onClick={fn} />; }",
+        "function Button({ onClick }) { const invoke = onClick; return <button onClick={() => invoke.call(null)}>go</button>; } function Mixed({ label }) { label(); return <span>{String(label)}</span>; } export function App(fn) { return <><Button onClick={fn} /><Mixed label={fn} /></>; }",
         options(OxcSourceLanguage::JavaScriptJsx),
         &HirBuildOptions::default(),
     );
@@ -1007,6 +1007,24 @@ fn models_simple_component_object_props_with_exact_read_origins() {
         fict_hir::HirObjectParameterMode::Value
     );
     assert!(callable_properties[0].references.is_empty());
+    let mixed = callable
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                callable.bindings[binding.as_usize()].display_name == "Mixed"
+            })
+        })
+        .expect("Mixed component");
+    let mixed_property = &mixed.parameters[0]
+        .object_properties
+        .as_ref()
+        .expect("mixed callable prop remains modeled")[0];
+    assert_eq!(
+        mixed_property.mode,
+        fict_hir::HirObjectParameterMode::Accessor
+    );
+    assert_eq!(mixed_property.references.len(), 2);
 }
 
 #[test]

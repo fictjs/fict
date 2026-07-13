@@ -431,7 +431,8 @@ test('Rust compiler output snapshots callable props without deactivating value p
       import { $state, render } from 'fict'
 
       function Child({ count, onIncrement }) {
-        return <div><span>{count}</span><button onClick={() => onIncrement()}>+</button></div>
+        const invoke = onIncrement
+        return <div><span>{count}</span><button onClick={() => invoke.call(null)}>+</button></div>
       }
 
       function App() {
@@ -464,6 +465,73 @@ test('Rust compiler output snapshots callable props without deactivating value p
   assert.equal(container.querySelector('span'), value)
   assert.equal(container.querySelector('button'), button)
   assert.equal(value.textContent, '1')
+
+  dispose()
+  assert.equal(container.childNodes.length, 0)
+  container.remove()
+})
+
+test('Rust compiler output keeps mixed displayed and called function props reactive', async () => {
+  const module = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      let setLabel = () => {}
+      export const calls = []
+
+      function makeLabel(value) {
+        const label = () => calls.push(value)
+        label.toString = () => value
+        return label
+      }
+
+      function Child({ label }) {
+        return <div><span>{String(label)}</span><button onClick={() => label()}>call</button></div>
+      }
+
+      function App() {
+        let model = $state({ label: makeLabel('first') })
+        setLabel = value => {
+          model = { label: makeLabel(value) }
+        }
+        return <Child label={model.label} />
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+
+      export function update(value) {
+        setLabel(value)
+      }
+    `,
+    'mixed-callable-props',
+    /const label = prop\(\(\) => __fictProps\.label\)/,
+  )
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = module.mount(container)
+  await flushRuntime()
+
+  const label = container.querySelector('span')
+  const button = container.querySelector('button')
+  assert.ok(label)
+  assert.ok(button)
+  assert.equal(label.textContent, 'first')
+
+  button.click()
+  await flushRuntime()
+  assert.deepEqual(module.calls, ['first'])
+
+  module.update('second')
+  await flushRuntime()
+  assert.equal(container.querySelector('span'), label)
+  assert.equal(label.textContent, 'second')
+
+  button.click()
+  await flushRuntime()
+  assert.deepEqual(module.calls, ['first', 'second'])
 
   dispose()
   assert.equal(container.childNodes.length, 0)

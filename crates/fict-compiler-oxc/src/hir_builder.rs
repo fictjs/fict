@@ -558,8 +558,7 @@ fn reference_is_invoked(
     for ancestor in semantic.nodes().ancestors(node_id) {
         match ancestor.kind() {
             AstKind::CallExpression(call) => {
-                let callee = call.callee.span();
-                if callee == span {
+                if expression_invokes_reference(&call.callee, span) {
                     return true;
                 }
             }
@@ -580,6 +579,89 @@ fn reference_is_invoked(
         }
     }
     false
+}
+
+fn expression_invokes_reference(expression: &Expression<'_>, span: Span) -> bool {
+    let expression = expression.get_inner_expression();
+    if expression.span() == span {
+        return true;
+    }
+    expression.get_member_expr().is_some_and(|member| {
+        matches!(
+            member.static_property_name(),
+            Some("call" | "apply" | "bind")
+        ) && member.object().get_inner_expression().span() == span
+    })
+}
+
+fn reference_alias_target(
+    semantic: &Semantic<'_>,
+    node_id: oxc::syntax::node::NodeId,
+    span: Span,
+) -> Option<SymbolId> {
+    for ancestor in semantic.nodes().ancestors(node_id) {
+        match ancestor.kind() {
+            AstKind::VariableDeclarator(declarator)
+                if declarator.init.as_ref().is_some_and(|initializer| {
+                    initializer.get_inner_expression().span() == span
+                }) =>
+            {
+                let BindingPattern::BindingIdentifier(binding) = &declarator.id else {
+                    return None;
+                };
+                return binding.symbol_id.get();
+            }
+            AstKind::Function(_) | AstKind::ArrowFunctionExpression(_) => break,
+            _ => {}
+        }
+    }
+    None
+}
+
+fn callable_prop_mode(
+    semantic: &Semantic<'_>,
+    root: SymbolId,
+    has_default: bool,
+) -> HirObjectParameterMode {
+    let mut queue = vec![root];
+    let mut visited = BTreeSet::new();
+    let mut has_callable_use = false;
+    let mut has_value_use = false;
+    while let Some(symbol) = queue.pop() {
+        if !visited.insert(symbol) {
+            continue;
+        }
+        for reference in semantic.symbol_references(symbol) {
+            if reference.is_write() {
+                if symbol != root {
+                    has_value_use = true;
+                }
+                continue;
+            }
+            if !reference.is_read() {
+                continue;
+            }
+            let node = semantic.nodes().get_node(reference.node_id());
+            let AstKind::IdentifierReference(identifier) = node.kind() else {
+                has_value_use = true;
+                continue;
+            };
+            if let Some(alias) =
+                reference_alias_target(semantic, reference.node_id(), identifier.span)
+            {
+                queue.push(alias);
+            } else if reference_is_invoked(semantic, reference.node_id(), identifier.span) {
+                has_callable_use = true;
+            } else {
+                has_value_use = true;
+            }
+        }
+    }
+    if has_callable_use && !has_value_use && !has_default {
+        HirObjectParameterMode::Value
+    } else {
+        HirObjectParameterMode::Accessor
+    }
 }
 
 struct Builder<'source, 'semantic> {
@@ -973,8 +1055,6 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .map(|property| {
                 let binding = self.symbol_to_binding.get(&property.binding).copied()?;
                 let mut references = Vec::new();
-                let mut has_invoked_read = false;
-                let mut has_value_read = false;
                 for reference in self.semantic.symbol_references(property.binding) {
                     if reference.is_write() {
                         return None;
@@ -986,20 +1066,16 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     let AstKind::IdentifierReference(identifier) = node.kind() else {
                         return None;
                     };
-                    if reference_is_invoked(self.semantic, reference.node_id(), identifier.span) {
-                        has_invoked_read = true;
-                    } else {
-                        has_value_read = true;
-                    }
                     references.push(Origin::source(source_span(identifier.span)));
                 }
-                let mode =
-                    if has_invoked_read && !has_value_read && property.default_value.is_none() {
-                        references.clear();
-                        HirObjectParameterMode::Value
-                    } else {
-                        HirObjectParameterMode::Accessor
-                    };
+                let mode = callable_prop_mode(
+                    self.semantic,
+                    property.binding,
+                    property.default_value.is_some(),
+                );
+                if mode == HirObjectParameterMode::Value {
+                    references.clear();
+                }
                 Some(HirObjectParameterProperty {
                     path: property.path.clone(),
                     binding,
