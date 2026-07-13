@@ -6,8 +6,8 @@ import {
   validateRustCrateBoundaries,
 } from './check-rust-crate-boundaries.mjs'
 
-function dependency(name, optional = false) {
-  return { name, kind: null, optional }
+function dependency(name, optional = false, kind = null) {
+  return { name, kind, optional }
 }
 
 function validMetadata() {
@@ -62,6 +62,21 @@ test('rejects filesystem/network dependencies and standard-library I/O', () => {
       'crates/fict-compiler/src/lib.rs must not access std::fs or std::net',
     ],
   )
+})
+
+test('allows test-only integration helpers but still rejects build-time boundary leaks', () => {
+  const metadata = validMetadata()
+  const compiler = metadata.packages.find(pkg => pkg.name === 'fict-compiler')
+  const adapter = metadata.packages.find(pkg => pkg.name === 'fict-compiler-oxc')
+  compiler.dependencies.push(dependency('oxc_sourcemap', false, 'dev'))
+  adapter.dependencies.push(dependency('fict-reactivity', false, 'dev'))
+
+  assert.deepEqual(validateRustCrateBoundaries(metadata), [])
+
+  compiler.dependencies.push(dependency('oxc', false, 'build'))
+  assert.deepEqual(validateRustCrateBoundaries(metadata), [
+    'fict-compiler must not depend on OXC package oxc',
+  ])
 })
 
 test('rejects frontend AST references from typed HIR', () => {

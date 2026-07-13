@@ -88,6 +88,10 @@ export function validateRustCrateBoundaries(metadata, sourceFiles = []) {
   for (const pkg of packages.values()) {
     const allowedInternal = ALLOWED_INTERNAL_DEPENDENCIES.get(pkg.name) ?? new Set()
     for (const dependency of pkg.dependencies) {
+      // Test-only helpers do not enter a crate's production or build graph. They may cross
+      // adapter boundaries to assert integration behavior, while normal and build dependencies
+      // remain subject to the architectural rules below.
+      if (dependency.kind === 'dev') continue
       if (EXPECTED_PACKAGE_SET.has(dependency.name) && !allowedInternal.has(dependency.name)) {
         errors.push(`${pkg.name} must not depend on internal crate ${dependency.name}`)
       }
