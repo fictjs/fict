@@ -13,6 +13,31 @@ export const RUNTIME_MODULES = {
   }
 } as const
 
+export const RUNTIME_DELEGATED_EVENTS = [
+  "beforeinput",
+  "click",
+  "dblclick",
+  "contextmenu",
+  "focusin",
+  "focusout",
+  "input",
+  "keydown",
+  "keyup",
+  "mousedown",
+  "mousemove",
+  "mouseout",
+  "mouseover",
+  "mouseup",
+  "pointerdown",
+  "pointermove",
+  "pointerout",
+  "pointerover",
+  "pointerup",
+  "touchend",
+  "touchmove",
+  "touchstart"
+] as const
+
 export const RUNTIME_HELPERS = {
   signal: "createSignal",
   createSelector: "createSelector",

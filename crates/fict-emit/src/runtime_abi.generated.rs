@@ -5,6 +5,7 @@ pub const FICT_INTERNAL_MODULE: &str = "fict/internal";
 pub const FICT_LIST_MODULE: &str = "fict/internal/list";
 pub const STANDALONE_INTERNAL_MODULE: &str = "@fictjs/runtime/internal";
 pub const STANDALONE_LIST_MODULE: &str = "@fictjs/runtime/internal/list";
+pub const DELEGATED_EVENTS: &[&str] = &["beforeinput", "click", "dblclick", "contextmenu", "focusin", "focusout", "input", "keydown", "keyup", "mousedown", "mousemove", "mouseout", "mouseover", "mouseup", "pointerdown", "pointermove", "pointerout", "pointerover", "pointerup", "touchend", "touchmove", "touchstart"];
 
 #[repr(u16)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

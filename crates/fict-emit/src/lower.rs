@@ -11,9 +11,9 @@ use fict_hir::{
 use fict_reactivity::{ReactiveCycleAnalysis, RegionAnalysis};
 
 use crate::{
-    CleanupOwner, ComponentProp, ComponentTarget, DomBindingKind, DomNamespace, EmitFunction,
-    EmitOperation, EmitProgram, EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef,
-    PropsOperation, ReactiveSlot, ReactiveSlotKind, RuntimeFamily, RuntimeHelper,
+    CleanupOwner, ComponentProp, ComponentTarget, DELEGATED_EVENTS, DomBindingKind, DomNamespace,
+    EmitFunction, EmitOperation, EmitProgram, EmitSlotId, EmitTemporary, EmitTemporaryId,
+    EmitValueRef, PropsOperation, ReactiveSlot, ReactiveSlotKind, RuntimeFamily, RuntimeHelper,
     RuntimeImportIntent, verify_emit_program,
 };
 
@@ -345,6 +345,11 @@ fn lower_function(
                         &mut temporaries,
                         &mut value_temporaries,
                         &mut operations,
+                        regions
+                            .top_level_regions
+                            .first()
+                            .copied()
+                            .map_or(CleanupOwner::Function, CleanupOwner::Region),
                     )?;
                 }
                 _ => preserve(&mut operations, block.id, instruction_index, instruction),
@@ -387,6 +392,15 @@ enum TemplateBinding {
         parent_path: Vec<u32>,
         value: ValueId,
     },
+    Event {
+        path: Vec<u32>,
+        event: String,
+        handler: ValueId,
+    },
+    Ref {
+        path: Vec<u32>,
+        reference: ValueId,
+    },
 }
 
 struct SerializedTemplate {
@@ -405,6 +419,7 @@ fn lower_jsx_instruction(
     temporaries: &mut Vec<EmitTemporary>,
     value_temporaries: &mut BTreeMap<ValueId, EmitTemporaryId>,
     operations: &mut Vec<EmitOperation>,
+    cleanup: CleanupOwner,
 ) -> Result<(), DiagnosticBundle> {
     let Some(template) = hir.templates.get(template_id.as_usize()) else {
         return Err(DiagnosticBundle::new(vec![lower_error(
@@ -524,6 +539,51 @@ fn lower_jsx_instruction(
                     value: lower_value(value, value_temporaries),
                     before: None,
                     helper: RuntimeHelper::Insert,
+                    origin: instruction.origin,
+                });
+            }
+            TemplateBinding::Event {
+                path,
+                event,
+                handler,
+            } => {
+                let element = resolved_element(
+                    root,
+                    path,
+                    &mut resolved,
+                    temporaries,
+                    operations,
+                    instruction.origin,
+                );
+                let delegated = DELEGATED_EVENTS.contains(&event.as_str());
+                operations.push(EmitOperation::BindEvent {
+                    element,
+                    event,
+                    handler: lower_value(handler, value_temporaries),
+                    delegated,
+                    helper: if delegated {
+                        RuntimeHelper::DelegateEvents
+                    } else {
+                        RuntimeHelper::BindEvent
+                    },
+                    cleanup,
+                    origin: instruction.origin,
+                });
+            }
+            TemplateBinding::Ref { path, reference } => {
+                let element = resolved_element(
+                    root,
+                    path,
+                    &mut resolved,
+                    temporaries,
+                    operations,
+                    instruction.origin,
+                );
+                operations.push(EmitOperation::BindRef {
+                    element,
+                    reference: lower_value(reference, value_temporaries),
+                    helper: RuntimeHelper::BindRef,
+                    cleanup,
                     origin: instruction.origin,
                 });
             }
@@ -707,11 +767,24 @@ fn serialize_node(
                                 html.push('"');
                             }
                             JsxAttributeValue::Expression(value) => {
-                                bindings.push(TemplateBinding::Attribute {
-                                    path: path.clone(),
-                                    name: name.clone(),
-                                    value: *value,
-                                });
+                                if name == "ref" {
+                                    bindings.push(TemplateBinding::Ref {
+                                        path: path.clone(),
+                                        reference: *value,
+                                    });
+                                } else if let Some(event) = event_name(name) {
+                                    bindings.push(TemplateBinding::Event {
+                                        path: path.clone(),
+                                        event,
+                                        handler: *value,
+                                    });
+                                } else {
+                                    bindings.push(TemplateBinding::Attribute {
+                                        path: path.clone(),
+                                        name: name.clone(),
+                                        value: *value,
+                                    });
+                                }
                             }
                             JsxAttributeValue::Node(_) => {
                                 return Err(DiagnosticBundle::new(vec![lower_error(
@@ -851,6 +924,19 @@ fn valid_markup_name(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':' | b'.'))
+}
+
+fn event_name(attribute: &str) -> Option<String> {
+    if let Some(event) = attribute.strip_prefix("on:")
+        && !event.is_empty()
+    {
+        return Some(event.to_ascii_lowercase());
+    }
+    let event = attribute.strip_prefix("on")?;
+    if event.is_empty() {
+        return None;
+    }
+    Some(event.to_ascii_lowercase())
 }
 
 fn creation_helper(kind: FunctionKind, macro_kind: FictMacroKind) -> RuntimeHelper {

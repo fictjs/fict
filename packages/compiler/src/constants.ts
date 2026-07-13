@@ -18,34 +18,10 @@ import {
   RUNTIME_HELPERS,
   RUNTIME_HELPER_MODULES,
   RUNTIME_MODULES,
+  RUNTIME_DELEGATED_EVENTS,
 } from './runtime-abi.generated'
 
 export { RUNTIME_ABI_VERSION, RUNTIME_ALIASES, RUNTIME_HELPERS } from './runtime-abi.generated'
-
-const DelegatedEventNames = [
-  'beforeinput',
-  'click',
-  'dblclick',
-  'contextmenu',
-  'focusin',
-  'focusout',
-  'input',
-  'keydown',
-  'keyup',
-  'mousedown',
-  'mousemove',
-  'mouseout',
-  'mouseover',
-  'mouseup',
-  'pointerdown',
-  'pointermove',
-  'pointerout',
-  'pointerover',
-  'pointerup',
-  'touchend',
-  'touchmove',
-  'touchstart',
-] as const
 
 // ============================================================================
 // Runtime Constants
@@ -160,7 +136,7 @@ export const NON_REACTIVE_ATTRS = new Set(['key', 'ref'])
  * These events bubble and are commonly used across many elements.
  * Must match the runtime's DelegatedEvents set.
  */
-export const DelegatedEvents = new Set<string>([...DelegatedEventNames])
+export const DelegatedEvents = new Set<string>(RUNTIME_DELEGATED_EVENTS)
 
 // Functions that are known to be safe (read-only, won't mutate passed objects)
 export const SAFE_FUNCTIONS = new Set([

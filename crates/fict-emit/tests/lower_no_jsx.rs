@@ -314,6 +314,16 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
                     value: JsxAttributeValue::Expression(ValueId::new(0)),
                     origin: origin(),
                 },
+                JsxAttribute::Named {
+                    name: "onClick".into(),
+                    value: JsxAttributeValue::Expression(ValueId::new(0)),
+                    origin: origin(),
+                },
+                JsxAttribute::Named {
+                    name: "ref".into(),
+                    value: JsxAttributeValue::Expression(ValueId::new(0)),
+                    origin: origin(),
+                },
             ],
             children: vec![
                 JsxChild::Text {
@@ -375,6 +385,29 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
             }
         )
     }));
+    assert!(program.functions[0].operations.iter().any(|operation| {
+        matches!(
+            operation,
+            EmitOperation::BindEvent {
+                event,
+                delegated: true,
+                helper: RuntimeHelper::DelegateEvents,
+                ..
+            } if event == "click"
+        )
+    }));
+    assert!(program.functions[0].operations.iter().any(|operation| {
+        matches!(
+            operation,
+            EmitOperation::BindRef {
+                helper: RuntimeHelper::BindRef,
+                cleanup: fict_emit::CleanupOwner::Function,
+                ..
+            }
+        )
+    }));
+    assert!(!declare.0.contains("onClick"));
+    assert!(!declare.0.contains(" ref"));
 
     let diagnostics = lower_no_jsx(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
         .expect_err("no-JSX phase rejects JSX");
