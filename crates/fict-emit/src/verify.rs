@@ -587,8 +587,10 @@ fn verify_operations(
                 if hir.functions.get(render.as_usize()).is_none()
                     || !valid_identifier(render_key)
                     || items.primary_span.is_none()
-                    || key.primary_span.is_none()
-                    || key_source.primary_span.is_none()
+                    || key.is_some_and(|origin| origin.primary_span.is_none())
+                    || key_source.is_some_and(|origin| origin.primary_span.is_none())
+                    || key.is_some() != key_source.is_some()
+                    || key_alias_initializer.is_some() && key.is_none()
                     || key_alias_initializer.is_some_and(|origin| origin.primary_span.is_none())
                     || item_references
                         .iter()

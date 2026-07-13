@@ -95,10 +95,10 @@ pub struct JsxListExpression {
     pub receiver: JsxListReceiver,
     /// HIR function that owns the inline render callback.
     pub callback: FunctionId,
-    /// Source range of the returned JSX key expression.
-    pub key: Origin,
-    /// Source range evaluated by the runtime key function.
-    pub key_source: Origin,
+    /// Source range of the returned JSX key expression, or no explicit key.
+    pub key: Option<Origin>,
+    /// Source range evaluated by the runtime key function; absent selects the index fallback.
+    pub key_source: Option<Origin>,
     /// Callback-local const initializer replaced by the runtime key, when key aliases are used.
     pub key_alias_initializer: Option<Origin>,
     /// Exact semantic references to the callback item parameter.

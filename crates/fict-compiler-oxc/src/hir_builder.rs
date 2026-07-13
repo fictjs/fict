@@ -1618,8 +1618,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             items: Origin::source(list.items),
             receiver,
             callback,
-            key: Origin::source(list.key),
-            key_source: Origin::source(list.key_source),
+            key: list.key.map(Origin::source),
+            key_source: list.key_source.map(Origin::source),
             key_alias_initializer: list.key_alias_initializer.map(Origin::source),
             item_references: list
                 .item_references
@@ -1876,8 +1876,8 @@ struct RawJsxListExpression {
     items: SourceSpan,
     receiver: RawJsxListReceiver,
     callback: SourceSpan,
-    key: SourceSpan,
-    key_source: SourceSpan,
+    key: Option<SourceSpan>,
+    key_source: Option<SourceSpan>,
     key_alias_initializer: Option<SourceSpan>,
     item_references: Vec<SourceSpan>,
     index_references: Vec<SourceSpan>,
@@ -2334,9 +2334,10 @@ fn raw_jsx_list_expression(
     let Expression::JSXElement(element) = returned_expression else {
         return None;
     };
-    let key = direct_jsx_key_span(element)?;
+    let key = direct_jsx_key_span(element).ok()?;
     let (key_source, key_alias_initializer) = match returned.key_alias {
         Some((alias, initializer)) => {
+            key?;
             let key_expression = direct_jsx_key_expression(element)?.get_inner_expression();
             let Expression::Identifier(identifier) = key_expression else {
                 return None;
@@ -2348,7 +2349,7 @@ fn raw_jsx_list_expression(
                 return None;
             }
             let initializer = source_span(initializer.span());
-            (initializer, Some(initializer))
+            (Some(initializer), Some(initializer))
         }
         None => (key, None),
     };
@@ -2368,12 +2369,14 @@ fn raw_jsx_list_expression(
     references.item_references.dedup();
     references.index_references.sort_unstable();
     references.index_references.dedup();
-    references
-        .item_references
-        .retain(|reference| reference.start() < key.start() || reference.end() > key.end());
-    references
-        .index_references
-        .retain(|reference| reference.start() < key.start() || reference.end() > key.end());
+    if let Some(key) = key {
+        references
+            .item_references
+            .retain(|reference| reference.start() < key.start() || reference.end() > key.end());
+        references
+            .index_references
+            .retain(|reference| reference.start() < key.start() || reference.end() > key.end());
+    }
     if let Some(initializer) = key_alias_initializer {
         references.item_references.retain(|reference| {
             reference.start() < initializer.start() || reference.end() > initializer.end()
@@ -2493,27 +2496,27 @@ impl<'a> Visit<'a> for ListParameterReferenceCollector<'_> {
     }
 }
 
-fn direct_jsx_key_span(element: &JSXElement<'_>) -> Option<SourceSpan> {
+fn direct_jsx_key_span(element: &JSXElement<'_>) -> Result<Option<SourceSpan>, ()> {
     let mut key = None;
     for attribute in &element.opening_element.attributes {
         let JSXAttributeItem::Attribute(attribute) = attribute else {
-            return None;
+            return Err(());
         };
         if !matches!(&attribute.name, JSXAttributeName::Identifier(name) if name.name == "key") {
             continue;
         }
         if key.is_some() {
-            return None;
+            return Err(());
         }
-        key = Some(match attribute.value.as_ref()? {
+        key = Some(match attribute.value.as_ref().ok_or(())? {
             OxcJsxAttributeValue::StringLiteral(literal) => source_span(literal.span),
             OxcJsxAttributeValue::ExpressionContainer(container) => {
-                source_span(container.expression.as_expression()?.span())
+                source_span(container.expression.as_expression().ok_or(())?.span())
             }
-            OxcJsxAttributeValue::Element(_) | OxcJsxAttributeValue::Fragment(_) => return None,
+            OxcJsxAttributeValue::Element(_) | OxcJsxAttributeValue::Fragment(_) => return Err(()),
         });
     }
-    key
+    Ok(key)
 }
 
 fn direct_jsx_key_expression<'a, 'element>(

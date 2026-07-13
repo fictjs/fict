@@ -1103,6 +1103,32 @@ mod tests {
     }
 
     #[test]
+    fn optimizes_safe_unkeyed_maps_with_index_identity() {
+        let result = compile(request(
+            "import { $state } from 'fict'; export function GeneratedIndex() { let rows = $state([{ name: 'A' }]); return <ul>{rows.map(row => <li>{row.name}</li>)}</ul>; } export function SourceIndex() { const rows = [{ name: 'B' }]; return <ol>{rows.map((row, index) => <li data-index={index}>{row.name}</li>)}</ol>; } export function Untrusted(rows) { return <div>{rows.map(row => <span>{row}</span>)}</div>; } export function Spread() { let rows = $state([{ name: 'C' }]); return <section>{rows.map(row => <i {...row}>{row.name}</i>)}</section>; }",
+            "unkeyed-map.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result.code.matches("createKeyedList(").count(),
+            2,
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("=> __fict_key"), "{}", result.code);
+        assert!(
+            result.code.contains("(row, index) => index"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("() => row().name"), "{}", result.code);
+        assert!(result.code.contains("() => index()"), "{}", result.code);
+        assert!(result.code.contains("rows.map((row)"), "{}", result.code);
+        assert!(result.code.contains("rows().map((row)"), "{}", result.code);
+    }
+
+    #[test]
     fn omits_intrinsic_keys_without_losing_dynamic_key_effects() {
         let result = compile(request(
             "export function Static() { return <p key=\"row\" title=\"ok\" />; } export function Dynamic() { return <div before={before()} key={side()} after={after()} />; }",

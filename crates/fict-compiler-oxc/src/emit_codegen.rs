@@ -958,8 +958,8 @@ enum FineJsxStep {
         namespace: DomNamespace,
         value_origin: SourceSpan,
         items_origin: SourceSpan,
-        key_origin: SourceSpan,
-        key_source_origin: SourceSpan,
+        key_origin: Option<SourceSpan>,
+        key_source_origin: Option<SourceSpan>,
         key_alias_initializer: Option<SourceSpan>,
         render_key: String,
         item_references: Vec<SourceSpan>,
@@ -1828,28 +1828,51 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                         ));
                         continue;
                     };
-                    let Some(key_origin) = key.primary_span else {
+                    let key_origin = match key {
+                        Some(key) => {
+                            let Some(key) = key.primary_span else {
+                                diagnostics.push(with_operation_span(
+                                    emit_error(
+                                        "FICT-OXC-EMIT-ORIGIN",
+                                        "keyed child key requires a source origin",
+                                        GuaranteeClass::Internal,
+                                    ),
+                                    *origin,
+                                ));
+                                continue;
+                            };
+                            Some(key)
+                        }
+                        None => None,
+                    };
+                    let key_source_origin = match key_source {
+                        Some(key_source) => {
+                            let Some(key_source) = key_source.primary_span else {
+                                diagnostics.push(with_operation_span(
+                                    emit_error(
+                                        "FICT-OXC-EMIT-ORIGIN",
+                                        "keyed child key source requires a source origin",
+                                        GuaranteeClass::Internal,
+                                    ),
+                                    *origin,
+                                ));
+                                continue;
+                            };
+                            Some(key_source)
+                        }
+                        None => None,
+                    };
+                    if key_origin.is_some() != key_source_origin.is_some() {
                         diagnostics.push(with_operation_span(
                             emit_error(
                                 "FICT-OXC-EMIT-ORIGIN",
-                                "keyed child key requires a source origin",
+                                "keyed child key and key source must both be present or absent",
                                 GuaranteeClass::Internal,
                             ),
                             *origin,
                         ));
                         continue;
-                    };
-                    let Some(key_source_origin) = key_source.primary_span else {
-                        diagnostics.push(with_operation_span(
-                            emit_error(
-                                "FICT-OXC-EMIT-ORIGIN",
-                                "keyed child key source requires a source origin",
-                                GuaranteeClass::Internal,
-                            ),
-                            *origin,
-                        ));
-                        continue;
-                    };
+                    }
                     let key_alias_initializer = match key_alias_initializer {
                         Some(initializer) => {
                             let Some(initializer) = initializer.primary_span else {
@@ -1867,6 +1890,17 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                         }
                         None => None,
                     };
+                    if key_alias_initializer.is_some() && key_origin.is_none() {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-ORIGIN",
+                                "keyed child key alias requires an explicit key",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    }
                     let item_references: Option<Vec<_>> = item_references
                         .iter()
                         .map(|origin| origin.primary_span)
@@ -3160,8 +3194,8 @@ impl<'a> AstRewriter<'a, '_> {
         cleanup_helper: &str,
         namespace: DomNamespace,
         items_origin: SourceSpan,
-        key_origin: SourceSpan,
-        key_source_origin: SourceSpan,
+        key_origin: Option<SourceSpan>,
+        key_source_origin: Option<SourceSpan>,
         key_alias_initializer: Option<SourceSpan>,
         render_key: &str,
         item_references: &[SourceSpan],
@@ -3170,6 +3204,33 @@ impl<'a> AstRewriter<'a, '_> {
         span: Span,
         statements: &mut ArenaVec<'a, Statement<'a>>,
     ) {
+        let explicit_key = match (key_origin, key_source_origin) {
+            (Some(key), Some(source)) => Some((key, source)),
+            (None, None) => None,
+            _ => {
+                self.diagnostics.push(
+                    emit_error(
+                        "FICT-OXC-EMIT-KEYED",
+                        "keyed child key and key source must both be present or absent",
+                        GuaranteeClass::Internal,
+                    )
+                    .with_primary_span(items_origin),
+                );
+                return;
+            }
+        };
+        if key_alias_initializer.is_some() && explicit_key.is_none() {
+            self.diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-KEYED",
+                    "keyed child key alias requires an explicit key",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(items_origin),
+            );
+            return;
+        }
+        let diagnostic_origin = explicit_key.map_or(items_origin, |(key, _)| key);
         let Expression::CallExpression(call) = map.into_inner_expression() else {
             self.diagnostics.push(
                 emit_error(
@@ -3228,7 +3289,7 @@ impl<'a> AstRewriter<'a, '_> {
                     "keyed child render callback is not an inline arrow function",
                     GuaranteeClass::Internal,
                 )
-                .with_primary_span(key_origin),
+                .with_primary_span(diagnostic_origin),
             );
             return;
         };
@@ -3239,32 +3300,64 @@ impl<'a> AstRewriter<'a, '_> {
                     "keyed child render callback has no direct return expression",
                     GuaranteeClass::Internal,
                 )
-                .with_primary_span(key_origin),
-            );
-            return;
-        };
-        let Some(mut key_expression) =
-            clone_callback_expression(self.allocator, &render_callback, key_source_origin).or_else(
-                || clone_direct_jsx_key_expression(self.allocator, render_body, key_source_origin),
-            )
-        else {
-            self.diagnostics.push(
-                emit_error(
-                    "FICT-OXC-EMIT-KEYED",
-                    "keyed child key origin does not identify a direct JSX key",
-                    GuaranteeClass::Internal,
-                )
-                .with_primary_span(key_source_origin),
+                .with_primary_span(diagnostic_origin),
             );
             return;
         };
         self.visit_expression(&mut items);
-        self.visit_expression(&mut key_expression);
 
         let mut key_callback = render_callback.clone_in(self.allocator);
-        replace_arrow_body_with_expression(self.allocator, &mut key_callback, key_expression);
+        if let Some((_, key_source_origin)) = explicit_key {
+            let Some(mut key_expression) =
+                clone_callback_expression(self.allocator, &render_callback, key_source_origin)
+                    .or_else(|| {
+                        clone_direct_jsx_key_expression(
+                            self.allocator,
+                            render_body,
+                            key_source_origin,
+                        )
+                    })
+            else {
+                self.diagnostics.push(
+                    emit_error(
+                        "FICT-OXC-EMIT-KEYED",
+                        "keyed child key origin does not identify a direct JSX key",
+                        GuaranteeClass::Internal,
+                    )
+                    .with_primary_span(key_source_origin),
+                );
+                return;
+            };
+            self.visit_expression(&mut key_expression);
+            replace_arrow_body_with_expression(self.allocator, &mut key_callback, key_expression);
+        } else {
+            let index_name = match simple_arrow_parameter_name(&key_callback, 1) {
+                Some(name) => name.to_owned(),
+                None if key_callback.params.items.len() == 1 => {
+                    append_arrow_parameter(self.allocator, &mut key_callback, render_key, span);
+                    render_key.to_owned()
+                }
+                None => {
+                    self.diagnostics.push(
+                        emit_error(
+                            "FICT-OXC-EMIT-KEYED",
+                            "index-keyed child requires a simple callback index parameter",
+                            GuaranteeClass::Internal,
+                        )
+                        .with_primary_span(items_origin),
+                    );
+                    return;
+                }
+            };
+            let builder = AstBuilder::new(self.allocator);
+            let index_expression =
+                Expression::new_identifier(span, self.allocator.alloc_str(&index_name), &builder);
+            replace_arrow_body_with_expression(self.allocator, &mut key_callback, index_expression);
+        }
         let key_callback = Expression::ArrowFunctionExpression(key_callback);
-        append_arrow_parameter(self.allocator, &mut render_callback, render_key, span);
+        if explicit_key.is_some() {
+            append_arrow_parameter(self.allocator, &mut render_callback, render_key, span);
+        }
 
         let expected_reads: BTreeSet<_> = item_references
             .iter()
@@ -3273,17 +3366,18 @@ impl<'a> AstRewriter<'a, '_> {
             .collect();
         let previous_reads = std::mem::replace(&mut self.active_list_reads, expected_reads.clone());
         let previous_matches = std::mem::take(&mut self.matched_list_reads);
-        let previous_key_local = self.active_list_key_local.replace(render_key.to_owned());
-        let previous_key_origin = self
-            .active_list_key_origin
-            .replace((key_origin.start(), key_origin.end()));
-        let previous_key_initializer = std::mem::replace(
-            &mut self.active_list_key_initializer,
-            key_alias_initializer.map(|origin| (origin.start(), origin.end())),
-        );
+        let previous_key_local = self.active_list_key_local.clone();
+        let previous_key_origin = self.active_list_key_origin;
+        let previous_key_initializer = self.active_list_key_initializer;
         let previous_suppressed = self.suppressed_evaluations.clone();
-        self.suppressed_evaluations
-            .insert((key_origin.start(), key_origin.end()));
+        if let Some((key_origin, _)) = explicit_key {
+            self.active_list_key_local = Some(render_key.to_owned());
+            self.active_list_key_origin = Some((key_origin.start(), key_origin.end()));
+            self.active_list_key_initializer =
+                key_alias_initializer.map(|origin| (origin.start(), origin.end()));
+            self.suppressed_evaluations
+                .insert((key_origin.start(), key_origin.end()));
+        }
         let mut render_callback = Expression::ArrowFunctionExpression(render_callback);
         self.prefer_template_clones += 1;
         self.visit_expression(&mut render_callback);
@@ -3302,7 +3396,7 @@ impl<'a> AstRewriter<'a, '_> {
                     "keyed child did not materialize every binding-aware callback read",
                     GuaranteeClass::Internal,
                 )
-                .with_primary_span(key_origin),
+                .with_primary_span(diagnostic_origin),
             );
             return;
         }
@@ -4666,6 +4760,20 @@ fn append_arrow_parameter<'a>(
         false,
         &builder,
     ));
+}
+
+fn simple_arrow_parameter_name<'a>(
+    arrow: &'a ArrowFunctionExpression<'_>,
+    index: usize,
+) -> Option<&'a str> {
+    let parameter = arrow.params.items.get(index)?;
+    if parameter.initializer.is_some() {
+        return None;
+    }
+    let BindingPattern::BindingIdentifier(identifier) = &parameter.pattern else {
+        return None;
+    };
+    Some(identifier.name.as_str())
 }
 
 fn generated_parameter_name<'a>(

@@ -630,7 +630,10 @@ fn models_binding_aware_direct_keyed_map_callbacks() {
     assert_eq!(list.item_references.len(), 1);
     assert_eq!(list.index_references.len(), 1);
     assert!(list.needs_index);
-    let key = list.key.primary_span.expect("source key span");
+    let key = list
+        .key
+        .and_then(|key| key.primary_span)
+        .expect("source key span");
     assert_eq!(&source[key.start() as usize..key.end() as usize], "row.id");
 
     let mutated = build_hir(
@@ -641,6 +644,54 @@ fn models_binding_aware_direct_keyed_map_callbacks() {
     assert!(mutated.diagnostics.is_empty(), "{:?}", mutated.diagnostics);
     let mutated = mutated.hir.expect("verified fallback HIR");
     let fict_hir::JsxNode::Element(root) = &mutated.templates[0].root else {
+        panic!("intrinsic list root")
+    };
+    assert!(matches!(
+        &root.children[0],
+        fict_hir::JsxChild::Expression { list: None, .. }
+    ));
+}
+
+#[test]
+fn models_direct_unkeyed_map_callbacks_with_index_identity() {
+    let source = r#"
+        import { $state } from 'fict';
+        export function App() {
+            let rows = $state([{ name: 'A' }]);
+            return <ul>{rows.map((row, index) => <li data-index={index}>{row.name}</li>)}</ul>;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+    let fict_hir::JsxNode::Element(root) = &hir.templates[0].root else {
+        panic!("intrinsic list root")
+    };
+    let fict_hir::JsxChild::Expression {
+        list: Some(list), ..
+    } = &root.children[0]
+    else {
+        panic!("unkeyed map metadata")
+    };
+    assert!(list.key.is_none());
+    assert!(list.key_source.is_none());
+    assert!(list.key_alias_initializer.is_none());
+    assert_eq!(list.item_references.len(), 1);
+    assert_eq!(list.index_references.len(), 1);
+    assert!(list.needs_index);
+
+    let spread = build_hir(
+        "import { $state } from 'fict'; export function App() { let rows = $state([{ name: 'A' }]); return <ul>{rows.map(row => <li {...row}>{row.name}</li>)}</ul>; }",
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(spread.diagnostics.is_empty(), "{:?}", spread.diagnostics);
+    let spread = spread.hir.expect("verified fallback HIR");
+    let fict_hir::JsxNode::Element(root) = &spread.templates[0].root else {
         panic!("intrinsic list root")
     };
     assert!(matches!(

@@ -826,8 +826,21 @@ impl Verifier<'_> {
                     self.verify_origin(*origin);
                     if let Some(list) = list {
                         self.verify_origin(list.items);
-                        self.verify_origin(list.key);
-                        self.verify_origin(list.key_source);
+                        if list.key.is_some() != list.key_source.is_some()
+                            || list.key_alias_initializer.is_some() && list.key.is_none()
+                        {
+                            self.error(
+                                "FICT-HIR-JSX-LIST",
+                                "JSX list keys and key sources must both be present or absent, and aliases require an explicit key",
+                                Some(*origin),
+                            );
+                        }
+                        if let Some(key) = list.key {
+                            self.verify_origin(key);
+                        }
+                        if let Some(key_source) = list.key_source {
+                            self.verify_origin(key_source);
+                        }
                         if let Some(initializer) = list.key_alias_initializer {
                             self.verify_origin(initializer);
                         }
