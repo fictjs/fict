@@ -169,8 +169,15 @@ pub fn verify_emit_program(
                             hir.bindings
                                 .get(source.binding.as_usize())
                                 .is_some_and(|binding| {
-                                    planned.property == source.key
+                                    planned.path == source.path
                                         && planned.local == binding.display_name
+                                        && planned.checks.len() == source.checks.len()
+                                        && planned.checks.iter().zip(&source.checks).all(
+                                            |(planned, source)| {
+                                                planned.path == source.path
+                                                    && planned.origin == source.origin
+                                            },
+                                        )
                                         && planned.references == source.references
                                         && planned.default_value == source.default_value
                                         && planned.default_local.is_some()
@@ -202,8 +209,22 @@ pub fn verify_emit_program(
                             .is_some_and(|context| context.local == default.input)
                 })
                 || props.bindings.iter().any(|binding| {
-                    binding.property.is_empty()
+                    binding.path.is_empty()
+                        || binding.path.iter().any(String::is_empty)
                         || !valid_identifier(&binding.local)
+                        || binding.checks.iter().any(|check| {
+                            check.path.is_empty()
+                                || check.path.iter().any(String::is_empty)
+                                || !valid_identifier(&check.local)
+                                || !generated_names.insert(check.local.as_str())
+                                || import_names.contains(check.local.as_str())
+                                || source_names.contains(check.local.as_str())
+                                || temporary_names.contains(check.local.as_str())
+                                || function
+                                    .context
+                                    .as_ref()
+                                    .is_some_and(|context| context.local == check.local)
+                        })
                         || binding
                             .default_value
                             .is_some_and(|origin| origin.primary_span.is_none())
@@ -388,6 +409,12 @@ fn verify_module_plan(hir: &HirFile, program: &EmitProgram, diagnostics: &mut Di
                         .bindings
                         .iter()
                         .filter_map(|binding| binding.default_local.as_deref())
+                }))
+                .chain(function.props.iter().flat_map(|props| {
+                    props
+                        .bindings
+                        .iter()
+                        .flat_map(|binding| binding.checks.iter().map(|check| check.local.as_str()))
                 }))
                 .chain(
                     function

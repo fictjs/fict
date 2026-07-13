@@ -667,11 +667,20 @@ pub struct EmitContext {
 /// One component prop destructured into a reactive local accessor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmitPropBinding {
-    pub property: String,
+    pub path: Vec<String>,
     pub local: String,
+    pub checks: Vec<EmitPropCheck>,
     pub references: Vec<Origin>,
     pub default_value: Option<Origin>,
     pub default_local: Option<String>,
+    pub origin: Origin,
+}
+
+/// Eager nested-object check emitted before a prop binding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmitPropCheck {
+    pub path: Vec<String>,
+    pub local: String,
     pub origin: Origin,
 }
 

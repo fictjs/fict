@@ -11,8 +11,8 @@ mod verify;
 pub use ir::{
     CleanupOwner, ComponentChild, ComponentProp, ComponentTarget, ConditionalKind, DomBindingKind,
     DomNamespace, EmitContext, EmitControlArm, EmitFunction, EmitModulePlan, EmitOperation,
-    EmitProgram, EmitPropBinding, EmitPropsDefault, EmitPropsPlan, EmitSlotId, EmitTemporary,
-    EmitTemporaryId, EmitValueRef, PropsOperation, ReactiveSlot, ReactiveSlotKind,
+    EmitProgram, EmitPropBinding, EmitPropCheck, EmitPropsDefault, EmitPropsPlan, EmitSlotId,
+    EmitTemporary, EmitTemporaryId, EmitValueRef, PropsOperation, ReactiveSlot, ReactiveSlotKind,
     ReactiveSlotStorage, RuntimeImportIntent,
 };
 pub use lower::{NoJsxLoweringOptions, lower_core, lower_no_jsx};

@@ -309,3 +309,67 @@ test('Rust compiler output applies whole-object parameter defaults with intrinsi
   assert.equal(container.childNodes.length, 0)
   container.remove()
 })
+
+test('Rust compiler output keeps nested destructured props reactive and checked', async () => {
+  const module = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      let setUser = () => {}
+
+      function Child({ user: { name, profile: { age = 18 } } }) {
+        return <p>{name}:{age}</p>
+      }
+
+      function App() {
+        let user = $state({ name: 'Ada', profile: {} })
+        setUser = next => {
+          user = next
+        }
+        return <Child user={user} />
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+
+      export function mountNull(container) {
+        return render(() => <Child user={null} />, container)
+      }
+
+      export function update(next) {
+        setUser(next)
+      }
+    `,
+    'nested-props',
+    /const name = prop\(\(\) => __fictProps\.user\.name\)/,
+  )
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = module.mount(container)
+  await flushRuntime()
+
+  const child = container.querySelector('p')
+  assert.ok(child)
+  assert.equal(child.textContent, 'Ada:18')
+
+  module.update({ name: 'Bea', profile: { age: 20 } })
+  await flushRuntime()
+  assert.equal(container.querySelector('p'), child)
+  assert.equal(child.textContent, 'Bea:20')
+
+  module.update({ name: 'Cy', profile: {} })
+  await flushRuntime()
+  assert.equal(container.querySelector('p'), child)
+  assert.equal(child.textContent, 'Cy:18')
+
+  dispose()
+  container.remove()
+
+  const invalidContainer = document.createElement('div')
+  assert.throws(
+    () => module.mountNull(invalidContainer),
+    /Cannot destructure prop "user" because it is nullish/,
+  )
+})

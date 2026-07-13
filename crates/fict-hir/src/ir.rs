@@ -218,15 +218,24 @@ pub struct HirParameter {
 /// One simple property in a binding-aware object parameter pattern.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HirObjectParameterProperty {
-    /// Static property name read from the incoming object.
-    pub key: String,
+    /// Static property path read from the incoming object.
+    pub path: Vec<String>,
     /// Semantic local binding introduced by the property pattern.
     pub binding: BindingId,
+    /// Ordered nullish checks required before this binding is initialized.
+    pub checks: Vec<HirObjectParameterCheck>,
     /// Exact read references that must become accessor calls.
     pub references: Vec<Origin>,
     /// Optional property-default expression evaluated at component invocation.
     pub default_value: Option<Origin>,
     /// Source provenance of the property declaration.
+    pub origin: Origin,
+}
+
+/// Eager object check required by a nested destructuring pattern.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HirObjectParameterCheck {
+    pub path: Vec<String>,
     pub origin: Origin,
 }
 

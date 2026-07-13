@@ -1274,7 +1274,7 @@ mod tests {
     #[test]
     fn lowers_simple_component_object_props_to_reactive_accessors() {
         let result = compile(request(
-            "import { $state } from 'fict'; function Child({ value: renamed, label = String(renamed) } = { value: 'fallback' }) { return <span>{label}:{renamed}</span>; } const Arrow = ({ value }) => <b>{value}</b>; function Method({ value }) { return <i>{value.toString()}</i>; } function Callable({ onClick }) { return <button onClick={() => onClick()}>go</button>; } export function App() { let value = $state(1); return <main><Child value={value} /><Arrow value={value} /><Method value={value} /><Callable onClick={() => value++} /></main>; }",
+            "import { $state } from 'fict'; function Child({ value: renamed, label = String(renamed) } = { value: 'fallback' }) { return <span>{label}:{renamed}</span>; } const Arrow = ({ value }) => <b>{value}</b>; function Method({ value }) { return <i>{value.toString()}</i>; } function Nested({ user: { name, profile: { age = 18 } } }) { return <u>{name}:{age}</u>; } function Callable({ onClick }) { return <button onClick={() => onClick()}>go</button>; } export function App() { let value = $state(1); return <main><Child value={value} /><Arrow value={value} /><Method value={value} /><Nested user={{ name: 'Ada', profile: {} }} /><Callable onClick={() => value++} /></main>; }",
             "component-object-props.tsx",
         ));
 
@@ -1335,6 +1335,41 @@ mod tests {
         );
         assert!(
             result.code.contains("() => value().toString()"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("const __fictPropObject = __fictProps.user"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains(r#"Cannot destructure prop \"user\" because it is nullish"#),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("const name = prop(() => __fictProps.user.name)"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("const __fictPropObject_1 = __fictProps.user.profile"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("__fictProps.user.profile.age === void 0 ? 18 : void 0"),
             "{}",
             result.code
         );

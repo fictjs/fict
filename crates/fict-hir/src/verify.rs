@@ -317,13 +317,33 @@ impl Verifier<'_> {
                     for reference in &property.references {
                         self.verify_origin(*reference);
                     }
+                    for check in &property.checks {
+                        self.verify_origin(check.origin);
+                    }
                     if let Some(default_value) = property.default_value {
                         self.verify_origin(default_value);
                     }
-                    if property.key.is_empty() || !bindings.insert(property.binding) {
+                    let checks_are_ordered_prefixes =
+                        property
+                            .checks
+                            .iter()
+                            .try_fold(0, |previous_length, check| {
+                                (check.path.len() > previous_length
+                                    && check.path.len() < property.path.len()
+                                    && property.path.starts_with(&check.path))
+                                .then_some(check.path.len())
+                            });
+                    if property.path.is_empty()
+                        || property.path.iter().any(String::is_empty)
+                        || property.checks.iter().any(|check| {
+                            check.path.is_empty() || check.path.iter().any(String::is_empty)
+                        })
+                        || checks_are_ordered_prefixes.is_none()
+                        || !bindings.insert(property.binding)
+                    {
                         self.error(
                             "FICT-HIR-PROPS",
-                            "modeled object parameters require non-empty keys and unique bindings",
+                            "modeled object parameters require ordered prefix checks, non-empty paths, and unique bindings",
                             Some(property.origin),
                         );
                     }

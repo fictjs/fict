@@ -504,10 +504,18 @@ struct CallRewrite {
 
 #[derive(Debug, Clone)]
 struct PropBindingRewrite {
-    property: String,
+    path: Vec<String>,
     local: String,
+    checks: Vec<PropCheckRewrite>,
     default_value: Option<SourceSpan>,
     default_local: Option<String>,
+    origin: SourceSpan,
+}
+
+#[derive(Debug, Clone)]
+struct PropCheckRewrite {
+    path: Vec<String>,
+    local: String,
     origin: SourceSpan,
 }
 
@@ -657,9 +665,33 @@ fn props_rewrites(emit: &EmitProgram) -> PropsRewrites {
                 valid = false;
                 break;
             }
+            let mut checks = Vec::with_capacity(binding.checks.len());
+            for check in &binding.checks {
+                let Some(origin) = check.origin.primary_span else {
+                    diagnostics.push(
+                        emit_error(
+                            "FICT-OXC-EMIT-PROPS",
+                            "component prop object check requires a source origin",
+                            GuaranteeClass::Internal,
+                        )
+                        .with_primary_span(origin),
+                    );
+                    valid = false;
+                    break;
+                };
+                checks.push(PropCheckRewrite {
+                    path: check.path.clone(),
+                    local: check.local.clone(),
+                    origin,
+                });
+            }
+            if !valid {
+                break;
+            }
             bindings.push(PropBindingRewrite {
-                property: binding.property.clone(),
+                path: binding.path.clone(),
                 local: binding.local.clone(),
+                checks,
                 default_value,
                 default_local: binding.default_local.clone(),
                 origin,
@@ -2646,6 +2678,25 @@ fn component_children_match(children: &[JSXChild<'_>], planned: &[ComponentChild
     planned.next().is_none()
 }
 
+fn collect_object_pattern_defaults<'a>(
+    pattern: &oxc::ast::ast::ObjectPattern<'a>,
+    allocator: &'a Allocator,
+    defaults: &mut BTreeMap<(u32, u32), Expression<'a>>,
+) {
+    for property in &pattern.properties {
+        match &property.value {
+            BindingPattern::AssignmentPattern(default) => {
+                let span = default.right.span();
+                defaults.insert((span.start, span.end), default.right.clone_in(allocator));
+            }
+            BindingPattern::ObjectPattern(nested) => {
+                collect_object_pattern_defaults(nested, allocator, defaults);
+            }
+            BindingPattern::BindingIdentifier(_) | BindingPattern::ArrayPattern(_) => {}
+        }
+    }
+}
+
 impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
     fn visit_function(&mut self, function: &mut Function<'a>, flags: ScopeFlags) {
         let location = (function.span.start, function.span.end);
@@ -2866,15 +2917,7 @@ impl<'a> AstRewriter<'a, '_> {
             }
         };
         let mut defaults = BTreeMap::new();
-        for property in &object_pattern.properties {
-            if let BindingPattern::AssignmentPattern(default) = &property.value {
-                let span = default.right.span();
-                defaults.insert(
-                    (span.start, span.end),
-                    default.right.clone_in(self.allocator),
-                );
-            }
-        }
+        collect_object_pattern_defaults(object_pattern, self.allocator, &mut defaults);
         let planned_defaults = plan
             .bindings
             .iter()
@@ -2939,6 +2982,24 @@ impl<'a> AstRewriter<'a, '_> {
         }
         for binding in &plan.bindings {
             let span = Span::new(binding.origin.start(), binding.origin.end());
+            for check in &binding.checks {
+                let check_span = Span::new(check.origin.start(), check.origin.end());
+                body.statements.insert(
+                    insertion_index,
+                    const_statement(
+                        self.allocator,
+                        &check.local,
+                        self.prop_member(&plan.source, &check.path, check_span),
+                        check_span,
+                    ),
+                );
+                insertion_index += 1;
+                body.statements.insert(
+                    insertion_index,
+                    self.nested_prop_check_statement(check, check_span),
+                );
+                insertion_index += 1;
+            }
             if let (Some(default), Some(default_local)) =
                 (binding.default_value, binding.default_local.as_deref())
             {
@@ -2947,7 +3008,7 @@ impl<'a> AstRewriter<'a, '_> {
                     .expect("validated component prop default expression");
                 let default_initializer = Expression::new_conditional_expression(
                     span,
-                    self.prop_is_undefined(&plan.source, &binding.property, span),
+                    self.prop_is_undefined(&plan.source, &binding.path, span),
                     default_expression,
                     self.void_zero(span),
                     &builder,
@@ -2961,17 +3022,17 @@ impl<'a> AstRewriter<'a, '_> {
             let value = if let Some(default_local) = binding.default_local.as_deref() {
                 Expression::new_conditional_expression(
                     span,
-                    self.prop_is_undefined(&plan.source, &binding.property, span),
+                    self.prop_is_undefined(&plan.source, &binding.path, span),
                     Expression::new_identifier(
                         span,
                         self.allocator.alloc_str(default_local),
                         &builder,
                     ),
-                    self.prop_member(&plan.source, &binding.property, span),
+                    self.prop_member(&plan.source, &binding.path, span),
                     &builder,
                 )
             } else {
-                self.prop_member(&plan.source, &binding.property, span)
+                self.prop_member(&plan.source, &binding.path, span)
             };
             let getter = zero_parameter_expression_arrow(self.allocator, value, span);
             let helper =
@@ -2989,35 +3050,75 @@ impl<'a> AstRewriter<'a, '_> {
         self.matched_props.insert(location);
     }
 
-    fn prop_member(&self, source: &str, property: &str, span: Span) -> Expression<'a> {
+    fn prop_member(&self, source: &str, path: &[String], span: Span) -> Expression<'a> {
         let builder = AstBuilder::new(self.allocator);
-        let source = Expression::new_identifier(span, self.allocator.alloc_str(source), &builder);
-        if is_identifier_name(property) {
-            Expression::new_static_member_expression(
-                span,
-                source,
-                IdentifierName::new(span, self.allocator.alloc_str(property), &builder),
-                false,
-                &builder,
-            )
-        } else {
-            let property = Expression::new_string_literal(
-                span,
-                self.allocator.alloc_str(property),
-                None,
-                &builder,
-            );
-            Expression::new_computed_member_expression(span, source, property, false, &builder)
+        let mut value =
+            Expression::new_identifier(span, self.allocator.alloc_str(source), &builder);
+        for property in path {
+            value = if is_identifier_name(property) {
+                Expression::new_static_member_expression(
+                    span,
+                    value,
+                    IdentifierName::new(span, self.allocator.alloc_str(property), &builder),
+                    false,
+                    &builder,
+                )
+            } else {
+                let property = Expression::new_string_literal(
+                    span,
+                    self.allocator.alloc_str(property),
+                    None,
+                    &builder,
+                );
+                Expression::new_computed_member_expression(span, value, property, false, &builder)
+            };
         }
+        value
     }
 
-    fn prop_is_undefined(&self, source: &str, property: &str, span: Span) -> Expression<'a> {
+    fn prop_is_undefined(&self, source: &str, path: &[String], span: Span) -> Expression<'a> {
         Expression::new_binary_expression(
             span,
-            self.prop_member(source, property, span),
+            self.prop_member(source, path, span),
             OxcBinaryOperator::StrictEquality,
             self.void_zero(span),
             &AstBuilder::new(self.allocator),
+        )
+    }
+
+    fn nested_prop_check_statement(&self, check: &PropCheckRewrite, span: Span) -> Statement<'a> {
+        let builder = AstBuilder::new(self.allocator);
+        let local =
+            Expression::new_identifier(span, self.allocator.alloc_str(&check.local), &builder);
+        let test = Expression::new_binary_expression(
+            span,
+            local,
+            OxcBinaryOperator::Equality,
+            Expression::new_null_literal(span, &builder),
+            &builder,
+        );
+        let key = check.path.last().map_or("", String::as_str);
+        let message = format!("Cannot destructure prop \"{key}\" because it is nullish");
+        let mut arguments = ArenaVec::new_in(&self.allocator);
+        arguments.push(Argument::from(Expression::new_string_literal(
+            span,
+            self.allocator.alloc_str(&message),
+            None,
+            &builder,
+        )));
+        let error = Expression::new_new_expression(
+            span,
+            Expression::new_identifier(span, "TypeError", &builder),
+            NONE,
+            arguments,
+            &builder,
+        );
+        Statement::new_if_statement(
+            span,
+            test,
+            Statement::new_throw_statement(span, error, &builder),
+            None,
+            &builder,
         )
     }
 

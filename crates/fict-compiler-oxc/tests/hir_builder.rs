@@ -855,8 +855,11 @@ fn models_simple_component_object_props_with_exact_read_origins() {
         function Method({ value, value: alias }) {
             return <span>{value.toString()}:{alias}</span>;
         }
+        function Nested({ user: { name, profile: { age = 18 } } }) {
+            return <span>{name}:{age}</span>;
+        }
         export function App(value) {
-            return <><Child value={value} label="ok" /><Method value={value} /></>;
+            return <><Child value={value} label="ok" /><Method value={value} /><Nested user={{ name: 'Ada', profile: {} }} /></>;
         }
     "#;
     let output = build_hir(
@@ -890,8 +893,8 @@ fn models_simple_component_object_props_with_exact_read_origins() {
         .as_ref()
         .expect("modeled object props");
     assert_eq!(properties.len(), 2);
-    assert_eq!(properties[0].key, "value");
-    assert_eq!(properties[1].key, "label");
+    assert_eq!(properties[0].path, ["value"]);
+    assert_eq!(properties[1].path, ["label"]);
     assert!(properties[0].default_value.is_none());
     let label_default = properties[1]
         .default_value
@@ -929,8 +932,29 @@ fn models_simple_component_object_props_with_exact_read_origins() {
     assert!(
         method_properties
             .iter()
-            .all(|property| property.key == "value")
+            .all(|property| property.path == ["value"])
     );
+    let nested = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "Nested")
+        })
+        .expect("Nested component");
+    let nested_properties = nested.parameters[0]
+        .object_properties
+        .as_ref()
+        .expect("nested object props remain modeled");
+    assert_eq!(nested_properties.len(), 2);
+    assert_eq!(nested_properties[0].path, ["user", "name"]);
+    assert_eq!(nested_properties[0].checks.len(), 1);
+    assert_eq!(nested_properties[0].checks[0].path, ["user"]);
+    assert_eq!(nested_properties[1].path, ["user", "profile", "age"]);
+    assert_eq!(nested_properties[1].checks.len(), 1);
+    assert_eq!(nested_properties[1].checks[0].path, ["user", "profile"]);
+    assert!(nested_properties[1].default_value.is_some());
 
     let callable = build_hir(
         "function Button({ onClick }) { return <button onClick={() => onClick()}>go</button>; } export function App(fn) { return <Button onClick={fn} />; }",

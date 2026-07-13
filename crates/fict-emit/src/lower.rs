@@ -14,9 +14,9 @@ use fict_reactivity::{ReactiveCycleAnalysis, RegionAnalysis, analyze_cfg, struct
 use crate::{
     CleanupOwner, ComponentChild, ComponentProp, ComponentTarget, ConditionalKind,
     DELEGATED_EVENTS, DomBindingKind, DomNamespace, EmitContext, EmitFunction, EmitModulePlan,
-    EmitOperation, EmitProgram, EmitPropBinding, EmitPropsDefault, EmitPropsPlan, EmitSlotId,
-    EmitTemporary, EmitTemporaryId, EmitValueRef, PropsOperation, ReactiveSlot, ReactiveSlotKind,
-    ReactiveSlotStorage, RuntimeFamily, RuntimeHelper, RuntimeImportIntent,
+    EmitOperation, EmitProgram, EmitPropBinding, EmitPropCheck, EmitPropsDefault, EmitPropsPlan,
+    EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef, PropsOperation, ReactiveSlot,
+    ReactiveSlotKind, ReactiveSlotStorage, RuntimeFamily, RuntimeHelper, RuntimeImportIntent,
     name_allocator::NameAllocator, verify_emit_program,
 };
 
@@ -213,6 +213,14 @@ fn lower_program(
                 .as_ref()
                 .and_then(|props| props.default.as_ref())
                 .map(|default| default.input.clone())
+        }))
+        .chain(functions.iter().flat_map(|function| {
+            function.props.iter().flat_map(|props| {
+                props
+                    .bindings
+                    .iter()
+                    .flat_map(|binding| binding.checks.iter().map(|check| check.local.clone()))
+            })
         }));
     let mut module_names = NameAllocator::new(source_names);
     let imports = helpers
@@ -759,8 +767,17 @@ fn lower_component_props_plan(
             )]));
         };
         bindings.push(EmitPropBinding {
-            property: property.key.clone(),
+            path: property.path.clone(),
             local: binding.display_name.clone(),
+            checks: property
+                .checks
+                .iter()
+                .map(|check| EmitPropCheck {
+                    path: check.path.clone(),
+                    local: names.allocate("__fictPropObject"),
+                    origin: check.origin,
+                })
+                .collect(),
             references: property.references.clone(),
             default_value: property.default_value,
             default_local: property

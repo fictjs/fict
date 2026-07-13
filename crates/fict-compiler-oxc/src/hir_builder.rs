@@ -7,13 +7,13 @@ use fict_hir::{
     Binding, BindingId, BindingKind, BlockId, CallArgument, CallHost, CallInstruction,
     CompoundAssignmentOperator, DeclarationKind, EvaluationMode, FictMacroKind, FileId,
     FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction, HirInstruction,
-    HirInstructionKind, HirLocal, HirObjectParameterProperty, HirParameter, HirScope,
-    HirTerminator, HirValue, InstructionSemantics, JsxAttribute, JsxAttributeValue, JsxChild,
-    JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode,
-    JsxTemplate, LocalId, LocalKind, MutationEffect, Origin, PatternSummary, Purity,
-    ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind,
-    SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TemplateId,
-    TerminatorKind, UpdateOperator, ValueId, ValueKind, verify_hir,
+    HirInstructionKind, HirLocal, HirObjectParameterCheck, HirObjectParameterProperty,
+    HirParameter, HirScope, HirTerminator, HirValue, InstructionSemantics, JsxAttribute,
+    JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression,
+    JsxListReceiver, JsxNode, JsxTemplate, LocalId, LocalKind, MutationEffect, Origin,
+    PatternSummary, Purity, ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind, RegionId,
+    ScopeId, ScopeKind, SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary,
+    TemplateId, TerminatorKind, UpdateOperator, ValueId, ValueKind, verify_hir,
 };
 use oxc::{
     allocator::Allocator,
@@ -239,9 +239,16 @@ struct ParameterFact {
 
 #[derive(Debug, Clone)]
 struct ObjectParameterPropertyFact {
-    key: String,
+    path: Vec<String>,
     binding: SymbolId,
+    checks: Vec<ObjectParameterCheckFact>,
     default_value: Option<SourceSpan>,
+    origin: SourceSpan,
+}
+
+#[derive(Debug, Clone)]
+struct ObjectParameterCheckFact {
+    path: Vec<String>,
     origin: SourceSpan,
 }
 
@@ -451,36 +458,66 @@ fn simple_object_parameter_properties(
     let BindingPattern::ObjectPattern(object) = pattern else {
         return None;
     };
+    let mut properties = Vec::new();
+    collect_simple_object_parameter_properties(object, &[], &mut properties)?;
+    (!properties.is_empty()).then_some(properties)
+}
+
+fn collect_simple_object_parameter_properties(
+    object: &oxc::ast::ast::ObjectPattern<'_>,
+    prefix: &[String],
+    properties: &mut Vec<ObjectParameterPropertyFact>,
+) -> Option<()> {
     if object.rest.is_some() {
         return None;
     }
-    let properties = object
-        .properties
-        .iter()
-        .map(|property| {
-            if property.computed {
-                return None;
+    for property in &object.properties {
+        if property.computed {
+            return None;
+        }
+        let key = property.key.static_name()?.into_owned();
+        let mut path = prefix.to_vec();
+        path.push(key);
+        match &property.value {
+            BindingPattern::BindingIdentifier(binding) => {
+                properties.push(ObjectParameterPropertyFact {
+                    path,
+                    binding: binding.symbol_id.get()?,
+                    checks: Vec::new(),
+                    default_value: None,
+                    origin: source_span(property.span),
+                });
             }
-            let key = property.key.static_name()?.into_owned();
-            let (binding, default_value) = match &property.value {
-                BindingPattern::BindingIdentifier(binding) => (binding, None),
-                BindingPattern::AssignmentPattern(default) => {
-                    let BindingPattern::BindingIdentifier(binding) = &default.left else {
-                        return None;
-                    };
-                    (binding, Some(source_span(default.right.span())))
+            BindingPattern::AssignmentPattern(default) => {
+                let BindingPattern::BindingIdentifier(binding) = &default.left else {
+                    return None;
+                };
+                properties.push(ObjectParameterPropertyFact {
+                    path,
+                    binding: binding.symbol_id.get()?,
+                    checks: Vec::new(),
+                    default_value: Some(source_span(default.right.span())),
+                    origin: source_span(property.span),
+                });
+            }
+            BindingPattern::ObjectPattern(nested) => {
+                let first_nested_property = properties.len();
+                collect_simple_object_parameter_properties(nested, &path, properties)?;
+                if first_nested_property == properties.len() {
+                    return None;
                 }
-                BindingPattern::ObjectPattern(_) | BindingPattern::ArrayPattern(_) => return None,
-            };
-            Some(ObjectParameterPropertyFact {
-                key,
-                binding: binding.symbol_id.get()?,
-                default_value,
-                origin: source_span(property.span),
-            })
-        })
-        .collect::<Option<Vec<_>>>()?;
-    (!properties.is_empty()).then_some(properties)
+                properties[first_nested_property].checks.insert(
+                    0,
+                    ObjectParameterCheckFact {
+                        path,
+                        origin: source_span(nested.span),
+                    },
+                );
+            }
+            BindingPattern::ArrayPattern(_) => return None,
+        }
+    }
+    Some(())
 }
 
 fn reference_is_invoked(
@@ -917,8 +954,16 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     references.push(Origin::source(source_span(identifier.span)));
                 }
                 Some(HirObjectParameterProperty {
-                    key: property.key.clone(),
+                    path: property.path.clone(),
                     binding,
+                    checks: property
+                        .checks
+                        .iter()
+                        .map(|check| HirObjectParameterCheck {
+                            path: check.path.clone(),
+                            origin: Origin::source(check.origin),
+                        })
+                        .collect(),
                     references,
                     default_value: property.default_value.map(Origin::source),
                     origin: Origin::source(property.origin),

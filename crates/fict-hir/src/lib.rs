@@ -19,11 +19,12 @@ pub use ir::{
     ArrayElement, BinaryOperator, Binding, BindingKind, CallArgument, CallHost, CallInstruction,
     CompoundAssignmentOperator, DeclarationKind, EvaluationMode, FictMacroKind, FunctionFlags,
     FunctionKind, HirBlock, HirFile, HirFunction, HirInstruction, HirInstructionKind, HirLocal,
-    HirObjectParameterProperty, HirParameter, HirScope, HirTerminator, HirValue, ImportBinding,
-    ImportKind, ImportedName, InstructionSemantics, LocalKind, MutationEffect, ObjectEntry,
-    ObjectPropertyKind, Place, PlaceBase, Projection, PropertyKey, Purity, ReactiveCallKind,
-    ReactiveScopeHost, ReactiveScopeKind, ScopeKind, StructuredSourceHint, StructuredSourceKind,
-    SwitchCase, TerminatorKind, UnaryOperator, UpdateOperator, ValueKind,
+    HirObjectParameterCheck, HirObjectParameterProperty, HirParameter, HirScope, HirTerminator,
+    HirValue, ImportBinding, ImportKind, ImportedName, InstructionSemantics, LocalKind,
+    MutationEffect, ObjectEntry, ObjectPropertyKind, Place, PlaceBase, Projection, PropertyKey,
+    Purity, ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind, ScopeKind,
+    StructuredSourceHint, StructuredSourceKind, SwitchCase, TerminatorKind, UnaryOperator,
+    UpdateOperator, ValueKind,
 };
 pub use jsx::{
     JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxExpressionKind,
