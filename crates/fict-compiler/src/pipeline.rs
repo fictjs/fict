@@ -1596,6 +1596,48 @@ mod tests {
     }
 
     #[test]
+    fn preserves_store_resource_and_selector_runtime_primitives() {
+        let result = compile(request(
+            "import { $store, createSelector, render } from 'fict'; import { resource } from 'fict/plus'; const greeting = resource(async (_ctx, name) => `hello ${name}`); export function App() { const model = $store({ selected: 'a', label: 'A' }); const selected = createSelector(() => model.selected); const result = greeting.read('world'); return <main><p>{model.label}</p><i class={selected('a') ? 'selected' : ''}>A</i><b>{result.loading ? 'loading' : result.data}</b></main>; } export function mount(node) { return render(() => <App />, node); }",
+            "runtime-reactive-primitives.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .code
+                .contains("const greeting = resource(async (_ctx, name) =>"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("const model = $store({")
+                && result.code.contains("selected: \"a\"")
+                && result.code.contains("label: \"A\""),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("const selected = createSelector(() => model.selected);"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("const result = greeting.read(\"world\");"),
+            "{}",
+            result.code
+        );
+        assert!(!result.code.contains("model()"), "{}", result.code);
+        assert!(!result.code.contains("greeting()"), "{}", result.code);
+        assert!(!result.code.contains("selected()"), "{}", result.code);
+        assert!(!result.code.contains("__fictUseContext"), "{}", result.code);
+    }
+
+    #[test]
     fn omits_intrinsic_keys_without_losing_dynamic_key_effects() {
         let result = compile(request(
             "export function Static() { return <p key=\"row\" title=\"ok\" />; } export function Dynamic() { return <div before={before()} key={side()} after={after()} />; }",

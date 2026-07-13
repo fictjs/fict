@@ -762,3 +762,84 @@ test('Rust compiler output keeps mixed displayed and called function props react
   assert.equal(container.childNodes.length, 0)
   container.remove()
 })
+
+test('Rust compiler output preserves store, resource, and selector runtime reactivity', async () => {
+  const module = await compileAndImport(
+    `
+      import { $store, createSelector, render } from 'fict'
+      import { resource } from 'fict/plus'
+
+      export const fetches = []
+      let updateModel = () => {}
+
+      const greeting = resource(async (_context, name) => {
+        fetches.push(name)
+        return 'hello ' + name
+      })
+
+      function App() {
+        const model = $store({ selected: 'a', label: 'A' })
+        const selected = createSelector(() => model.selected)
+        const result = greeting.read('world')
+        updateModel = () => {
+          model.label = 'B'
+          model.selected = 'b'
+        }
+        return (
+          <main>
+            <p data-id="store">{model.label}</p>
+            <i data-id="a" class={selected('a') ? 'selected' : ''}>A</i>
+            <i data-id="b" class={selected('b') ? 'selected' : ''}>B</i>
+            <b data-id="resource">{result.loading ? 'loading' : result.data}</b>
+          </main>
+        )
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+
+      export function update() {
+        updateModel()
+      }
+    `,
+    'runtime-reactive-primitives',
+    /const model = \$store\(.*const selected = createSelector\(\(\) => model\.selected\)/s,
+  )
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = module.mount(container)
+  await flushRuntime()
+
+  const store = container.querySelector('[data-id="store"]')
+  const first = container.querySelector('[data-id="a"]')
+  const second = container.querySelector('[data-id="b"]')
+  const resourceNode = container.querySelector('[data-id="resource"]')
+  assert.ok(store)
+  assert.ok(first)
+  assert.ok(second)
+  assert.ok(resourceNode)
+  assert.equal(store.textContent, 'A')
+  assert.equal(first.className, 'selected')
+  assert.equal(second.className, '')
+  assert.equal(resourceNode.textContent, 'hello world')
+  assert.deepEqual(module.fetches, ['world'])
+
+  module.update()
+  await flushRuntime()
+
+  assert.equal(container.querySelector('[data-id="store"]'), store)
+  assert.equal(container.querySelector('[data-id="a"]'), first)
+  assert.equal(container.querySelector('[data-id="b"]'), second)
+  assert.equal(container.querySelector('[data-id="resource"]'), resourceNode)
+  assert.equal(store.textContent, 'B')
+  assert.equal(first.className, '')
+  assert.equal(second.className, 'selected')
+  assert.equal(resourceNode.textContent, 'hello world')
+  assert.deepEqual(module.fetches, ['world'])
+
+  dispose()
+  assert.equal(container.childNodes.length, 0)
+  container.remove()
+})
