@@ -5,8 +5,8 @@ use fict_diagnostics::{
 };
 use fict_hir::{
     ArrayElement, CallHost, ContextValueKind, FictMacroKind, FunctionId, FunctionKind, HirFile,
-    HirInstructionKind, ImportedReactiveKind, LocalKind, ObjectEntry, PlaceBase, PropertyKey,
-    ReactiveCallKind, SsaName, ValueId,
+    HirInstructionKind, ImportedHookReturn, ImportedReactiveKind, LocalId, LocalKind, ObjectEntry,
+    PlaceBase, PropertyKey, ReactiveCallKind, SsaName, ValueId,
 };
 
 use crate::{
@@ -235,6 +235,52 @@ pub fn analyze_shapes(
     let mut read_sources = BTreeMap::new();
     let mut value_sources = BTreeMap::new();
     let mut assigned_values = BTreeMap::new();
+    let imported_hook_calls: BTreeMap<_, _> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter_map(|instruction| {
+            let result = instruction.result?;
+            let HirInstructionKind::Call(call) = &instruction.kind else {
+                return None;
+            };
+            imported_hook_return(file, call).map(|shape| (result, shape))
+        })
+        .collect();
+    let reassigned_hook_roots: BTreeSet<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .flat_map(|instruction| match &instruction.kind {
+            HirInstructionKind::Write { place, .. }
+            | HirInstructionKind::ReadWrite { place, .. }
+                if place.projections.is_empty() =>
+            {
+                place_local(place.base).into_iter().collect()
+            }
+            HirInstructionKind::PatternAssignment { writes, .. } => {
+                writes.iter().map(|write| write.local).collect()
+            }
+            _ => Vec::new(),
+        })
+        .collect();
+    let imported_hook_locals: BTreeMap<_, _> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter_map(|instruction| match instruction.kind {
+            HirInstructionKind::Declare {
+                local,
+                initializer: Some(initializer),
+                ..
+            } if imported_hook_calls.contains_key(&initializer)
+                && !reassigned_hook_roots.contains(&local) =>
+            {
+                Some((local, initializer))
+            }
+            _ => None,
+        })
+        .collect();
     let definitions_by_location: BTreeMap<_, _> = ssa
         .definitions
         .iter()
@@ -250,7 +296,13 @@ pub fn analyze_shapes(
             if let Some(result) = instruction.result {
                 let imported_reactive = match &instruction.kind {
                     HirInstructionKind::Read { place } => {
-                        imported_reactive_member_kind(file, function, place)
+                        imported_reactive_member_kind(file, function, place).or_else(|| {
+                            imported_hook_member_kind(
+                                place,
+                                &imported_hook_calls,
+                                &imported_hook_locals,
+                            )
+                        })
                     }
                     HirInstructionKind::Call(call) => imported_hook_direct_kind(file, call),
                     _ => None,
@@ -954,6 +1006,41 @@ fn imported_hook_direct_kind(
         .hook_return
         .as_ref()?
         .direct_accessor
+}
+
+fn imported_hook_return<'a>(
+    file: &'a HirFile,
+    call: &fict_hir::CallInstruction,
+) -> Option<&'a ImportedHookReturn> {
+    let CallHost::Binding(binding) = call.host else {
+        return None;
+    };
+    file.bindings
+        .get(binding.as_usize())?
+        .import
+        .as_ref()?
+        .hook_return
+        .as_ref()
+}
+
+fn imported_hook_member_kind(
+    place: &fict_hir::Place,
+    calls: &BTreeMap<ValueId, &ImportedHookReturn>,
+    locals: &BTreeMap<LocalId, ValueId>,
+) -> Option<ImportedReactiveKind> {
+    let call = match place.base {
+        PlaceBase::Value(value) => value,
+        PlaceBase::Local(local) => *locals.get(&local)?,
+        PlaceBase::Ssa(name) => *locals.get(&name.local)?,
+        PlaceBase::Global(_) => return None,
+    };
+    let shape = calls.get(&call)?;
+    if shape.direct_accessor.is_some() {
+        return None;
+    }
+    shape
+        .resolve_property(place.projections.first()?)
+        .map(|property| property.kind)
 }
 
 fn imported_reactive_shape(kind: ImportedReactiveKind) -> ValueShape {

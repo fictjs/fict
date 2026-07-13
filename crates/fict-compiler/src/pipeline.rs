@@ -818,6 +818,158 @@ mod tests {
     }
 
     #[test]
+    fn consumes_structured_member_metadata_from_imported_hooks() {
+        let snapshot = || ResolvedMetadataInput {
+            request: "./hooks?client".into(),
+            resolved_id: Some("/src/hooks.ts?client".into()),
+            status: MetadataResolutionStatus::Resolved,
+            metadata: Some(ModuleReactiveMetadata {
+                hooks: BTreeMap::from([
+                    (
+                        "useCounter".into(),
+                        HookReturnInfo {
+                            object_props: BTreeMap::from([
+                                ("count".into(), ReactiveExportKind::Signal),
+                                ("doubled".into(), ReactiveExportKind::Memo),
+                            ]),
+                            ..HookReturnInfo::default()
+                        },
+                    ),
+                    (
+                        "usePair".into(),
+                        HookReturnInfo {
+                            array_props: BTreeMap::from([
+                                ("0".into(), ReactiveExportKind::Signal),
+                                ("1".into(), ReactiveExportKind::Memo),
+                            ]),
+                            ..HookReturnInfo::default()
+                        },
+                    ),
+                    (
+                        "useStore".into(),
+                        HookReturnInfo {
+                            object_props: BTreeMap::from([(
+                                "state".into(),
+                                ReactiveExportKind::Store,
+                            )]),
+                            ..HookReturnInfo::default()
+                        },
+                    ),
+                ]),
+                ..ModuleReactiveMetadata::new()
+            }),
+            fingerprint: "sha256:structured-hooks-client".into(),
+        };
+        let mut input = request(
+            r#"
+                import { useCounter, usePair, useStore } from './hooks?client';
+                export function App(key) {
+                    const api = useCounter();
+                    const pair = usePair();
+                    const storeApi = useStore();
+                    let reassigned = useCounter();
+                    reassigned = { count: 1 };
+                    const explicit = api.count();
+                    const derived = api.count === 1;
+                    return [
+                        api.count,
+                        api["doubled"],
+                        pair[0],
+                        pair["1"],
+                        storeApi.state.value,
+                        api[key],
+                        useCounter().count,
+                        useCounter()["doubled"],
+                        api?.count,
+                        useCounter()?.count,
+                        explicit,
+                        derived,
+                        reassigned.count,
+                    ];
+                }
+            "#,
+            "structured-hook-consumer.jsx",
+        );
+        input.metadata.push(snapshot());
+
+        let result = compile(input);
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.code.contains("api.count()"), "{}", result.code);
+        assert!(
+            result.code.contains("api[\"doubled\"]()"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("pair[0]()"), "{}", result.code);
+        assert!(result.code.contains("pair[\"1\"]()"), "{}", result.code);
+        assert!(
+            result.code.contains("storeApi.state.value"),
+            "{}",
+            result.code
+        );
+        assert!(!result.code.contains("storeApi.state()"), "{}", result.code);
+        assert!(result.code.contains("api[key]"), "{}", result.code);
+        assert!(
+            result.code.contains("useCounter().count()"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("useCounter()[\"doubled\"]()"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.matches("?.()").count() >= 2, "{}", result.code);
+        assert!(!result.code.contains("api.count()()"), "{}", result.code);
+        assert!(result.code.contains("reassigned.count"), "{}", result.code);
+        assert!(
+            !result.code.contains("reassigned.count()"),
+            "{}",
+            result.code
+        );
+        assert_eq!(result.metadata_dependencies, ["/src/hooks.ts?client"]);
+
+        let mut signal_write = request(
+            "import { useCounter } from './hooks?client'; export function App() { const api = useCounter(); api.count = 2; return api.count; }",
+            "structured-hook-signal-write.jsx",
+        );
+        signal_write.metadata.push(snapshot());
+        let signal_write = compile(signal_write);
+        assert!(signal_write.has_errors());
+        assert!(signal_write.code.is_empty());
+        assert!(signal_write.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-M"
+                && diagnostic.message.contains("hook return accessor")
+        }));
+
+        let mut memo_write = request(
+            "import { useCounter } from './hooks?client'; export function App() { const api = useCounter(); api.doubled = 2; return api.doubled; }",
+            "structured-hook-memo-write.jsx",
+        );
+        memo_write.metadata.push(snapshot());
+        let memo_write = compile(memo_write);
+        assert!(memo_write.has_errors());
+        assert!(memo_write.code.is_empty());
+        assert!(memo_write.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-METADATA-READONLY"
+                && diagnostic.message.contains("imported hook")
+        }));
+
+        let mut store_write = request(
+            "import { useStore } from './hooks?client'; export function App() { const api = useStore(); api.state.value = 2; return api.state.value; }",
+            "structured-hook-store-write.jsx",
+        );
+        store_write.metadata.push(snapshot());
+        let store_write = compile(store_write);
+        assert!(!store_write.has_errors(), "{:?}", store_write.diagnostics);
+        assert!(
+            store_write.code.contains("api.state.value = 2"),
+            "{}",
+            store_write.code
+        );
+    }
+
+    #[test]
     fn consumes_recursive_namespace_metadata_for_static_member_reads() {
         let mut input = request(
             r#"

@@ -136,6 +136,26 @@ pub struct ImportedReactiveProperty {
     pub kind: ImportedReactiveKind,
 }
 
+/// Property collection selected from imported hook metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ImportedHookPropertyCollection {
+    /// Object property metadata.
+    Object,
+    /// Tuple/array index metadata.
+    Array,
+}
+
+/// Resolved reactive property in an imported hook return shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ImportedHookPropertyMatch {
+    /// Object or array metadata collection.
+    pub collection: ImportedHookPropertyCollection,
+    /// Index in the selected sorted property collection.
+    pub property_index: usize,
+    /// Runtime representation stored at the property.
+    pub kind: ImportedReactiveKind,
+}
+
 /// Reactive shape returned by an imported hook.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ImportedHookReturn {
@@ -145,6 +165,52 @@ pub struct ImportedHookReturn {
     pub object_properties: Vec<ImportedReactiveProperty>,
     /// Sorted reactive tuple/array properties keyed by canonical indexes.
     pub array_properties: Vec<ImportedReactiveProperty>,
+}
+
+impl ImportedHookReturn {
+    /// Resolve one statically known return property.
+    #[must_use]
+    pub fn resolve_property(&self, projection: &Projection) -> Option<ImportedHookPropertyMatch> {
+        let (key, first, second) = match projection {
+            Projection::StaticProperty { name, .. } => (
+                name.as_str(),
+                ImportedHookPropertyCollection::Object,
+                ImportedHookPropertyCollection::Array,
+            ),
+            Projection::Index { index, .. } => {
+                return self
+                    .resolve_property_in(&index.to_string(), ImportedHookPropertyCollection::Array)
+                    .or_else(|| {
+                        self.resolve_property_in(
+                            &index.to_string(),
+                            ImportedHookPropertyCollection::Object,
+                        )
+                    });
+            }
+            Projection::ComputedProperty { .. } => return None,
+        };
+        self.resolve_property_in(key, first)
+            .or_else(|| self.resolve_property_in(key, second))
+    }
+
+    fn resolve_property_in(
+        &self,
+        key: &str,
+        collection: ImportedHookPropertyCollection,
+    ) -> Option<ImportedHookPropertyMatch> {
+        let properties = match collection {
+            ImportedHookPropertyCollection::Object => &self.object_properties,
+            ImportedHookPropertyCollection::Array => &self.array_properties,
+        };
+        let property_index = properties
+            .binary_search_by(|property| property.key.as_str().cmp(key))
+            .ok()?;
+        Some(ImportedHookPropertyMatch {
+            collection,
+            property_index,
+            kind: properties[property_index].kind,
+        })
+    }
 }
 
 /// Module and exported-symbol identity for an import binding.

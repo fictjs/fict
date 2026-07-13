@@ -362,6 +362,115 @@ fn classifies_direct_imported_hook_accessors_in_reactive_scopes() {
 }
 
 #[test]
+fn propagates_structured_imported_hook_members_into_scopes_and_regions() {
+    let frontend = build_hir(
+        r#"
+            import { useCounter } from './hooks';
+            export function App(key) {
+                const api = useCounter();
+                const derived = api.count === 1;
+                const dynamic = api[key] === 1;
+                return [derived, dynamic];
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Module,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions {
+            resolved_metadata: vec![ResolvedMetadataInput {
+                request: "./hooks".into(),
+                resolved_id: Some("/src/hooks.ts".into()),
+                status: MetadataResolutionStatus::Resolved,
+                metadata: Some(ModuleReactiveMetadata {
+                    hooks: [(
+                        "useCounter".into(),
+                        HookReturnInfo {
+                            object_props: [("count".into(), ReactiveExportKind::Signal)]
+                                .into_iter()
+                                .collect(),
+                            ..HookReturnInfo::default()
+                        },
+                    )]
+                    .into_iter()
+                    .collect(),
+                    ..ModuleReactiveMetadata::new()
+                }),
+                fingerprint: "sha256:structured-hooks".into(),
+            }],
+            ..HirBuildOptions::default()
+        },
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified structured hook HIR"),
+        CorePassOptions {
+            optimize: false,
+            ..CorePassOptions::default()
+        },
+    )
+    .expect("core passes over structured imported hook members");
+    let function = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                output.hir.bindings[binding.as_usize()].display_name == "App"
+            })
+        })
+        .expect("App function");
+    let analysis = &output.functions[function.id.as_usize()];
+    let derived = function
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("derived"))
+        .expect("derived local");
+    let dynamic = function
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("dynamic"))
+        .expect("dynamic local");
+    let derived_binding = analysis
+        .scopes
+        .bindings
+        .iter()
+        .find(|binding| binding.name.local == derived.id)
+        .expect("derived structured hook binding");
+
+    assert_eq!(derived_binding.kind, ReactiveBindingKind::Derived);
+    assert!(derived_binding.dependencies.iter().any(|path| {
+        path.segments.first()
+            == Some(&DependencySegment::Static {
+                name: "count".into(),
+                optional: false,
+            })
+    }));
+    assert!(
+        analysis
+            .scopes
+            .bindings
+            .iter()
+            .all(|binding| binding.name.local != dynamic.id)
+    );
+    assert!(analysis.regions.regions.iter().any(|region| {
+        region.inputs.iter().any(|path| {
+            path.segments.first()
+                == Some(&DependencySegment::Static {
+                    name: "count".into(),
+                    optional: false,
+                })
+        })
+    }));
+}
+
+#[test]
 fn keeps_dynamic_reads_closed_and_only_treats_the_first_component_parameter_as_props() {
     let frontend = build_hir(
         r#"

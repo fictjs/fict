@@ -1470,31 +1470,126 @@ pub(crate) fn imported_reactive_dependency(
     function: &HirFunction,
     path: &DependencyPath,
 ) -> bool {
-    let DependencyBase::Ssa(name) = path.base else {
-        return false;
+    if let DependencyBase::Ssa(name) = path.base
+        && let Some(import) = function
+            .locals
+            .get(name.local.as_usize())
+            .and_then(|local| local.binding)
+            .and_then(|binding| file.bindings.get(binding.as_usize()))
+            .and_then(|binding| binding.import.as_ref())
+    {
+        if import.reactive.is_some() {
+            return true;
+        }
+
+        let mut member_path = Vec::new();
+        for segment in &path.segments {
+            match segment {
+                DependencySegment::Static { name, .. } => member_path.push(name.clone()),
+                DependencySegment::Index { index, .. } => member_path.push(index.to_string()),
+                DependencySegment::Dynamic { .. } => break,
+            }
+        }
+        if import.resolve_reactive_member_path(&member_path).is_some() {
+            return true;
+        }
+    }
+    imported_hook_reactive_dependency(file, function, path)
+}
+
+fn imported_hook_reactive_dependency(
+    file: &HirFile,
+    function: &HirFunction,
+    path: &DependencyPath,
+) -> bool {
+    let call = match path.base {
+        DependencyBase::Value(value) => value,
+        DependencyBase::Ssa(name) => {
+            if hook_root_reassigned(function, name.local) {
+                return false;
+            }
+            let Some(call) = function
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .find_map(|instruction| match instruction.kind {
+                    HirInstructionKind::Declare {
+                        local,
+                        initializer: Some(initializer),
+                        ..
+                    } if local == name.local => Some(initializer),
+                    _ => None,
+                })
+            else {
+                return false;
+            };
+            call
+        }
+        DependencyBase::Global(_) => return false,
     };
-    let Some(import) = function
-        .locals
-        .get(name.local.as_usize())
-        .and_then(|local| local.binding)
-        .and_then(|binding| file.bindings.get(binding.as_usize()))
-        .and_then(|binding| binding.import.as_ref())
+    let Some(call) = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| instruction.result == Some(call))
     else {
         return false;
     };
-    if import.reactive.is_some() {
-        return true;
+    let HirInstructionKind::Call(call) = &call.kind else {
+        return false;
+    };
+    let CallHost::Binding(binding) = call.host else {
+        return false;
+    };
+    let Some(shape) = file
+        .bindings
+        .get(binding.as_usize())
+        .and_then(|binding| binding.import.as_ref())
+        .and_then(|import| import.hook_return.as_ref())
+    else {
+        return false;
+    };
+    if shape.direct_accessor.is_some() {
+        return false;
     }
+    let Some(segment) = path.segments.first() else {
+        return false;
+    };
+    let projection = match segment {
+        DependencySegment::Static { name, optional } => Projection::StaticProperty {
+            name: name.clone(),
+            optional: *optional,
+        },
+        DependencySegment::Index { index, optional } => Projection::Index {
+            index: *index,
+            optional: *optional,
+        },
+        DependencySegment::Dynamic { .. } => return false,
+    };
+    shape.resolve_property(&projection).is_some()
+}
 
-    let mut member_path = Vec::new();
-    for segment in &path.segments {
-        match segment {
-            DependencySegment::Static { name, .. } => member_path.push(name.clone()),
-            DependencySegment::Index { index, .. } => member_path.push(index.to_string()),
-            DependencySegment::Dynamic { .. } => break,
-        }
-    }
-    import.resolve_reactive_member_path(&member_path).is_some()
+fn hook_root_reassigned(function: &HirFunction, local: LocalId) -> bool {
+    function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .any(|instruction| match &instruction.kind {
+            HirInstructionKind::Write { place, .. }
+            | HirInstructionKind::ReadWrite { place, .. }
+                if place.projections.is_empty() =>
+            {
+                match place.base {
+                    PlaceBase::Local(candidate) => candidate == local,
+                    PlaceBase::Ssa(name) => name.local == local,
+                    PlaceBase::Global(_) | PlaceBase::Value(_) => false,
+                }
+            }
+            HirInstructionKind::PatternAssignment { writes, .. } => {
+                writes.iter().any(|write| write.local == local)
+            }
+            _ => false,
+        })
 }
 
 fn analysis_error(code: &'static str, message: impl Into<String>) -> Diagnostic {

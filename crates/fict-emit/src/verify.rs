@@ -148,13 +148,34 @@ pub fn verify_emit_program(
                     ));
                 }
             }
-            if let crate::ReactiveSlotStorage::HookReturn { call, import } = slot.storage {
-                let imported_kind = hir
+            if let crate::ReactiveSlotStorage::HookReturn {
+                call,
+                import,
+                property,
+            } = slot.storage
+            {
+                let hook = hir
                     .bindings
                     .get(import.as_usize())
                     .and_then(|binding| binding.import.as_ref())
-                    .and_then(|import| import.hook_return.as_ref())
-                    .and_then(|hook| hook.direct_accessor);
+                    .and_then(|import| import.hook_return.as_ref());
+                let imported_kind = match property {
+                    None => hook.and_then(|hook| hook.direct_accessor),
+                    Some(property) => hook.and_then(|hook| {
+                        let properties = match property.collection {
+                            fict_hir::ImportedHookPropertyCollection::Object => {
+                                &hook.object_properties
+                            }
+                            fict_hir::ImportedHookPropertyCollection::Array => {
+                                &hook.array_properties
+                            }
+                        };
+                        properties
+                            .get(property.property_index)
+                            .filter(|candidate| candidate.kind == property.kind)
+                            .map(|candidate| candidate.kind)
+                    }),
+                };
                 let call_matches = hir_function
                     .blocks
                     .iter()
@@ -196,10 +217,12 @@ pub fn verify_emit_program(
                                 })
                     })
                 });
-                if !call_matches || !kind_matches || !binding_matches {
+                let shape_matches =
+                    hook.is_some_and(|hook| property.is_none() == hook.direct_accessor.is_some());
+                if !call_matches || !kind_matches || !binding_matches || !shape_matches {
                     diagnostics.push(emit_error(
                         "FICT-EMIT-HOOK-RETURN-SLOT",
-                        "hook return slots must match an imported accessor return call",
+                        "hook return slots must match imported accessor return metadata",
                     ));
                 }
             }
@@ -1017,11 +1040,11 @@ fn verify_reactive_read(
                 && usize::from(accessor_depth) <= projections.len(),
             accessor_depth == 0,
         ),
-        Some(crate::ReactiveSlotStorage::HookReturn { call, import }) => {
-            let direct_call = source_result == call
-                && source_instruction.is_some_and(|instruction| {
-                    matches!(instruction.kind, fict_hir::HirInstructionKind::Call(_))
-                });
+        Some(crate::ReactiveSlotStorage::HookReturn {
+            call,
+            import,
+            property,
+        }) => {
             let local = source_place.and_then(|place| match place.base {
                 fict_hir::PlaceBase::Local(local) => Some(local),
                 fict_hir::PlaceBase::Ssa(name) => Some(name.local),
@@ -1051,12 +1074,15 @@ fn verify_reactive_read(
                             .and_then(|local| local.binding)
                 })
             });
-            let imported_kind = hir
+            let hook = hir
                 .bindings
                 .get(import.as_usize())
                 .and_then(|binding| binding.import.as_ref())
-                .and_then(|import| import.hook_return.as_ref())
-                .and_then(|hook| hook.direct_accessor);
+                .and_then(|import| import.hook_return.as_ref());
+            let imported_kind = match property {
+                None => hook.and_then(|hook| hook.direct_accessor),
+                Some(property) => Some(property.kind),
+            };
             let kind_matches = slot.is_some_and(|slot| {
                 matches!(
                     (imported_kind, slot.kind),
@@ -1069,14 +1095,46 @@ fn verify_reactive_read(
                     )
                 )
             });
-            (
-                projections.is_empty()
-                    && accessor_depth == 0
-                    && (direct_call
-                        || (local_call
-                            && source_place.is_some_and(|place| place.projections.is_empty()))),
-                kind_matches,
-            )
+            match property {
+                None => {
+                    let direct_call = source_result == call
+                        && source_instruction.is_some_and(|instruction| {
+                            matches!(instruction.kind, fict_hir::HirInstructionKind::Call(_))
+                        });
+                    (
+                        projections.is_empty()
+                            && accessor_depth == 0
+                            && (direct_call
+                                || (local_call
+                                    && source_place
+                                        .is_some_and(|place| place.projections.is_empty()))),
+                        kind_matches,
+                    )
+                }
+                Some(property) => {
+                    let direct_call = source_place.is_some_and(|place| {
+                        matches!(place.base, fict_hir::PlaceBase::Value(value) if value == call)
+                    });
+                    let binding_matches = if direct_call {
+                        slot.is_some_and(|slot| slot.binding.is_none())
+                    } else {
+                        local_call
+                    };
+                    let resolved_property = source_place
+                        .and_then(|place| place.projections.first())
+                        .and_then(|projection| hook?.resolve_property(projection));
+                    (
+                        source_place.is_some_and(|place| place.projections == projections)
+                            && !projections.is_empty()
+                            && accessor_depth == 1
+                            && (direct_call || local_call),
+                        kind_matches
+                            && binding_matches
+                            && hook.is_some_and(|hook| hook.direct_accessor.is_none())
+                            && resolved_property == Some(property),
+                    )
+                }
+            }
         }
         None => (false, false),
     };

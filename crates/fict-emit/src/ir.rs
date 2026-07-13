@@ -1,6 +1,7 @@
 use fict_hir::{
-    BindingId, BlockId, CompoundAssignmentOperator, FunctionId, LiteralValue, LocalId, Origin,
-    Projection, RegionId, SsaName, SyntaxFragmentId, TemplateId, UpdateOperator, ValueId,
+    BindingId, BlockId, CompoundAssignmentOperator, FunctionId, ImportedHookPropertyMatch,
+    LiteralValue, LocalId, Origin, Projection, RegionId, SsaName, SyntaxFragmentId, TemplateId,
+    UpdateOperator, ValueId,
 };
 
 use crate::{RuntimeFamily, RuntimeHelper};
@@ -92,7 +93,11 @@ pub enum ReactiveSlotStorage {
     /// `member` identifies a static namespace path; `None` denotes a direct import.
     Imported { member: Option<u32> },
     /// The slot refers to an accessor returned by an imported hook call.
-    HookReturn { call: ValueId, import: BindingId },
+    HookReturn {
+        call: ValueId,
+        import: BindingId,
+        property: Option<ImportedHookPropertyMatch>,
+    },
 }
 
 /// One direct reactive identifier target inside an object or array assignment pattern.

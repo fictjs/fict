@@ -875,6 +875,15 @@ struct ReadRewrite {
     projected: bool,
     accessor_depth: u16,
     projection_count: usize,
+    optional_accessor: bool,
+}
+
+fn projection_is_optional(projection: &fict_hir::Projection) -> bool {
+    match projection {
+        fict_hir::Projection::StaticProperty { optional, .. }
+        | fict_hir::Projection::ComputedProperty { optional, .. }
+        | fict_hir::Projection::Index { optional, .. } => *optional,
+    }
 }
 
 fn read_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), ReadRewrite>, Vec<Diagnostic>) {
@@ -920,6 +929,10 @@ fn read_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), ReadRewrite>, Vec<
                     projected: !projections.is_empty(),
                     accessor_depth: *accessor_depth,
                     projection_count: projections.len(),
+                    optional_accessor: usize::from(*accessor_depth)
+                        .checked_sub(1)
+                        .and_then(|index| projections.get(index))
+                        .is_some_and(projection_is_optional),
                 },
             )
             .is_some()
@@ -2966,6 +2979,7 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
             if rewrite_reactive_accessor(
                 expression,
                 usize::from(rewrite.accessor_depth),
+                rewrite.optional_accessor,
                 self.allocator,
             ) {
                 self.matched_reads.insert(location);
@@ -5959,6 +5973,7 @@ fn getter_call<'a>(allocator: &'a Allocator, signal: &str, span: Span) -> Expres
 fn rewrite_reactive_accessor<'a>(
     expression: &mut Expression<'a>,
     accessor_depth: usize,
+    optional_accessor: bool,
     allocator: &'a Allocator,
 ) -> bool {
     if accessor_depth == 0 {
@@ -5970,26 +5985,42 @@ fn rewrite_reactive_accessor<'a>(
     if accessor_depth > total_depth {
         return false;
     }
-    rewrite_reactive_accessor_with_depth(expression, accessor_depth, total_depth, allocator)
+    rewrite_reactive_accessor_with_depth(
+        expression,
+        accessor_depth,
+        total_depth,
+        optional_accessor,
+        allocator,
+    )
 }
 
 fn rewrite_reactive_accessor_with_depth<'a>(
     expression: &mut Expression<'a>,
     accessor_depth: usize,
     total_depth: usize,
+    optional_accessor: bool,
     allocator: &'a Allocator,
 ) -> bool {
     if total_depth == accessor_depth {
         let span = expression.span();
         let callee = expression.take_in(&allocator);
-        *expression = Expression::new_call_expression(
+        let builder = AstBuilder::new(allocator);
+        let call = Expression::new_call_expression(
             span,
             callee,
             NONE,
             ArenaVec::new_in(&allocator),
-            false,
-            &AstBuilder::new(allocator),
+            optional_accessor,
+            &builder,
         );
+        *expression = if optional_accessor {
+            let Expression::CallExpression(call) = call else {
+                unreachable!("call builder returns a call expression")
+            };
+            Expression::new_chain_expression(span, ChainElement::CallExpression(call), &builder)
+        } else {
+            call
+        };
         return true;
     }
     match expression {
@@ -5997,18 +6028,21 @@ fn rewrite_reactive_accessor_with_depth<'a>(
             &mut member.object,
             accessor_depth,
             total_depth.saturating_sub(1),
+            optional_accessor,
             allocator,
         ),
         Expression::ComputedMemberExpression(member) => rewrite_reactive_accessor_with_depth(
             &mut member.object,
             accessor_depth,
             total_depth.saturating_sub(1),
+            optional_accessor,
             allocator,
         ),
         Expression::PrivateFieldExpression(member) => rewrite_reactive_accessor_with_depth(
             &mut member.object,
             accessor_depth,
             total_depth.saturating_sub(1),
+            optional_accessor,
             allocator,
         ),
         Expression::ChainExpression(chain) => match &mut chain.expression {
@@ -6016,24 +6050,28 @@ fn rewrite_reactive_accessor_with_depth<'a>(
                 &mut member.object,
                 accessor_depth,
                 total_depth.saturating_sub(1),
+                optional_accessor,
                 allocator,
             ),
             ChainElement::ComputedMemberExpression(member) => rewrite_reactive_accessor_with_depth(
                 &mut member.object,
                 accessor_depth,
                 total_depth.saturating_sub(1),
+                optional_accessor,
                 allocator,
             ),
             ChainElement::PrivateFieldExpression(member) => rewrite_reactive_accessor_with_depth(
                 &mut member.object,
                 accessor_depth,
                 total_depth.saturating_sub(1),
+                optional_accessor,
                 allocator,
             ),
             ChainElement::TSNonNullExpression(expression) => rewrite_reactive_accessor_with_depth(
                 &mut expression.expression,
                 accessor_depth,
                 total_depth,
+                optional_accessor,
                 allocator,
             ),
             ChainElement::CallExpression(_) => false,
@@ -6042,36 +6080,42 @@ fn rewrite_reactive_accessor_with_depth<'a>(
             &mut expression.expression,
             accessor_depth,
             total_depth,
+            optional_accessor,
             allocator,
         ),
         Expression::TSAsExpression(expression) => rewrite_reactive_accessor_with_depth(
             &mut expression.expression,
             accessor_depth,
             total_depth,
+            optional_accessor,
             allocator,
         ),
         Expression::TSSatisfiesExpression(expression) => rewrite_reactive_accessor_with_depth(
             &mut expression.expression,
             accessor_depth,
             total_depth,
+            optional_accessor,
             allocator,
         ),
         Expression::TSTypeAssertion(expression) => rewrite_reactive_accessor_with_depth(
             &mut expression.expression,
             accessor_depth,
             total_depth,
+            optional_accessor,
             allocator,
         ),
         Expression::TSNonNullExpression(expression) => rewrite_reactive_accessor_with_depth(
             &mut expression.expression,
             accessor_depth,
             total_depth,
+            optional_accessor,
             allocator,
         ),
         Expression::TSInstantiationExpression(expression) => rewrite_reactive_accessor_with_depth(
             &mut expression.expression,
             accessor_depth,
             total_depth,
+            optional_accessor,
             allocator,
         ),
         _ => false,
@@ -6080,7 +6124,7 @@ fn rewrite_reactive_accessor_with_depth<'a>(
 
 fn expression_projection_depth(expression: &Expression<'_>) -> Option<usize> {
     match expression {
-        Expression::Identifier(_) => Some(0),
+        Expression::Identifier(_) | Expression::CallExpression(_) => Some(0),
         Expression::StaticMemberExpression(member) => {
             expression_projection_depth(&member.object).map(|depth| depth.saturating_add(1))
         }
@@ -6103,7 +6147,7 @@ fn expression_projection_depth(expression: &Expression<'_>) -> Option<usize> {
             ChainElement::TSNonNullExpression(expression) => {
                 expression_projection_depth(&expression.expression)
             }
-            ChainElement::CallExpression(_) => None,
+            ChainElement::CallExpression(_) => Some(0),
         },
         Expression::ParenthesizedExpression(expression) => {
             expression_projection_depth(&expression.expression)

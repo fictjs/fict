@@ -5,9 +5,10 @@ use fict_diagnostics::{
 };
 use fict_hir::{
     CallHost, FictMacroKind, FunctionId, FunctionKind, HirFile, HirFunction, HirInstruction,
-    HirInstructionKind, ImportedName, ImportedReactiveKind, JsxAttribute, JsxAttributeValue,
-    JsxChild, JsxElementName, JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode,
-    LocalId, PlaceBase, ReactiveCallKind, TemplateId, TerminatorKind, ValueId, ValueKind,
+    HirInstructionKind, ImportedHookPropertyMatch, ImportedHookReturn, ImportedName,
+    ImportedReactiveKind, JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName,
+    JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode, LocalId, PlaceBase,
+    ReactiveCallKind, TemplateId, TerminatorKind, ValueId, ValueKind,
 };
 use fict_reactivity::{ReactiveCycleAnalysis, RegionAnalysis, analyze_cfg, structurize_cfg};
 
@@ -58,6 +59,17 @@ struct HookReturnSite {
     result: ValueId,
     local: Option<LocalId>,
     import: fict_hir::BindingId,
+    kind: ReactiveSlotKind,
+    origin: fict_hir::Origin,
+    slot: EmitSlotId,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HookMemberSite {
+    call: ValueId,
+    local: Option<LocalId>,
+    import: fict_hir::BindingId,
+    property: ImportedHookPropertyMatch,
     kind: ReactiveSlotKind,
     origin: fict_hir::Origin,
     slot: EmitSlotId,
@@ -434,6 +446,44 @@ fn lower_function(
                 .flatten()
         })
         .collect();
+    let imported_hook_calls: BTreeMap<_, _> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter_map(|instruction| {
+            let result = instruction.result?;
+            let HirInstructionKind::Call(call) = &instruction.kind else {
+                return None;
+            };
+            imported_hook_return(hir, call)
+                .map(|(import, shape)| (result, (import, shape.clone(), instruction.origin)))
+        })
+        .collect();
+    let reassigned_hook_roots: BTreeSet<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .flat_map(|instruction| match &instruction.kind {
+            HirInstructionKind::Write { place, .. }
+            | HirInstructionKind::ReadWrite { place, .. }
+                if place.projections.is_empty() =>
+            {
+                place_local(place.base).into_iter().collect()
+            }
+            HirInstructionKind::PatternAssignment { writes, .. } => {
+                writes.iter().map(|write| write.local).collect()
+            }
+            _ => Vec::new(),
+        })
+        .collect();
+    let structured_hook_locals: BTreeMap<_, _> = declarations_by_value
+        .iter()
+        .filter_map(|(value, local)| {
+            let (_, shape, _) = imported_hook_calls.get(value)?;
+            (shape.direct_accessor.is_none() && !reassigned_hook_roots.contains(local))
+                .then_some((*local, *value))
+        })
+        .collect();
     let hook_return_sites: Vec<_> = function
         .blocks
         .iter()
@@ -473,6 +523,54 @@ fn lower_function(
         .iter()
         .map(|site| (site.result, *site))
         .collect();
+    let mut hook_member_uses = BTreeMap::new();
+    for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
+        let HirInstructionKind::Read { place } = &instruction.kind else {
+            continue;
+        };
+        let Some((call, local, import, property)) =
+            imported_hook_member(&imported_hook_calls, &structured_hook_locals, place)
+        else {
+            continue;
+        };
+        if !matches!(
+            property.kind,
+            ImportedReactiveKind::Signal | ImportedReactiveKind::Memo
+        ) {
+            continue;
+        }
+        hook_member_uses
+            .entry((call, property))
+            .or_insert((local, import, instruction.origin));
+    }
+    let hook_member_sites: Vec<_> = hook_member_uses
+        .into_iter()
+        .enumerate()
+        .map(
+            |(index, ((call, property), (local, import, origin)))| HookMemberSite {
+                call,
+                local,
+                import,
+                property,
+                kind: match property.kind {
+                    ImportedReactiveKind::Signal => ReactiveSlotKind::Signal,
+                    ImportedReactiveKind::Memo => ReactiveSlotKind::Memo,
+                    ImportedReactiveKind::Store => unreachable!("stores are not accessor slots"),
+                },
+                origin,
+                slot: EmitSlotId::new(count_u32(
+                    sites
+                        .len()
+                        .saturating_add(hook_return_sites.len())
+                        .saturating_add(index),
+                )),
+            },
+        )
+        .collect();
+    let hook_member_slots: BTreeMap<_, _> = hook_member_sites
+        .iter()
+        .map(|site| ((site.call, site.property), site.slot))
+        .collect();
     let captured_sites: Vec<_> = function
         .locals
         .iter()
@@ -491,6 +589,7 @@ fn lower_function(
                     sites
                         .len()
                         .saturating_add(hook_return_sites.len())
+                        .saturating_add(hook_member_sites.len())
                         .saturating_add(index),
                 )),
             )
@@ -529,6 +628,7 @@ fn lower_function(
                     sites
                         .len()
                         .saturating_add(hook_return_sites.len())
+                        .saturating_add(hook_member_sites.len())
                         .saturating_add(captured_sites.len())
                         .saturating_add(index),
                 )),
@@ -573,6 +673,7 @@ fn lower_function(
                         sites
                             .len()
                             .saturating_add(hook_return_sites.len())
+                            .saturating_add(hook_member_sites.len())
                             .saturating_add(captured_sites.len())
                             .saturating_add(imported_sites.len())
                             .saturating_add(index),
@@ -648,6 +749,24 @@ fn lower_function(
             storage: ReactiveSlotStorage::HookReturn {
                 call: site.result,
                 import: site.import,
+                property: None,
+            },
+            binding: site
+                .local
+                .and_then(|local| function.locals.get(local.as_usize()))
+                .and_then(|local| local.binding),
+            control_path: Vec::new(),
+            origin: site.origin,
+        }
+    }));
+    slots.extend(hook_member_sites.iter().map(|site| {
+        ReactiveSlot {
+            id: site.slot,
+            kind: site.kind,
+            storage: ReactiveSlotStorage::HookReturn {
+                call: site.call,
+                import: site.import,
+                property: Some(site.property),
             },
             binding: site
                 .local
@@ -871,7 +990,17 @@ fn lower_function(
                                 .map(|(slot, _, accessor_depth)| (*slot, *accessor_depth))
                         },
                     );
-                    let Some((slot, accessor_depth)) = direct_slot.or(member_slot) else {
+                    let hook_member_slot =
+                        imported_hook_member(&imported_hook_calls, &structured_hook_locals, place)
+                            .and_then(|(call, _, _, property)| {
+                                hook_member_slots
+                                    .get(&(call, property))
+                                    .copied()
+                                    .map(|slot| (slot, 1_usize))
+                            });
+                    let Some((slot, accessor_depth)) =
+                        direct_slot.or(member_slot).or(hook_member_slot)
+                    else {
                         preserve(&mut operations, block.id, instruction_index, instruction);
                         continue;
                     };
@@ -907,6 +1036,11 @@ fn lower_function(
                     });
                 }
                 HirInstructionKind::Write { place, value } => {
+                    reject_imported_hook_member_mutation(
+                        &imported_hook_calls,
+                        &structured_hook_locals,
+                        place,
+                    )?;
                     let Some(slot) = place_local(place.base)
                         .and_then(|local| slot_by_local.get(&local).copied())
                     else {
@@ -941,6 +1075,11 @@ fn lower_function(
                     update,
                     prefix,
                 } => {
+                    reject_imported_hook_member_mutation(
+                        &imported_hook_calls,
+                        &structured_hook_locals,
+                        place,
+                    )?;
                     let Some(slot) = place_local(place.base)
                         .and_then(|local| slot_by_local.get(&local).copied())
                     else {
@@ -3047,18 +3186,77 @@ fn imported_hook_direct(
     hir: &HirFile,
     call: &fict_hir::CallInstruction,
 ) -> Option<(fict_hir::BindingId, ImportedReactiveKind)> {
+    let (binding, shape) = imported_hook_return(hir, call)?;
+    let kind = shape.direct_accessor?;
+    Some((binding, kind))
+}
+
+fn imported_hook_return<'a>(
+    hir: &'a HirFile,
+    call: &fict_hir::CallInstruction,
+) -> Option<(fict_hir::BindingId, &'a ImportedHookReturn)> {
     let CallHost::Binding(binding) = call.host else {
         return None;
     };
-    let kind = hir
+    let shape = hir
         .bindings
         .get(binding.as_usize())?
         .import
         .as_ref()?
         .hook_return
-        .as_ref()?
-        .direct_accessor?;
-    Some((binding, kind))
+        .as_ref()?;
+    Some((binding, shape))
+}
+
+fn imported_hook_member(
+    calls: &BTreeMap<ValueId, (fict_hir::BindingId, ImportedHookReturn, fict_hir::Origin)>,
+    locals: &BTreeMap<LocalId, ValueId>,
+    place: &fict_hir::Place,
+) -> Option<(
+    ValueId,
+    Option<LocalId>,
+    fict_hir::BindingId,
+    ImportedHookPropertyMatch,
+)> {
+    let (call, local) = match place.base {
+        PlaceBase::Value(value) => (value, None),
+        PlaceBase::Local(local) => (*locals.get(&local)?, Some(local)),
+        PlaceBase::Ssa(name) => (*locals.get(&name.local)?, Some(name.local)),
+        PlaceBase::Global(_) => return None,
+    };
+    let (import, shape, _) = calls.get(&call)?;
+    if shape.direct_accessor.is_some() {
+        return None;
+    }
+    let property = shape.resolve_property(place.projections.first()?)?;
+    Some((call, local, *import, property))
+}
+
+fn reject_imported_hook_member_mutation(
+    calls: &BTreeMap<ValueId, (fict_hir::BindingId, ImportedHookReturn, fict_hir::Origin)>,
+    locals: &BTreeMap<LocalId, ValueId>,
+    place: &fict_hir::Place,
+) -> Result<(), DiagnosticBundle> {
+    let Some((_, _, _, property)) = imported_hook_member(calls, locals, place) else {
+        return Ok(());
+    };
+    match property.kind {
+        ImportedReactiveKind::Store => Ok(()),
+        ImportedReactiveKind::Memo if place.projections.len() == 1 => {
+            Err(DiagnosticBundle::new(vec![lower_error(
+                "FICT-METADATA-READONLY",
+                "cannot assign to a memo accessor returned by an imported hook",
+                GuaranteeClass::Unsupported,
+            )]))
+        }
+        ImportedReactiveKind::Signal | ImportedReactiveKind::Memo => {
+            Err(DiagnosticBundle::new(vec![lower_error(
+                "FICT-M",
+                "mutating an imported hook return accessor member is not yet guaranteed",
+                GuaranteeClass::Fallback,
+            )]))
+        }
+    }
 }
 
 fn ensure_writable_hook_return(
