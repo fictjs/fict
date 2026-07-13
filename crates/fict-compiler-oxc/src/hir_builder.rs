@@ -5,24 +5,26 @@ use fict_diagnostics::{
 };
 use fict_hir::{
     Binding, BindingId, BindingKind, BlockId, CallArgument, CallHost, CallInstruction,
-    DeclarationKind, EvaluationMode, FictMacroKind, FileId, FunctionFlags, FunctionId,
-    FunctionKind, HirBlock, HirFile, HirFunction, HirInstruction, HirInstructionKind, HirLocal,
-    HirParameter, HirScope, HirTerminator, HirValue, InstructionSemantics, JsxAttribute,
-    JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxNode, JsxTemplate, LocalId,
-    LocalKind, MutationEffect, Origin, PatternSummary, Purity, ReactiveCallKind, ReactiveScopeHost,
-    ReactiveScopeKind, RegionId, ScopeId, ScopeKind, SyntaxFragment, SyntaxFragmentId,
-    SyntaxFragmentKind, SyntaxSummary, TemplateId, TerminatorKind, ValueId, ValueKind, verify_hir,
+    CompoundAssignmentOperator, DeclarationKind, EvaluationMode, FictMacroKind, FileId,
+    FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction, HirInstruction,
+    HirInstructionKind, HirLocal, HirParameter, HirScope, HirTerminator, HirValue,
+    InstructionSemantics, JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName,
+    JsxNode, JsxTemplate, LocalId, LocalKind, MutationEffect, Origin, PatternSummary, Purity,
+    ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind,
+    SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TemplateId,
+    TerminatorKind, UpdateOperator, ValueId, ValueKind, verify_hir,
 };
 use oxc::{
     allocator::Allocator,
     ast::{
         ast::{
-            ArrowFunctionExpression, AssignmentPattern, BindingIdentifier, BindingPattern,
-            BindingRestElement, CallExpression, Expression, FormalParameters, Function,
-            JSXAttributeItem, JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue,
-            JSXChild as OxcJsxChild, JSXElement, JSXElementName as OxcJsxElementName,
-            JSXExpression, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject,
-            MemberExpression, Program, VariableDeclarator,
+            ArrowFunctionExpression, AssignmentExpression, AssignmentPattern, AssignmentTarget,
+            BindingIdentifier, BindingPattern, BindingRestElement, CallExpression, Expression,
+            FormalParameters, Function, JSXAttributeItem, JSXAttributeName,
+            JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild, JSXElement,
+            JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment, JSXMemberExpression,
+            JSXMemberExpressionObject, MemberExpression, Program, SimpleAssignmentTarget,
+            UpdateExpression, VariableDeclarator,
         },
         ast_kind::AstKind,
     },
@@ -36,7 +38,13 @@ use oxc::{
     parser::{ParseOptions, Parser},
     semantic::{Scoping, Semantic, SemanticBuilder},
     span::{GetSpan, Span},
-    syntax::{scope::ScopeFlags, symbol::SymbolId},
+    syntax::{
+        operator::{
+            AssignmentOperator as OxcAssignmentOperator, UpdateOperator as OxcUpdateOperator,
+        },
+        scope::ScopeFlags,
+        symbol::SymbolId,
+    },
 };
 
 use crate::{
@@ -557,6 +565,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             roots: Vec::new(),
         };
         jsx.visit_program(program);
+        let mut mutations = MutationCollector {
+            scoping: self.semantic.scoping(),
+            facts: Vec::new(),
+        };
+        mutations.visit_program(program);
         for root in &jsx.roots {
             if root.owner != FunctionId::new(0)
                 && self.functions[root.owner.as_usize()].kind == FunctionKind::Plain
@@ -567,7 +580,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         self.apply_call_classification(&calls.calls);
         self.validate_macro_placement(&calls.calls);
         self.validate_hook_placement(&calls.calls);
-        self.populate_function_bodies(&calls.calls, &jsx.roots);
+        self.populate_function_bodies(&calls.calls, &mutations.facts, &jsx.roots);
     }
 
     fn build_function_shells(&mut self) {
@@ -1008,7 +1021,12 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         }
     }
 
-    fn populate_function_bodies(&mut self, calls: &[CallFact], jsx_roots: &[JsxFact]) {
+    fn populate_function_bodies(
+        &mut self,
+        calls: &[CallFact],
+        mutations: &[MutationFact],
+        jsx_roots: &[JsxFact],
+    ) {
         let reactive_targets: BTreeSet<_> = calls
             .iter()
             .filter(|call| {
@@ -1019,6 +1037,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .filter_map(|call| call.direct_variable_binding)
             .collect();
         let reactive_reads = self.collect_reactive_reads(&reactive_targets);
+        let reactive_mutations = self.collect_reactive_mutations(mutations, &reactive_targets);
         for fact in self.function_facts.clone() {
             let mut inputs = Vec::new();
             let call_argument_functions: BTreeSet<_> = calls
@@ -1160,6 +1179,81 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 inputs.push(value);
             }
 
+            for mutation in reactive_mutations
+                .iter()
+                .filter(|mutation| mutation.owner == fact.id)
+            {
+                let Some(local) = self.functions[fact.id.as_usize()]
+                    .locals
+                    .iter()
+                    .find(|local| local.binding == Some(mutation.binding))
+                    .map(|local| local.id)
+                else {
+                    continue;
+                };
+                match mutation.kind {
+                    ReactiveMutationKind::Write { value_span } => {
+                        let value = self.syntax_value(
+                            fact.id,
+                            value_span,
+                            self.referenced_bindings(value_span),
+                        );
+                        self.functions[fact.id.as_usize()].blocks[0]
+                            .instructions
+                            .push(HirInstruction {
+                                result: None,
+                                kind: HirInstructionKind::Write {
+                                    place: fict_hir::Place::local(local),
+                                    value,
+                                },
+                                semantics: reactive_mutation_semantics(),
+                                origin: Origin::source(mutation.span),
+                            });
+                        inputs.push(value);
+                    }
+                    ReactiveMutationKind::Compound {
+                        operator,
+                        value_span,
+                    } => {
+                        let value = self.syntax_value(
+                            fact.id,
+                            value_span,
+                            self.referenced_bindings(value_span),
+                        );
+                        let result = self.push_value(
+                            fact.id,
+                            ValueKind::InstructionResult,
+                            Origin::source(mutation.span),
+                            HirInstructionKind::ReadWrite {
+                                place: fict_hir::Place::local(local),
+                                compound: Some(operator),
+                                value: Some(value),
+                                update: None,
+                                prefix: false,
+                            },
+                            reactive_mutation_semantics(),
+                        );
+                        inputs.extend([value, result]);
+                    }
+                    ReactiveMutationKind::Update { operator, prefix } => {
+                        let result = self.push_value(
+                            fact.id,
+                            ValueKind::InstructionResult,
+                            Origin::source(mutation.span),
+                            HirInstructionKind::ReadWrite {
+                                place: fict_hir::Place::local(local),
+                                compound: None,
+                                value: None,
+                                update: Some(operator),
+                                prefix,
+                            },
+                            reactive_mutation_semantics(),
+                        );
+                        inputs.push(result);
+                    }
+                }
+            }
+
             for jsx in jsx_roots.iter().filter(|jsx| jsx.owner == fact.id) {
                 let root = self.lower_jsx_node(fact.id, &jsx.root);
                 let template = TemplateId::new(count_u32(self.templates.len()));
@@ -1226,6 +1320,35 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         }
         reads.sort_by_key(|read| (read.span.start(), read.span.end(), read.binding.index()));
         reads
+    }
+
+    fn collect_reactive_mutations(
+        &self,
+        mutations: &[MutationFact],
+        reactive_targets: &BTreeSet<BindingId>,
+    ) -> Vec<ReactiveMutationFact> {
+        let mut facts: Vec<_> = mutations
+            .iter()
+            .filter_map(|mutation| {
+                let binding = self.symbol_to_binding.get(&mutation.symbol).copied()?;
+                reactive_targets
+                    .contains(&binding)
+                    .then(|| ReactiveMutationFact {
+                        owner: self.function_owner_for_span(mutation.span),
+                        binding,
+                        span: mutation.span,
+                        kind: mutation.kind,
+                    })
+            })
+            .collect();
+        facts.sort_by_key(|mutation| {
+            (
+                mutation.span.start(),
+                mutation.span.end(),
+                mutation.binding.index(),
+            )
+        });
+        facts
     }
 
     fn function_owner_for_span(&self, span: SourceSpan) -> FunctionId {
@@ -1876,6 +1999,36 @@ struct ReactiveReadFact {
     span: SourceSpan,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct MutationFact {
+    symbol: SymbolId,
+    span: SourceSpan,
+    kind: ReactiveMutationKind,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ReactiveMutationFact {
+    owner: FunctionId,
+    binding: BindingId,
+    span: SourceSpan,
+    kind: ReactiveMutationKind,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ReactiveMutationKind {
+    Write {
+        value_span: SourceSpan,
+    },
+    Compound {
+        operator: CompoundAssignmentOperator,
+        value_span: SourceSpan,
+    },
+    Update {
+        operator: UpdateOperator,
+        prefix: bool,
+    },
+}
+
 #[derive(Debug, Clone)]
 enum HookCall {
     Direct {
@@ -2137,6 +2290,99 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
         });
         walk_call_expression(self, call);
     }
+}
+
+struct MutationCollector<'semantic> {
+    scoping: &'semantic Scoping,
+    facts: Vec<MutationFact>,
+}
+
+impl<'a> Visit<'a> for MutationCollector<'_> {
+    fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
+        if let Some(symbol) = assignment_target_symbol(self.scoping, &assignment.left) {
+            let kind = if assignment.operator == OxcAssignmentOperator::Assign {
+                Some(ReactiveMutationKind::Write {
+                    value_span: source_span(assignment.right.span()),
+                })
+            } else {
+                compound_assignment_operator(assignment.operator).map(|operator| {
+                    ReactiveMutationKind::Compound {
+                        operator,
+                        value_span: source_span(assignment.right.span()),
+                    }
+                })
+            };
+            if let Some(kind) = kind {
+                self.facts.push(MutationFact {
+                    symbol,
+                    span: source_span(assignment.span),
+                    kind,
+                });
+            }
+        }
+        oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
+    }
+
+    fn visit_update_expression(&mut self, update: &UpdateExpression<'a>) {
+        if let Some(symbol) = simple_assignment_target_symbol(self.scoping, &update.argument) {
+            self.facts.push(MutationFact {
+                symbol,
+                span: source_span(update.span),
+                kind: ReactiveMutationKind::Update {
+                    operator: match update.operator {
+                        OxcUpdateOperator::Increment => UpdateOperator::Increment,
+                        OxcUpdateOperator::Decrement => UpdateOperator::Decrement,
+                    },
+                    prefix: update.prefix,
+                },
+            });
+        }
+        oxc::ast_visit::walk::walk_update_expression(self, update);
+    }
+}
+
+fn assignment_target_symbol(scoping: &Scoping, target: &AssignmentTarget<'_>) -> Option<SymbolId> {
+    let AssignmentTarget::AssignmentTargetIdentifier(identifier) = target else {
+        return None;
+    };
+    scoping
+        .get_reference(identifier.reference_id.get()?)
+        .symbol_id()
+}
+
+fn simple_assignment_target_symbol(
+    scoping: &Scoping,
+    target: &SimpleAssignmentTarget<'_>,
+) -> Option<SymbolId> {
+    let SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) = target else {
+        return None;
+    };
+    scoping
+        .get_reference(identifier.reference_id.get()?)
+        .symbol_id()
+}
+
+fn compound_assignment_operator(
+    operator: OxcAssignmentOperator,
+) -> Option<CompoundAssignmentOperator> {
+    Some(match operator {
+        OxcAssignmentOperator::Assign => return None,
+        OxcAssignmentOperator::Addition => CompoundAssignmentOperator::Add,
+        OxcAssignmentOperator::Subtraction => CompoundAssignmentOperator::Subtract,
+        OxcAssignmentOperator::Multiplication => CompoundAssignmentOperator::Multiply,
+        OxcAssignmentOperator::Division => CompoundAssignmentOperator::Divide,
+        OxcAssignmentOperator::Remainder => CompoundAssignmentOperator::Remainder,
+        OxcAssignmentOperator::Exponential => CompoundAssignmentOperator::Exponent,
+        OxcAssignmentOperator::ShiftLeft => CompoundAssignmentOperator::ShiftLeft,
+        OxcAssignmentOperator::ShiftRight => CompoundAssignmentOperator::ShiftRight,
+        OxcAssignmentOperator::ShiftRightZeroFill => CompoundAssignmentOperator::ShiftRightUnsigned,
+        OxcAssignmentOperator::BitwiseOR => CompoundAssignmentOperator::BitOr,
+        OxcAssignmentOperator::BitwiseXOR => CompoundAssignmentOperator::BitXor,
+        OxcAssignmentOperator::BitwiseAnd => CompoundAssignmentOperator::BitAnd,
+        OxcAssignmentOperator::LogicalOr => CompoundAssignmentOperator::LogicalOr,
+        OxcAssignmentOperator::LogicalAnd => CompoundAssignmentOperator::LogicalAnd,
+        OxcAssignmentOperator::LogicalNullish => CompoundAssignmentOperator::NullishCoalescing,
+    })
 }
 
 fn resolved_callee_symbol(scoping: &Scoping, expression: &Expression<'_>) -> Option<SymbolId> {
@@ -2462,6 +2708,15 @@ fn is_hook_name(name: &str) -> bool {
     rest.chars()
         .next()
         .is_some_and(|character| character.is_uppercase() || character.is_ascii_digit())
+}
+
+fn reactive_mutation_semantics() -> InstructionSemantics {
+    InstructionSemantics {
+        purity: Purity::Unknown,
+        mutation: MutationEffect::Local,
+        evaluation: EvaluationMode::Eager,
+        may_throw: true,
+    }
 }
 
 fn source_span(span: Span) -> SourceSpan {

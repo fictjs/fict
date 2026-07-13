@@ -2,7 +2,8 @@ use fict_compiler_oxc::{
     HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, build_hir,
 };
 use fict_hir::{
-    CallHost, FictMacroKind, FunctionKind, HirInstructionKind, ReactiveCallKind, SyntaxFragmentKind,
+    CallHost, CompoundAssignmentOperator, FictMacroKind, FunctionKind, HirInstructionKind,
+    ReactiveCallKind, SyntaxFragmentKind, UpdateOperator,
 };
 
 fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
@@ -252,6 +253,107 @@ fn materializes_binding_resolved_macro_reads_in_hir() {
             .iter()
             .all(|instruction| { !matches!(instruction.kind, HirInstructionKind::Read { .. }) })
     );
+}
+
+#[test]
+fn materializes_reactive_assignments_compounds_and_updates() {
+    let source = r#"
+        import { $state as state } from 'fict';
+        function App() {
+            let count = state(0);
+            const assigned = (count = next());
+            const compound = (count += delta());
+            const postfix = count++;
+            const prefix = --count;
+            return [assigned, compound, postfix, prefix, count];
+        }
+        function shadow(count) { count += 1; return count++; }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified mutation HIR");
+    let app = hir
+        .functions
+        .iter()
+        .find(|function| function.kind == FunctionKind::Component)
+        .expect("component");
+    let count = app
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("count"))
+        .expect("state local");
+    let mutations: Vec<_> = app.blocks[0]
+        .instructions
+        .iter()
+        .filter(|instruction| match &instruction.kind {
+            HirInstructionKind::Write { place, .. }
+            | HirInstructionKind::ReadWrite { place, .. } => {
+                place == &fict_hir::Place::local(count.id)
+            }
+            _ => false,
+        })
+        .collect();
+
+    assert_eq!(mutations.len(), 4);
+    assert!(matches!(
+        mutations[0].kind,
+        HirInstructionKind::Write { .. }
+    ));
+    assert!(matches!(
+        mutations[1].kind,
+        HirInstructionKind::ReadWrite {
+            compound: Some(CompoundAssignmentOperator::Add),
+            update: None,
+            ..
+        }
+    ));
+    assert!(matches!(
+        mutations[2].kind,
+        HirInstructionKind::ReadWrite {
+            update: Some(UpdateOperator::Increment),
+            prefix: false,
+            ..
+        }
+    ));
+    assert!(matches!(
+        mutations[3].kind,
+        HirInstructionKind::ReadWrite {
+            update: Some(UpdateOperator::Decrement),
+            prefix: true,
+            ..
+        }
+    ));
+    let authored: Vec<_> = mutations
+        .iter()
+        .map(|instruction| {
+            let span = instruction.origin.primary_span.expect("mutation origin");
+            &source[span.start() as usize..span.end() as usize]
+        })
+        .collect();
+    assert_eq!(
+        authored,
+        ["count = next()", "count += delta()", "count++", "--count"]
+    );
+
+    let shadow = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "shadow")
+        })
+        .expect("shadow function");
+    assert!(shadow.blocks[0].instructions.iter().all(|instruction| {
+        !matches!(
+            instruction.kind,
+            HirInstructionKind::Write { .. } | HirInstructionKind::ReadWrite { .. }
+        )
+    }));
 }
 
 #[test]
