@@ -222,6 +222,8 @@ pub struct HirObjectParameterProperty {
     pub binding: BindingId,
     /// Exact read references that must become accessor calls.
     pub references: Vec<Origin>,
+    /// Optional property-default expression evaluated at component invocation.
+    pub default_value: Option<Origin>,
     /// Source provenance of the property declaration.
     pub origin: Origin,
 }

@@ -1274,7 +1274,7 @@ mod tests {
     #[test]
     fn lowers_simple_component_object_props_to_reactive_accessors() {
         let result = compile(request(
-            "import { $state } from 'fict'; function Child({ value: renamed, label }) { return <span>{label}:{renamed}</span>; } const Arrow = ({ value }) => <b>{value}</b>; function Method({ value }) { return <i>{value.toString()}</i>; } function Callable({ onClick }) { return <button onClick={() => onClick()}>go</button>; } export function App() { let value = $state(1); return <main><Child value={value} label={String(value)} /><Arrow value={value} /><Method value={value} /><Callable onClick={() => value++} /></main>; }",
+            "import { $state } from 'fict'; function Child({ value: renamed, label = String(renamed) }) { return <span>{label}:{renamed}</span>; } const Arrow = ({ value }) => <b>{value}</b>; function Method({ value }) { return <i>{value.toString()}</i>; } function Callable({ onClick }) { return <button onClick={() => onClick()}>go</button>; } export function App() { let value = $state(1); return <main><Child value={value} /><Arrow value={value} /><Method value={value} /><Callable onClick={() => value++} /></main>; }",
             "component-object-props.tsx",
         ));
 
@@ -1294,12 +1294,26 @@ mod tests {
         assert!(
             result
                 .code
-                .contains("const label = prop(() => __fictProps.label)"),
+                .contains("const label = prop(() => __fictProps.label === void 0"),
             "{}",
             result.code
         );
         assert!(result.code.contains("() => renamed()"), "{}", result.code);
         assert!(result.code.contains("() => label()"), "{}", result.code);
+        assert!(
+            result
+                .code
+                .contains("__fictProps.label === void 0 ? String(renamed()) : void 0"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("__fictProps.label === void 0 ? __fictPropDefault : __fictProps.label"),
+            "{}",
+            result.code
+        );
         assert!(
             result.code.contains("const Arrow = (__fictProps"),
             "{}",

@@ -670,6 +670,8 @@ pub struct EmitPropBinding {
     pub property: String,
     pub local: String,
     pub references: Vec<Origin>,
+    pub default_value: Option<Origin>,
+    pub default_local: Option<String>,
     pub origin: Origin,
 }
 

@@ -506,6 +506,8 @@ struct CallRewrite {
 struct PropBindingRewrite {
     property: String,
     local: String,
+    default_value: Option<SourceSpan>,
+    default_local: Option<String>,
     origin: SourceSpan,
 }
 
@@ -598,9 +600,41 @@ fn props_rewrites(emit: &EmitProgram) -> PropsRewrites {
             if !valid {
                 break;
             }
+            let default_value = match binding.default_value {
+                Some(default_value) => {
+                    let Some(default_value) = default_value.primary_span else {
+                        diagnostics.push(
+                            emit_error(
+                                "FICT-OXC-EMIT-PROPS",
+                                "component prop default requires a source origin",
+                                GuaranteeClass::Internal,
+                            )
+                            .with_primary_span(origin),
+                        );
+                        valid = false;
+                        break;
+                    };
+                    Some(default_value)
+                }
+                None => None,
+            };
+            if default_value.is_some() != binding.default_local.is_some() {
+                diagnostics.push(
+                    emit_error(
+                        "FICT-OXC-EMIT-PROPS",
+                        "component prop defaults require a generated snapshot binding",
+                        GuaranteeClass::Internal,
+                    )
+                    .with_primary_span(origin),
+                );
+                valid = false;
+                break;
+            }
             bindings.push(PropBindingRewrite {
                 property: binding.property.clone(),
                 local: binding.local.clone(),
+                default_value,
+                default_local: binding.default_local.clone(),
                 origin,
             });
         }
@@ -2767,13 +2801,60 @@ impl<'a> AstRewriter<'a, '_> {
         let Some(plan) = self.props.get(&location).cloned() else {
             return;
         };
-        if !matches!(parameter.pattern, BindingPattern::ObjectPattern(_))
-            || parameter.initializer.is_some()
-        {
+        let BindingPattern::ObjectPattern(object_pattern) = &parameter.pattern else {
             self.diagnostics.push(
                 emit_error(
                     "FICT-OXC-EMIT-PROPS",
                     "component props plan requires a non-defaulted object parameter",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(
+                    SourceSpan::new(location.0, location.1)
+                        .expect("ordered component props parameter"),
+                ),
+            );
+            return;
+        };
+        if parameter.initializer.is_some() {
+            self.diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-PROPS",
+                    "component props plan requires a non-defaulted object parameter",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(
+                    SourceSpan::new(location.0, location.1)
+                        .expect("ordered component props parameter"),
+                ),
+            );
+            return;
+        }
+        let mut defaults = BTreeMap::new();
+        for property in &object_pattern.properties {
+            if let BindingPattern::AssignmentPattern(default) = &property.value {
+                let span = default.right.span();
+                defaults.insert(
+                    (span.start, span.end),
+                    default.right.clone_in(self.allocator),
+                );
+            }
+        }
+        let planned_defaults = plan
+            .bindings
+            .iter()
+            .filter(|binding| binding.default_value.is_some())
+            .count();
+        if defaults.len() != planned_defaults
+            || plan.bindings.iter().any(|binding| {
+                binding.default_value.is_some_and(|default| {
+                    !defaults.contains_key(&(default.start(), default.end()))
+                })
+            })
+        {
+            self.diagnostics.push(
+                emit_error(
+                    "FICT-OXC-EMIT-PROPS",
+                    "component prop defaults do not match their source assignment patterns",
                     GuaranteeClass::Internal,
                 )
                 .with_primary_span(
@@ -2789,30 +2870,42 @@ impl<'a> AstRewriter<'a, '_> {
             self.allocator.alloc_str(&plan.source),
             &builder,
         );
-        for (index, binding) in plan.bindings.iter().enumerate() {
+        let mut insertion_index = 0;
+        for binding in &plan.bindings {
             let span = Span::new(binding.origin.start(), binding.origin.end());
-            let source =
-                Expression::new_identifier(span, self.allocator.alloc_str(&plan.source), &builder);
-            let value = if is_identifier_name(&binding.property) {
-                Expression::new_static_member_expression(
+            if let (Some(default), Some(default_local)) =
+                (binding.default_value, binding.default_local.as_deref())
+            {
+                let default_expression = defaults
+                    .remove(&(default.start(), default.end()))
+                    .expect("validated component prop default expression");
+                let default_initializer = Expression::new_conditional_expression(
                     span,
-                    source,
-                    IdentifierName::new(
+                    self.prop_is_undefined(&plan.source, &binding.property, span),
+                    default_expression,
+                    self.void_zero(span),
+                    &builder,
+                );
+                body.statements.insert(
+                    insertion_index,
+                    const_statement(self.allocator, default_local, default_initializer, span),
+                );
+                insertion_index += 1;
+            }
+            let value = if let Some(default_local) = binding.default_local.as_deref() {
+                Expression::new_conditional_expression(
+                    span,
+                    self.prop_is_undefined(&plan.source, &binding.property, span),
+                    Expression::new_identifier(
                         span,
-                        self.allocator.alloc_str(&binding.property),
+                        self.allocator.alloc_str(default_local),
                         &builder,
                     ),
-                    false,
+                    self.prop_member(&plan.source, &binding.property, span),
                     &builder,
                 )
             } else {
-                let property = Expression::new_string_literal(
-                    span,
-                    self.allocator.alloc_str(&binding.property),
-                    None,
-                    &builder,
-                );
-                Expression::new_computed_member_expression(span, source, property, false, &builder)
+                self.prop_member(&plan.source, &binding.property, span)
             };
             let getter = zero_parameter_expression_arrow(self.allocator, value, span);
             let helper =
@@ -2822,11 +2915,54 @@ impl<'a> AstRewriter<'a, '_> {
             let initializer =
                 Expression::new_call_expression(span, helper, NONE, arguments, false, &builder);
             body.statements.insert(
-                index,
+                insertion_index,
                 const_statement(self.allocator, &binding.local, initializer, span),
             );
+            insertion_index += 1;
         }
         self.matched_props.insert(location);
+    }
+
+    fn prop_member(&self, source: &str, property: &str, span: Span) -> Expression<'a> {
+        let builder = AstBuilder::new(self.allocator);
+        let source = Expression::new_identifier(span, self.allocator.alloc_str(source), &builder);
+        if is_identifier_name(property) {
+            Expression::new_static_member_expression(
+                span,
+                source,
+                IdentifierName::new(span, self.allocator.alloc_str(property), &builder),
+                false,
+                &builder,
+            )
+        } else {
+            let property = Expression::new_string_literal(
+                span,
+                self.allocator.alloc_str(property),
+                None,
+                &builder,
+            );
+            Expression::new_computed_member_expression(span, source, property, false, &builder)
+        }
+    }
+
+    fn prop_is_undefined(&self, source: &str, property: &str, span: Span) -> Expression<'a> {
+        Expression::new_binary_expression(
+            span,
+            self.prop_member(source, property, span),
+            OxcBinaryOperator::StrictEquality,
+            self.void_zero(span),
+            &AstBuilder::new(self.allocator),
+        )
+    }
+
+    fn void_zero(&self, span: Span) -> Expression<'a> {
+        let builder = AstBuilder::new(self.allocator);
+        Expression::new_unary_expression(
+            span,
+            OxcUnaryOperator::Void,
+            Expression::new_numeric_literal(span, 0.0, None, NumberBase::Decimal, &builder),
+            &builder,
+        )
     }
 
     fn lower_template_clone(

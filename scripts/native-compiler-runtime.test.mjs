@@ -205,3 +205,69 @@ test('Rust compiler output keeps destructured component props reactive', async (
   assert.equal(container.childNodes.length, 0)
   container.remove()
 })
+
+test('Rust compiler output snapshots destructured prop defaults at invocation', async () => {
+  const module = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      let setValue = () => {}
+      export const defaultCalls = []
+
+      function fallback(value) {
+        defaultCalls.push(value)
+        return value.toLowerCase()
+      }
+
+      function Child({ value: renamed, label = fallback(renamed) }) {
+        return <p>{String(label)}:{renamed}</p>
+      }
+
+      function App() {
+        let value = $state('A')
+        setValue = next => {
+          value = next
+        }
+        return <section><Child value={value} /><Child value={value} label={null} /></section>
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+
+      export function update(next) {
+        setValue(next)
+      }
+    `,
+    'defaulted-props',
+    /__fictProps\.label === void 0/,
+  )
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = module.mount(container)
+  await flushRuntime()
+
+  const initial = [...container.querySelectorAll('p')]
+  assert.deepEqual(
+    initial.map(node => node.textContent),
+    ['a:A', 'null:A'],
+  )
+  assert.deepEqual(module.defaultCalls, ['A'])
+
+  module.update('B')
+  await flushRuntime()
+
+  const updated = [...container.querySelectorAll('p')]
+  assert.deepEqual(
+    updated.map(node => node.textContent),
+    ['a:B', 'null:B'],
+  )
+  assert.equal(updated[0], initial[0])
+  assert.equal(updated[1], initial[1])
+  assert.deepEqual(module.defaultCalls, ['A'])
+
+  dispose()
+  assert.equal(container.childNodes.length, 0)
+  container.remove()
+})

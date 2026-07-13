@@ -240,6 +240,7 @@ struct ParameterFact {
 struct ObjectParameterPropertyFact {
     key: String,
     binding: SymbolId,
+    default_value: Option<SourceSpan>,
     origin: SourceSpan,
 }
 
@@ -457,12 +458,20 @@ fn simple_object_parameter_properties(
                 return None;
             }
             let key = property.key.static_name()?.into_owned();
-            let BindingPattern::BindingIdentifier(binding) = &property.value else {
-                return None;
+            let (binding, default_value) = match &property.value {
+                BindingPattern::BindingIdentifier(binding) => (binding, None),
+                BindingPattern::AssignmentPattern(default) => {
+                    let BindingPattern::BindingIdentifier(binding) = &default.left else {
+                        return None;
+                    };
+                    (binding, Some(source_span(default.right.span())))
+                }
+                BindingPattern::ObjectPattern(_) | BindingPattern::ArrayPattern(_) => return None,
             };
             Some(ObjectParameterPropertyFact {
                 key,
                 binding: binding.symbol_id.get()?,
+                default_value,
                 origin: source_span(property.span),
             })
         })
@@ -906,6 +915,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     key: property.key.clone(),
                     binding,
                     references,
+                    default_value: property.default_value.map(Origin::source),
                     origin: Origin::source(property.origin),
                 })
             })

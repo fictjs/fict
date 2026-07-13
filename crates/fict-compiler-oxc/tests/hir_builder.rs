@@ -849,7 +849,7 @@ fn models_context_free_anonymous_function_map_callbacks() {
 #[test]
 fn models_simple_component_object_props_with_exact_read_origins() {
     let source = r#"
-        function Child({ value: renamed, label }) {
+        function Child({ value: renamed, label = String(renamed) }) {
             return <span>{label}:{renamed}</span>;
         }
         function Method({ value, value: alias }) {
@@ -884,15 +884,25 @@ fn models_simple_component_object_props_with_exact_read_origins() {
     assert_eq!(properties.len(), 2);
     assert_eq!(properties[0].key, "value");
     assert_eq!(properties[1].key, "label");
+    assert!(properties[0].default_value.is_none());
+    let label_default = properties[1]
+        .default_value
+        .and_then(|origin| origin.primary_span)
+        .expect("label default expression");
+    assert_eq!(
+        &source[label_default.start() as usize..label_default.end() as usize],
+        "String(renamed)"
+    );
+    assert_eq!(properties[0].references.len(), 2);
+    assert_eq!(properties[1].references.len(), 1);
     for property in properties {
-        assert_eq!(property.references.len(), 1);
-        let reference = property.references[0]
-            .primary_span
-            .expect("prop reference origin");
-        assert_eq!(
-            &source[reference.start() as usize..reference.end() as usize],
-            hir.bindings[property.binding.as_usize()].display_name
-        );
+        for reference in &property.references {
+            let reference = reference.primary_span.expect("prop reference origin");
+            assert_eq!(
+                &source[reference.start() as usize..reference.end() as usize],
+                hir.bindings[property.binding.as_usize()].display_name
+            );
+        }
     }
     let method = hir
         .functions

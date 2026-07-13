@@ -150,6 +150,8 @@ pub fn verify_emit_program(
             Some(_) | None => {}
         }
         if let Some(props) = &function.props {
+            let mut generated_names = BTreeSet::new();
+            generated_names.insert(props.source.as_str());
             let expected = hir_function
                 .parameters
                 .first()
@@ -168,6 +170,9 @@ pub fn verify_emit_program(
                                     planned.property == source.key
                                         && planned.local == binding.display_name
                                         && planned.references == source.references
+                                        && planned.default_value == source.default_value
+                                        && planned.default_local.is_some()
+                                            == source.default_value.is_some()
                                         && planned.origin == source.origin
                                 })
                         })
@@ -185,6 +190,21 @@ pub fn verify_emit_program(
                 || props.bindings.iter().any(|binding| {
                     binding.property.is_empty()
                         || !valid_identifier(&binding.local)
+                        || binding
+                            .default_value
+                            .is_some_and(|origin| origin.primary_span.is_none())
+                        || binding.default_local.as_ref().is_some_and(|local| {
+                            !valid_identifier(local)
+                                || !generated_names.insert(local.as_str())
+                                || import_names.contains(local.as_str())
+                                || source_names.contains(local.as_str())
+                                || temporary_names.contains(local.as_str())
+                                || local == &props.source
+                                || function
+                                    .context
+                                    .as_ref()
+                                    .is_some_and(|context| context.local == local.as_str())
+                        })
                         || binding
                             .references
                             .iter()
@@ -346,6 +366,12 @@ fn verify_module_plan(hir: &HirFile, program: &EmitProgram, diagnostics: &mut Di
                         .map(|context| context.local.as_str()),
                 )
                 .chain(function.props.iter().map(|props| props.source.as_str()))
+                .chain(function.props.iter().flat_map(|props| {
+                    props
+                        .bindings
+                        .iter()
+                        .filter_map(|binding| binding.default_local.as_deref())
+                }))
                 .chain(
                     function
                         .operations

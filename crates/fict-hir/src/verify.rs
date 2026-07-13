@@ -314,6 +314,9 @@ impl Verifier<'_> {
                     for reference in &property.references {
                         self.verify_origin(*reference);
                     }
+                    if let Some(default_value) = property.default_value {
+                        self.verify_origin(default_value);
+                    }
                     if property.key.is_empty() || !bindings.insert(property.binding) {
                         self.error(
                             "FICT-HIR-PROPS",

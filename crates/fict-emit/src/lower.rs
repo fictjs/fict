@@ -198,7 +198,15 @@ fn lower_program(
             functions
                 .iter()
                 .filter_map(|function| function.props.as_ref().map(|props| props.source.clone())),
-        );
+        )
+        .chain(functions.iter().flat_map(|function| {
+            function.props.iter().flat_map(|props| {
+                props
+                    .bindings
+                    .iter()
+                    .filter_map(|binding| binding.default_local.clone())
+            })
+        }));
     let mut module_names = NameAllocator::new(source_names);
     let imports = helpers
         .into_iter()
@@ -747,6 +755,10 @@ fn lower_component_props_plan(
             property: property.key.clone(),
             local: binding.display_name.clone(),
             references: property.references.clone(),
+            default_value: property.default_value,
+            default_local: property
+                .default_value
+                .map(|_| names.allocate("__fictPropDefault")),
             origin: property.origin,
         });
     }
