@@ -2046,6 +2046,38 @@ mod tests {
     }
 
     #[test]
+    fn emits_authored_classic_loops_from_structured_hir() {
+        let source = "import { $state } from 'fict'; export function App() { let count = $state(0); while (count < 1) count++; do { count++; } while (count < 2); for (let index = 0; index < 1; index++) { count += index; } return count; }";
+        let result = compile(request(source, "classic-loops.js"));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+        assert!(
+            result.code.contains("while (count() < 1)"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("while (count() < 2)"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("for (let index = 0; index < 1; index++)"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("__fict_previous + 1"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("count() + index"), "{}", result.code);
+    }
+
+    #[test]
     fn applies_native_diagnostic_policy_precedence() {
         let finding = || {
             Diagnostic::new(

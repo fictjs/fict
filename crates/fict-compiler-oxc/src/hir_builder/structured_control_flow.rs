@@ -136,10 +136,18 @@ impl<'a> Visit<'a> for PlanCollector<'_> {
 struct PlanBuilder {
     blocks: Vec<PlannedBlock>,
     owners: Vec<SpanOwner>,
+    control_targets: Vec<ControlTarget>,
     supported: bool,
     has_control_flow: bool,
     function_scope: ScopeId,
     body_span: SourceSpan,
+}
+
+#[derive(Debug, Clone)]
+struct ControlTarget {
+    label: Option<String>,
+    break_target: BlockId,
+    continue_target: Option<BlockId>,
 }
 
 impl PlanBuilder {
@@ -155,6 +163,7 @@ impl PlanBuilder {
                 terminator: PlannedTerminator::Unreachable { origin: body_span },
             }],
             owners: Vec::new(),
+            control_targets: Vec::new(),
             supported: true,
             has_control_flow: false,
             function_scope,
@@ -216,6 +225,12 @@ impl PlanBuilder {
         match statement {
             Statement::BlockStatement(block) => self.lower_block(block, current),
             Statement::IfStatement(statement) => self.lower_if(statement, current),
+            Statement::DoWhileStatement(statement) => self.lower_do_while(statement, current, None),
+            Statement::WhileStatement(statement) => self.lower_while(statement, current, None),
+            Statement::ForStatement(statement) => self.lower_for(statement, current, None),
+            Statement::LabeledStatement(statement) => self.lower_labeled(statement, current),
+            Statement::BreakStatement(statement) => self.lower_break(statement, current),
+            Statement::ContinueStatement(statement) => self.lower_continue(statement, current),
             Statement::ReturnStatement(statement) => {
                 let value = statement
                     .argument
@@ -245,16 +260,10 @@ impl PlanBuilder {
                 };
                 None
             }
-            Statement::DoWhileStatement(_)
-            | Statement::WhileStatement(_)
-            | Statement::ForStatement(_)
-            | Statement::ForInStatement(_)
+            Statement::ForInStatement(_)
             | Statement::ForOfStatement(_)
             | Statement::SwitchStatement(_)
             | Statement::TryStatement(_)
-            | Statement::LabeledStatement(_)
-            | Statement::BreakStatement(_)
-            | Statement::ContinueStatement(_)
             | Statement::WithStatement(_) => {
                 self.supported = false;
                 self.owners.push(SpanOwner {
@@ -289,19 +298,20 @@ impl PlanBuilder {
             span: test,
             block: current,
         });
+        let scope = self.blocks[current.as_usize()].scope;
 
         let consequent = self.new_block(
-            statement_scope(&statement.consequent, self.function_scope),
+            statement_scope(&statement.consequent, scope),
             source_span(statement.consequent.span()),
         );
         let alternate = match &statement.alternate {
             Some(alternate) => self.new_block(
-                statement_scope(alternate, self.function_scope),
+                statement_scope(alternate, scope),
                 source_span(alternate.span()),
             ),
-            None => self.new_block(self.function_scope, origin),
+            None => self.new_block(scope, origin),
         };
-        let join = self.new_block(self.function_scope, origin);
+        let join = self.new_block(scope, origin);
         self.blocks[current.as_usize()].source_kind = Some(StructuredSourceKind::Conditional);
         self.blocks[current.as_usize()].source_exit = Some(join);
         self.blocks[current.as_usize()].source_origin = Some(origin);
@@ -333,6 +343,303 @@ impl PlanBuilder {
             };
         }
         Some(join)
+    }
+
+    fn lower_while(
+        &mut self,
+        statement: &oxc::ast::ast::WhileStatement<'_>,
+        current: BlockId,
+        label: Option<String>,
+    ) -> Option<BlockId> {
+        self.has_control_flow = true;
+        let origin = source_span(statement.span);
+        let scope = self.blocks[current.as_usize()].scope;
+        let header = self.new_block(scope, origin);
+        let body = self.new_block(
+            statement_scope(&statement.body, scope),
+            source_span(statement.body.span()),
+        );
+        let exit = self.new_block(scope, origin);
+        self.blocks[current.as_usize()].terminator = PlannedTerminator::Goto {
+            target: header,
+            origin,
+        };
+
+        let test = source_span(statement.test.span());
+        self.owners.push(SpanOwner {
+            span: test,
+            block: header,
+        });
+        self.set_loop_hint(header, StructuredSourceKind::WhileLoop, exit, origin);
+        self.blocks[header.as_usize()].terminator = PlannedTerminator::Branch {
+            test,
+            has_effects: expression_has_effects(&statement.test),
+            consequent: body,
+            alternate: exit,
+            origin,
+        };
+
+        self.control_targets.push(ControlTarget {
+            label,
+            break_target: exit,
+            continue_target: Some(header),
+        });
+        let body_end = self.lower_statement(&statement.body, body);
+        self.control_targets.pop();
+        if let Some(body_end) = body_end {
+            self.blocks[body_end.as_usize()].terminator = PlannedTerminator::Goto {
+                target: header,
+                origin: source_span(statement.body.span()),
+            };
+        }
+        Some(exit)
+    }
+
+    fn lower_do_while(
+        &mut self,
+        statement: &oxc::ast::ast::DoWhileStatement<'_>,
+        current: BlockId,
+        label: Option<String>,
+    ) -> Option<BlockId> {
+        self.has_control_flow = true;
+        let origin = source_span(statement.span);
+        let scope = self.blocks[current.as_usize()].scope;
+        let header = self.new_block(scope, origin);
+        let body = self.new_block(
+            statement_scope(&statement.body, scope),
+            source_span(statement.body.span()),
+        );
+        let test_block = self.new_block(scope, source_span(statement.test.span()));
+        let exit = self.new_block(scope, origin);
+        self.blocks[current.as_usize()].terminator = PlannedTerminator::Goto {
+            target: header,
+            origin,
+        };
+        self.set_loop_hint(header, StructuredSourceKind::DoWhileLoop, exit, origin);
+        self.blocks[header.as_usize()].terminator = PlannedTerminator::Goto {
+            target: body,
+            origin,
+        };
+
+        let test = source_span(statement.test.span());
+        self.owners.push(SpanOwner {
+            span: test,
+            block: test_block,
+        });
+        self.blocks[test_block.as_usize()].terminator = PlannedTerminator::Branch {
+            test,
+            has_effects: expression_has_effects(&statement.test),
+            consequent: header,
+            alternate: exit,
+            origin,
+        };
+
+        self.control_targets.push(ControlTarget {
+            label,
+            break_target: exit,
+            continue_target: Some(test_block),
+        });
+        let body_end = self.lower_statement(&statement.body, body);
+        self.control_targets.pop();
+        if let Some(body_end) = body_end {
+            self.blocks[body_end.as_usize()].terminator = PlannedTerminator::Goto {
+                target: test_block,
+                origin: source_span(statement.body.span()),
+            };
+        }
+        Some(exit)
+    }
+
+    fn lower_for(
+        &mut self,
+        statement: &oxc::ast::ast::ForStatement<'_>,
+        current: BlockId,
+        label: Option<String>,
+    ) -> Option<BlockId> {
+        self.has_control_flow = true;
+        let origin = source_span(statement.span);
+        let parent_scope = self.blocks[current.as_usize()].scope;
+        let loop_scope = statement
+            .scope_id
+            .get()
+            .map_or(parent_scope, |scope| ScopeId::new(count_u32(scope.index())));
+        let preheader = if let Some(initializer) = &statement.init {
+            let span = source_span(initializer.span());
+            let block = self.new_block(loop_scope, span);
+            self.blocks[current.as_usize()].terminator = PlannedTerminator::Goto {
+                target: block,
+                origin,
+            };
+            self.owners.push(SpanOwner { span, block });
+            block
+        } else {
+            current
+        };
+        let header = self.new_block(loop_scope, origin);
+        let body = self.new_block(
+            statement_scope(&statement.body, loop_scope),
+            source_span(statement.body.span()),
+        );
+        let update = self.new_block(
+            loop_scope,
+            statement
+                .update
+                .as_ref()
+                .map_or(origin, |update| source_span(update.span())),
+        );
+        let exit = self.new_block(parent_scope, origin);
+        self.blocks[preheader.as_usize()].terminator = PlannedTerminator::Goto {
+            target: header,
+            origin,
+        };
+        self.set_loop_hint(header, StructuredSourceKind::ForLoop, exit, origin);
+
+        if let Some(test_expression) = &statement.test {
+            let test = source_span(test_expression.span());
+            self.owners.push(SpanOwner {
+                span: test,
+                block: header,
+            });
+            self.blocks[header.as_usize()].terminator = PlannedTerminator::Branch {
+                test,
+                has_effects: expression_has_effects(test_expression),
+                consequent: body,
+                alternate: exit,
+                origin,
+            };
+        } else {
+            self.blocks[header.as_usize()].terminator = PlannedTerminator::Goto {
+                target: body,
+                origin,
+            };
+        }
+        if let Some(update_expression) = &statement.update {
+            self.owners.push(SpanOwner {
+                span: source_span(update_expression.span()),
+                block: update,
+            });
+        }
+        self.blocks[update.as_usize()].terminator = PlannedTerminator::Goto {
+            target: header,
+            origin,
+        };
+
+        self.control_targets.push(ControlTarget {
+            label,
+            break_target: exit,
+            continue_target: Some(update),
+        });
+        let body_end = self.lower_statement(&statement.body, body);
+        self.control_targets.pop();
+        if let Some(body_end) = body_end {
+            self.blocks[body_end.as_usize()].terminator = PlannedTerminator::Goto {
+                target: update,
+                origin: source_span(statement.body.span()),
+            };
+        }
+        Some(exit)
+    }
+
+    fn lower_labeled(
+        &mut self,
+        statement: &oxc::ast::ast::LabeledStatement<'_>,
+        current: BlockId,
+    ) -> Option<BlockId> {
+        let label = Some(statement.label.name.to_string());
+        match &statement.body {
+            Statement::WhileStatement(loop_statement) => {
+                self.lower_while(loop_statement, current, label)
+            }
+            Statement::DoWhileStatement(loop_statement) => {
+                self.lower_do_while(loop_statement, current, label)
+            }
+            Statement::ForStatement(loop_statement) => {
+                self.lower_for(loop_statement, current, label)
+            }
+            _ => {
+                self.supported = false;
+                self.owners.push(SpanOwner {
+                    span: source_span(statement.span),
+                    block: current,
+                });
+                Some(current)
+            }
+        }
+    }
+
+    fn lower_break(
+        &mut self,
+        statement: &oxc::ast::ast::BreakStatement<'_>,
+        current: BlockId,
+    ) -> Option<BlockId> {
+        let label = statement.label.as_ref().map(|label| label.name.as_str());
+        let target = label.map_or_else(
+            || {
+                self.control_targets
+                    .last()
+                    .map(|target| target.break_target)
+            },
+            |label| {
+                self.control_targets
+                    .iter()
+                    .rev()
+                    .find(|target| target.label.as_deref() == Some(label))
+                    .map(|target| target.break_target)
+            },
+        );
+        let Some(target) = target else {
+            self.supported = false;
+            return Some(current);
+        };
+        self.blocks[current.as_usize()].terminator = PlannedTerminator::Goto {
+            target,
+            origin: source_span(statement.span),
+        };
+        None
+    }
+
+    fn lower_continue(
+        &mut self,
+        statement: &oxc::ast::ast::ContinueStatement<'_>,
+        current: BlockId,
+    ) -> Option<BlockId> {
+        let label = statement.label.as_ref().map(|label| label.name.as_str());
+        let target = label.map_or_else(
+            || {
+                self.control_targets
+                    .iter()
+                    .rev()
+                    .find_map(|target| target.continue_target)
+            },
+            |label| {
+                self.control_targets
+                    .iter()
+                    .rev()
+                    .find(|target| target.label.as_deref() == Some(label))
+                    .and_then(|target| target.continue_target)
+            },
+        );
+        let Some(target) = target else {
+            self.supported = false;
+            return Some(current);
+        };
+        self.blocks[current.as_usize()].terminator = PlannedTerminator::Goto {
+            target,
+            origin: source_span(statement.span),
+        };
+        None
+    }
+
+    fn set_loop_hint(
+        &mut self,
+        header: BlockId,
+        kind: StructuredSourceKind,
+        exit: BlockId,
+        origin: SourceSpan,
+    ) {
+        self.blocks[header.as_usize()].source_kind = Some(kind);
+        self.blocks[header.as_usize()].source_exit = Some(exit);
+        self.blocks[header.as_usize()].source_origin = Some(origin);
     }
 
     fn new_block(&mut self, scope: ScopeId, origin: SourceSpan) -> BlockId {

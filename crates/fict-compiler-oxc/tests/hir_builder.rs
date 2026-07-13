@@ -169,11 +169,11 @@ fn lowers_throw_values_into_their_conditional_block() {
 }
 
 #[test]
-fn keeps_unsupported_mixed_flow_on_the_conservative_fallback_path() {
+fn keeps_unimplemented_for_of_flow_on_the_conservative_fallback_path() {
     let source = r#"
         function work(flag) {
             if (flag) return 1;
-            while (flag) flag = false;
+            for (const item of [0]) flag = item;
             return 0;
         }
     "#;
@@ -208,6 +208,118 @@ fn keeps_unsupported_mixed_flow_on_the_conservative_fallback_path() {
                 _ => false,
             })
     );
+}
+
+#[test]
+fn lowers_classic_loops_and_labeled_control_edges() {
+    let source = r#"
+        function loops(limit) {
+            let value = 0;
+            outer: for (let index = 0; index < limit; index++) {
+                while (value < limit) {
+                    value++;
+                    if (value === 1) continue;
+                    if (value === 2) continue outer;
+                    break outer;
+                }
+            }
+            do {
+                value++;
+                if (value > 10) break;
+            } while (value < limit);
+            return value;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified loop CFG");
+    let loops = hir
+        .bindings
+        .iter()
+        .find(|binding| binding.display_name == "loops")
+        .expect("loops binding")
+        .id;
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| function.binding == Some(loops))
+        .expect("loops function");
+
+    let loop_headers: Vec<_> = function
+        .blocks
+        .iter()
+        .filter_map(|block| block.source_hint.as_ref().map(|hint| (block.id, hint)))
+        .collect();
+    assert_eq!(
+        loop_headers
+            .iter()
+            .filter(|(_, hint)| matches!(
+                hint.kind,
+                StructuredSourceKind::ForLoop
+                    | StructuredSourceKind::WhileLoop
+                    | StructuredSourceKind::DoWhileLoop
+            ))
+            .count(),
+        3,
+        "{loop_headers:#?}"
+    );
+    let for_loop = loop_headers
+        .iter()
+        .find(|(_, hint)| matches!(hint.kind, StructuredSourceKind::ForLoop))
+        .expect("for loop");
+    let while_loop = loop_headers
+        .iter()
+        .find(|(_, hint)| matches!(hint.kind, StructuredSourceKind::WhileLoop))
+        .expect("while loop");
+    let do_while_loop = loop_headers
+        .iter()
+        .find(|(_, hint)| matches!(hint.kind, StructuredSourceKind::DoWhileLoop))
+        .expect("do-while loop");
+    assert!(for_loop.1.exit.is_some());
+    assert!(while_loop.1.exit.is_some());
+    assert!(do_while_loop.1.exit.is_some());
+    let for_update = function
+        .blocks
+        .iter()
+        .find(|block| {
+            block
+                .origin
+                .primary_span
+                .and_then(|span| source.get(span.start() as usize..span.end() as usize))
+                == Some("index++")
+        })
+        .expect("for update block")
+        .id;
+
+    let terminator_for = |text: &str| {
+        function.blocks.iter().find_map(|block| {
+            let span = block.terminator.origin.primary_span?;
+            (source
+                .get(span.start() as usize..span.end() as usize)
+                .is_some_and(|candidate| candidate == text))
+            .then_some(&block.terminator.kind)
+        })
+    };
+    assert!(matches!(
+        terminator_for("continue;"),
+        Some(TerminatorKind::Goto { target }) if *target == while_loop.0
+    ));
+    assert!(matches!(
+        terminator_for("break outer;"),
+        Some(TerminatorKind::Goto { target }) if Some(*target) == for_loop.1.exit
+    ));
+    assert!(matches!(
+        terminator_for("continue outer;"),
+        Some(TerminatorKind::Goto { target }) if *target == for_update
+    ));
+    assert!(matches!(
+        terminator_for("break;"),
+        Some(TerminatorKind::Goto { target }) if Some(*target) == do_while_loop.1.exit
+    ));
 }
 
 #[test]

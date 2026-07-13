@@ -2,7 +2,7 @@ use fict_compiler::{CorePassBudgets, CorePassOptions, run_core_passes};
 use fict_compiler_oxc::{
     HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, build_hir,
 };
-use fict_hir::FunctionKind;
+use fict_hir::{FunctionKind, StructuredSourceKind};
 
 fn build_fixture() -> fict_hir::HirFile {
     let output = build_hir(
@@ -124,4 +124,70 @@ fn analyzes_frontend_if_cfg_as_control_dependent_reactive_work() {
             .count(),
         4
     );
+}
+
+#[test]
+fn analyzes_frontend_while_cfg_with_a_backedge_and_reactive_phi() {
+    let frontend = build_hir(
+        r#"
+            import { $state } from 'fict';
+            export function App() {
+                let count = $state(0);
+                while (count < 3) count++;
+                return <span>{count}</span>;
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScriptJsx,
+            module_kind: OxcModuleKind::Module,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified frontend loop CFG"),
+        CorePassOptions::default(),
+    )
+    .expect("core passes over loop CFG");
+    let app = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| function.kind == FunctionKind::Component)
+        .expect("component function");
+    let analysis = &output.functions[app.id.as_usize()];
+    let count = app
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("count"))
+        .expect("count local")
+        .id;
+
+    assert_eq!(app.blocks.len(), 4);
+    assert_eq!(analysis.ssa.cfg.back_edges.len(), 1);
+    assert_eq!(analysis.ssa.cfg.loop_headers.len(), 1);
+    assert!(
+        analysis
+            .ssa
+            .phis
+            .iter()
+            .any(|phi| phi.target.local == count)
+    );
+    assert!(!analysis.dependencies.control_flow_reads.is_empty());
+    assert_eq!(analysis.structurize.stats.loops, 1);
+    assert!(analysis.structurize.fallback.is_none());
+    let header = analysis.ssa.cfg.loop_headers[0];
+    assert!(matches!(
+        app.blocks[header.as_usize()]
+            .source_hint
+            .as_ref()
+            .map(|hint| &hint.kind),
+        Some(StructuredSourceKind::WhileLoop)
+    ));
 }
