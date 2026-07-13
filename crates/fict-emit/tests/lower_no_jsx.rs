@@ -325,6 +325,7 @@ fn selects_hook_context_helpers_inside_components() {
 #[test]
 fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
     let mut hir = fixture(FunctionKind::Module);
+    hir.source_len = 100;
     hir.functions[0].locals.clear();
     hir.functions[0].values = vec![
         value(
@@ -333,6 +334,8 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
         ),
         value(1, ValueKind::InstructionResult),
     ];
+    let binding_origin = Origin::source(SourceSpan::new(10, 17).expect("binding span"));
+    hir.functions[0].values[0].origin = binding_origin;
     hir.functions[0].blocks[0].instructions = vec![
         instruction(
             Some(0),
@@ -414,6 +417,12 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
     assert!(declare.0.contains("&lt;hello&gt;"));
     assert!(program.functions[0].operations.iter().any(|operation| {
         matches!(operation, EmitOperation::CloneTemplate { source_result, .. } if *source_result == ValueId::new(1))
+    }));
+    assert!(program.functions[0].operations.iter().any(|operation| {
+        matches!(
+            operation,
+            EmitOperation::BindDom { origin, .. } if *origin == binding_origin
+        )
     }));
     assert!(program.functions[0].operations.iter().any(|operation| {
         matches!(operation, EmitOperation::ResolveElement { path, .. } if path == &[1])

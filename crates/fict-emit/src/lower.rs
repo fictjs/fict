@@ -823,6 +823,7 @@ fn lower_jsx_instruction(
     for binding in serialized.bindings {
         match binding {
             TemplateBinding::Attribute { path, name, value } => {
+                let origin = hir.functions[function_id.as_usize()].values[value.as_usize()].origin;
                 let element = resolved_element(
                     root,
                     path,
@@ -830,7 +831,7 @@ fn lower_jsx_instruction(
                     temporaries,
                     temporary_names,
                     operations,
-                    instruction.origin,
+                    origin,
                 );
                 let reactive = !matches!(
                     hir.functions[function_id.as_usize()].values[value.as_usize()].kind,
@@ -844,7 +845,7 @@ fn lower_jsx_instruction(
                     value: lower_value(value, value_temporaries),
                     reactive,
                     helper,
-                    origin: instruction.origin,
+                    origin,
                 });
             }
             TemplateBinding::Spread {
@@ -852,6 +853,7 @@ fn lower_jsx_instruction(
                 value,
                 namespace,
             } => {
+                let origin = hir.functions[function_id.as_usize()].values[value.as_usize()].origin;
                 let element = resolved_element(
                     root,
                     path,
@@ -859,7 +861,7 @@ fn lower_jsx_instruction(
                     temporaries,
                     temporary_names,
                     operations,
-                    instruction.origin,
+                    origin,
                 );
                 operations.push(EmitOperation::ApplyProps {
                     target: element,
@@ -870,7 +872,7 @@ fn lower_jsx_instruction(
                         excluded: Vec::new(),
                     },
                     helper: RuntimeHelper::Spread,
-                    origin: instruction.origin,
+                    origin,
                 });
             }
             TemplateBinding::Child {
@@ -878,6 +880,7 @@ fn lower_jsx_instruction(
                 value,
                 namespace,
             } => {
+                let origin = hir.functions[function_id.as_usize()].values[value.as_usize()].origin;
                 let parent = resolved_element(
                     root,
                     parent_path,
@@ -885,7 +888,7 @@ fn lower_jsx_instruction(
                     temporaries,
                     temporary_names,
                     operations,
-                    instruction.origin,
+                    origin,
                 );
                 operations.push(EmitOperation::Insert {
                     parent,
@@ -893,7 +896,7 @@ fn lower_jsx_instruction(
                     before: None,
                     namespace,
                     helper: RuntimeHelper::Insert,
-                    origin: instruction.origin,
+                    origin,
                 });
             }
             TemplateBinding::Event {
@@ -901,6 +904,8 @@ fn lower_jsx_instruction(
                 event,
                 handler,
             } => {
+                let origin =
+                    hir.functions[function_id.as_usize()].values[handler.as_usize()].origin;
                 let element = resolved_element(
                     root,
                     path,
@@ -908,7 +913,7 @@ fn lower_jsx_instruction(
                     temporaries,
                     temporary_names,
                     operations,
-                    instruction.origin,
+                    origin,
                 );
                 let delegated = DELEGATED_EVENTS.contains(&event.as_str());
                 operations.push(EmitOperation::BindEvent {
@@ -922,10 +927,12 @@ fn lower_jsx_instruction(
                         RuntimeHelper::BindEvent
                     },
                     cleanup,
-                    origin: instruction.origin,
+                    origin,
                 });
             }
             TemplateBinding::Ref { path, reference } => {
+                let origin =
+                    hir.functions[function_id.as_usize()].values[reference.as_usize()].origin;
                 let element = resolved_element(
                     root,
                     path,
@@ -933,14 +940,14 @@ fn lower_jsx_instruction(
                     temporaries,
                     temporary_names,
                     operations,
-                    instruction.origin,
+                    origin,
                 );
                 operations.push(EmitOperation::BindRef {
                     element,
                     reference: lower_value(reference, value_temporaries),
                     helper: RuntimeHelper::BindRef,
                     cleanup,
-                    origin: instruction.origin,
+                    origin,
                 });
             }
         }
