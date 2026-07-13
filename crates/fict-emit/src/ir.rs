@@ -243,6 +243,12 @@ pub enum EmitOperation {
         target: Option<EmitTemporaryId>,
         origin: Origin,
     },
+    /// Materialize one complete JSX root as a Fict VNode fallback.
+    CreateVNode {
+        template: TemplateId,
+        source_result: ValueId,
+        origin: Origin,
+    },
     DeclareTemplate {
         template: TemplateId,
         html: String,
@@ -361,6 +367,7 @@ impl EmitOperation {
             | Self::TrackRuntimeReactive { .. }
             | Self::WriteReactive { .. }
             | Self::UpdateReactive { .. }
+            | Self::CreateVNode { .. }
             | Self::CloneTemplate { .. }
             | Self::InvokeComponent { .. }
             | Self::Return { .. } => None,
@@ -427,6 +434,7 @@ impl EmitOperation {
             Self::PreserveHir { .. }
             | Self::TrackRuntimeReactive { .. }
             | Self::ReadReactive { .. }
+            | Self::CreateVNode { .. }
             | Self::DeclareTemplate { .. }
             | Self::CloneTemplate { .. }
             | Self::ResolveElement { .. } => {}

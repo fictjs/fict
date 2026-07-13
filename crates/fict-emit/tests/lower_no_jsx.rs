@@ -459,6 +459,33 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
     assert!(!declare.0.contains("onClick"));
     assert!(!declare.0.contains(" ref"));
 
+    let vnode = lower_core(
+        &hir,
+        &regions,
+        &cycles,
+        NoJsxLoweringOptions {
+            fine_grained_dom: false,
+            ..NoJsxLoweringOptions::default()
+        },
+    )
+    .expect("VNode JSX fallback");
+    assert!(vnode.functions[0].operations.iter().any(|operation| {
+        matches!(
+            operation,
+            EmitOperation::CreateVNode {
+                template,
+                source_result,
+                ..
+            } if *template == TemplateId::new(0) && *source_result == ValueId::new(1)
+        )
+    }));
+    assert!(
+        !vnode.functions[0]
+            .operations
+            .iter()
+            .any(|operation| { matches!(operation, EmitOperation::DeclareTemplate { .. }) })
+    );
+
     let diagnostics = lower_no_jsx(&hir, &regions, &cycles, NoJsxLoweringOptions::default())
         .expect_err("no-JSX phase rejects JSX");
     assert!(

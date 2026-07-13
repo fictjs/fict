@@ -440,6 +440,23 @@ fn verify_operations(
                 }
                 verify_cleanup(function, analysis, *cleanup, diagnostics);
             }
+            EmitOperation::CreateVNode {
+                template,
+                source_result,
+                ..
+            } => {
+                verify_source_result(hir_function, *source_result, diagnostics);
+                if hir
+                    .templates
+                    .get(template.as_usize())
+                    .is_none_or(|item| item.owner != function.source)
+                {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-VNODE",
+                        "VNode operation must reference a JSX template owned by its function",
+                    ));
+                }
+            }
             EmitOperation::DeclareTemplate {
                 template,
                 html,
@@ -644,6 +661,7 @@ fn verify_helper_semantics(
         | EmitOperation::TrackRuntimeReactive { .. }
         | EmitOperation::WriteReactive { .. }
         | EmitOperation::UpdateReactive { .. }
+        | EmitOperation::CreateVNode { .. }
         | EmitOperation::CloneTemplate { .. }
         | EmitOperation::InvokeComponent { .. }
         | EmitOperation::Return { .. } => true,

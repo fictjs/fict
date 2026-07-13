@@ -201,6 +201,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
             runtime_family,
             strict_guarantee: request.options.strict_guarantee,
             preview: false,
+            fine_grained_dom: request.options.fine_grained_dom,
         },
     ) {
         Ok(emit) => emit,

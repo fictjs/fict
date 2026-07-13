@@ -27,6 +27,8 @@ pub struct NoJsxLoweringOptions {
     pub strict_guarantee: bool,
     /// Allow Preview ABI helpers (none are emitted by this phase).
     pub preview: bool,
+    /// Emit fine-grained DOM operations instead of the complete VNode fallback.
+    pub fine_grained_dom: bool,
 }
 
 impl Default for NoJsxLoweringOptions {
@@ -35,6 +37,7 @@ impl Default for NoJsxLoweringOptions {
             runtime_family: RuntimeFamily::Fict,
             strict_guarantee: true,
             preview: false,
+            fine_grained_dom: true,
         }
     }
 }
@@ -131,6 +134,7 @@ fn lower_program(
             &regions[function_index],
             &reactive_bindings,
             allow_jsx,
+            options.fine_grained_dom,
         )?);
     }
     let helpers: BTreeSet<_> = functions
@@ -286,6 +290,7 @@ fn lower_function(
     regions: &RegionAnalysis,
     reactive_bindings: &BTreeMap<fict_hir::BindingId, ReactiveBindingSite>,
     allow_jsx: bool,
+    fine_grained_dom: bool,
 ) -> Result<EmitFunction, DiagnosticBundle> {
     let function = &hir.functions[function_id.as_usize()];
     let declarations_by_value: BTreeMap<_, _> = function
@@ -622,18 +627,33 @@ fn lower_function(
                     });
                 }
                 HirInstructionKind::Jsx { template } if allow_jsx => {
-                    lower_jsx_instruction(
-                        hir,
-                        function_id,
-                        *template,
-                        instruction,
-                        &mut declared_templates,
-                        &mut temporaries,
-                        &mut temporary_names,
-                        &mut value_temporaries,
-                        &mut operations,
-                        cleanup,
-                    )?;
+                    if fine_grained_dom {
+                        lower_jsx_instruction(
+                            hir,
+                            function_id,
+                            *template,
+                            instruction,
+                            &mut declared_templates,
+                            &mut temporaries,
+                            &mut temporary_names,
+                            &mut value_temporaries,
+                            &mut operations,
+                            cleanup,
+                        )?;
+                    } else {
+                        let Some(source_result) = instruction.result else {
+                            return Err(DiagnosticBundle::new(vec![lower_error(
+                                "FICT-EMIT-VNODE-RESULT",
+                                "VNode JSX lowering requires a source result",
+                                GuaranteeClass::Internal,
+                            )]));
+                        };
+                        operations.push(EmitOperation::CreateVNode {
+                            template: *template,
+                            source_result,
+                            origin: instruction.origin,
+                        });
+                    }
                 }
                 _ => preserve(&mut operations, block.id, instruction_index, instruction),
             }

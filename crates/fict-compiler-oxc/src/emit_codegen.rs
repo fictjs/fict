@@ -341,7 +341,8 @@ fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
             EmitOperation::UpdateReactive { projections, .. } => !projections.is_empty(),
             _ => matches!(
                 operation,
-                EmitOperation::DeclareTemplate { .. }
+                EmitOperation::CreateVNode { .. }
+                    | EmitOperation::DeclareTemplate { .. }
                     | EmitOperation::CloneTemplate { .. }
                     | EmitOperation::ResolveElement { .. }
                     | EmitOperation::InvokeComponent { .. }
@@ -1094,6 +1095,7 @@ fn operation_origin(operation: &EmitOperation) -> fict_hir::Origin {
         | EmitOperation::RegisterEffect { origin, .. }
         | EmitOperation::WriteReactive { origin, .. }
         | EmitOperation::UpdateReactive { origin, .. }
+        | EmitOperation::CreateVNode { origin, .. }
         | EmitOperation::DeclareTemplate { origin, .. }
         | EmitOperation::CloneTemplate { origin, .. }
         | EmitOperation::ResolveElement { origin, .. }
