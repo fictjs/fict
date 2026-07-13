@@ -378,6 +378,7 @@ pub enum EmitOperation {
         items: Origin,
         key: Origin,
         render: FunctionId,
+        render_key: String,
         item_references: Vec<Origin>,
         index_references: Vec<Origin>,
         needs_index: bool,

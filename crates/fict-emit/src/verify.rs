@@ -572,6 +572,7 @@ fn verify_operations(
             EmitOperation::KeyedChild {
                 source_result,
                 render,
+                render_key,
                 items,
                 key,
                 item_references,
@@ -582,6 +583,7 @@ fn verify_operations(
                 verify_source_result(hir_function, *source_result, diagnostics);
                 verify_cleanup(function, analysis, *cleanup, diagnostics);
                 if hir.functions.get(render.as_usize()).is_none()
+                    || !valid_identifier(render_key)
                     || items.primary_span.is_none()
                     || key.primary_span.is_none()
                     || item_references

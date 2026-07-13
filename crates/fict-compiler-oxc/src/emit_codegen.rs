@@ -130,6 +130,8 @@ pub fn emit_program(
         vnode_shadowed_clones: BTreeSet::new(),
         active_list_reads: BTreeSet::new(),
         matched_list_reads: BTreeSet::new(),
+        active_list_key_local: None,
+        active_list_key_origin: None,
         suppressed_evaluations: BTreeSet::new(),
         prefer_template_clones: 0,
         vnode_depth: 0,
@@ -956,6 +958,7 @@ enum FineJsxStep {
         value_origin: SourceSpan,
         items_origin: SourceSpan,
         key_origin: SourceSpan,
+        render_key: String,
         item_references: Vec<SourceSpan>,
         index_references: Vec<SourceSpan>,
         needs_index: bool,
@@ -1777,6 +1780,7 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                     target,
                     items,
                     key,
+                    render_key,
                     item_references,
                     index_references,
                     needs_index,
@@ -1921,6 +1925,7 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                         value_origin,
                         items_origin,
                         key_origin,
+                        render_key: render_key.clone(),
                         item_references,
                         index_references,
                         needs_index: *needs_index,
@@ -2131,6 +2136,8 @@ struct AstRewriter<'a, 'emit> {
     vnode_shadowed_clones: BTreeSet<(u32, u32)>,
     active_list_reads: BTreeSet<(u32, u32)>,
     matched_list_reads: BTreeSet<(u32, u32)>,
+    active_list_key_local: Option<String>,
+    active_list_key_origin: Option<(u32, u32)>,
     suppressed_evaluations: BTreeSet<(u32, u32)>,
     prefer_template_clones: usize,
     vnode_depth: usize,
@@ -2166,6 +2173,18 @@ fn jsx_attribute_node_span(value: &Option<JSXAttributeValue<'_>>) -> Option<Span
                 _ => None,
             }),
         Some(JSXAttributeValue::StringLiteral(_)) | None => None,
+    }
+}
+
+fn jsx_attribute_source_span(value: &Option<JSXAttributeValue<'_>>) -> Option<Span> {
+    match value {
+        Some(JSXAttributeValue::StringLiteral(literal)) => Some(literal.span),
+        Some(JSXAttributeValue::ExpressionContainer(container)) => {
+            container.expression.as_expression().map(GetSpan::span)
+        }
+        Some(JSXAttributeValue::Element(element)) => Some(element.span),
+        Some(JSXAttributeValue::Fragment(fragment)) => Some(fragment.span),
+        None => None,
     }
 }
 
@@ -2985,6 +3004,7 @@ impl<'a> AstRewriter<'a, '_> {
                     value_origin,
                     items_origin,
                     key_origin,
+                    render_key,
                     item_references,
                     index_references,
                     needs_index,
@@ -3012,6 +3032,7 @@ impl<'a> AstRewriter<'a, '_> {
                         namespace,
                         items_origin,
                         key_origin,
+                        &render_key,
                         &item_references,
                         &index_references,
                         needs_index,
@@ -3056,6 +3077,7 @@ impl<'a> AstRewriter<'a, '_> {
         namespace: DomNamespace,
         items_origin: SourceSpan,
         key_origin: SourceSpan,
+        render_key: &str,
         item_references: &[SourceSpan],
         index_references: &[SourceSpan],
         needs_index: bool,
@@ -3111,7 +3133,7 @@ impl<'a> AstRewriter<'a, '_> {
             );
             return;
         };
-        let Expression::ArrowFunctionExpression(render_callback) =
+        let Expression::ArrowFunctionExpression(mut render_callback) =
             callback.into_expression().into_inner_expression()
         else {
             self.diagnostics.push(
@@ -3157,6 +3179,7 @@ impl<'a> AstRewriter<'a, '_> {
         };
         *key_body = key_expression;
         let key_callback = Expression::ArrowFunctionExpression(key_callback);
+        append_arrow_parameter(self.allocator, &mut render_callback, render_key, span);
 
         let expected_reads: BTreeSet<_> = item_references
             .iter()
@@ -3165,6 +3188,10 @@ impl<'a> AstRewriter<'a, '_> {
             .collect();
         let previous_reads = std::mem::replace(&mut self.active_list_reads, expected_reads.clone());
         let previous_matches = std::mem::take(&mut self.matched_list_reads);
+        let previous_key_local = self.active_list_key_local.replace(render_key.to_owned());
+        let previous_key_origin = self
+            .active_list_key_origin
+            .replace((key_origin.start(), key_origin.end()));
         let previous_suppressed = self.suppressed_evaluations.clone();
         self.suppressed_evaluations
             .insert((key_origin.start(), key_origin.end()));
@@ -3175,6 +3202,8 @@ impl<'a> AstRewriter<'a, '_> {
         let matched_reads = std::mem::take(&mut self.matched_list_reads);
         self.active_list_reads = previous_reads;
         self.matched_list_reads = previous_matches;
+        self.active_list_key_local = previous_key_local;
+        self.active_list_key_origin = previous_key_origin;
         self.suppressed_evaluations = previous_suppressed;
         if matched_reads != expected_reads {
             self.diagnostics.push(
@@ -3365,7 +3394,21 @@ impl<'a> AstRewriter<'a, '_> {
                             (false, false)
                         }
                     };
-                    let mut value = self.lower_jsx_attribute_value(attribute.value, attribute.span);
+                    let keyed_runtime_value = (name == "key")
+                        .then(|| jsx_attribute_source_span(&attribute.value))
+                        .flatten()
+                        .filter(|source| {
+                            self.active_list_key_origin == Some((source.start, source.end))
+                        })
+                        .and_then(|_| self.active_list_key_local.clone());
+                    let mut value = match keyed_runtime_value {
+                        Some(local) => Expression::new_identifier(
+                            name_span,
+                            self.allocator.alloc_str(&local),
+                            &AstBuilder::new(self.allocator),
+                        ),
+                        None => self.lower_jsx_attribute_value(attribute.value, attribute.span),
+                    };
                     if getter {
                         if let Some(helper) = &component.prop_helper {
                             let arrow =
@@ -4481,6 +4524,28 @@ fn expression_arrow<'a>(
     Expression::new_arrow_function_expression(
         span, true, false, NONE, parameters, NONE, body, &builder,
     )
+}
+
+fn append_arrow_parameter<'a>(
+    allocator: &'a Allocator,
+    arrow: &mut oxc::allocator::Box<'a, ArrowFunctionExpression<'a>>,
+    name: &str,
+    span: Span,
+) {
+    let builder = AstBuilder::new(allocator);
+    let pattern = BindingPattern::new_binding_identifier(span, allocator.alloc_str(name), &builder);
+    arrow.params.items.push(FormalParameter::new(
+        span,
+        ArenaVec::new_in(&allocator),
+        pattern,
+        NONE,
+        NONE,
+        false,
+        None,
+        false,
+        false,
+        &builder,
+    ));
 }
 
 fn generated_parameter_name<'a>(

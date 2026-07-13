@@ -2266,12 +2266,6 @@ fn raw_jsx_list_expression(
     let Expression::JSXElement(element) = returned else {
         return None;
     };
-    if !matches!(
-        element.opening_element.name,
-        OxcJsxElementName::Identifier(_) | OxcJsxElementName::NamespacedName(_)
-    ) {
-        return None;
-    }
     let key = direct_jsx_key_span(element)?;
     let mut references = ListParameterReferenceCollector {
         scoping,

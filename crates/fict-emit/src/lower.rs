@@ -180,6 +180,7 @@ fn lower_program(
                 .iter()
                 .filter_map(|operation| match operation {
                     EmitOperation::DeclareTemplate { local, .. } => Some(local.clone()),
+                    EmitOperation::KeyedChild { render_key, .. } => Some(render_key.clone()),
                     _ => None,
                 })
         }))
@@ -1142,12 +1143,14 @@ fn lower_jsx_instruction(
                     format!("__fict_list{}", value.index()),
                     origin,
                 );
+                let render_key = temporary_names.allocate("__fict_key");
                 operations.push(EmitOperation::KeyedChild {
                     target,
                     source_result: value,
                     items: list.items,
                     key: list.key,
                     render: list.callback,
+                    render_key,
                     item_references: list.item_references,
                     index_references: list.index_references,
                     needs_index: list.needs_index,

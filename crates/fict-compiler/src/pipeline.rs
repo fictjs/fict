@@ -969,6 +969,33 @@ mod tests {
     }
 
     #[test]
+    fn reuses_runtime_keys_for_keyed_component_maps() {
+        let result = compile(request(
+            "import { $state } from 'fict'; const Row = (_props) => null; const __fict_key = 'outer'; export function List() { let rows = $state([{ id: 1, name: 'A' }]); return <main>{rows.map(row => <Row key={makeKey(row)} row={row} label={__fict_key} />)}</main>; }",
+            "keyed-component-map.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.code.contains("createKeyedList("), "{}", result.code);
+        assert!(!result.code.contains("rows.map("), "{}", result.code);
+        assert_eq!(
+            result.code.matches("makeKey(row)").count(),
+            1,
+            "{}",
+            result.code
+        );
+        assert!(!result.code.contains("makeKey(row())"), "{}", result.code);
+        assert!(result.code.contains("type: Row"), "{}", result.code);
+        assert!(result.code.contains("() => row()"), "{}", result.code);
+        assert!(result.code.contains("key: __fict_key_"), "{}", result.code);
+        assert!(
+            result.code.contains("label: __fictProp(() => __fict_key)"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn emits_array_store_and_svg_keyed_map_receivers() {
         let result = compile(request(
             "import { $store } from 'fict'; export function Lists() { const store = $store({ rows: [{ id: 1 }] }); return <main><ul>{store.rows.map(row => <li key={row.id}>{row.id}</li>)}</ul><svg>{[{ id: 2 }].map(row => <circle key={row.id} cx={row.id} />)}</svg></main>; }",
