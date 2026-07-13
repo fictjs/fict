@@ -39,6 +39,7 @@ pub(super) struct PlannedBlock {
     pub origin: SourceSpan,
     pub source_kind: Option<StructuredSourceKind>,
     pub source_exit: Option<BlockId>,
+    pub source_origin: Option<SourceSpan>,
     pub terminator: PlannedTerminator,
 }
 
@@ -150,6 +151,7 @@ impl PlanBuilder {
                 origin: body_span,
                 source_kind: None,
                 source_exit: None,
+                source_origin: None,
                 terminator: PlannedTerminator::Unreachable { origin: body_span },
             }],
             owners: Vec::new(),
@@ -302,6 +304,7 @@ impl PlanBuilder {
         let join = self.new_block(self.function_scope, origin);
         self.blocks[current.as_usize()].source_kind = Some(StructuredSourceKind::Conditional);
         self.blocks[current.as_usize()].source_exit = Some(join);
+        self.blocks[current.as_usize()].source_origin = Some(origin);
         self.blocks[current.as_usize()].terminator = PlannedTerminator::Branch {
             test,
             has_effects: expression_has_effects(&statement.test),
@@ -340,6 +343,7 @@ impl PlanBuilder {
             origin,
             source_kind: None,
             source_exit: None,
+            source_origin: None,
             terminator: PlannedTerminator::Unreachable { origin },
         });
         id
@@ -377,6 +381,10 @@ impl<'a> Visit<'a> for ExpressionEffectCollector {
     }
 
     fn visit_new_expression(&mut self, _expression: &oxc::ast::ast::NewExpression<'a>) {
+        self.found = true;
+    }
+
+    fn visit_import_expression(&mut self, _expression: &oxc::ast::ast::ImportExpression<'a>) {
         self.found = true;
     }
 

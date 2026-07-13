@@ -1082,6 +1082,52 @@ test('Rust compiler output keeps ErrorBoundary children lazy and reset keys reac
   container.remove()
 })
 
+test('Rust compiler rejects call-based reactive control flow at the native boundary', () => {
+  const source = `
+    import { $state } from 'fict'
+    export function App() {
+      const count = $state(0)
+      if (count > 10 && maybe?.()) return <Big />
+      return <Small />
+    }
+  `
+  const request = {
+    code: source,
+    filename: '/fixtures/reactive-control-flow.tsx',
+    moduleId: '/fixtures/reactive-control-flow.tsx',
+  }
+
+  const strict = binding.transformSync(request)
+  assert.equal(strict.code, '')
+  assert.deepEqual(
+    strict.diagnostics.map(diagnostic => [
+      diagnostic.code,
+      diagnostic.severity,
+      diagnostic.guaranteeClass,
+    ]),
+    [['FICT-R006', 'error', 'fallback']],
+  )
+  assert.ok(strict.diagnostics[0].primarySpan)
+  assert.match(strict.diagnostics[0].message, /count/)
+
+  const fallback = binding.transformSync({
+    ...request,
+    options: { strictGuarantee: false },
+  })
+  assert.notEqual(fallback.code, '')
+  assert.deepEqual(
+    fallback.diagnostics.map(diagnostic => [diagnostic.code, diagnostic.severity]),
+    [['FICT-R006', 'warning']],
+  )
+
+  const safe = binding.transformSync({
+    ...request,
+    code: source.replace('count > 10 && maybe?.()', 'count > 10'),
+  })
+  assert.notEqual(safe.code, '')
+  assert.ok(safe.diagnostics.every(diagnostic => diagnostic.code !== 'FICT-R006'))
+})
+
 test('Rust compiler rejects reactive writes in JSX children at the native boundary', () => {
   const source = `
     import { $state } from 'fict'

@@ -10,6 +10,7 @@ use fict_diagnostics::{
 use fict_emit::{NoJsxLoweringOptions, RuntimeFamily, lower_core};
 use fict_metadata::MetadataResolutionStatus;
 
+use crate::control_flow_diagnostics::reactive_control_flow_diagnostics;
 use crate::diagnostic_policy::{apply_diagnostic_policy, configured_diagnostic_severity};
 use crate::{
     CompileRequest, CompileResult, CompilerExplainArtifact, CompilerExplainEvent,
@@ -195,6 +196,14 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
             return result;
         }
     };
+    result
+        .diagnostics
+        .extend(reactive_control_flow_diagnostics(&core));
+    finalize_diagnostics(&mut result, &request.options);
+    if result.has_errors() {
+        attach_explain_if_requested(&mut result, &request, &[]);
+        return result;
+    }
     result.stats = Some(CompilerStats {
         stage_durations_ns: core.stats.stage_durations_ns.clone(),
         counters: core.stats.counters.clone(),
@@ -1908,6 +1917,132 @@ mod tests {
             "{}",
             fallback.code
         );
+    }
+
+    #[test]
+    fn enforces_call_based_reactive_control_flow_reexecution_guarantees() {
+        let source = "import { $state } from 'fict'; export function App() { const count = $state(0); if (count > 10 && maybe?.()) return <Big />; return <Small />; }";
+        let strict = compile(request(source, "call-control-flow.tsx"));
+        assert!(strict.has_errors());
+        assert!(strict.code.is_empty());
+        let finding = strict
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code.as_str() == "FICT-R006")
+            .expect("reactive control-flow diagnostic");
+        assert_eq!(finding.severity, DiagnosticSeverity::Error);
+        assert_eq!(finding.guarantee_class, GuaranteeClass::Fallback);
+        assert!(finding.primary_span.is_some());
+        assert!(finding.message.contains("count"));
+
+        let mut fallback_request = request(source, "call-control-flow.tsx");
+        fallback_request.options.strict_guarantee = false;
+        let fallback = compile(fallback_request);
+        assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
+        assert!(fallback.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R006"
+                && diagnostic.severity == DiagnosticSeverity::Warning
+        }));
+        assert!(!fallback.code.is_empty());
+
+        let mut strict_reactivity_request = request(source, "call-control-flow.tsx");
+        strict_reactivity_request.options.strict_guarantee = false;
+        strict_reactivity_request.options.strict_reactivity = true;
+        let strict_reactivity = compile(strict_reactivity_request);
+        assert!(strict_reactivity.has_errors());
+        assert!(strict_reactivity.code.is_empty());
+
+        let mut muted_request = request(source, "call-control-flow.tsx");
+        muted_request.options.strict_guarantee = false;
+        muted_request
+            .options
+            .warning_levels
+            .insert("FICT-R006".into(), WarningLevel::Off);
+        let muted = compile(muted_request);
+        assert!(!muted.has_errors(), "{:?}", muted.diagnostics);
+        assert!(muted.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R006"
+                && diagnostic.severity == DiagnosticSeverity::Info
+        }));
+    }
+
+    #[test]
+    fn accepts_guaranteed_simple_if_return_control_flow() {
+        let source = "import { $state } from 'fict'; export function App() { const count = $state(0); if (count > 10) return <Big />; return <Small />; }";
+        let result = compile(request(source, "simple-control-flow.tsx"));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code.as_str() != "FICT-R006")
+        );
+        assert!(result.code.contains("if (count() > 10)"), "{}", result.code);
+
+        let non_jsx = compile(request(
+            "import { $state } from 'fict'; export function App() { const count = $state(0); if (count > 10 && maybe()) return count; return 0; }",
+            "non-jsx-control-flow.js",
+        ));
+        assert!(!non_jsx.has_errors(), "{:?}", non_jsx.diagnostics);
+        assert!(
+            non_jsx
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code.as_str() != "FICT-R006")
+        );
+    }
+
+    #[test]
+    fn diagnoses_call_like_control_flow_forms_without_relying_on_call_hir_only() {
+        for (name, predicate) in [
+            ("constructor", "count > 0 && new Boolean(true)"),
+            ("dynamic-import", "count > 0 && import('./feature.js')"),
+            ("tagged-template", "count > 0 && tag`value`"),
+        ] {
+            let source = format!(
+                "import {{ $state }} from 'fict'; export function App() {{ const count = $state(0); if ({predicate}) return <Big />; return <Small />; }}"
+            );
+            let result = compile(request(&source, &format!("{name}.tsx")));
+            assert!(result.has_errors(), "{name}: {:?}", result.diagnostics);
+            assert!(
+                result.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code.as_str() == "FICT-R006"
+                        && diagnostic.guarantee_class == GuaranteeClass::Fallback
+                }),
+                "{name}: {:?}",
+                result.diagnostics
+            );
+        }
+    }
+
+    #[test]
+    fn checks_the_whole_story_conditional_before_suppressing_r006() {
+        let safe_source = "import { $state } from 'fict'; export function App() { const count = $state(0); let heading = 'empty'; if (count > 0) heading = count + ' items'; return <h1>{heading}</h1>; }";
+        let safe = compile(request(safe_source, "safe-story.tsx"));
+        assert!(!safe.has_errors(), "{:?}", safe.diagnostics);
+        assert!(
+            safe.diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code.as_str() != "FICT-R006")
+        );
+
+        let unsafe_source = "import { $state } from 'fict'; const external = { fmt() { return 'count:'; } }; export function App() { const count = $state(0); let heading = 'empty'; if (count > 0) heading = external.fmt() + count; return <h1>{heading}</h1>; }";
+        let strict = compile(request(unsafe_source, "unsafe-story.tsx"));
+        assert!(strict.has_errors());
+        assert!(strict.code.is_empty());
+        assert!(strict.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R006" && diagnostic.message.contains("count")
+        }));
+
+        let mut fallback_request = request(unsafe_source, "unsafe-story.tsx");
+        fallback_request.options.strict_guarantee = false;
+        let fallback = compile(fallback_request);
+        assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
+        assert!(fallback.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R006"
+                && diagnostic.severity == DiagnosticSeverity::Warning
+        }));
     }
 
     #[test]

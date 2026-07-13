@@ -1712,7 +1712,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     source_hint: block.source_kind.clone().map(|kind| StructuredSourceHint {
                         kind,
                         exit: block.source_exit,
-                        origin: Origin::source(block.origin),
+                        origin: Origin::source(block.source_origin.unwrap_or(block.origin)),
                     }),
                     origin: Origin::source(block.origin),
                 })

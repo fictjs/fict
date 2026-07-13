@@ -39,10 +39,18 @@ fn lowers_if_returns_into_real_hir_blocks_with_control_dependencies() {
         .expect("component function");
 
     assert_eq!(app.blocks.len(), 4);
+    let source_hint = app.blocks[0]
+        .source_hint
+        .as_ref()
+        .expect("conditional source hint");
     assert!(matches!(
-        app.blocks[0].source_hint.as_ref().map(|hint| &hint.kind),
-        Some(StructuredSourceKind::Conditional)
+        &source_hint.kind,
+        StructuredSourceKind::Conditional
     ));
+    assert_eq!(
+        source_hint.origin.primary_span,
+        app.blocks[0].terminator.origin.primary_span
+    );
     let TerminatorKind::Branch {
         test,
         consequent,
