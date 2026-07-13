@@ -18,6 +18,7 @@ impl MappedOutput {
     fn compile_with_module(source: &str, filename: &str, module_kind: Option<ModuleKind>) -> Self {
         let options = CompilerOptions {
             sourcemap: true,
+            strict_guarantee: false,
             ..CompilerOptions::default()
         };
         let result = compile(CompileRequest {

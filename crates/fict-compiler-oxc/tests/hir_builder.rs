@@ -148,10 +148,10 @@ fn classifies_runtime_reactive_calls_by_import_identity() {
 
         const one = store({ value: 1 });
         const two = resource(() => 2);
-        const three = selector(() => one.value);
+        const three = selector(() => 3);
         const four = F.$store({ value: 4 });
         const five = F['resource'](() => 5);
-        const six = F.createSelector(() => four.value);
+        const six = F.createSelector(() => 6);
         const ignored = fakeStore({ value: 0 });
         function shadow(store) { return store({ value: 0 }); }
     "#;
@@ -1502,6 +1502,7 @@ fn enforces_binding_aware_selector_control_flow_placement() {
         source,
         options(OxcSourceLanguage::JavaScriptJsx),
         &HirBuildOptions {
+            strict_guarantee: false,
             reactive_creation_control_flow_severity: fict_diagnostics::DiagnosticSeverity::Warning,
             ..HirBuildOptions::default()
         },

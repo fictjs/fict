@@ -401,6 +401,10 @@ test('Rust compiler output snapshots destructured prop defaults at invocation', 
     `,
     'defaulted-props',
     /__fictProps\.label === void 0/,
+    {
+      options: { strictGuarantee: false },
+      diagnosticCodes: ['FICT-R002'],
+    },
   )
 
   const container = document.createElement('div')
@@ -468,6 +472,10 @@ test('Rust compiler output materializes JSX prop defaults lazily and reactively'
     `,
     'jsx-prop-default',
     /__fictProps\.fallback === void 0.*defaultCalls\.push\(label\(\)\)/s,
+    {
+      options: { strictGuarantee: false },
+      diagnosticCodes: ['FICT-R002'],
+    },
   )
 
   const container = document.createElement('div')
@@ -948,6 +956,10 @@ test('Rust compiler output preserves store, resource, and selector runtime react
     `,
     'runtime-reactive-primitives',
     /const model = \$store\(.*const selected = createSelector\(\(\) => model\.selected\)/s,
+    {
+      options: { strictGuarantee: false },
+      diagnosticCodes: ['FICT-R002', 'FICT-R005'],
+    },
   )
 
   const container = document.createElement('div')

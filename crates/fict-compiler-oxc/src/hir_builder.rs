@@ -22,12 +22,13 @@ use oxc::{
         ast::{
             ArrayExpressionElement, ArrowFunctionExpression, AssignmentExpression,
             AssignmentPattern, AssignmentTarget, BindingIdentifier, BindingPattern,
-            BindingRestElement, CallExpression, ChainElement, ComputedMemberExpression, Expression,
-            FormalParameters, Function, FunctionBody, IdentifierReference, JSXAttributeItem,
-            JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild,
-            JSXElement, JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment,
-            JSXMemberExpression, JSXMemberExpressionObject, LogicalExpression, MemberExpression,
-            MetaProperty, ObjectPropertyKind, Program, SimpleAssignmentTarget, Statement, Super,
+            BindingRestElement, CallExpression, ChainElement, Class, ComputedMemberExpression,
+            Expression, FormalParameters, Function, FunctionBody, IdentifierReference,
+            JSXAttributeItem, JSXAttributeName, JSXAttributeValue as OxcJsxAttributeValue,
+            JSXChild as OxcJsxChild, JSXElement, JSXElementName as OxcJsxElementName,
+            JSXExpression, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject,
+            LogicalExpression, MemberExpression, MetaProperty, NewExpression, ObjectPropertyKind,
+            Program, SimpleAssignmentTarget, Statement, Super, TaggedTemplateExpression,
             ThisExpression, UpdateExpression, VariableDeclaration, VariableDeclarationKind,
             VariableDeclarator,
         },
@@ -929,6 +930,37 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         calls.visit_program(program);
         let mut known_arrays = KnownArrayCollector::default();
         known_arrays.visit_program(program);
+        let binding_to_symbol: BTreeMap<_, _> = self
+            .symbol_to_binding
+            .iter()
+            .map(|(symbol, binding)| (*binding, *symbol))
+            .collect();
+        let immutable_bindings: BTreeSet<_> = self
+            .frontend
+            .bindings
+            .iter()
+            .filter(|binding| !binding.mutated)
+            .filter_map(|binding| self.old_to_new.get(&binding.id.index()).copied())
+            .collect();
+        for call in &calls.calls {
+            let known_reactive_array = call.arguments.first().is_some_and(|argument| {
+                argument.array_literal
+                    && call
+                        .direct_variable_binding
+                        .is_some_and(|binding| immutable_bindings.contains(&binding))
+                    && (call.reactive_kind == Some(ReactiveCallKind::Store)
+                        || call.binding.is_some_and(|binding| {
+                            self.macro_bindings.get(&binding) == Some(&FictMacroKind::State)
+                        }))
+            });
+            if known_reactive_array
+                && let Some(symbol) = call
+                    .direct_variable_binding
+                    .and_then(|binding| binding_to_symbol.get(&binding).copied())
+            {
+                known_arrays.symbols.insert(symbol);
+            }
+        }
         let mut jsx = JsxCollector {
             scoping: self.semantic.scoping(),
             known_arrays: &known_arrays.symbols,
@@ -950,7 +982,14 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 self.functions[root.owner.as_usize()].kind = FunctionKind::Component;
             }
         }
-        self.validate_dynamic_property_access(program, &calls.calls);
+        let reactive_symbols = self.analyze_reactive_symbols(program, &calls.calls);
+        self.validate_dynamic_property_access(program, &reactive_symbols.reactive);
+        self.validate_reactive_escapes(
+            program,
+            &calls.calls,
+            &known_arrays.symbols,
+            &reactive_symbols,
+        );
         self.validate_component_props_patterns();
         self.apply_call_classification(&calls.calls);
         self.validate_macro_placement(&calls.calls);
@@ -978,11 +1017,25 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         }
     }
 
-    fn validate_dynamic_property_access(&mut self, program: &Program<'_>, calls: &[CallFact]) {
+    fn analyze_reactive_symbols(
+        &self,
+        program: &Program<'_>,
+        calls: &[CallFact],
+    ) -> ReactiveSymbolAnalysis {
         let binding_to_symbol: BTreeMap<_, _> = self
             .symbol_to_binding
             .iter()
             .map(|(symbol, binding)| (*binding, *symbol))
+            .collect();
+        let state: BTreeSet<_> = calls
+            .iter()
+            .filter(|call| {
+                call.binding.is_some_and(|binding| {
+                    self.macro_bindings.get(&binding) == Some(&FictMacroKind::State)
+                })
+            })
+            .filter_map(|call| call.direct_variable_binding)
+            .filter_map(|binding| binding_to_symbol.get(&binding).copied())
             .collect();
         let mut reactive_symbols: BTreeSet<_> = calls
             .iter()
@@ -1002,10 +1055,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             self.function_facts
                 .iter()
                 .filter(|function| {
-                    self.functions[function.id.as_usize()].kind == FunctionKind::Component
+                    classify_named_function(function.display_name.as_deref())
+                        == FunctionKind::Component
                 })
                 .flat_map(|function| function.parameters.iter())
-                .filter_map(|parameter| parameter.direct_binding),
+                .flat_map(|parameter| parameter.bindings.iter().copied()),
         );
 
         let mut dependencies = ReactiveBindingDependencyCollector {
@@ -1031,9 +1085,21 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             }
         }
 
+        ReactiveSymbolAnalysis {
+            state,
+            reactive: reactive_symbols,
+            dependencies: dependencies.facts,
+        }
+    }
+
+    fn validate_dynamic_property_access(
+        &mut self,
+        program: &Program<'_>,
+        reactive_symbols: &BTreeSet<SymbolId>,
+    ) {
         let mut dynamic = DynamicReactivePropertyCollector {
             scoping: self.semantic.scoping(),
-            reactive_symbols: &reactive_symbols,
+            reactive_symbols,
             spans: BTreeSet::new(),
         };
         dynamic.visit_program(program);
@@ -1053,6 +1119,282 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 .with_help(
                     "use a static string or numeric property when the reactive shape is known",
                 )
+                .with_guarantee_class(GuaranteeClass::Fallback),
+            );
+        }
+    }
+
+    /// Enforces the legacy-compatible escape contract while the OXC frontend still owns
+    /// binding-resolved source expressions. The resulting diagnostics are policy-neutral;
+    /// the compiler facade applies warning overrides and strict escalation afterwards.
+    fn validate_reactive_escapes(
+        &mut self,
+        program: &Program<'_>,
+        calls: &[CallFact],
+        known_arrays: &BTreeSet<SymbolId>,
+        reactive: &ReactiveSymbolAnalysis,
+    ) {
+        let binding_owners: BTreeMap<_, _> = self
+            .frontend
+            .bindings
+            .iter()
+            .map(|binding| {
+                (
+                    SymbolId::from_usize(binding.id.as_usize()),
+                    self.function_owner_for_scope(binding.scope),
+                )
+            })
+            .collect();
+        let mut captures = FunctionCaptureCollector {
+            scoping: self.semantic.scoping(),
+            reactive_symbols: &reactive.reactive,
+            binding_owners: &binding_owners,
+            function_by_span: &self.function_by_span,
+            stack: vec![FunctionId::new(0)],
+            captures: BTreeMap::new(),
+        };
+        captures.visit_program(program);
+
+        let capturing_functions: Vec<_> = captures
+            .captures
+            .iter()
+            .filter(|(_, symbols)| !symbols.is_empty())
+            .map(|(function, symbols)| {
+                (
+                    self.function_facts[function.as_usize()].span,
+                    symbols.clone(),
+                )
+            })
+            .collect();
+        let mut callback_captures: BTreeMap<SymbolId, BTreeSet<SymbolId>> = BTreeMap::new();
+        for function in &self.function_facts {
+            let mut captured: BTreeSet<SymbolId> = BTreeSet::new();
+            for (span, symbols) in &capturing_functions {
+                if !span_contains(function.span, *span) {
+                    continue;
+                }
+                captured.extend(
+                    symbols
+                        .iter()
+                        .filter(|symbol| binding_owners.get(symbol).copied() != Some(function.id)),
+                );
+            }
+            if let (Some(binding), false) = (function.binding, captured.is_empty()) {
+                callback_captures
+                    .entry(binding)
+                    .or_default()
+                    .extend(captured);
+            }
+        }
+        let mut classes = ClassBindingCollector::default();
+        classes.visit_program(program);
+        for (binding, span) in classes.classes {
+            let mut captured: BTreeSet<SymbolId> = BTreeSet::new();
+            for (function_span, symbols) in &capturing_functions {
+                if span_contains(span, *function_span) {
+                    captured.extend(symbols);
+                }
+            }
+            if !captured.is_empty() {
+                callback_captures
+                    .entry(binding)
+                    .or_default()
+                    .extend(captured);
+            }
+        }
+        loop {
+            let mut changed = false;
+            for dependency in &reactive.dependencies {
+                if !dependency.callback_container {
+                    continue;
+                }
+                let mut captured = BTreeSet::new();
+                for source in &dependency.sources {
+                    if let Some(source_captures) = callback_captures.get(source) {
+                        captured.extend(source_captures);
+                    }
+                }
+                for (span, symbols) in &capturing_functions {
+                    if span_contains(dependency.source_span, *span) {
+                        captured.extend(symbols);
+                    }
+                }
+                if captured.is_empty() {
+                    continue;
+                }
+                for target in &dependency.targets {
+                    let target_captures = callback_captures.entry(*target).or_default();
+                    for symbol in &captured {
+                        changed |= target_captures.insert(*symbol);
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        let mut property_facts = CallbackPropertyCollector {
+            scoping: self.semantic.scoping(),
+            properties: Vec::new(),
+            class_properties: Vec::new(),
+            class_instances: Vec::new(),
+        };
+        property_facts.visit_program(program);
+        let mut callback_property_captures: BTreeMap<(SymbolId, String), BTreeSet<SymbolId>> =
+            BTreeMap::new();
+        for property in &property_facts.properties {
+            let mut captured: BTreeSet<SymbolId> = BTreeSet::new();
+            for source in &property.sources {
+                if let Some(source_captures) = callback_captures.get(source) {
+                    captured.extend(source_captures);
+                }
+            }
+            for (span, symbols) in &capturing_functions {
+                if span_contains(property.source_span, *span) {
+                    captured.extend(symbols);
+                }
+            }
+            if !captured.is_empty() {
+                callback_property_captures
+                    .entry((property.target, property.property.clone()))
+                    .or_default()
+                    .extend(captured);
+            }
+        }
+        let mut instance_class_properties: BTreeMap<(SymbolId, String), BTreeSet<SymbolId>> =
+            BTreeMap::new();
+        for property in &property_facts.class_properties {
+            let mut captured: BTreeSet<SymbolId> = BTreeSet::new();
+            for (span, symbols) in &capturing_functions {
+                if span_contains(property.source_span, *span) {
+                    captured.extend(symbols);
+                }
+            }
+            if captured.is_empty() {
+                continue;
+            }
+            if property.is_static {
+                callback_property_captures
+                    .entry((property.class, property.property.clone()))
+                    .or_default()
+                    .extend(captured);
+            } else {
+                instance_class_properties
+                    .entry((property.class, property.property.clone()))
+                    .or_default()
+                    .extend(captured);
+            }
+        }
+        for instance in &property_facts.class_instances {
+            for ((class, property), captured) in &instance_class_properties {
+                if *class == instance.class {
+                    callback_property_captures
+                        .entry((instance.instance, property.clone()))
+                        .or_default()
+                        .extend(captured);
+                }
+            }
+        }
+
+        let imports: BTreeMap<_, _> = self
+            .frontend
+            .bindings
+            .iter()
+            .filter_map(|binding| {
+                let mapped = self.old_to_new.get(&binding.id.index()).copied()?;
+                let import = binding.import.as_ref()?;
+                let fict_hir::ImportedName::Named(imported) = &import.imported else {
+                    return None;
+                };
+                Some((
+                    mapped,
+                    EscapeImportIdentity {
+                        source: import.source.clone(),
+                        imported: imported.clone(),
+                    },
+                ))
+            })
+            .collect();
+        let local_hook_bindings: BTreeSet<_> = self
+            .functions
+            .iter()
+            .filter(|function| function.kind == FunctionKind::Hook)
+            .filter_map(|function| function.binding)
+            .collect();
+        let call_facts: BTreeMap<_, _> = calls
+            .iter()
+            .map(|call| ((call.span.start(), call.span.end()), call))
+            .collect();
+        let mut collector = ReactiveEscapeCollector {
+            scoping: self.semantic.scoping(),
+            call_facts: &call_facts,
+            macro_bindings: &self.macro_bindings,
+            configured_bindings: &self.configured_bindings,
+            local_hook_bindings: &local_hook_bindings,
+            imports: &imports,
+            known_arrays,
+            state_symbols: &reactive.state,
+            reactive_symbols: &reactive.reactive,
+            capturing_functions: &capturing_functions,
+            callback_captures: &callback_captures,
+            callback_property_captures: &callback_property_captures,
+            diagnostics: Vec::new(),
+        };
+        collector.visit_program(program);
+
+        let symbol_names: BTreeMap<_, _> = self
+            .frontend
+            .bindings
+            .iter()
+            .map(|binding| {
+                (
+                    SymbolId::from_usize(binding.id.as_usize()),
+                    binding.display_name.clone(),
+                )
+            })
+            .collect();
+        let severity = if self.strict_guarantee {
+            DiagnosticSeverity::Error
+        } else {
+            DiagnosticSeverity::Warning
+        };
+        for fact in collector.diagnostics {
+            let (code, message, help) = match fact.kind {
+                EscapeDiagnosticKind::StateSnapshot => (
+                    "FICT-S002",
+                    "state variable is passed as an argument; this passes a value snapshot and may escape component scope".to_owned(),
+                    "pass an accessor or place the read inside a known reactive scope",
+                ),
+                EscapeDiagnosticKind::ReactiveValue => (
+                    "FICT-R002",
+                    "reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise".to_owned(),
+                    "pass an accessor, memoize explicitly, or use a known synchronous host",
+                ),
+                EscapeDiagnosticKind::CallbackCapture(symbols) => {
+                    let names = symbols
+                        .iter()
+                        .filter_map(|symbol| symbol_names.get(symbol))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    (
+                        "FICT-R005",
+                        format!(
+                            "function captures reactive variable(s): {names}; the callback may escape its reactive owner"
+                        ),
+                        "pass captured values as parameters or memoize explicitly",
+                    )
+                }
+            };
+            self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::new(code).expect("diagnostic literal"),
+                    severity,
+                    message,
+                )
+                .with_primary_span(fact.span)
+                .with_help(help)
                 .with_guarantee_class(GuaranteeClass::Fallback),
             );
         }
@@ -3445,6 +3787,7 @@ struct ArgumentFact {
     span: SourceSpan,
     spread: bool,
     function: Option<FunctionId>,
+    array_literal: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -3784,21 +4127,27 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             .arguments
             .iter()
             .map(|argument| {
-                let (span, spread, function) = if let Some(expression) = argument.as_expression() {
-                    (
-                        source_span(expression.span()),
-                        false,
-                        self.function_for_expression(expression),
-                    )
-                } else if let oxc::ast::ast::Argument::SpreadElement(spread) = argument {
-                    (source_span(spread.span), true, None)
-                } else {
-                    unreachable!("every call argument is an expression or spread")
-                };
+                let (span, spread, function, array_literal) =
+                    if let Some(expression) = argument.as_expression() {
+                        (
+                            source_span(expression.span()),
+                            false,
+                            self.function_for_expression(expression),
+                            matches!(
+                                expression.get_inner_expression(),
+                                Expression::ArrayExpression(_)
+                            ),
+                        )
+                    } else if let oxc::ast::ast::Argument::SpreadElement(spread) = argument {
+                        (source_span(spread.span), true, None, false)
+                    } else {
+                        unreachable!("every call argument is an expression or spread")
+                    };
                 ArgumentFact {
                     span,
                     spread,
                     function,
+                    array_literal,
                 }
             })
             .collect();
@@ -3831,14 +4180,35 @@ struct MutationCollector<'semantic> {
 }
 
 #[derive(Debug)]
+struct ReactiveSymbolAnalysis {
+    state: BTreeSet<SymbolId>,
+    reactive: BTreeSet<SymbolId>,
+    dependencies: Vec<ReactiveBindingDependencyFact>,
+}
+
+#[derive(Debug, Clone)]
 struct ReactiveBindingDependencyFact {
     targets: Vec<SymbolId>,
     sources: BTreeSet<SymbolId>,
+    source_span: SourceSpan,
+    callback_container: bool,
 }
 
 struct ReactiveBindingDependencyCollector<'semantic> {
     scoping: &'semantic Scoping,
     facts: Vec<ReactiveBindingDependencyFact>,
+}
+
+fn expression_can_carry_callback(expression: &Expression<'_>) -> bool {
+    !matches!(
+        expression.get_inner_expression(),
+        Expression::CallExpression(_)
+            | Expression::TaggedTemplateExpression(_)
+            | Expression::AwaitExpression(_)
+            | Expression::BinaryExpression(_)
+            | Expression::UnaryExpression(_)
+            | Expression::UpdateExpression(_)
+    )
 }
 
 impl ReactiveBindingDependencyCollector<'_> {
@@ -3855,6 +4225,8 @@ impl ReactiveBindingDependencyCollector<'_> {
             self.facts.push(ReactiveBindingDependencyFact {
                 targets,
                 sources: collector.symbols,
+                source_span: source_span(source.span()),
+                callback_container: expression_can_carry_callback(source),
             });
         }
     }
@@ -3871,12 +4243,7 @@ impl<'a> Visit<'a> for ReactiveBindingDependencyCollector<'_> {
     }
 
     fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
-        if let AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left
-            && let Some(symbol) = identifier
-                .reference_id
-                .get()
-                .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
-        {
+        if let Some((symbol, _)) = assignment_target_symbol(self.scoping, &assignment.left) {
             self.push_fact(vec![symbol], &assignment.right);
         }
         oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
@@ -3897,6 +4264,729 @@ impl<'a> Visit<'a> for ResolvedSymbolCollector<'_> {
         {
             self.symbols.insert(symbol);
         }
+    }
+}
+
+struct CallbackReferenceCollector<'semantic> {
+    scoping: &'semantic Scoping,
+    symbols: BTreeSet<SymbolId>,
+    members: BTreeSet<(SymbolId, String)>,
+}
+
+impl<'a> Visit<'a> for CallbackReferenceCollector<'_> {
+    fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
+
+    fn visit_arrow_function_expression(&mut self, _function: &ArrowFunctionExpression<'a>) {}
+
+    fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+        if let Some(symbol) = identifier
+            .reference_id
+            .get()
+            .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+        {
+            self.symbols.insert(symbol);
+        }
+    }
+
+    fn visit_static_member_expression(
+        &mut self,
+        member: &oxc::ast::ast::StaticMemberExpression<'a>,
+    ) {
+        if let Expression::Identifier(identifier) = member.object.get_inner_expression()
+            && let Some(symbol) = identifier
+                .reference_id
+                .get()
+                .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+        {
+            self.members
+                .insert((symbol, member.property.name.to_string()));
+            return;
+        }
+        oxc::ast_visit::walk::walk_static_member_expression(self, member);
+    }
+
+    fn visit_computed_member_expression(&mut self, member: &ComputedMemberExpression<'a>) {
+        let property = match member.expression.get_inner_expression() {
+            Expression::StringLiteral(property) => Some(property.value.to_string()),
+            Expression::NumericLiteral(property) => Some(property.value.to_string()),
+            _ => None,
+        };
+        if let (Expression::Identifier(identifier), Some(property)) =
+            (member.object.get_inner_expression(), property)
+            && let Some(symbol) = identifier
+                .reference_id
+                .get()
+                .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+        {
+            self.members.insert((symbol, property));
+            return;
+        }
+        oxc::ast_visit::walk::walk_computed_member_expression(self, member);
+    }
+}
+
+fn span_contains(container: SourceSpan, nested: SourceSpan) -> bool {
+    container.start() <= nested.start() && nested.end() <= container.end()
+}
+
+struct FunctionCaptureCollector<'facts, 'semantic, 'reactive> {
+    scoping: &'semantic Scoping,
+    reactive_symbols: &'reactive BTreeSet<SymbolId>,
+    binding_owners: &'facts BTreeMap<SymbolId, FunctionId>,
+    function_by_span: &'facts BTreeMap<(u32, u32), FunctionId>,
+    stack: Vec<FunctionId>,
+    captures: BTreeMap<FunctionId, BTreeSet<SymbolId>>,
+}
+
+impl<'a> Visit<'a> for FunctionCaptureCollector<'_, '_, '_> {
+    fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+        let Some(owner) = self
+            .function_by_span
+            .get(&(function.span.start, function.span.end))
+            .copied()
+        else {
+            walk_function(self, function, flags);
+            return;
+        };
+        self.stack.push(owner);
+        walk_function(self, function, flags);
+        self.stack.pop();
+    }
+
+    fn visit_arrow_function_expression(&mut self, function: &ArrowFunctionExpression<'a>) {
+        let Some(owner) = self
+            .function_by_span
+            .get(&(function.span.start, function.span.end))
+            .copied()
+        else {
+            walk_arrow_function_expression(self, function);
+            return;
+        };
+        self.stack.push(owner);
+        walk_arrow_function_expression(self, function);
+        self.stack.pop();
+    }
+
+    fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+        let Some(symbol) = identifier
+            .reference_id
+            .get()
+            .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+        else {
+            return;
+        };
+        if !self.reactive_symbols.contains(&symbol) {
+            return;
+        }
+        let owner = *self.stack.last().expect("function capture owner");
+        if owner == FunctionId::new(0) || self.binding_owners.get(&symbol).copied() == Some(owner) {
+            return;
+        }
+        self.captures.entry(owner).or_default().insert(symbol);
+    }
+}
+
+#[derive(Default)]
+struct ClassBindingCollector {
+    classes: BTreeMap<SymbolId, SourceSpan>,
+}
+
+impl<'a> Visit<'a> for ClassBindingCollector {
+    fn visit_class(&mut self, class: &Class<'a>) {
+        if let Some(symbol) = class
+            .id
+            .as_ref()
+            .and_then(|identifier| identifier.symbol_id.get())
+        {
+            self.classes.insert(symbol, source_span(class.span));
+        }
+        oxc::ast_visit::walk::walk_class(self, class);
+    }
+
+    fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
+        if let (BindingPattern::BindingIdentifier(binding), Some(initializer)) =
+            (&declarator.id, &declarator.init)
+            && let Expression::ClassExpression(class) = initializer.get_inner_expression()
+            && let Some(symbol) = binding.symbol_id.get()
+        {
+            self.classes.insert(symbol, source_span(class.span));
+        }
+        walk_variable_declarator(self, declarator);
+    }
+}
+
+#[derive(Debug)]
+struct CallbackPropertyFact {
+    target: SymbolId,
+    property: String,
+    source_span: SourceSpan,
+    sources: BTreeSet<SymbolId>,
+}
+
+#[derive(Debug)]
+struct CallbackClassPropertyFact {
+    class: SymbolId,
+    property: String,
+    source_span: SourceSpan,
+    is_static: bool,
+}
+
+#[derive(Debug)]
+struct CallbackClassInstanceFact {
+    instance: SymbolId,
+    class: SymbolId,
+}
+
+struct CallbackPropertyCollector<'semantic> {
+    scoping: &'semantic Scoping,
+    properties: Vec<CallbackPropertyFact>,
+    class_properties: Vec<CallbackClassPropertyFact>,
+    class_instances: Vec<CallbackClassInstanceFact>,
+}
+
+impl CallbackPropertyCollector<'_> {
+    fn push_expression(&mut self, target: SymbolId, property: String, source: &Expression<'_>) {
+        let mut symbols = ResolvedSymbolCollector {
+            scoping: self.scoping,
+            symbols: BTreeSet::new(),
+        };
+        symbols.visit_expression(source);
+        self.properties.push(CallbackPropertyFact {
+            target,
+            property,
+            source_span: source_span(source.span()),
+            sources: symbols.symbols,
+        });
+    }
+
+    fn push_object(&mut self, target: SymbolId, object: &oxc::ast::ast::ObjectExpression<'_>) {
+        for property in &object.properties {
+            let ObjectPropertyKind::ObjectProperty(property) = property else {
+                continue;
+            };
+            let Some(name) = property.key.static_name() else {
+                continue;
+            };
+            self.push_expression(target, name.into_owned(), &property.value);
+        }
+    }
+}
+
+impl<'a> Visit<'a> for CallbackPropertyCollector<'_> {
+    fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
+        if let BindingPattern::BindingIdentifier(binding) = &declarator.id
+            && let Some(target) = binding.symbol_id.get()
+            && let Some(initializer) = &declarator.init
+        {
+            match initializer.get_inner_expression() {
+                Expression::ObjectExpression(object) => self.push_object(target, object),
+                Expression::NewExpression(new_expression) => {
+                    if let Some(class) =
+                        resolved_callee_symbol(self.scoping, &new_expression.callee)
+                    {
+                        self.class_instances.push(CallbackClassInstanceFact {
+                            instance: target,
+                            class,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        walk_variable_declarator(self, declarator);
+    }
+
+    fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
+        let target = match &assignment.left {
+            AssignmentTarget::StaticMemberExpression(member) => {
+                expression_root_symbol(self.scoping, &member.object)
+                    .map(|symbol| (symbol, member.property.name.to_string()))
+            }
+            AssignmentTarget::ComputedMemberExpression(member) => {
+                let name = match member.expression.get_inner_expression() {
+                    Expression::StringLiteral(property) => Some(property.value.to_string()),
+                    Expression::NumericLiteral(property) => Some(property.value.to_string()),
+                    _ => None,
+                };
+                expression_root_symbol(self.scoping, &member.object).zip(name)
+            }
+            _ => None,
+        };
+        if let Some((target, property)) = target {
+            self.push_expression(target, property, &assignment.right);
+        }
+        oxc::ast_visit::walk::walk_assignment_expression(self, assignment);
+    }
+
+    fn visit_class(&mut self, class: &Class<'a>) {
+        if let Some(binding) = class
+            .id
+            .as_ref()
+            .and_then(|identifier| identifier.symbol_id.get())
+        {
+            for element in &class.body.body {
+                let Some(property) = element.static_name().map(|name| name.into_owned()) else {
+                    continue;
+                };
+                let is_static = match element {
+                    oxc::ast::ast::ClassElement::MethodDefinition(definition) => {
+                        definition.r#static
+                    }
+                    oxc::ast::ast::ClassElement::PropertyDefinition(definition) => {
+                        definition.r#static
+                    }
+                    oxc::ast::ast::ClassElement::AccessorProperty(definition) => {
+                        definition.r#static
+                    }
+                    oxc::ast::ast::ClassElement::StaticBlock(_)
+                    | oxc::ast::ast::ClassElement::TSIndexSignature(_) => continue,
+                };
+                self.class_properties.push(CallbackClassPropertyFact {
+                    class: binding,
+                    property,
+                    source_span: source_span(element.span()),
+                    is_static,
+                });
+            }
+        }
+        oxc::ast_visit::walk::walk_class(self, class);
+    }
+}
+
+#[derive(Debug, Clone)]
+struct EscapeImportIdentity {
+    source: String,
+    imported: String,
+}
+
+#[derive(Debug)]
+enum EscapeDiagnosticKind {
+    StateSnapshot,
+    ReactiveValue,
+    CallbackCapture(BTreeSet<SymbolId>),
+}
+
+#[derive(Debug)]
+struct EscapeDiagnosticFact {
+    kind: EscapeDiagnosticKind,
+    span: SourceSpan,
+}
+
+#[derive(Clone, Copy)]
+struct EscapeArgument<'node, 'ast> {
+    expression: &'node Expression<'ast>,
+    span: SourceSpan,
+    spread: bool,
+}
+
+struct ReactiveEscapeCollector<'facts, 'semantic, 'reactive> {
+    scoping: &'semantic Scoping,
+    call_facts: &'facts BTreeMap<(u32, u32), &'facts CallFact>,
+    macro_bindings: &'facts BTreeMap<BindingId, FictMacroKind>,
+    configured_bindings: &'facts BTreeSet<BindingId>,
+    local_hook_bindings: &'facts BTreeSet<BindingId>,
+    imports: &'facts BTreeMap<BindingId, EscapeImportIdentity>,
+    known_arrays: &'facts BTreeSet<SymbolId>,
+    state_symbols: &'reactive BTreeSet<SymbolId>,
+    reactive_symbols: &'reactive BTreeSet<SymbolId>,
+    capturing_functions: &'facts [(SourceSpan, BTreeSet<SymbolId>)],
+    callback_captures: &'facts BTreeMap<SymbolId, BTreeSet<SymbolId>>,
+    callback_property_captures: &'facts BTreeMap<(SymbolId, String), BTreeSet<SymbolId>>,
+    diagnostics: Vec<EscapeDiagnosticFact>,
+}
+
+impl ReactiveEscapeCollector<'_, '_, '_> {
+    fn direct_state_symbol(&self, argument: EscapeArgument<'_, '_>) -> Option<SymbolId> {
+        if argument.spread {
+            return None;
+        }
+        let Expression::Identifier(identifier) = argument.expression.get_inner_expression() else {
+            return None;
+        };
+        let symbol = identifier
+            .reference_id
+            .get()
+            .and_then(|reference| self.scoping.get_reference(reference).symbol_id())?;
+        self.state_symbols.contains(&symbol).then_some(symbol)
+    }
+
+    fn reactive_references(&self, argument: EscapeArgument<'_, '_>) -> BTreeSet<SymbolId> {
+        let root = argument.expression.get_inner_expression();
+        let root_function = match root {
+            Expression::FunctionExpression(function) => {
+                Some((function.span.start, function.span.end))
+            }
+            Expression::ArrowFunctionExpression(function) => {
+                Some((function.span.start, function.span.end))
+            }
+            _ => None,
+        };
+        let mut collector = ReactiveArgumentCollector {
+            scoping: self.scoping,
+            reactive_symbols: self.reactive_symbols,
+            root_function,
+            symbols: BTreeSet::new(),
+        };
+        collector.visit_expression(argument.expression);
+        collector.symbols
+    }
+
+    fn callback_captures(&self, argument: EscapeArgument<'_, '_>) -> BTreeSet<SymbolId> {
+        let mut captured = BTreeSet::new();
+        for (span, symbols) in self.capturing_functions {
+            if span_contains(argument.span, *span) {
+                captured.extend(symbols);
+            }
+        }
+        let mut references = CallbackReferenceCollector {
+            scoping: self.scoping,
+            symbols: BTreeSet::new(),
+            members: BTreeSet::new(),
+        };
+        references.visit_expression(argument.expression);
+        for symbol in references.symbols {
+            if let Some(symbol_captures) = self.callback_captures.get(&symbol) {
+                captured.extend(symbol_captures);
+            }
+        }
+        for member in references.members {
+            if let Some(member_captures) = self.callback_property_captures.get(&member) {
+                captured.extend(member_captures);
+            }
+        }
+        captured
+    }
+
+    fn emit_direct_state_warnings(&mut self, arguments: &[EscapeArgument<'_, '_>], allowed: bool) {
+        if allowed {
+            return;
+        }
+        let spans = arguments
+            .iter()
+            .filter(|argument| self.direct_state_symbol(**argument).is_some())
+            .map(|argument| argument.span)
+            .collect::<Vec<_>>();
+        self.diagnostics
+            .extend(spans.into_iter().map(|span| EscapeDiagnosticFact {
+                kind: EscapeDiagnosticKind::StateSnapshot,
+                span,
+            }));
+    }
+
+    fn analyze_call<'node, 'ast>(
+        &mut self,
+        call: &'node CallExpression<'ast>,
+        arguments: &[EscapeArgument<'node, 'ast>],
+    ) {
+        let Some(fact) = self.call_facts.get(&(call.span.start, call.span.end)) else {
+            return;
+        };
+        let binding = fact.binding;
+        let macro_kind = binding.and_then(|binding| self.macro_bindings.get(&binding).copied());
+        let store = fact.reactive_kind == Some(ReactiveCallKind::Store);
+        let local_hook = binding.is_some_and(|binding| self.local_hook_bindings.contains(&binding));
+        let state_argument_import = binding
+            .and_then(|binding| self.imports.get(&binding))
+            .is_some_and(|import| {
+                matches!(
+                    import.imported.as_str(),
+                    "render"
+                        | "createEffect"
+                        | "createMemo"
+                        | "createSelector"
+                        | "createRenderEffect"
+                )
+            });
+        let state_arguments_allowed = store
+            || local_hook
+            || state_argument_import
+            || matches!(
+                macro_kind,
+                Some(FictMacroKind::Effect | FictMacroKind::Memo)
+            );
+        self.emit_direct_state_warnings(arguments, state_arguments_allowed);
+
+        if store || macro_kind.is_some() || is_safe_global_call(self.scoping, &call.callee) {
+            return;
+        }
+        if self.is_non_escaping_callback_host(&call.callee, binding) {
+            return;
+        }
+
+        let configured = binding.is_some_and(|binding| self.configured_bindings.contains(&binding));
+        if !local_hook {
+            for (index, argument) in arguments.iter().enumerate() {
+                if (configured && index == 0) || self.direct_state_symbol(*argument).is_some() {
+                    continue;
+                }
+                if !self.reactive_references(*argument).is_empty() {
+                    self.diagnostics.push(EscapeDiagnosticFact {
+                        kind: EscapeDiagnosticKind::ReactiveValue,
+                        span: argument.span,
+                    });
+                    break;
+                }
+            }
+        }
+        for (index, argument) in arguments.iter().enumerate() {
+            if configured && index == 0 {
+                continue;
+            }
+            let captured = self.callback_captures(*argument);
+            if captured.is_empty() {
+                continue;
+            }
+            self.diagnostics.push(EscapeDiagnosticFact {
+                kind: EscapeDiagnosticKind::CallbackCapture(captured),
+                span: argument.span,
+            });
+            break;
+        }
+    }
+
+    fn analyze_invocation(&mut self, arguments: &[EscapeArgument<'_, '_>]) {
+        self.emit_direct_state_warnings(arguments, false);
+        for argument in arguments {
+            if self.direct_state_symbol(*argument).is_some() {
+                continue;
+            }
+            if !self.reactive_references(*argument).is_empty() {
+                self.diagnostics.push(EscapeDiagnosticFact {
+                    kind: EscapeDiagnosticKind::ReactiveValue,
+                    span: argument.span,
+                });
+                break;
+            }
+        }
+    }
+
+    fn is_non_escaping_callback_host(
+        &self,
+        callee: &Expression<'_>,
+        binding: Option<BindingId>,
+    ) -> bool {
+        if binding
+            .and_then(|binding| self.imports.get(&binding))
+            .is_some_and(|import| {
+                matches!(
+                    import.source.as_str(),
+                    "fict" | "fict/advanced" | "@fictjs/runtime" | "@fictjs/runtime/advanced"
+                ) && matches!(
+                    import.imported.as_str(),
+                    "untrack"
+                        | "batch"
+                        | "startTransition"
+                        | "createEffect"
+                        | "createMemo"
+                        | "createRenderEffect"
+                        | "runInScope"
+                )
+            })
+        {
+            return true;
+        }
+
+        let (receiver, method) = match unwrap_transparent_call_expression(callee) {
+            Expression::StaticMemberExpression(member) => {
+                (&member.object, member.property.name.as_str())
+            }
+            Expression::ComputedMemberExpression(member) => {
+                let Expression::StringLiteral(property) = member.expression.get_inner_expression()
+                else {
+                    return false;
+                };
+                (&member.object, property.value.as_str())
+            }
+            _ => return false,
+        };
+        if !matches!(
+            method,
+            "map"
+                | "forEach"
+                | "filter"
+                | "some"
+                | "every"
+                | "find"
+                | "findIndex"
+                | "findLast"
+                | "findLastIndex"
+                | "flatMap"
+                | "reduce"
+                | "reduceRight"
+                | "sort"
+                | "toSorted"
+        ) {
+            return false;
+        }
+        match receiver.get_inner_expression() {
+            Expression::ArrayExpression(_) => true,
+            Expression::Identifier(identifier) => identifier
+                .reference_id
+                .get()
+                .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+                .is_some_and(|symbol| self.known_arrays.contains(&symbol)),
+            _ => false,
+        }
+    }
+}
+
+impl<'a> Visit<'a> for ReactiveEscapeCollector<'_, '_, '_> {
+    fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        let arguments = escape_arguments(&call.arguments);
+        self.analyze_call(call, &arguments);
+        walk_call_expression(self, call);
+    }
+
+    fn visit_new_expression(&mut self, expression: &NewExpression<'a>) {
+        let arguments = escape_arguments(&expression.arguments);
+        self.analyze_invocation(&arguments);
+        oxc::ast_visit::walk::walk_new_expression(self, expression);
+    }
+
+    fn visit_tagged_template_expression(&mut self, expression: &TaggedTemplateExpression<'a>) {
+        let arguments = expression
+            .quasi
+            .expressions
+            .iter()
+            .map(|expression| EscapeArgument {
+                expression,
+                span: source_span(expression.span()),
+                spread: false,
+            })
+            .collect::<Vec<_>>();
+        self.analyze_invocation(&arguments);
+        oxc::ast_visit::walk::walk_tagged_template_expression(self, expression);
+    }
+}
+
+fn escape_arguments<'node, 'ast>(
+    arguments: &'node [oxc::ast::ast::Argument<'ast>],
+) -> Vec<EscapeArgument<'node, 'ast>> {
+    arguments
+        .iter()
+        .map(|argument| {
+            if let Some(expression) = argument.as_expression() {
+                EscapeArgument {
+                    expression,
+                    span: source_span(expression.span()),
+                    spread: false,
+                }
+            } else if let oxc::ast::ast::Argument::SpreadElement(spread) = argument {
+                EscapeArgument {
+                    expression: &spread.argument,
+                    span: source_span(spread.span),
+                    spread: true,
+                }
+            } else {
+                unreachable!("every invocation argument is an expression or spread")
+            }
+        })
+        .collect()
+}
+
+struct ReactiveArgumentCollector<'semantic, 'reactive> {
+    scoping: &'semantic Scoping,
+    reactive_symbols: &'reactive BTreeSet<SymbolId>,
+    root_function: Option<(u32, u32)>,
+    symbols: BTreeSet<SymbolId>,
+}
+
+impl<'a> Visit<'a> for ReactiveArgumentCollector<'_, '_> {
+    fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+        if self.root_function == Some((function.span.start, function.span.end)) {
+            walk_function(self, function, flags);
+        }
+    }
+
+    fn visit_arrow_function_expression(&mut self, function: &ArrowFunctionExpression<'a>) {
+        if self.root_function == Some((function.span.start, function.span.end)) {
+            walk_arrow_function_expression(self, function);
+        }
+    }
+
+    fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+        if let Some(symbol) = identifier
+            .reference_id
+            .get()
+            .and_then(|reference| self.scoping.get_reference(reference).symbol_id())
+            && self.reactive_symbols.contains(&symbol)
+        {
+            self.symbols.insert(symbol);
+        }
+    }
+}
+
+fn is_safe_global_call(scoping: &Scoping, callee: &Expression<'_>) -> bool {
+    let unresolved = |identifier: &IdentifierReference<'_>| {
+        identifier
+            .reference_id
+            .get()
+            .is_some_and(|reference| scoping.get_reference(reference).symbol_id().is_none())
+    };
+    match unwrap_transparent_call_expression(callee) {
+        Expression::Identifier(identifier) => {
+            unresolved(identifier)
+                && matches!(
+                    identifier.name.as_str(),
+                    "String"
+                        | "Number"
+                        | "Boolean"
+                        | "parseInt"
+                        | "parseFloat"
+                        | "isNaN"
+                        | "isFinite"
+                        | "typeof"
+                )
+        }
+        Expression::StaticMemberExpression(member) => {
+            let Expression::Identifier(root) = member.object.get_inner_expression() else {
+                return false;
+            };
+            if !unresolved(root) {
+                return false;
+            }
+            matches!(
+                (root.name.as_str(), member.property.name.as_str()),
+                (
+                    "console",
+                    "log" | "info" | "warn" | "error" | "debug" | "trace" | "dir" | "table"
+                ) | ("JSON", "stringify" | "parse")
+                    | (
+                        "Object",
+                        "keys"
+                            | "values"
+                            | "entries"
+                            | "isFrozen"
+                            | "isSealed"
+                            | "isExtensible"
+                            | "getOwnPropertyNames"
+                            | "getOwnPropertyDescriptor"
+                            | "getPrototypeOf"
+                    )
+                    | ("Array", "isArray" | "from" | "of")
+                    | (
+                        "Math",
+                        "abs"
+                            | "ceil"
+                            | "floor"
+                            | "round"
+                            | "max"
+                            | "min"
+                            | "pow"
+                            | "sqrt"
+                            | "random"
+                            | "sin"
+                            | "cos"
+                            | "tan"
+                            | "log"
+                            | "exp"
+                            | "sign"
+                            | "trunc"
+                    )
+                    | ("Date", "now" | "parse")
+            )
+        }
+        _ => false,
     }
 }
 

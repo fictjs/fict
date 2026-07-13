@@ -940,10 +940,12 @@ mod tests {
 
     #[test]
     fn materializes_binding_aware_keyed_list_calls() {
-        let result = compile(request(
+        let mut input = request(
             "import { createKeyedList as list } from 'fict/internal/list'; export function App(items) { return list(() => items, (item) => item.id, (item) => <span>{item.name}</span>); }",
             "keyed-list.tsx",
-        ));
+        );
+        input.options.strict_guarantee = false;
+        let result = compile(input);
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
         assert!(
@@ -1327,10 +1329,12 @@ mod tests {
 
     #[test]
     fn lowers_simple_component_object_props_to_reactive_accessors() {
-        let result = compile(request(
+        let mut input = request(
             "import { $state } from 'fict'; function Child({ value: renamed, label = String(renamed) } = { value: 'fallback' }) { return <span>{label}:{renamed}</span>; } const Arrow = ({ value }) => <b>{value}</b>; function Method({ value }) { return <i>{value.toString()}</i>; } function Nested({ user: { name, profile: { age = 18 } } }) { return <u>{name}:{age}</u>; } function Rest({ id, ...rest }) { return <small>{id}:{rest.title}</small>; } function Callable({ onClick, value }) { const invoke = onClick; return <button onClick={() => invoke.call(null)}>{value}</button>; } export function App() { let value = $state(1); return <main><Child value={value} /><Arrow value={value} /><Method value={value} /><Nested user={{ name: 'Ada', profile: {} }} /><Rest id='row' title={String(value)} /><Callable onClick={() => value++} value={value} /></main>; }",
             "component-object-props.tsx",
-        ));
+        );
+        input.options.strict_guarantee = false;
+        let result = compile(input);
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
         assert!(
@@ -1528,10 +1532,12 @@ mod tests {
 
     #[test]
     fn lowers_jsx_inside_component_prop_defaults() {
-        let result = compile(request(
+        let mut input = request(
             "import { $state } from 'fict'; export const calls = []; function Child({ label, fallback = (calls.push(label), <span data-id='fallback'>{label}</span>) } = {}) { return <div data-id='host'>{fallback}</div>; } export function App() { let label = $state('A'); return <><Child label={label} /><Child label={label} fallback={<em data-id='custom'>Custom</em>} /><Child label={label} fallback={null} /></>; }",
             "jsx-prop-default.tsx",
-        ));
+        );
+        input.options.strict_guarantee = false;
+        let result = compile(input);
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
         assert!(
@@ -1796,10 +1802,12 @@ mod tests {
 
     #[test]
     fn preserves_store_resource_and_selector_runtime_primitives() {
-        let result = compile(request(
+        let mut input = request(
             "import { $store, createSelector, render } from 'fict'; import { resource } from 'fict/plus'; const greeting = resource(async (_ctx, name) => `hello ${name}`); export function App() { const model = $store({ selected: 'a', label: 'A' }); const selected = createSelector(() => model.selected); const result = greeting.read('world'); return <main><p>{model.label}</p><i class={selected('a') ? 'selected' : ''}>A</i><b>{result.loading ? 'loading' : result.data}</b></main>; } export function mount(node) { return render(() => <App />, node); }",
             "runtime-reactive-primitives.tsx",
-        ));
+        );
+        input.options.strict_guarantee = false;
+        let result = compile(input);
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
         assert!(
@@ -1852,6 +1860,7 @@ mod tests {
         assert_eq!(finding.guarantee_class, GuaranteeClass::Fallback);
 
         let mut fallback_request = request(source, "conditional-selector.tsx");
+        fallback_request.options.strict_guarantee = false;
         fallback_request
             .options
             .warning_levels
@@ -2237,10 +2246,12 @@ mod tests {
 
     #[test]
     fn rewrites_state_captured_by_effect_callbacks() {
-        let result = compile(request(
+        let mut input = request(
             "import { $state, $effect } from 'fict'; const seen = []; function Component() { let count = $state(0); $effect(() => { seen.push(count); count += 1; }); return count; }",
             "captured.js",
-        ));
+        );
+        input.options.strict_guarantee = false;
+        let result = compile(input);
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
         assert!(result.code.contains("__fictUseEffect(__fictCtx"));
@@ -2367,6 +2378,247 @@ mod tests {
                 .map(|diagnostic| diagnostic.code.as_str())
                 .collect::<Vec<_>>(),
             ["FICT-H", "FICT-M"]
+        );
+    }
+
+    #[test]
+    fn enforces_reactive_argument_escape_guarantees() {
+        let source = "import { $state, $memo } from 'fict'; function sink(...values) { return values; } class Box { constructor(value) { this.value = value; } } function tag(_parts, value) { return value; } export function App() { const state = $state({ value: 1 }); const doubled = $memo(() => state.value * 2); sink(state); sink([state]); sink(doubled); sink(state.value); sink?.({ value: state }); new Box(state); new Box([state]); tag`${state}`; return null; }";
+        let strict = compile(request(source, "reactive-argument-escapes.js"));
+
+        assert!(strict.has_errors());
+        assert!(strict.code.is_empty());
+        assert_eq!(
+            strict
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-S002")
+                .count(),
+            3,
+            "{:?}",
+            strict.diagnostics
+        );
+        assert_eq!(
+            strict
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-R002")
+                .count(),
+            5,
+            "{:?}",
+            strict.diagnostics
+        );
+        assert!(strict.diagnostics.iter().all(|diagnostic| {
+            diagnostic.severity == DiagnosticSeverity::Error
+                && diagnostic.guarantee_class == GuaranteeClass::Fallback
+                && diagnostic.primary_span.is_some()
+        }));
+
+        let mut fallback_request = request(source, "reactive-argument-escapes.js");
+        fallback_request.options.strict_guarantee = false;
+        let fallback = compile(fallback_request);
+        assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
+        assert_eq!(fallback.diagnostics.len(), 8, "{:?}", fallback.diagnostics);
+        assert!(
+            fallback
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.severity == DiagnosticSeverity::Warning)
+        );
+        assert!(!fallback.code.is_empty());
+
+        let mut muted_request = request(source, "reactive-argument-escapes-muted.js");
+        muted_request.options.strict_guarantee = false;
+        muted_request
+            .options
+            .warning_levels
+            .insert("FICT-R002".into(), WarningLevel::Off);
+        let muted = compile(muted_request);
+        assert!(!muted.has_errors(), "{:?}", muted.diagnostics);
+        assert!(muted.diagnostics.iter().all(|diagnostic| {
+            diagnostic.code.as_str() != "FICT-R002"
+                || diagnostic.severity == DiagnosticSeverity::Info
+        }));
+
+        let mut escalated_request = request(source, "reactive-argument-escapes-escalated.js");
+        escalated_request.options.strict_guarantee = false;
+        escalated_request.options.warnings_as_errors =
+            WarningsAsErrors::Codes(vec!["FICT-R002".into()]);
+        let escalated = compile(escalated_request);
+        assert!(escalated.has_errors());
+        assert!(escalated.code.is_empty());
+        assert!(escalated.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R002"
+                && diagnostic.severity == DiagnosticSeverity::Error
+        }));
+    }
+
+    #[test]
+    fn diagnoses_reactive_callback_escape_shapes() {
+        let source = "import { $state } from 'fict'; function sink(value) { return value; } export function App() { const count = $state(0); sink(() => count); const named = () => count; sink(named); function hoisted() { return count; } sink(hoisted); const nested = () => () => count; sink(nested); sink({ read: () => count }); sink([() => count]); const callbacks = { ...{ read: () => count } }; sink(callbacks); return null; }";
+        let mut input = request(source, "reactive-callback-escapes.js");
+        input.options.strict_guarantee = false;
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-R005")
+                .count(),
+            7,
+            "{:?}",
+            result.diagnostics
+        );
+        assert!(result.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-R005" && diagnostic.message.contains("count")
+        }));
+
+        let object_slots = "import { $state } from 'fict'; function sink(value) { return value; } export function App() { const count = $state(0); sink({ read: () => count }); sink([() => count]); sink(<button onClick={() => count++} />); return null; }";
+        let mut object_input = request(object_slots, "reactive-callback-slots.tsx");
+        object_input.options.strict_guarantee = false;
+        let object_result = compile(object_input);
+        assert!(
+            !object_result.has_errors(),
+            "{:?}",
+            object_result.diagnostics
+        );
+        assert_eq!(
+            object_result
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            ["FICT-R005", "FICT-R005", "FICT-R005"]
+        );
+    }
+
+    #[test]
+    fn tracks_callback_alias_class_and_producer_shapes() {
+        let source = "import { $state } from 'fict'; function sink(value) { return value; } export function App() { const count = $state(0); sink(hoisted); function hoisted() { return count; } const callbacks = { read: () => count, value: 1 }; sink(callbacks.read); const alias = callbacks.read; sink(alias); const shorthandRead = () => count; const shorthand = { shorthandRead }; sink(shorthand.shorthandRead); const assigned = {}; assigned.read = shorthandRead; sink(assigned.read); class MethodBox { read() { return count; } } const methodBox = new MethodBox(); sink(methodBox.read); class FieldBox { read = () => count; } const fieldBox = new FieldBox(); sink(fieldBox.read); class StaticBox { static read() { return count; } } sink(StaticBox.read); class GetterBox { get read() { return () => count; } } const getterBox = new GetterBox(); sink(getterBox.read); const methodAlias = methodBox.read; sink(methodAlias); sink((() => () => count)()); function makeRead() { return () => count; } sink(makeRead()); sink(true ? () => count : () => 0); sink(true && (() => count)); sink((0, () => count)); Promise.resolve(1).then(() => count); sink(callbacks.value); return null; }";
+        let mut input = request(source, "callback-shape-matrix.js");
+        input.options.strict_guarantee = false;
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-R005")
+                .count(),
+            16,
+            "{:?}",
+            result.diagnostics
+        );
+        let plain_property_start = source
+            .rfind("callbacks.value")
+            .expect("plain property span") as u32;
+        assert!(result.diagnostics.iter().all(|diagnostic| {
+            diagnostic.code.as_str() != "FICT-R005"
+                || diagnostic
+                    .primary_span
+                    .is_none_or(|span| span.start() != plain_property_start)
+        }));
+    }
+
+    #[test]
+    fn preserves_binding_aware_escape_host_identity() {
+        let source = "import { $state, $store, batch as runtimeBatch, render as runtimeRender } from 'fict'; function sink(value) { return value; } function render(value) { return value; } function batch(callback) { return callback; } export function App() { const count = $state(0); const stateItems = $state([1, 2]); const storeItems = $store([1, 2]); let mutableItems = $state([1, 2]); mutableItems = [3]; stateItems.map(() => count); storeItems.forEach(() => count); mutableItems.map(() => count); runtimeBatch(() => count); runtimeRender(count); render(count); batch(() => count); console.log(count); sink([count]); return null; } export function Shadow() { const count = $state(0); const console = { log(value) { return value; } }; console.log([count]); return null; }";
+        let mut input = request(source, "escape-host-identity.js");
+        input.options.strict_guarantee = false;
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-S002")
+                .count(),
+            2,
+            "{:?}",
+            result.diagnostics
+        );
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-R002")
+                .count(),
+            4,
+            "{:?}",
+            result.diagnostics
+        );
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-R005")
+                .count(),
+            2,
+            "{:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn preserves_known_reactive_escape_boundaries() {
+        let source = "import { $state, $store, batch, untrack, createEffect, render } from 'fict'; function sink(value) { return value; } function useValue(value) { return value; } export function App(items) { const count = $state(0); const local = [1, 2, 3]; $store({ value: count }); useValue(count); batch(() => count); untrack(() => count); createEffect(() => count); local.map(() => count); [1, 2].forEach(() => count); items.map(() => count); console.log(count); render(count); sink([count]); return null; }";
+        let mut input = request(source, "known-escape-boundaries.js");
+        input.options.strict_guarantee = false;
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-S002")
+                .count(),
+            1,
+            "{:?}",
+            result.diagnostics
+        );
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-R002")
+                .count(),
+            2,
+            "{:?}",
+            result.diagnostics
+        );
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code.as_str() == "FICT-R005")
+                .count(),
+            1,
+            "{:?}",
+            result.diagnostics
+        );
+
+        let configured = "import { $state } from 'fict'; function reactiveScope(callback) { return callback(); } function sink(value) { return value; } export function App() { const count = $state(0); reactiveScope(() => { sink([count]); return count; }); return null; }";
+        let mut configured_input = request(configured, "configured-reactive-scope.js");
+        configured_input.options.strict_guarantee = false;
+        configured_input.options.reactive_scopes = vec!["reactiveScope".into()];
+        let configured_result = compile(configured_input);
+        assert!(
+            !configured_result.has_errors(),
+            "{:?}",
+            configured_result.diagnostics
+        );
+        assert_eq!(
+            configured_result
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            ["FICT-R002"]
         );
     }
 
