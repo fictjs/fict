@@ -2,7 +2,7 @@ use fict_compiler::{CorePassBudgets, CorePassOptions, run_core_passes};
 use fict_compiler_oxc::{
     HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, build_hir,
 };
-use fict_hir::{FunctionKind, StructuredSourceKind};
+use fict_hir::{ContextValueKind, FunctionKind, StructuredSourceKind};
 use fict_reactivity::{
     DependencyBase, EscapeKind, ShapeKind, ShapeSource, SsaDefinitionKind, StructuredConstructKind,
     StructuredLoopKind,
@@ -346,6 +346,98 @@ fn unresolved_typeof_has_no_false_value_dependency_and_a_primitive_shape() {
         shape.shape.source,
         ShapeSource::UnresolvedTypeof(source) if source == value
     ));
+}
+
+#[test]
+fn context_values_have_no_false_local_dependencies_and_keep_runtime_shapes() {
+    let frontend = build_hir(
+        r#"
+            export function inspect() {
+                const receiver = this;
+                const target = new.target;
+                const metadata = import.meta;
+                return [receiver, target, metadata];
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Module,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified context-value HIR"),
+        CorePassOptions {
+            optimize: false,
+            ..CorePassOptions::default()
+        },
+    )
+    .expect("core passes over context values");
+    let function = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                output.hir.bindings[binding.as_usize()].display_name == "inspect"
+            })
+        })
+        .expect("inspect function");
+    let analysis = &output.functions[function.id.as_usize()];
+
+    for (name, kind, expected_shape) in [
+        ("receiver", ContextValueKind::This, ShapeKind::Unknown),
+        ("target", ContextValueKind::NewTarget, ShapeKind::Unknown),
+        ("metadata", ContextValueKind::ImportMeta, ShapeKind::Object),
+    ] {
+        let local = function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"));
+        let value = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find_map(|instruction| match instruction.kind {
+                fict_hir::HirInstructionKind::Declare {
+                    local: candidate,
+                    initializer,
+                    ..
+                } if candidate == local.id => initializer,
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{name} initializer"));
+        assert!(analysis.dependencies.value_dependencies[value.as_usize()].is_empty());
+
+        let definition = analysis
+            .ssa
+            .definitions
+            .iter()
+            .find(|definition| {
+                definition.name.local == local.id && definition.kind == SsaDefinitionKind::Declare
+            })
+            .unwrap_or_else(|| panic!("{name} declaration definition"));
+        let shape = analysis
+            .shapes
+            .shapes
+            .iter()
+            .find(|shape| shape.name == definition.name)
+            .unwrap_or_else(|| panic!("{name} context shape"));
+        assert_eq!(shape.shape.kind, expected_shape);
+        assert!(matches!(
+            shape.shape.source,
+            ShapeSource::ContextValue(source, candidate)
+                if source == value && candidate == kind
+        ));
+    }
 }
 
 #[test]

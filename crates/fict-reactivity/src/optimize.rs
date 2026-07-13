@@ -1251,6 +1251,7 @@ fn rewrite_instruction_values(
         }
         HirInstructionKind::Literal(_)
         | HirInstructionKind::UnresolvedTypeof { .. }
+        | HirInstructionKind::Context { .. }
         | HirInstructionKind::Function { .. }
         | HirInstructionKind::Jsx { .. }
         | HirInstructionKind::Phi { .. }
@@ -1308,6 +1309,7 @@ fn instruction_value_inputs(
         HirInstructionKind::Iteration { source, .. } => vec![*source],
         HirInstructionKind::Literal(_)
         | HirInstructionKind::UnresolvedTypeof { .. }
+        | HirInstructionKind::Context { .. }
         | HirInstructionKind::Function { .. }
         | HirInstructionKind::Phi { .. }
         | HirInstructionKind::Debugger => Vec::new(),
@@ -1583,6 +1585,7 @@ fn remap_instruction_values(
         }
         HirInstructionKind::Literal(_)
         | HirInstructionKind::UnresolvedTypeof { .. }
+        | HirInstructionKind::Context { .. }
         | HirInstructionKind::Function { .. }
         | HirInstructionKind::Jsx { .. }
         | HirInstructionKind::Phi { .. }

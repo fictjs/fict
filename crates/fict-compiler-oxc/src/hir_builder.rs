@@ -5,18 +5,18 @@ use fict_diagnostics::{
 };
 use fict_hir::{
     ArrayElement, BinaryOperator, Binding, BindingId, BindingKind, BlockId, CallArgument, CallHost,
-    CallInstruction, CompoundAssignmentOperator, DeclarationKind, DesugaringKind, EvaluationMode,
-    FictMacroKind, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction,
-    HirInstruction, HirInstructionKind, HirLocal, HirObjectParameterCheck, HirObjectParameterMode,
-    HirObjectParameterProperty, HirObjectParameterRest, HirParameter, HirScope, HirTerminator,
-    HirValue, ImportPhase, InstructionSemantics, IterationKind, JavaScriptString, JsxAttribute,
-    JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression,
-    JsxListReceiver, JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind, MutationEffect,
-    NumberLiteral, ObjectEntry, ObjectPropertyKind, Origin, PatternSummary, PropertyKey, Purity,
-    ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind,
-    StructuredSourceHint, SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary,
-    TaggedTemplateQuasi, TemplateId, TerminatorKind, UnaryOperator, UpdateOperator, ValueId,
-    ValueKind, verify_hir,
+    CallInstruction, CompoundAssignmentOperator, ContextValueKind, DeclarationKind, DesugaringKind,
+    EvaluationMode, FictMacroKind, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock,
+    HirFile, HirFunction, HirInstruction, HirInstructionKind, HirLocal, HirObjectParameterCheck,
+    HirObjectParameterMode, HirObjectParameterProperty, HirObjectParameterRest, HirParameter,
+    HirScope, HirTerminator, HirValue, ImportPhase, InstructionSemantics, IterationKind,
+    JavaScriptString, JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName,
+    JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode, JsxTemplate, LiteralValue,
+    LocalId, LocalKind, MutationEffect, NumberLiteral, ObjectEntry, ObjectPropertyKind, Origin,
+    PatternSummary, PropertyKey, Purity, ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind,
+    RegionId, ScopeId, ScopeKind, StructuredSourceHint, SyntaxFragment, SyntaxFragmentId,
+    SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi, TemplateId, TerminatorKind,
+    UnaryOperator, UpdateOperator, ValueId, ValueKind, verify_hir,
 };
 use oxc::{
     allocator::Allocator,
@@ -573,6 +573,18 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
             Expression::ImportExpression(import_expression) => {
                 Some(typed_dynamic_import(import_expression))
             }
+            Expression::ThisExpression(this_expression) => Some(TypedExpressionFact {
+                span: source_span(this_expression.span),
+                kind: TypedExpressionKind::Context {
+                    kind: ContextValueKind::This,
+                },
+            }),
+            Expression::MetaProperty(meta_property) => {
+                context_value_kind(meta_property).map(|kind| TypedExpressionFact {
+                    span: source_span(meta_property.span),
+                    kind: TypedExpressionKind::Context { kind },
+                })
+            }
             Expression::UnaryExpression(unary) if is_unresolved_typeof(self.scoping, unary) => {
                 let Expression::Identifier(identifier) = unary.argument.get_inner_expression()
                 else {
@@ -885,6 +897,17 @@ fn typed_dynamic_import(import_expression: &ImportExpression<'_>) -> TypedExpres
                 Some(OxcImportPhase::Defer) => ImportPhase::Defer,
             },
         },
+    }
+}
+
+fn context_value_kind(meta_property: &MetaProperty<'_>) -> Option<ContextValueKind> {
+    match (
+        meta_property.meta.name.as_str(),
+        meta_property.property.name.as_str(),
+    ) {
+        ("new", "target") => Some(ContextValueKind::NewTarget),
+        ("import", "meta") => Some(ContextValueKind::ImportMeta),
+        _ => None,
     }
 }
 
@@ -3144,6 +3167,14 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     identifier: identifier.clone(),
                 },
                 InstructionSemantics::CONSERVATIVE_EAGER,
+            ),
+            TypedExpressionKind::Context { kind } => self.push_value_to_block(
+                owner,
+                block,
+                ValueKind::InstructionResult,
+                origin,
+                HirInstructionKind::Context { kind: *kind },
+                context_value_semantics(*kind),
             ),
             TypedExpressionKind::Unary {
                 operator,
@@ -5907,6 +5938,9 @@ enum TypedExpressionKind {
     UnresolvedTypeof {
         identifier: String,
     },
+    Context {
+        kind: ContextValueKind,
+    },
     Unary {
         operator: UnaryOperator,
         argument: SourceSpan,
@@ -6129,6 +6163,10 @@ impl EvaluationFact {
             }) => 0,
             Self::Typed(TypedExpressionFact {
                 kind: TypedExpressionKind::UnresolvedTypeof { .. },
+                ..
+            }) => 1,
+            Self::Typed(TypedExpressionFact {
+                kind: TypedExpressionKind::Context { .. },
                 ..
             }) => 1,
             Self::Typed(TypedExpressionFact {
@@ -8225,6 +8263,21 @@ fn unary_expression_semantics(operator: UnaryOperator) -> InstructionSemantics {
     }
 }
 
+fn context_value_semantics(kind: ContextValueKind) -> InstructionSemantics {
+    match kind {
+        ContextValueKind::This => InstructionSemantics {
+            purity: Purity::Pure,
+            mutation: MutationEffect::None,
+            evaluation: EvaluationMode::Eager,
+            // Accessing `this` before `super()` in a derived constructor throws.
+            may_throw: true,
+        },
+        ContextValueKind::NewTarget | ContextValueKind::ImportMeta => {
+            InstructionSemantics::PURE_EAGER
+        }
+    }
+}
+
 fn binary_expression_semantics(operator: BinaryOperator) -> InstructionSemantics {
     match operator {
         BinaryOperator::StrictEqual | BinaryOperator::StrictNotEqual => {
@@ -8381,6 +8434,7 @@ fn instruction_value_inputs(instruction: &HirInstruction) -> Vec<ValueId> {
         } => inputs.extend(fragment_inputs),
         HirInstructionKind::Literal(_)
         | HirInstructionKind::UnresolvedTypeof { .. }
+        | HirInstructionKind::Context { .. }
         | HirInstructionKind::Function { .. }
         | HirInstructionKind::Jsx { .. }
         | HirInstructionKind::Phi { .. }

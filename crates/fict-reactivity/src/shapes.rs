@@ -4,8 +4,9 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
 use fict_hir::{
-    ArrayElement, FictMacroKind, FunctionId, FunctionKind, HirFile, HirInstructionKind, LocalKind,
-    ObjectEntry, PlaceBase, PropertyKey, ReactiveCallKind, SsaName, ValueId,
+    ArrayElement, ContextValueKind, FictMacroKind, FunctionId, FunctionKind, HirFile,
+    HirInstructionKind, LocalKind, ObjectEntry, PlaceBase, PropertyKey, ReactiveCallKind, SsaName,
+    ValueId,
 };
 
 use crate::{
@@ -44,6 +45,8 @@ pub enum ShapeSource {
     TemplateLiteral(ValueId),
     /// String produced by `typeof` for a frontend-unresolved name.
     UnresolvedTypeof(ValueId),
+    /// Value read from the current JavaScript execution context.
+    ContextValue(ValueId, ContextValueKind),
     /// Promise object returned by a dynamic import request.
     DynamicImport(ValueId),
     /// Object literal.
@@ -635,6 +638,22 @@ fn structural_value_shape(
             escapes: false,
             array_length: None,
         },
+        HirInstructionKind::Context {
+            kind: ContextValueKind::ImportMeta,
+        } => ValueShape {
+            kind: ShapeKind::Object,
+            source: ShapeSource::ContextValue(value, ContextValueKind::ImportMeta),
+            known_keys: Vec::new(),
+            mutable_keys: Vec::new(),
+            complete_key_set: false,
+            dynamic_access: false,
+            has_spread: false,
+            escapes: false,
+            array_length: None,
+        },
+        HirInstructionKind::Context { kind } => {
+            unknown_shape(ShapeSource::ContextValue(value, *kind))
+        }
         HirInstructionKind::DynamicImport { .. } => ValueShape {
             kind: ShapeKind::Object,
             source: ShapeSource::DynamicImport(value),

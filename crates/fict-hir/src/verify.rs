@@ -663,7 +663,9 @@ impl Verifier<'_> {
                     );
                 }
             }
-            HirInstructionKind::Literal(_) | HirInstructionKind::Debugger => {}
+            HirInstructionKind::Literal(_)
+            | HirInstructionKind::Context { .. }
+            | HirInstructionKind::Debugger => {}
             HirInstructionKind::UnresolvedTypeof { identifier } => {
                 if identifier.is_empty() {
                     self.error(

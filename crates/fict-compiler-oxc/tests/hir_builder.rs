@@ -2,11 +2,11 @@ use fict_compiler_oxc::{
     HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, build_hir,
 };
 use fict_hir::{
-    ArrayElement, BinaryOperator, CallHost, CompoundAssignmentOperator, DeclarationKind,
-    EvaluationMode, FictMacroKind, FunctionKind, HirInstructionKind, ImportPhase, IterationKind,
-    JavaScriptString, LiteralValue, MutationEffect, ObjectEntry, ObjectPropertyKind, PropertyKey,
-    Purity, ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind, TerminatorKind,
-    UnaryOperator, UpdateOperator, ValueKind,
+    ArrayElement, BinaryOperator, CallHost, CompoundAssignmentOperator, ContextValueKind,
+    DeclarationKind, EvaluationMode, FictMacroKind, FunctionKind, HirInstructionKind, ImportPhase,
+    IterationKind, JavaScriptString, LiteralValue, MutationEffect, ObjectEntry, ObjectPropertyKind,
+    PropertyKey, Purity, ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind,
+    TerminatorKind, UnaryOperator, UpdateOperator, ValueKind,
 };
 
 fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
@@ -2000,6 +2000,175 @@ fn distinguishes_unresolved_typeof_from_binding_reads() {
             "{name} must not fall back to adapter-owned syntax"
         );
     }
+}
+
+#[test]
+fn materializes_this_new_target_and_import_meta_as_context_values() {
+    let source = r#"
+        export function inspect() {
+            const receiver = this;
+            const target = new.target;
+            const metadata = import.meta;
+            const receiverField = this.value;
+            const targetField = new.target.name;
+            const url = import.meta.url;
+            const nested = () => [this, new.target, import.meta];
+            return [receiver, target, metadata, receiverField, targetField, url, nested];
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified context-value HIR");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "inspect")
+        })
+        .expect("inspect function");
+    let instructions: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+
+    for (kind, authored, expected_count) in [
+        (ContextValueKind::This, "this", 2),
+        (ContextValueKind::NewTarget, "new.target", 2),
+        (ContextValueKind::ImportMeta, "import.meta", 2),
+    ] {
+        let contexts: Vec<_> = instructions
+            .iter()
+            .filter(|instruction| {
+                matches!(instruction.kind, HirInstructionKind::Context { kind: candidate } if candidate == kind)
+                    && instruction.origin.primary_span.is_some_and(|span| {
+                        &source[span.start() as usize..span.end() as usize] == authored
+                    })
+            })
+            .collect();
+        assert_eq!(contexts.len(), expected_count, "typed {authored} contexts");
+        for instruction in contexts {
+            if kind == ContextValueKind::This {
+                assert_eq!(instruction.semantics.purity, Purity::Pure);
+                assert_eq!(instruction.semantics.mutation, MutationEffect::None);
+                assert!(instruction.semantics.may_throw);
+            } else {
+                assert_eq!(
+                    instruction.semantics,
+                    fict_hir::InstructionSemantics::PURE_EAGER
+                );
+            }
+        }
+    }
+
+    let instruction_for_result = |value| {
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| instruction.result == Some(value))
+            .unwrap_or_else(|| panic!("instruction for value{}", value.index()))
+    };
+    let initializer = |name: &str| {
+        let local = function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"));
+        instructions
+            .iter()
+            .find_map(|instruction| match instruction.kind {
+                HirInstructionKind::Declare {
+                    local: candidate,
+                    initializer,
+                    ..
+                } if candidate == local.id => initializer,
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{name} initializer"))
+    };
+
+    for (name, kind) in [
+        ("receiver", ContextValueKind::This),
+        ("target", ContextValueKind::NewTarget),
+        ("metadata", ContextValueKind::ImportMeta),
+    ] {
+        assert!(matches!(
+            instruction_for_result(initializer(name)).kind,
+            HirInstructionKind::Context { kind: candidate } if candidate == kind
+        ));
+    }
+    for (name, kind) in [
+        ("receiverField", ContextValueKind::This),
+        ("targetField", ContextValueKind::NewTarget),
+        ("url", ContextValueKind::ImportMeta),
+    ] {
+        let root = instruction_for_result(initializer(name));
+        let HirInstructionKind::Read { place } = &root.kind else {
+            panic!("typed projected context read for {name}")
+        };
+        let fict_hir::PlaceBase::Value(base) = place.base else {
+            panic!("value-based context receiver for {name}")
+        };
+        assert!(matches!(
+            instruction_for_result(base).kind,
+            HirInstructionKind::Context { kind: candidate } if candidate == kind
+        ));
+    }
+
+    for name in [
+        "receiver",
+        "target",
+        "metadata",
+        "receiverField",
+        "targetField",
+        "url",
+    ] {
+        assert!(
+            !matches!(
+                instruction_for_result(initializer(name)).kind,
+                HirInstructionKind::SyntaxFragment { .. }
+            ),
+            "{name} must not fall back to adapter-owned syntax"
+        );
+    }
+
+    let nested = hir
+        .functions
+        .iter()
+        .find(|candidate| {
+            candidate.flags.is_arrow
+                && candidate.origin.primary_span.is_some_and(|span| {
+                    &source[span.start() as usize..span.end() as usize]
+                        == "() => [this, new.target, import.meta]"
+                })
+        })
+        .expect("nested lexical-context arrow");
+    let nested_contexts: std::collections::BTreeSet<_> = nested
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter_map(|instruction| match instruction.kind {
+            HirInstructionKind::Context { kind } => Some(kind),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        nested_contexts,
+        [
+            ContextValueKind::This,
+            ContextValueKind::NewTarget,
+            ContextValueKind::ImportMeta,
+        ]
+        .into_iter()
+        .collect(),
+        "arrow-owned context values retain lexical function form"
+    );
 }
 
 #[test]

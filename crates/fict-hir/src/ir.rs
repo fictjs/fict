@@ -444,6 +444,17 @@ pub enum UnaryOperator {
     Delete,
 }
 
+/// Value read directly from the current JavaScript execution context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ContextValueKind {
+    /// Current `this` binding, including lexical arrow-function capture semantics.
+    This,
+    /// Constructor target exposed through `new.target`.
+    NewTarget,
+    /// Per-module metadata object exposed through `import.meta`.
+    ImportMeta,
+}
+
 /// Binary or logical JavaScript operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BinaryOperator {
@@ -795,6 +806,11 @@ pub enum HirInstructionKind {
     UnresolvedTypeof {
         /// Normalized identifier name used for host/global environment lookup.
         identifier: String,
+    },
+    /// Read a value supplied by the current execution context without a lexical binding input.
+    Context {
+        /// Context slot selected by the authored expression.
+        kind: ContextValueKind,
     },
     /// Apply a unary operator.
     Unary {

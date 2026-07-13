@@ -17,14 +17,14 @@ pub use ids::{
 };
 pub use ir::{
     ArrayElement, BinaryOperator, Binding, BindingKind, CallArgument, CallHost, CallInstruction,
-    CompoundAssignmentOperator, DeclarationKind, EvaluationMode, FictMacroKind, FunctionFlags,
-    FunctionKind, HirBlock, HirFile, HirFunction, HirInstruction, HirInstructionKind, HirLocal,
-    HirObjectParameterCheck, HirObjectParameterMode, HirObjectParameterProperty,
-    HirObjectParameterRest, HirParameter, HirScope, HirTerminator, HirValue, ImportBinding,
-    ImportKind, ImportPhase, ImportedName, InstructionSemantics, IterationKind, LocalKind,
-    MutationEffect, ObjectEntry, ObjectPropertyKind, Place, PlaceBase, Projection, PropertyKey,
-    Purity, ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind, ScopeKind,
-    StructuredSourceHint, StructuredSourceKind, StructuredSwitchCaseHint, SwitchCase,
+    CompoundAssignmentOperator, ContextValueKind, DeclarationKind, EvaluationMode, FictMacroKind,
+    FunctionFlags, FunctionKind, HirBlock, HirFile, HirFunction, HirInstruction,
+    HirInstructionKind, HirLocal, HirObjectParameterCheck, HirObjectParameterMode,
+    HirObjectParameterProperty, HirObjectParameterRest, HirParameter, HirScope, HirTerminator,
+    HirValue, ImportBinding, ImportKind, ImportPhase, ImportedName, InstructionSemantics,
+    IterationKind, LocalKind, MutationEffect, ObjectEntry, ObjectPropertyKind, Place, PlaceBase,
+    Projection, PropertyKey, Purity, ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind,
+    ScopeKind, StructuredSourceHint, StructuredSourceKind, StructuredSwitchCaseHint, SwitchCase,
     TaggedTemplateQuasi, TerminatorKind, UnaryOperator, UpdateOperator, ValueKind,
 };
 pub use jsx::{
