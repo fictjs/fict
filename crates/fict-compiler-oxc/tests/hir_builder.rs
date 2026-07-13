@@ -4,10 +4,13 @@ use fict_compiler_oxc::{
 use fict_hir::{
     ArrayElement, BinaryOperator, CallHost, CompoundAssignmentOperator, ContextValueKind,
     DeclarationKind, DeleteTarget, EvaluationMode, FictMacroKind, FunctionKind, HirInstructionKind,
-    ImportPhase, IterationKind, JavaScriptString, LiteralValue, ModuleExport, ModuleLocalExport,
-    MutationEffect, ObjectEntry, ObjectPropertyKind, PlaceBase, Projection, PropertyKey, Purity,
-    ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, UnaryOperator,
-    UpdateOperator, ValueKind, verify_module_plan,
+    ImportPhase, ImportedReactiveKind, IterationKind, JavaScriptString, LiteralValue, ModuleExport,
+    ModuleLocalExport, MutationEffect, ObjectEntry, ObjectPropertyKind, PlaceBase, Projection,
+    PropertyKey, Purity, ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind,
+    TerminatorKind, UnaryOperator, UpdateOperator, ValueKind, verify_module_plan,
+};
+use fict_metadata::{
+    MetadataResolutionStatus, ModuleReactiveMetadata, ReactiveExportKind, ResolvedMetadataInput,
 };
 use fict_reactivity::{
     ReactiveBindingKind, SsaDefinitionKind, analyze_aliases, analyze_dependencies,
@@ -21,6 +24,68 @@ fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
         typescript: Default::default(),
         sourcemap: false,
     }
+}
+
+#[test]
+fn annotates_direct_runtime_imports_from_exact_resolved_metadata() {
+    let output = build_hir(
+        r#"
+            import primary, { count as localCount, doubled, state, plain } from './dep?client';
+            import { count as differentRequest } from './dep';
+            import * as namespace from './dep?client';
+            import { hidden } from './opaque';
+        "#,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions {
+            resolved_metadata: vec![
+                ResolvedMetadataInput {
+                    request: "./dep?client".into(),
+                    resolved_id: Some("/src/dep.ts?client".into()),
+                    status: MetadataResolutionStatus::Resolved,
+                    metadata: Some(ModuleReactiveMetadata {
+                        exports: [
+                            ("default".into(), ReactiveExportKind::Signal),
+                            ("count".into(), ReactiveExportKind::Signal),
+                            ("doubled".into(), ReactiveExportKind::Memo),
+                            ("state".into(), ReactiveExportKind::Store),
+                        ]
+                        .into_iter()
+                        .collect(),
+                        ..ModuleReactiveMetadata::new()
+                    }),
+                    fingerprint: "sha256:dep-client".into(),
+                },
+                ResolvedMetadataInput {
+                    request: "./opaque".into(),
+                    resolved_id: Some("/src/opaque.ts".into()),
+                    status: MetadataResolutionStatus::Opaque,
+                    metadata: None,
+                    fingerprint: "sha256:opaque".into(),
+                },
+            ],
+            ..HirBuildOptions::default()
+        },
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified HIR");
+    let reactive = |name: &str| {
+        hir.bindings
+            .iter()
+            .find(|binding| binding.display_name == name)
+            .unwrap_or_else(|| panic!("missing import {name}"))
+            .import
+            .as_ref()
+            .and_then(|import| import.reactive)
+    };
+
+    assert_eq!(reactive("primary"), Some(ImportedReactiveKind::Signal));
+    assert_eq!(reactive("localCount"), Some(ImportedReactiveKind::Signal));
+    assert_eq!(reactive("doubled"), Some(ImportedReactiveKind::Memo));
+    assert_eq!(reactive("state"), Some(ImportedReactiveKind::Store));
+    assert_eq!(reactive("plain"), None);
+    assert_eq!(reactive("differentRequest"), None);
+    assert_eq!(reactive("namespace"), None);
+    assert_eq!(reactive("hidden"), None);
 }
 
 #[test]

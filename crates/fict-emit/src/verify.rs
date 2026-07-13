@@ -108,6 +108,38 @@ pub fn verify_emit_program(
                     ));
                 }
             }
+            if slot.storage == crate::ReactiveSlotStorage::Imported {
+                let imported_kind = slot
+                    .binding
+                    .and_then(|binding| hir.bindings.get(binding.as_usize()))
+                    .and_then(|binding| binding.import.as_ref())
+                    .and_then(|import| import.reactive);
+                let kind_matches = matches!(
+                    (imported_kind, slot.kind),
+                    (
+                        Some(fict_hir::ImportedReactiveKind::Signal),
+                        crate::ReactiveSlotKind::Signal
+                    ) | (
+                        Some(fict_hir::ImportedReactiveKind::Memo),
+                        crate::ReactiveSlotKind::Memo
+                    ) | (
+                        Some(fict_hir::ImportedReactiveKind::Store),
+                        crate::ReactiveSlotKind::Store
+                    )
+                );
+                let local_exists = slot.binding.is_some_and(|binding| {
+                    hir_function
+                        .locals
+                        .iter()
+                        .any(|local| local.binding == Some(binding))
+                });
+                if !kind_matches || !local_exists {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-IMPORTED-SLOT",
+                        "imported reactive slots must match a metadata-annotated local binding",
+                    ));
+                }
+            }
         }
         let mut temporary_names = BTreeSet::new();
         for (index, temporary) in function.temporaries.iter().enumerate() {

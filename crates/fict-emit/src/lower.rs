@@ -5,9 +5,9 @@ use fict_diagnostics::{
 };
 use fict_hir::{
     CallHost, FictMacroKind, FunctionId, FunctionKind, HirFile, HirFunction, HirInstruction,
-    HirInstructionKind, ImportedName, JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName,
-    JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode, LocalId, PlaceBase,
-    ReactiveCallKind, TemplateId, TerminatorKind, ValueId, ValueKind,
+    HirInstructionKind, ImportedName, ImportedReactiveKind, JsxAttribute, JsxAttributeValue,
+    JsxChild, JsxElementName, JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode,
+    LocalId, PlaceBase, ReactiveCallKind, TemplateId, TerminatorKind, ValueId, ValueKind,
 };
 use fict_reactivity::{ReactiveCycleAnalysis, RegionAnalysis, analyze_cfg, structurize_cfg};
 
@@ -438,6 +438,44 @@ fn lower_function(
             )
         })
         .collect();
+    let imported_sites: Vec<_> = function
+        .locals
+        .iter()
+        .filter_map(|local| {
+            let binding = local.binding?;
+            let kind = hir
+                .bindings
+                .get(binding.as_usize())?
+                .import
+                .as_ref()?
+                .reactive?;
+            Some((
+                local.id,
+                binding,
+                match kind {
+                    ImportedReactiveKind::Signal => ReactiveSlotKind::Signal,
+                    ImportedReactiveKind::Memo => ReactiveSlotKind::Memo,
+                    ImportedReactiveKind::Store => ReactiveSlotKind::Store,
+                },
+                local.origin,
+            ))
+        })
+        .enumerate()
+        .map(|(index, (local, binding, kind, origin))| {
+            (
+                local,
+                binding,
+                kind,
+                origin,
+                EmitSlotId::new(count_u32(
+                    sites
+                        .len()
+                        .saturating_add(captured_sites.len())
+                        .saturating_add(index),
+                )),
+            )
+        })
+        .collect();
     let mut slot_by_local: BTreeMap<_, _> = sites
         .iter()
         .filter_map(|site| {
@@ -457,6 +495,14 @@ fn lower_function(
                 matches!(site.kind, ReactiveSlotKind::Signal | ReactiveSlotKind::Memo)
             })
             .map(|(local, _, slot)| (*local, *slot)),
+    );
+    slot_by_local.extend(
+        imported_sites
+            .iter()
+            .filter(|(_, _, kind, _, _)| {
+                matches!(kind, ReactiveSlotKind::Signal | ReactiveSlotKind::Memo)
+            })
+            .map(|(local, _, _, _, slot)| (*local, *slot)),
     );
     let mut slots: Vec<_> = sites
         .iter()
@@ -487,6 +533,18 @@ fn lower_function(
         control_path: Vec::new(),
         origin: site.origin,
     }));
+    slots.extend(
+        imported_sites
+            .iter()
+            .map(|(_, binding, kind, origin, slot)| ReactiveSlot {
+                id: *slot,
+                kind: *kind,
+                storage: ReactiveSlotStorage::Imported,
+                binding: Some(*binding),
+                control_path: Vec::new(),
+                origin: *origin,
+            }),
+    );
     let mut temporary_names = NameAllocator::new(
         hir.bindings
             .iter()

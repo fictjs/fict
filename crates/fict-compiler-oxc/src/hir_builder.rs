@@ -10,16 +10,17 @@ use fict_hir::{
     GlobalId, HirBlock, HirFile, HirFunction, HirGlobal, HirInstruction, HirInstructionKind,
     HirLocal, HirObjectParameterCheck, HirObjectParameterMode, HirObjectParameterProperty,
     HirObjectParameterRest, HirParameter, HirPatternWrite, HirScope, HirTerminator, HirValue,
-    ImportPhase, InstructionSemantics, IterationKind, JavaScriptString, JsxAttribute,
-    JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression,
-    JsxListReceiver, JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind, ModuleExport,
-    ModuleLocalExport, ModulePlan, MutationEffect, NumberLiteral, ObjectEntry, ObjectPropertyKind,
-    Origin, PatternSummary, PropertyKey, Purity, ReactiveCallKind, ReactiveScopeHost,
-    ReactiveScopeKind, RegionId, ScopeId, ScopeKind, StructuredSourceHint, SyntaxFragment,
-    SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi, TemplateId,
-    TerminatorKind, UnaryOperator, UpdateOperator, ValueId, ValueKind, verify_hir,
+    ImportPhase, ImportedReactiveKind, InstructionSemantics, IterationKind, JavaScriptString,
+    JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxExpressionKind,
+    JsxListExpression, JsxListReceiver, JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind,
+    ModuleExport, ModuleLocalExport, ModulePlan, MutationEffect, NumberLiteral, ObjectEntry,
+    ObjectPropertyKind, Origin, PatternSummary, PropertyKey, Purity, ReactiveCallKind,
+    ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind, StructuredSourceHint,
+    SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi,
+    TemplateId, TerminatorKind, UnaryOperator, UpdateOperator, ValueId, ValueKind, verify_hir,
     verify_module_plan,
 };
+use fict_metadata::{MetadataResolutionStatus, ReactiveExportKind, ResolvedMetadataInput};
 use oxc::{
     allocator::Allocator,
     ast::{
@@ -90,6 +91,8 @@ pub struct HirBuildOptions {
     pub strict_guarantee: bool,
     /// Effective severity for runtime reactive creation in non-JSX control flow.
     pub reactive_creation_control_flow_severity: DiagnosticSeverity,
+    /// Bundler-authoritative metadata snapshot used to annotate imported runtime bindings.
+    pub resolved_metadata: Vec<ResolvedMetadataInput>,
 }
 
 impl Default for HirBuildOptions {
@@ -98,6 +101,7 @@ impl Default for HirBuildOptions {
             reactive_scopes: Vec::new(),
             strict_guarantee: true,
             reactive_creation_control_flow_severity: DiagnosticSeverity::Error,
+            resolved_metadata: Vec::new(),
         }
     }
 }
@@ -1570,10 +1574,50 @@ struct Builder<'source, 'semantic> {
     reactive_creation_control_flow_severity: DiagnosticSeverity,
 }
 
+fn apply_resolved_import_metadata(
+    frontend: &mut FrontendSummary,
+    resolved_metadata: &[ResolvedMetadataInput],
+) {
+    let snapshot: BTreeMap<_, _> = resolved_metadata
+        .iter()
+        .filter(|entry| {
+            entry.status == MetadataResolutionStatus::Resolved && entry.validate().is_ok()
+        })
+        .filter_map(|entry| {
+            entry
+                .metadata
+                .as_ref()
+                .map(|metadata| (entry.request.as_str(), metadata))
+        })
+        .collect();
+
+    for binding in &mut frontend.bindings {
+        let Some(import) = binding.import.as_mut() else {
+            continue;
+        };
+        if import.kind != fict_hir::ImportKind::Value {
+            continue;
+        }
+        let exported = match &import.imported {
+            fict_hir::ImportedName::Default => "default",
+            fict_hir::ImportedName::Named(exported) => exported,
+            fict_hir::ImportedName::Namespace => continue,
+        };
+        import.reactive = snapshot
+            .get(import.source.as_str())
+            .and_then(|metadata| metadata.exports.get(exported))
+            .map(|kind| match kind {
+                ReactiveExportKind::Signal => ImportedReactiveKind::Signal,
+                ReactiveExportKind::Memo => ImportedReactiveKind::Memo,
+                ReactiveExportKind::Store => ImportedReactiveKind::Store,
+            });
+    }
+}
+
 impl<'source, 'semantic> Builder<'source, 'semantic> {
     fn new(
         source: &'source str,
-        frontend: FrontendSummary,
+        mut frontend: FrontendSummary,
         semantic: &'semantic Semantic<'semantic>,
         options: &HirBuildOptions,
     ) -> Self {
@@ -1588,6 +1632,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             old_to_new.insert(binding.id.index(), new);
             symbol_to_binding.insert(SymbolId::from_usize(binding.id.as_usize()), new);
         }
+        apply_resolved_import_metadata(&mut frontend, &options.resolved_metadata);
         let macro_bindings = frontend
             .macro_imports
             .iter()

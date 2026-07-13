@@ -158,6 +158,18 @@ impl Verifier<'_> {
                             Some(binding.origin),
                         );
                     }
+                    if import.reactive.is_some()
+                        && matches!(import.imported, crate::ImportedName::Namespace)
+                    {
+                        self.error(
+                            "FICT-HIR-BINDING",
+                            format!(
+                                "namespace import binding{} cannot carry direct reactive semantics",
+                                binding.id.index()
+                            ),
+                            Some(binding.origin),
+                        );
+                    }
                 }
                 (_, Some(_)) => self.error(
                     "FICT-HIR-BINDING",

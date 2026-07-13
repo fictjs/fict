@@ -244,6 +244,7 @@ fn propagates_state_into_pure_derived_bindings_and_active_blocks() {
                 source: source.into(),
                 imported: ImportedName::Named(name.into()),
                 kind: ImportKind::Value,
+                reactive: None,
             }),
             origin: origin(),
         })

@@ -871,6 +871,7 @@ fn lowers_only_binding_aware_runtime_keyed_list_calls() {
             source: "fict/internal/list".into(),
             imported: ImportedName::Named("createKeyedList".into()),
             kind: ImportKind::Value,
+            reactive: None,
         }),
         origin: origin(),
     }];
@@ -1005,6 +1006,7 @@ fn tracks_preserved_store_resource_and_selector_calls() {
             source: source.into(),
             imported: ImportedName::Named(name.into()),
             kind: ImportKind::Value,
+            reactive: None,
         }),
         origin: origin(),
     })

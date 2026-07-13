@@ -96,6 +96,17 @@ pub enum ImportKind {
     TypeOnly,
 }
 
+/// Reactive value semantics recovered from authoritative module metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ImportedReactiveKind {
+    /// Imported signal accessor.
+    Signal,
+    /// Imported memo accessor.
+    Memo,
+    /// Imported deep reactive store.
+    Store,
+}
+
 /// Module and exported-symbol identity for an import binding.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ImportBinding {
@@ -105,6 +116,8 @@ pub struct ImportBinding {
     pub imported: ImportedName,
     /// Runtime/type role.
     pub kind: ImportKind,
+    /// Authoritative cross-module reactive semantics, when supplied by the graph host.
+    pub reactive: Option<ImportedReactiveKind>,
 }
 
 /// Semantic binding. `display_name` is never an identity key.

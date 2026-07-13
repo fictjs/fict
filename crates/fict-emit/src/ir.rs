@@ -88,6 +88,8 @@ pub enum ReactiveSlotStorage {
     Owned,
     /// The function closes over a reactive binding created by another HIR function.
     Captured { owner: FunctionId },
+    /// The slot refers to an accessor or store owned by another module.
+    Imported,
 }
 
 /// One direct reactive identifier target inside an object or array assignment pattern.

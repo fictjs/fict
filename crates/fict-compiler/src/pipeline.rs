@@ -135,6 +135,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
                 "FICT-R004",
                 DiagnosticSeverity::Error,
             ),
+            resolved_metadata: request.metadata.clone(),
         },
     );
     result.diagnostics.extend(build.diagnostics);
@@ -655,6 +656,52 @@ mod tests {
                 .get("dependencyNamespace")
                 .and_then(|metadata| metadata.exports.get("count")),
             Some(&ReactiveExportKind::Signal)
+        );
+        assert_eq!(result.metadata_dependencies, ["/src/dep.ts?client"]);
+        assert!(result.unresolved_metadata_requests.is_empty());
+    }
+
+    #[test]
+    fn consumes_resolved_metadata_for_direct_import_reads() {
+        let mut input = request(
+            r#"
+                import primary, { count as localCount, doubled, state, plain } from './dep?client';
+                import { count as differentRequest } from './dep';
+                export function App() {
+                    return [primary, localCount, doubled, state.value, plain, differentRequest];
+                }
+            "#,
+            "consumer.jsx",
+        );
+        input.metadata.push(ResolvedMetadataInput {
+            request: "./dep?client".into(),
+            resolved_id: Some("/src/dep.ts?client".into()),
+            status: MetadataResolutionStatus::Resolved,
+            metadata: Some(ModuleReactiveMetadata {
+                exports: BTreeMap::from([
+                    ("default".into(), ReactiveExportKind::Signal),
+                    ("count".into(), ReactiveExportKind::Signal),
+                    ("doubled".into(), ReactiveExportKind::Memo),
+                    ("state".into(), ReactiveExportKind::Store),
+                ]),
+                ..ModuleReactiveMetadata::new()
+            }),
+            fingerprint: "sha256:dep-client".into(),
+        });
+
+        let result = compile(input);
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.code.contains("primary()"), "{}", result.code);
+        assert!(result.code.contains("localCount()"), "{}", result.code);
+        assert!(result.code.contains("doubled()"), "{}", result.code);
+        assert!(result.code.contains("state.value"), "{}", result.code);
+        assert!(!result.code.contains("state().value"), "{}", result.code);
+        assert!(result.code.contains("plain,"), "{}", result.code);
+        assert!(result.code.contains("differentRequest"), "{}", result.code);
+        assert!(
+            !result.code.contains("differentRequest()"),
+            "{}",
+            result.code
         );
         assert_eq!(result.metadata_dependencies, ["/src/dep.ts?client"]);
         assert!(result.unresolved_metadata_requests.is_empty());

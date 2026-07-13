@@ -5,8 +5,8 @@ use fict_diagnostics::{
 };
 use fict_hir::{
     ArrayElement, ContextValueKind, FictMacroKind, FunctionId, FunctionKind, HirFile,
-    HirInstructionKind, LocalKind, ObjectEntry, PlaceBase, PropertyKey, ReactiveCallKind, SsaName,
-    ValueId,
+    HirInstructionKind, ImportedReactiveKind, LocalKind, ObjectEntry, PlaceBase, PropertyKey,
+    ReactiveCallKind, SsaName, ValueId,
 };
 
 use crate::{
@@ -63,6 +63,8 @@ pub enum ShapeSource {
     ReactiveMacro(FictMacroKind),
     /// Binding-resolved runtime store/resource/selector call.
     RuntimeReactive(ReactiveCallKind),
+    /// Reactive value imported through authoritative module metadata.
+    ImportedReactive(ImportedReactiveKind),
     /// Direct alias of another SSA definition.
     Alias(SsaName),
     /// Join of multiple control-flow definitions.
@@ -189,6 +191,11 @@ pub fn analyze_shapes(
             || definition.kind == SsaDefinitionKind::Parameter
         {
             let local = &function.locals[definition.name.local.as_usize()];
+            let imported_reactive = local
+                .binding
+                .and_then(|binding| file.bindings.get(binding.as_usize()))
+                .and_then(|binding| binding.import.as_ref())
+                .and_then(|import| import.reactive);
             let parameter_object = local.kind == LocalKind::Parameter
                 && function.kind == FunctionKind::Component
                 && function
@@ -198,12 +205,16 @@ pub fn analyze_shapes(
             shapes.insert(
                 definition.name,
                 Some(ValueShape {
-                    kind: if parameter_object {
+                    kind: if imported_reactive.is_some() {
+                        ShapeKind::Reactive
+                    } else if parameter_object {
                         ShapeKind::Object
                     } else {
                         ShapeKind::Unknown
                     },
-                    source: if local.kind == LocalKind::Parameter {
+                    source: if let Some(kind) = imported_reactive {
+                        ShapeSource::ImportedReactive(kind)
+                    } else if local.kind == LocalKind::Parameter {
                         ShapeSource::Parameter
                     } else {
                         ShapeSource::Entry

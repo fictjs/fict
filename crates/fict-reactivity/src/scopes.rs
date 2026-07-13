@@ -5,7 +5,7 @@ use fict_diagnostics::{
 };
 use fict_hir::{
     BlockId, EvaluationMode, FictMacroKind, FunctionId, HirFile, HirInstructionKind,
-    MutationEffect, ReactiveCallKind, SsaName,
+    ImportedReactiveKind, MutationEffect, ReactiveCallKind, SsaName,
 };
 
 use crate::{
@@ -146,6 +146,15 @@ pub fn analyze_reactive_scopes(
             }
             ShapeSource::RuntimeReactive(ReactiveCallKind::Selector) => {
                 Some(ReactiveBindingKind::Selector)
+            }
+            ShapeSource::ImportedReactive(ImportedReactiveKind::Signal) => {
+                Some(ReactiveBindingKind::State)
+            }
+            ShapeSource::ImportedReactive(ImportedReactiveKind::Memo) => {
+                Some(ReactiveBindingKind::Memo)
+            }
+            ShapeSource::ImportedReactive(ImportedReactiveKind::Store) => {
+                Some(ReactiveBindingKind::Store)
             }
             ShapeSource::Alias(_) if shape.kind == ShapeKind::Reactive => {
                 Some(ReactiveBindingKind::Alias)

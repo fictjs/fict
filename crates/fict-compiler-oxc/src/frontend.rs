@@ -586,6 +586,7 @@ fn build_bindings(
                 } else {
                     ImportKind::Value
                 },
+                reactive: None,
             });
             FrontendBinding {
                 id: binding_id(index),

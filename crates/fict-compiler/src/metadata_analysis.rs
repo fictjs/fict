@@ -179,6 +179,16 @@ pub(crate) fn generate_module_metadata(
     let root = &core.hir.functions[core.hir.root_function.as_usize()];
     let mut builder = MetadataBuilder::new(snapshot);
 
+    for import in core
+        .hir
+        .bindings
+        .iter()
+        .filter_map(|binding| binding.import.as_ref())
+        .filter(|import| import.reactive.is_some())
+    {
+        let _ = builder.resolve(&import.source);
+    }
+
     for export in &module_plan.exports {
         match export {
             ModuleExport::Local {
