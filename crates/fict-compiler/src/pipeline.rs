@@ -1,16 +1,20 @@
 use std::mem;
 
 use fict_compiler_oxc::{
-    OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, OxcTypeScriptOptions, compile_passthrough,
+    HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, OxcTypeScriptOptions,
+    build_hir, emit_program,
 };
 use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
+use fict_emit::{NoJsxLoweringOptions, RuntimeFamily, lower_core};
+use fict_hir::FictMacroKind;
 use fict_metadata::MetadataResolutionStatus;
 
 use crate::{
     CompileRequest, CompileResult, CompilerExplainArtifact, CompilerExplainEvent,
-    CompilerExplainEventKind, ModuleKind, NormalizedCompileRequest, RawSourceMap, SourceLanguage,
+    CompilerExplainEventKind, CompilerStats, CorePassOptions, ModuleKind, NormalizedCompileRequest,
+    RawSourceMap, SourceLanguage, run_core_passes,
 };
 
 /// Execute the currently connected native pipeline and return a complete result.
@@ -62,6 +66,18 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         );
     }
 
+    if request.options.preview.is_some() {
+        result.diagnostics.push(
+            diagnostic(
+                "FICT-PREVIEW-UNAVAILABLE",
+                DiagnosticSeverity::Error,
+                "Preview compilation is not connected to the stable native pass graph",
+                GuaranteeClass::Unsupported,
+            )
+            .with_help("omit preview options until the optional Preview crate is enabled"),
+        );
+    }
+
     for metadata in &request.metadata {
         if metadata.status == MetadataResolutionStatus::IncompleteCycle {
             result.metadata_incomplete = true;
@@ -86,30 +102,143 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
 
     finalize_diagnostics(&mut result);
     if result.has_errors() {
-        attach_explain_if_requested(&mut result, &request);
+        attach_explain_if_requested(&mut result, &request, &[]);
         return result;
     }
 
-    let output = compile_passthrough(
+    let oxc_options = OxcCompileOptions {
+        language: oxc_language(request.language),
+        module_kind: oxc_module_kind(request.module_kind),
+        typescript: OxcTypeScriptOptions {
+            allow_namespaces: request.options.typescript.allow_namespaces,
+            only_remove_type_imports: request.options.typescript.only_remove_type_imports,
+            optimize_const_enums: request.options.typescript.optimize_const_enums,
+            optimize_enums: request.options.typescript.optimize_enums,
+            rewrite_import_extensions: request.options.typescript.rewrite_import_extensions,
+            remove_class_fields_without_initializer: request
+                .options
+                .typescript
+                .remove_class_fields_without_initializer,
+        },
+        sourcemap: request.options.sourcemap,
+    };
+    let build = build_hir(
         &request.code,
-        &request.filename,
-        OxcCompileOptions {
-            language: oxc_language(request.language),
-            module_kind: oxc_module_kind(request.module_kind),
-            typescript: OxcTypeScriptOptions {
-                allow_namespaces: request.options.typescript.allow_namespaces,
-                only_remove_type_imports: request.options.typescript.only_remove_type_imports,
-                optimize_const_enums: request.options.typescript.optimize_const_enums,
-                optimize_enums: request.options.typescript.optimize_enums,
-                rewrite_import_extensions: request.options.typescript.rewrite_import_extensions,
-                remove_class_fields_without_initializer: request
-                    .options
-                    .typescript
-                    .remove_class_fields_without_initializer,
-            },
-            sourcemap: request.options.sourcemap,
+        oxc_options,
+        &HirBuildOptions {
+            reactive_scopes: request.options.reactive_scopes.clone(),
         },
     );
+    result.diagnostics.extend(build.diagnostics);
+    let Some(hir) = build.hir else {
+        finalize_diagnostics(&mut result);
+        if !result.has_errors() {
+            result.diagnostics.push(diagnostic(
+                "FICT-I003",
+                DiagnosticSeverity::Error,
+                "the OXC frontend returned no HIR without a diagnostic",
+                GuaranteeClass::Internal,
+            ));
+        }
+        finalize_diagnostics(&mut result);
+        attach_explain_if_requested(&mut result, &request, &[]);
+        return result;
+    };
+    let Some(frontend) = build.frontend else {
+        result.diagnostics.push(diagnostic(
+            "FICT-I004",
+            DiagnosticSeverity::Error,
+            "the OXC frontend returned HIR without its binding summary",
+            GuaranteeClass::Internal,
+        ));
+        finalize_diagnostics(&mut result);
+        attach_explain_if_requested(&mut result, &request, &[]);
+        return result;
+    };
+    for call in frontend
+        .macro_calls
+        .iter()
+        .filter(|call| matches!(call.kind, FictMacroKind::State | FictMacroKind::Memo))
+    {
+        result.diagnostics.push(
+            diagnostic(
+                "FICT-OXC-EMIT-REACTIVE-ACCESS",
+                DiagnosticSeverity::Error,
+                "signal and memo access rewriting is not yet materialized by the OXC output adapter",
+                GuaranteeClass::Unsupported,
+            )
+            .with_primary_span(call.call_span)
+            .with_help("use the legacy backend for modules containing $state or $memo"),
+        );
+    }
+    finalize_diagnostics(&mut result);
+    if result.has_errors() {
+        attach_explain_if_requested(&mut result, &request, &[]);
+        return result;
+    }
+
+    let core = match run_core_passes(
+        &hir,
+        CorePassOptions {
+            optimize: request.options.optimize,
+            ..CorePassOptions::default()
+        },
+    ) {
+        Ok(core) => core,
+        Err(diagnostics) => {
+            result.diagnostics.extend(diagnostics.into_sorted());
+            finalize_diagnostics(&mut result);
+            attach_explain_if_requested(&mut result, &request, &[]);
+            return result;
+        }
+    };
+    result.stats = Some(CompilerStats {
+        stage_durations_ns: core.stats.stage_durations_ns.clone(),
+        counters: core.stats.counters.clone(),
+    });
+    let regions: Vec<_> = core
+        .functions
+        .iter()
+        .map(|analysis| analysis.regions.clone())
+        .collect();
+    let cycles: Vec<_> = core
+        .functions
+        .iter()
+        .map(|analysis| analysis.cycles.clone())
+        .collect();
+    let runtime_family = if frontend
+        .macro_imports
+        .iter()
+        .any(|import| import.source.starts_with("@fictjs/runtime"))
+    {
+        RuntimeFamily::Runtime
+    } else {
+        RuntimeFamily::Fict
+    };
+    let emit = match lower_core(
+        &core.hir,
+        &regions,
+        &cycles,
+        NoJsxLoweringOptions {
+            runtime_family,
+            strict_guarantee: request.options.strict_guarantee,
+            preview: false,
+        },
+    ) {
+        Ok(emit) => emit,
+        Err(diagnostics) => {
+            result.diagnostics.extend(diagnostics.into_sorted());
+            finalize_diagnostics(&mut result);
+            attach_explain_if_requested(&mut result, &request, &[]);
+            return result;
+        }
+    };
+    let helpers: Vec<_> = emit
+        .imports
+        .iter()
+        .map(|intent| intent.helper.spec().key.to_owned())
+        .collect();
+    let output = emit_program(&request.code, &request.filename, oxc_options, &emit);
     result.diagnostics.extend(output.diagnostics);
     finalize_diagnostics(&mut result);
 
@@ -142,7 +271,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         result.code.clear();
         result.map = None;
     }
-    attach_explain_if_requested(&mut result, &request);
+    attach_explain_if_requested(&mut result, &request, &helpers);
     result
 }
 
@@ -196,25 +325,40 @@ fn finalize_diagnostics(result: &mut CompileResult) {
     result.diagnostics = DiagnosticBundle::new(mem::take(&mut result.diagnostics)).into_sorted();
 }
 
-fn attach_explain_if_requested(result: &mut CompileResult, request: &NormalizedCompileRequest) {
+fn attach_explain_if_requested(
+    result: &mut CompileResult,
+    request: &NormalizedCompileRequest,
+    helpers: &[String],
+) {
     if !request.options.explain {
         return;
     }
     result.explain = Some(CompilerExplainArtifact {
         version: 1,
         file_name: request.filename.clone(),
-        helpers: Vec::new(),
+        helpers: helpers.to_vec(),
         diagnostics: result.diagnostics.clone(),
-        events: result
-            .diagnostics
+        events: helpers
             .iter()
-            .map(|finding| CompilerExplainEvent {
-                kind: CompilerExplainEventKind::Diagnostic,
-                message: finding.message.clone(),
-                name: None,
-                code: Some(finding.code.to_string()),
-                span: finding.primary_span,
+            .map(|helper| CompilerExplainEvent {
+                kind: CompilerExplainEventKind::RuntimeHelper,
+                message: format!("emits runtime helper {helper}"),
+                name: Some(helper.clone()),
+                code: None,
+                span: None,
             })
+            .chain(
+                result
+                    .diagnostics
+                    .iter()
+                    .map(|finding| CompilerExplainEvent {
+                        kind: CompilerExplainEventKind::Diagnostic,
+                        message: finding.message.clone(),
+                        name: None,
+                        code: Some(finding.code.to_string()),
+                        span: finding.primary_span,
+                    }),
+            )
             .collect(),
     });
 }
@@ -222,7 +366,9 @@ fn attach_explain_if_requested(result: &mut CompileResult, request: &NormalizedC
 #[cfg(test)]
 mod tests {
     use super::{compile, internal_error_result};
-    use crate::{COMPILER_PROTOCOL_VERSION, CompileRequest, CompilerOptions};
+    use crate::{
+        COMPILER_PROTOCOL_VERSION, CompileRequest, CompilerExplainEventKind, CompilerOptions,
+    };
 
     fn request(code: &str, filename: &str) -> CompileRequest {
         CompileRequest {
@@ -269,6 +415,71 @@ mod tests {
         assert!(result.code.contains("./setup.js"));
         assert!(!result.code.contains("Size["));
         assert!(result.code.contains("value = 1"));
+    }
+
+    #[test]
+    fn runs_module_effects_through_hir_emit_ir_and_oxc_codegen() {
+        let mut input = request(
+            "import { $effect, batch } from 'fict'; $effect(() => batch(() => 1)); export { batch };",
+            "effect.js",
+        );
+        input.options.explain = true;
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(!result.code.contains("$effect"));
+        assert!(result.code.contains("createEffect"));
+        assert!(result.code.contains("fict/internal"));
+        assert!(result.code.contains("import { batch } from \"fict\""));
+        assert!(result.stats.is_some());
+        let explain = result.explain.expect("native explanation");
+        assert_eq!(explain.helpers, ["effect"]);
+        assert!(explain.events.iter().any(|event| {
+            event.kind == CompilerExplainEventKind::RuntimeHelper
+                && event.name.as_deref() == Some("effect")
+        }));
+    }
+
+    #[test]
+    fn fails_closed_for_unmaterialized_reactive_access_and_jsx() {
+        let state = compile(request(
+            "import { $state } from 'fict'; function Component() { let count = $state(0); return count; }",
+            "state.js",
+        ));
+        assert!(state.has_errors());
+        assert!(state.code.is_empty());
+        assert!(
+            state
+                .diagnostics
+                .iter()
+                .any(|diagnostic| { diagnostic.code.as_str() == "FICT-OXC-EMIT-REACTIVE-ACCESS" })
+        );
+
+        let jsx = compile(request(
+            "export function Component() { return <button>Save</button>; }",
+            "component.jsx",
+        ));
+        assert!(jsx.has_errors());
+        assert!(jsx.code.is_empty());
+        assert!(
+            jsx.diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_str() == "FICT-OXC-EMIT-JSX")
+        );
+    }
+
+    #[test]
+    fn rejects_preview_options_until_the_optional_pass_graph_is_connected() {
+        let mut input = request("export const value = 1", "preview.js");
+        input.options.preview = Some(Default::default());
+        let result = compile(input);
+
+        assert!(result.has_errors());
+        assert!(result.code.is_empty());
+        assert_eq!(
+            result.diagnostics[0].code.as_str(),
+            "FICT-PREVIEW-UNAVAILABLE"
+        );
     }
 
     #[test]
