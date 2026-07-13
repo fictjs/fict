@@ -3,7 +3,9 @@ use fict_compiler_oxc::{
     HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, build_hir,
 };
 use fict_hir::{FunctionKind, StructuredSourceKind};
-use fict_reactivity::{SsaDefinitionKind, StructuredConstructKind, StructuredLoopKind};
+use fict_reactivity::{
+    DependencyBase, ShapeKind, SsaDefinitionKind, StructuredConstructKind, StructuredLoopKind,
+};
 
 fn build_fixture() -> fict_hir::HirFile {
     let output = build_hir(
@@ -71,6 +73,99 @@ fn rejects_hir_that_exceeds_an_explicit_resource_budget() {
             .iter()
             .any(|diagnostic| diagnostic.code.as_str() == "FICT-PASS-BUDGET")
     );
+}
+
+#[test]
+fn sequence_results_depend_on_and_inherit_shape_from_only_the_final_value() {
+    let frontend = build_hir(
+        r#"
+            export function evaluate(preceding, finalValue, touch) {
+                const alias = (preceding, finalValue);
+                const shaped = (touch(), [1, 2]);
+                return [alias, shaped];
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Module,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified sequence HIR"),
+        CorePassOptions {
+            optimize: false,
+            ..CorePassOptions::default()
+        },
+    )
+    .expect("core passes over sequences");
+    let function = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                output.hir.bindings[binding.as_usize()].display_name == "evaluate"
+            })
+        })
+        .expect("evaluate function");
+    let analysis = &output.functions[function.id.as_usize()];
+    let local = |name: &str| {
+        function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"))
+    };
+    let initializer = |name: &str| {
+        let local = local(name);
+        function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find_map(|instruction| match instruction.kind {
+                fict_hir::HirInstructionKind::Declare {
+                    local: candidate,
+                    initializer,
+                    ..
+                } if candidate == local.id => initializer,
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{name} initializer"))
+    };
+
+    let alias_value = initializer("alias");
+    let alias_dependencies = &analysis.dependencies.value_dependencies[alias_value.as_usize()];
+    assert_eq!(alias_dependencies.len(), 1);
+    assert!(matches!(
+        alias_dependencies[0].base,
+        DependencyBase::Ssa(name) if name.local == local("finalValue").id
+    ));
+
+    let shaped = local("shaped");
+    let shaped_definition = analysis
+        .ssa
+        .definitions
+        .iter()
+        .find(|definition| {
+            definition.name.local == shaped.id && definition.kind == SsaDefinitionKind::Declare
+        })
+        .expect("shaped declaration definition");
+    let shaped_shape = analysis
+        .shapes
+        .shapes
+        .iter()
+        .find(|shape| shape.name == shaped_definition.name)
+        .expect("shaped sequence shape");
+    assert_eq!(shaped_shape.shape.kind, ShapeKind::Array);
+    assert_eq!(shaped_shape.shape.array_length, Some(2));
 }
 
 #[test]

@@ -177,6 +177,68 @@ fn verifier_checks_every_typed_conditional_input() {
 }
 
 #[test]
+fn verifier_requires_a_nontrivial_sequence_and_checks_every_value() {
+    let mut file = empty_file();
+    let origin = Origin::source(fict_hir::SourceSpan::empty(0));
+    for index in 0..2 {
+        let value = ValueId::new(index);
+        let literal = LiteralValue::Number(NumberLiteral::from_f64(f64::from(index)));
+        file.functions[0].values.push(HirValue {
+            id: value,
+            kind: ValueKind::Literal(literal.clone()),
+            origin,
+        });
+        file.functions[0].blocks[0]
+            .instructions
+            .push(HirInstruction {
+                result: Some(value),
+                kind: HirInstructionKind::Literal(literal),
+                semantics: InstructionSemantics::PURE_EAGER,
+                origin,
+            });
+    }
+    file.functions[0].values.push(HirValue {
+        id: ValueId::new(2),
+        kind: ValueKind::InstructionResult,
+        origin,
+    });
+    file.functions[0].blocks[0]
+        .instructions
+        .push(HirInstruction {
+            result: Some(ValueId::new(2)),
+            kind: HirInstructionKind::Sequence {
+                values: vec![ValueId::new(0), ValueId::new(1)],
+            },
+            semantics: InstructionSemantics::PURE_EAGER,
+            origin,
+        });
+
+    verify_hir(&file).expect("well-formed sequence HIR");
+    let HirInstructionKind::Sequence { values } =
+        &mut file.functions[0].blocks[0].instructions[2].kind
+    else {
+        panic!("sequence fixture")
+    };
+    values[1] = ValueId::new(99);
+    let invalid_value = verify_hir(&file).expect_err("invalid sequence input must fail");
+    assert!(invalid_value.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-REF" && diagnostic.message.contains("value99")
+    }));
+
+    let HirInstructionKind::Sequence { values } =
+        &mut file.functions[0].blocks[0].instructions[2].kind
+    else {
+        panic!("sequence fixture")
+    };
+    values.truncate(1);
+    let trivial = verify_hir(&file).expect_err("one-value sequence must fail");
+    assert!(trivial.as_slice().iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-SEQUENCE"
+            && diagnostic.message.contains("at least two")
+    }));
+}
+
+#[test]
 fn verifier_enforces_object_prototype_setter_invariants() {
     let mut file = empty_file();
     let origin = Origin::source(fict_hir::SourceSpan::empty(0));

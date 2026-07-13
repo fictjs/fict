@@ -254,7 +254,7 @@ impl<'semantic> PlanBuilder<'semantic> {
     }
 
     fn build_expression(mut self, expression: &Expression<'_>) -> FunctionControlFlowPlan {
-        let span = source_span(expression.span());
+        let span = runtime_expression_span(expression);
         self.owners.push(SpanOwner {
             span,
             block: BlockId::new(0),
@@ -307,10 +307,7 @@ impl<'semantic> PlanBuilder<'semantic> {
             Statement::BreakStatement(statement) => self.lower_break(statement, current),
             Statement::ContinueStatement(statement) => self.lower_continue(statement, current),
             Statement::ReturnStatement(statement) => {
-                let value = statement
-                    .argument
-                    .as_ref()
-                    .map(|value| source_span(value.span()));
+                let value = statement.argument.as_ref().map(runtime_expression_span);
                 if let Some(value) = value {
                     self.owners.push(SpanOwner {
                         span: value,
@@ -324,7 +321,7 @@ impl<'semantic> PlanBuilder<'semantic> {
                 None
             }
             Statement::ThrowStatement(statement) => {
-                let value = source_span(statement.argument.span());
+                let value = runtime_expression_span(&statement.argument);
                 self.owners.push(SpanOwner {
                     span: value,
                     block: current,
@@ -364,7 +361,7 @@ impl<'semantic> PlanBuilder<'semantic> {
     ) -> Option<BlockId> {
         self.has_control_flow = true;
         let origin = source_span(statement.span);
-        let test = source_span(statement.test.span());
+        let test = runtime_expression_span(&statement.test);
         self.owners.push(SpanOwner {
             span: test,
             block: current,
@@ -444,7 +441,7 @@ impl<'semantic> PlanBuilder<'semantic> {
             })
             .collect();
         let exit = self.new_block(parent_scope, origin);
-        let discriminant = source_span(statement.discriminant.span());
+        let discriminant = runtime_expression_span(&statement.discriminant);
         let discriminant_has_effects = expression_has_effects(&statement.discriminant);
         self.owners.push(SpanOwner {
             span: discriminant,
@@ -453,7 +450,7 @@ impl<'semantic> PlanBuilder<'semantic> {
         for (case, test_block) in statement.cases.iter().zip(&tests) {
             if let (Some(test), Some(test_block)) = (&case.test, test_block) {
                 self.owners.push(SpanOwner {
-                    span: source_span(test.span()),
+                    span: runtime_expression_span(test),
                     block: *test_block,
                 });
             }
@@ -474,7 +471,7 @@ impl<'semantic> PlanBuilder<'semantic> {
                 discriminant,
                 discriminant_block: current,
                 discriminant_has_effects,
-                test: source_span(test.span()),
+                test: runtime_expression_span(test),
                 test_has_effects: expression_has_effects(test),
                 consequent: bodies[index],
                 alternate: next_dispatch,
@@ -653,7 +650,7 @@ impl<'semantic> PlanBuilder<'semantic> {
             origin,
         };
 
-        let test = source_span(statement.test.span());
+        let test = runtime_expression_span(&statement.test);
         self.owners.push(SpanOwner {
             span: test,
             block: header,
@@ -709,7 +706,7 @@ impl<'semantic> PlanBuilder<'semantic> {
             origin,
         };
 
-        let test = source_span(statement.test.span());
+        let test = runtime_expression_span(&statement.test);
         self.owners.push(SpanOwner {
             span: test,
             block: test_block,
@@ -752,7 +749,9 @@ impl<'semantic> PlanBuilder<'semantic> {
             .get()
             .map_or(parent_scope, |scope| ScopeId::new(count_u32(scope.index())));
         let preheader = if let Some(initializer) = &statement.init {
-            let span = source_span(initializer.span());
+            let span = initializer
+                .as_expression()
+                .map_or_else(|| source_span(initializer.span()), runtime_expression_span);
             let block = self.new_block(loop_scope, span);
             self.blocks[current.as_usize()].terminator = PlannedTerminator::Goto {
                 target: block,
@@ -773,7 +772,7 @@ impl<'semantic> PlanBuilder<'semantic> {
             statement
                 .update
                 .as_ref()
-                .map_or(origin, |update| source_span(update.span())),
+                .map_or(origin, runtime_expression_span),
         );
         let exit = self.new_block(parent_scope, origin);
         self.blocks[preheader.as_usize()].terminator = PlannedTerminator::Goto {
@@ -783,7 +782,7 @@ impl<'semantic> PlanBuilder<'semantic> {
         self.set_loop_hint(header, StructuredSourceKind::ForLoop, exit, origin);
 
         if let Some(test_expression) = &statement.test {
-            let test = source_span(test_expression.span());
+            let test = runtime_expression_span(test_expression);
             self.owners.push(SpanOwner {
                 span: test,
                 block: header,
@@ -803,7 +802,7 @@ impl<'semantic> PlanBuilder<'semantic> {
         }
         if let Some(update_expression) = &statement.update {
             self.owners.push(SpanOwner {
-                span: source_span(update_expression.span()),
+                span: runtime_expression_span(update_expression),
                 block: update,
             });
         }
@@ -903,7 +902,7 @@ impl<'semantic> PlanBuilder<'semantic> {
             origin,
         };
 
-        let source = source_span(source_expression.span());
+        let source = runtime_expression_span(source_expression);
         self.owners.push(SpanOwner {
             span: source,
             block: current,
@@ -1209,6 +1208,10 @@ pub(super) fn expression_has_effects(expression: &Expression<'_>) -> bool {
     let mut collector = ExpressionEffectCollector::default();
     collector.visit_expression(expression);
     collector.found
+}
+
+fn runtime_expression_span(expression: &Expression<'_>) -> SourceSpan {
+    source_span(expression.get_inner_expression().span())
 }
 
 fn statement_scope(statement: &Statement<'_>, fallback: ScopeId) -> ScopeId {

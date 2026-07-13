@@ -506,7 +506,7 @@ impl<'a> Visit<'a> for VariableDeclarationCollector {
                     initializer_span: declarator
                         .init
                         .as_ref()
-                        .map(|initializer| source_span(initializer.span())),
+                        .map(|initializer| source_span(initializer.get_inner_expression().span())),
                     initializer_has_effects: declarator.init.as_ref().is_some_and(|initializer| {
                         structured_control_flow::expression_has_effects(initializer)
                     }),
@@ -621,6 +621,24 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
                     alternate_has_effects: structured_control_flow::expression_has_effects(
                         &conditional.alternate,
                     ),
+                },
+            }),
+            Expression::SequenceExpression(sequence) => Some(TypedExpressionFact {
+                span: source_span(sequence.span),
+                kind: TypedExpressionKind::Sequence {
+                    values: sequence
+                        .expressions
+                        .iter()
+                        .map(|expression| {
+                            let expression = expression.get_inner_expression();
+                            TypedSequenceValue {
+                                span: source_span(expression.span()),
+                                has_effects: structured_control_flow::expression_has_effects(
+                                    expression,
+                                ),
+                            }
+                        })
+                        .collect(),
                 },
             }),
             Expression::AwaitExpression(await_expression) => {
@@ -3087,6 +3105,28 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         consequent,
                         alternate,
                     },
+                    InstructionSemantics::PURE_EAGER,
+                )
+            }
+            TypedExpressionKind::Sequence { values } => {
+                let values = values
+                    .iter()
+                    .map(|value| {
+                        self.control_expression_value(
+                            owner,
+                            block,
+                            value.span,
+                            true,
+                            value.has_effects,
+                        )
+                    })
+                    .collect();
+                self.push_value_to_block(
+                    owner,
+                    block,
+                    ValueKind::InstructionResult,
+                    origin,
+                    HirInstructionKind::Sequence { values },
                     InstructionSemantics::PURE_EAGER,
                 )
             }
@@ -5631,6 +5671,9 @@ enum TypedExpressionKind {
         consequent_has_effects: bool,
         alternate_has_effects: bool,
     },
+    Sequence {
+        values: Vec<TypedSequenceValue>,
+    },
     Await {
         value: SourceSpan,
         value_has_effects: bool,
@@ -5651,6 +5694,12 @@ enum TypedExpressionKind {
     Object {
         entries: Vec<TypedObjectEntry>,
     },
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TypedSequenceValue {
+    span: SourceSpan,
+    has_effects: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -5808,28 +5857,32 @@ impl EvaluationFact {
                 ..
             }) => 4,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Await { .. },
+                kind: TypedExpressionKind::Sequence { .. },
                 ..
             }) => 5,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Yield { .. },
+                kind: TypedExpressionKind::Await { .. },
                 ..
             }) => 6,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::New { .. },
+                kind: TypedExpressionKind::Yield { .. },
                 ..
             }) => 7,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Array { .. },
+                kind: TypedExpressionKind::New { .. },
                 ..
             }) => 8,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Object { .. },
+                kind: TypedExpressionKind::Array { .. },
                 ..
             }) => 9,
-            Self::Jsx(_) => 10,
-            Self::Member(_) => 11,
-            Self::Call(_) => 12,
+            Self::Typed(TypedExpressionFact {
+                kind: TypedExpressionKind::Object { .. },
+                ..
+            }) => 10,
+            Self::Jsx(_) => 11,
+            Self::Member(_) => 12,
+            Self::Call(_) => 13,
         }
     }
 }
@@ -7150,9 +7203,10 @@ impl<'a> Visit<'a> for MutationCollector<'_> {
         if let Some((symbol, projected)) = assignment_target_symbol(self.scoping, &assignment.left)
         {
             let target_span = source_span(assignment.left.span());
+            let right = assignment.right.get_inner_expression();
             let kind = if assignment.operator == OxcAssignmentOperator::Assign {
                 Some(ReactiveMutationKind::Write {
-                    value_span: source_span(assignment.right.span()),
+                    value_span: source_span(right.span()),
                     value_has_effects: structured_control_flow::expression_has_effects(
                         &assignment.right,
                     ),
@@ -7161,7 +7215,7 @@ impl<'a> Visit<'a> for MutationCollector<'_> {
                 compound_assignment_operator(assignment.operator).map(|operator| {
                     ReactiveMutationKind::Compound {
                         operator,
-                        value_span: source_span(assignment.right.span()),
+                        value_span: source_span(right.span()),
                         value_has_effects: structured_control_flow::expression_has_effects(
                             &assignment.right,
                         ),
@@ -7972,6 +8026,7 @@ fn instruction_value_inputs(instruction: &HirInstruction) -> Vec<ValueId> {
             consequent,
             alternate,
         } => inputs.extend([*test, *consequent, *alternate]),
+        HirInstructionKind::Sequence { values } => inputs.extend(values),
         HirInstructionKind::Call(call) => {
             inputs.push(call.callee);
             inputs.extend(call.arguments.iter().map(|argument| argument.value));

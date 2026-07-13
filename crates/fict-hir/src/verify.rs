@@ -680,6 +680,18 @@ impl Verifier<'_> {
                 self.value(function, *consequent, instruction.origin);
                 self.value(function, *alternate, instruction.origin);
             }
+            HirInstructionKind::Sequence { values } => {
+                for value in values {
+                    self.value(function, *value, instruction.origin);
+                }
+                if values.len() < 2 {
+                    self.error(
+                        "FICT-HIR-SEQUENCE",
+                        "a sequence expression must contain at least two values",
+                        Some(instruction.origin),
+                    );
+                }
+            }
             HirInstructionKind::Call(call) => {
                 self.value(function, call.callee, instruction.origin);
                 for argument in &call.arguments {

@@ -3130,6 +3130,157 @@ fn materializes_yield_values_delegation_and_lazy_arguments() {
 }
 
 #[test]
+fn materializes_sequence_values_in_authored_evaluation_order() {
+    let source = r#"
+        function evaluate(make, optional, value) {
+            const result = (make('first'), value, make('last'));
+            let assigned;
+            assigned = (make('assigned'), value);
+            const deferred = optional?.((
+                make('optional-first'),
+                make('optional-last')
+            ));
+            return [result, assigned, deferred];
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified sequence HIR");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "evaluate")
+        })
+        .expect("evaluate function");
+    let instructions: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let authored = |instruction: &fict_hir::HirInstruction| {
+        let span = instruction
+            .origin
+            .primary_span
+            .expect("authored sequence instruction");
+        &source[span.start() as usize..span.end() as usize]
+    };
+    let instruction_for_result = |value| {
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| instruction.result == Some(value))
+            .unwrap_or_else(|| panic!("instruction for value{}", value.index()))
+    };
+    let local = |name: &str| {
+        function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"))
+    };
+    let initializer = |name: &str| {
+        let local = local(name);
+        instructions
+            .iter()
+            .find_map(|instruction| match instruction.kind {
+                HirInstructionKind::Declare {
+                    local: candidate,
+                    initializer,
+                    ..
+                } if candidate == local.id => initializer,
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{name} initializer"))
+    };
+
+    let result_value = initializer("result");
+    let result = instruction_for_result(result_value);
+    let HirInstructionKind::Sequence { values } = &result.kind else {
+        panic!("typed result sequence")
+    };
+    assert_eq!(
+        authored(result),
+        "make('first'), value, make('last')",
+        "transparent parentheses must not force a syntax-fragment wrapper"
+    );
+    assert_eq!(result.semantics, fict_hir::InstructionSemantics::PURE_EAGER);
+    assert_eq!(values.len(), 3);
+    assert_eq!(authored(instruction_for_result(values[0])), "make('first')");
+    assert_eq!(authored(instruction_for_result(values[1])), "value");
+    assert_eq!(authored(instruction_for_result(values[2])), "make('last')");
+    let positions: Vec<_> = values
+        .iter()
+        .map(|value| {
+            instructions
+                .iter()
+                .position(|instruction| instruction.result == Some(*value))
+                .expect("sequence input position")
+        })
+        .collect();
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(
+        positions[2]
+            < instructions
+                .iter()
+                .position(|instruction| instruction.result == Some(result_value))
+                .expect("sequence result position")
+    );
+
+    let assigned = local("assigned");
+    let assigned_value = instructions
+        .iter()
+        .find_map(|instruction| match &instruction.kind {
+            HirInstructionKind::Write { place, value }
+                if place == &fict_hir::Place::local(assigned.id) =>
+            {
+                Some(*value)
+            }
+            _ => None,
+        })
+        .expect("assigned write value");
+    let HirInstructionKind::Sequence { values } = &instruction_for_result(assigned_value).kind
+    else {
+        panic!("typed assignment sequence")
+    };
+    assert_eq!(values.len(), 2);
+    assert_eq!(
+        authored(instruction_for_result(values[0])),
+        "make('assigned')"
+    );
+    assert_eq!(authored(instruction_for_result(values[1])), "value");
+
+    let deferred_value = initializer("deferred");
+    let deferred_call = instruction_for_result(deferred_value);
+    let HirInstructionKind::Call(call) = &deferred_call.kind else {
+        panic!("typed optional call")
+    };
+    assert!(call.optional);
+    assert_eq!(call.arguments.len(), 1);
+    let deferred_sequence = instruction_for_result(call.arguments[0].value);
+    let HirInstructionKind::Sequence { values } = &deferred_sequence.kind else {
+        panic!("typed optional argument sequence")
+    };
+    assert_eq!(values.len(), 2);
+    for value in values {
+        assert_eq!(
+            instruction_for_result(*value).semantics.evaluation,
+            EvaluationMode::Deferred
+        );
+    }
+    assert_eq!(
+        deferred_sequence.semantics.evaluation,
+        EvaluationMode::Deferred
+    );
+}
+
+#[test]
 fn materializes_static_computed_index_and_value_base_projections() {
     let source = r#"
         function project(obj) {

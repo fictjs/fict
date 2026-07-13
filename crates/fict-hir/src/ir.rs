@@ -790,6 +790,11 @@ pub enum HirInstructionKind {
         /// Value produced by the falsy branch.
         alternate: ValueId,
     },
+    /// Evaluate comma-separated expressions from left to right and return the final value.
+    Sequence {
+        /// Values in authored evaluation order. A valid sequence contains at least two values.
+        values: Vec<ValueId>,
+    },
     /// Invoke a function or method.
     Call(CallInstruction),
     /// Construct a value with `new`.

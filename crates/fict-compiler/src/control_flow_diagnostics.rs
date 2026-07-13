@@ -492,6 +492,9 @@ fn value_has_unsafe_control_work(
                 || value_has_unsafe_control_work(file, function, *consequent, visiting)
                 || value_has_unsafe_control_work(file, function, *alternate, visiting)
         }
+        HirInstructionKind::Sequence { values } => values
+            .iter()
+            .any(|value| value_has_unsafe_control_work(file, function, *value, visiting)),
         _ => false,
     }
 }

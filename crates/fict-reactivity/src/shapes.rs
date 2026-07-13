@@ -207,6 +207,7 @@ pub fn analyze_shapes(
 
     let mut structural_values = BTreeMap::new();
     let mut read_sources = BTreeMap::new();
+    let mut value_sources = BTreeMap::new();
     let mut assigned_values = BTreeMap::new();
     let definitions_by_location: BTreeMap<_, _> = ssa
         .definitions
@@ -223,6 +224,11 @@ pub fn analyze_shapes(
             if let Some(result) = instruction.result {
                 if let Some(shape) = structural_value_shape(result, instruction) {
                     structural_values.insert(result, shape);
+                }
+                if let HirInstructionKind::Sequence { values } = &instruction.kind
+                    && let Some(value) = values.last()
+                {
+                    value_sources.insert(result, *value);
                 }
                 if matches!(instruction.kind, HirInstructionKind::Read { .. })
                     && let Some([path]) = dependencies
@@ -313,7 +319,13 @@ pub fn analyze_shapes(
                         incoming.map(|incoming| join_many(&incoming, ShapeSource::Phi))
                     })
             } else if let Some(value) = assigned_values.get(&definition.name).copied().flatten() {
-                value_shape(value, &structural_values, &read_sources, &previous)
+                value_shape(
+                    value,
+                    &structural_values,
+                    &read_sources,
+                    &value_sources,
+                    &previous,
+                )
             } else if assigned_values.contains_key(&definition.name) {
                 Some(unknown_shape(ShapeSource::UnknownOperation))
             } else {
@@ -709,6 +721,7 @@ fn structural_value_shape(
         | HirInstructionKind::Unary { .. }
         | HirInstructionKind::Binary { .. }
         | HirInstructionKind::Conditional { .. }
+        | HirInstructionKind::Sequence { .. }
         | HirInstructionKind::Await { .. }
         | HirInstructionKind::Yield { .. }
         | HirInstructionKind::Phi { .. }
@@ -718,11 +731,19 @@ fn structural_value_shape(
 }
 
 fn value_shape(
-    value: ValueId,
+    mut value: ValueId,
     structural: &BTreeMap<ValueId, ValueShape>,
     reads: &BTreeMap<ValueId, SsaName>,
+    value_sources: &BTreeMap<ValueId, ValueId>,
     shapes: &BTreeMap<SsaName, Option<ValueShape>>,
 ) -> Option<ValueShape> {
+    let mut visited = BTreeSet::new();
+    while let Some(source) = value_sources.get(&value).copied() {
+        if !visited.insert(value) {
+            return None;
+        }
+        value = source;
+    }
     structural.get(&value).cloned().or_else(|| {
         reads
             .get(&value)
