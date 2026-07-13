@@ -1,0 +1,6 @@
+30import { $memo, $state } from 'fict';
+export function App(props: { initial: number }) {
+  let count = $state(props.initial);
+  const doubled = $memo(() => count * 2);
+  return <button onClick={() => count++}>{doubled}</button>;
+}

@@ -168,6 +168,9 @@ plan.md
 
 # Rust compiler artifacts
 /target/
+/fuzz/artifacts/
+/fuzz/coverage/
+/fuzz/target/
 
 # Standalone repos kept next to the monorepo working tree
 /mcp/

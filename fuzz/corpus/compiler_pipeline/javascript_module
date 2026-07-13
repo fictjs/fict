@@ -1,0 +1,6 @@
+00export function evaluate(input) {
+  let value = input ?? 1;
+  if (value > 4) value += 2;
+  else value -= 1;
+  return value;
+}
