@@ -2502,6 +2502,178 @@ fn materializes_object_keys_entries_and_definition_order() {
 }
 
 #[test]
+fn materializes_constructor_calls_and_spread_iteration_order() {
+    let source = r#"
+        function construct(Ctor, getCtor, make, tail, value) {
+            const empty = new Ctor;
+            const direct = new Ctor(make('first'), () => value, make('third'));
+            const spread = new (getCtor())(
+                make('before'),
+                ...make('spread'),
+                make('after'),
+                ...tail,
+            );
+            return [empty, direct, spread];
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified constructor HIR");
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "construct")
+        })
+        .expect("construct function");
+    let instructions: Vec<_> = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .collect();
+    let authored = |instruction: &fict_hir::HirInstruction| {
+        let span = instruction
+            .origin
+            .primary_span
+            .expect("authored expression");
+        &source[span.start() as usize..span.end() as usize]
+    };
+    let instruction = |text: &str| {
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| authored(instruction) == text)
+            .unwrap_or_else(|| panic!("instruction for {text}"))
+    };
+    let constructor_for_local = |name: &str| {
+        let local = function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} local"));
+        let initializer = instructions
+            .iter()
+            .find_map(|instruction| match instruction.kind {
+                HirInstructionKind::Declare {
+                    local: candidate,
+                    initializer,
+                    ..
+                } if candidate == local.id => initializer,
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{name} initializer"));
+        instructions
+            .iter()
+            .copied()
+            .find(|instruction| instruction.result == Some(initializer))
+            .unwrap_or_else(|| panic!("{name} constructor instruction"))
+    };
+
+    let empty = constructor_for_local("empty");
+    let HirInstructionKind::New {
+        callee: empty_callee,
+        arguments: empty_arguments,
+    } = &empty.kind
+    else {
+        panic!("typed empty constructor")
+    };
+    assert!(empty_arguments.is_empty());
+    assert_eq!(
+        function.values[empty_callee.as_usize()].kind,
+        ValueKind::InstructionResult
+    );
+    assert_eq!(
+        empty.semantics,
+        fict_hir::InstructionSemantics::CONSERVATIVE_EAGER
+    );
+
+    let direct = constructor_for_local("direct");
+    let HirInstructionKind::New {
+        arguments: direct_arguments,
+        ..
+    } = &direct.kind
+    else {
+        panic!("typed direct constructor")
+    };
+    assert_eq!(direct_arguments.len(), 3);
+    assert!(direct_arguments.iter().all(|argument| !argument.spread));
+    assert_eq!(
+        Some(direct_arguments[0].value),
+        instruction("make('first')").result
+    );
+    assert!(matches!(
+        function.values[direct_arguments[1].value.as_usize()].kind,
+        ValueKind::Function(_)
+    ));
+    assert_eq!(
+        Some(direct_arguments[2].value),
+        instruction("make('third')").result
+    );
+    for argument in direct_arguments {
+        assert_eq!(
+            instructions
+                .iter()
+                .find(|instruction| instruction.result == Some(argument.value))
+                .expect("direct constructor argument instruction")
+                .semantics
+                .evaluation,
+            EvaluationMode::Eager
+        );
+    }
+
+    let spread = constructor_for_local("spread");
+    let HirInstructionKind::New { callee, arguments } = &spread.kind else {
+        panic!("typed spread constructor")
+    };
+    assert_eq!(Some(*callee), instruction("getCtor()").result);
+    assert_eq!(arguments.len(), 4);
+    assert_eq!(
+        arguments
+            .iter()
+            .map(|argument| argument.spread)
+            .collect::<Vec<_>>(),
+        [false, true, false, true]
+    );
+    assert_eq!(
+        Some(arguments[0].value),
+        instruction("make('before')").result
+    );
+    assert_eq!(
+        Some(arguments[1].value),
+        instruction("make('spread')").result
+    );
+    assert_eq!(
+        Some(arguments[2].value),
+        instruction("make('after')").result
+    );
+    assert_eq!(Some(arguments[3].value), instruction("tail").result);
+    for text in ["getCtor()", "make('before')"] {
+        assert_eq!(
+            instruction(text).semantics.evaluation,
+            EvaluationMode::Eager,
+            "constructor and pre-spread arguments are eager: {text}"
+        );
+    }
+    for text in ["make('spread')", "make('after')", "tail"] {
+        assert_eq!(
+            instruction(text).semantics.evaluation,
+            EvaluationMode::Deferred,
+            "the new node owns evaluation from its first spread: {text}"
+        );
+    }
+    assert_eq!(
+        spread.semantics,
+        fict_hir::InstructionSemantics::CONSERVATIVE_EAGER
+    );
+}
+
+#[test]
 fn materializes_static_computed_index_and_value_base_projections() {
     let source = r#"
         function project(obj) {

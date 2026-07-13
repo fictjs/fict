@@ -623,6 +623,51 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
                     ),
                 },
             }),
+            Expression::NewExpression(new_expression) => {
+                let callee = new_expression.callee.get_inner_expression();
+                Some(TypedExpressionFact {
+                    span: source_span(new_expression.span),
+                    kind: TypedExpressionKind::New {
+                        callee: source_span(callee.span()),
+                        callee_has_effects: structured_control_flow::expression_has_effects(
+                            &new_expression.callee,
+                        ),
+                        arguments: new_expression
+                            .arguments
+                            .iter()
+                            .map(|argument| {
+                                if let Some(expression) = argument.as_expression() {
+                                    let expression = expression.get_inner_expression();
+                                    TypedNewArgument {
+                                        value: source_span(expression.span()),
+                                        value_has_effects:
+                                            structured_control_flow::expression_has_effects(
+                                                expression,
+                                            ),
+                                        spread: false,
+                                    }
+                                } else if let oxc::ast::ast::Argument::SpreadElement(spread) =
+                                    argument
+                                {
+                                    let expression = spread.argument.get_inner_expression();
+                                    TypedNewArgument {
+                                        value: source_span(expression.span()),
+                                        value_has_effects:
+                                            structured_control_flow::expression_has_effects(
+                                                &spread.argument,
+                                            ),
+                                        spread: true,
+                                    }
+                                } else {
+                                    unreachable!(
+                                        "every constructor argument is an expression or spread"
+                                    )
+                                }
+                            })
+                            .collect(),
+                    },
+                })
+            }
             Expression::ArrayExpression(array) => Some(TypedExpressionFact {
                 span: source_span(array.span),
                 kind: TypedExpressionKind::Array {
@@ -3014,6 +3059,44 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         alternate,
                     },
                     InstructionSemantics::PURE_EAGER,
+                )
+            }
+            TypedExpressionKind::New {
+                callee,
+                callee_has_effects,
+                arguments,
+            } => {
+                let callee =
+                    self.control_expression_value(owner, block, *callee, true, *callee_has_effects);
+                let mut materialized = Vec::with_capacity(arguments.len());
+                let mut owns_evaluation = false;
+                for argument in arguments {
+                    owns_evaluation |= argument.spread;
+                    let value = self.control_expression_value(
+                        owner,
+                        block,
+                        argument.value,
+                        true,
+                        argument.value_has_effects,
+                    );
+                    if owns_evaluation {
+                        self.mark_span_deferred(owner, block, argument.value);
+                    }
+                    materialized.push(CallArgument {
+                        value,
+                        spread: argument.spread,
+                    });
+                }
+                self.push_value_to_block(
+                    owner,
+                    block,
+                    ValueKind::InstructionResult,
+                    origin,
+                    HirInstructionKind::New {
+                        callee,
+                        arguments: materialized,
+                    },
+                    InstructionSemantics::CONSERVATIVE_EAGER,
                 )
             }
             TypedExpressionKind::Array { elements } => {
@@ -5435,6 +5518,11 @@ enum TypedExpressionKind {
         consequent_has_effects: bool,
         alternate_has_effects: bool,
     },
+    New {
+        callee: SourceSpan,
+        callee_has_effects: bool,
+        arguments: Vec<TypedNewArgument>,
+    },
     Array {
         elements: Vec<TypedArrayElement>,
     },
@@ -5455,6 +5543,13 @@ enum TypedArrayElement {
         origin: SourceSpan,
         has_effects: bool,
     },
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TypedNewArgument {
+    value: SourceSpan,
+    value_has_effects: bool,
+    spread: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -5591,16 +5686,20 @@ impl EvaluationFact {
                 ..
             }) => 4,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Array { .. },
+                kind: TypedExpressionKind::New { .. },
                 ..
             }) => 5,
             Self::Typed(TypedExpressionFact {
-                kind: TypedExpressionKind::Object { .. },
+                kind: TypedExpressionKind::Array { .. },
                 ..
             }) => 6,
-            Self::Jsx(_) => 7,
-            Self::Member(_) => 8,
-            Self::Call(_) => 9,
+            Self::Typed(TypedExpressionFact {
+                kind: TypedExpressionKind::Object { .. },
+                ..
+            }) => 7,
+            Self::Jsx(_) => 8,
+            Self::Member(_) => 9,
+            Self::Call(_) => 10,
         }
     }
 }
