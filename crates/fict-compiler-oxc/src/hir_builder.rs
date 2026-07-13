@@ -12,9 +12,9 @@ use fict_hir::{
     HirValue, InstructionSemantics, JsxAttribute, JsxAttributeValue, JsxChild, JsxElement,
     JsxElementName, JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode, JsxTemplate,
     LocalId, LocalKind, MutationEffect, Origin, PatternSummary, Purity, ReactiveCallKind,
-    ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind, SyntaxFragment,
-    SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TemplateId, TerminatorKind,
-    UpdateOperator, ValueId, ValueKind, verify_hir,
+    ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind, StructuredSourceHint,
+    SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TemplateId,
+    TerminatorKind, UpdateOperator, ValueId, ValueKind, verify_hir,
 };
 use oxc::{
     allocator::Allocator,
@@ -66,6 +66,7 @@ mod inline_jsx_functions;
 mod memo_side_effects;
 mod native_jsx_spreads;
 mod reactive_jsx_writes;
+mod structured_control_flow;
 
 /// Binding-aware frontend controls that affect HIR classification.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -783,6 +784,7 @@ struct Builder<'source, 'semantic> {
     configured_bindings: BTreeSet<BindingId>,
     reactive_value_bindings: BTreeSet<BindingId>,
     reactive_functions: BTreeMap<FunctionId, ReactiveScopeKind>,
+    control_flow_plans: BTreeMap<FunctionId, structured_control_flow::FunctionControlFlowPlan>,
     strict_guarantee: bool,
     reactive_creation_control_flow_severity: DiagnosticSeverity,
 }
@@ -868,6 +870,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             configured_bindings,
             reactive_value_bindings: BTreeSet::new(),
             reactive_functions: BTreeMap::new(),
+            control_flow_plans: BTreeMap::new(),
             strict_guarantee: options.strict_guarantee,
             reactive_creation_control_flow_severity: options
                 .reactive_creation_control_flow_severity,
@@ -884,6 +887,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .collect();
         self.function_facts = collector.functions;
         self.build_function_shells();
+        self.control_flow_plans = structured_control_flow::collect(program, &self.function_by_span);
+        self.apply_control_flow_plans();
 
         let function_by_span = self.function_by_span.clone();
         let symbol_to_binding = self.symbol_to_binding.clone();
@@ -1686,6 +1691,44 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         }
     }
 
+    fn apply_control_flow_plans(&mut self) {
+        for (function_id, plan) in &self.control_flow_plans {
+            if !plan.supported || !plan.has_control_flow {
+                continue;
+            }
+            let function = &mut self.functions[function_id.as_usize()];
+            let declarations = std::mem::take(&mut function.blocks[0].instructions);
+            function.blocks = plan
+                .blocks
+                .iter()
+                .map(|block| HirBlock {
+                    id: block.id,
+                    scope: block.scope,
+                    instructions: Vec::new(),
+                    terminator: HirTerminator {
+                        kind: TerminatorKind::Unreachable,
+                        origin: Origin::source(block.origin),
+                    },
+                    source_hint: block.source_kind.clone().map(|kind| StructuredSourceHint {
+                        kind,
+                        exit: block.source_exit,
+                        origin: Origin::source(block.origin),
+                    }),
+                    origin: Origin::source(block.origin),
+                })
+                .collect();
+            for declaration in declarations {
+                let block = declaration
+                    .origin
+                    .primary_span
+                    .map_or(BlockId::new(0), |span| plan.block_for_span(span));
+                function.blocks[block.as_usize()]
+                    .instructions
+                    .push(declaration);
+            }
+        }
+    }
+
     fn lower_object_parameter(
         &self,
         parameter: &ParameterFact,
@@ -2073,6 +2116,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             self.collect_reactive_reads(&reactive_targets, &accessor_read_suppressions);
         let reactive_mutations = self.collect_reactive_mutations(mutations, &reactive_targets);
         for fact in self.function_facts.clone() {
+            let has_structured_control_flow = self.has_structured_control_flow(fact.id);
             let mut inputs = Vec::new();
             let call_argument_functions: BTreeSet<_> = calls
                 .iter()
@@ -2232,7 +2276,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                             value_span,
                             self.referenced_bindings(value_span),
                         );
-                        self.functions[fact.id.as_usize()].blocks[0]
+                        let block = self.planned_block_for_span(fact.id, mutation.span);
+                        self.functions[fact.id.as_usize()].blocks[block.as_usize()]
                             .instructions
                             .push(HirInstruction {
                                 result: None,
@@ -2308,26 +2353,29 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 inputs.push(value);
             }
 
-            let body_summary = SyntaxSummary {
-                referenced_bindings: self.referenced_bindings(fact.body_span),
-                has_side_effects: true,
-                may_throw: true,
-                contains_await: fact.flags.is_async,
-                contains_yield: fact.flags.is_generator,
-                contains_jsx: source_slice(self.source, fact.body_span)
-                    .is_some_and(|slice| slice.contains('<')),
-                ..SyntaxSummary::default()
-            };
-            let fragment =
-                self.add_fragment(SyntaxFragmentKind::Statement, fact.body_span, body_summary);
-            self.functions[fact.id.as_usize()].blocks[0]
-                .instructions
-                .push(HirInstruction {
-                    result: None,
-                    kind: HirInstructionKind::SyntaxFragment { fragment, inputs },
-                    semantics: InstructionSemantics::CONSERVATIVE_EAGER,
-                    origin: Origin::source(fact.body_span),
-                });
+            if !has_structured_control_flow {
+                let body_summary = SyntaxSummary {
+                    referenced_bindings: self.referenced_bindings(fact.body_span),
+                    has_side_effects: true,
+                    may_throw: true,
+                    contains_await: fact.flags.is_async,
+                    contains_yield: fact.flags.is_generator,
+                    contains_jsx: source_slice(self.source, fact.body_span)
+                        .is_some_and(|slice| slice.contains('<')),
+                    ..SyntaxSummary::default()
+                };
+                let fragment =
+                    self.add_fragment(SyntaxFragmentKind::Statement, fact.body_span, body_summary);
+                self.functions[fact.id.as_usize()].blocks[0]
+                    .instructions
+                    .push(HirInstruction {
+                        result: None,
+                        kind: HirInstructionKind::SyntaxFragment { fragment, inputs },
+                        semantics: InstructionSemantics::CONSERVATIVE_EAGER,
+                        origin: Origin::source(fact.body_span),
+                    });
+            }
+            self.materialize_control_flow_terminators(fact.id);
         }
     }
 
@@ -2451,6 +2499,143 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         )
     }
 
+    fn has_structured_control_flow(&self, owner: FunctionId) -> bool {
+        self.control_flow_plans
+            .get(&owner)
+            .is_some_and(|plan| plan.supported && plan.has_control_flow)
+    }
+
+    fn planned_block_for_span(&self, owner: FunctionId, span: SourceSpan) -> BlockId {
+        self.control_flow_plans
+            .get(&owner)
+            .filter(|plan| plan.supported && plan.has_control_flow)
+            .map_or(BlockId::new(0), |plan| plan.block_for_span(span))
+    }
+
+    fn materialize_control_flow_terminators(&mut self, owner: FunctionId) {
+        let Some(plan) = self
+            .control_flow_plans
+            .get(&owner)
+            .filter(|plan| plan.supported && plan.has_control_flow)
+            .cloned()
+        else {
+            return;
+        };
+
+        for block in plan.blocks {
+            let origin = match &block.terminator {
+                structured_control_flow::PlannedTerminator::Return { origin, .. }
+                | structured_control_flow::PlannedTerminator::Throw { origin, .. }
+                | structured_control_flow::PlannedTerminator::Goto { origin, .. }
+                | structured_control_flow::PlannedTerminator::Branch { origin, .. }
+                | structured_control_flow::PlannedTerminator::Unreachable { origin } => *origin,
+            };
+            let kind = match block.terminator {
+                structured_control_flow::PlannedTerminator::Return { value, .. } => {
+                    TerminatorKind::Return {
+                        value: value.map(|span| {
+                            self.control_expression_value(owner, block.id, span, true, true)
+                        }),
+                    }
+                }
+                structured_control_flow::PlannedTerminator::Throw { value, .. } => {
+                    TerminatorKind::Throw {
+                        value: self.control_expression_value(owner, block.id, value, true, true),
+                    }
+                }
+                structured_control_flow::PlannedTerminator::Goto { target, .. } => {
+                    TerminatorKind::Goto { target }
+                }
+                structured_control_flow::PlannedTerminator::Branch {
+                    test,
+                    has_effects,
+                    consequent,
+                    alternate,
+                    ..
+                } => TerminatorKind::Branch {
+                    test: self.control_expression_value(owner, block.id, test, false, has_effects),
+                    consequent,
+                    alternate,
+                },
+                structured_control_flow::PlannedTerminator::Unreachable { .. } => {
+                    TerminatorKind::Unreachable
+                }
+            };
+            self.functions[owner.as_usize()].blocks[block.id.as_usize()].terminator =
+                HirTerminator {
+                    kind,
+                    origin: Origin::source(origin),
+                };
+        }
+    }
+
+    fn control_expression_value(
+        &mut self,
+        owner: FunctionId,
+        block: BlockId,
+        span: SourceSpan,
+        reuse_exact_value: bool,
+        has_effects: bool,
+    ) -> ValueId {
+        if reuse_exact_value
+            && let Some(value) = self.functions[owner.as_usize()].blocks[block.as_usize()]
+                .instructions
+                .iter()
+                .rev()
+                .find_map(|instruction| {
+                    (instruction.origin.primary_span == Some(span))
+                        .then_some(instruction.result)
+                        .flatten()
+                })
+        {
+            return value;
+        }
+
+        let mut ordered_inputs: Vec<_> = self.functions[owner.as_usize()].blocks[block.as_usize()]
+            .instructions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, instruction)| {
+                let value = instruction.result?;
+                let candidate = instruction.origin.primary_span?;
+                span_contains(span, candidate).then_some((
+                    candidate.start(),
+                    candidate.end(),
+                    index,
+                    value,
+                ))
+            })
+            .collect();
+        ordered_inputs.sort_by_key(|(start, end, index, _)| (*start, *end, *index));
+        let mut seen = BTreeSet::new();
+        let inputs = ordered_inputs
+            .into_iter()
+            .filter_map(|(_, _, _, value)| seen.insert(value).then_some(value))
+            .collect();
+        let fragment = self.add_fragment(
+            SyntaxFragmentKind::Expression,
+            span,
+            SyntaxSummary {
+                referenced_bindings: self.referenced_bindings(span),
+                has_side_effects: has_effects,
+                may_throw: has_effects,
+                ..SyntaxSummary::default()
+            },
+        );
+        self.push_value_to_block(
+            owner,
+            block,
+            ValueKind::SyntaxFragment(fragment),
+            Origin::source(span),
+            HirInstructionKind::SyntaxFragment { fragment, inputs },
+            if has_effects {
+                InstructionSemantics::CONSERVATIVE_EAGER
+            } else {
+                InstructionSemantics::PURE_EAGER
+            },
+        )
+    }
+
     fn link_direct_call_declaration(
         &mut self,
         owner: FunctionId,
@@ -2466,19 +2651,37 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         else {
             return;
         };
-        let block = &mut function.blocks[0];
-        let Some(index) = block.instructions.iter().position(|instruction| {
-            matches!(
-                instruction.kind,
-                HirInstructionKind::Declare {
-                    local: candidate,
-                    ..
-                } if candidate == local
-            )
+        let Some(target_block) = function.blocks.iter().find_map(|block| {
+            block
+                .instructions
+                .iter()
+                .any(|instruction| instruction.result == Some(initializer))
+                .then_some(block.id)
         }) else {
             return;
         };
-        let mut declaration = block.instructions.remove(index);
+        let Some((declaration_block, declaration_index)) =
+            function.blocks.iter().find_map(|block| {
+                block
+                    .instructions
+                    .iter()
+                    .position(|instruction| {
+                        matches!(
+                            instruction.kind,
+                            HirInstructionKind::Declare {
+                                local: candidate,
+                                ..
+                            } if candidate == local
+                        )
+                    })
+                    .map(|index| (block.id, index))
+            })
+        else {
+            return;
+        };
+        let mut declaration = function.blocks[declaration_block.as_usize()]
+            .instructions
+            .remove(declaration_index);
         let HirInstructionKind::Declare {
             initializer: target,
             ..
@@ -2487,7 +2690,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             unreachable!("selected declaration instruction")
         };
         *target = Some(initializer);
-        block.instructions.push(declaration);
+        function.blocks[target_block.as_usize()]
+            .instructions
+            .push(declaration);
     }
 
     fn lower_jsx_node(&mut self, owner: FunctionId, node: &RawJsxNode) -> JsxNode {
@@ -2704,6 +2909,21 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         instruction_kind: HirInstructionKind,
         semantics: InstructionSemantics,
     ) -> ValueId {
+        let block = origin.primary_span.map_or(BlockId::new(0), |span| {
+            self.planned_block_for_span(owner, span)
+        });
+        self.push_value_to_block(owner, block, kind, origin, instruction_kind, semantics)
+    }
+
+    fn push_value_to_block(
+        &mut self,
+        owner: FunctionId,
+        block: BlockId,
+        kind: ValueKind,
+        origin: Origin,
+        instruction_kind: HirInstructionKind,
+        semantics: InstructionSemantics,
+    ) -> ValueId {
         let function = &mut self.functions[owner.as_usize()];
         let value = ValueId::new(count_u32(function.values.len()));
         function.values.push(HirValue {
@@ -2711,12 +2931,14 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             kind,
             origin,
         });
-        function.blocks[0].instructions.push(HirInstruction {
-            result: Some(value),
-            kind: instruction_kind,
-            semantics,
-            origin,
-        });
+        function.blocks[block.as_usize()]
+            .instructions
+            .push(HirInstruction {
+                result: Some(value),
+                kind: instruction_kind,
+                semantics,
+                origin,
+            });
         value
     }
 

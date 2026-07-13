@@ -3,7 +3,7 @@ use fict_compiler_oxc::{
 };
 use fict_hir::{
     CallHost, CompoundAssignmentOperator, FictMacroKind, FunctionKind, HirInstructionKind,
-    ReactiveCallKind, SyntaxFragmentKind, UpdateOperator,
+    ReactiveCallKind, StructuredSourceKind, SyntaxFragmentKind, TerminatorKind, UpdateOperator,
 };
 
 fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
@@ -13,6 +13,193 @@ fn options(language: OxcSourceLanguage) -> OxcCompileOptions {
         typescript: Default::default(),
         sourcemap: false,
     }
+}
+
+#[test]
+fn lowers_if_returns_into_real_hir_blocks_with_control_dependencies() {
+    let source = r#"
+        import { $state } from 'fict';
+        function App() {
+            const count = $state(0);
+            if (count > 10 && maybe()) return <Big />;
+            return <Small />;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified structured HIR");
+    let app = hir
+        .functions
+        .iter()
+        .find(|function| function.kind == FunctionKind::Component)
+        .expect("component function");
+
+    assert_eq!(app.blocks.len(), 4);
+    assert!(matches!(
+        app.blocks[0].source_hint.as_ref().map(|hint| &hint.kind),
+        Some(StructuredSourceKind::Conditional)
+    ));
+    let TerminatorKind::Branch {
+        test,
+        consequent,
+        alternate,
+    } = app.blocks[0].terminator.kind
+    else {
+        panic!("entry block must branch")
+    };
+    let test_inputs = app.blocks[0]
+        .instructions
+        .iter()
+        .find_map(|instruction| {
+            (instruction.result == Some(test))
+                .then_some(&instruction.kind)
+                .and_then(|kind| match kind {
+                    HirInstructionKind::SyntaxFragment { inputs, .. } => Some(inputs),
+                    _ => None,
+                })
+        })
+        .expect("materialized branch test");
+    let reactive_read = app.blocks[0]
+        .instructions
+        .iter()
+        .find_map(|instruction| {
+            matches!(instruction.kind, HirInstructionKind::Read { .. })
+                .then_some(instruction.result)
+                .flatten()
+        })
+        .expect("reactive condition read");
+    let unknown_call = app.blocks[0]
+        .instructions
+        .iter()
+        .find_map(|instruction| match &instruction.kind {
+            HirInstructionKind::Call(call) if call.macro_kind.is_none() => instruction.result,
+            _ => None,
+        })
+        .expect("condition call");
+    assert!(test_inputs.contains(&reactive_read));
+    assert!(test_inputs.contains(&unknown_call));
+
+    let consequent_block = &app.blocks[consequent.as_usize()];
+    let TerminatorKind::Return {
+        value: Some(big_value),
+    } = consequent_block.terminator.kind
+    else {
+        panic!("truthy branch must return JSX")
+    };
+    assert!(consequent_block.instructions.iter().any(|instruction| {
+        instruction.result == Some(big_value)
+            && matches!(instruction.kind, HirInstructionKind::Jsx { .. })
+    }));
+
+    let TerminatorKind::Goto { target: join } = app.blocks[alternate.as_usize()].terminator.kind
+    else {
+        panic!("empty false branch must flow to the join")
+    };
+    let join_block = &app.blocks[join.as_usize()];
+    let TerminatorKind::Return {
+        value: Some(small_value),
+    } = join_block.terminator.kind
+    else {
+        panic!("join block must return fallback JSX")
+    };
+    assert!(join_block.instructions.iter().any(|instruction| {
+        instruction.result == Some(small_value)
+            && matches!(instruction.kind, HirInstructionKind::Jsx { .. })
+    }));
+    assert!(
+        app.blocks.iter().flat_map(|block| &block.instructions).all(
+            |instruction| match instruction.kind {
+                HirInstructionKind::SyntaxFragment { fragment, .. } => {
+                    hir.syntax_fragments[fragment.as_usize()].kind != SyntaxFragmentKind::Statement
+                }
+                _ => true,
+            }
+        )
+    );
+}
+
+#[test]
+fn lowers_throw_values_into_their_conditional_block() {
+    let source = r#"
+        function classify(value) {
+            if (value) throw makeError();
+            return 1;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified throw CFG");
+    let classify = hir
+        .bindings
+        .iter()
+        .find(|binding| binding.display_name == "classify")
+        .expect("classify binding")
+        .id;
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| function.binding == Some(classify));
+    let function = function.expect("named function");
+    let TerminatorKind::Branch { consequent, .. } = function.blocks[0].terminator.kind else {
+        panic!("function entry must branch")
+    };
+    let throw_block = &function.blocks[consequent.as_usize()];
+    let TerminatorKind::Throw { value } = throw_block.terminator.kind else {
+        panic!("truthy branch must throw")
+    };
+    assert!(throw_block.instructions.iter().any(|instruction| {
+        instruction.result == Some(value) && matches!(instruction.kind, HirInstructionKind::Call(_))
+    }));
+}
+
+#[test]
+fn keeps_unsupported_mixed_flow_on_the_conservative_fallback_path() {
+    let source = r#"
+        function work(flag) {
+            if (flag) return 1;
+            while (flag) flag = false;
+            return 0;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::JavaScript),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified conservative fallback HIR");
+    let work = hir
+        .bindings
+        .iter()
+        .find(|binding| binding.display_name == "work")
+        .expect("work binding")
+        .id;
+    let function = hir
+        .functions
+        .iter()
+        .find(|function| function.binding == Some(work))
+        .expect("work function");
+
+    assert_eq!(function.blocks.len(), 1);
+    assert!(
+        function.blocks[0]
+            .instructions
+            .iter()
+            .any(|instruction| match instruction.kind {
+                HirInstructionKind::SyntaxFragment { fragment, .. } => {
+                    hir.syntax_fragments[fragment.as_usize()].kind == SyntaxFragmentKind::Statement
+                }
+                _ => false,
+            })
+    );
 }
 
 #[test]

@@ -2,6 +2,7 @@ use fict_compiler::{CorePassBudgets, CorePassOptions, run_core_passes};
 use fict_compiler_oxc::{
     HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, build_hir,
 };
+use fict_hir::FunctionKind;
 
 fn build_fixture() -> fict_hir::HirFile {
     let output = build_hir(
@@ -68,5 +69,59 @@ fn rejects_hir_that_exceeds_an_explicit_resource_budget() {
             .as_slice()
             .iter()
             .any(|diagnostic| diagnostic.code.as_str() == "FICT-PASS-BUDGET")
+    );
+}
+
+#[test]
+fn analyzes_frontend_if_cfg_as_control_dependent_reactive_work() {
+    let frontend = build_hir(
+        r#"
+            import { $state } from 'fict';
+            export function App() {
+                const count = $state(0);
+                if (count > 10 && maybe()) return <Big />;
+                return <Small />;
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScriptJsx,
+            module_kind: OxcModuleKind::Module,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified frontend CFG"),
+        CorePassOptions::default(),
+    )
+    .expect("core passes over frontend CFG");
+    let app = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| function.kind == FunctionKind::Component)
+        .expect("component function");
+    let analysis = &output.functions[app.id.as_usize()];
+
+    assert_eq!(app.blocks.len(), 4);
+    assert!(!analysis.dependencies.control_flow_reads.is_empty());
+    assert!(!analysis.dependencies.barriers.is_empty());
+    assert_eq!(analysis.structurize.stats.conditionals, 1);
+    assert!(analysis.structurize.fallback.is_none());
+    assert_eq!(
+        analysis
+            .ssa
+            .cfg
+            .reachable
+            .iter()
+            .filter(|reachable| **reachable)
+            .count(),
+        4
     );
 }
