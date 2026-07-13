@@ -63,10 +63,12 @@ pub(crate) fn reactive_control_flow_diagnostics(core: &CorePassOutput) -> Vec<Di
                     // A throw inside a try is not a function exit: it may enter the associated
                     // catch/finally story. Keep branch-return suppression disabled until that
                     // enclosing exception construct has been proven as one unit.
+                    let has_try_ancestor =
+                        construct_has_try_ancestor(construct, &analysis.structurize.constructs);
                     let branch_return =
-                        !construct_has_try_ancestor(construct, &analysis.structurize.constructs)
-                            && is_branch_return_construct(function, construct, *join);
-                    let memoizable_story = !function.flags.no_memo
+                        !has_try_ancestor && is_branch_return_construct(function, construct, *join);
+                    let memoizable_story = !has_try_ancestor
+                        && !function.flags.no_memo
                         && !construct_has_unsafe_control_work(&core.hir, function, construct);
                     if !condition_invokes_user_code && (branch_return || memoizable_story) {
                         continue;
