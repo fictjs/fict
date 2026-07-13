@@ -6,7 +6,7 @@ use fict_diagnostics::{
 };
 use fict_emit::{
     ComponentChild, ComponentProp, ConditionalKind, DomBindingKind, DomNamespace, EmitOperation,
-    EmitProgram, EmitValueRef, PropsOperation, RuntimeHelper,
+    EmitProgram, EmitPropMode, EmitValueRef, PropsOperation, RuntimeHelper,
 };
 use fict_hir::{CompoundAssignmentOperator, LiteralValue, TemplateId, UpdateOperator};
 use oxc::{
@@ -506,6 +506,7 @@ struct CallRewrite {
 struct PropBindingRewrite {
     path: Vec<String>,
     local: String,
+    mode: EmitPropMode,
     checks: Vec<PropCheckRewrite>,
     default_value: Option<SourceSpan>,
     default_local: Option<String>,
@@ -739,6 +740,7 @@ fn props_rewrites(emit: &EmitProgram) -> PropsRewrites {
             bindings.push(PropBindingRewrite {
                 path: binding.path.clone(),
                 local: binding.local.clone(),
+                mode: binding.mode,
                 checks,
                 default_value,
                 default_local: binding.default_local.clone(),
@@ -2992,7 +2994,12 @@ impl<'a> AstRewriter<'a, '_> {
             );
             return;
         }
-        if !plan.bindings.is_empty() && plan.helper.is_none() {
+        if plan
+            .bindings
+            .iter()
+            .any(|binding| binding.mode == EmitPropMode::Accessor)
+            && plan.helper.is_none()
+        {
             self.diagnostics.push(
                 emit_error(
                     "FICT-OXC-EMIT-PROPS",
@@ -3082,7 +3089,9 @@ impl<'a> AstRewriter<'a, '_> {
                 );
                 insertion_index += 1;
             }
-            let value = if let Some(default_local) = binding.default_local.as_deref() {
+            let value = if binding.mode == EmitPropMode::Value {
+                self.prop_member(&plan.source, &binding.path, span)
+            } else if let Some(default_local) = binding.default_local.as_deref() {
                 Expression::new_conditional_expression(
                     span,
                     self.prop_is_undefined(&plan.source, &binding.path, span),
@@ -3097,20 +3106,23 @@ impl<'a> AstRewriter<'a, '_> {
             } else {
                 self.prop_member(&plan.source, &binding.path, span)
             };
-            let getter = zero_parameter_expression_arrow(self.allocator, value, span);
-            let helper = Expression::new_identifier(
-                span,
-                self.allocator.alloc_str(
-                    plan.helper
-                        .as_deref()
-                        .expect("validated component prop accessor helper"),
-                ),
-                &builder,
-            );
-            let mut arguments = ArenaVec::new_in(&self.allocator);
-            arguments.push(Argument::from(getter));
-            let initializer =
-                Expression::new_call_expression(span, helper, NONE, arguments, false, &builder);
+            let initializer = if binding.mode == EmitPropMode::Accessor {
+                let getter = zero_parameter_expression_arrow(self.allocator, value, span);
+                let helper = Expression::new_identifier(
+                    span,
+                    self.allocator.alloc_str(
+                        plan.helper
+                            .as_deref()
+                            .expect("validated component prop accessor helper"),
+                    ),
+                    &builder,
+                );
+                let mut arguments = ArenaVec::new_in(&self.allocator);
+                arguments.push(Argument::from(getter));
+                Expression::new_call_expression(span, helper, NONE, arguments, false, &builder)
+            } else {
+                value
+            };
             body.statements.insert(
                 insertion_index,
                 const_statement(self.allocator, &binding.local, initializer, span),

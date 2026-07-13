@@ -323,6 +323,15 @@ impl Verifier<'_> {
                     if let Some(default_value) = property.default_value {
                         self.verify_origin(default_value);
                     }
+                    if property.mode == crate::HirObjectParameterMode::Value
+                        && (!property.references.is_empty() || property.default_value.is_some())
+                    {
+                        self.error(
+                            "FICT-HIR-PROPS-MODE",
+                            "plain value props cannot carry accessor rewrites or defaults",
+                            Some(property.origin),
+                        );
+                    }
                     let checks_are_ordered_prefixes =
                         property
                             .checks

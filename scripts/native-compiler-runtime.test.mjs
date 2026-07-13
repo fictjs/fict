@@ -424,3 +424,48 @@ test('Rust compiler output preserves reactive top-level rest props', async () =>
   assert.equal(container.childNodes.length, 0)
   container.remove()
 })
+
+test('Rust compiler output snapshots callable props without deactivating value props', async () => {
+  const module = await compileAndImport(
+    `
+      import { $state, render } from 'fict'
+
+      function Child({ count, onIncrement }) {
+        return <div><span>{count}</span><button onClick={() => onIncrement()}>+</button></div>
+      }
+
+      function App() {
+        let count = $state(0)
+        return <Child count={count} onIncrement={() => count++} />
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+    `,
+    'callable-props',
+    /const onIncrement = __fictProps\.onIncrement/,
+  )
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = module.mount(container)
+  await flushRuntime()
+
+  const value = container.querySelector('span')
+  const button = container.querySelector('button')
+  assert.ok(value)
+  assert.ok(button)
+  assert.equal(value.textContent, '0')
+
+  button.click()
+  await flushRuntime()
+
+  assert.equal(container.querySelector('span'), value)
+  assert.equal(container.querySelector('button'), button)
+  assert.equal(value.textContent, '1')
+
+  dispose()
+  assert.equal(container.childNodes.length, 0)
+  container.remove()
+})

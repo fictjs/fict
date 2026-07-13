@@ -1274,7 +1274,7 @@ mod tests {
     #[test]
     fn lowers_simple_component_object_props_to_reactive_accessors() {
         let result = compile(request(
-            "import { $state } from 'fict'; function Child({ value: renamed, label = String(renamed) } = { value: 'fallback' }) { return <span>{label}:{renamed}</span>; } const Arrow = ({ value }) => <b>{value}</b>; function Method({ value }) { return <i>{value.toString()}</i>; } function Nested({ user: { name, profile: { age = 18 } } }) { return <u>{name}:{age}</u>; } function Rest({ id, ...rest }) { return <small>{id}:{rest.title}</small>; } function Callable({ onClick }) { return <button onClick={() => onClick()}>go</button>; } export function App() { let value = $state(1); return <main><Child value={value} /><Arrow value={value} /><Method value={value} /><Nested user={{ name: 'Ada', profile: {} }} /><Rest id='row' title={String(value)} /><Callable onClick={() => value++} /></main>; }",
+            "import { $state } from 'fict'; function Child({ value: renamed, label = String(renamed) } = { value: 'fallback' }) { return <span>{label}:{renamed}</span>; } const Arrow = ({ value }) => <b>{value}</b>; function Method({ value }) { return <i>{value.toString()}</i>; } function Nested({ user: { name, profile: { age = 18 } } }) { return <u>{name}:{age}</u>; } function Rest({ id, ...rest }) { return <small>{id}:{rest.title}</small>; } function Callable({ onClick, value }) { return <button onClick={() => onClick()}>{value}</button>; } export function App() { let value = $state(1); return <main><Child value={value} /><Arrow value={value} /><Method value={value} /><Nested user={{ name: 'Ada', profile: {} }} /><Rest id='row' title={String(value)} /><Callable onClick={() => value++} value={value} /></main>; }",
             "component-object-props.tsx",
         ));
 
@@ -1382,7 +1382,19 @@ mod tests {
         );
         assert!(result.code.contains("() => rest.title"), "{}", result.code);
         assert!(
-            result.code.contains("function Callable({ onClick })"),
+            result.code.contains("function Callable(__fictProps)"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("const onClick = __fictProps.onClick;"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("const value = prop(() => __fictProps.value);"),
             "{}",
             result.code
         );

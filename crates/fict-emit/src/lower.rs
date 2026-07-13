@@ -14,10 +14,10 @@ use fict_reactivity::{ReactiveCycleAnalysis, RegionAnalysis, analyze_cfg, struct
 use crate::{
     CleanupOwner, ComponentChild, ComponentProp, ComponentTarget, ConditionalKind,
     DELEGATED_EVENTS, DomBindingKind, DomNamespace, EmitContext, EmitFunction, EmitModulePlan,
-    EmitOperation, EmitProgram, EmitPropBinding, EmitPropCheck, EmitPropsDefault, EmitPropsPlan,
-    EmitPropsRest, EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef, PropsOperation,
-    ReactiveSlot, ReactiveSlotKind, ReactiveSlotStorage, RuntimeFamily, RuntimeHelper,
-    RuntimeImportIntent, name_allocator::NameAllocator, verify_emit_program,
+    EmitOperation, EmitProgram, EmitPropBinding, EmitPropCheck, EmitPropMode, EmitPropsDefault,
+    EmitPropsPlan, EmitPropsRest, EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef,
+    PropsOperation, ReactiveSlot, ReactiveSlotKind, ReactiveSlotStorage, RuntimeFamily,
+    RuntimeHelper, RuntimeImportIntent, name_allocator::NameAllocator, verify_emit_program,
 };
 
 /// Phase-1 Core lowering configuration.
@@ -775,6 +775,10 @@ fn lower_component_props_plan(
         bindings.push(EmitPropBinding {
             path: property.path.clone(),
             local: binding.display_name.clone(),
+            mode: match property.mode {
+                fict_hir::HirObjectParameterMode::Accessor => EmitPropMode::Accessor,
+                fict_hir::HirObjectParameterMode::Value => EmitPropMode::Value,
+            },
             checks: property
                 .checks
                 .iter()
@@ -814,13 +818,17 @@ fn lower_component_props_plan(
     } else {
         None
     };
+    let helper = bindings
+        .iter()
+        .any(|binding| binding.mode == EmitPropMode::Accessor)
+        .then_some(RuntimeHelper::Prop);
     Ok(Some(EmitPropsPlan {
         parameter: parameter.origin,
         source,
         default,
         bindings,
         rest,
-        helper: (!properties.is_empty()).then_some(RuntimeHelper::Prop),
+        helper,
     }))
 }
 

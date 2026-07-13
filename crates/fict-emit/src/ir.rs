@@ -669,11 +669,19 @@ pub struct EmitContext {
 pub struct EmitPropBinding {
     pub path: Vec<String>,
     pub local: String,
+    pub mode: EmitPropMode,
     pub checks: Vec<EmitPropCheck>,
     pub references: Vec<Origin>,
     pub default_value: Option<Origin>,
     pub default_local: Option<String>,
     pub origin: Origin,
+}
+
+/// Runtime representation selected for a destructured component prop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmitPropMode {
+    Accessor,
+    Value,
 }
 
 /// Eager nested-object check emitted before a prop binding.

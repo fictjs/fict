@@ -224,6 +224,8 @@ pub struct HirObjectParameterProperty {
     pub path: Vec<String>,
     /// Semantic local binding introduced by the property pattern.
     pub binding: BindingId,
+    /// Whether reads use a reactive accessor or a plain callable/value snapshot.
+    pub mode: HirObjectParameterMode,
     /// Ordered nullish checks required before this binding is initialized.
     pub checks: Vec<HirObjectParameterCheck>,
     /// Exact read references that must become accessor calls.
@@ -232,6 +234,13 @@ pub struct HirObjectParameterProperty {
     pub default_value: Option<Origin>,
     /// Source provenance of the property declaration.
     pub origin: Origin,
+}
+
+/// Lowering mode for one destructured component prop binding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HirObjectParameterMode {
+    Accessor,
+    Value,
 }
 
 /// Eager object check required by a nested destructuring pattern.

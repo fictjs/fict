@@ -997,7 +997,16 @@ fn models_simple_component_object_props_with_exact_read_origins() {
             })
         })
         .expect("Button component");
-    assert!(button.parameters[0].object_properties.is_none());
+    let callable_properties = button.parameters[0]
+        .object_properties
+        .as_ref()
+        .expect("call-only prop remains modeled");
+    assert_eq!(callable_properties.len(), 1);
+    assert_eq!(
+        callable_properties[0].mode,
+        fict_hir::HirObjectParameterMode::Value
+    );
+    assert!(callable_properties[0].references.is_empty());
 }
 
 #[test]

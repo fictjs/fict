@@ -7,13 +7,14 @@ use fict_hir::{
     Binding, BindingId, BindingKind, BlockId, CallArgument, CallHost, CallInstruction,
     CompoundAssignmentOperator, DeclarationKind, EvaluationMode, FictMacroKind, FileId,
     FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction, HirInstruction,
-    HirInstructionKind, HirLocal, HirObjectParameterCheck, HirObjectParameterProperty,
-    HirObjectParameterRest, HirParameter, HirScope, HirTerminator, HirValue, InstructionSemantics,
-    JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxExpressionKind,
-    JsxListExpression, JsxListReceiver, JsxNode, JsxTemplate, LocalId, LocalKind, MutationEffect,
-    Origin, PatternSummary, Purity, ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind,
-    RegionId, ScopeId, ScopeKind, SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind,
-    SyntaxSummary, TemplateId, TerminatorKind, UpdateOperator, ValueId, ValueKind, verify_hir,
+    HirInstructionKind, HirLocal, HirObjectParameterCheck, HirObjectParameterMode,
+    HirObjectParameterProperty, HirObjectParameterRest, HirParameter, HirScope, HirTerminator,
+    HirValue, InstructionSemantics, JsxAttribute, JsxAttributeValue, JsxChild, JsxElement,
+    JsxElementName, JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode, JsxTemplate,
+    LocalId, LocalKind, MutationEffect, Origin, PatternSummary, Purity, ReactiveCallKind,
+    ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind, SyntaxFragment,
+    SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TemplateId, TerminatorKind,
+    UpdateOperator, ValueId, ValueKind, verify_hir,
 };
 use oxc::{
     allocator::Allocator,
@@ -972,6 +973,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .map(|property| {
                 let binding = self.symbol_to_binding.get(&property.binding).copied()?;
                 let mut references = Vec::new();
+                let mut has_invoked_read = false;
+                let mut has_value_read = false;
                 for reference in self.semantic.symbol_references(property.binding) {
                     if reference.is_write() {
                         return None;
@@ -984,13 +987,23 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         return None;
                     };
                     if reference_is_invoked(self.semantic, reference.node_id(), identifier.span) {
-                        return None;
+                        has_invoked_read = true;
+                    } else {
+                        has_value_read = true;
                     }
                     references.push(Origin::source(source_span(identifier.span)));
                 }
+                let mode =
+                    if has_invoked_read && !has_value_read && property.default_value.is_none() {
+                        references.clear();
+                        HirObjectParameterMode::Value
+                    } else {
+                        HirObjectParameterMode::Accessor
+                    };
                 Some(HirObjectParameterProperty {
                     path: property.path.clone(),
                     binding,
+                    mode,
                     checks: property
                         .checks
                         .iter()

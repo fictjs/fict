@@ -183,6 +183,15 @@ pub fn verify_emit_program(
                                 .is_some_and(|binding| {
                                     planned.path == source.path
                                         && planned.local == binding.display_name
+                                        && planned.mode
+                                            == match source.mode {
+                                                fict_hir::HirObjectParameterMode::Accessor => {
+                                                    crate::EmitPropMode::Accessor
+                                                }
+                                                fict_hir::HirObjectParameterMode::Value => {
+                                                    crate::EmitPropMode::Value
+                                                }
+                                            }
                                         && planned.checks.len() == source.checks.len()
                                         && planned.checks.iter().zip(&source.checks).all(
                                             |(planned, source)| {
@@ -199,7 +208,12 @@ pub fn verify_emit_program(
                         })
             });
             if hir_function.kind != fict_hir::FunctionKind::Component
-                || props.helper != (!props.bindings.is_empty()).then_some(RuntimeHelper::Prop)
+                || props.helper
+                    != props
+                        .bindings
+                        .iter()
+                        .any(|binding| binding.mode == crate::EmitPropMode::Accessor)
+                        .then_some(RuntimeHelper::Prop)
                 || !valid_identifier(&props.source)
                 || import_names.contains(props.source.as_str())
                 || source_names.contains(props.source.as_str())
@@ -230,6 +244,10 @@ pub fn verify_emit_program(
                     binding.path.is_empty()
                         || binding.path.iter().any(String::is_empty)
                         || !valid_identifier(&binding.local)
+                        || (binding.mode == crate::EmitPropMode::Value
+                            && (!binding.references.is_empty()
+                                || binding.default_value.is_some()
+                                || binding.default_local.is_some()))
                         || binding.checks.iter().any(|check| {
                             check.path.is_empty()
                                 || check.path.iter().any(String::is_empty)
