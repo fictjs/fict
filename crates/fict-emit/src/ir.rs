@@ -182,6 +182,7 @@ pub enum ComponentProp {
         value: EmitValueRef,
         getter: bool,
         non_reactive: bool,
+        reactive_function: bool,
     },
     Node {
         name: String,
@@ -303,6 +304,7 @@ pub enum EmitOperation {
         children_helper: Option<RuntimeHelper>,
         merge_helper: Option<RuntimeHelper>,
         non_reactive_helper: Option<RuntimeHelper>,
+        reactive_function_helper: Option<RuntimeHelper>,
         fragment_helper: Option<RuntimeHelper>,
         origin: Origin,
     },
@@ -437,6 +439,7 @@ impl EmitOperation {
                 children_helper,
                 merge_helper,
                 non_reactive_helper,
+                reactive_function_helper,
                 fragment_helper,
                 ..
             } => match prop_helper {
@@ -447,7 +450,10 @@ impl EmitOperation {
                         Some(helper) => Some(*helper),
                         None => match non_reactive_helper {
                             Some(helper) => Some(*helper),
-                            None => *fragment_helper,
+                            None => match reactive_function_helper {
+                                Some(helper) => Some(*helper),
+                                None => *fragment_helper,
+                            },
                         },
                     },
                 },
@@ -507,6 +513,7 @@ impl EmitOperation {
                 children_helper,
                 merge_helper,
                 non_reactive_helper,
+                reactive_function_helper,
                 fragment_helper,
                 ..
             } => [
@@ -514,8 +521,8 @@ impl EmitOperation {
                 *children_helper,
                 *merge_helper,
                 *non_reactive_helper,
+                *reactive_function_helper,
                 *fragment_helper,
-                None,
                 None,
                 None,
             ],

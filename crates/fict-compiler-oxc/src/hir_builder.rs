@@ -701,6 +701,16 @@ fn reference_alias_target(
     None
 }
 
+fn reference_is_jsx_closing_name(
+    semantic: &Semantic<'_>,
+    node_id: oxc::syntax::node::NodeId,
+) -> bool {
+    semantic
+        .nodes()
+        .ancestors(node_id)
+        .any(|ancestor| matches!(ancestor.kind(), AstKind::JSXClosingElement(_)))
+}
+
 fn callable_prop_mode(
     semantic: &Semantic<'_>,
     root: SymbolId,
@@ -1183,6 +1193,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     let AstKind::IdentifierReference(identifier) = node.kind() else {
                         return None;
                     };
+                    if reference_is_jsx_closing_name(self.semantic, reference.node_id()) {
+                        continue;
+                    }
                     references.push(Origin::source(source_span(identifier.span)));
                 }
                 let mode = if mutated {

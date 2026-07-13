@@ -843,3 +843,85 @@ test('Rust compiler output preserves store, resource, and selector runtime react
   assert.equal(container.childNodes.length, 0)
   container.remove()
 })
+
+test('Rust compiler output keeps ErrorBoundary children lazy and reset keys reactive', async () => {
+  const module = await compileAndImport(
+    `
+      import { $state, ErrorBoundary, render } from 'fict'
+
+      export const errors = []
+
+      function Risky({ fail }) {
+        if (fail) {
+          throw new Error('render boom')
+        }
+        return (
+          <div>
+            <p data-id="safe">safe</p>
+            <button data-id="explode" onClick={() => { throw new Error('event boom') }}>
+              explode
+            </button>
+          </div>
+        )
+      }
+
+      function App() {
+        let fail = $state(true)
+        let resetKey = $state(0)
+        return (
+          <ErrorBoundary
+            fallback={error => (
+              <button
+                data-id="retry"
+                onClick={() => {
+                  fail = false
+                  resetKey++
+                }}
+              >
+                retry:{error.message}
+              </button>
+            )}
+            onError={error => errors.push(error.message)}
+            resetKeys={() => resetKey}
+          >
+            <Risky fail={fail} />
+          </ErrorBoundary>
+        )
+      }
+
+      export function mount(container) {
+        return render(() => <App />, container)
+      }
+    `,
+    'error-boundary',
+    /resetKeys: __fictReactive\(\(\) => resetKey\(\)\)/,
+  )
+
+  const container = document.createElement('div')
+  document.body.append(container)
+  const dispose = module.mount(container)
+  await flushRuntime()
+
+  assert.equal(container.querySelector('[data-id="retry"]')?.textContent, 'retry:render boom')
+  assert.deepEqual(module.errors, ['render boom'])
+
+  container.querySelector('[data-id="retry"]')?.click()
+  await flushRuntime()
+
+  assert.equal(container.querySelector('[data-id="safe"]')?.textContent, 'safe')
+  assert.ok(container.querySelector('[data-id="explode"]'))
+
+  container.querySelector('[data-id="explode"]')?.click()
+  await flushRuntime()
+
+  assert.equal(container.querySelector('[data-id="retry"]')?.textContent, 'retry:event boom')
+  assert.deepEqual(module.errors, ['render boom', 'event boom'])
+
+  container.querySelector('[data-id="retry"]')?.click()
+  await flushRuntime()
+  assert.equal(container.querySelector('[data-id="safe"]')?.textContent, 'safe')
+
+  dispose()
+  assert.equal(container.childNodes.length, 0)
+  container.remove()
+})

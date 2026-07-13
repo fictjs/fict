@@ -1475,6 +1475,7 @@ fn lower_component_operation(
     value_temporaries: &mut BTreeMap<ValueId, EmitTemporaryId>,
     operations: &mut Vec<EmitOperation>,
 ) -> Result<EmitTemporaryId, DiagnosticBundle> {
+    let resettable_boundary = is_runtime_resettable_boundary(hir, &element.name);
     let component = match &element.name {
         JsxElementName::Component(binding) => ComponentTarget::Binding(*binding),
         JsxElementName::Member { root, properties } => ComponentTarget::Member {
@@ -1526,11 +1527,17 @@ fn lower_component_operation(
                     getter = false;
                     non_reactive = false;
                 }
+                let reactive_function = resettable_boundary && name == "resetKeys" && non_reactive;
+                if reactive_function {
+                    getter = false;
+                    non_reactive = false;
+                }
                 props.push(ComponentProp::Named {
                     name: name.clone(),
                     value,
                     getter,
                     non_reactive,
+                    reactive_function,
                 });
             }
             JsxAttribute::Spread { value, .. } => {
@@ -1615,6 +1622,18 @@ fn lower_component_operation(
             )
         }))
         .then_some(RuntimeHelper::NonReactive),
+        reactive_function_helper: props
+            .iter()
+            .any(|prop| {
+                matches!(
+                    prop,
+                    ComponentProp::Named {
+                        reactive_function: true,
+                        ..
+                    }
+                )
+            })
+            .then_some(RuntimeHelper::ReactiveGetter),
         fragment_helper: element
             .contains_fragment()
             .then_some(RuntimeHelper::Fragment),
@@ -1623,6 +1642,33 @@ fn lower_component_operation(
         origin: element.origin,
     });
     Ok(target)
+}
+
+fn is_runtime_resettable_boundary(hir: &HirFile, name: &JsxElementName) -> bool {
+    match name {
+        JsxElementName::Component(binding) => hir
+            .bindings
+            .get(binding.as_usize())
+            .and_then(|binding| binding.import.as_ref())
+            .is_some_and(|import| {
+                matches!(import.source.as_str(), "fict" | "@fictjs/runtime")
+                    && matches!(
+                        &import.imported,
+                        ImportedName::Named(name)
+                            if matches!(name.as_str(), "ErrorBoundary" | "Suspense")
+                    )
+            }),
+        JsxElementName::Member { root, properties } => hir
+            .bindings
+            .get(root.as_usize())
+            .and_then(|binding| binding.import.as_ref())
+            .is_some_and(|import| {
+                matches!(import.source.as_str(), "fict" | "@fictjs/runtime")
+                    && import.imported == ImportedName::Namespace
+                    && matches!(properties.as_slice(), [name] if matches!(name.as_str(), "ErrorBoundary" | "Suspense"))
+            }),
+        JsxElementName::Intrinsic(_) | JsxElementName::Dynamic(_) => false,
+    }
 }
 
 fn jsx_node_origin(node: &JsxNode) -> fict_hir::Origin {

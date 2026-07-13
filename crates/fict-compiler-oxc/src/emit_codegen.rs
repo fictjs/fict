@@ -1035,6 +1035,7 @@ struct ComponentRewrite {
     children_helper: Option<String>,
     merge_helper: Option<String>,
     non_reactive_helper: Option<String>,
+    reactive_function_helper: Option<String>,
     fragment_local: Option<String>,
 }
 
@@ -1060,6 +1061,7 @@ fn component_rewrites(
             children_helper,
             merge_helper,
             non_reactive_helper,
+            reactive_function_helper,
             fragment_helper,
             origin,
             ..
@@ -1143,6 +1145,23 @@ fn component_rewrites(
             }
             None => None,
         };
+        let reactive_function_helper = match reactive_function_helper {
+            Some(helper) => {
+                let Some(local) = helper_names.get(helper) else {
+                    diagnostics.push(
+                        emit_error(
+                            "FICT-OXC-EMIT-IMPORT",
+                            "component reactive-function helper has no runtime import intent",
+                            GuaranteeClass::Internal,
+                        )
+                        .with_primary_span(span),
+                    );
+                    continue;
+                };
+                Some((*local).to_owned())
+            }
+            None => None,
+        };
         let fragment_local = match fragment_helper {
             Some(helper) => {
                 let Some(local) = helper_names.get(helper) else {
@@ -1170,6 +1189,7 @@ fn component_rewrites(
                     children_helper,
                     merge_helper,
                     non_reactive_helper,
+                    reactive_function_helper,
                     fragment_local,
                 },
             )
@@ -4397,14 +4417,15 @@ impl<'a> AstRewriter<'a, '_> {
                     let attribute = attribute.unbox();
                     let (name, name_span) = jsx_attribute_name(attribute.name);
                     let source_node_span = jsx_attribute_node_span(&attribute.value);
-                    let (getter, non_reactive) = match planned {
+                    let (getter, non_reactive, reactive_function) = match planned {
                         Some(ComponentProp::Named {
                             name: planned_name,
                             getter,
                             non_reactive,
+                            reactive_function,
                             ..
                         }) if planned_name == name && source_node_span.is_none() => {
-                            (getter, non_reactive)
+                            (getter, non_reactive, reactive_function)
                         }
                         Some(ComponentProp::Node {
                             name: planned_name,
@@ -4414,7 +4435,7 @@ impl<'a> AstRewriter<'a, '_> {
                                 component_node_origin_matches(origin, span)
                             }) =>
                         {
-                            (false, false)
+                            (false, false, false)
                         }
                         _ => {
                             self.diagnostics.push(emit_error(
@@ -4422,7 +4443,7 @@ impl<'a> AstRewriter<'a, '_> {
                                 "component named prop does not match its EmitIR plan",
                                 GuaranteeClass::Internal,
                             ));
-                            (false, false)
+                            (false, false, false)
                         }
                     };
                     let keyed_runtime_value = (name == "key")
@@ -4488,6 +4509,31 @@ impl<'a> AstRewriter<'a, '_> {
                             self.diagnostics.push(emit_error(
                                 "FICT-OXC-EMIT-COMPONENT",
                                 "function component prop has no non-reactive runtime helper",
+                                GuaranteeClass::Internal,
+                            ));
+                        }
+                    }
+                    if reactive_function {
+                        if let Some(helper) = &component.reactive_function_helper {
+                            let callee = Expression::new_identifier(
+                                name_span,
+                                self.allocator.alloc_str(helper),
+                                &AstBuilder::new(self.allocator),
+                            );
+                            let mut arguments = ArenaVec::new_in(&self.allocator);
+                            arguments.push(Argument::from(value));
+                            value = Expression::new_call_expression(
+                                name_span,
+                                callee,
+                                NONE,
+                                arguments,
+                                false,
+                                &AstBuilder::new(self.allocator),
+                            );
+                        } else {
+                            self.diagnostics.push(emit_error(
+                                "FICT-OXC-EMIT-COMPONENT",
+                                "reactive function component prop has no runtime helper",
                                 GuaranteeClass::Internal,
                             ));
                         }

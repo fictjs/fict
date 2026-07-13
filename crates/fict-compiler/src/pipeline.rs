@@ -1707,6 +1707,39 @@ mod tests {
     }
 
     #[test]
+    fn marks_only_runtime_boundary_reset_callbacks_as_reactive() {
+        let result = compile(request(
+            "import { $state, ErrorBoundary as Boundary } from 'fict'; import * as Runtime from 'fict'; function UserBoundary(props) { return <section>{props.children}</section>; } function App() { let key = $state(0); return <><Boundary fallback='error' resetKeys={() => key}>ready</Boundary><Runtime.Suspense fallback='loading' resetKeys={() => key}>ready</Runtime.Suspense><UserBoundary resetKeys={() => key}>user</UserBoundary></>; } function Shadow({ ErrorBoundary }) { let key = $state(0); return <ErrorBoundary resetKeys={() => key}>shadow</ErrorBoundary>; }",
+            "boundary-reset-keys.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result
+                .code
+                .matches("resetKeys: __fictReactive(() => key())")
+                .count(),
+            2,
+            "{}",
+            result.code
+        );
+        assert_eq!(
+            result
+                .code
+                .matches("resetKeys: nonReactive(() => key())")
+                .count(),
+            2,
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("import { __fictReactive }"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn omits_intrinsic_keys_without_losing_dynamic_key_effects() {
         let result = compile(request(
             "export function Static() { return <p key=\"row\" title=\"ok\" />; } export function Dynamic() { return <div before={before()} key={side()} after={after()} />; }",

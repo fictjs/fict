@@ -952,6 +952,7 @@ fn verify_helper_semantics(
             children_helper,
             merge_helper,
             non_reactive_helper,
+            reactive_function_helper,
             fragment_helper,
             ..
         } => {
@@ -981,15 +982,27 @@ fn verify_helper_semantics(
                     }
                 )
             });
-            let wrappers_exclusive = props.iter().all(|prop| {
-                !matches!(
+            let needs_reactive_function = props.iter().any(|prop| {
+                matches!(
                     prop,
                     crate::ComponentProp::Named {
-                        getter: true,
-                        non_reactive: true,
+                        reactive_function: true,
                         ..
                     }
                 )
+            });
+            let wrappers_exclusive = props.iter().all(|prop| {
+                let crate::ComponentProp::Named {
+                    getter,
+                    non_reactive,
+                    reactive_function,
+                    ..
+                } = prop
+                else {
+                    return true;
+                };
+                usize::from(*getter) + usize::from(*non_reactive) + usize::from(*reactive_function)
+                    <= 1
             }) && children.iter().all(|child| {
                 !matches!(
                     child,
@@ -1005,6 +1018,8 @@ fn verify_helper_semantics(
                 && *children_helper == needs_children.then_some(RuntimeHelper::Prop)
                 && *merge_helper == needs_merge.then_some(RuntimeHelper::MergeProps)
                 && *non_reactive_helper == needs_non_reactive.then_some(RuntimeHelper::NonReactive)
+                && *reactive_function_helper
+                    == needs_reactive_function.then_some(RuntimeHelper::ReactiveGetter)
                 && fragment_helper.is_none_or(|helper| helper == RuntimeHelper::Fragment)
         }
         EmitOperation::PreserveHir { .. }
