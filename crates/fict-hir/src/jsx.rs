@@ -81,6 +81,8 @@ pub enum JsxListReceiver {
         root: BindingId,
         /// Whether the map receiver projects from the root binding.
         projected: bool,
+        /// Whether frontend syntax proves the binding is an immutable Array value.
+        known_array: bool,
     },
 }
 

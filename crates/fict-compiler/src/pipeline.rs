@@ -1076,6 +1076,33 @@ mod tests {
     }
 
     #[test]
+    fn trusts_only_immutable_local_array_receivers() {
+        let result = compile(request(
+            "export function Immutable() { const rows = [{ id: 1 }]; return <ul>{rows.map(row => <li key={row.id}>{row.id}</li>)}</ul>; } export function Mutable() { let rows = [{ id: 2 }]; return <ul>{rows.map(row => <li key={row.id}>{row.id}</li>)}</ul>; }",
+            "keyed-local-array.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result.code.matches("createKeyedList(").count(),
+            1,
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("createKeyedList(() => rows"),
+            "{}",
+            result.code
+        );
+        assert_eq!(
+            result.code.matches("rows.map(").count(),
+            1,
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn omits_intrinsic_keys_without_losing_dynamic_key_effects() {
         let result = compile(request(
             "export function Static() { return <p key=\"row\" title=\"ok\" />; } export function Dynamic() { return <div before={before()} key={side()} after={after()} />; }",

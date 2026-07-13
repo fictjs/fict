@@ -25,7 +25,8 @@ use oxc::{
             JSXAttributeValue as OxcJsxAttributeValue, JSXChild as OxcJsxChild, JSXElement,
             JSXElementName as OxcJsxElementName, JSXExpression, JSXFragment, JSXMemberExpression,
             JSXMemberExpressionObject, MemberExpression, Program, SimpleAssignmentTarget,
-            Statement, UpdateExpression, VariableDeclarationKind, VariableDeclarator,
+            Statement, UpdateExpression, VariableDeclaration, VariableDeclarationKind,
+            VariableDeclarator,
         },
         ast_kind::AstKind,
     },
@@ -33,7 +34,8 @@ use oxc::{
         Visit,
         walk::{
             walk_arrow_function_expression, walk_assignment_pattern, walk_binding_rest_element,
-            walk_call_expression, walk_function, walk_jsx_element, walk_variable_declarator,
+            walk_call_expression, walk_function, walk_jsx_element, walk_variable_declaration,
+            walk_variable_declarator,
         },
     },
     parser::{ParseOptions, Parser},
@@ -573,8 +575,11 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             calls: Vec::new(),
         };
         calls.visit_program(program);
+        let mut known_arrays = KnownArrayCollector::default();
+        known_arrays.visit_program(program);
         let mut jsx = JsxCollector {
             scoping: self.semantic.scoping(),
+            known_arrays: &known_arrays.symbols,
             stack: vec![FunctionId::new(0)],
             scan_owners: Vec::new(),
             function_by_span: &function_by_span,
@@ -1599,9 +1604,14 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .id;
         let receiver = match list.receiver {
             RawJsxListReceiver::ArrayLiteral => JsxListReceiver::ArrayLiteral,
-            RawJsxListReceiver::Binding { root, projected } => JsxListReceiver::Binding {
+            RawJsxListReceiver::Binding {
+                root,
+                projected,
+                known_array,
+            } => JsxListReceiver::Binding {
                 root: self.symbol_to_binding.get(&root).copied()?,
                 projected,
+                known_array,
             },
         };
         Some(JsxListExpression {
@@ -1877,15 +1887,47 @@ struct RawJsxListExpression {
 #[derive(Debug, Clone, Copy)]
 enum RawJsxListReceiver {
     ArrayLiteral,
-    Binding { root: SymbolId, projected: bool },
+    Binding {
+        root: SymbolId,
+        projected: bool,
+        known_array: bool,
+    },
 }
 
 struct JsxCollector<'facts> {
     scoping: &'facts Scoping,
+    known_arrays: &'facts BTreeSet<SymbolId>,
     stack: Vec<FunctionId>,
     scan_owners: Vec<FunctionId>,
     function_by_span: &'facts BTreeMap<(u32, u32), FunctionId>,
     roots: Vec<JsxFact>,
+}
+
+#[derive(Default)]
+struct KnownArrayCollector {
+    symbols: BTreeSet<SymbolId>,
+}
+
+impl<'a> Visit<'a> for KnownArrayCollector {
+    fn visit_variable_declaration(&mut self, declaration: &VariableDeclaration<'a>) {
+        if declaration.kind == VariableDeclarationKind::Const {
+            for declarator in &declaration.declarations {
+                let (BindingPattern::BindingIdentifier(binding), Some(initializer)) =
+                    (&declarator.id, &declarator.init)
+                else {
+                    continue;
+                };
+                if matches!(
+                    initializer.get_inner_expression(),
+                    Expression::ArrayExpression(_)
+                ) && let Some(symbol) = binding.symbol_id.get()
+                {
+                    self.symbols.insert(symbol);
+                }
+            }
+        }
+        walk_variable_declaration(self, declaration);
+    }
 }
 
 impl JsxCollector<'_> {
@@ -1989,7 +2031,7 @@ impl<'a> Visit<'a> for JsxCollector<'_> {
         self.roots.push(JsxFact {
             owner,
             span: source_span(element.span),
-            root: raw_jsx_element(self.scoping, element),
+            root: raw_jsx_element(self.scoping, self.known_arrays, element),
             contains_fragment: fragments.found,
         });
         self.scan_owners.push(owner);
@@ -2006,7 +2048,7 @@ impl<'a> Visit<'a> for JsxCollector<'_> {
         self.roots.push(JsxFact {
             owner,
             span: source_span(fragment.span),
-            root: raw_jsx_fragment(self.scoping, fragment),
+            root: raw_jsx_fragment(self.scoping, self.known_arrays, fragment),
             contains_fragment: true,
         });
         self.scan_owners.push(owner);
@@ -2026,30 +2068,38 @@ impl<'a> Visit<'a> for FragmentDetector {
     }
 }
 
-fn raw_jsx_element(scoping: &Scoping, element: &JSXElement<'_>) -> RawJsxNode {
+fn raw_jsx_element(
+    scoping: &Scoping,
+    known_arrays: &BTreeSet<SymbolId>,
+    element: &JSXElement<'_>,
+) -> RawJsxNode {
     RawJsxNode::Element {
         name: raw_jsx_name(scoping, &element.opening_element.name),
         attributes: element
             .opening_element
             .attributes
             .iter()
-            .map(|attribute| raw_jsx_attribute(scoping, attribute))
+            .map(|attribute| raw_jsx_attribute(scoping, known_arrays, attribute))
             .collect(),
         children: element
             .children
             .iter()
-            .filter_map(|child| raw_jsx_child(scoping, child))
+            .filter_map(|child| raw_jsx_child(scoping, known_arrays, child))
             .collect(),
         span: source_span(element.span),
     }
 }
 
-fn raw_jsx_fragment(scoping: &Scoping, fragment: &JSXFragment<'_>) -> RawJsxNode {
+fn raw_jsx_fragment(
+    scoping: &Scoping,
+    known_arrays: &BTreeSet<SymbolId>,
+    fragment: &JSXFragment<'_>,
+) -> RawJsxNode {
     RawJsxNode::Fragment {
         children: fragment
             .children
             .iter()
-            .filter_map(|child| raw_jsx_child(scoping, child))
+            .filter_map(|child| raw_jsx_child(scoping, known_arrays, child))
             .collect(),
         span: source_span(fragment.span),
     }
@@ -2107,7 +2157,11 @@ fn raw_jsx_member_name(scoping: &Scoping, member: &JSXMemberExpression<'_>) -> R
     }
 }
 
-fn raw_jsx_attribute(scoping: &Scoping, attribute: &JSXAttributeItem<'_>) -> RawJsxAttribute {
+fn raw_jsx_attribute(
+    scoping: &Scoping,
+    known_arrays: &BTreeSet<SymbolId>,
+    attribute: &JSXAttributeItem<'_>,
+) -> RawJsxAttribute {
     match attribute {
         JSXAttributeItem::Attribute(attribute) => RawJsxAttribute::Named {
             name: match &attribute.name {
@@ -2120,7 +2174,7 @@ fn raw_jsx_attribute(scoping: &Scoping, attribute: &JSXAttributeItem<'_>) -> Raw
                 .value
                 .as_ref()
                 .map_or(RawJsxAttributeValue::ImplicitTrue, |value| {
-                    raw_jsx_attribute_value(scoping, value)
+                    raw_jsx_attribute_value(scoping, known_arrays, value)
                 }),
             span: source_span(attribute.span),
         },
@@ -2133,6 +2187,7 @@ fn raw_jsx_attribute(scoping: &Scoping, attribute: &JSXAttributeItem<'_>) -> Raw
 
 fn raw_jsx_attribute_value(
     scoping: &Scoping,
+    known_arrays: &BTreeSet<SymbolId>,
     value: &OxcJsxAttributeValue<'_>,
 ) -> RawJsxAttributeValue {
     match value {
@@ -2143,12 +2198,12 @@ fn raw_jsx_attribute_value(
             container.expression.as_expression().map_or(
                 RawJsxAttributeValue::ImplicitTrue,
                 |expression| match expression.get_inner_expression() {
-                    Expression::JSXElement(element) => {
-                        RawJsxAttributeValue::Node(Box::new(raw_jsx_element(scoping, element)))
-                    }
-                    Expression::JSXFragment(fragment) => {
-                        RawJsxAttributeValue::Node(Box::new(raw_jsx_fragment(scoping, fragment)))
-                    }
+                    Expression::JSXElement(element) => RawJsxAttributeValue::Node(Box::new(
+                        raw_jsx_element(scoping, known_arrays, element),
+                    )),
+                    Expression::JSXFragment(fragment) => RawJsxAttributeValue::Node(Box::new(
+                        raw_jsx_fragment(scoping, known_arrays, fragment),
+                    )),
                     inner => {
                         let mut fragments = FragmentDetector::default();
                         fragments.visit_expression(expression);
@@ -2162,15 +2217,19 @@ fn raw_jsx_attribute_value(
             )
         }
         OxcJsxAttributeValue::Element(element) => {
-            RawJsxAttributeValue::Node(Box::new(raw_jsx_element(scoping, element)))
+            RawJsxAttributeValue::Node(Box::new(raw_jsx_element(scoping, known_arrays, element)))
         }
         OxcJsxAttributeValue::Fragment(fragment) => {
-            RawJsxAttributeValue::Node(Box::new(raw_jsx_fragment(scoping, fragment)))
+            RawJsxAttributeValue::Node(Box::new(raw_jsx_fragment(scoping, known_arrays, fragment)))
         }
     }
 }
 
-fn raw_jsx_child(scoping: &Scoping, child: &OxcJsxChild<'_>) -> Option<RawJsxChild> {
+fn raw_jsx_child(
+    scoping: &Scoping,
+    known_arrays: &BTreeSet<SymbolId>,
+    child: &OxcJsxChild<'_>,
+) -> Option<RawJsxChild> {
     match child {
         OxcJsxChild::Text(text) => {
             crate::jsx_text::normalize_text(text.value.as_str()).map(|value| RawJsxChild::Text {
@@ -2179,21 +2238,25 @@ fn raw_jsx_child(scoping: &Scoping, child: &OxcJsxChild<'_>) -> Option<RawJsxChi
             })
         }
         OxcJsxChild::Element(element) => Some(RawJsxChild::Node(Box::new(raw_jsx_element(
-            scoping, element,
+            scoping,
+            known_arrays,
+            element,
         )))),
         OxcJsxChild::Fragment(fragment) => Some(RawJsxChild::Node(Box::new(raw_jsx_fragment(
-            scoping, fragment,
+            scoping,
+            known_arrays,
+            fragment,
         )))),
         OxcJsxChild::ExpressionContainer(container) => match &container.expression {
             JSXExpression::EmptyExpression(_) => None,
             expression => expression.as_expression().map(|expression| {
                 match expression.get_inner_expression() {
                     Expression::JSXElement(element) => {
-                        RawJsxChild::Node(Box::new(raw_jsx_element(scoping, element)))
+                        RawJsxChild::Node(Box::new(raw_jsx_element(scoping, known_arrays, element)))
                     }
-                    Expression::JSXFragment(fragment) => {
-                        RawJsxChild::Node(Box::new(raw_jsx_fragment(scoping, fragment)))
-                    }
+                    Expression::JSXFragment(fragment) => RawJsxChild::Node(Box::new(
+                        raw_jsx_fragment(scoping, known_arrays, fragment),
+                    )),
                     inner => {
                         let kind = match inner {
                             Expression::ConditionalExpression(_) => JsxExpressionKind::Conditional,
@@ -2211,7 +2274,7 @@ fn raw_jsx_child(scoping: &Scoping, child: &OxcJsxChild<'_>) -> Option<RawJsxChi
                             kind,
                             contains_fragment: fragments.found,
                             function_like: inner.is_function(),
-                            list: raw_jsx_list_expression(scoping, expression),
+                            list: raw_jsx_list_expression(scoping, known_arrays, expression),
                         }
                     }
                 }
@@ -2226,6 +2289,7 @@ fn raw_jsx_child(scoping: &Scoping, child: &OxcJsxChild<'_>) -> Option<RawJsxChi
 
 fn raw_jsx_list_expression(
     scoping: &Scoping,
+    known_arrays: &BTreeSet<SymbolId>,
     expression: &Expression<'_>,
 ) -> Option<RawJsxListExpression> {
     let Expression::CallExpression(call) = expression.get_inner_expression() else {
@@ -2318,7 +2382,7 @@ fn raw_jsx_list_expression(
             reference.start() < initializer.start() || reference.end() > initializer.end()
         });
     }
-    let receiver = classify_raw_list_receiver(scoping, items)?;
+    let receiver = classify_raw_list_receiver(scoping, known_arrays, items)?;
     Some(RawJsxListExpression {
         items: source_span(items.span()),
         receiver,
@@ -2476,6 +2540,7 @@ fn direct_jsx_key_expression<'a, 'element>(
 
 fn classify_raw_list_receiver(
     scoping: &Scoping,
+    known_arrays: &BTreeSet<SymbolId>,
     expression: &Expression<'_>,
 ) -> Option<RawJsxListReceiver> {
     match expression.get_inner_expression() {
@@ -2486,6 +2551,7 @@ fn classify_raw_list_receiver(
             .map(|root| RawJsxListReceiver::Binding {
                 root,
                 projected: false,
+                known_array: known_arrays.contains(&root),
             }),
         Expression::StaticMemberExpression(_)
         | Expression::ComputedMemberExpression(_)
@@ -2493,6 +2559,7 @@ fn classify_raw_list_receiver(
             expression_root_symbol(scoping, expression).map(|root| RawJsxListReceiver::Binding {
                 root,
                 projected: true,
+                known_array: false,
             })
         }
         _ => None,

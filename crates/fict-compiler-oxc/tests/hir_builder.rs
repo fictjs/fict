@@ -620,6 +620,7 @@ fn models_binding_aware_direct_keyed_map_callbacks() {
     let fict_hir::JsxListReceiver::Binding {
         root: receiver,
         projected: false,
+        ..
     } = list.receiver
     else {
         panic!("direct binding receiver")

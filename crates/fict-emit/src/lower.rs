@@ -1556,14 +1556,19 @@ fn trusted_jsx_list_receiver(
     match receiver {
         JsxListReceiver::ArrayLiteral => true,
         JsxListReceiver::Binding {
+            known_array: true, ..
+        } => true,
+        JsxListReceiver::Binding {
             root,
             projected: false,
+            known_array: false,
         } => reactive_bindings.get(&root).is_some_and(|site| {
             matches!(site.kind, ReactiveSlotKind::Signal | ReactiveSlotKind::Memo)
         }),
         JsxListReceiver::Binding {
             root,
             projected: true,
+            known_array: false,
         } => reactive_bindings
             .get(&root)
             .is_some_and(|site| site.kind == ReactiveSlotKind::Store),
