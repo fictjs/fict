@@ -62,6 +62,7 @@ use crate::{
 
 use super::compile::{convert_diagnostics, sorted, source_type};
 
+mod inline_jsx_functions;
 mod native_jsx_spreads;
 mod reactive_jsx_writes;
 
@@ -986,6 +987,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             }
         }
         let reactive_symbols = self.analyze_reactive_symbols(program, &calls.calls);
+        self.validate_inline_jsx_functions(program);
         self.validate_native_jsx_spreads(program);
         self.validate_dynamic_property_access(program, &reactive_symbols.reactive);
         self.validate_reactive_jsx_writes(program, &reactive_symbols.reactive);
@@ -1144,6 +1146,20 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 )
                 .with_primary_span(span)
                 .with_guarantee_class(GuaranteeClass::Fallback),
+            );
+        }
+    }
+
+    fn validate_inline_jsx_functions(&mut self, program: &Program<'_>) {
+        for span in inline_jsx_functions::collect(program) {
+            self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::new("FICT-X003").expect("diagnostic literal"),
+                    DiagnosticSeverity::Warning,
+                    "Inline function in JSX props may cause unnecessary re-renders.",
+                )
+                .with_primary_span(span)
+                .with_guarantee_class(GuaranteeClass::Advisory),
             );
         }
     }

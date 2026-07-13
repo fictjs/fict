@@ -1050,6 +1050,7 @@ test('Rust compiler output keeps ErrorBoundary children lazy and reset keys reac
     `,
     'error-boundary',
     /resetKeys: __fictReactive\(\(\) => resetKey\(\)\)/,
+    { diagnosticCodes: ['FICT-X003', 'FICT-X003'] },
   )
 
   const container = document.createElement('div')
@@ -1151,5 +1152,42 @@ test('Rust compiler rejects intrinsic JSX spreads at the native boundary', () =>
   assert.deepEqual(
     fallback.diagnostics.map(diagnostic => [diagnostic.code, diagnostic.severity]),
     [['FICT-J003', 'warning']],
+  )
+})
+
+test('Rust compiler reports inline non-event function props at the native boundary', () => {
+  const source = `
+    function Button(_props) {
+      return null
+    }
+    export function Panel({ label, stable }) {
+      return <><Button renderLabel={() => label} /><Button renderLabel={stable} /><button onClick={() => label} /></>
+    }
+  `
+  const request = {
+    code: source,
+    filename: '/fixtures/inline-function-props.tsx',
+    moduleId: '/fixtures/inline-function-props.tsx',
+  }
+
+  const advisory = binding.transformSync(request)
+  assert.notEqual(advisory.code, '')
+  assert.deepEqual(
+    advisory.diagnostics.map(diagnostic => [
+      diagnostic.code,
+      diagnostic.severity,
+      diagnostic.guaranteeClass,
+    ]),
+    [['FICT-X003', 'warning', 'advisory']],
+  )
+
+  const escalated = binding.transformSync({
+    ...request,
+    options: { warningLevels: { 'FICT-X003': 'error' } },
+  })
+  assert.equal(escalated.code, '')
+  assert.deepEqual(
+    escalated.diagnostics.map(diagnostic => [diagnostic.code, diagnostic.severity]),
+    [['FICT-X003', 'error']],
   )
 })

@@ -1729,3 +1729,58 @@ fn diagnoses_only_intrinsic_jsx_spreads_once_per_element() {
         2
     );
 }
+
+#[test]
+fn diagnoses_shallow_inline_non_event_jsx_function_props() {
+    let source = r#"
+        function Panel({ label, ok, stable }) {
+            return <>
+                <Button renderLabel={() => label} />
+                <Button renderLabel={function () { return label; }} />
+                <Button renderLabel={ok ? () => label : null} />
+                <Button renderLabel={ok && (() => label)} />
+                <Button renderLabel={(0, () => label)} />
+                <Button renderLabel={((() => label) as unknown)} />
+                <Button renderLabel={stable} />
+                <Button renderLabel={(() => label, stable)} />
+                <Button config={{ render: () => label }} />
+                <button onClick={() => label} ref={node => node} onclick={() => label} />
+            </>;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        options(OxcSourceLanguage::TypeScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(output.hir.is_some(), "{:?}", output.diagnostics);
+    let findings = output
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.as_str() == "FICT-X003")
+        .collect::<Vec<_>>();
+    assert_eq!(findings.len(), 7, "{:?}", output.diagnostics);
+    assert!(findings.iter().all(|diagnostic| {
+        diagnostic.severity == fict_diagnostics::DiagnosticSeverity::Warning
+            && diagnostic.guarantee_class == fict_diagnostics::GuaranteeClass::Advisory
+    }));
+    let finding_sources = findings
+        .iter()
+        .map(|diagnostic| {
+            let span = diagnostic.primary_span.expect("inline function prop span");
+            &source[span.start() as usize..span.end() as usize]
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        finding_sources,
+        [
+            "renderLabel={() => label}",
+            "renderLabel={function () { return label; }}",
+            "renderLabel={ok ? () => label : null}",
+            "renderLabel={ok && (() => label)}",
+            "renderLabel={(0, () => label)}",
+            "renderLabel={((() => label) as unknown)}",
+            "onclick={() => label}"
+        ]
+    );
+}

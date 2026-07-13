@@ -2603,6 +2603,50 @@ mod tests {
     }
 
     #[test]
+    fn diagnoses_inline_non_event_jsx_function_props() {
+        let source = "function Button(_props) { return null; } export function Panel({ label, ok, stable }) { return <><Button renderLabel={() => label} /><Button renderLabel={ok && (() => label)} /><Button renderLabel={stable} /><button onClick={() => label} ref={node => node} /></>; }";
+        let result = compile(request(source, "inline-function-props.tsx"));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(!result.code.is_empty());
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            ["FICT-X003", "FICT-X003"]
+        );
+        assert!(result.diagnostics.iter().all(|diagnostic| {
+            diagnostic.severity == DiagnosticSeverity::Warning
+                && diagnostic.guarantee_class == GuaranteeClass::Advisory
+        }));
+
+        let mut muted_request = request(source, "inline-function-props-muted.tsx");
+        muted_request
+            .options
+            .warning_levels
+            .insert("FICT-X003".into(), WarningLevel::Off);
+        let muted = compile(muted_request);
+        assert!(!muted.has_errors(), "{:?}", muted.diagnostics);
+        assert!(
+            muted
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.severity == DiagnosticSeverity::Info)
+        );
+
+        let mut escalated_request = request(source, "inline-function-props-error.tsx");
+        escalated_request
+            .options
+            .warning_levels
+            .insert("FICT-X003".into(), WarningLevel::Error);
+        let escalated = compile(escalated_request);
+        assert!(escalated.has_errors());
+        assert!(escalated.code.is_empty());
+    }
+
+    #[test]
     fn diagnoses_reactive_callback_escape_shapes() {
         let source = "import { $state } from 'fict'; function sink(value) { return value; } export function App() { const count = $state(0); sink(() => count); const named = () => count; sink(named); function hoisted() { return count; } sink(hoisted); const nested = () => () => count; sink(nested); sink({ read: () => count }); sink([() => count]); const callbacks = { ...{ read: () => count } }; sink(callbacks); return null; }";
         let mut input = request(source, "reactive-callback-escapes.js");
