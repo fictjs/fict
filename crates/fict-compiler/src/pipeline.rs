@@ -879,6 +879,63 @@ mod tests {
     }
 
     #[test]
+    fn emits_fine_grained_ternary_and_logical_conditions() {
+        let result = compile(request(
+            "import { $state } from 'fict'; const Yes = () => null; const No = () => null; export function App() { let show = $state(true); return <main>{show ? <><Yes /></> : <No />}{show && <span>{show}</span>}</main>; }",
+            "conditional.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .code
+                .contains("template(\"<main><!----><!----><!----><!----></main>\")"),
+            "{}",
+            result.code
+        );
+        assert_eq!(
+            result.code.matches("= createConditional(").count(),
+            2,
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("() => show()"), "{}", result.code);
+        assert!(result.code.contains("type: Fragment"), "{}", result.code);
+        assert!(result.code.contains("type: Yes"), "{}", result.code);
+        assert!(result.code.contains("type: No"), "{}", result.code);
+        assert!(result.code.contains("void 0"), "{}", result.code);
+        assert!(
+            result.code.matches("onDestroy(").count() >= 2,
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn emits_namespace_aware_conditional_creators() {
+        let result = compile(request(
+            "const Icon = () => null; export function Svg(show) { return <svg>{show && <Icon />}</svg>; } export function Annotation(props) { return <math><annotation-xml encoding={props.encoding}>{props.show ? <Icon /> : null}</annotation-xml></math>; }",
+            "conditional-namespace.tsx",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .code
+                .contains("createElementInNamespace(__fict_child, \"svg\")"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("createElementInParentNamespace(__fict_child"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn preserves_inline_function_component_props_as_values() {
         let result = compile(request(
             "import { $state } from 'fict'; const Card = (_props) => null; export function App() { let count = $state(0); return <Card onSelect={(() => count++) as () => number} />; }",

@@ -26,7 +26,8 @@ pub use ir::{
     TerminatorKind, UnaryOperator, UpdateOperator, ValueKind,
 };
 pub use jsx::{
-    JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxNode, JsxTemplate,
+    JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxExpressionKind,
+    JsxNode, JsxTemplate,
 };
 pub use origin::{DesugaringKind, GeneratedOrigin, Origin, OriginKind};
 pub use printer::print_hir;

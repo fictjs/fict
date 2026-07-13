@@ -187,13 +187,7 @@ fn verify_imports(program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {
             function
                 .operations
                 .iter()
-                .filter_map(EmitOperation::helper)
-                .chain(
-                    function
-                        .operations
-                        .iter()
-                        .filter_map(EmitOperation::auxiliary_helper),
-                )
+                .flat_map(|operation| operation.helper_slots().into_iter().flatten())
                 .chain(function.context.iter().map(|context| context.helper))
         })
         .collect();
@@ -708,7 +702,30 @@ fn verify_helper_semantics(
                     }
                 }
         }
-        EmitOperation::Conditional { helper, .. } => *helper == RuntimeHelper::Conditional,
+        EmitOperation::Conditional {
+            namespace,
+            helper,
+            create_helper,
+            cleanup_helper,
+            fragment_helper,
+            ..
+        } => {
+            *helper == RuntimeHelper::Conditional
+                && *cleanup_helper == RuntimeHelper::OnDestroy
+                && fragment_helper.is_none_or(|helper| helper == RuntimeHelper::Fragment)
+                && match namespace {
+                    DomNamespace::Html => *create_helper == RuntimeHelper::CreateElement,
+                    DomNamespace::Svg
+                    | DomNamespace::MathMl
+                    | DomNamespace::MathMlTextIntegration
+                    | DomNamespace::MathMlAnnotationXml => {
+                        *create_helper == RuntimeHelper::CreateElementInNamespace
+                    }
+                    DomNamespace::Parent => {
+                        *create_helper == RuntimeHelper::CreateElementInParentNamespace
+                    }
+                }
+        }
         EmitOperation::KeyedList { helper, .. } => *helper == RuntimeHelper::KeyedList,
         EmitOperation::ReadReactive { helper, .. } => {
             helper.is_none_or(|helper| helper == RuntimeHelper::ReactiveGetter)

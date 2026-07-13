@@ -7,10 +7,11 @@ use fict_hir::{
     DeclarationKind, FictMacroKind, FileId, FunctionFlags, FunctionId, FunctionKind, HirBlock,
     HirFile, HirFunction, HirInstruction, HirInstructionKind, HirLocal, HirScope, HirTerminator,
     HirValue, ImportBinding, ImportKind, ImportedName, InstructionSemantics, JsxAttribute,
-    JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxNode, JsxTemplate, LiteralValue,
-    LocalId, LocalKind, MutationEffect, NumberLiteral, Origin, Place, ReactiveCallKind, ScopeId,
-    ScopeKind, SourceSpan, SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary,
-    TemplateId, TerminatorKind, UpdateOperator, ValueId, ValueKind, verify_hir,
+    JsxAttributeValue, JsxChild, JsxElement, JsxElementName, JsxExpressionKind, JsxNode,
+    JsxTemplate, LiteralValue, LocalId, LocalKind, MutationEffect, NumberLiteral, Origin, Place,
+    ReactiveCallKind, ScopeId, ScopeKind, SourceSpan, SyntaxFragment, SyntaxFragmentId,
+    SyntaxFragmentKind, SyntaxSummary, TemplateId, TerminatorKind, UpdateOperator, ValueId,
+    ValueKind, verify_hir,
 };
 use fict_reactivity::{
     ReactiveCycleAnalysis, RegionAnalysis, analyze_aliases, analyze_dependencies,
@@ -406,6 +407,8 @@ fn lowers_intrinsic_templates_with_escaping_paths_and_static_bindings() {
                     attributes: Vec::new(),
                     children: vec![JsxChild::Expression {
                         value: ValueId::new(0),
+                        kind: JsxExpressionKind::Value,
+                        contains_fragment: false,
                         origin: origin(),
                     }],
                     origin: origin(),

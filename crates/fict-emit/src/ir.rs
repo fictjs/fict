@@ -196,6 +196,13 @@ pub enum ComponentChild {
     Node(Origin),
 }
 
+/// Source conditional shape represented by a fine-grained binding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConditionalKind {
+    Ternary,
+    LogicalAnd,
+}
+
 /// Verified operation between HIR analysis and output AST construction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EmitOperation {
@@ -340,10 +347,16 @@ pub enum EmitOperation {
     },
     Conditional {
         target: EmitTemporaryId,
-        test: EmitValueRef,
-        consequent: FunctionId,
-        alternate: Option<FunctionId>,
+        source: EmitValueRef,
+        kind: ConditionalKind,
+        parent: EmitTemporaryId,
+        start: EmitTemporaryId,
+        end: EmitTemporaryId,
+        namespace: DomNamespace,
         helper: RuntimeHelper,
+        create_helper: RuntimeHelper,
+        cleanup_helper: RuntimeHelper,
+        fragment_helper: Option<RuntimeHelper>,
         cleanup: CleanupOwner,
         origin: Origin,
     },
@@ -406,6 +419,7 @@ impl EmitOperation {
         match self {
             Self::Insert { create_helper, .. } => Some(*create_helper),
             Self::BindEvent { cleanup_helper, .. } => *cleanup_helper,
+            Self::Conditional { create_helper, .. } => Some(*create_helper),
             Self::InvokeComponent {
                 prop_helper: Some(_),
                 fragment_helper,
@@ -413,6 +427,34 @@ impl EmitOperation {
             } => *fragment_helper,
             _ => None,
         }
+    }
+
+    #[must_use]
+    pub const fn tertiary_helper(&self) -> Option<RuntimeHelper> {
+        match self {
+            Self::Conditional { cleanup_helper, .. } => Some(*cleanup_helper),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn quaternary_helper(&self) -> Option<RuntimeHelper> {
+        match self {
+            Self::Conditional {
+                fragment_helper, ..
+            } => *fragment_helper,
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn helper_slots(&self) -> [Option<RuntimeHelper>; 4] {
+        [
+            self.helper(),
+            self.auxiliary_helper(),
+            self.tertiary_helper(),
+            self.quaternary_helper(),
+        ]
     }
 
     #[must_use]
@@ -443,7 +485,7 @@ impl EmitOperation {
             | Self::BindDom { value: tag, .. }
             | Self::BindRef { reference: tag, .. }
             | Self::Insert { value: tag, .. }
-            | Self::Conditional { test: tag, .. }
+            | Self::Conditional { source: tag, .. }
             | Self::KeyedList { items: tag, .. } => visit(tag),
             Self::ApplyProps { operation, .. } => match operation {
                 PropsOperation::Getter { value, .. } | PropsOperation::Keyed(value) => visit(value),
@@ -497,6 +539,13 @@ impl EmitOperation {
             Self::Insert { parent, before, .. } => {
                 visit(*parent);
                 before.iter().copied().for_each(visit);
+            }
+            Self::Conditional {
+                parent, start, end, ..
+            } => {
+                visit(*parent);
+                visit(*start);
+                visit(*end);
             }
             _ => {}
         }

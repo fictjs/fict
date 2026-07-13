@@ -57,6 +57,17 @@ pub enum JsxAttribute {
     },
 }
 
+/// Structural class of a JSX expression container.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JsxExpressionKind {
+    /// Ordinary expression container.
+    Value,
+    /// Ternary conditional expression.
+    Conditional,
+    /// Logical-AND conditional expression.
+    LogicalAnd,
+}
+
 /// JSX child in authored order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JsxChild {
@@ -71,6 +82,10 @@ pub enum JsxChild {
     Expression {
         /// Evaluated HIR value.
         value: ValueId,
+        /// Structural expression classification used by fine-grained lowering.
+        kind: JsxExpressionKind,
+        /// Whether the expression contains source short-fragment syntax.
+        contains_fragment: bool,
         /// Source provenance.
         origin: Origin,
     },

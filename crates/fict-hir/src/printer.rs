@@ -242,10 +242,18 @@ fn print_jsx(output: &mut String, root: &JsxNode) {
                 )
                 .expect("writing to String cannot fail");
             }
-            JsxPrintItem::Child(JsxChild::Expression { value, origin }, depth) => {
+            JsxPrintItem::Child(
+                JsxChild::Expression {
+                    value,
+                    kind,
+                    contains_fragment,
+                    origin,
+                },
+                depth,
+            ) => {
                 writeln!(
                     output,
-                    "{}child expression=value{} origin={}",
+                    "{}child expression=value{} kind={kind:?} fragment={contains_fragment} origin={}",
                     indentation(depth),
                     value.index(),
                     print_origin(*origin)

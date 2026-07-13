@@ -816,7 +816,7 @@ impl Verifier<'_> {
                     }
                 }
                 Item::Child(JsxChild::Text { origin, .. }) => self.verify_origin(*origin),
-                Item::Child(JsxChild::Expression { value, origin })
+                Item::Child(JsxChild::Expression { value, origin, .. })
                 | Item::Child(JsxChild::Spread { value, origin }) => {
                     self.value(owner, *value, *origin);
                     self.verify_origin(*origin);

@@ -5,17 +5,17 @@ use fict_diagnostics::{
 };
 use fict_hir::{
     CallHost, FictMacroKind, FunctionId, FunctionKind, HirFile, HirInstructionKind, ImportedName,
-    JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName, JsxNode, LocalId, PlaceBase,
-    ReactiveCallKind, TemplateId, TerminatorKind, ValueId, ValueKind,
+    JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName, JsxExpressionKind, JsxNode, LocalId,
+    PlaceBase, ReactiveCallKind, TemplateId, TerminatorKind, ValueId, ValueKind,
 };
 use fict_reactivity::{ReactiveCycleAnalysis, RegionAnalysis, analyze_cfg, structurize_cfg};
 
 use crate::{
-    CleanupOwner, ComponentChild, ComponentProp, ComponentTarget, DELEGATED_EVENTS, DomBindingKind,
-    DomNamespace, EmitContext, EmitFunction, EmitModulePlan, EmitOperation, EmitProgram,
-    EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef, PropsOperation, ReactiveSlot,
-    ReactiveSlotKind, ReactiveSlotStorage, RuntimeFamily, RuntimeHelper, RuntimeImportIntent,
-    name_allocator::NameAllocator, verify_emit_program,
+    CleanupOwner, ComponentChild, ComponentProp, ComponentTarget, ConditionalKind,
+    DELEGATED_EVENTS, DomBindingKind, DomNamespace, EmitContext, EmitFunction, EmitModulePlan,
+    EmitOperation, EmitProgram, EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef,
+    PropsOperation, ReactiveSlot, ReactiveSlotKind, ReactiveSlotStorage, RuntimeFamily,
+    RuntimeHelper, RuntimeImportIntent, name_allocator::NameAllocator, verify_emit_program,
 };
 
 /// Phase-1 Core lowering configuration.
@@ -143,13 +143,7 @@ fn lower_program(
             function
                 .operations
                 .iter()
-                .filter_map(EmitOperation::helper)
-                .chain(
-                    function
-                        .operations
-                        .iter()
-                        .filter_map(EmitOperation::auxiliary_helper),
-                )
+                .flat_map(|operation| operation.helper_slots().into_iter().flatten())
                 .chain(function.context.iter().map(|context| context.helper))
         })
         .collect();
@@ -747,6 +741,15 @@ enum TemplateBinding {
         origin: fict_hir::Origin,
         namespace: DomNamespace,
     },
+    Conditional {
+        parent_path: Vec<u32>,
+        start_path: Vec<u32>,
+        end_path: Vec<u32>,
+        value: ValueId,
+        kind: ConditionalKind,
+        contains_fragment: bool,
+        namespace: DomNamespace,
+    },
     Event {
         path: Vec<u32>,
         event: String,
@@ -1008,6 +1011,65 @@ fn lower_jsx_instruction(
                     namespace,
                     helper: RuntimeHelper::Insert,
                     create_helper: create_element_helper(namespace),
+                    origin,
+                });
+            }
+            TemplateBinding::Conditional {
+                parent_path,
+                start_path,
+                end_path,
+                value,
+                kind,
+                contains_fragment,
+                namespace,
+            } => {
+                let origin = hir.functions[function_id.as_usize()].values[value.as_usize()].origin;
+                let parent = resolved_element(
+                    root,
+                    parent_path,
+                    &mut resolved,
+                    temporaries,
+                    temporary_names,
+                    operations,
+                    origin,
+                );
+                let start = resolved_element(
+                    root,
+                    start_path,
+                    &mut resolved,
+                    temporaries,
+                    temporary_names,
+                    operations,
+                    origin,
+                );
+                let end = resolved_element(
+                    root,
+                    end_path,
+                    &mut resolved,
+                    temporaries,
+                    temporary_names,
+                    operations,
+                    origin,
+                );
+                let target = allocate_temporary(
+                    temporaries,
+                    temporary_names,
+                    format!("__fict_cond{}", value.index()),
+                    origin,
+                );
+                operations.push(EmitOperation::Conditional {
+                    target,
+                    source: lower_value(value, value_temporaries),
+                    kind,
+                    parent,
+                    start,
+                    end,
+                    namespace,
+                    helper: RuntimeHelper::Conditional,
+                    create_helper: create_element_helper(namespace),
+                    cleanup_helper: RuntimeHelper::OnDestroy,
+                    fragment_helper: contains_fragment.then_some(RuntimeHelper::Fragment),
+                    cleanup,
                     origin,
                 });
             }
@@ -1494,6 +1556,37 @@ fn serialize_children(
                     }
                     previous_static_text = true;
                 }
+            }
+            JsxChild::Expression {
+                value,
+                kind,
+                contains_fragment,
+                ..
+            } if matches!(
+                kind,
+                JsxExpressionKind::Conditional | JsxExpressionKind::LogicalAnd
+            ) =>
+            {
+                previous_static_text = false;
+                html.push_str("<!----><!---->");
+                let mut start_path = parent_path.clone();
+                start_path.push(child_index);
+                let mut end_path = parent_path.clone();
+                end_path.push(child_index + 1);
+                bindings.push(TemplateBinding::Conditional {
+                    parent_path: parent_path.clone(),
+                    start_path,
+                    end_path,
+                    value: *value,
+                    kind: match kind {
+                        JsxExpressionKind::Conditional => ConditionalKind::Ternary,
+                        JsxExpressionKind::LogicalAnd => ConditionalKind::LogicalAnd,
+                        JsxExpressionKind::Value => unreachable!(),
+                    },
+                    contains_fragment: *contains_fragment,
+                    namespace: child_namespace,
+                });
+                child_index += 2;
             }
             JsxChild::Expression { value, .. } | JsxChild::Spread { value, .. } => {
                 previous_static_text = false;
@@ -2187,6 +2280,8 @@ mod namespace_tests {
     fn expression(value: u32) -> JsxChild {
         JsxChild::Expression {
             value: ValueId::new(value),
+            kind: fict_hir::JsxExpressionKind::Value,
+            contains_fragment: false,
             origin: test_origin(),
         }
     }

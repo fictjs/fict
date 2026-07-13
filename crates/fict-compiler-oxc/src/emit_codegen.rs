@@ -5,8 +5,8 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass, SourceSpan,
 };
 use fict_emit::{
-    ComponentChild, ComponentProp, DomBindingKind, DomNamespace, EmitOperation, EmitProgram,
-    EmitValueRef, PropsOperation, RuntimeHelper,
+    ComponentChild, ComponentProp, ConditionalKind, DomBindingKind, DomNamespace, EmitOperation,
+    EmitProgram, EmitValueRef, PropsOperation, RuntimeHelper,
 };
 use fict_hir::{CompoundAssignmentOperator, LiteralValue, TemplateId, UpdateOperator};
 use oxc::{
@@ -32,7 +32,10 @@ use oxc::{
     syntax::{
         identifier::is_identifier_name,
         number::NumberBase,
-        operator::{BinaryOperator as OxcBinaryOperator, LogicalOperator as OxcLogicalOperator},
+        operator::{
+            BinaryOperator as OxcBinaryOperator, LogicalOperator as OxcLogicalOperator,
+            UnaryOperator as OxcUnaryOperator,
+        },
         scope::ScopeFlags,
     },
     transformer::{JsxOptions, Module, TransformOptions, Transformer},
@@ -412,10 +415,7 @@ fn unsupported_operations(emit: &EmitProgram) -> Vec<Diagnostic> {
             EmitOperation::ApplyProps { operation, .. } => {
                 !matches!(operation, PropsOperation::Spread { .. })
             }
-            _ => matches!(
-                operation,
-                EmitOperation::CreateElement { .. } | EmitOperation::Conditional { .. }
-            ),
+            _ => matches!(operation, EmitOperation::CreateElement { .. }),
         });
     unsupported.map_or_else(Vec::new, |operation| {
         let mut diagnostic = emit_error(
@@ -842,6 +842,19 @@ enum FineJsxStep {
         before: Option<String>,
         helper: String,
         create_helper: String,
+        namespace: DomNamespace,
+        value_origin: SourceSpan,
+    },
+    Conditional {
+        target: String,
+        parent: String,
+        start: String,
+        end: String,
+        kind: ConditionalKind,
+        helper: String,
+        create_helper: String,
+        cleanup_helper: String,
+        fragment_local: Option<String>,
         namespace: DomNamespace,
         value_origin: SourceSpan,
     },
@@ -1462,6 +1475,145 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                         before,
                         helper: (*helper).to_owned(),
                         create_helper: (*create_helper).to_owned(),
+                        namespace: *namespace,
+                        value_origin,
+                    });
+                }
+                EmitOperation::Conditional {
+                    target,
+                    source,
+                    kind,
+                    parent,
+                    start,
+                    end,
+                    namespace,
+                    helper,
+                    create_helper,
+                    cleanup_helper,
+                    fragment_helper,
+                    origin,
+                    ..
+                } => {
+                    let Some(plan) = current.and_then(|location| clones.get_mut(&location)) else {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-TEMPLATE",
+                                "conditional binding is not attached to a template clone",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    };
+                    if !matches!(source, EmitValueRef::Hir(_)) {
+                        diagnostics.push(with_operation_span(
+                            emit_error(
+                                "FICT-OXC-EMIT-VALUE",
+                                "conditional binding is not backed by a source HIR expression",
+                                GuaranteeClass::Internal,
+                            ),
+                            *origin,
+                        ));
+                        continue;
+                    }
+                    let Some(value_origin) = origin.primary_span else {
+                        diagnostics.push(emit_error(
+                            "FICT-OXC-EMIT-ORIGIN",
+                            "conditional binding requires a source expression origin",
+                            GuaranteeClass::Internal,
+                        ));
+                        continue;
+                    };
+                    let mut temporary = |id, description| {
+                        temporary_names.get(id).map_or_else(
+                            || {
+                                diagnostics.push(with_operation_span(
+                                    emit_error(
+                                        "FICT-OXC-EMIT-TEMP",
+                                        description,
+                                        GuaranteeClass::Internal,
+                                    ),
+                                    *origin,
+                                ));
+                                None
+                            },
+                            |name| Some((*name).to_owned()),
+                        )
+                    };
+                    let Some(target) =
+                        temporary(target, "conditional target has no generated local")
+                    else {
+                        continue;
+                    };
+                    let Some(parent) =
+                        temporary(parent, "conditional parent has no generated local")
+                    else {
+                        continue;
+                    };
+                    let Some(start) =
+                        temporary(start, "conditional start marker has no generated local")
+                    else {
+                        continue;
+                    };
+                    let Some(end) = temporary(end, "conditional end marker has no generated local")
+                    else {
+                        continue;
+                    };
+                    let mut runtime_helper = |helper, description| {
+                        helper_names.get(helper).map_or_else(
+                            || {
+                                diagnostics.push(with_operation_span(
+                                    emit_error(
+                                        "FICT-OXC-EMIT-IMPORT",
+                                        description,
+                                        GuaranteeClass::Internal,
+                                    ),
+                                    *origin,
+                                ));
+                                None
+                            },
+                            |name| Some((*name).to_owned()),
+                        )
+                    };
+                    let Some(helper) =
+                        runtime_helper(helper, "conditional helper has no runtime import intent")
+                    else {
+                        continue;
+                    };
+                    let Some(create_helper) = runtime_helper(
+                        create_helper,
+                        "conditional create helper has no runtime import intent",
+                    ) else {
+                        continue;
+                    };
+                    let Some(cleanup_helper) = runtime_helper(
+                        cleanup_helper,
+                        "conditional cleanup helper has no runtime import intent",
+                    ) else {
+                        continue;
+                    };
+                    let fragment_local = match fragment_helper {
+                        Some(fragment_helper) => {
+                            let Some(local) = runtime_helper(
+                                fragment_helper,
+                                "conditional fragment helper has no runtime import intent",
+                            ) else {
+                                continue;
+                            };
+                            Some(local)
+                        }
+                        None => None,
+                    };
+                    plan.steps.push(FineJsxStep::Conditional {
+                        target,
+                        parent,
+                        start,
+                        end,
+                        kind: *kind,
+                        helper,
+                        create_helper,
+                        cleanup_helper,
+                        fragment_local,
                         namespace: *namespace,
                         value_origin,
                     });
@@ -2259,12 +2411,180 @@ impl<'a> AstRewriter<'a, '_> {
                     );
                     statements.push(Statement::new_expression_statement(span, call, &builder));
                 }
+                FineJsxStep::Conditional {
+                    target,
+                    parent,
+                    start,
+                    end,
+                    kind,
+                    helper,
+                    create_helper,
+                    cleanup_helper,
+                    fragment_local,
+                    namespace,
+                    value_origin,
+                } => {
+                    let location = (value_origin.start(), value_origin.end());
+                    let Some(value) = values.remove(&location) else {
+                        self.diagnostics.push(
+                            emit_error(
+                                "FICT-OXC-EMIT-ORIGIN",
+                                "conditional origin does not identify a JSX child expression",
+                                GuaranteeClass::Internal,
+                            )
+                            .with_primary_span(value_origin),
+                        );
+                        continue;
+                    };
+                    let (mut test, consequent, alternate) =
+                        match (kind, value.into_inner_expression()) {
+                            (
+                                ConditionalKind::Ternary,
+                                Expression::ConditionalExpression(conditional),
+                            ) => {
+                                let conditional = conditional.unbox();
+                                (
+                                    conditional.test,
+                                    conditional.consequent,
+                                    Some(conditional.alternate),
+                                )
+                            }
+                            (
+                                ConditionalKind::LogicalAnd,
+                                Expression::LogicalExpression(logical),
+                            ) if logical.operator == OxcLogicalOperator::And => {
+                                let logical = logical.unbox();
+                                (logical.left, logical.right, None)
+                            }
+                            _ => {
+                                self.diagnostics.push(
+                                emit_error(
+                                    "FICT-OXC-EMIT-CONDITIONAL",
+                                    "conditional source expression does not match its EmitIR kind",
+                                    GuaranteeClass::Internal,
+                                )
+                                .with_primary_span(value_origin),
+                            );
+                                continue;
+                            }
+                        };
+                    self.visit_expression(&mut test);
+                    let consequent =
+                        self.lower_conditional_branch(consequent, fragment_local.as_deref());
+                    let alternate = alternate.map(|alternate| {
+                        self.lower_conditional_branch(alternate, fragment_local.as_deref())
+                    });
+                    let condition = zero_parameter_expression_arrow(self.allocator, test, span);
+                    let consequent =
+                        zero_parameter_expression_arrow(self.allocator, consequent, span);
+                    let create = insertion_create_callback(
+                        self.allocator,
+                        &create_helper,
+                        namespace,
+                        &parent,
+                        span,
+                    );
+                    let alternate = alternate.map_or_else(
+                        || {
+                            Expression::new_unary_expression(
+                                span,
+                                OxcUnaryOperator::Void,
+                                Expression::new_numeric_literal(
+                                    span,
+                                    0.0,
+                                    None,
+                                    NumberBase::Decimal,
+                                    &builder,
+                                ),
+                                &builder,
+                            )
+                        },
+                        |alternate| {
+                            zero_parameter_expression_arrow(self.allocator, alternate, span)
+                        },
+                    );
+                    let callee = Expression::new_identifier(
+                        span,
+                        self.allocator.alloc_str(&helper),
+                        &builder,
+                    );
+                    let mut arguments = ArenaVec::new_in(&self.allocator);
+                    arguments.extend([
+                        Argument::from(condition),
+                        Argument::from(consequent),
+                        Argument::from(create),
+                        Argument::from(alternate),
+                        Argument::from(Expression::new_identifier(
+                            span,
+                            self.allocator.alloc_str(&start),
+                            &builder,
+                        )),
+                        Argument::from(Expression::new_identifier(
+                            span,
+                            self.allocator.alloc_str(&end),
+                            &builder,
+                        )),
+                    ]);
+                    let call = Expression::new_call_expression(
+                        span, callee, NONE, arguments, false, &builder,
+                    );
+                    statements.push(const_statement(self.allocator, &target, call, span));
+
+                    let target_expression = Expression::new_identifier(
+                        span,
+                        self.allocator.alloc_str(&target),
+                        &builder,
+                    );
+                    let dispose = Expression::new_static_member_expression(
+                        span,
+                        target_expression,
+                        IdentifierName::new(span, "dispose", &builder),
+                        false,
+                        &builder,
+                    );
+                    let cleanup = Expression::new_identifier(
+                        span,
+                        self.allocator.alloc_str(&cleanup_helper),
+                        &builder,
+                    );
+                    let mut cleanup_arguments = ArenaVec::new_in(&self.allocator);
+                    cleanup_arguments.push(Argument::from(dispose));
+                    let cleanup_call = Expression::new_call_expression(
+                        span,
+                        cleanup,
+                        NONE,
+                        cleanup_arguments,
+                        false,
+                        &builder,
+                    );
+                    statements.push(Statement::new_expression_statement(
+                        span,
+                        cleanup_call,
+                        &builder,
+                    ));
+                }
             }
         }
         let root =
             Expression::new_identifier(span, self.allocator.alloc_str(&clone.root), &builder);
         statements.push(Statement::new_return_statement(span, Some(root), &builder));
         block_iife(self.allocator, statements, span)
+    }
+
+    fn lower_conditional_branch(
+        &mut self,
+        mut branch: Expression<'a>,
+        fragment_local: Option<&str>,
+    ) -> Expression<'a> {
+        let previous_fragment = self.active_fragment_local.clone();
+        if let Some(fragment_local) = fragment_local {
+            self.active_fragment_local = Some(fragment_local.to_owned());
+        }
+        self.vnode_depth += 1;
+        self.visit_expression(&mut branch);
+        self.vnode_depth -= 1;
+        self.active_fragment_local = previous_fragment;
+        branch
     }
 
     fn lower_planned_jsx_element(&mut self, element: JSXElement<'a>) -> Expression<'a> {

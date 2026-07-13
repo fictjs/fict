@@ -9,10 +9,10 @@ use fict_hir::{
     FunctionFlags, FunctionId, FunctionKind, HirBlock, HirFile, HirFunction, HirInstruction,
     HirInstructionKind, HirLocal, HirParameter, HirScope, HirTerminator, HirValue,
     InstructionSemantics, JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName,
-    JsxNode, JsxTemplate, LocalId, LocalKind, MutationEffect, Origin, PatternSummary, Purity,
-    ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind,
-    SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TemplateId,
-    TerminatorKind, UpdateOperator, ValueId, ValueKind, verify_hir,
+    JsxExpressionKind, JsxNode, JsxTemplate, LocalId, LocalKind, MutationEffect, Origin,
+    PatternSummary, Purity, ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind, RegionId,
+    ScopeId, ScopeKind, SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary,
+    TemplateId, TerminatorKind, UpdateOperator, ValueId, ValueKind, verify_hir,
 };
 use oxc::{
     allocator::Allocator,
@@ -40,7 +40,8 @@ use oxc::{
     span::{GetSpan, Span},
     syntax::{
         operator::{
-            AssignmentOperator as OxcAssignmentOperator, UpdateOperator as OxcUpdateOperator,
+            AssignmentOperator as OxcAssignmentOperator, LogicalOperator as OxcLogicalOperator,
+            UpdateOperator as OxcUpdateOperator,
         },
         scope::ScopeFlags,
         symbol::SymbolId,
@@ -1562,8 +1563,14 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 value: value.clone(),
                 origin: Origin::source(*span),
             },
-            RawJsxChild::Expression(span) => JsxChild::Expression {
+            RawJsxChild::Expression {
+                span,
+                kind,
+                contains_fragment,
+            } => JsxChild::Expression {
                 value: self.syntax_value(owner, *span, self.referenced_bindings(*span)),
+                kind: *kind,
+                contains_fragment: *contains_fragment,
                 origin: Origin::source(*span),
             },
             RawJsxChild::Node(node) => JsxChild::Node(Box::new(self.lower_jsx_node(owner, node))),
@@ -1793,7 +1800,11 @@ enum RawJsxChild {
         value: String,
         span: SourceSpan,
     },
-    Expression(SourceSpan),
+    Expression {
+        span: SourceSpan,
+        kind: JsxExpressionKind,
+        contains_fragment: bool,
+    },
     Node(Box<RawJsxNode>),
     Spread {
         expression: SourceSpan,
@@ -2030,7 +2041,24 @@ fn raw_jsx_child(scoping: &Scoping, child: &OxcJsxChild<'_>) -> Option<RawJsxChi
                     Expression::JSXFragment(fragment) => {
                         RawJsxChild::Node(Box::new(raw_jsx_fragment(scoping, fragment)))
                     }
-                    _ => RawJsxChild::Expression(source_span(expression.span())),
+                    inner => {
+                        let kind = match inner {
+                            Expression::ConditionalExpression(_) => JsxExpressionKind::Conditional,
+                            Expression::LogicalExpression(logical)
+                                if logical.operator == OxcLogicalOperator::And =>
+                            {
+                                JsxExpressionKind::LogicalAnd
+                            }
+                            _ => JsxExpressionKind::Value,
+                        };
+                        let mut fragments = FragmentDetector::default();
+                        fragments.visit_expression(expression);
+                        RawJsxChild::Expression {
+                            span: source_span(expression.span()),
+                            kind,
+                            contains_fragment: fragments.found,
+                        }
+                    }
                 }
             }),
         },
