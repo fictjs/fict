@@ -375,7 +375,7 @@ fn classifies_nested_state_mutation_by_strict_guarantee_policy() {
     let finding = strict
         .diagnostics
         .iter()
-        .find(|diagnostic| diagnostic.code.as_str() == "FICT-M001")
+        .find(|diagnostic| diagnostic.code.as_str() == "FICT-M")
         .expect("strict nested-mutation diagnostic");
     assert_eq!(
         finding.severity,
@@ -398,7 +398,7 @@ fn classifies_nested_state_mutation_by_strict_guarantee_policy() {
     let finding = fallback
         .diagnostics
         .iter()
-        .find(|diagnostic| diagnostic.code.as_str() == "FICT-M001")
+        .find(|diagnostic| diagnostic.code.as_str() == "FICT-M")
         .expect("fallback nested-mutation warning");
     assert_eq!(
         finding.severity,

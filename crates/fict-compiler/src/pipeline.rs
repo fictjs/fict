@@ -2252,7 +2252,7 @@ mod tests {
             strict
                 .diagnostics
                 .iter()
-                .any(|diagnostic| diagnostic.code.as_str() == "FICT-M001")
+                .any(|diagnostic| diagnostic.code.as_str() == "FICT-M")
         );
 
         let mut fallback_request = request(source, "nested.js");
@@ -2260,11 +2260,34 @@ mod tests {
         let fallback = compile(fallback_request);
         assert!(!fallback.has_errors(), "{:?}", fallback.diagnostics);
         assert!(fallback.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code.as_str() == "FICT-M001"
+            diagnostic.code.as_str() == "FICT-M"
                 && diagnostic.severity == DiagnosticSeverity::Warning
         }));
         assert!(fallback.code.contains("user().name = \"Grace\""));
         assert!(fallback.code.contains("return user().name"));
+
+        let mut muted_request = request(source, "nested-muted.js");
+        muted_request.options.strict_guarantee = false;
+        muted_request
+            .options
+            .warning_levels
+            .insert("FICT-M".into(), WarningLevel::Off);
+        let muted = compile(muted_request);
+        assert!(!muted.has_errors(), "{:?}", muted.diagnostics);
+        assert_eq!(muted.diagnostics.len(), 1);
+        assert_eq!(muted.diagnostics[0].code.as_str(), "FICT-M");
+        assert_eq!(muted.diagnostics[0].severity, DiagnosticSeverity::Info);
+
+        let mut escalated_request = request(source, "nested-escalated.js");
+        escalated_request.options.strict_guarantee = false;
+        escalated_request.options.warnings_as_errors =
+            WarningsAsErrors::Codes(vec!["FICT-M".into()]);
+        let escalated = compile(escalated_request);
+        assert!(escalated.has_errors());
+        assert!(escalated.code.is_empty());
+        assert_eq!(escalated.diagnostics.len(), 1);
+        assert_eq!(escalated.diagnostics[0].code.as_str(), "FICT-M");
+        assert_eq!(escalated.diagnostics[0].severity, DiagnosticSeverity::Error);
     }
 
     #[test]

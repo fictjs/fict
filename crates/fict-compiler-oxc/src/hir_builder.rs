@@ -1859,7 +1859,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             if mutation.projected {
                 self.diagnostics.push(
                     Diagnostic::new(
-                        DiagnosticCode::new("FICT-M001").expect("diagnostic literal"),
+                        DiagnosticCode::new("FICT-M").expect("diagnostic literal"),
                         if self.strict_guarantee {
                             DiagnosticSeverity::Error
                         } else {
