@@ -16,9 +16,22 @@ import {
   createFictPlugin,
   getCompilerCacheFingerprint,
   resolvePackageModuleMetadata,
+  type CompileRequest,
+  type CompileResult,
+  type CompilerExplainArtifact,
+  type CompilerWarning,
+  type FictDiagnostic,
   type FictCompilerOptions,
   type ModuleReactiveMetadata,
+  type NativeCompilerExplainArtifact,
+  type NativeCompilerOptions,
+  type ResolvedMetadataInput,
 } from '@fictjs/compiler'
+import {
+  loadNativeCompilerBinding,
+  type NativeCompilerBinding,
+  type NativeCompilerInfo,
+} from '@fictjs/compiler/native'
 import {
   createFilter,
   transformWithEsbuild,
@@ -61,6 +74,17 @@ interface BabelGeneratorOptionsWithInputSourceMap extends BabelGeneratorOptions 
 }
 
 export interface FictPluginOptions extends FictCompilerOptions {
+  /**
+   * Compiler implementation used by the Vite compile stage.
+   * @default 'legacy'
+   */
+  backend?: 'legacy' | 'rust'
+  /**
+   * Explicit native addon path for local development and release verification.
+   * Production installations normally resolve the platform optional package.
+   * @internal
+   */
+  nativeCompilerPath?: string
   /**
    * File patterns to include for transformation.
    * Relative patterns are resolved from the Vite project root.
@@ -450,6 +474,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   const {
     include,
     exclude = ['**/node_modules/**'],
+    backend = 'legacy',
+    nativeCompilerPath,
     cache: cacheOption,
     tsconfigPath,
     useTypeScriptProject = true,
@@ -459,6 +485,30 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     publicModuleId: _integrationOwnedPublicModuleId,
     ...compilerOptions
   } = options
+  if (backend !== 'legacy' && backend !== 'rust') {
+    throw new Error(`[fict] Unknown compiler backend ${JSON.stringify(backend)}.`)
+  }
+  if (backend === 'rust' && compilerOptions.resumable === true) {
+    throw new Error(
+      '[fict] The Rust compiler backend does not yet support Preview resumability. ' +
+        'Disable resumable output or use backend: "legacy".',
+    )
+  }
+  let nativeCompilerBinding: NativeCompilerBinding | undefined
+  let nativeCompilerInfo: NativeCompilerInfo | undefined
+  const getNativeCompiler = (): NativeCompilerBinding => {
+    if (!nativeCompilerBinding) {
+      const nativePath = nativeCompilerPath ?? process.env.FICT_COMPILER_NATIVE_PATH
+      nativeCompilerBinding = loadNativeCompilerBinding(nativePath ? { nativePath } : {})
+      nativeCompilerInfo = nativeCompilerBinding.nativeCompilerInfo()
+    }
+    return nativeCompilerBinding
+  }
+  const getCompilerStageFingerprint = (): string => {
+    if (backend === 'legacy') return `legacy:${getTransformCacheFingerprint()}`
+    getNativeCompiler()
+    return `rust:${nativeCompilerInfo!.compilerBuildId}:oxc${nativeCompilerInfo!.oxcVersion}`
+  }
   const publicIdentityNamespace = publicIdentityNamespaceOption?.trim()
   if (publicIdentityNamespaceOption !== undefined && !publicIdentityNamespace) {
     throw new Error('[fict] publicIdentityNamespace must be a non-empty string.')
@@ -1127,6 +1177,60 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     })
   }
 
+  const createNativeMetadataSnapshot = (
+    state: MetadataTransformState,
+    code: string,
+    normalizedFilename: string,
+    importerKey: string,
+  ): ResolvedMetadataInput[] => {
+    const aliasEntries = normalizeAliases(config?.resolve?.alias)
+    return collectStaticModuleSources(code).map(source => {
+      const metadata = resolveCompilerModuleMetadata(state, source, normalizedFilename, importerKey)
+      const exactResolution = state.resolvedLocalModules.get(
+        createLocalResolutionKey(importerKey, source),
+      )
+      const localFile =
+        exactResolution?.filename ??
+        resolveLocalModuleSource(source, normalizedFilename, config?.root, aliasEntries)
+      const packageSource = resolveAliasedPackageSource(source, aliasEntries)
+      let resolvedId = exactResolution?.key ?? localFile ?? packageSource
+      let status: ResolvedMetadataInput['status']
+      let resolvedMetadata: ModuleReactiveMetadata | null = null
+
+      if (metadata === null) {
+        status = 'missing'
+        resolvedId = null
+      } else if (metadata !== undefined) {
+        status = 'resolved'
+        resolvedMetadata = metadata
+        resolvedId ??= `resolver:${source}`
+      } else if (
+        shouldSkipMetadataForModuleQuery(source, {
+          root: config?.root,
+          importer: normalizedFilename,
+        })
+      ) {
+        status = 'opaque'
+        resolvedId ??= source
+      } else if (resolvedId) {
+        status = 'opaque'
+      } else {
+        status = 'missing'
+        resolvedId = null
+      }
+
+      return {
+        request: source,
+        resolvedId,
+        status,
+        metadata: resolvedMetadata,
+        fingerprint: `sha256:${hashString(
+          stableStringify([source, resolvedId, status, resolvedMetadata]),
+        )}`,
+      }
+    })
+  }
+
   const createCompilerOptions = async (
     state: MetadataTransformState,
     code: string,
@@ -1142,6 +1246,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     fictOptions: FictCompilerOptions
     project: TypeScriptProject | null
     tsImportElision: TypeScriptImportElision
+    nativeMetadata: ResolvedMetadataInput[]
   }> => {
     assertTransformStateActive(state)
     let publicModuleId: string | undefined
@@ -1224,7 +1329,16 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         configPath: project.configPath,
       }
     }
-    return { fictOptions, project, tsImportElision }
+    const nativeMetadata =
+      backend === 'rust'
+        ? createNativeMetadataSnapshot(
+            state,
+            code,
+            normalizedFilename,
+            transformOptions?.metadataKey ?? normalizedFilename,
+          )
+        : []
+    return { fictOptions, project, tsImportElision, nativeMetadata }
   }
 
   const resolveGraphDependency = async (
@@ -1335,13 +1449,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     fictOptions: FictCompilerOptions
     outputMetadata: Map<string, ModuleReactiveMetadata>
     tsImportElision: TypeScriptImportElision
+    nativeMetadata: ResolvedMetadataInput[]
   }> => {
     assertTransformStateActive(state)
     const isVariant = node.key !== node.filename
     const outputMetadata = isVariant
       ? new Map<string, ModuleReactiveMetadata>()
       : state.moduleMetadata
-    const { fictOptions, project } = await createCompilerOptions(
+    const { fictOptions, project, nativeMetadata } = await createCompilerOptions(
       state,
       node.code,
       node.filename,
@@ -1373,10 +1488,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         project,
         tsImportElision,
         dependencyFingerprint,
+        getCompilerStageFingerprint(),
       ),
       fictOptions,
       outputMetadata,
       tsImportElision,
+      nativeMetadata,
     }
   }
 
@@ -1386,6 +1503,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     fictOptions: FictCompilerOptions,
     outputMetadata: Map<string, ModuleReactiveMetadata>,
     tsImportElision: TypeScriptImportElision,
+    nativeMetadata: ResolvedMetadataInput[],
   ): Promise<Omit<PreparedCompilerTransform, 'preparationKey'>> => {
     assertTransformStateActive(state)
     const compiled = await compileFictCompilerStage(
@@ -1393,6 +1511,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       node.filename,
       fictOptions,
       tsImportElision,
+      {
+        backend,
+        moduleId: node.id,
+        metadata: nativeMetadata,
+        ...(backend === 'rust' ? { nativeCompiler: getNativeCompiler() } : {}),
+      },
     )
     assertTransformStateActive(state)
     const generatedMetadata = outputMetadata.get(node.filename)
@@ -1454,6 +1578,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         fictOptions: FictCompilerOptions
         outputMetadata: Map<string, ModuleReactiveMetadata>
         tsImportElision: TypeScriptImportElision
+        nativeMetadata: ResolvedMetadataInput[]
       }[] = []
       // TypeScriptProject is a shared mutable language-service snapshot. Prepare
       // candidate keys deterministically so updateFile/getProgram never race.
@@ -1480,7 +1605,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         const moduleKey = sortedComponent[0]!
         const node = graph.get(moduleKey)!
         const tsImportElision = await getFixedTsImportElision(node)
-        const { fictOptions, outputMetadata } = await getPreparationKey(
+        const { fictOptions, outputMetadata, nativeMetadata } = await getPreparationKey(
           state,
           node,
           tsImportElision,
@@ -1491,6 +1616,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           fictOptions,
           outputMetadata,
           tsImportElision,
+          nativeMetadata,
         )
         const { key } = await getPreparationKey(state, node, tsImportElision)
         state.preparedCompilerTransforms.set(moduleKey, { ...compiled, preparationKey: key })
@@ -1514,14 +1640,21 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         for (const moduleKey of sortedComponent) {
           const node = graph.get(moduleKey)!
           const tsImportElision = await getFixedTsImportElision(node)
-          const { fictOptions, outputMetadata } = await getPreparationKey(
+          const { fictOptions, outputMetadata, nativeMetadata } = await getPreparationKey(
             state,
             node,
             tsImportElision,
           )
           passResults.set(
             moduleKey,
-            await compileMetadataNode(state, node, fictOptions, outputMetadata, tsImportElision),
+            await compileMetadataNode(
+              state,
+              node,
+              fictOptions,
+              outputMetadata,
+              tsImportElision,
+              nativeMetadata,
+            ),
           )
         }
         latestResults = passResults
@@ -1937,6 +2070,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           fictOptions,
           project: tsProject,
           tsImportElision,
+          nativeMetadata,
         } = await createCompilerOptions(state, code, normalizedFilename, undefined, {
           metadataKey,
           moduleMetadata: transformMetadata,
@@ -1975,6 +2109,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
                 tsImportElision,
                 shouldSplit,
                 dependencyFingerprint,
+                getCompilerStageFingerprint(),
                 state.devHandlerGeneration && state.devEnvironmentId
                   ? `${state.devHandlerGeneration.id}:${state.devEnvironmentId}`
                   : '',
@@ -2035,6 +2170,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             tsProject,
             tsImportElision,
             dependencyFingerprint,
+            getCompilerStageFingerprint(),
           )
           const prepared = isPassThroughVariant
             ? undefined
@@ -2048,6 +2184,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               normalizedFilename,
               fictOptions,
               tsImportElision,
+              {
+                backend,
+                moduleId: id,
+                metadata: nativeMetadata,
+                ...(backend === 'rust' ? { nativeCompiler: getNativeCompiler() } : {}),
+              },
             )
             assertTransformStateActive(state)
             const generatedMetadata = transformMetadata.get(normalizedFilename)
@@ -3925,12 +4067,210 @@ function parseModuleWithDecoratorFallback(code: string): ReturnType<typeof parse
   }
 }
 
+interface CompilerStageOptions {
+  backend: 'legacy' | 'rust'
+  moduleId: string
+  metadata: ResolvedMetadataInput[]
+  nativeCompiler?: NativeCompilerBinding
+}
+
+function sourcePositionForByteOffset(
+  source: string,
+  byteOffset: number,
+): { line: number; column: number } {
+  const bytes = Buffer.from(source)
+  const prefix = bytes.subarray(0, Math.min(Math.max(0, byteOffset), bytes.length)).toString('utf8')
+  const lines = prefix.split('\n')
+  return {
+    line: lines.length,
+    column: (lines[lines.length - 1]?.replace(/\r$/, '').length ?? 0) + 1,
+  }
+}
+
+function sourceByteOffsetForPosition(source: string, line: number, column: number): number | null {
+  if (line <= 0 || column <= 0) return null
+  let index = 0
+  let currentLine = 1
+  while (currentLine < line) {
+    const newline = source.indexOf('\n', index)
+    if (newline === -1) return null
+    index = newline + 1
+    currentLine += 1
+  }
+  const lineEnd = source.indexOf('\n', index)
+  const end = lineEnd === -1 ? source.length : lineEnd
+  const sourceIndex = Math.min(index + column - 1, end)
+  return Buffer.byteLength(source.slice(0, sourceIndex))
+}
+
+function nativeDiagnosticToWarning(
+  diagnostic: FictDiagnostic,
+  source: string,
+  filename: string,
+): CompilerWarning {
+  const position = diagnostic.primarySpan
+    ? sourcePositionForByteOffset(source, diagnostic.primarySpan.start)
+    : { line: 0, column: 0 }
+  return {
+    code: diagnostic.code,
+    message: diagnostic.message,
+    fileName: filename,
+    line: position.line,
+    column: position.column,
+  }
+}
+
+function formatNativeDiagnostic(
+  diagnostic: FictDiagnostic,
+  source: string,
+  filename: string,
+): string {
+  const warning = nativeDiagnosticToWarning(diagnostic, source, filename)
+  const location = warning.line > 0 ? `\n  at ${filename}:${warning.line}:${warning.column}` : ''
+  const help = diagnostic.help ? `\n  help: ${diagnostic.help}` : ''
+  return `[${diagnostic.code}] ${diagnostic.message}${location}${help}`
+}
+
+function nativeExplainToLegacy(
+  artifact: NativeCompilerExplainArtifact,
+  source: string,
+  filename: string,
+): CompilerExplainArtifact {
+  return {
+    version: 1,
+    fileName: artifact.fileName,
+    helpers: artifact.helpers,
+    diagnostics: artifact.diagnostics.map(diagnostic =>
+      nativeDiagnosticToWarning(diagnostic, source, filename),
+    ),
+    events: artifact.events.map(event => {
+      const position = event.span
+        ? sourcePositionForByteOffset(source, event.span.start)
+        : undefined
+      return {
+        kind: event.kind,
+        message: event.message,
+        ...(event.name ? { name: event.name } : {}),
+        ...(event.code ? { code: event.code } : {}),
+        ...(position ? { line: position.line, column: position.column } : {}),
+      }
+    }),
+  }
+}
+
+function nativeCompilerOptions(
+  options: FictCompilerOptions,
+  tsImportElision: TypeScriptImportElision,
+): NativeCompilerOptions {
+  const strictGuaranteeFromEnv = readBooleanEnv('FICT_STRICT_GUARANTEE') === true
+  return {
+    dev: options.dev ?? false,
+    sourcemap: options.sourcemap ?? true,
+    explain: options.explain === true || typeof options.explain === 'function',
+    lazyConditional: options.lazyConditional ?? true,
+    getterCache: options.getterCache ?? true,
+    fineGrainedDom: options.fineGrainedDom ?? true,
+    optimize: options.optimize ?? true,
+    optimizeLevel: options.optimizeLevel ?? 'safe',
+    inlineDerivedMemos: options.inlineDerivedMemos ?? true,
+    strictReactivity: options.strictReactivity ?? false,
+    strictGuarantee:
+      strictGuaranteeFromEnv ||
+      process.env.NODE_ENV === 'production' ||
+      options.strictGuarantee !== false,
+    warningsAsErrors: options.warningsAsErrors ?? false,
+    warningLevels: options.warningLevels ?? {},
+    reactiveScopes: options.reactiveScopes ?? [],
+    typescript: {
+      allowNamespaces: true,
+      onlyRemoveTypeImports: tsImportElision !== 'remove',
+    },
+  }
+}
+
+function nativeIntegrationDiagnostics(
+  source: string,
+  warnings: readonly CompilerWarning[] | undefined,
+): FictDiagnostic[] {
+  return (warnings ?? []).map(warning => {
+    const offset = sourceByteOffsetForPosition(source, warning.line, warning.column)
+    return {
+      code: warning.code,
+      severity: 'warning',
+      message: warning.message,
+      primarySpan: offset === null ? null : { start: offset, end: offset },
+      secondaryLabels: [],
+      help: null,
+      notes: [],
+      guaranteeClass: 'advisory',
+    }
+  })
+}
+
+function consumeNativeCompileResult(
+  result: CompileResult,
+  source: string,
+  filename: string,
+  options: FictCompilerOptions,
+): { code: string; map: TransformResult['map'] } {
+  for (const dependency of result.metadataDependencies) {
+    options.onModuleMetadataDependency?.(dependency)
+  }
+  for (const diagnostic of result.diagnostics) {
+    if (diagnostic.severity === 'warning') {
+      options.onWarn?.(nativeDiagnosticToWarning(diagnostic, source, filename))
+    }
+  }
+  if (result.explain && typeof options.explain === 'function') {
+    options.explain(nativeExplainToLegacy(result.explain, source, filename))
+  }
+
+  const errors = result.diagnostics.filter(diagnostic => diagnostic.severity === 'error')
+  if (errors.length > 0) {
+    const error = new SyntaxError(
+      errors.map(diagnostic => formatNativeDiagnostic(diagnostic, source, filename)).join('\n'),
+    ) as SyntaxError & { code?: string; loc?: { line: number; column: number } }
+    const first = errors[0]!
+    error.code = first.code
+    if (first.primarySpan) {
+      error.loc = sourcePositionForByteOffset(source, first.primarySpan.start)
+    }
+    throw error
+  }
+
+  options.moduleMetadata?.set(filename, result.moduleMetadata)
+  return {
+    code: result.code,
+    map: result.map as TransformResult['map'],
+  }
+}
+
 async function compileFictCompilerStage(
   code: string,
   filename: string,
   fictOptions: FictCompilerOptions,
   tsImportElision: TypeScriptImportElision,
+  stage: CompilerStageOptions,
 ): Promise<{ code: string; map: TransformResult['map'] }> {
+  if (stage.backend === 'rust') {
+    if (!stage.nativeCompiler) {
+      throw new Error('[fict] Rust compiler backend selected without a native compiler binding.')
+    }
+    const request: CompileRequest = {
+      code,
+      filename,
+      moduleId: stage.moduleId,
+      options: nativeCompilerOptions(fictOptions, tsImportElision),
+      metadata: stage.metadata,
+      integrationDiagnostics: nativeIntegrationDiagnostics(
+        code,
+        fictOptions.integrationDiagnostics,
+      ),
+    }
+    const result = await stage.nativeCompiler.transform(request)
+    return consumeNativeCompileResult(result, code, filename, fictOptions)
+  }
+
   const isTypeScript = TYPESCRIPT_EXTENSIONS.some(extension => filename.endsWith(extension))
   const isTSX = filename.endsWith('.tsx')
   const isExplicitModuleTypeScript = filename.endsWith('.mts') || filename.endsWith('.cts')
@@ -4238,6 +4578,7 @@ function buildCacheKey(
   tsImportElision: TypeScriptImportElision,
   shouldSplit: boolean,
   packageMetadataFingerprint: string,
+  compilerStageFingerprint: string,
   devHandlerNamespace = '',
 ): string {
   const codeHash = hashString(code)
@@ -4246,7 +4587,7 @@ function buildCacheKey(
   return hashString(
     [
       CACHE_VERSION,
-      getTransformCacheFingerprint(),
+      compilerStageFingerprint,
       filename,
       codeHash,
       optionsHash,
@@ -4266,6 +4607,7 @@ function buildMetadataPreparationKey(
   tsProject: TypeScriptProject | null,
   tsImportElision: TypeScriptImportElision,
   dependencyMetadataFingerprint: string,
+  compilerStageFingerprint: string,
 ): string {
   const normalizedOptions = normalizeOptionsForCache(options)
   const typescript = normalizedOptions.typescript
@@ -4278,7 +4620,7 @@ function buildMetadataPreparationKey(
   return hashString(
     [
       CACHE_VERSION,
-      getTransformCacheFingerprint(),
+      compilerStageFingerprint,
       'metadata-preparation',
       filename,
       hashString(code),
