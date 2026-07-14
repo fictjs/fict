@@ -65,6 +65,34 @@ test('precommit, release verification, and CI enforce the review regression suit
   assert.match(ciWorkflow, /run: pnpm test:review-regressions/)
 })
 
+test('CI and release fail closed on advisories in both Rust lockfiles', () => {
+  assert.equal(
+    rootPackage.scripts['security:audit:rust'],
+    'cargo audit --deny warnings && cargo audit --deny warnings --file fuzz/Cargo.lock',
+  )
+  assert.match(
+    rootPackage.scripts['release:verify'],
+    /^pnpm security:audit:prod && pnpm security:audit:rust &&/,
+  )
+
+  for (const workflow of [ciWorkflow, releaseWorkflow]) {
+    assert.match(workflow, /CARGO_AUDIT_VERSION: 0\.22\.2/)
+    assert.match(
+      workflow,
+      /cargo install cargo-audit --version "\$\{CARGO_AUDIT_VERSION\}" --locked/,
+    )
+    assert.match(
+      workflow,
+      /test "\$\(cargo audit --version\)" = "cargo-audit \$\{CARGO_AUDIT_VERSION\}"/,
+    )
+    assert.doesNotMatch(workflow, /cargo audit[^\n]*--ignore/)
+  }
+
+  assert.match(ciWorkflow, /name: Audit locked Rust dependencies[\s\S]*?pnpm security:audit:rust/)
+  assert.match(releaseWorkflow, /^\s+cargo audit --deny warnings$/m)
+  assert.match(releaseWorkflow, /^\s+cargo audit --deny warnings --file fuzz\/Cargo\.lock$/m)
+})
+
 test('Babel preset deprecation verification builds its compiler dependency first', () => {
   assert.match(
     rootPackage.scripts['test:babel-preset:deprecation'],

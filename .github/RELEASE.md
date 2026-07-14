@@ -176,6 +176,14 @@ pnpm changeset version
 NPM publishing uses Trusted Publishing through GitHub Actions OIDC. Do not add a
 long-lived NPM publishing token to the workflow.
 
+Rust dependency auditing uses pinned `cargo-audit 0.22.2` and scans both the
+root `Cargo.lock` and the independent `fuzz/Cargo.lock` with `--deny warnings`.
+The workflows cache only the version-checked auditor binary; every invocation
+fetches current RustSec advisories. Do not add advisory ignores or stale-database
+acceptance to unblock a release. For the equivalent local gate, install the
+pinned tool with `cargo install cargo-audit --version 0.22.2 --locked`, then run
+`pnpm security:audit:rust`.
+
 The release workflow pins npm `11.18.0`. Changesets 2.x reads
 `npm info --json` as an object, while npm 12 returns an array and causes already
 published versions to be misclassified as pending. Do not upgrade the release

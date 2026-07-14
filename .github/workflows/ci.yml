@@ -2,6 +2,7 @@ name: CI
 
 env:
   FICT_COMPILER_BUILD_REVISION: ${{ github.sha }}
+  CARGO_AUDIT_VERSION: 0.22.2
 
 on:
   push:
@@ -93,6 +94,24 @@ jobs:
           cache: pnpm
 
       - run: pnpm install
+
+      - name: Cache pinned Rust advisory auditor
+        if: matrix.node == '24'
+        id: cargo-audit-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}-${{ runner.arch }}-${{ env.CARGO_AUDIT_VERSION }}
+
+      - name: Install pinned Rust advisory auditor
+        if: matrix.node == '24' && steps.cargo-audit-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --version "${CARGO_AUDIT_VERSION}" --locked
+
+      - name: Audit locked Rust dependencies
+        if: matrix.node == '24'
+        run: |
+          test "$(cargo audit --version)" = "cargo-audit ${CARGO_AUDIT_VERSION}"
+          pnpm security:audit:rust
 
       - name: Verify pinned Rust workspace
         if: matrix.node == '24'

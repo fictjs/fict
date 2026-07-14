@@ -240,6 +240,10 @@ requires the same maintainer review as changing a performance or RSS budget.
 The standalone fuzz workspace owns an independent lockfile; CI MUST validate it
 with Cargo's locked metadata mode before building or running fuzz targets so an
 OXC pin change cannot silently resolve a different fuzz dependency graph.
+CI and release verification MUST also audit both the root and fuzz lockfiles
+with the pinned `cargo-audit` version and `--deny warnings`. Advisory ignores,
+stale-database acceptance, and skipping the independent fuzz lockfile are not
+valid ways to make a candidate pass.
 
 The executable M7 promotion policy, candidate chain, privacy-safe allowlist,
 performance/RSS budget, and human approval are owned by the
@@ -301,6 +305,7 @@ Native implementation evidence, required as the corresponding milestones land:
 cargo fmt --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
+pnpm security:audit:rust
 pnpm test:compiler:differential
 pnpm test:compiler:native-packages
 pnpm release:verify
