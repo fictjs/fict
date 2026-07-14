@@ -4889,6 +4889,30 @@ mod tests {
 
     #[cfg(feature = "preview")]
     #[test]
+    fn transforms_preview_handlers_with_source_spans_beyond_the_artifact_wrapper() {
+        let source = format!(
+            "/* {} */\nexport function App() {{ return <button onClick$={{(event: MouseEvent) => event.preventDefault()}}>Deploy</button>; }}",
+            "padding".repeat(512)
+        );
+        let mut input = request(&source, "preview-long-handler-offset.tsx");
+        input.options.sourcemap = true;
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: false,
+            ..CompilerPreviewOptions::default()
+        });
+
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        let artifact = result.artifacts.first().expect("one handler artifact");
+        assert!(artifact.code.contains("event.preventDefault()"));
+        assert!(!artifact.code.contains("MouseEvent"));
+        assert!(artifact.map.is_some());
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
     fn scopes_preview_prevent_default_detection_to_the_event_parameter() {
         let source = r#"
             export function App() {

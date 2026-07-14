@@ -327,6 +327,7 @@ pub(crate) fn generate_handler_artifact<'a>(
     let mut program = parsed.program;
     program.source_type = source_type;
     ZeroSpans.visit_program(&mut program);
+    program.source_text = source;
     let expected_prop_defaults = prepared
         .plan
         .prop_captures
