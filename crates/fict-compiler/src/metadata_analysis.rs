@@ -493,12 +493,6 @@ fn hook_info_for_value(
     analysis: &FunctionPassAnalysis,
     value: ValueId,
 ) -> Option<HookReturnInfo> {
-    if let Some(kind) = classify_value(function, analysis, value, &mut BTreeSet::new()) {
-        return Some(HookReturnInfo {
-            direct_accessor: Some(kind),
-            ..HookReturnInfo::default()
-        });
-    }
     let instruction = defining_instruction(function, value)?;
     match &instruction.kind {
         HirInstructionKind::Object { entries } => {
@@ -545,7 +539,12 @@ fn hook_info_for_value(
                 ..HookReturnInfo::default()
             })
         }
-        _ => None,
+        _ => classify_value(function, analysis, value, &mut BTreeSet::new()).map(|kind| {
+            HookReturnInfo {
+                direct_accessor: Some(kind),
+                ..HookReturnInfo::default()
+            }
+        }),
     }
 }
 

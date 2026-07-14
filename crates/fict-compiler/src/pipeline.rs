@@ -577,6 +577,10 @@ mod tests {
                     const doubled = $memo(() => count * 2);
                     return { count, doubled };
                 }
+                export function useSingle() {
+                    const count = $state(0);
+                    return { count };
+                }
                 /** @fictReturn [0: store, 2: 'signal'] */
                 function useAnnotated(input) { return input; }
                 export { useAnnotated as "__proto__" };
@@ -602,6 +606,13 @@ mod tests {
                     ("0".into(), ReactiveExportKind::Store),
                     ("2".into(), ReactiveExportKind::Signal),
                 ]),
+                ..HookReturnInfo::default()
+            })
+        );
+        assert_eq!(
+            result.module_metadata.hooks.get("useSingle"),
+            Some(&HookReturnInfo {
+                object_props: BTreeMap::from([("count".into(), ReactiveExportKind::Signal,)]),
                 ..HookReturnInfo::default()
             })
         );
