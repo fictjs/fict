@@ -232,8 +232,12 @@ test('release aggregates and certifies all revision-bound native runtime evidenc
 
   const certificationSource = releaseWorkflow.slice(certificationJob, releaseJob)
   const releaseSource = releaseWorkflow.slice(releaseJob)
+  const certificationPnpmSetup = certificationSource.indexOf('uses: pnpm/action-setup@v5')
+  const certificationNodeSetup = certificationSource.indexOf('uses: actions/setup-node@v5')
   assert.match(certificationSource, /needs: \[native-build, native-runtime\]/)
   assert.doesNotMatch(certificationSource, /github\.event_name == 'push'/)
+  assert.ok(certificationPnpmSetup >= 0 && certificationPnpmSetup < certificationNodeSetup)
+  assert.match(certificationSource, /uses: pnpm\/action-setup@v5[\s\S]*?version: 9\.1\.1/)
   assert.match(releaseSource, /needs: native-certification/)
   assert.doesNotMatch(releaseSource, /Download all native runtime evidence/)
 })
