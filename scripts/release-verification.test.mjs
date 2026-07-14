@@ -64,6 +64,13 @@ test('precommit, release verification, and CI enforce the review regression suit
   assert.match(ciWorkflow, /run: pnpm test:review-regressions/)
 })
 
+test('Babel preset deprecation verification builds its compiler dependency first', () => {
+  assert.match(
+    rootPackage.scripts['test:babel-preset:deprecation'],
+    /^pnpm --filter @fictjs\/compiler build && pnpm --filter @fictjs\/babel-preset build &&/,
+  )
+})
+
 test('compiler and top-level release gates enforce Rust architecture and complexity budgets', () => {
   assert.match(rootPackage.scripts['release:verify'], /pnpm guardrails:rust-crates/)
   assert.match(rootPackage.scripts['release:compiler:verify'], /pnpm guardrails:rust-crates/)
