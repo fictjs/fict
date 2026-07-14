@@ -4953,6 +4953,78 @@ mod tests {
 
     #[cfg(feature = "preview")]
     #[test]
+    fn restores_factory_expression_dependencies_in_preview_artifacts() {
+        let source = "const makeHandler = () => event => event.type; export function App({ enabled = true }) { return <button onClick$={enabled ? makeHandler() : makeHandler()}>{enabled}</button>; }";
+        let mut input = request(source, "preview-handler-factory.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: false,
+            ..CompilerPreviewOptions::default()
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(result.artifacts.len(), 1);
+        assert!(
+            result
+                .code
+                .contains("export { makeHandler as __fict_dep_0 }"),
+            "{}",
+            result.code
+        );
+        let artifact = &result.artifacts[0].code;
+        assert!(
+            artifact.contains("__fict_dep_0 as makeHandler"),
+            "{artifact}"
+        );
+        assert!(artifact.contains("const enabled = () =>"), "{artifact}");
+        assert!(
+            artifact.contains("enabled() ? makeHandler() : makeHandler()"),
+            "{artifact}"
+        );
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn rejects_unrestorable_factory_expression_dependencies() {
+        let source = "const makeHandler = value => () => value; export function App() { const local = Math.random(); return <button onClick$={makeHandler(local)}>Click</button>; }";
+        let mut input = request(source, "preview-handler-factory-local.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: false,
+            ..CompilerPreviewOptions::default()
+        });
+        let result = compile(input);
+
+        assert!(result.has_errors());
+        assert!(result.code.is_empty());
+        assert_eq!(result.diagnostics[0].code.as_str(), "FICT-PREVIEW-CAPTURE");
+        assert!(result.diagnostics[0].message.contains("local"));
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn rejects_factory_expressions_that_call_function_props() {
+        let source = "export function App({ createHandler }) { return <button onClick$={createHandler('label')}>Click</button>; }";
+        let mut input = request(source, "preview-handler-factory-prop.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: false,
+            ..CompilerPreviewOptions::default()
+        });
+        let result = compile(input);
+
+        assert!(result.has_errors());
+        assert!(result.code.is_empty());
+        assert_eq!(
+            result.diagnostics[0].code.as_str(),
+            "FICT-PREVIEW-PROP-CALL"
+        );
+        assert!(result.diagnostics[0].message.contains("createHandler"));
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
     fn restores_component_prop_rest_objects_in_preview_artifacts() {
         let source = "export function Button({ id, kind, ...rest }) { return <button onClick$={() => console.log(rest.title)}>Click</button>; }";
         let mut input = request(source, "preview-prop-rest.tsx");

@@ -220,10 +220,13 @@ pub fn attach_preview_plan(
                 continue;
             }
 
-            let mut captures = handler_function
-                .and_then(|function| hir.functions.get(function.as_usize()))
-                .map(captured_bindings)
-                .unwrap_or_default();
+            let mut captures = handler_captured_bindings(
+                hir,
+                owner,
+                &candidate.handler,
+                candidate.origin,
+                handler_function,
+            );
             let non_serializable_signals = non_serializable_signal_bindings(owner, owner_emit);
             let slot_bindings: BTreeMap<_, _> = owner_emit
                 .slots
@@ -258,9 +261,14 @@ pub fn attach_preview_plan(
                 .parameters
                 .first()
                 .and_then(|parameter| parameter.binding);
-            let function_prop_calls = handler_function.map_or_else(Vec::new, |function| {
-                handler_function_prop_calls(hir, function, props_parameter_binding, &prop_bindings)
-            });
+            let function_prop_calls = handler_prop_calls(
+                hir,
+                owner,
+                handler_function,
+                candidate.origin,
+                props_parameter_binding,
+                &prop_bindings,
+            );
             if !function_prop_calls.is_empty() {
                 if candidate.explicit {
                     diagnostics.push(
@@ -972,15 +980,338 @@ fn captured_bindings(function: &fict_hir::HirFunction) -> BTreeSet<BindingId> {
         .collect()
 }
 
-fn handler_function_prop_calls(
+fn handler_captured_bindings(
     hir: &HirFile,
-    root: FunctionId,
+    owner: &fict_hir::HirFunction,
+    handler: &EmitValueRef,
+    origin: Origin,
+    handler_function: Option<FunctionId>,
+) -> BTreeSet<BindingId> {
+    let mut collector = HandlerBindingCollector {
+        hir,
+        owner,
+        bindings: BTreeSet::new(),
+        visited_values: BTreeSet::new(),
+        visited_functions: BTreeSet::new(),
+        owned_spans: origin.primary_span.into_iter().collect(),
+    };
+    match handler {
+        EmitValueRef::Hir(value) => collector.value(*value),
+        EmitValueRef::Ssa(name) => collector.local(name.local),
+        EmitValueRef::Function(function) => collector.function(*function),
+        EmitValueRef::Binding(binding) => {
+            collector.bindings.insert(*binding);
+        }
+        EmitValueRef::Slot(_) | EmitValueRef::Temporary(_) | EmitValueRef::Literal(_) => {}
+    }
+    if let Some(function) = handler_function {
+        collector.function(function);
+    }
+    collector.bindings.retain(|binding| {
+        let declaration = hir
+            .bindings
+            .get(binding.as_usize())
+            .and_then(|binding| binding.origin.primary_span);
+        declaration.is_none_or(|declaration| {
+            !collector
+                .owned_spans
+                .iter()
+                .any(|span| span_contains(*span, declaration))
+        })
+    });
+    collector.bindings
+}
+
+struct HandlerBindingCollector<'hir> {
+    hir: &'hir HirFile,
+    owner: &'hir fict_hir::HirFunction,
+    bindings: BTreeSet<BindingId>,
+    visited_values: BTreeSet<ValueId>,
+    visited_functions: BTreeSet<FunctionId>,
+    owned_spans: Vec<fict_hir::SourceSpan>,
+}
+
+impl HandlerBindingCollector<'_> {
+    fn value(&mut self, value: ValueId) {
+        if !self.visited_values.insert(value) {
+            return;
+        }
+        if let Some(ValueKind::Function(function)) = self
+            .owner
+            .values
+            .get(value.as_usize())
+            .map(|value| &value.kind)
+        {
+            self.function(*function);
+        }
+        let instruction = self
+            .owner
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find(|instruction| instruction.result == Some(value))
+            .cloned();
+        let Some(instruction) = instruction else {
+            return;
+        };
+        match instruction.kind {
+            HirInstructionKind::Declare { initializer, .. } => {
+                if let Some(initializer) = initializer {
+                    self.value(initializer);
+                }
+            }
+            HirInstructionKind::Read { place } => self.place(&place),
+            HirInstructionKind::Write { place, value } => {
+                self.place(&place);
+                self.value(value);
+            }
+            HirInstructionKind::ReadWrite { place, value, .. } => {
+                self.place(&place);
+                if let Some(value) = value {
+                    self.value(value);
+                }
+            }
+            HirInstructionKind::Iteration {
+                source,
+                pattern,
+                targets,
+                ..
+            } => {
+                self.value(source);
+                self.fragment(pattern);
+                for target in targets {
+                    self.local(target);
+                }
+            }
+            HirInstructionKind::PatternAssignment {
+                value,
+                pattern,
+                writes,
+            } => {
+                self.value(value);
+                self.fragment(pattern);
+                for write in writes {
+                    self.local(write.local);
+                }
+            }
+            HirInstructionKind::Delete { target } => match target {
+                fict_hir::DeleteTarget::Place(place) => self.place(&place),
+                fict_hir::DeleteTarget::Value(value) => self.value(value),
+                fict_hir::DeleteTarget::UnresolvedIdentifier(_) => {}
+            },
+            HirInstructionKind::Unary { argument, .. } => self.value(argument),
+            HirInstructionKind::Binary { left, right, .. } => {
+                self.value(left);
+                self.value(right);
+            }
+            HirInstructionKind::Conditional {
+                test,
+                consequent,
+                alternate,
+            } => {
+                self.value(test);
+                self.value(consequent);
+                self.value(alternate);
+            }
+            HirInstructionKind::Sequence { values } => {
+                for value in values {
+                    self.value(value);
+                }
+            }
+            HirInstructionKind::TemplateLiteral { expressions, .. } => {
+                for expression in expressions {
+                    self.value(expression);
+                }
+            }
+            HirInstructionKind::TaggedTemplate {
+                tag,
+                tag_reference,
+                substitutions,
+                host,
+                ..
+            } => {
+                self.value(tag);
+                if let Some(reference) = tag_reference {
+                    self.place(&reference);
+                }
+                for substitution in substitutions {
+                    self.value(substitution);
+                }
+                self.call_host(host);
+            }
+            HirInstructionKind::DynamicImport {
+                specifier, options, ..
+            } => {
+                self.value(specifier);
+                if let Some(options) = options {
+                    self.value(options);
+                }
+            }
+            HirInstructionKind::Call(call) => {
+                self.value(call.callee);
+                if let Some(reference) = &call.callee_reference {
+                    self.place(reference);
+                }
+                for argument in call.arguments {
+                    self.value(argument.value);
+                }
+                self.call_host(call.host);
+            }
+            HirInstructionKind::New { callee, arguments } => {
+                self.value(callee);
+                for argument in arguments {
+                    self.value(argument.value);
+                }
+            }
+            HirInstructionKind::Array { elements } => {
+                for element in elements {
+                    match element {
+                        fict_hir::ArrayElement::Hole(_) => {}
+                        fict_hir::ArrayElement::Value(value)
+                        | fict_hir::ArrayElement::Spread { value, .. } => self.value(value),
+                    }
+                }
+            }
+            HirInstructionKind::Object { entries } => {
+                for entry in entries {
+                    match entry {
+                        fict_hir::ObjectEntry::Property { key, value, .. } => {
+                            if let fict_hir::PropertyKey::Computed(key) = key {
+                                self.value(key);
+                            }
+                            self.value(value);
+                        }
+                        fict_hir::ObjectEntry::Spread { value, .. } => self.value(value),
+                    }
+                }
+            }
+            HirInstructionKind::Function { function } => self.function(function),
+            HirInstructionKind::Await { value } => self.value(value),
+            HirInstructionKind::Yield { value, .. } => {
+                if let Some(value) = value {
+                    self.value(value);
+                }
+            }
+            HirInstructionKind::Phi { target, sources } => {
+                self.local(target.local);
+                for (_, source) in sources {
+                    self.local(source.local);
+                }
+            }
+            HirInstructionKind::SyntaxFragment { fragment, inputs } => {
+                self.fragment(fragment);
+                for input in inputs {
+                    self.value(input);
+                }
+            }
+            HirInstructionKind::Literal(_)
+            | HirInstructionKind::UnresolvedTypeof { .. }
+            | HirInstructionKind::Context { .. }
+            | HirInstructionKind::Jsx { .. }
+            | HirInstructionKind::Debugger => {}
+        }
+    }
+
+    fn place(&mut self, place: &fict_hir::Place) {
+        match place.base {
+            PlaceBase::Local(local) => self.local(local),
+            PlaceBase::Ssa(name) => self.local(name.local),
+            PlaceBase::Value(value) => self.value(value),
+            PlaceBase::Global(_) => {}
+        }
+        for projection in &place.projections {
+            if let fict_hir::Projection::ComputedProperty { key, .. } = projection {
+                self.value(*key);
+            }
+        }
+    }
+
+    fn local(&mut self, local: fict_hir::LocalId) {
+        if let Some(binding) = self
+            .owner
+            .locals
+            .get(local.as_usize())
+            .and_then(|local| local.binding)
+        {
+            self.bindings.insert(binding);
+        }
+    }
+
+    fn fragment(&mut self, fragment: fict_hir::SyntaxFragmentId) {
+        if let Some(fragment) = self.hir.syntax_fragments.get(fragment.as_usize()) {
+            self.bindings
+                .extend(fragment.summary.referenced_bindings.iter().copied());
+        }
+    }
+
+    fn call_host(&mut self, host: fict_hir::CallHost) {
+        match host {
+            fict_hir::CallHost::Binding(binding) => {
+                self.bindings.insert(binding);
+            }
+            fict_hir::CallHost::Function(function) => self.function(function),
+            fict_hir::CallHost::ReactiveScope(host) => {
+                self.bindings.insert(host.callee);
+            }
+            fict_hir::CallHost::Unknown => {}
+        }
+    }
+
+    fn function(&mut self, function: FunctionId) {
+        if !self.visited_functions.insert(function) {
+            return;
+        }
+        let Some(function_info) = self.hir.functions.get(function.as_usize()) else {
+            return;
+        };
+        if let Some(span) = function_info.origin.primary_span {
+            self.owned_spans.push(span);
+        }
+        self.bindings.extend(captured_bindings(function_info));
+        let children: Vec<_> = self
+            .hir
+            .functions
+            .iter()
+            .filter(|child| child.parent == function)
+            .map(|child| child.id)
+            .collect();
+        for child in children {
+            self.function(child);
+        }
+    }
+}
+
+fn handler_prop_calls(
+    hir: &HirFile,
+    owner: &fict_hir::HirFunction,
+    handler_function: Option<FunctionId>,
+    origin: Origin,
     props_parameter: Option<BindingId>,
     props: &BTreeMap<BindingId, &EmitPropBinding>,
 ) -> Vec<String> {
     let mut calls = BTreeSet::new();
-    let mut stack = vec![root];
+    let handler_span = origin.primary_span;
+    collect_prop_calls_in_function(hir, owner, handler_span, props_parameter, props, &mut calls);
+    let mut visited = BTreeSet::new();
+    let mut stack: Vec<_> = handler_function.into_iter().collect();
+    if let Some(handler_span) = handler_span {
+        stack.extend(
+            hir.functions
+                .iter()
+                .filter(|function| {
+                    function.id != owner.id
+                        && function
+                            .origin
+                            .primary_span
+                            .is_some_and(|span| span_contains(handler_span, span))
+                })
+                .map(|function| function.id),
+        );
+    }
     while let Some(function_id) = stack.pop() {
+        if !visited.insert(function_id) {
+            continue;
+        }
         let Some(function) = hir.functions.get(function_id.as_usize()) else {
             continue;
         };
@@ -990,40 +1321,64 @@ fn handler_function_prop_calls(
                 .filter(|child| child.parent == function_id)
                 .map(|child| child.id),
         );
-        for call in function
-            .blocks
-            .iter()
-            .flat_map(|block| &block.instructions)
-            .filter_map(|instruction| match &instruction.kind {
-                HirInstructionKind::Call(call) => Some(call),
-                _ => None,
+        collect_prop_calls_in_function(hir, function, None, props_parameter, props, &mut calls);
+    }
+    calls.into_iter().collect()
+}
+
+fn collect_prop_calls_in_function(
+    hir: &HirFile,
+    function: &fict_hir::HirFunction,
+    within: Option<fict_hir::SourceSpan>,
+    props_parameter: Option<BindingId>,
+    props: &BTreeMap<BindingId, &EmitPropBinding>,
+    calls: &mut BTreeSet<String>,
+) {
+    for call in function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter_map(|instruction| match &instruction.kind {
+            HirInstructionKind::Call(call) => Some((instruction, call)),
+            _ => None,
+        })
+        .filter(|(instruction, _)| {
+            within.is_none_or(|within| {
+                instruction
+                    .origin
+                    .primary_span
+                    .is_some_and(|span| span_contains(within, span))
             })
+        })
+        .map(|(_, call)| call)
+    {
+        if let Some(place) = &call.callee_reference
+            && let Some(label) = prop_call_label(function, place, props_parameter, props)
         {
-            if let Some(place) = &call.callee_reference
-                && let Some(label) = prop_call_label(function, place, props_parameter, props)
-            {
-                calls.insert(label);
-                continue;
-            }
-            let binding = match call.host {
-                fict_hir::CallHost::Binding(binding) => Some(binding),
-                fict_hir::CallHost::Unknown
-                | fict_hir::CallHost::Function(_)
-                | fict_hir::CallHost::ReactiveScope(_) => None,
-            };
-            if let Some(binding) = binding {
-                if props_parameter == Some(binding) {
-                    calls.insert(hir.bindings.get(binding.as_usize()).map_or_else(
-                        || "props".to_owned(),
-                        |binding| binding.display_name.clone(),
-                    ));
-                } else if let Some(prop) = props.get(&binding) {
-                    calls.insert(prop.local.clone());
-                }
+            calls.insert(label);
+            continue;
+        }
+        let binding = match call.host {
+            fict_hir::CallHost::Binding(binding) => Some(binding),
+            fict_hir::CallHost::Unknown
+            | fict_hir::CallHost::Function(_)
+            | fict_hir::CallHost::ReactiveScope(_) => None,
+        };
+        if let Some(binding) = binding {
+            if props_parameter == Some(binding) {
+                calls.insert(hir.bindings.get(binding.as_usize()).map_or_else(
+                    || "props".to_owned(),
+                    |binding| binding.display_name.clone(),
+                ));
+            } else if let Some(prop) = props.get(&binding) {
+                calls.insert(prop.local.clone());
             }
         }
     }
-    calls.into_iter().collect()
+}
+
+const fn span_contains(outer: fict_hir::SourceSpan, inner: fict_hir::SourceSpan) -> bool {
+    outer.start() <= inner.start() && inner.end() <= outer.end()
 }
 
 fn prop_call_label(
