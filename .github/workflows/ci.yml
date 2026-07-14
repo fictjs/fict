@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install pinned fuzz toolchain
         run: |
@@ -51,7 +51,7 @@ jobs:
 
       - name: Upload fuzz crash artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: rust-fuzz-artifacts-${{ github.sha }}
           path: fuzz/artifacts
@@ -68,7 +68,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive
@@ -84,11 +84,11 @@ jobs:
           find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
           cp -a "${tmp_dir}"/. .
 
-      - uses: pnpm/action-setup@v3
+      - uses: pnpm/action-setup@v5
         with:
           version: 9.1.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
@@ -98,7 +98,7 @@ jobs:
       - name: Cache pinned Rust advisory auditor
         if: matrix.node == '24'
         id: cargo-audit-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/cargo-audit
           key: cargo-audit-${{ runner.os }}-${{ runner.arch }}-${{ env.CARGO_AUDIT_VERSION }}
@@ -148,7 +148,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive
@@ -164,11 +164,11 @@ jobs:
           find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
           cp -a "${tmp_dir}"/. .
 
-      - uses: pnpm/action-setup@v3
+      - uses: pnpm/action-setup@v5
         with:
           version: 9.1.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -232,7 +232,7 @@ jobs:
           --evidence "${RUNNER_TEMP}/compiler-rollout/package.json"
 
       - name: Upload raw rollout evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: compiler-rollout-raw-evidence
           path: ${{ runner.temp }}/compiler-rollout/*.json
@@ -245,7 +245,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive
@@ -261,11 +261,11 @@ jobs:
           find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
           cp -a "${tmp_dir}"/. .
 
-      - uses: pnpm/action-setup@v3
+      - uses: pnpm/action-setup@v5
         with:
           version: 9.1.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -291,7 +291,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive
@@ -307,11 +307,11 @@ jobs:
           find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
           cp -a "${tmp_dir}"/. .
 
-      - uses: pnpm/action-setup@v3
+      - uses: pnpm/action-setup@v5
         with:
           version: 9.1.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -328,7 +328,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive
@@ -344,11 +344,11 @@ jobs:
           find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
           cp -a "${tmp_dir}"/. .
 
-      - uses: pnpm/action-setup@v3
+      - uses: pnpm/action-setup@v5
         with:
           version: 9.1.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -364,7 +364,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive
@@ -380,11 +380,11 @@ jobs:
           find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
           cp -a "${tmp_dir}"/. .
 
-      - uses: pnpm/action-setup@v3
+      - uses: pnpm/action-setup@v5
         with:
           version: 9.1.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -396,7 +396,7 @@ jobs:
 
       - name: Upload optimizer benchmark output
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: optimizer-benchmark-${{ github.sha }}
           path: ${{ runner.temp }}/optimizer-bench.json
@@ -409,7 +409,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive
@@ -425,11 +425,11 @@ jobs:
           find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
           cp -a "${tmp_dir}"/. .
 
-      - uses: pnpm/action-setup@v3
+      - uses: pnpm/action-setup@v5
         with:
           version: 9.1.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -455,7 +455,7 @@ jobs:
       - run: FICT_STRICT_GUARANTEE=1 pnpm test:bundlers
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/lcov.info
@@ -467,7 +467,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive
@@ -483,11 +483,11 @@ jobs:
           find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
           cp -a "${tmp_dir}"/. .
 
-      - uses: pnpm/action-setup@v3
+      - uses: pnpm/action-setup@v5
         with:
           version: 9.1.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -503,7 +503,7 @@ jobs:
 
       - name: Upload E2E failure diagnostics
         if: steps.e2e.outcome == 'failure'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: e2e-failure-diagnostics-${{ github.sha }}
           path: |
@@ -520,7 +520,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive
@@ -536,11 +536,11 @@ jobs:
           find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
           cp -a "${tmp_dir}"/. .
 
-      - uses: pnpm/action-setup@v3
+      - uses: pnpm/action-setup@v5
         with:
           version: 9.1.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -555,7 +555,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive
@@ -571,11 +571,11 @@ jobs:
           find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
           cp -a "${tmp_dir}"/. .
 
-      - uses: pnpm/action-setup@v3
+      - uses: pnpm/action-setup@v5
         with:
           version: 9.1.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -591,7 +591,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive
@@ -607,11 +607,11 @@ jobs:
           find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
           cp -a "${tmp_dir}"/. .
 
-      - uses: pnpm/action-setup@v3
+      - uses: pnpm/action-setup@v5
         with:
           version: 9.1.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -659,7 +659,7 @@ jobs:
     steps:
       - name: Checkout repository
         id: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         continue-on-error: true
 
       - name: Fallback checkout from codeload archive
@@ -676,7 +676,7 @@ jobs:
           cp -a "${tmp_dir}"/. .
 
       - name: Download current rollout evidence
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: compiler-rollout-raw-evidence
           path: ${{ runner.temp }}/compiler-rollout/current
@@ -684,7 +684,7 @@ jobs:
       - name: Find the immediately previous rollout candidate attempt
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         id: previous_candidate
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
@@ -712,7 +712,7 @@ jobs:
 
       - name: Download the previous rollout candidate
         if: steps.previous_candidate.outputs.run_id != ''
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: compiler-rollout-candidate
           path: ${{ runner.temp }}/compiler-rollout/previous
@@ -747,7 +747,7 @@ jobs:
             "${previous_args[@]}"
 
       - name: Upload finalized rollout candidate
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: compiler-rollout-candidate
           path: ${{ runner.temp }}/compiler-rollout/current/*.json
