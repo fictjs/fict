@@ -18,14 +18,15 @@ use oxc::{
         AstBuilder, NONE,
         ast::{
             Argument, ArrayExpressionElement, ArrowFunctionExpression, AssignmentTarget,
-            AssignmentTargetMaybeDefault, AssignmentTargetProperty, BindingPattern,
-            BindingRestElement, CallExpression, ChainElement, Expression, FormalParameter,
-            FormalParameterKind, FormalParameterRest, FormalParameters, Function, FunctionBody,
-            FunctionType, IdentifierName, IdentifierReference, ImportDeclarationSpecifier,
-            ImportOrExportKind, JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild,
-            JSXElement, JSXElementName, JSXFragment, JSXMemberExpression,
-            JSXMemberExpressionObject, ObjectPropertyKind, Program, PropertyKey, PropertyKind,
-            SimpleAssignmentTarget, Statement, VariableDeclarationKind, VariableDeclarator,
+            AssignmentTargetMaybeDefault, AssignmentTargetProperty, AwaitExpression,
+            BindingPattern, BindingRestElement, CallExpression, ChainElement, Expression,
+            FormalParameter, FormalParameterKind, FormalParameterRest, FormalParameters, Function,
+            FunctionBody, FunctionType, IdentifierName, IdentifierReference,
+            ImportDeclarationSpecifier, ImportOrExportKind, JSXAttributeItem, JSXAttributeName,
+            JSXAttributeValue, JSXChild, JSXElement, JSXElementName, JSXFragment,
+            JSXMemberExpression, JSXMemberExpressionObject, ObjectPropertyKind, Program,
+            PropertyKey, PropertyKind, SimpleAssignmentTarget, Statement, VariableDeclarationKind,
+            VariableDeclarator,
         },
     },
     ast_visit::{Visit, VisitMut, walk, walk_mut},
@@ -178,6 +179,7 @@ pub fn emit_program(
         prefer_template_clones: 0,
         vnode_depth: 0,
         active_fragment_local: None,
+        await_allowed: options.module_kind == OxcModuleKind::Module,
         diagnostics: Vec::new(),
     };
     rewriter.visit_program(&mut program);
@@ -2891,6 +2893,7 @@ struct AstRewriter<'a, 'emit> {
     prefer_template_clones: usize,
     vnode_depth: usize,
     active_fragment_local: Option<String>,
+    await_allowed: bool,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -3164,7 +3167,10 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
                 body.statements.insert(0, declaration);
             }
         }
+        let previous_await_allowed = self.await_allowed;
+        self.await_allowed = function.r#async;
         walk_mut::walk_function(self, function, flags);
+        self.await_allowed = previous_await_allowed;
     }
 
     fn visit_arrow_function_expression(&mut self, function: &mut ArrowFunctionExpression<'a>) {
@@ -3197,7 +3203,10 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
         if let Some(declaration) = self.context_declarations.remove(&location) {
             function.body.statements.insert(0, declaration);
         }
+        let previous_await_allowed = self.await_allowed;
+        self.await_allowed = function.r#async;
         walk_mut::walk_arrow_function_expression(self, function);
+        self.await_allowed = previous_await_allowed;
     }
 
     fn visit_expression(&mut self, expression: &mut Expression<'a>) {
@@ -4499,7 +4508,7 @@ impl<'a> AstRewriter<'a, '_> {
         let root =
             Expression::new_identifier(span, self.allocator.alloc_str(&clone.root), &builder);
         statements.push(Statement::new_return_statement(span, Some(root), &builder));
-        block_iife(self.allocator, statements, span)
+        block_iife(self.allocator, statements, span, self.await_allowed)
     }
 
     fn lower_conditional_branch(
@@ -6450,7 +6459,9 @@ fn block_iife<'a>(
     allocator: &'a Allocator,
     statements: ArenaVec<'a, Statement<'a>>,
     span: Span,
+    await_allowed: bool,
 ) -> Expression<'a> {
+    let contains_await = statements_contain_direct_await(&statements);
     let builder = AstBuilder::new(allocator);
     let parameters = FormalParameters::boxed(
         span,
@@ -6461,16 +6472,53 @@ fn block_iife<'a>(
     );
     let body = FunctionBody::boxed(span, ArenaVec::new_in(&allocator), statements, &builder);
     let arrow = Expression::new_arrow_function_expression(
-        span, false, false, NONE, parameters, NONE, body, &builder,
+        span,
+        false,
+        contains_await,
+        NONE,
+        parameters,
+        NONE,
+        body,
+        &builder,
     );
-    Expression::new_call_expression(
+    let call = Expression::new_call_expression(
         span,
         arrow,
         NONE,
         ArenaVec::new_in(&allocator),
         false,
         &builder,
-    )
+    );
+    if contains_await && await_allowed {
+        Expression::new_await_expression(span, call, &builder)
+    } else {
+        call
+    }
+}
+
+fn statements_contain_direct_await(statements: &[Statement<'_>]) -> bool {
+    let mut finder = DirectAwaitFinder { found: false };
+    for statement in statements {
+        finder.visit_statement(statement);
+        if finder.found {
+            return true;
+        }
+    }
+    false
+}
+
+struct DirectAwaitFinder {
+    found: bool,
+}
+
+impl<'a> Visit<'a> for DirectAwaitFinder {
+    fn visit_await_expression(&mut self, _expression: &AwaitExpression<'a>) {
+        self.found = true;
+    }
+
+    fn visit_function(&mut self, _function: &Function<'a>, _flags: ScopeFlags) {}
+
+    fn visit_arrow_function_expression(&mut self, _function: &ArrowFunctionExpression<'a>) {}
 }
 
 fn assignment_target_name(target: &AssignmentTarget<'_>) -> Option<String> {

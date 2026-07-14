@@ -1392,7 +1392,7 @@ fn lower_function(
                     });
                 }
                 HirInstructionKind::Jsx { template } if allow_jsx => {
-                    if fine_grained_dom {
+                    if fine_grained_dom && !jsx_contains_direct_yield(function, instruction) {
                         lower_jsx_instruction(
                             hir,
                             function_id,
@@ -1462,6 +1462,25 @@ fn lower_function(
         control_flow: structurize_cfg(function, &analyze_cfg(function)?)?,
         operations,
     })
+}
+
+fn jsx_contains_direct_yield(function: &HirFunction, jsx: &HirInstruction) -> bool {
+    if !function.flags.is_generator {
+        return false;
+    }
+    let Some(jsx_span) = jsx.origin.primary_span else {
+        return true;
+    };
+    function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .any(|instruction| {
+            matches!(instruction.kind, HirInstructionKind::Yield { .. })
+                && instruction.origin.primary_span.is_some_and(|yield_span| {
+                    jsx_span.start() <= yield_span.start() && yield_span.end() <= jsx_span.end()
+                })
+        })
 }
 
 fn lower_component_props_plan(

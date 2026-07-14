@@ -6046,6 +6046,123 @@ mod tests {
         assert!(artifact.code.contains("new.target"), "{}", artifact.code);
     }
 
+    #[cfg(feature = "preview")]
+    #[test]
+    fn preserves_async_and_generator_preview_function_dependencies() {
+        let source = "export function App() { const asyncHelper = async () => await Promise.resolve(1); function* generatorHelper() { yield 1; } return <><button onClick$={async () => await asyncHelper()}>Async</button><button onClick$={() => generatorHelper().next()}>Generator</button></>; }";
+        let mut input = request(source, "preview-async-generator-functions.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: false,
+            ..CompilerPreviewOptions::default()
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(result.artifacts.len(), 2);
+        assert!(
+            result.artifacts[0]
+                .code
+                .contains("const asyncHelper = async () => await Promise.resolve(1)"),
+            "{}",
+            result.artifacts[0].code
+        );
+        assert!(
+            result.artifacts[0]
+                .code
+                .contains("async () => await asyncHelper()"),
+            "{}",
+            result.artifacts[0].code
+        );
+        assert!(
+            result.artifacts[1]
+                .code
+                .contains("function* generatorHelper()"),
+            "{}",
+            result.artifacts[1].code
+        );
+        assert!(
+            result.artifacts[1]
+                .code
+                .contains("generatorHelper().next()"),
+            "{}",
+            result.artifacts[1].code
+        );
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn rejects_suspending_preview_factory_expressions() {
+        for (name, source, expected) in [
+            (
+                "await",
+                "const make = () => () => 1; export async function App() { return <button onClick$={await Promise.resolve(make())}>Click</button>; }",
+                "await",
+            ),
+            (
+                "yield",
+                "const make = () => () => 1; export function* App() { return <button onClick$={yield make()}>Click</button>; }",
+                "yield",
+            ),
+        ] {
+            let mut input = request(source, &format!("preview-factory-{name}.tsx"));
+            input.options.preview = Some(CompilerPreviewOptions {
+                resumable: true,
+                auto_extract_handlers: false,
+                ..CompilerPreviewOptions::default()
+            });
+            let result = compile(input);
+
+            assert!(result.has_errors(), "{name}: {:?}", result.diagnostics);
+            assert!(result.code.is_empty(), "{name}: {}", result.code);
+            assert!(
+                result.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code.as_str() == "FICT-PREVIEW-CONTEXT"
+                        && diagnostic.message.contains(expected)
+                }),
+                "{name}: {:?}",
+                result.diagnostics
+            );
+        }
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn keeps_auto_suspending_factory_expressions_eager() {
+        for (name, source, expected, binding) in [
+            (
+                "await",
+                "const make = () => () => 1; export async function App() { return <button onClick={await Promise.resolve(make())}>Click</button>; }",
+                "await Promise.resolve",
+                "addEventListener",
+            ),
+            (
+                "yield",
+                "const make = () => () => 1; export function* App() { return <button onClick={yield make()}>Click</button>; }",
+                "yield make()",
+                "onClick",
+            ),
+        ] {
+            let mut input = request(source, &format!("preview-factory-{name}-auto.tsx"));
+            input.options.preview = Some(CompilerPreviewOptions {
+                resumable: true,
+                auto_extract_handlers: true,
+                auto_extract_threshold: 1,
+            });
+            let result = compile(input);
+
+            assert!(!result.has_errors(), "{name}: {:?}", result.diagnostics);
+            assert!(
+                result.artifacts.is_empty(),
+                "{name}: {:?}",
+                result.artifacts
+            );
+            assert!(!result.code.contains("fict:compiler-artifact:"));
+            assert!(result.code.contains(binding), "{name}: {}", result.code);
+            assert!(result.code.contains(expected), "{name}: {}", result.code);
+        }
+    }
+
     #[test]
     fn returns_parser_errors_and_never_emits_partial_code() {
         let result = compile(request("export const =", "broken.ts"));

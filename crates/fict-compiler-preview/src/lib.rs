@@ -130,6 +130,27 @@ pub fn attach_preview_plan(
                 continue;
             }
 
+            let suspension_contexts =
+                handler_expression_suspensions(hir, owner, candidate.origin, handler_function);
+            if !suspension_contexts.is_empty() {
+                if candidate.explicit {
+                    diagnostics.push(
+                        preview_error(
+                            "FICT-PREVIEW-CONTEXT",
+                            format!(
+                                "resumable handler factory expression cannot move suspension context into an isolated artifact: {}",
+                                suspension_contexts.join(", ")
+                            ),
+                        )
+                        .with_primary_span(handler_origin)
+                        .with_help(
+                            "wrap the suspended work in an async or generator event handler, or remove the `$` suffix",
+                        ),
+                    );
+                }
+                continue;
+            }
+
             let direct_handler_binding = handler_binding(owner, &candidate.handler);
             let module_handler_binding =
                 direct_handler_binding.filter(|binding| binding_is_module_scoped(hir, *binding));
@@ -1173,6 +1194,53 @@ fn handler_context_captures(
         captures.extend(arrow_context_captures(hir, child.id));
     }
     captures
+}
+
+fn handler_expression_suspensions(
+    hir: &HirFile,
+    owner: &fict_hir::HirFunction,
+    origin: Origin,
+    handler_function: Option<FunctionId>,
+) -> Vec<&'static str> {
+    if handler_function.is_some() {
+        return Vec::new();
+    }
+    let Some(span) = origin.primary_span else {
+        return Vec::new();
+    };
+    let mut suspensions = BTreeSet::new();
+    for instruction in owner
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter(|instruction| {
+            instruction
+                .origin
+                .primary_span
+                .is_some_and(|candidate| span_contains(span, candidate))
+        })
+    {
+        match &instruction.kind {
+            HirInstructionKind::Await { .. } => {
+                suspensions.insert("await");
+            }
+            HirInstructionKind::Yield { .. } => {
+                suspensions.insert("yield");
+            }
+            HirInstructionKind::SyntaxFragment { fragment, .. } => {
+                if let Some(fragment) = hir.syntax_fragments.get(fragment.as_usize()) {
+                    if fragment.summary.contains_await {
+                        suspensions.insert("await");
+                    }
+                    if fragment.summary.contains_yield {
+                        suspensions.insert("yield");
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    suspensions.into_iter().collect()
 }
 
 fn arrow_context_captures(hir: &HirFile, root: FunctionId) -> BTreeSet<ContextValueKind> {
