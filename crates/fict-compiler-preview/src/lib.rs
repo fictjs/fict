@@ -74,6 +74,36 @@ pub fn attach_preview_plan(
                 continue;
             }
 
+            let direct_handler_binding = handler_binding(owner, &candidate.handler);
+            let module_handler_binding = direct_handler_binding.filter(|binding| {
+                hir.bindings
+                    .get(binding.as_usize())
+                    .and_then(|binding| hir.scopes.get(binding.scope.as_usize()))
+                    .is_some_and(|scope| scope.kind == fict_hir::ScopeKind::Module)
+            });
+            if module_handler_binding
+                .is_some_and(|binding| !is_stable_module_handler_binding(hir, binding))
+            {
+                if candidate.explicit {
+                    let name = module_handler_binding
+                        .and_then(|binding| hir.bindings.get(binding.as_usize()))
+                        .map_or("<unknown>", |binding| binding.display_name.as_str());
+                    diagnostics.push(
+                        preview_error(
+                            "FICT-PREVIEW-HANDLER",
+                            format!(
+                                "resumable handlers cannot use mutable module handler identifier `{name}`"
+                            ),
+                        )
+                        .with_primary_span(handler_origin)
+                        .with_help(
+                            "use a module const/function/class binding, or remove the `$` suffix",
+                        ),
+                    );
+                }
+                continue;
+            }
+
             let context_captures = handler_context_captures(
                 hir,
                 owner,
@@ -142,6 +172,16 @@ pub fn attach_preview_plan(
             let mut lexical_captures = Vec::new();
             let mut prop_captures = Vec::new();
             let mut module_captures = Vec::new();
+            if let Some(binding) = module_handler_binding {
+                let binding_info = &hir.bindings[binding.as_usize()];
+                let source_export_name =
+                    allocate_indexed(&mut reserved, "__fict_dep_", &mut dependency_index);
+                module_captures.push(EmitPreviewModuleCapture {
+                    binding,
+                    local: binding_info.display_name.clone(),
+                    source_export_name,
+                });
+            }
             let mut unsupported = Vec::new();
             for binding in captures {
                 let Some(binding_info) = hir.bindings.get(binding.as_usize()) else {
@@ -167,6 +207,12 @@ pub fn attach_preview_plan(
                     continue;
                 }
                 if is_stable_module_binding(hir, binding) {
+                    if module_captures
+                        .iter()
+                        .any(|capture| capture.binding == binding)
+                    {
+                        continue;
+                    }
                     let source_export_name =
                         allocate_indexed(&mut reserved, "__fict_dep_", &mut dependency_index);
                     module_captures.push(EmitPreviewModuleCapture {
@@ -549,6 +595,52 @@ fn handler_is_member_read(function: &fict_hir::HirFunction, handler: &EmitValueR
     value_is_member_read(function, *value, &mut BTreeSet::new())
 }
 
+fn handler_binding(function: &fict_hir::HirFunction, handler: &EmitValueRef) -> Option<BindingId> {
+    let EmitValueRef::Hir(value) = handler else {
+        return None;
+    };
+    value_read_binding(function, *value, &mut BTreeSet::new())
+}
+
+fn value_read_binding(
+    function: &fict_hir::HirFunction,
+    value: ValueId,
+    visited: &mut BTreeSet<ValueId>,
+) -> Option<BindingId> {
+    if !visited.insert(value) {
+        return None;
+    }
+    let instruction = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| instruction.result == Some(value))?;
+    match &instruction.kind {
+        HirInstructionKind::Read { place } if place.projections.is_empty() => {
+            let local = match place.base {
+                PlaceBase::Local(local) => local,
+                PlaceBase::Ssa(name) => name.local,
+                PlaceBase::Global(_) | PlaceBase::Value(_) => return None,
+            };
+            function.locals.get(local.as_usize())?.binding
+        }
+        HirInstructionKind::SyntaxFragment { .. } => {
+            let origin = function.values.get(value.as_usize())?.origin.primary_span?;
+            function
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .rev()
+                .filter_map(|candidate| candidate.result.map(|result| (candidate, result)))
+                .filter(|(candidate, result)| {
+                    *result != value && candidate.origin.primary_span == Some(origin)
+                })
+                .find_map(|(_, result)| value_read_binding(function, result, visited))
+        }
+        _ => None,
+    }
+}
+
 fn value_is_member_read(
     function: &fict_hir::HirFunction,
     value: ValueId,
@@ -710,6 +802,19 @@ fn is_stable_module_binding(hir: &HirFile, binding: BindingId) -> bool {
         return false;
     }
     hir.scopes
+        .get(binding.scope.as_usize())
+        .is_some_and(|scope| scope.kind == fict_hir::ScopeKind::Module)
+}
+
+fn is_stable_module_handler_binding(hir: &HirFile, binding: BindingId) -> bool {
+    let Some(binding) = hir.bindings.get(binding.as_usize()) else {
+        return false;
+    };
+    matches!(
+        binding.kind,
+        BindingKind::Const | BindingKind::Function | BindingKind::Class
+    ) && hir
+        .scopes
         .get(binding.scope.as_usize())
         .is_some_and(|scope| scope.kind == fict_hir::ScopeKind::Module)
 }

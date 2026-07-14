@@ -5027,6 +5027,117 @@ mod tests {
 
     #[cfg(feature = "preview")]
     #[test]
+    fn rejects_mutable_module_preview_handler_identifiers() {
+        for (name, source) in [
+            (
+                "let",
+                "export let handler = () => 1; export function swap() { handler = () => 2; } export function App() { return <button onClick$={handler}>Click</button>; }",
+            ),
+            (
+                "var",
+                "var handler = () => 1; export function App() { return <button onClick$={handler}>Click</button>; }",
+            ),
+            (
+                "import",
+                "import { handler } from './handlers'; export function App() { return <button onClick$={handler}>Click</button>; }",
+            ),
+        ] {
+            let mut input = request(source, &format!("preview-module-handler-{name}.tsx"));
+            input.options.preview = Some(CompilerPreviewOptions {
+                resumable: true,
+                auto_extract_handlers: false,
+                ..CompilerPreviewOptions::default()
+            });
+            let result = compile(input);
+
+            assert!(result.has_errors(), "{name}: {:?}", result.diagnostics);
+            assert!(result.code.is_empty(), "{name}: {}", result.code);
+            assert!(
+                result.artifacts.is_empty(),
+                "{name}: {:?}",
+                result.artifacts
+            );
+            assert!(
+                result.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code.as_str() == "FICT-PREVIEW-HANDLER"
+                        && diagnostic
+                            .message
+                            .contains("mutable module handler identifier")
+                }),
+                "{name}: {:?}",
+                result.diagnostics
+            );
+        }
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn imports_stable_module_preview_handler_identifiers_into_artifacts() {
+        let source = "const constHandler = () => 'const'; function declaredHandler() { return 'declared'; } export function App() { return <><button onClick$={constHandler}>Const</button><button onClick$={declaredHandler}>Declared</button></>; }";
+        let mut input = request(source, "preview-stable-module-handler.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: false,
+            ..CompilerPreviewOptions::default()
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(result.artifacts.len(), 2, "{:?}", result.artifacts);
+        assert!(
+            result
+                .code
+                .contains("export { constHandler as __fict_dep_0 }"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("export { declaredHandler as __fict_dep_1 }"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.artifacts[0]
+                .code
+                .contains("__fict_dep_0 as constHandler"),
+            "{}",
+            result.artifacts[0].code
+        );
+        assert!(
+            result.artifacts[1]
+                .code
+                .contains("__fict_dep_1 as declaredHandler"),
+            "{}",
+            result.artifacts[1].code
+        );
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn keeps_auto_mutable_module_preview_handler_identifiers_eager() {
+        let source = "export let handler = () => 1; export function App() { return <button onClick={handler}>Click</button>; }";
+        let mut input = request(source, "preview-mutable-module-auto.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: true,
+            auto_extract_threshold: 1,
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.artifacts.is_empty(), "{:?}", result.artifacts);
+        assert!(
+            !result.code.contains("fict:compiler-artifact:"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("addEventListener"), "{}", result.code);
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
     fn falls_back_for_auto_preview_handlers_with_lexical_context() {
         let source = "export function App() { return <button onClick={() => { console.log(this); console.log('eager'); }}>Click</button>; }";
         let mut input = request(source, "preview-context-auto.tsx");
