@@ -13,6 +13,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  actions: read
+  contents: read
+
 jobs:
   rust-fuzz:
     name: Rust Compiler Fuzz Smoke
@@ -108,6 +112,152 @@ jobs:
       - name: Typecheck ESM and CommonJS native facades
         if: matrix.node == '24'
         run: pnpm test:compiler:native-types
+
+  compiler-rollout:
+    name: Rust Compiler Rollout Candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout repository
+        id: checkout
+        uses: actions/checkout@v4
+        continue-on-error: true
+
+      - name: Fallback checkout from codeload archive
+        if: steps.checkout.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          echo "::warning::actions/checkout failed; falling back to archive download."
+          archive_url="https://codeload.github.com/${GITHUB_REPOSITORY}/tar.gz/${GITHUB_SHA}"
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "${tmp_dir}"' EXIT
+          curl --fail --location --retry 5 --retry-all-errors --retry-delay 3 "${archive_url}" \
+            | tar -xz -C "${tmp_dir}" --strip-components=1
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          cp -a "${tmp_dir}"/. .
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9.1.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install
+      - run: pnpm test:compiler:rollout-state
+      - run: pnpm test:babel-preset:deprecation
+      - run: pnpm --filter @fictjs/runtime build
+      - run: pnpm --filter fict build
+
+      - name: Verify native Vite, Webpack, editor, and playground integrations
+        run: |
+          pnpm test:vite:native
+          pnpm test:webpack:native
+          pnpm test:playground:native
+          pnpm test:vscode:native
+
+      - name: Run Core runtime and strict-guarantee parity
+        run: >-
+          node scripts/compiler-runtime-parity-gate.mjs
+          --native-path=target/release/fict_compiler_napi.node
+          --output="${RUNNER_TEMP}/compiler-rollout/runtime.json"
+
+      - name: Build a representative application with the Rust backend
+        env:
+          FICT_COMPILER_BACKEND: rust
+          FICT_COMPILER_NATIVE_PATH: ${{ github.workspace }}/target/release/fict_compiler_napi.node
+        run: pnpm -C examples/real-apps build
+
+      - name: Run privacy-safe legacy/Rust shadow comparison
+        run: >-
+          node scripts/compiler-shadow-gate.mjs
+          --native-path=target/release/fict_compiler_napi.node
+          --allowlist=.github/compiler-shadow-allowlist.json
+          --output="${RUNNER_TEMP}/compiler-rollout/shadow.json"
+
+      - name: Drill whole-build Rust to legacy rollback
+        run: >-
+          node scripts/compiler-backend-rollback-drill.mjs
+          --native-path=target/release/fict_compiler_napi.node
+          --output="${RUNNER_TEMP}/compiler-rollout/rollback.json"
+
+      - name: Gate large-project throughput and peak RSS
+        env:
+          BENCH_MODULES: ${{ github.event_name == 'schedule' && '1200' || github.event_name == 'pull_request' && '480' || '1000' }}
+          BENCH_PROFILE: ${{ github.event_name == 'schedule' && 'max' || 'ci' }}
+        run: >-
+          node scripts/compiler-backend-bench.mjs
+          --modules="${BENCH_MODULES}"
+          --rows=10
+          --samples=5
+          --warmup=8
+          --profile="${BENCH_PROFILE}"
+          --native-path=target/release/fict_compiler_napi.node
+          --output="${RUNNER_TEMP}/compiler-rollout/benchmark.json"
+
+      - name: Find the immediately previous rollout candidate attempt
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: previous_candidate
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              ...context.repo,
+              workflow_id: 'ci.yml',
+              branch: 'main',
+              event: 'push',
+              status: 'completed',
+              per_page: 50,
+            })
+            const run = runs.find(candidate => candidate.id !== context.runId)
+            if (run) {
+              const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+                ...context.repo,
+                run_id: run.id,
+                per_page: 100,
+              })
+              if (artifacts.some(artifact => artifact.name === 'compiler-rollout-candidate' && !artifact.expired)) {
+                core.setOutput('run_id', String(run.id))
+                return
+              }
+            }
+            core.setOutput('run_id', '')
+
+      - name: Download the previous rollout candidate
+        if: steps.previous_candidate.outputs.run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: compiler-rollout-candidate
+          path: ${{ runner.temp }}/compiler-rollout/previous
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.previous_candidate.outputs.run_id }}
+
+      - name: Seal candidate evidence
+        run: |
+          set -euo pipefail
+          previous_args=()
+          previous="${RUNNER_TEMP}/compiler-rollout/previous/candidate.json"
+          if [[ -f "${previous}" ]]; then
+            previous_args+=("--previous=${previous}")
+          fi
+          node scripts/compiler-rollout-candidate.mjs \
+            --shadow="${RUNNER_TEMP}/compiler-rollout/shadow.json" \
+            --benchmark="${RUNNER_TEMP}/compiler-rollout/benchmark.json" \
+            --runtime="${RUNNER_TEMP}/compiler-rollout/runtime.json" \
+            --rollback="${RUNNER_TEMP}/compiler-rollout/rollback.json" \
+            --output="${RUNNER_TEMP}/compiler-rollout/candidate.json" \
+            "${previous_args[@]}"
+
+      - name: Upload rollout evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiler-rollout-candidate
+          path: ${{ runner.temp }}/compiler-rollout/*.json
+          if-no-files-found: warn
+          retention-days: 90
 
   lint:
     name: Lint
