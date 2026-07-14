@@ -1595,6 +1595,23 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         continue
       }
 
+      // Native compilation consumes an eager, serializable metadata snapshot while candidate
+      // keys are prepared. Seed every missing SCC member before that snapshot is built; otherwise
+      // the first Rust pass mistakes a legitimate back-edge for an unprepared local module and
+      // aborts before fixed-point convergence can start. Reuse a prepared result when available
+      // so watch/cache rebuilds compare against the last converged state instead of an empty seed.
+      if (hasCycle) {
+        for (const moduleKey of sortedComponent) {
+          if (!state.moduleMetadata.has(moduleKey)) {
+            state.moduleMetadata.set(
+              moduleKey,
+              state.preparedCompilerTransforms.get(moduleKey)?.moduleMetadata ??
+                createEmptyModuleMetadata(),
+            )
+          }
+        }
+      }
+
       const preparedCandidates: {
         moduleKey: string
         prepared: PreparedCompilerTransform | undefined
@@ -1645,12 +1662,6 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         const { key } = await getPreparationKey(state, node, tsImportElision)
         state.preparedCompilerTransforms.set(moduleKey, { ...compiled, preparationKey: key })
         continue
-      }
-
-      for (const moduleKey of sortedComponent) {
-        if (!state.moduleMetadata.has(moduleKey)) {
-          state.moduleMetadata.set(moduleKey, createEmptyModuleMetadata())
-        }
       }
 
       let latestResults = new Map<string, Omit<PreparedCompilerTransform, 'preparationKey'>>()
