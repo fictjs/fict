@@ -5816,6 +5816,18 @@ mod tests {
                 "value",
             ),
             (
+                "alias-property-mutation",
+                "export function App() { const helper = () => 1; const alias = helper; alias.extra = 'x'; return <button onClick$={() => helper.extra}>Click</button>; }",
+                "FICT-PREVIEW-CAPTURE",
+                "helper",
+            ),
+            (
+                "object-mutation",
+                "export function App() { const helper = () => 1; Object.defineProperty(helper, 'secret', { value: 'x' }); Object.assign(helper, { extra: 'y' }); return <button onClick$={() => helper.secret + helper.extra}>Click</button>; }",
+                "FICT-PREVIEW-CAPTURE",
+                "helper",
+            ),
+            (
                 "arguments",
                 "export function App() { const helper = () => arguments.length; return <button onClick$={() => helper()}>Click</button>; }",
                 "FICT-PREVIEW-CONTEXT",
@@ -5854,19 +5866,40 @@ mod tests {
     #[cfg(feature = "preview")]
     #[test]
     fn keeps_auto_handlers_with_unsafe_local_function_dependencies_eager() {
-        let source = "export function App() { let helper = () => 1; helper = () => 2; return <button onClick={() => { helper(); console.log('eager'); }}>Click</button>; }";
-        let mut input = request(source, "preview-local-function-dependency-auto.tsx");
-        input.options.preview = Some(CompilerPreviewOptions {
-            resumable: true,
-            auto_extract_handlers: true,
-            auto_extract_threshold: 1,
-        });
-        let result = compile(input);
+        for (name, source) in [
+            (
+                "reassigned",
+                "export function App() { let helper = () => 1; helper = () => 2; return <button onClick={() => { helper(); console.log('eager'); }}>Click</button>; }",
+            ),
+            (
+                "alias-mutated",
+                "export function App() { const helper = () => 1; const alias = helper; alias.extra = 'x'; return <button onClick={() => { console.log(helper.extra); console.log('eager'); }}>Click</button>; }",
+            ),
+        ] {
+            let mut input = request(
+                source,
+                &format!("preview-local-function-dependency-auto-{name}.tsx"),
+            );
+            input.options.preview = Some(CompilerPreviewOptions {
+                resumable: true,
+                auto_extract_handlers: true,
+                auto_extract_threshold: 1,
+            });
+            let result = compile(input);
 
-        assert!(!result.has_errors(), "{:?}", result.diagnostics);
-        assert!(result.artifacts.is_empty(), "{:?}", result.artifacts);
-        assert!(!result.code.contains("fict:compiler-artifact:"));
-        assert!(result.code.contains("addEventListener"), "{}", result.code);
+            assert!(!result.has_errors(), "{name}: {:?}", result.diagnostics);
+            assert!(
+                result.artifacts.is_empty(),
+                "{name}: {:?}",
+                result.artifacts
+            );
+            assert!(!result.code.contains("fict:compiler-artifact:"));
+            assert!(
+                result.code.contains("addEventListener"),
+                "{name}: {}",
+                result.code
+            );
+        }
     }
 
     #[cfg(feature = "preview")]
@@ -5884,6 +5917,10 @@ mod tests {
             (
                 "reassigned-declaration",
                 "export function App() { function handler() { return 1; } handler = () => 2; return <button onClick$={handler}>Click</button>; }",
+            ),
+            (
+                "alias-property-mutation",
+                "export function App() { const handler = () => 1; const alias = handler; alias.extra = 'x'; return <button onClick$={handler}>Click</button>; }",
             ),
         ] {
             let mut input = request(source, &format!("preview-local-handler-{name}.tsx"));

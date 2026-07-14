@@ -166,7 +166,7 @@ pub fn attach_preview_plan(
                     binding_info.kind,
                     BindingKind::Const | BindingKind::Function
                 ) && function.binding == Some(binding)
-                    && !binding_has_runtime_write(hir, binding))
+                    && !local_function_has_runtime_mutation(hir, owner, binding))
                 .then(|| EmitPreviewLocalHandler {
                     binding,
                     local: binding_info.display_name.clone(),
@@ -855,7 +855,7 @@ fn stable_bare_handler_binding(
         .is_some_and(|binding| matches!(binding.kind, BindingKind::Const | BindingKind::Function))
         && function.binding == Some(binding_id)
         && function.parent == owner.id
-        && !binding_has_runtime_write(hir, binding_id)
+        && !local_function_has_runtime_mutation(hir, owner, binding_id)
 }
 
 fn function_has_auto_extract_trigger(hir: &HirFile, root: FunctionId) -> bool {
@@ -1321,7 +1321,7 @@ fn expand_local_function_dependencies(
         if !matches!(
             binding_info.kind,
             BindingKind::Const | BindingKind::Function
-        ) || binding_has_runtime_write(hir, binding)
+        ) || local_function_has_runtime_mutation(hir, owner, binding)
         {
             continue;
         }
@@ -1953,7 +1953,71 @@ fn binding_is_module_scoped(hir: &HirFile, binding: BindingId) -> bool {
         .is_some_and(|scope| scope.kind == fict_hir::ScopeKind::Module)
 }
 
-fn binding_has_runtime_write(hir: &HirFile, binding: BindingId) -> bool {
+fn local_function_has_runtime_mutation(
+    hir: &HirFile,
+    owner: &fict_hir::HirFunction,
+    binding: BindingId,
+) -> bool {
+    let alias_sources = stable_binding_aliases(hir, owner);
+    let mut aliases = BTreeSet::from([binding]);
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (alias, source) in &alias_sources {
+            if aliases.contains(source) && aliases.insert(*alias) {
+                changed = true;
+            }
+        }
+    }
+    hir.functions.iter().any(|function| {
+        function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .any(|instruction| instruction_mutates_bindings(hir, function, instruction, &aliases))
+    })
+}
+
+fn stable_binding_aliases(
+    hir: &HirFile,
+    function: &fict_hir::HirFunction,
+) -> BTreeMap<BindingId, BindingId> {
+    let mut candidates: BTreeMap<BindingId, BTreeSet<BindingId>> = BTreeMap::new();
+    for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
+        let HirInstructionKind::Declare {
+            local,
+            initializer: Some(initializer),
+            ..
+        } = &instruction.kind
+        else {
+            continue;
+        };
+        let Some(alias) = function
+            .locals
+            .get(local.as_usize())
+            .and_then(|local| local.binding)
+        else {
+            continue;
+        };
+        let Some(source) = value_read_binding(function, *initializer, &mut BTreeSet::new()) else {
+            continue;
+        };
+        if alias != source && !binding_has_direct_runtime_write(hir, alias) {
+            candidates.entry(alias).or_default().insert(source);
+        }
+    }
+    candidates
+        .into_iter()
+        .filter_map(|(alias, sources)| {
+            if sources.len() != 1 {
+                return None;
+            }
+            Some((alias, *sources.first().expect("one stable alias source")))
+        })
+        .collect()
+}
+
+fn binding_has_direct_runtime_write(hir: &HirFile, binding: BindingId) -> bool {
     hir.functions.iter().any(|function| {
         function
             .blocks
@@ -1961,7 +2025,9 @@ fn binding_has_runtime_write(hir: &HirFile, binding: BindingId) -> bool {
             .flat_map(|block| &block.instructions)
             .any(|instruction| match &instruction.kind {
                 HirInstructionKind::Write { place, .. }
-                | HirInstructionKind::ReadWrite { place, .. } => {
+                | HirInstructionKind::ReadWrite { place, .. }
+                    if place.projections.is_empty() =>
+                {
                     place_binding(function, place) == Some(binding)
                 }
                 HirInstructionKind::Iteration { targets, .. } => targets.iter().any(|local| {
@@ -1983,6 +2049,90 @@ fn binding_has_runtime_write(hir: &HirFile, binding: BindingId) -> bool {
                 _ => false,
             })
     })
+}
+
+fn instruction_mutates_bindings(
+    hir: &HirFile,
+    function: &fict_hir::HirFunction,
+    instruction: &fict_hir::HirInstruction,
+    bindings: &BTreeSet<BindingId>,
+) -> bool {
+    match &instruction.kind {
+        HirInstructionKind::Write { place, .. } | HirInstructionKind::ReadWrite { place, .. } => {
+            place_binding(function, place).is_some_and(|binding| bindings.contains(&binding))
+        }
+        HirInstructionKind::Delete {
+            target: fict_hir::DeleteTarget::Place(place),
+        } => place_binding(function, place).is_some_and(|binding| bindings.contains(&binding)),
+        HirInstructionKind::Iteration { targets, .. } => targets.iter().any(|local| {
+            function
+                .locals
+                .get(local.as_usize())
+                .and_then(|local| local.binding)
+                .is_some_and(|binding| bindings.contains(&binding))
+        }),
+        HirInstructionKind::PatternAssignment { writes, .. } => writes.iter().any(|write| {
+            function
+                .locals
+                .get(write.local.as_usize())
+                .and_then(|local| local.binding)
+                .is_some_and(|binding| bindings.contains(&binding))
+        }),
+        HirInstructionKind::Call(call) => object_mutation_target(hir, function, call)
+            .is_some_and(|binding| bindings.contains(&binding)),
+        _ => false,
+    }
+}
+
+fn object_mutation_target(
+    hir: &HirFile,
+    function: &fict_hir::HirFunction,
+    call: &fict_hir::CallInstruction,
+) -> Option<BindingId> {
+    let callee = call.callee_reference.as_ref()?;
+    let PlaceBase::Global(global) = callee.base else {
+        return None;
+    };
+    if hir.globals.get(global.as_usize())?.name != "Object" {
+        return None;
+    }
+    let mutating = match callee.projections.as_slice() {
+        [fict_hir::Projection::StaticProperty { name, .. }] => {
+            matches!(name.as_str(), "assign" | "defineProperty")
+        }
+        [fict_hir::Projection::ComputedProperty { key, .. }] => {
+            value_is_string(function, *key, "assign")
+                || value_is_string(function, *key, "defineProperty")
+        }
+        [fict_hir::Projection::Index { .. }] | [] | [_, _, ..] => false,
+    };
+    if !mutating {
+        return None;
+    }
+    let target = call.arguments.first()?.value;
+    value_root_binding(function, target, &mut BTreeSet::new())
+}
+
+fn value_root_binding(
+    function: &fict_hir::HirFunction,
+    value: ValueId,
+    visited: &mut BTreeSet<ValueId>,
+) -> Option<BindingId> {
+    if !visited.insert(value) {
+        return None;
+    }
+    let instruction = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| instruction.result == Some(value))?;
+    match &instruction.kind {
+        HirInstructionKind::Read { place } => place_binding(function, place),
+        HirInstructionKind::SyntaxFragment { inputs, .. } => inputs
+            .iter()
+            .find_map(|input| value_root_binding(function, *input, visited)),
+        _ => None,
+    }
 }
 
 fn place_binding(function: &fict_hir::HirFunction, place: &fict_hir::Place) -> Option<BindingId> {
