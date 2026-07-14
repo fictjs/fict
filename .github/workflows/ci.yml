@@ -224,7 +224,7 @@ jobs:
               per_page: 50,
             })
             const run = runs.find(candidate => candidate.id !== context.runId)
-            if (run) {
+            if (run?.conclusion === 'success') {
               const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
                 ...context.repo,
                 run_id: run.id,

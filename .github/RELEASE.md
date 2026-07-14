@@ -69,7 +69,10 @@ and peak-RSS samples, runtime parity, native package clean-install/size evidence
 rollback-drill evidence, and the sealed candidate record. Candidate schema v2
 binds all five evidence digests and rejects content changes after sealing. A
 successful main-branch run chains the previous green candidate digest when one
-exists.
+exists. The chain is fail-closed: the immediately preceding completed
+main-branch push must have an overall workflow conclusion of `success` and an
+unexpired candidate artifact. A failed or artifact-less intervening run resets
+the count instead of allowing CI to skip backward to an older green run.
 
 Before changing the Vite default to Rust, download the latest candidate and
 confirm `consecutiveGreenCandidates >= 2`. Copy the reviewed candidate record

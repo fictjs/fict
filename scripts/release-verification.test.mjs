@@ -54,6 +54,16 @@ test('precommit, release verification, and CI enforce the review regression suit
   assert.match(ciWorkflow, /run: pnpm test:review-regressions/)
 })
 
+test('rollout candidates only chain the immediately preceding successful main push', () => {
+  assert.match(ciWorkflow, /status: 'completed'/)
+  assert.match(
+    ciWorkflow,
+    /const run = runs\.find\(candidate => candidate\.id !== context\.runId\)/,
+  )
+  assert.match(ciWorkflow, /if \(run\?\.conclusion === 'success'\)/)
+  assert.doesNotMatch(ciWorkflow, /runs\.find\([^\n]+conclusion === 'success'/)
+})
+
 test('browser E2E continuously includes production-shaped real applications and scheduled soak', () => {
   assert.match(rootPackage.scripts['test:e2e'], /pnpm test:real-apps/)
   assert.match(rootPackage.scripts['test:real-apps'], /examples:build-real-apps/)
