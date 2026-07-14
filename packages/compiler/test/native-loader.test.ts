@@ -148,7 +148,7 @@ describe('native compiler loader', () => {
   it('detects glibc only from an explicit runtime report marker', () => {
     expect(detectLinuxLibc({ header: { glibcVersionRuntime: '2.39' } })).toBe('gnu')
     expect(detectLinuxLibc({ header: {} })).toBe('musl')
-    expect(detectLinuxLibc(undefined)).toBe('musl')
+    expect(detectLinuxLibc(null)).toBe('musl')
   })
 
   it('loads and validates the platform optional package', () => {
