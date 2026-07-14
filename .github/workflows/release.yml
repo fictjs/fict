@@ -16,6 +16,8 @@ env:
   # Make every native artifact self-identify the exact release source revision.
   FICT_COMPILER_BUILD_REVISION: ${{ github.sha }}
   CARGO_AUDIT_VERSION: 0.22.2
+  CARGO_ZIGBUILD_VERSION: 0.23.0
+  ZIG_VERSION: 0.14.1
 
 jobs:
   native-matrix:
@@ -72,17 +74,49 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Install musl linker
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.rustTarget }}
+
+      - name: Install pinned Zig for musl targets
         if: matrix.musl
         shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes musl-tools
+          python3 -m venv "${RUNNER_TEMP}/fict-zig"
+          "${RUNNER_TEMP}/fict-zig/bin/python" -m pip install \
+            --disable-pip-version-check \
+            --require-hashes \
+            --requirement .github/requirements-zig-linux.txt
+          test "$("${RUNNER_TEMP}/fict-zig/bin/python" -m ziglang version)" = "${ZIG_VERSION}"
+
+      - name: Cache pinned cargo-zigbuild for musl targets
+        if: matrix.musl
+        id: cargo-zigbuild-cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cargo/bin/cargo-zigbuild
+          key: cargo-zigbuild-${{ runner.os }}-${{ runner.arch }}-${{ env.CARGO_ZIGBUILD_VERSION }}
+
+      - name: Install pinned cargo-zigbuild for musl targets
+        if: ${{ matrix.musl && steps.cargo-zigbuild-cache.outputs.cache-hit != 'true' }}
+        run: cargo install cargo-zigbuild --version "${CARGO_ZIGBUILD_VERSION}" --locked
+
+      - name: Verify pinned cargo-zigbuild for musl targets
+        if: matrix.musl
+        shell: bash
+        run: test "$(cargo zigbuild --version)" = "cargo-zigbuild ${CARGO_ZIGBUILD_VERSION}"
 
       - name: Build target N-API binary
-        run: |
-          rustup target add ${{ matrix.rustTarget }}
-          cargo build --release -p fict-compiler-napi --target ${{ matrix.rustTarget }}
+        if: ${{ !matrix.musl }}
+        run: cargo build --release -p fict-compiler-napi --target ${{ matrix.rustTarget }}
+
+      - name: Build target N-API binary with Zig
+        if: matrix.musl
+        shell: bash
+        env:
+          CARGO_ZIGBUILD_PYTHON_PATH: ${{ runner.temp }}/fict-zig/bin/python
+          # Rust's musl targets default to static CRT, which does not support cdylib output.
+          RUSTFLAGS: '-C target-feature=-crt-static'
+        run: cargo zigbuild --release -p fict-compiler-napi --target ${{ matrix.rustTarget }}
 
       - name: Assemble checksummed platform tarball
         run: >-

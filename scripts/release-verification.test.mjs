@@ -36,6 +36,10 @@ const releaseWorkflow = readFileSync(
   new URL('../.github/workflows/release.yml', import.meta.url),
   'utf8',
 )
+const zigRequirements = readFileSync(
+  new URL('../.github/requirements-zig-linux.txt', import.meta.url),
+  'utf8',
+)
 const ciWorkflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
 const turboConfig = JSON.parse(readFileSync(new URL('../turbo.json', import.meta.url), 'utf8'))
 const ssrPackage = JSON.parse(
@@ -121,6 +125,43 @@ test('CI and release use Node 24-compatible action majors', () => {
   }
 
   assert.deepEqual([...seen].sort(), [...minimumMajors.keys()].sort())
+})
+
+test('musl native releases use a pinned Zig cdylib build path', () => {
+  const nativeBuildStart = releaseWorkflow.indexOf('\n  native-build:')
+  const nativeRuntimeStart = releaseWorkflow.indexOf('\n  native-runtime:')
+  assert.ok(nativeBuildStart >= 0 && nativeBuildStart < nativeRuntimeStart)
+
+  const nativeBuild = releaseWorkflow.slice(nativeBuildStart, nativeRuntimeStart)
+  assert.match(releaseWorkflow, /^  CARGO_ZIGBUILD_VERSION: 0\.23\.0$/m)
+  assert.match(releaseWorkflow, /^  ZIG_VERSION: 0\.14\.1$/m)
+  assert.match(
+    zigRequirements,
+    /^ziglang==0\.14\.1 \\\n\s+--hash=sha256:[a-f0-9]{64} \\\n\s+--hash=sha256:[a-f0-9]{64}\n$/,
+  )
+  assert.match(
+    nativeBuild,
+    /python3 -m venv "\$\{RUNNER_TEMP\}\/fict-zig"[\s\S]*?--require-hashes[\s\S]*?--requirement \.github\/requirements-zig-linux\.txt/,
+  )
+  assert.match(
+    nativeBuild,
+    /test "\$\("\$\{RUNNER_TEMP\}\/fict-zig\/bin\/python" -m ziglang version\)" = "\$\{ZIG_VERSION\}"/,
+  )
+  assert.match(nativeBuild, /path: ~\/\.cargo\/bin\/cargo-zigbuild/)
+  assert.match(
+    nativeBuild,
+    /cargo install cargo-zigbuild --version "\$\{CARGO_ZIGBUILD_VERSION\}" --locked/,
+  )
+  assert.match(
+    nativeBuild,
+    /test "\$\(cargo zigbuild --version\)" = "cargo-zigbuild \$\{CARGO_ZIGBUILD_VERSION\}"/,
+  )
+  assert.match(nativeBuild, /name: Build target N-API binary\n\s+if: \$\{\{ !matrix\.musl \}\}/)
+  assert.match(
+    nativeBuild,
+    /name: Build target N-API binary with Zig[\s\S]*?CARGO_ZIGBUILD_PYTHON_PATH: \$\{\{ runner\.temp \}\}\/fict-zig\/bin\/python[\s\S]*?RUSTFLAGS: '-C target-feature=-crt-static'[\s\S]*?cargo zigbuild --release -p fict-compiler-napi --target \$\{\{ matrix\.rustTarget \}\}/,
+  )
+  assert.doesNotMatch(nativeBuild, /musl-tools|Install musl linker|mlugg\/setup-zig/)
 })
 
 test('Babel preset deprecation verification builds its compiler dependency first', () => {
