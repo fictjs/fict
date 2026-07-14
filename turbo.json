@@ -37,7 +37,15 @@
       ],
       "outputs": []
     },
+    "@fictjs/vite-plugin#typecheck": {
+      "dependsOn": ["@fictjs/compiler#build"],
+      "outputs": []
+    },
     "@fictjs/vscode-extension#typecheck": {
+      "dependsOn": ["@fictjs/compiler#build"],
+      "outputs": []
+    },
+    "@fictjs/webpack-plugin#typecheck": {
       "dependsOn": ["@fictjs/compiler#build"],
       "outputs": []
     },

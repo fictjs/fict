@@ -37,6 +37,7 @@ const releaseWorkflow = readFileSync(
   'utf8',
 )
 const ciWorkflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
+const turboConfig = JSON.parse(readFileSync(new URL('../turbo.json', import.meta.url), 'utf8'))
 const ssrPackage = JSON.parse(
   readFileSync(new URL('../packages/ssr/package.json', import.meta.url), 'utf8'),
 )
@@ -69,6 +70,12 @@ test('Babel preset deprecation verification builds its compiler dependency first
     rootPackage.scripts['test:babel-preset:deprecation'],
     /^pnpm --filter @fictjs\/compiler build && pnpm --filter @fictjs\/babel-preset build &&/,
   )
+})
+
+test('native bundler typechecks wait for compiler declarations in clean checkouts', () => {
+  for (const task of ['@fictjs/vite-plugin#typecheck', '@fictjs/webpack-plugin#typecheck']) {
+    assert.deepEqual(turboConfig.tasks[task]?.dependsOn, ['@fictjs/compiler#build'])
+  }
 })
 
 test('compiler and top-level release gates enforce Rust architecture and complexity budgets', () => {
