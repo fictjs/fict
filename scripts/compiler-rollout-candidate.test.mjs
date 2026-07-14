@@ -46,6 +46,29 @@ async function evidence(directory, compilerBuildId = 'fict-rust-test') {
         generatedOutput: true,
       },
     },
+    package: {
+      schemaVersion: 1,
+      target: 'linux-x64-gnu',
+      compilerBuildId,
+      binarySha256: 'b'.repeat(64),
+      tarballSha256: 'c'.repeat(64),
+      tarballBytes: 3_000_000,
+      unpackedBytes: 7_000_000,
+      formats: ['esm', 'cjs'],
+      syncAndAsync: true,
+      rustToolchainRequired: false,
+      sizeGate: {
+        schemaVersion: 1,
+        target: 'linux-x64-gnu',
+        profile: 'ci',
+        tarballBytes: 3_000_000,
+        unpackedBytes: 7_000_000,
+        maximumTarballBytes: 8_388_608,
+        maximumUnpackedBytes: 20_971_520,
+        passed: true,
+        violations: [],
+      },
+    },
   }
   for (const [name, document] of Object.entries(documents)) {
     await writeFile(path.join(directory, `${name}.json`), JSON.stringify(document))
@@ -61,6 +84,7 @@ function run(directory, runId, output, extra = []) {
       `--benchmark=${path.join(directory, 'benchmark.json')}`,
       `--runtime=${path.join(directory, 'runtime.json')}`,
       `--rollback=${path.join(directory, 'rollback.json')}`,
+      `--package=${path.join(directory, 'package.json')}`,
       `--revision=${revision}`,
       `--run-id=${runId}`,
       `--output=${output}`,
@@ -87,6 +111,8 @@ test('candidate evidence chains two distinct green builds', async t => {
   assert.equal(firstArtifact.consecutiveGreenCandidates, 1)
   assert.equal(secondArtifact.consecutiveGreenCandidates, 2)
   assert.equal(secondArtifact.previousCandidateDigest, firstArtifact.candidateDigest)
+  assert.equal(firstArtifact.schemaVersion, 2)
+  assert.match(firstArtifact.nativePackageDigest, /^sha256:[0-9a-f]{64}$/)
 })
 
 test('candidate evidence rejects mixed native compiler builds', async t => {
@@ -102,6 +128,20 @@ test('candidate evidence rejects mixed native compiler builds', async t => {
   assert.match(result.stderr, /one native compiler build/)
 })
 
+test('candidate evidence rejects native packages that failed their size gate', async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'fict-candidate-package-'))
+  t.after(() => rm(directory, { recursive: true }))
+  await evidence(directory)
+  const packageEvidence = JSON.parse(await readFile(path.join(directory, 'package.json'), 'utf8'))
+  packageEvidence.sizeGate.passed = false
+  packageEvidence.sizeGate.violations = ['tarball exceeds budget']
+  await writeFile(path.join(directory, 'package.json'), JSON.stringify(packageEvidence))
+
+  const result = run(directory, '100', path.join(directory, 'candidate.json'))
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /Native package evidence is incomplete or exceeds its size budget/)
+})
+
 test('candidate evidence rejects non-CI run identities and malformed previous chains', async t => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'fict-candidate-identity-'))
   t.after(() => rm(directory, { recursive: true }))
@@ -115,7 +155,7 @@ test('candidate evidence rejects non-CI run identities and malformed previous ch
   await writeFile(
     previousPath,
     JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 2,
       status: 'pass',
       runId: '99',
       runAttempt: '1',
@@ -127,5 +167,5 @@ test('candidate evidence rejects non-CI run identities and malformed previous ch
     `--previous=${previousPath}`,
   ])
   assert.notEqual(malformed.status, 0)
-  assert.match(malformed.stderr, /not a passing schema-v1 candidate/)
+  assert.match(malformed.stderr, /not a passing schema-v2 candidate/)
 })

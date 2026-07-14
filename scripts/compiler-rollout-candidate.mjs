@@ -73,6 +73,67 @@ function validateRollback(artifact) {
   }
 }
 
+function validateNativePackage(artifact) {
+  const sizeGate = artifact.sizeGate
+  if (
+    artifact.schemaVersion !== 1 ||
+    typeof artifact.target !== 'string' ||
+    !artifact.target ||
+    typeof artifact.compilerBuildId !== 'string' ||
+    !artifact.compilerBuildId ||
+    !/^sha256:[0-9a-f]{64}$/.test(`sha256:${artifact.binarySha256 ?? ''}`) ||
+    !/^sha256:[0-9a-f]{64}$/.test(`sha256:${artifact.tarballSha256 ?? ''}`) ||
+    !Number.isSafeInteger(artifact.tarballBytes) ||
+    artifact.tarballBytes <= 0 ||
+    !Number.isSafeInteger(artifact.unpackedBytes) ||
+    artifact.unpackedBytes <= 0 ||
+    artifact.syncAndAsync !== true ||
+    artifact.rustToolchainRequired !== false ||
+    JSON.stringify([...(artifact.formats ?? [])].sort()) !== JSON.stringify(['cjs', 'esm']) ||
+    sizeGate?.schemaVersion !== 1 ||
+    sizeGate.target !== artifact.target ||
+    typeof sizeGate.profile !== 'string' ||
+    !sizeGate.profile ||
+    sizeGate.tarballBytes !== artifact.tarballBytes ||
+    sizeGate.unpackedBytes !== artifact.unpackedBytes ||
+    sizeGate.passed !== true ||
+    !Array.isArray(sizeGate.violations) ||
+    sizeGate.violations.length !== 0 ||
+    !Number.isSafeInteger(sizeGate.maximumTarballBytes) ||
+    sizeGate.maximumTarballBytes <= 0 ||
+    !Number.isSafeInteger(sizeGate.maximumUnpackedBytes) ||
+    sizeGate.maximumUnpackedBytes <= 0
+  ) {
+    throw new Error('Native package evidence is incomplete or exceeds its size budget')
+  }
+}
+
+function validatePreviousCandidate(previous) {
+  const { candidateDigest, ...payload } = previous
+  const requiredDigests = [
+    payload.shadowDigest,
+    payload.benchmarkDigest,
+    payload.runtimeDigest,
+    payload.rollbackDigest,
+    payload.nativePackageDigest,
+  ]
+  if (
+    payload.schemaVersion !== 2 ||
+    payload.status !== 'pass' ||
+    digest(payload) !== candidateDigest ||
+    requiredDigests.some(value => !/^sha256:[0-9a-f]{64}$/.test(value ?? '')) ||
+    !Number.isSafeInteger(payload.consecutiveGreenCandidates) ||
+    payload.consecutiveGreenCandidates < 1 ||
+    !/^\d+$/.test(String(payload.runId)) ||
+    !/^\d+$/.test(String(payload.runAttempt)) ||
+    !/^[0-9a-f]{40}$/.test(payload.sourceRevision ?? '') ||
+    typeof payload.compilerBuildId !== 'string' ||
+    !payload.compilerBuildId
+  ) {
+    throw new Error('Previous candidate artifact is not a passing schema-v2 candidate')
+  }
+}
+
 const shadowPath = path.resolve(
   readArgument('shadow', path.join(root, '.fict-cache', 'compiler-shadow.json')),
 )
@@ -84,6 +145,9 @@ const runtimePath = path.resolve(
 )
 const rollbackPath = path.resolve(
   readArgument('rollback', path.join(root, '.fict-cache', 'compiler-rollback-drill.json')),
+)
+const nativePackagePath = path.resolve(
+  readArgument('package', path.join(root, '.fict-cache', 'compiler-native-package.json')),
 )
 const outputPath = path.resolve(
   readArgument('output', path.join(root, '.fict-cache', 'compiler-rollout-candidate.json')),
@@ -108,16 +172,19 @@ const shadow = readJson(shadowPath, 'Shadow artifact')
 const benchmark = readJson(benchmarkPath, 'Benchmark artifact')
 const runtime = readJson(runtimePath, 'Runtime parity artifact')
 const rollback = readJson(rollbackPath, 'Rollback drill artifact')
+const nativePackage = readJson(nativePackagePath, 'Native package artifact')
 validateShadow(shadow)
 validateBenchmark(benchmark)
 validateRuntime(runtime)
 validateRollback(rollback)
+validateNativePackage(nativePackage)
 
 const compilerBuildIds = new Set([
   shadow.compilerBuildId,
   benchmark.compilerBuildId,
   runtime.compilerBuildId,
   rollback.compilerBuildId,
+  nativePackage.compilerBuildId,
 ])
 if (compilerBuildIds.size !== 1 || compilerBuildIds.has(undefined)) {
   throw new Error('Candidate artifacts were not produced by one native compiler build')
@@ -126,17 +193,7 @@ if (compilerBuildIds.size !== 1 || compilerBuildIds.has(undefined)) {
 let previous = null
 if (previousPath) {
   previous = readJson(path.resolve(previousPath), 'Previous candidate artifact')
-  if (
-    previous.schemaVersion !== 1 ||
-    previous.status !== 'pass' ||
-    !/^sha256:[0-9a-f]{64}$/.test(previous.candidateDigest ?? '') ||
-    !Number.isSafeInteger(previous.consecutiveGreenCandidates) ||
-    previous.consecutiveGreenCandidates < 1 ||
-    !/^\d+$/.test(String(previous.runId)) ||
-    !/^\d+$/.test(String(previous.runAttempt))
-  ) {
-    throw new Error('Previous candidate artifact is not a passing schema-v1 candidate')
-  }
+  validatePreviousCandidate(previous)
   if (String(previous.runId) === runId && String(previous.runAttempt) === runAttempt) {
     throw new Error('Previous and current candidate builds must be distinct runs')
   }
@@ -146,7 +203,7 @@ if (previousPath) {
 }
 
 const payload = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   status: 'pass',
   runId,
   runAttempt,
@@ -156,6 +213,7 @@ const payload = {
   benchmarkDigest: digest(benchmark),
   runtimeDigest: digest(runtime),
   rollbackDigest: digest(rollback),
+  nativePackageDigest: digest(nativePackage),
   previousCandidateDigest: previous?.candidateDigest ?? null,
   consecutiveGreenCandidates: previous
     ? Math.max(2, Number(previous.consecutiveGreenCandidates ?? 1) + 1)

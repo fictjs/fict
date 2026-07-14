@@ -197,6 +197,12 @@ jobs:
           --native-path=target/release/fict_compiler_napi.node
           --output="${RUNNER_TEMP}/compiler-rollout/benchmark.json"
 
+      - name: Certify candidate native package install and size
+        run: >-
+          node scripts/native-compiler-package-smoke.mjs
+          --host-binary target/release/fict_compiler_napi.node
+          --evidence "${RUNNER_TEMP}/compiler-rollout/package.json"
+
       - name: Find the immediately previous rollout candidate attempt
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         id: previous_candidate
@@ -247,6 +253,7 @@ jobs:
             --benchmark="${RUNNER_TEMP}/compiler-rollout/benchmark.json" \
             --runtime="${RUNNER_TEMP}/compiler-rollout/runtime.json" \
             --rollback="${RUNNER_TEMP}/compiler-rollout/rollback.json" \
+            --package="${RUNNER_TEMP}/compiler-rollout/package.json" \
             --output="${RUNNER_TEMP}/compiler-rollout/candidate.json" \
             "${previous_args[@]}"
 

@@ -1,10 +1,46 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
 import { validateCompilerRolloutReadiness } from './compiler-rollout-readiness.mjs'
+
+const approvedAreas = {
+  coreSemantics: true,
+  strictGuarantee: true,
+  typescriptNamespacesAndCts: true,
+  runtimeAndMetadataAbi: true,
+  sourceMaps: true,
+  nativePlatformsAndRelease: true,
+  performanceAndRss: true,
+  rollbackDrill: true,
+}
+
+function candidateEvidence(overrides = {}) {
+  const artifactDigest = `sha256:${'b'.repeat(64)}`
+  const payload = {
+    schemaVersion: 2,
+    status: 'pass',
+    runId: '101',
+    runAttempt: '1',
+    sourceRevision: 'c'.repeat(40),
+    compilerBuildId: 'fict-rust-test',
+    shadowDigest: artifactDigest,
+    benchmarkDigest: artifactDigest,
+    runtimeDigest: artifactDigest,
+    rollbackDigest: artifactDigest,
+    nativePackageDigest: artifactDigest,
+    previousCandidateDigest: `sha256:${'d'.repeat(64)}`,
+    consecutiveGreenCandidates: 2,
+    ...overrides,
+  }
+  return {
+    ...payload,
+    candidateDigest: `sha256:${createHash('sha256').update(JSON.stringify(payload)).digest('hex')}`,
+  }
+}
 
 async function fixture(state, review, evidence) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'fict-rollout-'))
@@ -50,23 +86,9 @@ test('beta keeps legacy default without claiming human approval', async t => {
 })
 
 test('rust default requires chained candidates and a checklist bound to their digest', async t => {
-  const candidateDigest = `sha256:${'a'.repeat(64)}`
-  const evidence = {
-    schemaVersion: 1,
-    status: 'pass',
-    consecutiveGreenCandidates: 2,
-    candidateDigest,
-  }
-  const areas = {
-    coreSemantics: true,
-    strictGuarantee: true,
-    typescriptNamespacesAndCts: true,
-    runtimeAndMetadataAbi: true,
-    sourceMaps: true,
-    nativePlatformsAndRelease: true,
-    performanceAndRss: true,
-    rollbackDrill: true,
-  }
+  const evidence = candidateEvidence()
+  const { candidateDigest } = evidence
+  const areas = approvedAreas
   const root = await fixture(
     { phase: 'rust-default', viteDefaultBackend: 'rust' },
     { schemaVersion: 1, status: 'approved', candidateDigest, reviewer: 'maintainer', areas },
@@ -88,8 +110,26 @@ test('rust default requires chained candidates and a checklist bound to their di
   assert.throws(() => validateCompilerRolloutReadiness({ root }), /does not bind/)
 })
 
+test('rust default rejects candidate content modified after sealing', async t => {
+  const evidence = candidateEvidence()
+  const root = await fixture(
+    { phase: 'rust-default', viteDefaultBackend: 'rust' },
+    {
+      schemaVersion: 1,
+      status: 'approved',
+      candidateDigest: evidence.candidateDigest,
+      reviewer: 'maintainer',
+      areas: approvedAreas,
+    },
+    { ...evidence, nativePackageDigest: `sha256:${'e'.repeat(64)}` },
+  )
+  t.after(() => rm(root, { recursive: true }))
+  assert.throws(() => validateCompilerRolloutReadiness({ root }), /intact consecutive schema-v2/)
+})
+
 test('human approval cannot substitute arbitrary checklist area names', async t => {
-  const candidateDigest = `sha256:${'a'.repeat(64)}`
+  const evidence = candidateEvidence()
+  const { candidateDigest } = evidence
   const root = await fixture(
     { phase: 'rust-default', viteDefaultBackend: 'rust' },
     {
@@ -101,12 +141,7 @@ test('human approval cannot substitute arbitrary checklist area names', async t 
         Array.from({ length: 8 }, (_, index) => [`alternate${index}`, true]),
       ),
     },
-    {
-      schemaVersion: 1,
-      status: 'pass',
-      consecutiveGreenCandidates: 2,
-      candidateDigest,
-    },
+    evidence,
   )
   t.after(() => rm(root, { recursive: true }))
   assert.throws(

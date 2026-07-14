@@ -65,9 +65,11 @@ so behavior-first test suites keep their documented non-strict configuration.
 
 The `compiler-rollout` CI job uploads one `compiler-rollout-candidate` artifact
 containing privacy-safe shadow differences, paired large-project performance
-and peak-RSS samples, runtime parity, rollback-drill evidence, and the sealed
-candidate record. A successful main-branch run chains the previous green
-candidate digest when one exists.
+and peak-RSS samples, runtime parity, native package clean-install/size evidence,
+rollback-drill evidence, and the sealed candidate record. Candidate schema v2
+binds all five evidence digests and rejects content changes after sealing. A
+successful main-branch run chains the previous green candidate digest when one
+exists.
 
 Before changing the Vite default to Rust, download the latest candidate and
 confirm `consecutiveGreenCandidates >= 2`. Copy the reviewed candidate record

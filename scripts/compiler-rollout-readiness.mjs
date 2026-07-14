@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -47,13 +48,27 @@ function assertReview(review, evidence) {
 }
 
 function assertCandidate(evidence) {
+  const { candidateDigest, ...payload } = evidence
+  const requiredDigests = [
+    payload.shadowDigest,
+    payload.benchmarkDigest,
+    payload.runtimeDigest,
+    payload.rollbackDigest,
+    payload.nativePackageDigest,
+  ]
+  const computedDigest = `sha256:${createHash('sha256')
+    .update(JSON.stringify(payload))
+    .digest('hex')}`
   if (
-    evidence.schemaVersion !== 1 ||
-    evidence.status !== 'pass' ||
-    evidence.consecutiveGreenCandidates < 2 ||
-    !/^sha256:[0-9a-f]{64}$/.test(evidence.candidateDigest ?? '')
+    payload.schemaVersion !== 2 ||
+    payload.status !== 'pass' ||
+    payload.consecutiveGreenCandidates < 2 ||
+    requiredDigests.some(value => !/^sha256:[0-9a-f]{64}$/.test(value ?? '')) ||
+    computedDigest !== candidateDigest
   ) {
-    throw new Error('Rust-default rollout requires two consecutive passing candidate builds')
+    throw new Error(
+      'Rust-default rollout requires two intact consecutive schema-v2 candidate builds',
+    )
   }
 }
 

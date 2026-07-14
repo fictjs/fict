@@ -87,12 +87,16 @@ compiler build identifier:
 - representative Vite shadow build with no unexplained semantic difference;
 - Core runtime parity and strict-guarantee matrix;
 - large-project paired/interleaved throughput and isolated peak RSS budgets;
+- clean native-package installation plus compressed and unpacked-size budgets;
 - native Vite, Webpack, editor, playground, and real-application paths;
 - successful whole-build Rust-to-legacy rollback drill.
 
-`compiler-rollout-candidate.mjs` hashes those artifacts and chains the previous
-green candidate digest. A first candidate records one green build; only a later,
-distinct CI run can record two. Local smoke runs do not become release evidence.
+`compiler-rollout-candidate.mjs` hashes those artifacts, requires one native
+compiler build identifier across them, and chains the previous green candidate
+digest. Candidate schema v2 binds native package evidence and rejects any
+modified payload whose digest no longer matches. A first candidate records one
+green build; only a later, distinct CI run can record two. Local smoke runs do
+not become release evidence.
 
 The performance budget is owned by
 [`compiler-backend-budget.json`](../../../.github/compiler-backend-budget.json).
