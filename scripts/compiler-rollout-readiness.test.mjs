@@ -29,6 +29,29 @@ const approvedRemovalAreas = {
   legacyDependencyRemoval: true,
 }
 
+function pendingReview() {
+  return {
+    schemaVersion: 2,
+    status: 'pending',
+    candidateDigest: null,
+    reviewer: null,
+    areas: Object.fromEntries(Object.keys(approvedAreas).map(area => [area, false])),
+  }
+}
+
+function pendingRemovalReview() {
+  return {
+    schemaVersion: 1,
+    status: 'pending',
+    reviewer: null,
+    rustDefaultRelease: null,
+    compatibilityRelease: null,
+    finalLegacyRelease: null,
+    legacyRemovalRelease: null,
+    areas: Object.fromEntries(Object.keys(approvedRemovalAreas).map(area => [area, false])),
+  }
+}
+
 function rustDefaultState(overrides = {}) {
   return {
     phase: 'rust-default',
@@ -88,24 +111,20 @@ async function fixture(state, review, evidence, removalReview) {
     path.join(root, 'packages', 'vite-plugin', 'src', 'index.ts'),
     `const backend = backendOption ?? backendFromEnvironment ?? '${state.viteDefaultBackend}'`,
   )
-  if (review) {
-    await writeFile(
-      path.join(root, '.github', 'compiler-rollout-review.json'),
-      JSON.stringify(review),
-    )
-  }
+  await writeFile(
+    path.join(root, '.github', 'compiler-rollout-review.json'),
+    JSON.stringify(review ?? pendingReview()),
+  )
   if (evidence) {
     await writeFile(
       path.join(root, '.github', 'compiler-rollout-evidence.json'),
       JSON.stringify(evidence),
     )
   }
-  if (removalReview) {
-    await writeFile(
-      path.join(root, '.github', 'compiler-legacy-removal-review.json'),
-      JSON.stringify(removalReview),
-    )
-  }
+  await writeFile(
+    path.join(root, '.github', 'compiler-legacy-removal-review.json'),
+    JSON.stringify(removalReview ?? pendingRemovalReview()),
+  )
   return root
 }
 
@@ -209,7 +228,7 @@ test('human approval cannot substitute arbitrary checklist area names', async t 
   t.after(() => rm(root, { recursive: true }))
   assert.throws(
     () => validateCompilerRolloutReadiness({ root }),
-    /does not use the required rollout areas/,
+    /does not use the required review areas/,
   )
 })
 
@@ -241,6 +260,28 @@ test('beta cannot claim a Rust-default or compatibility release', async t => {
     () => validateCompilerRolloutReadiness({ root }),
     /cannot claim Rust-default compatibility releases/,
   )
+})
+
+test('beta validates pending review shape before promotion', async t => {
+  const root = await fixture({ phase: 'beta', viteDefaultBackend: 'legacy' })
+  t.after(() => rm(root, { recursive: true }))
+  const review = pendingReview()
+  review.areas.coreSemantics = true
+  await writeFile(
+    path.join(root, '.github', 'compiler-rollout-review.json'),
+    JSON.stringify(review),
+  )
+  assert.throws(() => validateCompilerRolloutReadiness({ root }), /cannot contain partial approval/)
+})
+
+test('rollout state evidence paths cannot escape the workspace', async t => {
+  const root = await fixture({
+    phase: 'beta',
+    viteDefaultBackend: 'legacy',
+    reviewPath: '../compiler-rollout-review.json',
+  })
+  t.after(() => rm(root, { recursive: true }))
+  assert.throws(() => validateCompilerRolloutReadiness({ root }), /must remain inside/)
 })
 
 test('legacy removal requires a bound review and a completed stable minor window', async t => {

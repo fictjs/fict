@@ -28,7 +28,10 @@ The machine-readable phase and default backend live in
 Do not copy or infer the current phase from release prose. The readiness check
 rejects a mismatch between that file and the Vite implementation. State schema
 v2 also records the Rust-default, completed compatibility-minor, final legacy,
-and planned legacy-removal releases; beta keeps all four values `null`.
+and planned legacy-removal releases; beta keeps all four values `null`. Evidence
+and review paths must remain workspace-relative. The normal beta readiness check
+validates both pending review documents, so an unknown area, non-boolean value,
+or partial approval fails before promotion work starts.
 
 ## Rollout states
 

@@ -87,6 +87,9 @@ exact `candidateDigest`. `node scripts/compiler-rollout-readiness.mjs
 Review schema v2 includes an explicit `nativePackageSizeBudget` approval; since
 the candidate digest binds the package evidence, this approval covers the exact
 compressed/unpacked ceilings and measurements in that candidate.
+Rollout evidence/review paths are restricted to the repository, and CI validates
+the exact pending/approved checklist shape even during beta. Do not stage a
+partial approval: update the digest, reviewer, status, and all areas atomically.
 
 Do not manufacture a second candidate by running the sealer twice locally.
 Only distinct CI runs from committed source count. Raw benchmark values remain

@@ -33,6 +33,101 @@ function readJson(filename, label) {
   return JSON.parse(readFileSync(filename, 'utf8'))
 }
 
+function resolveWorkspaceStatePath(workspaceRoot, value, label) {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`${label} must be a non-empty workspace-relative path`)
+  }
+  if (path.isAbsolute(value)) {
+    throw new Error(`${label} must remain inside the workspace`)
+  }
+  const resolved = path.resolve(workspaceRoot, value)
+  const relative = path.relative(workspaceRoot, resolved)
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`${label} must remain inside the workspace`)
+  }
+  return resolved
+}
+
+function assertAreaShape(areas, requiredAreas, label) {
+  const areaNames = Object.keys(areas ?? {}).sort()
+  if (JSON.stringify(areaNames) !== JSON.stringify(requiredAreas)) {
+    throw new Error(`${label} does not use the required review areas`)
+  }
+  if (Object.values(areas).some(value => typeof value !== 'boolean')) {
+    throw new Error(`${label} review areas must be boolean`)
+  }
+}
+
+function assertReviewDocumentShape(review) {
+  if (review.schemaVersion !== 2 || !['pending', 'approved'].includes(review.status)) {
+    throw new Error('Compiler rollout review has an unsupported schema or status')
+  }
+  assertAreaShape(review.areas, REQUIRED_REVIEW_AREAS, 'Reviewer checklist')
+  if (
+    review.status === 'pending' &&
+    (review.candidateDigest !== null ||
+      review.reviewer !== null ||
+      Object.values(review.areas).some(Boolean))
+  ) {
+    throw new Error('Pending compiler rollout review cannot contain partial approval')
+  }
+  if (
+    review.status === 'approved' &&
+    (typeof review.reviewer !== 'string' ||
+      !review.reviewer.trim() ||
+      !/^sha256:[0-9a-f]{64}$/.test(review.candidateDigest ?? ''))
+  ) {
+    throw new Error('Approved compiler rollout review must be complete and digest-bound')
+  }
+  if (review.status === 'approved') {
+    const missingAreas = Object.entries(review.areas)
+      .filter(([, approved]) => approved !== true)
+      .map(([area]) => area)
+    if (missingAreas.length > 0) {
+      throw new Error(`Approved compiler rollout review is incomplete: ${missingAreas.join(', ')}`)
+    }
+  }
+}
+
+function assertLegacyRemovalReviewDocumentShape(review) {
+  if (review.schemaVersion !== 1 || !['pending', 'approved'].includes(review.status)) {
+    throw new Error('Compiler legacy-removal review has an unsupported schema or status')
+  }
+  assertAreaShape(review.areas, REQUIRED_LEGACY_REMOVAL_AREAS, 'Legacy-removal checklist')
+  if (
+    review.status === 'pending' &&
+    (review.reviewer !== null ||
+      [
+        review.rustDefaultRelease,
+        review.compatibilityRelease,
+        review.finalLegacyRelease,
+        review.legacyRemovalRelease,
+      ].some(value => value !== null) ||
+      Object.values(review.areas).some(Boolean))
+  ) {
+    throw new Error('Pending legacy-removal review cannot contain partial approval')
+  }
+  if (review.status === 'approved') {
+    if (typeof review.reviewer !== 'string' || !review.reviewer.trim()) {
+      throw new Error('Approved legacy-removal review must have a complete human checklist')
+    }
+    const missingAreas = Object.entries(review.areas)
+      .filter(([, approved]) => approved !== true)
+      .map(([area]) => area)
+    if (missingAreas.length > 0) {
+      throw new Error(`Approved legacy-removal review is incomplete: ${missingAreas.join(', ')}`)
+    }
+    for (const field of [
+      'rustDefaultRelease',
+      'compatibilityRelease',
+      'finalLegacyRelease',
+      'legacyRemovalRelease',
+    ]) {
+      parseStableRelease(review[field], `legacy-removal review ${field}`)
+    }
+  }
+}
+
 function assertReview(review, evidence) {
   if (
     review.schemaVersion !== 2 ||
@@ -46,10 +141,6 @@ function assertReview(review, evidence) {
     throw new Error('Reviewer approval does not bind the current candidate evidence')
   }
   const reviewAreas = review.areas ?? {}
-  const areaNames = Object.keys(reviewAreas).sort()
-  if (JSON.stringify(areaNames) !== JSON.stringify(REQUIRED_REVIEW_AREAS)) {
-    throw new Error('Reviewer checklist does not use the required rollout areas')
-  }
   const missingAreas = Object.entries(reviewAreas)
     .filter(([, approved]) => approved !== true)
     .map(([area]) => area)
@@ -155,10 +246,6 @@ function assertLegacyRemovalReview(review, state) {
     }
   }
   const reviewAreas = review.areas ?? {}
-  const areaNames = Object.keys(reviewAreas).sort()
-  if (JSON.stringify(areaNames) !== JSON.stringify(REQUIRED_LEGACY_REMOVAL_AREAS)) {
-    throw new Error('Legacy-removal checklist does not use the required review areas')
-  }
   const missingAreas = Object.entries(reviewAreas)
     .filter(([, approved]) => approved !== true)
     .map(([area]) => area)
@@ -286,6 +373,21 @@ export function validateCompilerRolloutReadiness(options = {}) {
     throw new Error('Legacy-removal phase cannot retain the removed legacy rollback backend')
   }
   assertReleaseWindow(state)
+  const candidateEvidencePath = resolveWorkspaceStatePath(
+    workspaceRoot,
+    state.candidateEvidencePath,
+    'candidateEvidencePath',
+  )
+  const reviewPath = resolveWorkspaceStatePath(workspaceRoot, state.reviewPath, 'reviewPath')
+  const legacyRemovalReviewPath = resolveWorkspaceStatePath(
+    workspaceRoot,
+    state.legacyRemovalReviewPath,
+    'legacyRemovalReviewPath',
+  )
+  const review = readJson(reviewPath, 'Compiler rollout review')
+  const legacyRemovalReview = readJson(legacyRemovalReviewPath, 'Compiler legacy-removal review')
+  assertReviewDocumentShape(review)
+  assertLegacyRemovalReviewDocumentShape(legacyRemovalReview)
   const source = readFileSync(sourcePath, 'utf8')
   const defaultMatch = source.match(
     /backendOption\s*\?\?\s*backendFromEnvironment\s*\?\?\s*'(legacy|rust)'/,
@@ -302,23 +404,12 @@ export function validateCompilerRolloutReadiness(options = {}) {
 
   const requiresApproval = state.phase !== 'beta' || options.requireDefaultReady === true
   if (requiresApproval) {
-    const evidence = readJson(
-      path.resolve(workspaceRoot, state.candidateEvidencePath),
-      'Compiler candidate evidence',
-    )
-    const review = readJson(
-      path.resolve(workspaceRoot, state.reviewPath),
-      'Compiler rollout review',
-    )
+    const evidence = readJson(candidateEvidencePath, 'Compiler candidate evidence')
     assertCandidate(evidence)
     assertReview(review, evidence)
   }
   if (state.phase === 'legacy-removal') {
-    const removalReview = readJson(
-      path.resolve(workspaceRoot, state.legacyRemovalReviewPath),
-      'Compiler legacy-removal review',
-    )
-    assertLegacyRemovalReview(removalReview, state)
+    assertLegacyRemovalReview(legacyRemovalReview, state)
   }
   if (state.phase !== 'beta' && state.viteDefaultBackend !== 'rust') {
     throw new Error(`${state.phase} phase must select Rust in Vite`)
