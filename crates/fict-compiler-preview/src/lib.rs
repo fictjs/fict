@@ -58,6 +58,22 @@ pub fn attach_preview_plan(
                 continue;
             }
 
+            if handler_is_member_read(owner, &candidate.handler) {
+                if candidate.explicit {
+                    diagnostics.push(
+                        preview_error(
+                            "FICT-PREVIEW-HANDLER",
+                            "resumable handlers cannot use member-expression handler values because the member read must run during render",
+                        )
+                        .with_primary_span(handler_origin)
+                        .with_help(
+                            "store the handler in a stable function binding, or remove the `$` suffix",
+                        ),
+                    );
+                }
+                continue;
+            }
+
             let context_captures = handler_context_captures(
                 hir,
                 owner,
@@ -524,6 +540,54 @@ fn handler_node_count(hir: &HirFile, function: FunctionId) -> u32 {
         })
         .and_then(|count| u32::try_from(count).ok())
         .unwrap_or(u32::MAX)
+}
+
+fn handler_is_member_read(function: &fict_hir::HirFunction, handler: &EmitValueRef) -> bool {
+    let EmitValueRef::Hir(value) = handler else {
+        return false;
+    };
+    value_is_member_read(function, *value, &mut BTreeSet::new())
+}
+
+fn value_is_member_read(
+    function: &fict_hir::HirFunction,
+    value: ValueId,
+    visited: &mut BTreeSet<ValueId>,
+) -> bool {
+    if !visited.insert(value) {
+        return false;
+    }
+    let Some(instruction) = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| instruction.result == Some(value))
+    else {
+        return false;
+    };
+    match &instruction.kind {
+        HirInstructionKind::Read { place } => !place.projections.is_empty(),
+        HirInstructionKind::SyntaxFragment { .. } => {
+            let Some(origin) = function
+                .values
+                .get(value.as_usize())
+                .and_then(|value| value.origin.primary_span)
+            else {
+                return false;
+            };
+            function
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .rev()
+                .filter_map(|candidate| candidate.result.map(|result| (candidate, result)))
+                .filter(|(candidate, result)| {
+                    *result != value && candidate.origin.primary_span == Some(origin)
+                })
+                .any(|(_, result)| value_is_member_read(function, result, visited))
+        }
+        _ => false,
+    }
 }
 
 fn handler_context_captures(

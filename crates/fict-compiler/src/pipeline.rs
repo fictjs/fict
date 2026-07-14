@@ -4962,6 +4962,71 @@ mod tests {
 
     #[cfg(feature = "preview")]
     #[test]
+    fn rejects_explicit_preview_member_handler_values_at_render_boundary() {
+        for (name, source) in [
+            (
+                "module-member",
+                "const holder = { get handler() { return () => 1; } }; export function App() { return <button onClick$={holder.handler}>Click</button>; }",
+            ),
+            (
+                "optional-member",
+                "const holder = { handler: () => 1 }; export function App() { return <button onClick$={holder?.handler}>Click</button>; }",
+            ),
+            (
+                "local-member",
+                "export function App() { const holder = { handler: () => 1 }; return <button onClick$={holder.handler}>Click</button>; }",
+            ),
+        ] {
+            let mut input = request(source, &format!("preview-member-{name}.tsx"));
+            input.options.preview = Some(CompilerPreviewOptions {
+                resumable: true,
+                auto_extract_handlers: false,
+                ..CompilerPreviewOptions::default()
+            });
+            let result = compile(input);
+
+            assert!(result.has_errors(), "{name}: {:?}", result.diagnostics);
+            assert!(result.code.is_empty(), "{name}: {}", result.code);
+            assert!(
+                result.artifacts.is_empty(),
+                "{name}: {:?}",
+                result.artifacts
+            );
+            assert!(
+                result.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code.as_str() == "FICT-PREVIEW-HANDLER"
+                        && diagnostic.message.contains("member-expression")
+                }),
+                "{name}: {:?}",
+                result.diagnostics
+            );
+        }
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn keeps_auto_preview_member_handler_values_eager() {
+        let source = "const holder = { handler: () => 1 }; export function App() { return <button onClick={holder.handler}>Click</button>; }";
+        let mut input = request(source, "preview-member-auto.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: true,
+            auto_extract_threshold: 1,
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.artifacts.is_empty(), "{:?}", result.artifacts);
+        assert!(
+            !result.code.contains("fict:compiler-artifact:"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("addEventListener"), "{}", result.code);
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
     fn falls_back_for_auto_preview_handlers_with_lexical_context() {
         let source = "export function App() { return <button onClick={() => { console.log(this); console.log('eager'); }}>Click</button>; }";
         let mut input = request(source, "preview-context-auto.tsx");
