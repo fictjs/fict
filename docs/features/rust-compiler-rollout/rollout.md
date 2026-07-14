@@ -77,7 +77,11 @@ typed into JSON: the bound human checklist is the publication attestation. Any
 missing version, prerelease, patch-only window, same-major removal, mismatched
 review, retained Babel-preset/legacy-IR path, production Babel dependency, or
 stale Core scope/maturity/Changesets/publish/CI boundary reference blocks the
-phase, as does any incomplete review area.
+phase, as does any incomplete review area. The gate also rejects the public
+`./legacy` export, Babel or legacy-subpath imports in production source, Vite
+shadow sources, legacy differential/rollback harnesses, Webpack v1–v5 cache
+compatibility, and a compiler root that does not expose the Rust
+`transform`/`scan`/`analyze` request API.
 
 ## Backend modes
 

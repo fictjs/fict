@@ -182,8 +182,10 @@ Rust-default release, the completed subsequent-minor release, the final legacy
 release, and the breaking legacy-removal release. A separate legacy-removal
 review binds those versions and the Phase D checklist. The readiness gate
 rejects beta release claims, patch-only compatibility windows, same-major
-removal, retained legacy source/dependency edges, stale Core release-boundary
-references, or removal without the approved checklist.
+removal, retained legacy source/dependency edges, the public legacy subpath,
+Babel imports, dual-backend harnesses, old cache-schema readers, a non-native
+compiler root, stale Core release-boundary references, or removal without the
+approved checklist.
 
 ## Human review requirements
 
@@ -210,9 +212,11 @@ pnpm test:release-publish-plan
 
 At Phase D, repository and packed-artifact checks MUST prove that no Core
 runtime dependency, export, loader, fixed-group entry, or release plan refers
-to `@fictjs/babel-preset` or the legacy compiler. Historical package
-installability is verified against the registry separately from the current
-workspace.
+to `@fictjs/babel-preset` or the legacy compiler. The explicit `./legacy`
+subpath, shadow/differential/rollback-only harnesses, production Babel imports,
+and old cache-schema compatibility readers must be absent, while the compiler
+root must expose the Rust request API. Historical package installability is
+verified against the registry separately from the current workspace.
 
 ## Related decisions
 

@@ -257,15 +257,54 @@ function assertLegacyRemovalReview(review, state) {
 }
 
 function assertLegacySourcesRemoved(workspaceRoot) {
-  const retainedPaths = ['packages/babel-preset', 'packages/compiler/src/ir'].filter(relative =>
-    existsSync(path.join(workspaceRoot, relative)),
-  )
+  const retainedPaths = [
+    '.github/compiler-shadow-allowlist.json',
+    'packages/babel-preset',
+    'packages/compiler/src/ir',
+    'packages/compiler/src/legacy.ts',
+    'packages/compiler/test/babel-typescript-integration.test.ts',
+    'packages/compiler/test/differential',
+    'packages/vite-plugin/src/shadow-rollout.ts',
+    'packages/vite-plugin/src/__tests__/shadow-rollout.test.ts',
+    'scripts/compiler-backend-bench.mjs',
+    'scripts/compiler-backend-rollback-drill.mjs',
+    'scripts/compiler-runtime-parity-gate.mjs',
+    'scripts/compiler-shadow-gate.mjs',
+  ].filter(relative => existsSync(path.join(workspaceRoot, relative)))
+  const missingReplacementPaths = [
+    'packages/compiler/package.json',
+    'packages/compiler/src/index.ts',
+  ].filter(relative => !existsSync(path.join(workspaceRoot, relative)))
   const dependencyEdges = []
   const controlPlaneReferences = []
+  const productionSourceReferences = []
+  const legacyCompatibilityMarkers = []
   const packagesRoot = path.join(workspaceRoot, 'packages')
   if (existsSync(packagesRoot)) {
     for (const entry of readdirSync(packagesRoot, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue
+      const sourceRoot = path.join(packagesRoot, entry.name, 'src')
+      if (existsSync(sourceRoot)) {
+        const pending = [sourceRoot]
+        while (pending.length > 0) {
+          const directory = pending.pop()
+          for (const sourceEntry of readdirSync(directory, { withFileTypes: true })) {
+            const filename = path.join(directory, sourceEntry.name)
+            if (sourceEntry.isDirectory()) {
+              pending.push(filename)
+              continue
+            }
+            if (!sourceEntry.isFile() || !/\.(?:[cm]?[jt]sx?|d\.ts)$/.test(sourceEntry.name)) {
+              continue
+            }
+            const source = readFileSync(filename, 'utf8')
+            if (source.includes('@babel/') || source.includes('@fictjs/compiler/legacy')) {
+              productionSourceReferences.push(path.relative(workspaceRoot, filename))
+            }
+          }
+        }
+      }
+
       const manifestPath = path.join(packagesRoot, entry.name, 'package.json')
       if (!existsSync(manifestPath)) continue
       const manifest = readJson(manifestPath, `${entry.name} package manifest`)
@@ -286,6 +325,59 @@ function assertLegacySourcesRemoved(workspaceRoot) {
       }
     }
   }
+
+  const compilerManifestPath = path.join(workspaceRoot, 'packages/compiler/package.json')
+  if (existsSync(compilerManifestPath)) {
+    const compilerManifest = readJson(compilerManifestPath, 'Compiler package manifest')
+    if (!compilerManifest.exports?.['.']) {
+      legacyCompatibilityMarkers.push('packages/compiler/package.json:missing-root-export')
+    }
+    if (compilerManifest.exports?.['./legacy']) {
+      legacyCompatibilityMarkers.push('packages/compiler/package.json:exports[./legacy]')
+    }
+  }
+
+  const compilerRootPath = path.join(workspaceRoot, 'packages/compiler/src/index.ts')
+  if (existsSync(compilerRootPath)) {
+    const compilerRoot = readFileSync(compilerRootPath, 'utf8')
+    const missingNativeApis = ['transformSync', 'transform', 'scan', 'analyze'].filter(
+      api => !new RegExp(`\\b${api}\\b`).test(compilerRoot),
+    )
+    if (missingNativeApis.length > 0) {
+      legacyCompatibilityMarkers.push(
+        `packages/compiler/src/index.ts:missing-native-api(${missingNativeApis.join(',')})`,
+      )
+    }
+    if (/\bcreateFictPlugin\b/.test(compilerRoot)) {
+      legacyCompatibilityMarkers.push('packages/compiler/src/index.ts:createFictPlugin')
+    }
+  }
+
+  for (const [relative, marker] of [
+    ['packages/compiler/src/tooling/minimize.ts', "'rust' | 'legacy'"],
+    ['packages/vite-plugin/src/index.ts', "'legacy' | 'rust' | 'shadow'"],
+    ['packages/webpack-plugin/src/shared.ts', 'isLegacyV'],
+  ]) {
+    const filename = path.join(workspaceRoot, relative)
+    if (existsSync(filename) && readFileSync(filename, 'utf8').includes(marker)) {
+      legacyCompatibilityMarkers.push(`${relative}:${marker}`)
+    }
+  }
+
+  for (const [relative, marker] of [
+    ['package.json', 'test:compiler:differential'],
+    ['package.json', 'test:compiler:shadow'],
+    ['package.json', 'test:compiler:rollback-drill'],
+    ['package.json', 'bench:compiler:backends'],
+    ['package.json', 'release:compiler:rust-rollout'],
+    ['.github/workflows/ci.yml', 'compiler-rollout-candidate'],
+  ]) {
+    const filename = path.join(workspaceRoot, relative)
+    if (existsSync(filename) && readFileSync(filename, 'utf8').includes(marker)) {
+      legacyCompatibilityMarkers.push(`${relative}:${marker}`)
+    }
+  }
+
   for (const relative of [
     'package.json',
     'SCOPE.md',
@@ -302,12 +394,22 @@ function assertLegacySourcesRemoved(workspaceRoot) {
       controlPlaneReferences.push(relative)
     }
   }
-  if (retainedPaths.length > 0 || dependencyEdges.length > 0 || controlPlaneReferences.length > 0) {
+  if (
+    retainedPaths.length > 0 ||
+    missingReplacementPaths.length > 0 ||
+    dependencyEdges.length > 0 ||
+    controlPlaneReferences.length > 0 ||
+    productionSourceReferences.length > 0 ||
+    legacyCompatibilityMarkers.length > 0
+  ) {
     throw new Error(
       `Legacy compiler removal is incomplete: ${[
         ...retainedPaths,
+        ...missingReplacementPaths.map(relative => `missing:${relative}`),
         ...dependencyEdges,
         ...controlPlaneReferences,
+        ...productionSourceReferences,
+        ...legacyCompatibilityMarkers,
       ].join(', ')}`,
     )
   }

@@ -104,9 +104,11 @@ in `.github/compiler-rollout-state.json` and complete
 `.github/compiler-legacy-removal-review.json`. The readiness check requires a
 completed subsequent `x.y.0` compatibility release, a final legacy release,
 and a later breaking `x.0.0` removal release, with the removal review bound to
-those exact versions. It also rejects retained preset/legacy-IR paths and
-production Babel dependency edges, plus stale scope, maturity, Changesets,
-publish allowlist, CI, and API-boundary references.
+those exact versions. It also rejects retained preset/legacy-IR paths,
+`./legacy` exports, production Babel or legacy-subpath imports, Vite shadow and
+dual-backend harnesses, old Webpack cache readers, and a compiler root missing
+the Rust request API, plus stale scope, maturity, Changesets, publish allowlist,
+CI, and API-boundary references.
 
 For an emergency reversal, follow
 `docs/operations/runbooks/compiler-backend-rollback.md`. Roll back the whole

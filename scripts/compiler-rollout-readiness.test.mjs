@@ -119,6 +119,7 @@ function candidateEvidence(overrides = {}) {
 async function fixture(state, review, evidence, removalReview) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'fict-rollout-'))
   await mkdir(path.join(root, '.github'), { recursive: true })
+  await mkdir(path.join(root, 'packages', 'compiler', 'src'), { recursive: true })
   await mkdir(path.join(root, 'packages', 'vite-plugin', 'src'), { recursive: true })
   await writeFile(
     path.join(root, '.github', 'compiler-rollout-state.json'),
@@ -134,6 +135,14 @@ async function fixture(state, review, evidence, removalReview) {
       legacyRemovalReviewPath: '.github/compiler-legacy-removal-review.json',
       ...state,
     }),
+  )
+  await writeFile(
+    path.join(root, 'packages', 'compiler', 'package.json'),
+    JSON.stringify({ name: '@fictjs/compiler', exports: { '.': './dist/index.js' } }),
+  )
+  await writeFile(
+    path.join(root, 'packages', 'compiler', 'src', 'index.ts'),
+    "export { transformSync, transform, scan, analyze } from './native-loader'",
   )
   await writeFile(
     path.join(root, 'packages', 'vite-plugin', 'src', 'index.ts'),
@@ -400,6 +409,51 @@ test('legacy removal requires a bound review and a completed stable minor window
   await rm(path.join(root, 'packages', 'vite-plugin', 'package.json'))
   await writeFile(path.join(root, 'SCOPE.md'), '@fictjs/babel-preset is still Core')
   assert.throws(() => validateCompilerRolloutReadiness({ root }), /SCOPE\.md/)
+
+  await rm(path.join(root, 'SCOPE.md'))
+  await writeFile(path.join(root, 'packages', 'compiler', 'src', 'legacy.ts'), 'export {}')
+  assert.throws(() => validateCompilerRolloutReadiness({ root }), /src\/legacy\.ts/)
+
+  await rm(path.join(root, 'packages', 'compiler', 'src', 'legacy.ts'))
+  await writeFile(
+    path.join(root, 'packages', 'compiler', 'package.json'),
+    JSON.stringify({
+      name: '@fictjs/compiler',
+      exports: { '.': './dist/index.js', './legacy': './dist/legacy.js' },
+    }),
+  )
+  assert.throws(() => validateCompilerRolloutReadiness({ root }), /exports\[\.\/legacy\]/)
+
+  await writeFile(
+    path.join(root, 'packages', 'compiler', 'package.json'),
+    JSON.stringify({ name: '@fictjs/compiler', exports: { '.': './dist/index.js' } }),
+  )
+  await writeFile(
+    path.join(root, 'packages', 'compiler', 'src', 'index.ts'),
+    "import type { NodePath } from '@babel/core'; export { transformSync, transform, scan, analyze } from './native-loader'",
+  )
+  assert.throws(() => validateCompilerRolloutReadiness({ root }), /compiler\/src\/index\.ts/)
+
+  await writeFile(
+    path.join(root, 'packages', 'compiler', 'src', 'index.ts'),
+    "export { transformSync, transform, scan, analyze } from './native-loader'",
+  )
+  await writeFile(
+    path.join(root, 'packages', 'compiler', 'src', 'index.ts'),
+    "export { transformSync } from './native-loader'",
+  )
+  assert.throws(() => validateCompilerRolloutReadiness({ root }), /missing-native-api/)
+
+  await writeFile(
+    path.join(root, 'packages', 'compiler', 'src', 'index.ts'),
+    "export { transformSync, transform, scan, analyze } from './native-loader'",
+  )
+  await mkdir(path.join(root, 'packages', 'webpack-plugin', 'src'), { recursive: true })
+  await writeFile(
+    path.join(root, 'packages', 'webpack-plugin', 'src', 'shared.ts'),
+    'const isLegacyV1 = true',
+  )
+  assert.throws(() => validateCompilerRolloutReadiness({ root }), /isLegacyV/)
 })
 
 test('legacy removal rejects a same-major release after 1.0', async t => {
