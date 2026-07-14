@@ -1159,11 +1159,12 @@ fn unresolved_typeof_has_no_false_value_dependency_and_a_primitive_shape() {
 fn context_values_have_no_false_local_dependencies_and_keep_runtime_shapes() {
     let frontend = build_hir(
         r#"
-            export function inspect() {
-                const receiver = this;
-                const target = new.target;
-                const metadata = import.meta;
-                return [receiver, target, metadata];
+        export function inspect() {
+            const receiver = this;
+            const args = arguments;
+            const target = new.target;
+            const metadata = import.meta;
+            return [receiver, args, target, metadata];
             }
         "#,
         OxcCompileOptions {
@@ -1201,6 +1202,7 @@ fn context_values_have_no_false_local_dependencies_and_keep_runtime_shapes() {
 
     for (name, kind, expected_shape) in [
         ("receiver", ContextValueKind::This, ShapeKind::Unknown),
+        ("args", ContextValueKind::Arguments, ShapeKind::Object),
         ("target", ContextValueKind::NewTarget, ShapeKind::Unknown),
         ("metadata", ContextValueKind::ImportMeta, ShapeKind::Object),
     ] {

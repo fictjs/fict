@@ -664,6 +664,8 @@ pub enum UnaryOperator {
 pub enum ContextValueKind {
     /// Current `this` binding, including lexical arrow-function capture semantics.
     This,
+    /// Current function's `arguments` object, including lexical arrow-function capture semantics.
+    Arguments,
     /// Constructor target exposed through `new.target`.
     NewTarget,
     /// Per-module metadata object exposed through `import.meta`.

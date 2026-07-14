@@ -731,10 +731,10 @@ fn structural_value_shape(
             array_length: None,
         },
         HirInstructionKind::Context {
-            kind: ContextValueKind::ImportMeta,
+            kind: kind @ (ContextValueKind::Arguments | ContextValueKind::ImportMeta),
         } => ValueShape {
             kind: ShapeKind::Object,
-            source: ShapeSource::ContextValue(value, ContextValueKind::ImportMeta),
+            source: ShapeSource::ContextValue(value, *kind),
             known_keys: Vec::new(),
             mutable_keys: Vec::new(),
             complete_key_set: false,

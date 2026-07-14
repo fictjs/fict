@@ -3036,13 +3036,15 @@ fn materializes_this_new_target_and_import_meta_as_context_values() {
     let source = r#"
         export function inspect() {
             const receiver = this;
+            const args = arguments;
             const target = new.target;
             const metadata = import.meta;
             const receiverField = this.value;
+            const argLength = arguments.length;
             const targetField = new.target.name;
             const url = import.meta.url;
-            const nested = () => [this, new.target, import.meta];
-            return [receiver, target, metadata, receiverField, targetField, url, nested];
+            const nested = () => [this, arguments, new.target, import.meta];
+            return [receiver, args, target, metadata, receiverField, argLength, targetField, url, nested];
         }
     "#;
     let output = build_hir(
@@ -3069,6 +3071,7 @@ fn materializes_this_new_target_and_import_meta_as_context_values() {
 
     for (kind, authored, expected_count) in [
         (ContextValueKind::This, "this", 2),
+        (ContextValueKind::Arguments, "arguments", 2),
         (ContextValueKind::NewTarget, "new.target", 2),
         (ContextValueKind::ImportMeta, "import.meta", 2),
     ] {
@@ -3124,6 +3127,7 @@ fn materializes_this_new_target_and_import_meta_as_context_values() {
 
     for (name, kind) in [
         ("receiver", ContextValueKind::This),
+        ("args", ContextValueKind::Arguments),
         ("target", ContextValueKind::NewTarget),
         ("metadata", ContextValueKind::ImportMeta),
     ] {
@@ -3134,6 +3138,7 @@ fn materializes_this_new_target_and_import_meta_as_context_values() {
     }
     for (name, kind) in [
         ("receiverField", ContextValueKind::This),
+        ("argLength", ContextValueKind::Arguments),
         ("targetField", ContextValueKind::NewTarget),
         ("url", ContextValueKind::ImportMeta),
     ] {
@@ -3152,9 +3157,11 @@ fn materializes_this_new_target_and_import_meta_as_context_values() {
 
     for name in [
         "receiver",
+        "args",
         "target",
         "metadata",
         "receiverField",
+        "argLength",
         "targetField",
         "url",
     ] {
@@ -3174,7 +3181,7 @@ fn materializes_this_new_target_and_import_meta_as_context_values() {
             candidate.flags.is_arrow
                 && candidate.origin.primary_span.is_some_and(|span| {
                     &source[span.start() as usize..span.end() as usize]
-                        == "() => [this, new.target, import.meta]"
+                        == "() => [this, arguments, new.target, import.meta]"
                 })
         })
         .expect("nested lexical-context arrow");
@@ -3192,12 +3199,93 @@ fn materializes_this_new_target_and_import_meta_as_context_values() {
         nested_contexts,
         [
             ContextValueKind::This,
+            ContextValueKind::Arguments,
             ContextValueKind::NewTarget,
             ContextValueKind::ImportMeta,
         ]
         .into_iter()
         .collect(),
         "arrow-owned context values retain lexical function form"
+    );
+}
+
+#[test]
+fn keeps_module_and_shadowed_arguments_outside_function_context_values() {
+    let source = r#"
+        const moduleArgs = arguments;
+        function shadow(arguments) {
+            return arguments;
+        }
+    "#;
+    let output = build_hir(
+        source,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Script,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions::default(),
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let hir = output.hir.expect("verified arguments ownership HIR");
+    let arguments_global = hir
+        .globals
+        .iter()
+        .find(|global| global.name == "arguments")
+        .expect("module arguments remains an unresolved host global")
+        .id;
+    let root = &hir.functions[hir.root_function.as_usize()];
+    assert!(
+        root.blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .any(|instruction| matches!(
+                instruction.kind,
+                HirInstructionKind::Read {
+                    place: fict_hir::Place {
+                        base: fict_hir::PlaceBase::Global(global),
+                        ..
+                    },
+                } if global == arguments_global
+            ))
+    );
+
+    let shadow = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "shadow")
+        })
+        .expect("shadow function");
+    assert!(
+        !shadow
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .any(|instruction| matches!(
+                instruction.kind,
+                HirInstructionKind::Context {
+                    kind: ContextValueKind::Arguments
+                }
+            ))
+    );
+    assert!(
+        shadow
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .any(|instruction| matches!(
+                instruction.kind,
+                HirInstructionKind::Read {
+                    place: fict_hir::Place {
+                        base: fict_hir::PlaceBase::Local(_),
+                        ..
+                    },
+                }
+            ))
     );
 }
 

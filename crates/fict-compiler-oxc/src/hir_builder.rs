@@ -667,6 +667,16 @@ impl<'a> Visit<'a> for TypedExpressionCollector<'_> {
                     kind: ContextValueKind::This,
                 },
             }),
+            Expression::Identifier(identifier)
+                if is_context_arguments_reference(self.scoping, identifier) =>
+            {
+                Some(TypedExpressionFact {
+                    span: source_span(identifier.span),
+                    kind: TypedExpressionKind::Context {
+                        kind: ContextValueKind::Arguments,
+                    },
+                })
+            }
             Expression::MetaProperty(meta_property) => {
                 context_value_kind(meta_property).map(|kind| TypedExpressionFact {
                     span: source_span(meta_property.span),
@@ -3521,6 +3531,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         .get(&symbol)
                         .is_some_and(|binding| reactive_targets.contains(binding)),
                     PlannedPlaceBase::UnresolvedGlobal { .. }
+                    | PlannedPlaceBase::Context { .. }
                     | PlannedPlaceBase::Expression { .. } => false,
                 };
                 if reactive {
@@ -3567,6 +3578,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     PlannedPlaceBase::Binding(_) if read.reactive => reactive_read_semantics(),
                     PlannedPlaceBase::Binding(_) => InstructionSemantics::PURE_EAGER,
                     PlannedPlaceBase::UnresolvedGlobal { .. }
+                    | PlannedPlaceBase::Context { .. }
                     | PlannedPlaceBase::Expression { .. } => {
                         InstructionSemantics::CONSERVATIVE_EAGER
                     }
@@ -3816,6 +3828,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     continue;
                 }
                 let owner = self.function_owner_for_span(span);
+                if name == "arguments" && owner != FunctionId::new(0) {
+                    continue;
+                }
                 if span_is_within_owned_pattern(owner, span, opaque_patterns) {
                     continue;
                 }
@@ -4074,14 +4089,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 },
                 InstructionSemantics::CONSERVATIVE_EAGER,
             ),
-            TypedExpressionKind::Context { kind } => self.push_value_to_block(
-                owner,
-                block,
-                ValueKind::InstructionResult,
-                origin,
-                HirInstructionKind::Context { kind: *kind },
-                context_value_semantics(*kind),
-            ),
+            TypedExpressionKind::Context { kind } => {
+                self.materialize_context_value(owner, block, expression.span, *kind)
+            }
             TypedExpressionKind::Delete { target } => {
                 let deletes_nested_reactive_value = matches!(
                     target,
@@ -5011,6 +5021,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 let global = self.intern_global(name, Origin::source(*span));
                 fict_hir::PlaceBase::Global(global)
             }
+            PlannedPlaceBase::Context { kind, span } => fict_hir::PlaceBase::Value(
+                self.materialize_context_value(owner, block, *span, *kind),
+            ),
             PlannedPlaceBase::Expression { span, has_effects } => {
                 let value = self.control_expression_value(owner, block, *span, true, *has_effects);
                 fict_hir::PlaceBase::Value(value)
@@ -5048,6 +5061,39 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             });
         }
         Some(fict_hir::Place { base, projections })
+    }
+
+    fn materialize_context_value(
+        &mut self,
+        owner: FunctionId,
+        block: BlockId,
+        span: SourceSpan,
+        kind: ContextValueKind,
+    ) -> ValueId {
+        if let Some(value) = self.functions[owner.as_usize()].blocks[block.as_usize()]
+            .instructions
+            .iter()
+            .rev()
+            .find_map(|instruction| {
+                (instruction.origin.primary_span == Some(span)
+                    && matches!(
+                        instruction.kind,
+                        HirInstructionKind::Context { kind: candidate } if candidate == kind
+                    ))
+                .then_some(instruction.result)
+                .flatten()
+            })
+        {
+            return value;
+        }
+        self.push_value_to_block(
+            owner,
+            block,
+            ValueKind::InstructionResult,
+            Origin::source(span),
+            HirInstructionKind::Context { kind },
+            context_value_semantics(kind),
+        )
     }
 
     fn mark_span_deferred(&mut self, owner: FunctionId, block: BlockId, span: SourceSpan) {
@@ -7415,8 +7461,18 @@ struct PlannedPlace {
 #[derive(Debug, Clone)]
 enum PlannedPlaceBase {
     Binding(SymbolId),
-    UnresolvedGlobal { name: String, span: SourceSpan },
-    Expression { span: SourceSpan, has_effects: bool },
+    UnresolvedGlobal {
+        name: String,
+        span: SourceSpan,
+    },
+    Context {
+        kind: ContextValueKind,
+        span: SourceSpan,
+    },
+    Expression {
+        span: SourceSpan,
+        has_effects: bool,
+    },
 }
 
 fn planned_global_reference(place: &PlannedPlace) -> Option<(String, SourceSpan)> {
@@ -9161,7 +9217,9 @@ impl<'a> Visit<'a> for MutationCollector<'_> {
             match place.as_ref().map(|place| &place.base) {
                 Some(PlannedPlaceBase::Binding(symbol)) => Some(*symbol),
                 Some(
-                    PlannedPlaceBase::UnresolvedGlobal { .. } | PlannedPlaceBase::Expression { .. },
+                    PlannedPlaceBase::UnresolvedGlobal { .. }
+                    | PlannedPlaceBase::Context { .. }
+                    | PlannedPlaceBase::Expression { .. },
                 )
                 | None => None,
             }
@@ -9212,7 +9270,9 @@ impl<'a> Visit<'a> for MutationCollector<'_> {
             match place.as_ref().map(|place| &place.base) {
                 Some(PlannedPlaceBase::Binding(symbol)) => Some(*symbol),
                 Some(
-                    PlannedPlaceBase::UnresolvedGlobal { .. } | PlannedPlaceBase::Expression { .. },
+                    PlannedPlaceBase::UnresolvedGlobal { .. }
+                    | PlannedPlaceBase::Context { .. }
+                    | PlannedPlaceBase::Expression { .. },
                 )
                 | None => None,
             }
@@ -9685,6 +9745,18 @@ fn planned_expression_place(
     expression: &Expression<'_>,
 ) -> Option<PlannedPlace> {
     match expression.get_inner_expression() {
+        Expression::Identifier(identifier)
+            if is_context_arguments_reference(scoping, identifier) =>
+        {
+            Some(PlannedPlace {
+                base: PlannedPlaceBase::Context {
+                    kind: ContextValueKind::Arguments,
+                    span: source_span(identifier.span),
+                },
+                projections: Vec::new(),
+                root_reference_span: Some(source_span(identifier.span)),
+            })
+        }
         Expression::Identifier(identifier) => {
             planned_reference_identifier_place(scoping, identifier)
                 .or_else(|| Some(planned_expression_base(expression)))
@@ -9743,6 +9815,31 @@ fn identifier_symbol(scoping: &Scoping, identifier: &IdentifierReference<'_>) ->
     (!reference_is_inside_with(scoping, reference.scope_id()))
         .then(|| reference.symbol_id())
         .flatten()
+}
+
+fn is_context_arguments_reference(scoping: &Scoping, identifier: &IdentifierReference<'_>) -> bool {
+    if identifier.name != "arguments" {
+        return false;
+    }
+    let Some(reference) = identifier.reference_id.get() else {
+        return false;
+    };
+    let reference = scoping.get_reference(reference);
+    reference.symbol_id().is_none()
+        && !reference_is_inside_with(scoping, reference.scope_id())
+        && reference_is_inside_function(scoping, reference.scope_id())
+}
+
+fn reference_is_inside_function(scoping: &Scoping, mut scope: OxcScopeId) -> bool {
+    loop {
+        if scoping.scope_flags(scope).is_function() {
+            return true;
+        }
+        let Some(parent) = scoping.scope_parent_id(scope) else {
+            return false;
+        };
+        scope = parent;
+    }
 }
 
 fn is_unresolved_typeof(
@@ -10290,9 +10387,9 @@ fn context_value_semantics(kind: ContextValueKind) -> InstructionSemantics {
             // Accessing `this` before `super()` in a derived constructor throws.
             may_throw: true,
         },
-        ContextValueKind::NewTarget | ContextValueKind::ImportMeta => {
-            InstructionSemantics::PURE_EAGER
-        }
+        ContextValueKind::Arguments
+        | ContextValueKind::NewTarget
+        | ContextValueKind::ImportMeta => InstructionSemantics::PURE_EAGER,
     }
 }
 
