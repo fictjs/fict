@@ -36,7 +36,7 @@
     "test:compiler:native-host": "pnpm --filter @fictjs/compiler build && pnpm build:compiler:native-host && node scripts/native-compiler-host-smoke.mjs",
     "test:compiler:native-runtime": "pnpm --filter @fictjs/runtime build && pnpm --filter fict build && pnpm --filter @fictjs/compiler build && cargo build --release -p fict-compiler-napi && node scripts/prepare-native-compiler-addon.mjs && node --test scripts/native-compiler-runtime.test.mjs",
     "test:compiler:native-types": "pnpm --filter @fictjs/compiler build && tsc -p scripts/fixtures/native-compiler-types/tsconfig.json",
-    "test:vite:native": "pnpm --filter @fictjs/compiler build && pnpm --filter @fictjs/vite-plugin build && pnpm build:compiler:native-host && node scripts/native-vite-plugin-smoke.mjs",
+    "test:vite:native": "pnpm --filter @fictjs/compiler build && pnpm --filter @fictjs/vite-plugin build && pnpm build:compiler:native-host && node scripts/native-vite-plugin-smoke.mjs && node scripts/native-vite-library-metadata-smoke.mjs",
     "test:compiler:fuzz-build": "cargo +nightly-2026-04-28 fuzz build compiler_pipeline",
     "test:compiler:fuzz-smoke": "cargo +nightly-2026-04-28 fuzz run compiler_pipeline -- -runs=5000 -timeout=10 -rss_limit_mb=4096",
     "test:runtime-package-smoke": "node scripts/runtime-package-smoke.mjs",
