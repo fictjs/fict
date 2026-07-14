@@ -142,7 +142,9 @@ async function fixture(state, review, evidence, removalReview) {
   )
   await writeFile(
     path.join(root, 'packages', 'compiler', 'src', 'index.ts'),
-    "export { transformSync, transform, scan, analyze } from './native-loader'",
+    state.phase === 'beta'
+      ? "export { createFictPlugin as default } from './legacy-compiler'\nexport * from './legacy-compiler'"
+      : "export { nativeCompilerInfo, transformSync, transform, scanSync, scan, analyzeSync, analyze } from './native-loader'",
   )
   await writeFile(
     path.join(root, 'packages', 'vite-plugin', 'src', 'index.ts'),
@@ -175,6 +177,19 @@ test('beta keeps legacy default without claiming human approval', async t => {
   )
 })
 
+test('beta rejects a native package root before promotion', async t => {
+  const root = await fixture({ phase: 'beta', viteDefaultBackend: 'legacy' })
+  t.after(() => rm(root, { recursive: true }))
+  await writeFile(
+    path.join(root, 'packages', 'compiler', 'src', 'index.ts'),
+    "export { nativeCompilerInfo, transformSync, transform, scanSync, scan, analyzeSync, analyze } from './native-loader'",
+  )
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root }),
+    /preserve the legacy compiler package root/,
+  )
+})
+
 test('rust default requires chained candidates and a checklist bound to their digest', async t => {
   const evidence = candidateEvidence()
   const { candidateDigest } = evidence
@@ -198,6 +213,38 @@ test('rust default requires chained candidates and a checklist bound to their di
     }),
   )
   assert.throws(() => validateCompilerRolloutReadiness({ root }), /does not bind/)
+})
+
+test('rust default rejects a legacy or incomplete native package root', async t => {
+  const evidence = candidateEvidence()
+  const root = await fixture(
+    rustDefaultState(),
+    {
+      schemaVersion: 2,
+      status: 'approved',
+      candidateDigest: evidence.candidateDigest,
+      reviewer: 'maintainer',
+      areas: approvedAreas,
+    },
+    evidence,
+  )
+  t.after(() => rm(root, { recursive: true }))
+  const compilerRootPath = path.join(root, 'packages', 'compiler', 'src', 'index.ts')
+
+  await writeFile(
+    compilerRootPath,
+    "export { createFictPlugin as default } from './legacy-compiler'\nexport * from './legacy-compiler'",
+  )
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root }),
+    /must expose only the native request API/,
+  )
+
+  await writeFile(
+    compilerRootPath,
+    "export { nativeCompilerInfo, transformSync, transform, scan, analyze } from './native-loader'",
+  )
+  assert.throws(() => validateCompilerRolloutReadiness({ root }), /scanSync,analyzeSync/)
 })
 
 test('rust default rejects candidate content modified after sealing', async t => {
@@ -434,13 +481,13 @@ test('legacy removal requires a bound review and a completed stable minor window
   )
   await writeFile(
     path.join(root, 'packages', 'compiler', 'src', 'index.ts'),
-    "import type { NodePath } from '@babel/core'; export { transformSync, transform, scan, analyze } from './native-loader'",
+    "import type { NodePath } from '@babel/core'; export { nativeCompilerInfo, transformSync, transform, scanSync, scan, analyzeSync, analyze } from './native-loader'",
   )
   assert.throws(() => validateCompilerRolloutReadiness({ root }), /compiler\/src\/index\.ts/)
 
   await writeFile(
     path.join(root, 'packages', 'compiler', 'src', 'index.ts'),
-    "export { transformSync, transform, scan, analyze } from './native-loader'",
+    "export { nativeCompilerInfo, transformSync, transform, scanSync, scan, analyzeSync, analyze } from './native-loader'",
   )
   await writeFile(
     path.join(root, 'packages', 'compiler', 'src', 'index.ts'),
@@ -450,7 +497,7 @@ test('legacy removal requires a bound review and a completed stable minor window
 
   await writeFile(
     path.join(root, 'packages', 'compiler', 'src', 'index.ts'),
-    "export { transformSync, transform, scan, analyze } from './native-loader'",
+    "export { nativeCompilerInfo, transformSync, transform, scanSync, scan, analyzeSync, analyze } from './native-loader'",
   )
   await mkdir(path.join(root, 'packages', 'webpack-plugin', 'src'), { recursive: true })
   await writeFile(

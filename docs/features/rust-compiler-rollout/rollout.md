@@ -32,6 +32,10 @@ and planned legacy-removal releases; beta keeps all four values `null`. Evidence
 and review paths must remain workspace-relative. The normal beta readiness check
 validates both pending review documents, so an unknown area, non-boolean value,
 or partial approval fails before promotion work starts.
+The same check binds the compiler package root to the phase: beta MUST retain
+the legacy facade, while `rust-default` and `legacy-removal` MUST expose the
+complete native request API without importing the legacy implementation.
+Changing only the state file or only one public default therefore fails closed.
 
 ## Rollout states
 

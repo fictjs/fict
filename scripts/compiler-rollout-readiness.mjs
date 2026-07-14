@@ -29,6 +29,15 @@ const REQUIRED_LEGACY_REMOVAL_AREAS = [
   'coreScopeChanges',
   'legacyDependencyRemoval',
 ].sort()
+const REQUIRED_NATIVE_ROOT_APIS = [
+  'nativeCompilerInfo',
+  'transformSync',
+  'transform',
+  'scanSync',
+  'scan',
+  'analyzeSync',
+  'analyze',
+]
 
 function readJson(filename, label) {
   if (!existsSync(filename)) throw new Error(`${label} does not exist: ${filename}`)
@@ -228,6 +237,49 @@ function assertReleaseWindow(state) {
   }
 }
 
+function assertCompilerRootMatchesPhase(workspaceRoot, phase) {
+  const manifestPath = path.join(workspaceRoot, 'packages/compiler/package.json')
+  const manifest = readJson(manifestPath, 'Compiler package manifest')
+  if (!manifest.exports?.['.']) {
+    throw new Error('Compiler package must expose its package root during rollout')
+  }
+
+  const compilerRootPath = path.join(workspaceRoot, 'packages/compiler/src/index.ts')
+  if (!existsSync(compilerRootPath)) {
+    throw new Error('Compiler package root source does not exist')
+  }
+  const compilerRoot = readFileSync(compilerRootPath, 'utf8')
+  const importsLegacyImplementation = compilerRoot.includes("from './legacy-compiler'")
+  const importsNativeFacade = compilerRoot.includes("from './native-loader'")
+
+  if (phase === 'beta') {
+    if (
+      !importsLegacyImplementation ||
+      importsNativeFacade ||
+      !/\bcreateFictPlugin\b/.test(compilerRoot)
+    ) {
+      throw new Error('Beta rollout must preserve the legacy compiler package root facade')
+    }
+    return
+  }
+
+  const missingNativeApis = REQUIRED_NATIVE_ROOT_APIS.filter(
+    api => !new RegExp(`\\b${api}\\b`).test(compilerRoot),
+  )
+  if (
+    !importsNativeFacade ||
+    importsLegacyImplementation ||
+    /\bcreateFictPlugin\b/.test(compilerRoot) ||
+    missingNativeApis.length > 0
+  ) {
+    const missing =
+      missingNativeApis.length > 0 ? `: missing-native-api(${missingNativeApis.join(',')})` : ''
+    throw new Error(
+      `Rust-default compiler package root must expose only the native request API${missing}`,
+    )
+  }
+}
+
 function assertLegacyRemovalReview(review, state) {
   if (
     review.schemaVersion !== 1 ||
@@ -341,7 +393,7 @@ function assertLegacySourcesRemoved(workspaceRoot) {
   const compilerRootPath = path.join(workspaceRoot, 'packages/compiler/src/index.ts')
   if (existsSync(compilerRootPath)) {
     const compilerRoot = readFileSync(compilerRootPath, 'utf8')
-    const missingNativeApis = ['transformSync', 'transform', 'scan', 'analyze'].filter(
+    const missingNativeApis = REQUIRED_NATIVE_ROOT_APIS.filter(
       api => !new RegExp(`\\b${api}\\b`).test(compilerRoot),
     )
     if (missingNativeApis.length > 0) {
@@ -501,6 +553,7 @@ export function validateCompilerRolloutReadiness(options = {}) {
   const legacyRemovalReview = readJson(legacyRemovalReviewPath, 'Compiler legacy-removal review')
   assertReviewDocumentShape(review)
   assertLegacyRemovalReviewDocumentShape(legacyRemovalReview)
+  assertCompilerRootMatchesPhase(workspaceRoot, state.phase)
   const source = readFileSync(sourcePath, 'utf8')
   const defaultMatch = source.match(
     /backendOption\s*\?\?\s*backendFromEnvironment\s*\?\?\s*'(legacy|rust)'/,
