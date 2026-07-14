@@ -25,11 +25,13 @@ use super::emit_codegen::ZeroSpans;
 
 const HANDLER_SENTINEL: &str = "__FICT_PREVIEW_HANDLER_EXPRESSION__";
 const PROP_DEFAULT_SENTINEL_PREFIX: &str = "__FICT_PREVIEW_PROP_DEFAULT_";
+const LOCAL_FUNCTION_SENTINEL_PREFIX: &str = "__FICT_PREVIEW_LOCAL_FUNCTION_";
 
 pub(crate) struct PreparedHandler<'a> {
     pub plan: EmitPreviewHandler,
     pub expression: Expression<'a>,
     pub prop_defaults: BTreeMap<BindingId, Expression<'a>>,
+    pub local_functions: BTreeMap<BindingId, Expression<'a>>,
 }
 
 pub(crate) fn generate_handler_artifact<'a>(
@@ -52,6 +54,9 @@ pub(crate) fn generate_handler_artifact<'a>(
     }
     let mut identifiers = IdentifierCollector::default();
     identifiers.visit_expression(&prepared.expression);
+    for function in prepared.local_functions.values() {
+        identifiers.visit_expression(function);
+    }
     for capture in &prepared.plan.lexical_captures {
         identifiers.names.insert(capture.local.clone());
     }
@@ -65,6 +70,9 @@ pub(crate) fn generate_handler_artifact<'a>(
         identifiers.names.insert(capture.local.clone());
     }
     if let Some(local) = &prepared.plan.local_handler {
+        identifiers.names.insert(local.local.clone());
+    }
+    for local in &prepared.plan.local_functions {
         identifiers.names.insert(local.local.clone());
     }
     if let Some(local) = &prepared.plan.props_object_local {
@@ -224,6 +232,13 @@ pub(crate) fn generate_handler_artifact<'a>(
             wrapper.push_str("]);\n");
         }
     }
+    for local in &prepared.plan.local_functions {
+        wrapper.push_str("const ");
+        wrapper.push_str(&local.local);
+        wrapper.push_str(" = ");
+        wrapper.push_str(&local_function_sentinel(local.binding));
+        wrapper.push_str(";\n");
+    }
     if let Some(local) = &prepared.plan.local_handler {
         wrapper.push_str("const ");
         wrapper.push_str(&local.local);
@@ -309,20 +324,35 @@ pub(crate) fn generate_handler_artifact<'a>(
             "prepared handler does not contain every planned prop default expression",
         )]);
     }
+    let expected_local_functions = prepared.plan.local_functions.len();
+    if prepared.local_functions.len() != expected_local_functions {
+        return Err(vec![preview_error(
+            "FICT-PREVIEW-ARTIFACT",
+            "prepared handler does not contain every planned local function dependency",
+        )]);
+    }
     let default_replacements = std::mem::take(&mut prepared.prop_defaults)
         .into_iter()
         .map(|(binding, expression)| (prop_default_sentinel(binding), expression))
         .collect();
+    let local_function_replacements = std::mem::take(&mut prepared.local_functions)
+        .into_iter()
+        .map(|(binding, expression)| (local_function_sentinel(binding), expression))
+        .collect();
     let mut replacer = ArtifactExpressionReplacer {
         handler: Some(prepared.expression),
         defaults: default_replacements,
+        local_functions: local_function_replacements,
         handler_replacements: 0,
         default_replacements: 0,
+        local_function_replacements: 0,
     };
     replacer.visit_program(&mut program);
     if replacer.handler_replacements != 1
         || replacer.default_replacements != expected_prop_defaults
         || !replacer.defaults.is_empty()
+        || replacer.local_function_replacements != expected_local_functions
+        || !replacer.local_functions.is_empty()
     {
         return Err(vec![preview_error(
             "FICT-PREVIEW-ARTIFACT",
@@ -414,8 +444,10 @@ impl<'a> Visit<'a> for IdentifierCollector {
 struct ArtifactExpressionReplacer<'a> {
     handler: Option<Expression<'a>>,
     defaults: BTreeMap<String, Expression<'a>>,
+    local_functions: BTreeMap<String, Expression<'a>>,
     handler_replacements: usize,
     default_replacements: usize,
+    local_function_replacements: usize,
 }
 
 impl<'a> VisitMut<'a> for ArtifactExpressionReplacer<'a> {
@@ -434,6 +466,11 @@ impl<'a> VisitMut<'a> for ArtifactExpressionReplacer<'a> {
                 self.default_replacements += 1;
                 return;
             }
+            if let Some(replacement) = self.local_functions.remove(identifier.name.as_str()) {
+                *expression = replacement;
+                self.local_function_replacements += 1;
+                return;
+            }
         }
         walk_mut::walk_expression(self, expression);
     }
@@ -441,6 +478,10 @@ impl<'a> VisitMut<'a> for ArtifactExpressionReplacer<'a> {
 
 fn prop_default_sentinel(binding: BindingId) -> String {
     format!("{PROP_DEFAULT_SENTINEL_PREFIX}{}__", binding.as_usize())
+}
+
+fn local_function_sentinel(binding: BindingId) -> String {
+    format!("{LOCAL_FUNCTION_SENTINEL_PREFIX}{}__", binding.as_usize())
 }
 
 fn helper_alias(

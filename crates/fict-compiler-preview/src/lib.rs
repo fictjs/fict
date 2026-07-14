@@ -227,6 +227,34 @@ pub fn attach_preview_plan(
                 candidate.origin,
                 handler_function,
             );
+            let (local_functions, local_function_contexts) = expand_local_function_dependencies(
+                hir,
+                owner,
+                local_handler.as_ref().map(|handler| handler.binding),
+                &mut captures,
+            );
+            if !local_function_contexts.is_empty() {
+                if candidate.explicit {
+                    diagnostics.push(
+                        preview_error(
+                            "FICT-PREVIEW-CONTEXT",
+                            format!(
+                                "resumable handler function dependencies capture lexical execution context: {}",
+                                local_function_contexts.join(", ")
+                            ),
+                        )
+                        .with_primary_span(handler_origin)
+                        .with_help(
+                            "use ordinary helper functions with their own dynamic context, or remove the `$` suffix",
+                        ),
+                    );
+                }
+                continue;
+            }
+            let local_function_bindings: BTreeSet<_> = local_functions
+                .iter()
+                .map(|function| function.binding)
+                .collect();
             let non_serializable_signals = non_serializable_signal_bindings(owner, owner_emit);
             let slot_bindings: BTreeMap<_, _> = owner_emit
                 .slots
@@ -265,6 +293,7 @@ pub fn attach_preview_plan(
                 hir,
                 owner,
                 handler_function,
+                &local_functions,
                 candidate.origin,
                 props_parameter_binding,
                 &prop_bindings,
@@ -319,6 +348,7 @@ pub fn attach_preview_plan(
                 if local_handler
                     .as_ref()
                     .is_some_and(|handler| handler.binding == binding)
+                    || local_function_bindings.contains(&binding)
                 {
                     continue;
                 }
@@ -442,6 +472,7 @@ pub fn attach_preview_plan(
                     .map(|binding| hir.bindings[binding.as_usize()].display_name.clone()),
                 module_captures,
                 local_handler,
+                local_functions,
             });
         }
     }
@@ -1022,6 +1053,80 @@ fn handler_captured_bindings(
     collector.bindings
 }
 
+fn expand_local_function_dependencies(
+    hir: &HirFile,
+    owner: &fict_hir::HirFunction,
+    direct_handler: Option<BindingId>,
+    captures: &mut BTreeSet<BindingId>,
+) -> (Vec<EmitPreviewLocalHandler>, Vec<String>) {
+    let mut functions = Vec::new();
+    let mut contexts = Vec::new();
+    let mut visited = BTreeSet::new();
+    let mut pending: Vec<_> = captures.iter().copied().collect();
+    while let Some(binding) = pending.pop() {
+        if !visited.insert(binding)
+            || direct_handler == Some(binding)
+            || binding_is_module_scoped(hir, binding)
+        {
+            continue;
+        }
+        let candidates: Vec<_> = hir
+            .functions
+            .iter()
+            .filter(|function| function.parent == owner.id && function.binding == Some(binding))
+            .collect();
+        let [function] = candidates.as_slice() else {
+            continue;
+        };
+        let Some(binding_info) = hir.bindings.get(binding.as_usize()) else {
+            continue;
+        };
+        if !matches!(
+            binding_info.kind,
+            BindingKind::Const | BindingKind::Function
+        ) || binding_has_runtime_write(hir, binding)
+        {
+            continue;
+        }
+
+        if function.flags.is_arrow {
+            contexts.extend(
+                arrow_context_captures(hir, function.id)
+                    .into_iter()
+                    .map(|context| {
+                        format!(
+                            "{} -> {}",
+                            binding_info.display_name,
+                            context_value_label(context)
+                        )
+                    }),
+            );
+        }
+        functions.push(EmitPreviewLocalHandler {
+            binding,
+            local: binding_info.display_name.clone(),
+            function: function.id,
+            definition_origin: function.origin,
+        });
+        let dependencies = handler_captured_bindings(
+            hir,
+            owner,
+            &EmitValueRef::Function(function.id),
+            function.origin,
+            Some(function.id),
+        );
+        for dependency in dependencies {
+            if captures.insert(dependency) {
+                pending.push(dependency);
+            }
+        }
+    }
+    functions.sort_by_key(|function| function.binding);
+    contexts.sort();
+    contexts.dedup();
+    (functions, contexts)
+}
+
 struct HandlerBindingCollector<'hir> {
     hir: &'hir HirFile,
     owner: &'hir fict_hir::HirFunction,
@@ -1285,6 +1390,7 @@ fn handler_prop_calls(
     hir: &HirFile,
     owner: &fict_hir::HirFunction,
     handler_function: Option<FunctionId>,
+    local_functions: &[EmitPreviewLocalHandler],
     origin: Origin,
     props_parameter: Option<BindingId>,
     props: &BTreeMap<BindingId, &EmitPropBinding>,
@@ -1294,6 +1400,7 @@ fn handler_prop_calls(
     collect_prop_calls_in_function(hir, owner, handler_span, props_parameter, props, &mut calls);
     let mut visited = BTreeSet::new();
     let mut stack: Vec<_> = handler_function.into_iter().collect();
+    stack.extend(local_functions.iter().map(|function| function.function));
     if let Some(handler_span) = handler_span {
         stack.extend(
             hir.functions

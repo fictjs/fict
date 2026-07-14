@@ -851,6 +851,7 @@ pub struct EmitPreviewHandler {
     pub props_object_local: Option<String>,
     pub module_captures: Vec<EmitPreviewModuleCapture>,
     pub local_handler: Option<EmitPreviewLocalHandler>,
+    pub local_functions: Vec<EmitPreviewLocalHandler>,
 }
 
 /// Structured component-resume plan produced by the optional Preview crate.

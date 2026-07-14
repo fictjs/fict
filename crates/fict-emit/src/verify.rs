@@ -568,26 +568,63 @@ fn verify_preview_plan(hir: &HirFile, program: &EmitProgram, diagnostics: &mut D
                 "Preview prop captures must be ordered copies of the owning component props plan",
             ));
         }
+        let valid_local_function = |local: &crate::EmitPreviewLocalHandler| {
+            let binding = hir.bindings.get(local.binding.as_usize());
+            let function = hir.functions.get(local.function.as_usize());
+            binding.is_some_and(|binding| {
+                binding.display_name == local.local
+                    && matches!(
+                        binding.kind,
+                        fict_hir::BindingKind::Const | fict_hir::BindingKind::Function
+                    )
+                    && !hir
+                        .scopes
+                        .get(binding.scope.as_usize())
+                        .is_some_and(|scope| scope.kind == fict_hir::ScopeKind::Module)
+            }) && function.is_some_and(|function| {
+                function.binding == Some(local.binding)
+                    && function.parent == handler.owner
+                    && function.origin == local.definition_origin
+            }) && !preview_binding_has_runtime_write(hir, local.binding)
+        };
+        let local_functions_valid = handler
+            .local_functions
+            .windows(2)
+            .all(|pair| pair[0].binding < pair[1].binding)
+            && handler.local_functions.iter().all(|local| {
+                valid_local_function(local)
+                    && handler
+                        .local_handler
+                        .as_ref()
+                        .is_none_or(|handler| handler.binding != local.binding)
+                    && !handler
+                        .module_captures
+                        .iter()
+                        .any(|capture| capture.binding == local.binding)
+                    && !handler
+                        .lexical_captures
+                        .iter()
+                        .any(|capture| capture.binding == local.binding)
+                    && !handler
+                        .prop_captures
+                        .iter()
+                        .any(|capture| capture.binding == local.binding)
+                    && !handler
+                        .prop_rest_captures
+                        .iter()
+                        .any(|capture| capture.binding == local.binding)
+            });
+        if !local_functions_valid {
+            diagnostics.push(emit_error(
+                "FICT-EMIT-PREVIEW-FUNCTION",
+                "Preview local function dependencies must be ordered, disjoint stable functions owned by the component",
+            ));
+        }
         let Some(local) = &handler.local_handler else {
             continue;
         };
-        let binding = hir.bindings.get(local.binding.as_usize());
-        let function = hir.functions.get(local.function.as_usize());
-        let valid = binding.is_some_and(|binding| {
-            binding.display_name == local.local
-                && matches!(
-                    binding.kind,
-                    fict_hir::BindingKind::Const | fict_hir::BindingKind::Function
-                )
-                && !hir
-                    .scopes
-                    .get(binding.scope.as_usize())
-                    .is_some_and(|scope| scope.kind == fict_hir::ScopeKind::Module)
-        }) && function.is_some_and(|function| {
-            function.binding == Some(local.binding)
-                && function.parent == handler.owner
-                && function.origin == local.definition_origin
-        }) && handler.handler_function == Some(local.function)
+        let valid = valid_local_function(local)
+            && handler.handler_function == Some(local.function)
             && !handler
                 .module_captures
                 .iter()
@@ -599,6 +636,52 @@ fn verify_preview_plan(hir: &HirFile, program: &EmitProgram, diagnostics: &mut D
             ));
         }
     }
+}
+
+fn preview_binding_has_runtime_write(hir: &HirFile, binding: fict_hir::BindingId) -> bool {
+    hir.functions.iter().any(|function| {
+        function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .any(|instruction| match &instruction.kind {
+                fict_hir::HirInstructionKind::Write { place, .. }
+                | fict_hir::HirInstructionKind::ReadWrite { place, .. } => {
+                    preview_place_binding(function, place) == Some(binding)
+                }
+                fict_hir::HirInstructionKind::Iteration { targets, .. } => {
+                    targets.iter().any(|local| {
+                        function
+                            .locals
+                            .get(local.as_usize())
+                            .and_then(|local| local.binding)
+                            == Some(binding)
+                    })
+                }
+                fict_hir::HirInstructionKind::PatternAssignment { writes, .. } => {
+                    writes.iter().any(|write| {
+                        function
+                            .locals
+                            .get(write.local.as_usize())
+                            .and_then(|local| local.binding)
+                            == Some(binding)
+                    })
+                }
+                _ => false,
+            })
+    })
+}
+
+fn preview_place_binding(
+    function: &fict_hir::HirFunction,
+    place: &fict_hir::Place,
+) -> Option<fict_hir::BindingId> {
+    let local = match place.base {
+        fict_hir::PlaceBase::Local(local) => local,
+        fict_hir::PlaceBase::Ssa(name) => name.local,
+        fict_hir::PlaceBase::Global(_) | fict_hir::PlaceBase::Value(_) => return None,
+    };
+    function.locals.get(local.as_usize())?.binding
 }
 
 fn verify_module_plan(hir: &HirFile, program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {

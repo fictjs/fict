@@ -345,6 +345,31 @@ pub fn emit_program(
         prepared.expression = definition;
     }
     for prepared in prepared_preview_handlers.values_mut() {
+        for local in &prepared.plan.local_functions {
+            let Some(origin) = local.definition_origin.primary_span else {
+                diagnostics.push(emit_error(
+                    "FICT-OXC-PREVIEW-ORIGIN",
+                    "Preview local function dependency has no source origin",
+                    GuaranteeClass::Internal,
+                ));
+                continue;
+            };
+            let Some(definition) = clone_source_function_expression(&allocator, &program, origin)
+            else {
+                diagnostics.push(
+                    emit_error(
+                        "FICT-OXC-PREVIEW-ORIGIN",
+                        "Preview local function origin does not identify a function definition",
+                        GuaranteeClass::Internal,
+                    )
+                    .with_primary_span(origin),
+                );
+                continue;
+            };
+            prepared.local_functions.insert(local.binding, definition);
+        }
+    }
+    for prepared in prepared_preview_handlers.values_mut() {
         for capture in &prepared.plan.prop_captures {
             let Some(origin) = capture.default_value.and_then(|origin| origin.primary_span) else {
                 continue;
@@ -3742,6 +3767,7 @@ impl<'a> AstRewriter<'a, '_> {
                 plan: plan.clone(),
                 expression: handler,
                 prop_defaults: BTreeMap::new(),
+                local_functions: BTreeMap::new(),
             });
         let Some(qrl_local) = self.preview_qrl_local else {
             self.diagnostics.push(

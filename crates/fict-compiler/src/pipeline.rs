@@ -5641,6 +5641,116 @@ mod tests {
 
     #[cfg(feature = "preview")]
     #[test]
+    fn clones_transitive_local_function_dependencies_into_preview_artifacts() {
+        let source = "import { $state } from 'fict'; const moduleSuffix = '!'; export function App({ prefix }: { prefix: string }) { const count = $state(0); const format = (event: MouseEvent): string => `${prefix}:${count}:${event.type}${moduleSuffix}`; function invoke(event: MouseEvent): string { return format(event); } return <button onClick$={(event: MouseEvent) => invoke(event)}>{count}</button>; }";
+        let mut input = request(source, "preview-local-function-dependencies.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: false,
+            ..CompilerPreviewOptions::default()
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(result.artifacts.len(), 1);
+        assert!(
+            result
+                .code
+                .contains("export { moduleSuffix as __fict_dep_0 }"),
+            "{}",
+            result.code
+        );
+        let artifact = &result.artifacts[0].code;
+        assert!(artifact.contains("__fictUseLexicalScope"), "{artifact}");
+        assert!(artifact.contains("const prefix = () =>"), "{artifact}");
+        assert!(
+            artifact.contains("__fict_dep_0 as moduleSuffix"),
+            "{artifact}"
+        );
+        assert!(artifact.contains("const format = (event) =>"), "{artifact}");
+        assert!(
+            artifact.contains("const invoke = function invoke(event)"),
+            "{artifact}"
+        );
+        assert!(artifact.contains("format(event)"), "{artifact}");
+        assert!(artifact.contains("invoke(event)"), "{artifact}");
+        assert!(artifact.contains("prefix()"), "{artifact}");
+        assert!(artifact.contains("count()"), "{artifact}");
+        assert!(!artifact.contains("MouseEvent"), "{artifact}");
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn rejects_unsafe_local_function_dependencies_in_preview_handlers() {
+        for (name, source, code, expected) in [
+            (
+                "mutable",
+                "export function App() { let helper = () => 1; helper = () => 2; return <button onClick$={() => helper()}>Click</button>; }",
+                "FICT-PREVIEW-CAPTURE",
+                "helper",
+            ),
+            (
+                "local-capture",
+                "export function App() { const value = Math.random(); const helper = () => value; return <button onClick$={() => helper()}>Click</button>; }",
+                "FICT-PREVIEW-CAPTURE",
+                "value",
+            ),
+            (
+                "arguments",
+                "export function App() { const helper = () => arguments.length; return <button onClick$={() => helper()}>Click</button>; }",
+                "FICT-PREVIEW-CONTEXT",
+                "helper -> arguments",
+            ),
+            (
+                "function-prop",
+                "export function App({ onCommit }) { const helper = () => onCommit(); return <button onClick$={() => helper()}>Click</button>; }",
+                "FICT-PREVIEW-PROP-CALL",
+                "onCommit",
+            ),
+        ] {
+            let mut input = request(
+                source,
+                &format!("preview-local-function-dependency-{name}.tsx"),
+            );
+            input.options.preview = Some(CompilerPreviewOptions {
+                resumable: true,
+                auto_extract_handlers: false,
+                ..CompilerPreviewOptions::default()
+            });
+            let result = compile(input);
+
+            assert!(result.has_errors(), "{name}: {:?}", result.diagnostics);
+            assert!(result.code.is_empty(), "{name}: {}", result.code);
+            assert!(
+                result.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code.as_str() == code && diagnostic.message.contains(expected)
+                }),
+                "{name}: {:?}",
+                result.diagnostics
+            );
+        }
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn keeps_auto_handlers_with_unsafe_local_function_dependencies_eager() {
+        let source = "export function App() { let helper = () => 1; helper = () => 2; return <button onClick={() => { helper(); console.log('eager'); }}>Click</button>; }";
+        let mut input = request(source, "preview-local-function-dependency-auto.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: true,
+            auto_extract_threshold: 1,
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.artifacts.is_empty(), "{:?}", result.artifacts);
+        assert!(!result.code.contains("fict:compiler-artifact:"));
+        assert!(result.code.contains("addEventListener"), "{}", result.code);
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
     fn rejects_mutable_or_aliased_local_preview_handler_identifiers() {
         for (name, source) in [
             (
