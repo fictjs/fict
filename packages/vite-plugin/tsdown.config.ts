@@ -23,6 +23,7 @@ export default defineConfig({
       '@babel/traverse',
       '@babel/types',
       '@fictjs/compiler',
+      '@fictjs/compiler/legacy',
       'typescript',
       'vite',
     ],

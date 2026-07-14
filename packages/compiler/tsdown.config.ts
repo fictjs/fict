@@ -5,6 +5,7 @@ import { packageOutExtensions } from '../../scripts/tsdown-presets.mjs'
 export default defineConfig({
   entry: {
     index: 'src/index.ts',
+    legacy: 'src/legacy.ts',
     'native-loader': 'src/native-loader.ts',
   },
   format: ['cjs', 'esm'],

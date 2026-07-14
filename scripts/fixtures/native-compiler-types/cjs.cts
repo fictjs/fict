@@ -19,6 +19,9 @@ import {
   type NativeCompilerBinding,
   type NativeCompilerFacade,
 } from '../../../packages/compiler/dist/native-loader.cjs'
+import legacyCompiler, {
+  createFictPlugin as explicitLegacyCompiler,
+} from '../../../packages/compiler/dist/legacy.cjs'
 
 const request: CompileRequest = {
   code: 'module.exports = 1',
@@ -48,6 +51,7 @@ const directAsyncScanResult: Promise<ScanResult> = scan(scanRequest)
 const directAnalysis: AnalyzeResult = analyzeSync(analyzeRequest)
 const directAsyncAnalysis: Promise<AnalyzeResult> = analyze(analyzeRequest)
 const buildId: string = nativeCompilerInfo().compilerBuildId
+const legacyFactory: typeof explicitLegacyCompiler = legacyCompiler
 
 void syncResult
 void asyncResult
@@ -61,3 +65,4 @@ void directAsyncScanResult
 void directAnalysis
 void directAsyncAnalysis
 void buildId
+void legacyFactory

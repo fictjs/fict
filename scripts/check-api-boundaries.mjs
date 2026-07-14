@@ -99,6 +99,12 @@ assertEqualSet('runtime package exports', packageExports('packages/runtime/packa
   './jsx-runtime',
 ])
 
+assertEqualSet('compiler package exports', packageExports('packages/compiler/package.json'), [
+  '.',
+  './legacy',
+  './native',
+])
+
 const ssrPackage = readJson('packages/ssr/package.json')
 for (const [subpath, basename] of [
   ['.', 'index'],
@@ -162,6 +168,22 @@ for (const packagePath of [
     fail(
       `${packageJson.name ?? packagePath} must expose format-specific declarations for ESM and CJS consumers`,
     )
+  }
+}
+
+const compilerPackage = readJson('packages/compiler/package.json')
+for (const [subpath, basename] of [
+  ['./legacy', 'legacy'],
+  ['./native', 'native-loader'],
+]) {
+  const entry = compilerPackage.exports?.[subpath]
+  if (
+    entry?.import?.types !== `./dist/${basename}.d.ts` ||
+    entry?.import?.default !== `./dist/${basename}.js` ||
+    entry?.require?.types !== `./dist/${basename}.d.cts` ||
+    entry?.require?.default !== `./dist/${basename}.cjs`
+  ) {
+    fail(`@fictjs/compiler ${subpath} must expose format-specific declarations and runtime files`)
   }
 }
 

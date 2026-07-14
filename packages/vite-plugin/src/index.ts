@@ -12,10 +12,7 @@ import transformTypeScript from '@babel/plugin-transform-typescript'
 import _traverse from '@babel/traverse'
 import type { NodePath, Scope } from '@babel/traverse'
 import * as t from '@babel/types'
-import remapping, { type SourceMapInput as RemappingSourceMapInput } from '@jridgewell/remapping'
 import {
-  createFictPlugin,
-  getCompilerCacheFingerprint,
   resolvePackageModuleMetadata,
   type CompileRequest,
   type CompileResult,
@@ -31,12 +28,14 @@ import {
   type ResolvedMetadataInput,
   type ScanResult,
 } from '@fictjs/compiler'
-import MagicString from 'magic-string'
+import { createFictPlugin, getCompilerCacheFingerprint } from '@fictjs/compiler/legacy'
 import {
   loadNativeCompilerBinding,
   type NativeCompilerBinding,
   type NativeCompilerInfo,
 } from '@fictjs/compiler/native'
+import remapping, { type SourceMapInput as RemappingSourceMapInput } from '@jridgewell/remapping'
+import MagicString from 'magic-string'
 import {
   createFilter,
   transformWithEsbuild,

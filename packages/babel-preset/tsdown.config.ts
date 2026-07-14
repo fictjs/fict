@@ -24,6 +24,7 @@ export default defineConfig({
       '@babel/plugin-syntax-typescript',
       '@babel/plugin-transform-typescript',
       '@fictjs/compiler',
+      '@fictjs/compiler/legacy',
     ],
   },
 })

@@ -26,6 +26,15 @@ import {
   type ScanResult,
 } from '../src/types'
 
+import legacyCompiler, {
+  createFictPlugin as explicitLegacyCompiler,
+  getCompilerCacheFingerprint as getLegacyCompilerCacheFingerprint,
+} from '../src/legacy'
+import rootCompiler, {
+  createFictPlugin as rootLegacyCompiler,
+  getCompilerCacheFingerprint as getRootCompilerCacheFingerprint,
+} from '../src/index'
+
 function createCompileResult(): CompileResult {
   return {
     protocolVersion: COMPILER_PROTOCOL_VERSION,
@@ -84,6 +93,12 @@ function createBinding(): NativeCompilerBinding {
 }
 
 describe('native compiler loader', () => {
+  it('keeps the explicit legacy entrypoint identical during the beta window', () => {
+    expect(legacyCompiler).toBe(rootCompiler)
+    expect(explicitLegacyCompiler).toBe(rootLegacyCompiler)
+    expect(getLegacyCompilerCacheFingerprint).toBe(getRootCompilerCacheFingerprint)
+  })
+
   it('exports the complete serializable direct compiler facade', () => {
     expect(typeof nativeCompilerInfo).toBe('function')
     expect(typeof transformSync).toBe('function')

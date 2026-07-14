@@ -51,6 +51,12 @@ release verification; normal installations select the platform optional
 package automatically. Low-level hosts that need an isolated binding may use
 `createNativeCompilerFacade(options)` or `loadNativeCompilerBinding(options)`.
 
+The package root remains the Babel plugin during the beta compatibility window.
+Code that intentionally owns legacy rollback should import
+`@fictjs/compiler/legacy`; this explicit subpath will remain the compatibility
+entry when the package root becomes the Rust request facade in a breaking
+release.
+
 The request boundary is serializable. Host callbacks, filesystem resolution,
 and bundler graph objects must stay outside Rust. A build must use one compiler
 build identifier and one backend; do not catch a native failure and compile
