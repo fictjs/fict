@@ -380,6 +380,8 @@ pub struct HirObjectParameterProperty {
     pub references: Vec<Origin>,
     /// Optional property-default expression evaluated at component invocation.
     pub default_value: Option<Origin>,
+    /// Semantic bindings read while evaluating the property default, sorted by binding ID.
+    pub default_dependencies: Vec<BindingId>,
     /// Source provenance of the property declaration.
     pub origin: Origin,
 }

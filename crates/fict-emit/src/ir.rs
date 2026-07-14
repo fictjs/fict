@@ -727,6 +727,7 @@ pub struct EmitPropBinding {
     pub checks: Vec<EmitPropCheck>,
     pub references: Vec<Origin>,
     pub default_value: Option<Origin>,
+    pub default_dependencies: Vec<BindingId>,
     pub default_local: Option<String>,
     pub origin: Origin,
 }
@@ -788,6 +789,7 @@ pub struct EmitPreviewPropCapture {
     pub binding: BindingId,
     pub local: String,
     pub path: Vec<String>,
+    pub mode: EmitPropMode,
     pub default_value: Option<Origin>,
 }
 

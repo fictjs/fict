@@ -345,6 +345,8 @@ pub fn verify_emit_program(
                                         )
                                         && planned.references == source.references
                                         && planned.default_value == source.default_value
+                                        && planned.default_dependencies
+                                            == source.default_dependencies
                                         && planned.default_local.is_some()
                                             == source.default_value.is_some()
                                         && planned.origin == source.origin
@@ -541,6 +543,31 @@ fn verify_preview_plan(hir: &HirFile, program: &EmitProgram, diagnostics: &mut D
         return;
     };
     for handler in &preview.handlers {
+        let prop_sources = program
+            .functions
+            .get(handler.owner.as_usize())
+            .and_then(|function| function.props.as_ref());
+        let prop_captures_valid = handler
+            .prop_captures
+            .windows(2)
+            .all(|pair| pair[0].binding < pair[1].binding)
+            && handler.prop_captures.iter().all(|capture| {
+                prop_sources.is_some_and(|props| {
+                    props.bindings.iter().any(|source| {
+                        source.binding == capture.binding
+                            && source.local == capture.local
+                            && source.path == capture.path
+                            && source.mode == capture.mode
+                            && source.default_value == capture.default_value
+                    })
+                })
+            });
+        if !prop_captures_valid {
+            diagnostics.push(emit_error(
+                "FICT-EMIT-PREVIEW-PROPS",
+                "Preview prop captures must be ordered copies of the owning component props plan",
+            ));
+        }
         let Some(local) = &handler.local_handler else {
             continue;
         };

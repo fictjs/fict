@@ -3059,6 +3059,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 if mode != HirObjectParameterMode::Accessor {
                     references.clear();
                 }
+                let default_dependencies = property
+                    .default_value
+                    .map_or_else(Vec::new, |default| self.prop_default_dependencies(default));
                 Some(HirObjectParameterProperty {
                     path: property.path.clone(),
                     binding,
@@ -3073,6 +3076,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         .collect(),
                     references,
                     default_value: property.default_value.map(Origin::source),
+                    default_dependencies,
                     origin: Origin::source(property.origin),
                 })
             })
@@ -3094,6 +3098,28 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             None
         };
         Some((properties, rest))
+    }
+
+    fn prop_default_dependencies(&self, default: SourceSpan) -> Vec<BindingId> {
+        let mut dependencies: Vec<_> = self
+            .symbol_to_binding
+            .iter()
+            .filter_map(|(symbol, binding)| {
+                self.semantic
+                    .symbol_references(*symbol)
+                    .filter(|reference| reference.is_read())
+                    .any(|reference| {
+                        let node = self.semantic.nodes().get_node(reference.node_id());
+                        matches!(node.kind(), AstKind::IdentifierReference(identifier)
+                            if default.start() <= identifier.span.start
+                                && identifier.span.end <= default.end())
+                    })
+                    .then_some(*binding)
+            })
+            .collect();
+        dependencies.sort_unstable();
+        dependencies.dedup();
+        dependencies
     }
 
     fn function_owner_for_scope(&self, mut scope: ScopeId) -> FunctionId {

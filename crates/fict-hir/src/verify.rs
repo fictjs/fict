@@ -473,6 +473,9 @@ impl Verifier<'_> {
                     if let Some(default_value) = property.default_value {
                         self.verify_origin(default_value);
                     }
+                    for dependency in &property.default_dependencies {
+                        self.binding(*dependency, property.origin);
+                    }
                     if (property.mode == crate::HirObjectParameterMode::Value
                         && (!property.references.is_empty() || property.default_value.is_some()))
                         || (property.mode == crate::HirObjectParameterMode::Mutable
@@ -500,6 +503,12 @@ impl Verifier<'_> {
                             check.path.is_empty() || check.path.iter().any(String::is_empty)
                         })
                         || checks_are_ordered_prefixes.is_none()
+                        || property
+                            .default_dependencies
+                            .windows(2)
+                            .any(|pair| pair[0] >= pair[1])
+                        || (property.default_value.is_none()
+                            && !property.default_dependencies.is_empty())
                         || !bindings.insert(property.binding)
                     {
                         self.error(

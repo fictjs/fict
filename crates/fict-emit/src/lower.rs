@@ -1507,6 +1507,7 @@ fn lower_component_props_plan(
                 .collect(),
             references: property.references.clone(),
             default_value: property.default_value,
+            default_dependencies: property.default_dependencies.clone(),
             default_local: property
                 .default_value
                 .map(|_| names.allocate("__fictPropDefault")),

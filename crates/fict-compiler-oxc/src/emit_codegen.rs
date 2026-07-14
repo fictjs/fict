@@ -344,6 +344,25 @@ pub fn emit_program(
         };
         prepared.expression = definition;
     }
+    for prepared in prepared_preview_handlers.values_mut() {
+        for capture in &prepared.plan.prop_captures {
+            let Some(origin) = capture.default_value.and_then(|origin| origin.primary_span) else {
+                continue;
+            };
+            let Some(default) = clone_source_expression(&allocator, &program, origin) else {
+                diagnostics.push(
+                    emit_error(
+                        "FICT-OXC-PREVIEW-ORIGIN",
+                        "Preview prop default origin does not identify its transformed expression",
+                        GuaranteeClass::Internal,
+                    )
+                    .with_primary_span(origin),
+                );
+                continue;
+            };
+            prepared.prop_defaults.insert(capture.binding, default);
+        }
+    }
     for location in preview_handlers.keys() {
         if !prepared_preview_handlers.contains_key(location) {
             diagnostics.push(
@@ -2977,18 +2996,26 @@ fn clone_source_function_expression<'a>(
     program: &Program<'a>,
     origin: SourceSpan,
 ) -> Option<Expression<'a>> {
+    clone_source_expression(allocator, program, origin).filter(|expression| {
+        matches!(
+            expression,
+            Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_)
+        )
+    })
+}
+
+fn clone_source_expression<'a>(
+    allocator: &'a Allocator,
+    program: &Program<'a>,
+    origin: SourceSpan,
+) -> Option<Expression<'a>> {
     let mut cloner = SourceExpressionCloner {
         allocator,
         target: (origin.start(), origin.end()),
         found: None,
     };
     cloner.visit_program(program);
-    cloner.found.filter(|expression| {
-        matches!(
-            expression,
-            Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_)
-        )
-    })
+    cloner.found
 }
 
 fn clone_callback_expression<'a>(
@@ -3711,6 +3738,7 @@ impl<'a> AstRewriter<'a, '_> {
             .or_insert(PreparedHandler {
                 plan: plan.clone(),
                 expression: handler,
+                prop_defaults: BTreeMap::new(),
             });
         let Some(qrl_local) = self.preview_qrl_local else {
             self.diagnostics.push(

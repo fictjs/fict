@@ -10,8 +10,8 @@ use fict_diagnostics::{
 use fict_emit::{
     EmitOperation, EmitPreviewComponent, EmitPreviewHandler, EmitPreviewLexicalCapture,
     EmitPreviewLocalHandler, EmitPreviewModuleCapture, EmitPreviewPlan, EmitPreviewPropCapture,
-    EmitPreviewPropRestCapture, EmitProgram, EmitValueRef, ReactiveSlotStorage, RuntimeHelper,
-    RuntimeImportIntent,
+    EmitPreviewPropRestCapture, EmitProgram, EmitPropBinding, EmitValueRef, ReactiveSlotStorage,
+    RuntimeHelper, RuntimeImportIntent,
 };
 use fict_hir::{
     BindingId, BindingKind, ContextValueKind, FunctionId, FunctionKind, HirFile,
@@ -170,7 +170,7 @@ pub fn attach_preview_plan(
                 continue;
             }
 
-            let captures = handler_function
+            let mut captures = handler_function
                 .and_then(|function| hir.functions.get(function.as_usize()))
                 .map(captured_bindings)
                 .unwrap_or_default();
@@ -199,6 +199,7 @@ pub fn attach_preview_plan(
                 .flat_map(|props| &props.bindings)
                 .map(|prop| (prop.binding, prop))
                 .collect();
+            expand_prop_default_dependencies(&prop_bindings, &mut captures);
             let prop_rest_binding = owner_emit
                 .props
                 .as_ref()
@@ -247,6 +248,7 @@ pub fn attach_preview_plan(
                         binding,
                         local: prop.local.clone(),
                         path: prop.path.clone(),
+                        mode: prop.mode,
                         default_value: prop.default_value,
                     });
                     continue;
@@ -857,6 +859,30 @@ fn captured_bindings(function: &fict_hir::HirFunction) -> BTreeSet<BindingId> {
         .filter(|local| local.kind == LocalKind::Capture)
         .filter_map(|local| local.binding)
         .collect()
+}
+
+fn expand_prop_default_dependencies(
+    props: &BTreeMap<BindingId, &EmitPropBinding>,
+    captures: &mut BTreeSet<BindingId>,
+) {
+    let mut queue: Vec<_> = captures.iter().copied().collect();
+    let mut visited = BTreeSet::new();
+    while let Some(binding) = queue.pop() {
+        if !visited.insert(binding) {
+            continue;
+        }
+        let Some(prop) = props
+            .get(&binding)
+            .filter(|prop| prop.default_value.is_some())
+        else {
+            continue;
+        };
+        for dependency in prop.default_dependencies.iter().copied() {
+            if captures.insert(dependency) {
+                queue.push(dependency);
+            }
+        }
+    }
 }
 
 fn is_stable_module_binding(hir: &HirFile, binding: BindingId) -> bool {

@@ -4943,6 +4943,64 @@ mod tests {
 
     #[cfg(feature = "preview")]
     #[test]
+    fn restores_transitive_prop_default_dependencies_in_preview_artifacts() {
+        let source = "const moduleDefault = () => 'module'; export function Button({ a, b = a, fn, fnResult = fn(), label = moduleDefault() }) { return <button onClick$={() => console.log(b, fnResult, label)}>Click</button>; }";
+        let mut input = request(source, "preview-prop-default-dependencies.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: false,
+            ..CompilerPreviewOptions::default()
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result
+                .code
+                .contains("export { moduleDefault as __fict_dep_0 }"),
+            "{}",
+            result.code
+        );
+        let artifact = result.artifacts.first().expect("prop-default artifact");
+        assert!(
+            artifact
+                .code
+                .contains("const a = () => __scopeProps[\"a\"]"),
+            "{}",
+            artifact.code
+        );
+        assert!(
+            artifact.code.contains("const b = () =>") && artifact.code.contains("a()"),
+            "{}",
+            artifact.code
+        );
+        assert!(
+            artifact.code.contains("const fn = __scopeProps[\"fn\"]"),
+            "{}",
+            artifact.code
+        );
+        assert!(
+            artifact.code.contains("const fnResult = () =>") && artifact.code.contains("fn()"),
+            "{}",
+            artifact.code
+        );
+        assert!(
+            artifact.code.contains("__fict_dep_0 as moduleDefault")
+                && artifact.code.contains("moduleDefault()"),
+            "{}",
+            artifact.code
+        );
+        assert!(
+            artifact
+                .code
+                .contains("console.log(b(), fnResult(), label())"),
+            "{}",
+            artifact.code
+        );
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
     fn rejects_explicit_preview_handlers_that_capture_lexical_execution_context() {
         for (name, source, expected) in [
             (

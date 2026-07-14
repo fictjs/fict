@@ -1,10 +1,12 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use fict_diagnostics::{Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass};
 use fict_emit::{
-    EmitPreviewHandler, EmitPreviewPlan, RuntimeFamily, RuntimeHelper, RuntimeHelperSpec,
+    EmitPreviewHandler, EmitPreviewPlan, EmitPropMode, RuntimeFamily, RuntimeHelper,
+    RuntimeHelperSpec,
 };
+use fict_hir::BindingId;
 use oxc::{
     allocator::Allocator,
     ast::ast::{Expression, IdentifierReference, Program},
@@ -22,10 +24,12 @@ use crate::{OxcHandlerArtifact, OxcModuleKind};
 use super::emit_codegen::ZeroSpans;
 
 const HANDLER_SENTINEL: &str = "__FICT_PREVIEW_HANDLER_EXPRESSION__";
+const PROP_DEFAULT_SENTINEL_PREFIX: &str = "__FICT_PREVIEW_PROP_DEFAULT_";
 
 pub(crate) struct PreparedHandler<'a> {
     pub plan: EmitPreviewHandler,
     pub expression: Expression<'a>,
+    pub prop_defaults: BTreeMap<BindingId, Expression<'a>>,
 }
 
 pub(crate) fn generate_handler_artifact<'a>(
@@ -37,7 +41,7 @@ pub(crate) fn generate_handler_artifact<'a>(
     transform_options: &TransformOptions,
     runtime_family: RuntimeFamily,
     preview: &EmitPreviewPlan,
-    prepared: PreparedHandler<'a>,
+    mut prepared: PreparedHandler<'a>,
     sourcemap: bool,
 ) -> Result<OxcHandlerArtifact, Vec<Diagnostic>> {
     if module_kind != OxcModuleKind::Module {
@@ -178,19 +182,19 @@ pub(crate) fn generate_handler_artifact<'a>(
         for capture in &prepared.plan.prop_captures {
             wrapper.push_str("const ");
             wrapper.push_str(&capture.local);
-            wrapper.push_str(" = () => ");
+            wrapper.push_str(" = ");
+            if capture.mode == EmitPropMode::Accessor {
+                wrapper.push_str("() => ");
+            }
             let mut read = scope_props.clone();
             for segment in &capture.path {
                 read.push('[');
                 read.push_str(&quote_javascript_string(segment));
                 read.push(']');
             }
-            if let Some(default) = capture.default_value.and_then(|origin| origin.primary_span) {
-                let default_source = source
-                    .get(default.start() as usize..default.end() as usize)
-                    .unwrap_or("void 0");
+            if capture.default_value.is_some() {
                 wrapper.push_str("((__value) => __value === void 0 ? (");
-                wrapper.push_str(default_source);
+                wrapper.push_str(&prop_default_sentinel(capture.binding));
                 wrapper.push_str(") : __value)(");
                 wrapper.push_str(&read);
                 wrapper.push(')');
@@ -293,15 +297,36 @@ pub(crate) fn generate_handler_artifact<'a>(
     let mut program = parsed.program;
     program.source_type = source_type;
     ZeroSpans.visit_program(&mut program);
-    let mut replacer = HandlerExpressionReplacer {
-        replacement: Some(prepared.expression),
-        replacements: 0,
-    };
-    replacer.visit_program(&mut program);
-    if replacer.replacements != 1 {
+    let expected_prop_defaults = prepared
+        .plan
+        .prop_captures
+        .iter()
+        .filter(|capture| capture.default_value.is_some())
+        .count();
+    if prepared.prop_defaults.len() != expected_prop_defaults {
         return Err(vec![preview_error(
             "FICT-PREVIEW-ARTIFACT",
-            "generated handler wrapper did not contain exactly one expression placeholder",
+            "prepared handler does not contain every planned prop default expression",
+        )]);
+    }
+    let default_replacements = std::mem::take(&mut prepared.prop_defaults)
+        .into_iter()
+        .map(|(binding, expression)| (prop_default_sentinel(binding), expression))
+        .collect();
+    let mut replacer = ArtifactExpressionReplacer {
+        handler: Some(prepared.expression),
+        defaults: default_replacements,
+        handler_replacements: 0,
+        default_replacements: 0,
+    };
+    replacer.visit_program(&mut program);
+    if replacer.handler_replacements != 1
+        || replacer.default_replacements != expected_prop_defaults
+        || !replacer.defaults.is_empty()
+    {
+        return Err(vec![preview_error(
+            "FICT-PREVIEW-ARTIFACT",
+            "generated handler wrapper did not contain every planned expression placeholder exactly once",
         )]);
     }
 
@@ -386,24 +411,36 @@ impl<'a> Visit<'a> for IdentifierCollector {
     }
 }
 
-struct HandlerExpressionReplacer<'a> {
-    replacement: Option<Expression<'a>>,
-    replacements: u32,
+struct ArtifactExpressionReplacer<'a> {
+    handler: Option<Expression<'a>>,
+    defaults: BTreeMap<String, Expression<'a>>,
+    handler_replacements: usize,
+    default_replacements: usize,
 }
 
-impl<'a> VisitMut<'a> for HandlerExpressionReplacer<'a> {
+impl<'a> VisitMut<'a> for ArtifactExpressionReplacer<'a> {
     fn visit_expression(&mut self, expression: &mut Expression<'a>) {
-        if matches!(expression, Expression::Identifier(identifier) if identifier.name == HANDLER_SENTINEL)
-        {
-            *expression = self
-                .replacement
-                .take()
-                .expect("one generated handler expression placeholder");
-            self.replacements += 1;
-            return;
+        if let Expression::Identifier(identifier) = expression {
+            if identifier.name == HANDLER_SENTINEL {
+                *expression = self
+                    .handler
+                    .take()
+                    .expect("one generated handler expression placeholder");
+                self.handler_replacements += 1;
+                return;
+            }
+            if let Some(replacement) = self.defaults.remove(identifier.name.as_str()) {
+                *expression = replacement;
+                self.default_replacements += 1;
+                return;
+            }
         }
         walk_mut::walk_expression(self, expression);
     }
+}
+
+fn prop_default_sentinel(binding: BindingId) -> String {
+    format!("{PROP_DEFAULT_SENTINEL_PREFIX}{}__", binding.as_usize())
 }
 
 fn helper_alias(
