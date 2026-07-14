@@ -53,6 +53,12 @@ function SsrLocationProbe() {
   return <span>{location().pathname}</span>
 }
 
+function ssrTextContent(html: string): string | null {
+  const template = document.createElement('template')
+  template.innerHTML = html
+  return template.content.textContent
+}
+
 describe('router context isolation', () => {
   it('keeps independent DOM roots bound to their own router and guard context', async () => {
     const firstHistory = createMemoryHistory({ initialEntries: ['/first'] })
@@ -202,15 +208,15 @@ describe('router context isolation', () => {
     try {
       expect(firstRequest.html).toContain('/ssr-first')
       expect(secondRequest.html).toContain('/ssr-second')
-      expect(renderToString(() => <SsrLocationProbe />, { includeSnapshot: false })).toContain(
-        '<!--fict:slot:start-->/<!--fict:slot:end-->',
-      )
+      expect(
+        ssrTextContent(renderToString(() => <SsrLocationProbe />, { includeSnapshot: false })),
+      ).toBe('/')
 
       secondRequest.dispose()
       secondDisposed = true
-      expect(renderToString(() => <SsrLocationProbe />, { includeSnapshot: false })).toContain(
-        '<!--fict:slot:start-->/<!--fict:slot:end-->',
-      )
+      expect(
+        ssrTextContent(renderToString(() => <SsrLocationProbe />, { includeSnapshot: false })),
+      ).toBe('/')
     } finally {
       if (!secondDisposed) secondRequest.dispose()
       firstRequest.dispose()

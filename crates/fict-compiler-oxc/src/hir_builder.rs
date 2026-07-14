@@ -3972,6 +3972,8 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         span: SourceSpan,
         referenced_bindings: Vec<BindingId>,
     ) -> ValueId {
+        let block = self.planned_block_for_span(owner, span);
+        let inputs = self.instruction_inputs_for_spans(owner, block, &[span], true);
         let fragment = self.add_fragment(
             SyntaxFragmentKind::Expression,
             span,
@@ -3982,14 +3984,12 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 ..SyntaxSummary::default()
             },
         );
-        self.push_value(
+        self.push_value_to_block(
             owner,
+            block,
             ValueKind::SyntaxFragment(fragment),
             Origin::source(span),
-            HirInstructionKind::SyntaxFragment {
-                fragment,
-                inputs: Vec::new(),
-            },
+            HirInstructionKind::SyntaxFragment { fragment, inputs },
             InstructionSemantics::CONSERVATIVE_EAGER,
         )
     }

@@ -110,7 +110,7 @@ pub fn emit_program(
 
     strip_compiler_macro_imports(&mut program);
 
-    let (rewrites, rewrite_diagnostics) = call_rewrites(emit);
+    let (creations, rewrite_diagnostics) = creation_rewrites(emit);
     let props_rewrites = props_rewrites(emit);
     let (reads, read_diagnostics) = read_rewrites(emit);
     let (mutations, mutation_diagnostics) = mutation_rewrites(emit);
@@ -149,7 +149,7 @@ pub fn emit_program(
     };
     let mut rewriter = AstRewriter {
         allocator: &allocator,
-        call_rewrites: &rewrites,
+        creations: &creations,
         props: &props_rewrites.parameters,
         prop_reads: &props_rewrites.reads,
         reads: &reads,
@@ -161,7 +161,7 @@ pub fn emit_program(
         preview_qrl_local,
         prepared_preview_handlers: BTreeMap::new(),
         context_declarations,
-        matched_calls: BTreeSet::new(),
+        matched_creations: BTreeSet::new(),
         matched_props: BTreeSet::new(),
         matched_prop_reads: BTreeSet::new(),
         matched_reads: BTreeSet::new(),
@@ -183,17 +183,17 @@ pub fn emit_program(
         diagnostics: Vec::new(),
     };
     rewriter.visit_program(&mut program);
-    for location in rewrites.keys() {
-        if !rewriter.matched_calls.contains(location) {
+    for location in creations.keys() {
+        if !rewriter.matched_creations.contains(location) {
             diagnostics.push(
                 emit_error(
                     "FICT-OXC-EMIT-ORIGIN",
-                    "EmitIR call origin does not identify an OXC call expression",
+                    "EmitIR creation origin does not identify its source expression",
                     GuaranteeClass::Internal,
                 )
                 .with_primary_span(
                     SourceSpan::new(location.0, location.1)
-                        .expect("ordered EmitIR rewrite location"),
+                        .expect("ordered EmitIR creation location"),
                 ),
             );
         }
@@ -674,9 +674,10 @@ fn is_scoped_helper(helper: RuntimeHelper) -> bool {
 }
 
 #[derive(Debug, Clone)]
-struct CallRewrite {
-    local: String,
+struct CreationRewrite {
+    local: Option<String>,
     context: Option<String>,
+    derived: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -957,7 +958,9 @@ fn props_rewrites(emit: &EmitProgram) -> PropsRewrites {
     }
 }
 
-fn call_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), CallRewrite>, Vec<Diagnostic>) {
+fn creation_rewrites(
+    emit: &EmitProgram,
+) -> (BTreeMap<(u32, u32), CreationRewrite>, Vec<Diagnostic>) {
     let helper_names: BTreeMap<_, _> = emit
         .imports
         .iter()
@@ -967,64 +970,65 @@ fn call_rewrites(emit: &EmitProgram) -> (BTreeMap<(u32, u32), CallRewrite>, Vec<
     let mut diagnostics = Vec::new();
     for function in &emit.functions {
         for operation in &function.operations {
-            let helper = match operation {
+            let (helper, is_derived) = match operation {
+                EmitOperation::CreateDerived { helper, .. } => (*helper, true),
                 EmitOperation::CreateReactive { helper, .. }
                 | EmitOperation::RegisterEffect { helper, .. }
-                | EmitOperation::KeyedList { helper, .. } => Some(*helper),
-                _ => None,
-            };
-            let Some(helper) = helper else {
-                continue;
+                | EmitOperation::KeyedList { helper, .. } => (Some(*helper), false),
+                _ => continue,
             };
             let Some(span) = operation_origin(operation).primary_span else {
                 diagnostics.push(emit_error(
                     "FICT-OXC-EMIT-ORIGIN",
-                    "call-lowering EmitIR operation requires a source origin",
+                    "creation-lowering EmitIR operation requires a source origin",
                     GuaranteeClass::Internal,
                 ));
                 continue;
             };
-            let Some(local) = helper_names.get(&helper) else {
-                diagnostics.push(emit_error(
-                    "FICT-OXC-EMIT-IMPORT",
-                    "call-lowering helper has no runtime import intent",
-                    GuaranteeClass::Internal,
-                ));
-                continue;
-            };
-            let context = is_scoped_helper(helper)
-                .then(|| {
-                    function
-                        .context
-                        .as_ref()
-                        .map(|context| context.local.clone())
-                })
-                .flatten();
-            if is_scoped_helper(helper) && context.is_none() {
+            let local = helper.and_then(|helper| helper_names.get(&helper).copied());
+            if helper.is_some() && local.is_none() {
                 diagnostics.push(
                     emit_error(
-                        "FICT-OXC-EMIT-CONTEXT",
-                        "scoped call-lowering helper has no function context plan",
+                        "FICT-OXC-EMIT-IMPORT",
+                        "creation-lowering helper has no runtime import intent",
                         GuaranteeClass::Internal,
                     )
                     .with_primary_span(span),
                 );
                 continue;
             }
+            let context = helper
+                .filter(|helper| is_scoped_helper(*helper))
+                .and_then(|_| {
+                    function
+                        .context
+                        .as_ref()
+                        .map(|context| context.local.clone())
+                });
+            if helper.is_some_and(is_scoped_helper) && context.is_none() {
+                diagnostics.push(
+                    emit_error(
+                        "FICT-OXC-EMIT-CONTEXT",
+                        "scoped creation-lowering helper has no function context plan",
+                        GuaranteeClass::Internal,
+                    )
+                    .with_primary_span(span),
+                );
+                continue;
+            }
+            let rewrite = CreationRewrite {
+                local: local.map(str::to_owned),
+                context,
+                derived: is_derived,
+            };
             if rewrites
-                .insert(
-                    (span.start(), span.end()),
-                    CallRewrite {
-                        local: (*local).to_owned(),
-                        context,
-                    },
-                )
+                .insert((span.start(), span.end()), rewrite)
                 .is_some()
             {
                 diagnostics.push(
                     emit_error(
                         "FICT-OXC-EMIT-ORIGIN",
-                        "multiple call-lowering operations share the same source origin",
+                        "multiple creation operations share the same source origin",
                         GuaranteeClass::Internal,
                     )
                     .with_primary_span(span),
@@ -1589,6 +1593,7 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
             local,
             html,
             namespace,
+            force_fragment,
             helper,
             origin,
         } = operation
@@ -1616,7 +1621,8 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
             diagnostics.push(diagnostic);
             continue;
         }
-        let Some(call) = render_template_call(helper_local, html, *namespace) else {
+        let Some(call) = render_template_call(helper_local, html, *namespace, *force_fragment)
+        else {
             let mut diagnostic = emit_error(
                 "FICT-OXC-EMIT-TEMPLATE",
                 "template declaration uses a non-concrete DOM namespace",
@@ -2609,18 +2615,29 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
     }
 }
 
-fn render_template_call(helper: &str, html: &str, namespace: DomNamespace) -> Option<String> {
-    let html = quote_javascript_string(html);
-    Some(match namespace {
-        DomNamespace::Html => format!("{helper}({html})"),
-        DomNamespace::Svg => format!("{helper}({html}, void 0, true)"),
+fn render_template_call(
+    helper: &str,
+    html: &str,
+    namespace: DomNamespace,
+    force_fragment: bool,
+) -> Option<String> {
+    let suffixes = match namespace {
+        DomNamespace::Html => ("", ", void 0, void 0, void 0, true"),
+        DomNamespace::Svg => (", void 0, true", ", void 0, true, void 0, true"),
         DomNamespace::MathMl
         | DomNamespace::MathMlTextIntegration
         | DomNamespace::MathMlAnnotationXml => {
-            format!("{helper}({html}, void 0, void 0, true)")
+            (", void 0, void 0, true", ", void 0, void 0, true, true")
         }
         DomNamespace::Parent => return None,
-    })
+    };
+    let suffix = if force_fragment {
+        suffixes.1
+    } else {
+        suffixes.0
+    };
+    let html = quote_javascript_string(html);
+    Some(format!("{helper}({html}{suffix})"))
 }
 
 fn quote_javascript_string(value: &str) -> String {
@@ -2868,7 +2885,7 @@ fn render_preview_module_statements(
 
 struct AstRewriter<'a, 'emit> {
     allocator: &'a Allocator,
-    call_rewrites: &'emit BTreeMap<(u32, u32), CallRewrite>,
+    creations: &'emit BTreeMap<(u32, u32), CreationRewrite>,
     props: &'emit BTreeMap<(u32, u32), PropsRewrite>,
     prop_reads: &'emit BTreeSet<(u32, u32)>,
     reads: &'emit BTreeMap<(u32, u32), ReadRewrite>,
@@ -2880,7 +2897,7 @@ struct AstRewriter<'a, 'emit> {
     preview_qrl_local: Option<&'emit str>,
     prepared_preview_handlers: BTreeMap<(u32, u32), PreparedHandler<'a>>,
     context_declarations: BTreeMap<(u32, u32), Statement<'a>>,
-    matched_calls: BTreeSet<(u32, u32)>,
+    matched_creations: BTreeSet<(u32, u32)>,
     matched_props: BTreeSet<(u32, u32)>,
     matched_prop_reads: BTreeSet<(u32, u32)>,
     matched_reads: BTreeSet<(u32, u32)>,
@@ -3216,6 +3233,25 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
 
     fn visit_expression(&mut self, expression: &mut Expression<'a>) {
         let location = (expression.span().start, expression.span().end);
+        if let Some(rewrite) = self
+            .creations
+            .get(&location)
+            .cloned()
+            .filter(|rewrite| rewrite.derived && !self.matched_creations.contains(&location))
+        {
+            self.matched_creations.insert(location);
+            let span = expression.span();
+            let mut initializer = expression.take_in(&self.allocator);
+            self.visit_expression(&mut initializer);
+            *expression = derived_accessor_expression(
+                self.allocator,
+                initializer,
+                rewrite.local,
+                rewrite.context,
+                span,
+            );
+            return;
+        }
         if self.active_list_key_initializer == Some(location)
             && let Some(local) = &self.active_list_key_local
         {
@@ -3340,10 +3376,11 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
 
     fn visit_call_expression(&mut self, call: &mut oxc::ast::ast::CallExpression<'a>) {
         let location = (call.span.start, call.span.end);
-        if let Some(rewrite) = self.call_rewrites.get(&location)
-            && rename_callee(&mut call.callee, self.allocator.alloc_str(&rewrite.local))
+        if let Some((local, context)) = self.creations.get(&location).and_then(|rewrite| {
+            (!rewrite.derived).then_some((rewrite.local.as_deref()?, &rewrite.context))
+        }) && rename_callee(&mut call.callee, self.allocator.alloc_str(local))
         {
-            if let Some(context) = &rewrite.context {
+            if let Some(context) = context {
                 let builder = AstBuilder::new(self.allocator);
                 let context = Expression::new_identifier(
                     call.span,
@@ -3352,7 +3389,7 @@ impl<'a> VisitMut<'a> for AstRewriter<'a, '_> {
                 );
                 call.arguments.insert(0, Argument::from(context));
             }
-            self.matched_calls.insert(location);
+            self.matched_creations.insert(location);
         }
         let callee_span = call.callee.span();
         let callee_location = (callee_span.start, callee_span.end);
@@ -6207,6 +6244,28 @@ fn zero_parameter_expression_arrow<'a>(
     )
 }
 
+fn derived_accessor_expression<'a>(
+    allocator: &'a Allocator,
+    initializer: Expression<'a>,
+    helper: Option<String>,
+    context: Option<String>,
+    span: Span,
+) -> Expression<'a> {
+    let getter = zero_parameter_expression_arrow(allocator, initializer, span);
+    let Some(helper) = helper else {
+        return getter;
+    };
+    let builder = AstBuilder::new(allocator);
+    let callee = Expression::new_identifier(span, allocator.alloc_str(&helper), &builder);
+    let context = context
+        .map(|context| Expression::new_identifier(span, allocator.alloc_str(&context), &builder));
+    let arguments = ArenaVec::from_iter_in(
+        context.into_iter().chain([getter]).map(Argument::from),
+        &allocator,
+    );
+    Expression::new_call_expression(span, callee, NONE, arguments, false, &builder)
+}
+
 fn ignore_inline_event_handler_return<'a>(
     allocator: &'a Allocator,
     handler: Expression<'a>,
@@ -7239,6 +7298,7 @@ fn operation_origin(operation: &EmitOperation) -> fict_hir::Origin {
     match operation {
         EmitOperation::PreserveHir { origin, .. }
         | EmitOperation::CreateReactive { origin, .. }
+        | EmitOperation::CreateDerived { origin, .. }
         | EmitOperation::TrackRuntimeReactive { origin, .. }
         | EmitOperation::ReadReactive { origin, .. }
         | EmitOperation::RegisterEffect { origin, .. }

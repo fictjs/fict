@@ -1753,13 +1753,7 @@ fn preserves_assignment_results_projected_order_and_logical_rhs_laziness() {
             .find(|instruction| authored(instruction) == text)
             .unwrap_or_else(|| panic!("instruction for {text}"))
     };
-    let instruction_for_result = |value| {
-        instructions
-            .iter()
-            .copied()
-            .find(|instruction| instruction.result == Some(value))
-            .unwrap_or_else(|| panic!("instruction for {value:?}"))
-    };
+    let instruction_for_result = |value| function.instruction_for_result(value).unwrap();
     let initializer = |name: &str| {
         let local = function
             .locals
@@ -1956,13 +1950,7 @@ fn materializes_destructuring_assignments_as_typed_result_bearing_hir() {
             .as_deref()
             .expect("named local")
     };
-    let instruction_for_result = |value| {
-        instructions
-            .iter()
-            .copied()
-            .find(|instruction| instruction.result == Some(value))
-            .unwrap_or_else(|| panic!("instruction for {value:?}"))
-    };
+    let instruction_for_result = |value| function.instruction_for_result(value).unwrap();
     let initializer = |name: &str| {
         let local = function
             .locals
@@ -2870,13 +2858,7 @@ fn materializes_exact_utf16_strings_and_template_quasis() {
         .iter()
         .flat_map(|block| &block.instructions)
         .collect();
-    let instruction_for_result = |value| {
-        instructions
-            .iter()
-            .copied()
-            .find(|instruction| instruction.result == Some(value))
-            .unwrap_or_else(|| panic!("instruction for value{}", value.index()))
-    };
+    let instruction_for_result = |value| function.instruction_for_result(value).unwrap();
     let initializer = |name: &str| {
         let local = function
             .locals
@@ -3099,13 +3081,7 @@ fn materializes_this_new_target_and_import_meta_as_context_values() {
         }
     }
 
-    let instruction_for_result = |value| {
-        instructions
-            .iter()
-            .copied()
-            .find(|instruction| instruction.result == Some(value))
-            .unwrap_or_else(|| panic!("instruction for value{}", value.index()))
-    };
+    let instruction_for_result = |value| function.instruction_for_result(value).unwrap();
     let initializer = |name: &str| {
         let local = function
             .locals
@@ -4814,13 +4790,7 @@ fn materializes_sequence_values_in_authored_evaluation_order() {
             .expect("authored sequence instruction");
         &source[span.start() as usize..span.end() as usize]
     };
-    let instruction_for_result = |value| {
-        instructions
-            .iter()
-            .copied()
-            .find(|instruction| instruction.result == Some(value))
-            .unwrap_or_else(|| panic!("instruction for value{}", value.index()))
-    };
+    let instruction_for_result = |value| function.instruction_for_result(value).unwrap();
     let local = |name: &str| {
         function
             .locals
@@ -4962,13 +4932,7 @@ fn materializes_template_quasis_coercions_and_lazy_ownership() {
             .expect("authored template instruction");
         &source[span.start() as usize..span.end() as usize]
     };
-    let instruction_for_result = |value| {
-        instructions
-            .iter()
-            .copied()
-            .find(|instruction| instruction.result == Some(value))
-            .unwrap_or_else(|| panic!("instruction for value{}", value.index()))
-    };
+    let instruction_for_result = |value| function.instruction_for_result(value).unwrap();
     let initializer = |name: &str| {
         let local = function
             .locals
@@ -5095,13 +5059,7 @@ fn materializes_tagged_template_objects_substitutions_and_utf16_cooked_values() 
             .expect("authored tagged-template instruction");
         &source[span.start() as usize..span.end() as usize]
     };
-    let instruction_for_result = |value| {
-        instructions
-            .iter()
-            .copied()
-            .find(|instruction| instruction.result == Some(value))
-            .unwrap_or_else(|| panic!("instruction for value{}", value.index()))
-    };
+    let instruction_for_result = |value| function.instruction_for_result(value).unwrap();
     let local = |name: &str| {
         function
             .locals
@@ -5328,13 +5286,7 @@ fn materializes_dynamic_import_phases_options_and_coercion_order() {
             .expect("authored dynamic-import instruction");
         &source[span.start() as usize..span.end() as usize]
     };
-    let instruction_for_result = |value| {
-        instructions
-            .iter()
-            .copied()
-            .find(|instruction| instruction.result == Some(value))
-            .unwrap_or_else(|| panic!("instruction for value{}", value.index()))
-    };
+    let instruction_for_result = |value| function.instruction_for_result(value).unwrap();
     let initializer = |name: &str| {
         let local = function
             .locals
@@ -6113,13 +6065,7 @@ fn materializes_reference_aware_delete_targets_without_property_reads() {
         .iter()
         .flat_map(|block| &block.instructions)
         .collect();
-    let instruction_for_result = |value| {
-        instructions
-            .iter()
-            .copied()
-            .find(|instruction| instruction.result == Some(value))
-            .unwrap_or_else(|| panic!("instruction for value{}", value.index()))
-    };
+    let instruction_for_result = |value| function.instruction_for_result(value).unwrap();
     let initializer = |name: &str| {
         let local = function
             .locals

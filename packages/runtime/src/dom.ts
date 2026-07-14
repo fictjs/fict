@@ -782,12 +782,14 @@ function createElementWithContext(
  * @param isImportNode - Use importNode for elements like img/iframe
  * @param isSVG - Whether the template is SVG content
  * @param isMathML - Whether the template is MathML content
+ * @param forceFragment - Preserve the virtual JSX fragment root even when it has one child
  */
 export function template(
   html: string,
   isImportNode?: boolean,
   isSVG?: boolean,
   isMathML?: boolean,
+  forceFragment?: boolean,
 ): () => Node {
   const nodeByDocument = new WeakMap<Document, Node>()
 
@@ -803,7 +805,7 @@ export function template(
       if (isDev && wrapper.childNodes.length !== 1) {
         console.warn('[fict] Multi-root SVG template.')
       }
-      if (wrapper.childNodes.length === 1) {
+      if (!forceFragment && wrapper.childNodes.length === 1) {
         return wrapper.firstChild!
       }
       // Preserve all root nodes by returning a fragment
@@ -820,7 +822,7 @@ export function template(
       if (isDev && wrapper.childNodes.length !== 1) {
         console.warn('[fict] Multi-root MathML template.')
       }
-      if (wrapper.childNodes.length === 1) {
+      if (!forceFragment && wrapper.childNodes.length === 1) {
         return wrapper.firstChild!
       }
       // Preserve all root nodes by returning a fragment
@@ -835,7 +837,7 @@ export function template(
     if (isDev && content.childNodes.length !== 1) {
       console.warn('[fict] Multi-root template.')
     }
-    if (content.childNodes.length === 1) {
+    if (!forceFragment && content.childNodes.length === 1) {
       return content.firstChild!
     }
     // Preserve all root nodes by returning a fragment

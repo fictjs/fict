@@ -1409,6 +1409,16 @@ pub struct HirFunction {
     pub origin: Origin,
 }
 
+impl HirFunction {
+    /// Find the instruction that defines one function-local value.
+    pub fn instruction_for_result(&self, result: ValueId) -> Option<&HirInstruction> {
+        self.blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find(|instruction| instruction.result == Some(result))
+    }
+}
+
 /// Complete OXC-independent HIR for one source file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HirFile {

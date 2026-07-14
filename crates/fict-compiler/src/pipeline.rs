@@ -228,6 +228,11 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         .iter()
         .map(|analysis| analysis.cycles.clone())
         .collect();
+    let scopes: Vec<_> = core
+        .functions
+        .iter()
+        .map(|analysis| analysis.scopes.clone())
+        .collect();
     let runtime_family = if frontend
         .macro_imports
         .iter()
@@ -241,6 +246,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         &core.hir,
         &regions,
         &cycles,
+        Some(&scopes),
         NoJsxLoweringOptions {
             runtime_family,
             strict_guarantee: request.options.strict_guarantee,
@@ -698,6 +704,26 @@ mod tests {
         );
         assert!(!result.code.contains("import {"), "{}", result.code);
         assert!(!result.code.contains("export default"), "{}", result.code);
+    }
+
+    #[test]
+    fn lowers_derived_values_and_preserves_fragment_roots() {
+        #[rustfmt::skip]
+        let cases = [
+            ("import { $effect, $state } from 'fict'; export function Counter() { let count = $state(2); const doubled = count * 2; $effect(() => doubled); return <div>{doubled}</div>; }", "__fictUseMemo(__fictCtx, () => count() * 2)|() => doubled()|__fictUseEffect(__fictCtx, () => doubled())", ""),
+            ("import { $effect, $state } from 'fict'; export function Counter() { 'use no memo'; let count = $state(2); const doubled = count * 2; $effect(() => doubled); return <div>{doubled}</div>; }", "() => count() * 2|() => doubled()|__fictUseEffect(__fictCtx, () => doubled())", ""),
+            ("export function Label(props) { const text = props.value + '!'; return <span>{text}</span>; }", "__fictUseMemo(__fictCtx, () => props.value + \"!\")|() => text()", ""),
+            ("import { createEffect } from '@fictjs/runtime'; export function Routes(props) { const routes = props.routes ?? []; const compiled = routes.map(value => value); const branches = compiled.slice(); const match = branches.slice(0, 1)[0]; const route = match.route; const hasPreload = typeof route.preload === 'function'; createEffect(() => { for (const branch of branches) void branch; void hasPreload; }); return route; }", "() => match().route|const branch of branches()", "__fictUseMemo()("),
+            ("import { reactive } from '@fictjs/runtime'; export function App() { const render = () => null; return <>{[reactive(render)]}</>; }", "template(\"<!---->\", void 0, void 0, void 0, true)|insert(__fict_jsx", ""),
+        ];
+        for (source, expected, rejected) in cases {
+            let result = compile(request(source, "lowering.tsx"));
+            assert!(!result.has_errors(), "{:?}", result.diagnostics);
+            #[rustfmt::skip]
+            assert!(expected.split('|').all(|s| result.code.contains(s)), "{}", result.code);
+            #[rustfmt::skip]
+            assert!(rejected.is_empty() || rejected.split('|').all(|s| !result.code.contains(s)), "{}", result.code);
+        }
     }
 
     #[test]
@@ -2078,11 +2104,8 @@ mod tests {
             "{}",
             result.code
         );
-        assert!(
-            result.code.contains("template(\"<i>a</i><i>b</i>\")"),
-            "{}",
-            result.code
-        );
+        let fragment = "template(\"<i>a</i><i>b</i>\", void 0, void 0, void 0, true)";
+        assert!(result.code.contains(fragment), "{}", result.code);
         assert!(!result.code.contains("return <"), "{}", result.code);
     }
 
@@ -2392,22 +2415,23 @@ mod tests {
 
     #[test]
     fn emits_reactive_component_prop_getters() {
-        let result = compile(request(
-            "import { $state } from 'fict'; const Card = (_props) => null; export function App() { let count = $state(0); return <Card value={count} />; }",
+        let mut input = request(
+            "import { $state } from 'fict'; const Card = (_props) => null; const handler = makeHandler(); export function App() { let count = $state(0); return <Card value={count} onSelect={handler} />; } export function Router(props) { const owns = !props.history; const history = props.history || makeHistory(); if (owns) history.destroy?.(); return <Card history={history} />; }",
             "reactive-component.tsx",
-        ));
+        );
+        input.options.strict_guarantee = false;
+        let result = compile(input);
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
-        assert!(
-            result.code.contains("import { __fictProp"),
-            "{}",
-            result.code
-        );
-        assert!(
-            result.code.contains("value: __fictProp(() => count())"),
-            "{}",
-            result.code
-        );
+        for snippet in [
+            "import { __fictProp",
+            "value: __fictProp(() => count())",
+            "onSelect: handler",
+            "history: __fictProp(() => history())",
+        ] {
+            assert!(result.code.contains(snippet), "{}", result.code);
+        }
+        assert!(!result.code.contains("() => handler"), "{}", result.code);
     }
 
     #[test]
@@ -2579,11 +2603,7 @@ mod tests {
         assert!(result.code.contains("type: Row"), "{}", result.code);
         assert!(result.code.contains("() => row()"), "{}", result.code);
         assert!(result.code.contains("key: __fict_key_"), "{}", result.code);
-        assert!(
-            result.code.contains("label: __fictProp(() => __fict_key)"),
-            "{}",
-            result.code
-        );
+        assert!(result.code.contains("label: __fict_key"), "{}", result.code);
     }
 
     #[test]
@@ -3639,7 +3659,7 @@ mod tests {
 
     #[test]
     fn emits_authored_try_catch_finally_from_structured_hir() {
-        let source = "import { $state } from 'fict'; export function App(shouldThrow) { let result = $state('init'); try { result = 'try'; if (shouldThrow) throw new Error('boom'); } catch (error) { result = error.message; } finally { result += '!'; } return <span>{result}</span>; }";
+        let source = "import { $state } from 'fict'; export function App() { let result = $state('init'); try { result = 'try'; if (globalThis.shouldThrow) throw new Error('boom'); } catch (error) { result = error.message; } finally { result += '!'; } return <span>{result}</span>; }";
         let compiled = compile(request(source, "try-catch-finally.tsx"));
 
         assert!(!compiled.has_errors(), "{:?}", compiled.diagnostics);

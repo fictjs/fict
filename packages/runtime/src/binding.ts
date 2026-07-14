@@ -1079,6 +1079,24 @@ export function classList(
 // Child/Insert Binding (Dynamic Children)
 // ============================================================================
 
+function materializeArrayItems(
+  values: FictNode[],
+  createElementFn: CreateElementFn,
+  ownerDocument: Document,
+): Node[] {
+  const fragment = ownerDocument.createDocumentFragment()
+  for (const value of values) {
+    if (typeof value === 'function' && isReactive(value)) {
+      createChildBinding(fragment, value as () => FictNode, createElementFn)
+    } else {
+      for (const node of toNodeArray(createElementFn(value), ownerDocument)) {
+        fragment.appendChild(node)
+      }
+    }
+  }
+  return Array.from(fragment.childNodes)
+}
+
 /**
  * Insert reactive content into a parent element.
  * This is a simpler API than createChildBinding for basic cases.
@@ -1208,16 +1226,15 @@ export function insert(
           if (isNodeLike(value, ownerDocument)) {
             return value
           }
+          if (typeof value === 'function' && isReactive(value) && createFn) {
+            return materializeArrayItems([value], createFn, ownerDocument)
+          }
           if (Array.isArray(value)) {
             if (value.every(v => isNodeLike(v, ownerDocument))) {
               return value as Node[]
             }
             if (createFn) {
-              const mapped: Node[] = []
-              for (const item of value) {
-                mapped.push(...toNodeArray(createFn(item as any), ownerDocument))
-              }
-              return mapped
+              return materializeArrayItems(value, createFn, ownerDocument)
             }
             return ownerDocument.createTextNode(String(value))
           }
@@ -1431,16 +1448,15 @@ export function insertBetween(
           if (isNodeLike(value, ownerDocument)) {
             return value
           }
+          if (typeof value === 'function' && isReactive(value) && createElementFn) {
+            return materializeArrayItems([value], createElementFn, ownerDocument)
+          }
           if (Array.isArray(value)) {
             if (value.every(v => isNodeLike(v, ownerDocument))) {
               return value as Node[]
             }
             if (createElementFn) {
-              const mapped: Node[] = []
-              for (const item of value) {
-                mapped.push(...toNodeArray(createElementFn(item as any), ownerDocument))
-              }
-              return mapped
+              return materializeArrayItems(value, createElementFn, ownerDocument)
             }
             return ownerDocument.createTextNode(String(value))
           }
@@ -2345,16 +2361,15 @@ function bindAssignedChildren(
           if (isNodeLike(value, ownerDocument)) {
             return value
           }
+          if (typeof value === 'function' && isReactive(value) && createFn) {
+            return materializeArrayItems([value], createFn, ownerDocument)
+          }
           if (Array.isArray(value)) {
             if (value.every(v => isNodeLike(v, ownerDocument))) {
               return value as Node[]
             }
             if (createFn) {
-              const mapped: Node[] = []
-              for (const item of value) {
-                mapped.push(...toNodeArray(createFn(item as any), ownerDocument))
-              }
-              return mapped
+              return materializeArrayItems(value, createFn, ownerDocument)
             }
             return ownerDocument.createTextNode(String(value))
           }

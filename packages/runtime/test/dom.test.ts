@@ -2242,6 +2242,16 @@ describe('DOM Module', () => {
       expect((node2 as HTMLDivElement).className).toBe('test')
     })
 
+    it('preserves an explicit single-child fragment root', () => {
+      const factory = template('<!---->', undefined, undefined, undefined, true)
+
+      const node = factory()
+
+      expect(node).toBeInstanceOf(DocumentFragment)
+      expect(node.childNodes).toHaveLength(1)
+      expect(node.firstChild).toBeInstanceOf(Comment)
+    })
+
     it('caches the template element', () => {
       const factory = template('<span>Cached</span>')
 

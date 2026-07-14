@@ -862,6 +862,11 @@ fn verify_operations(
                 slot,
                 source_result,
                 ..
+            }
+            | EmitOperation::CreateDerived {
+                slot,
+                source_result,
+                ..
             } => {
                 verify_slot(function, *slot, diagnostics);
                 verify_source_result(hir_function, *source_result, diagnostics);
@@ -1439,6 +1444,15 @@ fn verify_helper_semantics(
                         | crate::ReactiveSlotKind::Store
                         | crate::ReactiveSlotKind::Resource => false,
                     }
+            })
+        }
+        EmitOperation::CreateDerived { slot, helper, .. } => {
+            function.slots.get(slot.as_usize()).is_some_and(|slot| {
+                slot.storage == crate::ReactiveSlotStorage::Owned
+                    && slot.kind == crate::ReactiveSlotKind::Memo
+                    && helper.is_none_or(|helper| {
+                        matches!(helper, RuntimeHelper::Memo | RuntimeHelper::UseMemo)
+                    })
             })
         }
         EmitOperation::RegisterEffect { helper, .. } => {

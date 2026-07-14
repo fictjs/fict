@@ -1,4 +1,6 @@
-use crate::{BindingId, FunctionId, Origin, TemplateId, ValueId};
+use std::collections::BTreeSet;
+
+use crate::{BindingId, FunctionId, HirFile, Origin, TemplateId, ValueId};
 
 /// JSX tag identity after semantic binding resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -208,6 +210,15 @@ pub enum JsxNode {
 }
 
 impl JsxNode {
+    /// Return this node's source provenance.
+    #[must_use]
+    pub const fn origin(&self) -> Origin {
+        match self {
+            Self::Element(element) => element.origin,
+            Self::Fragment { origin, .. } => *origin,
+        }
+    }
+
     /// Whether this tree contains source short-fragment syntax and therefore needs the runtime
     /// `Fragment` identity when emitted as a VNode.
     #[must_use]
@@ -233,6 +244,60 @@ pub struct JsxTemplate {
     pub contains_fragment: bool,
     /// Source provenance for the complete template.
     pub origin: Origin,
+}
+
+impl HirFile {
+    /// Collect semantic bindings used as the item parameter of JSX list callbacks.
+    #[must_use]
+    pub fn jsx_list_item_bindings(&self) -> BTreeSet<BindingId> {
+        enum Item<'a> {
+            Node(&'a JsxNode),
+            Child(&'a JsxChild),
+        }
+
+        let mut bindings = BTreeSet::new();
+        for template in &self.templates {
+            let mut stack = vec![Item::Node(&template.root)];
+            while let Some(item) = stack.pop() {
+                match item {
+                    Item::Node(JsxNode::Element(element)) => {
+                        for attribute in &element.attributes {
+                            if let JsxAttribute::Named {
+                                value: JsxAttributeValue::Node(node),
+                                ..
+                            } = attribute
+                            {
+                                stack.push(Item::Node(node));
+                            }
+                        }
+                        stack.extend(element.children.iter().map(Item::Child));
+                    }
+                    Item::Node(JsxNode::Fragment { children, .. }) => {
+                        stack.extend(children.iter().map(Item::Child));
+                    }
+                    Item::Child(JsxChild::Expression {
+                        list: Some(list), ..
+                    }) => {
+                        if let Some(binding) = self
+                            .functions
+                            .get(list.callback.as_usize())
+                            .and_then(|function| function.parameters.first())
+                            .and_then(|parameter| parameter.binding)
+                        {
+                            bindings.insert(binding);
+                        }
+                    }
+                    Item::Child(JsxChild::Node(node)) => stack.push(Item::Node(node)),
+                    Item::Child(
+                        JsxChild::Text { .. }
+                        | JsxChild::Expression { .. }
+                        | JsxChild::Spread { .. },
+                    ) => {}
+                }
+            }
+        }
+        bindings
+    }
 }
 
 #[cfg(test)]

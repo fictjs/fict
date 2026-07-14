@@ -337,6 +337,7 @@ pub fn analyze_dependencies(
                             ) {
                                 direct_dependencies[result_index].insert(path);
                             }
+                            input_edges[result_index].extend(projection_values(place));
                         }
                         HirInstructionKind::Delete {
                             target: DeleteTarget::Place(place),

@@ -253,6 +253,13 @@ pub enum EmitOperation {
         helper: RuntimeHelper,
         origin: Origin,
     },
+    /// Turn a derived declaration into an accessor; omit `helper` for `use no memo`.
+    CreateDerived {
+        slot: EmitSlotId,
+        source_result: ValueId,
+        helper: Option<RuntimeHelper>,
+        origin: Origin,
+    },
     /// Associate a preserved runtime call (`$store`, `resource`, `createSelector`) with a stable
     /// compiler slot without replacing the executable call.
     TrackRuntimeReactive {
@@ -318,6 +325,7 @@ pub enum EmitOperation {
         local: String,
         html: String,
         namespace: DomNamespace,
+        force_fragment: bool,
         helper: RuntimeHelper,
         origin: Origin,
     },
@@ -486,7 +494,8 @@ impl EmitOperation {
             | Self::KeyedChild { helper, .. }
             | Self::KeyedList { helper, .. }
             | Self::ResolveElement { helper, .. } => Some(*helper),
-            Self::ReadReactive { helper, .. }
+            Self::CreateDerived { helper, .. }
+            | Self::ReadReactive { helper, .. }
             | Self::CreateVNode {
                 fragment_helper: helper,
                 ..
@@ -682,6 +691,7 @@ impl EmitOperation {
             }
             Self::Return { value, .. } => value.iter().for_each(visit),
             Self::PreserveHir { .. }
+            | Self::CreateDerived { .. }
             | Self::TrackRuntimeReactive { .. }
             | Self::ReadReactive { .. }
             | Self::CreateVNode { .. }

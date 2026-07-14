@@ -36,7 +36,7 @@ import {
   serializeValue,
   deserializeValue,
 } from '@fictjs/runtime/internal'
-import createFictPlugin, { type FictCompilerOptions } from '../../compiler/src/index'
+import createFictPlugin, { type FictCompilerOptions } from '../../compiler/src/legacy'
 import { parseHTML } from 'linkedom'
 
 import {
