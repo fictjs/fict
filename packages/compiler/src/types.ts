@@ -174,8 +174,20 @@ export type NativeOptimizeLevel = 'safe' | 'full'
 export type NativeWarningLevel = 'off' | 'warn' | 'error'
 
 export interface CompilerPreviewOptions {
+  /**
+   * @experimental Enables the unfrozen resumable-handler/QRL protocol. Omit this option or use
+   * eager event handlers for the stable compilation path.
+   */
   resumable?: boolean
+  /**
+   * @experimental Selects handlers for the unfrozen resumable protocol automatically. Keep this
+   * disabled and use eager event handlers for stable behavior.
+   */
   autoExtractHandlers?: boolean
+  /**
+   * @experimental Tunes a heuristic of the unfrozen resumable protocol. Keep automatic extraction
+   * disabled for the stable compilation path.
+   */
   autoExtractThreshold?: number
 }
 
