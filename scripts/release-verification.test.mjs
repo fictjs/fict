@@ -94,6 +94,35 @@ test('CI and release fail closed on advisories in both Rust lockfiles', () => {
   assert.match(releaseWorkflow, /^\s+cargo audit --deny warnings --file fuzz\/Cargo\.lock$/m)
 })
 
+test('CI and release use Node 24-compatible action majors', () => {
+  const minimumMajors = new Map([
+    ['actions/cache', 5],
+    ['actions/checkout', 5],
+    ['actions/download-artifact', 7],
+    ['actions/github-script', 8],
+    ['actions/setup-node', 5],
+    ['actions/upload-artifact', 6],
+    ['codecov/codecov-action', 6],
+    ['pnpm/action-setup', 5],
+  ])
+  const seen = new Set()
+
+  for (const workflow of [ciWorkflow, releaseWorkflow]) {
+    for (const match of workflow.matchAll(/uses:\s+([^@\s]+)@v(\d+)/g)) {
+      const [, action, majorText] = match
+      const minimum = minimumMajors.get(action)
+      if (minimum === undefined) continue
+      seen.add(action)
+      assert.ok(
+        Number(majorText) >= minimum,
+        `${action}@v${majorText} must use Node 24-compatible major v${minimum} or newer`,
+      )
+    }
+  }
+
+  assert.deepEqual([...seen].sort(), [...minimumMajors.keys()].sort())
+})
+
 test('Babel preset deprecation verification builds its compiler dependency first', () => {
   assert.match(
     rootPackage.scripts['test:babel-preset:deprecation'],
