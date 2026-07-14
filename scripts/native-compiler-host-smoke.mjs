@@ -63,6 +63,44 @@ for (const [format, facade] of [
   assert.deepEqual(syncResult.map?.sources, ['/fixtures/value.ts'])
   assert.equal(syncResult.explain?.fileName, '/fixtures/value.ts')
 
+  const sourceExplain = binding.transformSync({
+    code: `
+      import { $effect, $memo, $state } from 'fict'
+      export function Counter() {
+        const count = $state(0)
+        const doubled = $memo(() => count * 2)
+        $effect(() => { doubled })
+        if (count) return <button>{doubled}</button>
+        return <span>zero</span>
+      }
+    `,
+    filename: '/fixtures/explain.tsx',
+    options: { explain: true, strictGuarantee: false },
+  })
+  assert.deepEqual(sourceExplain.diagnostics, [])
+  const sourceEvents = sourceExplain.explain?.events.filter(event =>
+    event.kind.startsWith('source-'),
+  )
+  assert.ok(sourceEvents)
+  for (const kind of [
+    'source-signal',
+    'source-memo',
+    'source-effect',
+    'source-jsx',
+    'source-control-flow',
+  ]) {
+    assert.ok(
+      sourceEvents.some(event => event.kind === kind),
+      `missing ${kind}`,
+    )
+  }
+  assert.ok(sourceEvents.every(event => event.span))
+  assert.ok(
+    sourceEvents.every(
+      (event, index) => index === 0 || sourceEvents[index - 1].span.start <= event.span.start,
+    ),
+  )
+
   const empty = binding.transformSync({ code: '', filename: 'empty.js' })
   assert.equal(empty.code, '')
   assert.deepEqual(empty.diagnostics, [])

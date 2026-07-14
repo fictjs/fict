@@ -8,6 +8,7 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
 use fict_emit::{NoJsxLoweringOptions, RuntimeFamily, lower_core};
+use fict_hir::{FictMacroKind, HirFile, HirInstructionKind, StructuredSourceKind};
 use fict_metadata::MetadataResolutionStatus;
 
 use crate::control_flow_diagnostics::reactive_control_flow_diagnostics;
@@ -104,7 +105,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
 
     finalize_diagnostics(&mut result, &request.options);
     if result.has_errors() {
-        attach_explain_if_requested(&mut result, &request, &[]);
+        attach_explain_if_requested(&mut result, &request, &[], &[]);
         return result;
     }
 
@@ -150,8 +151,13 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
             ));
         }
         finalize_diagnostics(&mut result, &request.options);
-        attach_explain_if_requested(&mut result, &request, &[]);
+        attach_explain_if_requested(&mut result, &request, &[], &[]);
         return result;
+    };
+    let source_events = if request.options.explain {
+        source_explain_events(&hir)
+    } else {
+        Vec::new()
     };
     let Some(frontend) = build.frontend else {
         result.diagnostics.push(diagnostic(
@@ -161,7 +167,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
             GuaranteeClass::Internal,
         ));
         finalize_diagnostics(&mut result, &request.options);
-        attach_explain_if_requested(&mut result, &request, &[]);
+        attach_explain_if_requested(&mut result, &request, &source_events, &[]);
         return result;
     };
     let Some(module_plan) = build.module_plan else {
@@ -172,7 +178,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
             GuaranteeClass::Internal,
         ));
         finalize_diagnostics(&mut result, &request.options);
-        attach_explain_if_requested(&mut result, &request, &[]);
+        attach_explain_if_requested(&mut result, &request, &source_events, &[]);
         return result;
     };
     if request.options.strict_guarantee
@@ -191,7 +197,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     }
     finalize_diagnostics(&mut result, &request.options);
     if result.has_errors() {
-        attach_explain_if_requested(&mut result, &request, &[]);
+        attach_explain_if_requested(&mut result, &request, &source_events, &[]);
         return result;
     }
     let core = match run_core_passes(
@@ -205,7 +211,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         Err(diagnostics) => {
             result.diagnostics.extend(diagnostics.into_sorted());
             finalize_diagnostics(&mut result, &request.options);
-            attach_explain_if_requested(&mut result, &request, &[]);
+            attach_explain_if_requested(&mut result, &request, &source_events, &[]);
             return result;
         }
     };
@@ -219,7 +225,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         .extend(reactive_control_flow_diagnostics(&core));
     finalize_diagnostics(&mut result, &request.options);
     if result.has_errors() {
-        attach_explain_if_requested(&mut result, &request, &[]);
+        attach_explain_if_requested(&mut result, &request, &source_events, &[]);
         return result;
     }
     result.stats = Some(CompilerStats {
@@ -260,7 +266,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         Err(diagnostics) => {
             result.diagnostics.extend(diagnostics.into_sorted());
             finalize_diagnostics(&mut result, &request.options);
-            attach_explain_if_requested(&mut result, &request, &[]);
+            attach_explain_if_requested(&mut result, &request, &source_events, &[]);
             return result;
         }
     };
@@ -302,7 +308,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         result.code.clear();
         result.map = None;
     }
-    attach_explain_if_requested(&mut result, &request, &helpers);
+    attach_explain_if_requested(&mut result, &request, &source_events, &helpers);
     result
 }
 
@@ -360,6 +366,7 @@ fn finalize_diagnostics(result: &mut CompileResult, options: &crate::CompilerOpt
 fn attach_explain_if_requested(
     result: &mut CompileResult,
     request: &NormalizedCompileRequest,
+    source_events: &[CompilerExplainEvent],
     helpers: &[String],
 ) {
     if !request.options.explain {
@@ -370,15 +377,16 @@ fn attach_explain_if_requested(
         file_name: request.filename.clone(),
         helpers: helpers.to_vec(),
         diagnostics: result.diagnostics.clone(),
-        events: helpers
+        events: source_events
             .iter()
-            .map(|helper| CompilerExplainEvent {
+            .cloned()
+            .chain(helpers.iter().map(|helper| CompilerExplainEvent {
                 kind: CompilerExplainEventKind::RuntimeHelper,
                 message: format!("emits runtime helper {helper}"),
                 name: Some(helper.clone()),
                 code: None,
                 span: None,
-            })
+            }))
             .chain(
                 result
                     .diagnostics
@@ -393,6 +401,109 @@ fn attach_explain_if_requested(
             )
             .collect(),
     });
+}
+
+fn source_explain_events(hir: &HirFile) -> Vec<CompilerExplainEvent> {
+    let mut events = Vec::new();
+    for function in &hir.functions {
+        for block in &function.blocks {
+            if let Some(hint) = &block.source_hint
+                && let Some(name) = structured_source_name(&hint.kind)
+                && let Some(span) = hint.origin.primary_span
+            {
+                events.push(CompilerExplainEvent {
+                    kind: CompilerExplainEventKind::SourceControlFlow,
+                    message: format!("preserves {name} control flow for native reactive analysis"),
+                    name: Some(name),
+                    code: None,
+                    span: Some(span),
+                });
+            }
+
+            for instruction in &block.instructions {
+                let Some(span) = instruction.origin.primary_span else {
+                    continue;
+                };
+                let event = match &instruction.kind {
+                    HirInstructionKind::Call(call) => match call.macro_kind {
+                        Some(FictMacroKind::State) => Some(CompilerExplainEvent {
+                            kind: CompilerExplainEventKind::SourceSignal,
+                            message: "classifies $state as a source signal".to_owned(),
+                            name: Some("$state".to_owned()),
+                            code: None,
+                            span: Some(span),
+                        }),
+                        Some(FictMacroKind::Effect) => Some(CompilerExplainEvent {
+                            kind: CompilerExplainEventKind::SourceEffect,
+                            message: "classifies $effect as a reactive effect".to_owned(),
+                            name: Some("$effect".to_owned()),
+                            code: None,
+                            span: Some(span),
+                        }),
+                        Some(FictMacroKind::Memo) => Some(CompilerExplainEvent {
+                            kind: CompilerExplainEventKind::SourceMemo,
+                            message: "classifies $memo as a derived memo".to_owned(),
+                            name: Some("$memo".to_owned()),
+                            code: None,
+                            span: Some(span),
+                        }),
+                        None => None,
+                    },
+                    HirInstructionKind::Jsx { .. } => Some(CompilerExplainEvent {
+                        kind: CompilerExplainEventKind::SourceJsx,
+                        message: "lowers JSX through the native template pipeline".to_owned(),
+                        name: None,
+                        code: None,
+                        span: Some(span),
+                    }),
+                    _ => None,
+                };
+                if let Some(event) = event {
+                    events.push(event);
+                }
+            }
+        }
+    }
+
+    events.sort_by(|left, right| source_event_sort_key(left).cmp(&source_event_sort_key(right)));
+    events.dedup_by(|left, right| {
+        left.kind == right.kind && left.name == right.name && left.span == right.span
+    });
+    events
+}
+
+fn source_event_sort_key(event: &CompilerExplainEvent) -> (u32, u32, u8, Option<&str>) {
+    let (start, end) = event
+        .span
+        .map_or((u32::MAX, u32::MAX), |span| (span.start(), span.end()));
+    let kind = match event.kind {
+        CompilerExplainEventKind::SourceSignal => 0,
+        CompilerExplainEventKind::SourceEffect => 1,
+        CompilerExplainEventKind::SourceMemo => 2,
+        CompilerExplainEventKind::SourceJsx => 3,
+        CompilerExplainEventKind::SourceControlFlow => 4,
+        CompilerExplainEventKind::RuntimeHelper => 5,
+        CompilerExplainEventKind::Diagnostic => 6,
+    };
+    (start, end, kind, event.name.as_deref())
+}
+
+fn structured_source_name(kind: &StructuredSourceKind) -> Option<String> {
+    match kind {
+        StructuredSourceKind::LexicalBlock => None,
+        StructuredSourceKind::Conditional => Some("if".to_owned()),
+        StructuredSourceKind::Switch => Some("switch".to_owned()),
+        StructuredSourceKind::WhileLoop => Some("while".to_owned()),
+        StructuredSourceKind::DoWhileLoop => Some("do-while".to_owned()),
+        StructuredSourceKind::ForLoop => Some("for".to_owned()),
+        StructuredSourceKind::ForOfLoop => Some("for-of".to_owned()),
+        StructuredSourceKind::ForAwaitOfLoop => Some("for-await-of".to_owned()),
+        StructuredSourceKind::ForInLoop => Some("for-in".to_owned()),
+        StructuredSourceKind::Try => Some("try".to_owned()),
+        StructuredSourceKind::Catch => Some("catch".to_owned()),
+        StructuredSourceKind::Finally => Some("finally".to_owned()),
+        StructuredSourceKind::Labeled(label) => Some(format!("label:{label}")),
+    }
 }
 
 #[cfg(test)]
@@ -526,6 +637,64 @@ mod tests {
             result.explain.expect("native explanation").helpers,
             ["memo"]
         );
+    }
+
+    #[test]
+    fn explains_source_decisions_from_native_hir_in_source_order() {
+        let code = r#"
+            import { $effect, $memo, $state } from 'fict';
+            export function Counter() {
+                const count = $state(0);
+                const doubled = $memo(() => count * 2);
+                $effect(() => { doubled; });
+                if (count) {
+                    return <button>{doubled}</button>;
+                }
+                return <span>zero</span>;
+            }
+        "#;
+        let mut input = request(code, "explain-source.tsx");
+        input.options.explain = true;
+        input.options.strict_guarantee = false;
+
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        let explain = result.explain.expect("native explanation");
+        let source_events: Vec<_> = explain
+            .events
+            .iter()
+            .filter(|event| {
+                !matches!(
+                    event.kind,
+                    CompilerExplainEventKind::RuntimeHelper | CompilerExplainEventKind::Diagnostic
+                )
+            })
+            .collect();
+        for (kind, name) in [
+            (CompilerExplainEventKind::SourceSignal, "$state"),
+            (CompilerExplainEventKind::SourceMemo, "$memo"),
+            (CompilerExplainEventKind::SourceEffect, "$effect"),
+            (CompilerExplainEventKind::SourceControlFlow, "if"),
+        ] {
+            assert!(
+                source_events
+                    .iter()
+                    .any(|event| event.kind == kind && event.name.as_deref() == Some(name)),
+                "missing {kind:?} {name}: {source_events:?}"
+            );
+        }
+        assert!(
+            source_events
+                .iter()
+                .any(|event| event.kind == CompilerExplainEventKind::SourceJsx),
+            "missing JSX explanation: {source_events:?}"
+        );
+        assert!(source_events.iter().all(|event| event.span.is_some()));
+        assert!(source_events.windows(2).all(|events| {
+            events[0].span.expect("source event span").start()
+                <= events[1].span.expect("source event span").start()
+        }));
     }
 
     #[test]
