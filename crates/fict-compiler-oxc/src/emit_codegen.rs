@@ -6253,9 +6253,11 @@ fn ignore_inline_event_handler_return<'a>(
 
 fn handler_may_prevent_default(handler: &Expression<'_>) -> bool {
     let handler = handler.get_inner_expression();
-    let parameters = match handler {
-        Expression::ArrowFunctionExpression(function) => &function.params,
-        Expression::FunctionExpression(function) => &function.params,
+    let (parameters, body) = match handler {
+        Expression::ArrowFunctionExpression(function) => {
+            (&function.params, Some(function.body.as_ref()))
+        }
+        Expression::FunctionExpression(function) => (&function.params, function.body.as_deref()),
         _ => return false,
     };
     let Some(parameter) = parameters.items.first() else {
@@ -6266,38 +6268,104 @@ fn handler_may_prevent_default(handler: &Expression<'_>) -> bool {
     };
     let mut finder = PreventDefaultFinder {
         event_parameter: parameter.name.as_str(),
+        shadow_depth: 0,
         found: false,
     };
-    finder.visit_expression(handler);
+    if let Some(body) = body {
+        finder.visit_function_body(body);
+    }
     finder.found
 }
 
 struct PreventDefaultFinder<'name> {
     event_parameter: &'name str,
+    shadow_depth: usize,
     found: bool,
 }
 
 impl<'a> Visit<'a> for PreventDefaultFinder<'_> {
+    fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+        if self.found {
+            return;
+        }
+        let shadows_event = formal_parameters_bind_name(&function.params, self.event_parameter);
+        self.shadow_depth += usize::from(shadows_event);
+        walk::walk_function(self, function, flags);
+        self.shadow_depth -= usize::from(shadows_event);
+    }
+
+    fn visit_arrow_function_expression(&mut self, function: &ArrowFunctionExpression<'a>) {
+        if self.found {
+            return;
+        }
+        let shadows_event = formal_parameters_bind_name(&function.params, self.event_parameter);
+        self.shadow_depth += usize::from(shadows_event);
+        walk::walk_arrow_function_expression(self, function);
+        self.shadow_depth -= usize::from(shadows_event);
+    }
+
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
         if self.found {
             return;
         }
-        let member_matches = match call.callee.get_inner_expression() {
-            Expression::StaticMemberExpression(member) => {
-                matches!(member.object.get_inner_expression(), Expression::Identifier(object) if object.name == self.event_parameter)
-                    && member.property.name == "preventDefault"
-            }
-            Expression::ComputedMemberExpression(member) => {
-                matches!(member.object.get_inner_expression(), Expression::Identifier(object) if object.name == self.event_parameter)
-                    && matches!(member.expression.get_inner_expression(), Expression::StringLiteral(property) if property.value == "preventDefault")
-            }
-            _ => false,
-        };
+        let member_matches = self.shadow_depth == 0
+            && match call.callee.get_inner_expression() {
+                Expression::StaticMemberExpression(member) => {
+                    matches!(member.object.get_inner_expression(), Expression::Identifier(object) if object.name == self.event_parameter)
+                        && member.property.name == "preventDefault"
+                }
+                Expression::ComputedMemberExpression(member) => {
+                    matches!(member.object.get_inner_expression(), Expression::Identifier(object) if object.name == self.event_parameter)
+                        && matches!(member.expression.get_inner_expression(), Expression::StringLiteral(property) if property.value == "preventDefault")
+                }
+                _ => false,
+            };
         if member_matches {
             self.found = true;
             return;
         }
         walk::walk_call_expression(self, call);
+    }
+}
+
+fn formal_parameters_bind_name(parameters: &FormalParameters<'_>, name: &str) -> bool {
+    parameters
+        .items
+        .iter()
+        .any(|parameter| binding_pattern_binds_name(&parameter.pattern, name))
+        || parameters
+            .rest
+            .as_ref()
+            .is_some_and(|rest| binding_pattern_binds_name(&rest.rest.argument, name))
+}
+
+fn binding_pattern_binds_name(pattern: &BindingPattern<'_>, name: &str) -> bool {
+    match pattern {
+        BindingPattern::BindingIdentifier(identifier) => identifier.name == name,
+        BindingPattern::ObjectPattern(pattern) => {
+            pattern
+                .properties
+                .iter()
+                .any(|property| binding_pattern_binds_name(&property.value, name))
+                || pattern
+                    .rest
+                    .as_ref()
+                    .is_some_and(|rest| binding_pattern_binds_name(&rest.argument, name))
+        }
+        BindingPattern::ArrayPattern(pattern) => {
+            pattern
+                .elements
+                .iter()
+                .flatten()
+                .any(|element| binding_pattern_binds_name(element, name))
+                || pattern
+                    .rest
+                    .as_ref()
+                    .is_some_and(|rest| binding_pattern_binds_name(&rest.argument, name))
+        }
+        BindingPattern::AssignmentPattern(pattern) => {
+            binding_pattern_binds_name(&pattern.left, name)
+        }
     }
 }
 

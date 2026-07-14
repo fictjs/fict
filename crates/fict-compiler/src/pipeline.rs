@@ -4885,6 +4885,48 @@ mod tests {
 
     #[cfg(feature = "preview")]
     #[test]
+    fn scopes_preview_prevent_default_detection_to_the_event_parameter() {
+        let source = r#"
+            export function App() {
+                return <div>
+                    <button onClick$={(event) => { (() => event.preventDefault())(); }} />
+                    <button onClick$={(event) => { ((event) => event.preventDefault())({ preventDefault() {} }); }} />
+                    <button onClick$={(event) => { (({ event }) => event.preventDefault())({ event: { preventDefault() {} } }); }} />
+                    <button onClick$={(event) => { ({ preventDefault() {} }).preventDefault(); }} />
+                </div>;
+            }
+        "#;
+        let mut input = request(source, "preview-prevent-default-scope.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: false,
+            ..CompilerPreviewOptions::default()
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(result.artifacts.len(), 4);
+        assert_eq!(result.code.matches("\"default\", \"pd\"").count(), 1);
+        assert!(
+            result
+                .code
+                .contains("__fictQrl(\"fict:compiler-artifact:handler-0\", \"default\", \"pd\")"),
+            "{}",
+            result.code
+        );
+        for handler in 1..=3 {
+            assert!(
+                result.code.contains(&format!(
+                    "__fictQrl(\"fict:compiler-artifact:handler-{handler}\", \"default\")"
+                )),
+                "{}",
+                result.code
+            );
+        }
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
     fn emits_preview_vnode_qrls_with_prop_and_module_capture_artifacts() {
         let source = "const moduleHelper = () => 1; export function App({ label = 'fallback' }) { return <button on:click$={() => { moduleHelper(); console.log(label); }}>{label}</button>; }";
         let mut input = request(source, "preview-vnode.tsx");
