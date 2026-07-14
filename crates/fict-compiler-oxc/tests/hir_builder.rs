@@ -35,6 +35,14 @@ fn annotates_direct_and_namespace_imports_from_exact_resolved_metadata() {
             import { count as differentRequest } from './dep';
             import * as namespace from './dep?client';
             import { hidden } from './opaque';
+            export function App(key) {
+                return [
+                    namespace.useCount(),
+                    namespace.group.useGroup(),
+                    namedNamespace.deep.usePair(),
+                    namespace[key](),
+                ];
+            }
         "#,
         options(OxcSourceLanguage::JavaScript),
         &HirBuildOptions {
@@ -58,12 +66,40 @@ fn annotates_direct_and_namespace_imports_from_exact_resolved_metadata() {
                                 exports: [("inner".into(), ReactiveExportKind::Memo)]
                                     .into_iter()
                                     .collect(),
+                                hooks: [(
+                                    "useGroup".into(),
+                                    fict_metadata::HookReturnInfo {
+                                        object_props: [(
+                                            "count".into(),
+                                            ReactiveExportKind::Signal,
+                                        )]
+                                        .into_iter()
+                                        .collect(),
+                                        ..fict_metadata::HookReturnInfo::default()
+                                    },
+                                )]
+                                .into_iter()
+                                .collect(),
                                 namespaces: [(
                                     "deep".into(),
                                     ModuleReactiveMetadata {
                                         exports: [("value".into(), ReactiveExportKind::Signal)]
                                             .into_iter()
                                             .collect(),
+                                        hooks: [(
+                                            "usePair".into(),
+                                            fict_metadata::HookReturnInfo {
+                                                array_props: [(
+                                                    "0".into(),
+                                                    ReactiveExportKind::Memo,
+                                                )]
+                                                .into_iter()
+                                                .collect(),
+                                                ..fict_metadata::HookReturnInfo::default()
+                                            },
+                                        )]
+                                        .into_iter()
+                                        .collect(),
                                         ..ModuleReactiveMetadata::new()
                                     },
                                 )]
@@ -182,6 +218,87 @@ fn annotates_direct_and_namespace_imports_from_exact_resolved_metadata() {
             (vec!["inner".into()], ImportedReactiveKind::Memo),
         ]
     );
+    let import = |name: &str| {
+        hir.bindings
+            .iter()
+            .find(|binding| binding.display_name == name)
+            .and_then(|binding| binding.import.as_ref())
+            .unwrap_or_else(|| panic!("missing import {name}"))
+    };
+    assert_eq!(
+        import("namespace")
+            .resolve_hook_member_path(&["useCount".into()])
+            .and_then(|hook| hook.direct_accessor),
+        Some(ImportedReactiveKind::Signal)
+    );
+    assert_eq!(
+        import("namespace")
+            .resolve_hook_member_path(&["group".into(), "useGroup".into()])
+            .and_then(|hook| hook.object_properties.first())
+            .map(|property| (property.key.as_str(), property.kind)),
+        Some(("count", ImportedReactiveKind::Signal))
+    );
+    assert_eq!(
+        import("namedNamespace")
+            .resolve_hook_member_path(&["deep".into(), "usePair".into()])
+            .and_then(|hook| hook.array_properties.first())
+            .map(|property| (property.key.as_str(), property.kind)),
+        Some(("0", ImportedReactiveKind::Memo))
+    );
+
+    let app = hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .binding
+                .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "App")
+        })
+        .expect("App function");
+    let calls: Vec<_> = app
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter_map(|instruction| match &instruction.kind {
+            HirInstructionKind::Call(call) => Some(call),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(calls.len(), 4);
+    let namespace = hir
+        .bindings
+        .iter()
+        .find(|binding| binding.display_name == "namespace")
+        .expect("namespace import")
+        .id;
+    let named_namespace = hir
+        .bindings
+        .iter()
+        .find(|binding| binding.display_name == "namedNamespace")
+        .expect("named namespace import")
+        .id;
+    assert!(matches!(calls[0].host, CallHost::Binding(binding) if binding == namespace));
+    assert!(matches!(calls[1].host, CallHost::Binding(binding) if binding == namespace));
+    assert!(matches!(calls[2].host, CallHost::Binding(binding) if binding == named_namespace));
+    assert_eq!(calls[3].host, CallHost::Unknown);
+    let static_path = |call: &fict_hir::CallInstruction| {
+        call.callee_reference
+            .as_ref()
+            .expect("namespace member reference")
+            .projections
+            .iter()
+            .map(|projection| match projection {
+                Projection::StaticProperty { name, .. } => name.clone(),
+                Projection::Index { .. } | Projection::ComputedProperty { .. } => {
+                    "<dynamic>".into()
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(static_path(calls[0]), ["useCount"]);
+    assert_eq!(static_path(calls[1]), ["group", "useGroup"]);
+    assert_eq!(static_path(calls[2]), ["deep", "usePair"]);
+    assert_eq!(static_path(calls[3]), ["<dynamic>"]);
 }
 
 #[test]

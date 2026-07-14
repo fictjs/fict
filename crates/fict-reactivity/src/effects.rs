@@ -1549,15 +1549,7 @@ fn imported_hook_reactive_dependency(
     let HirInstructionKind::Call(call) = &call.kind else {
         return false;
     };
-    let CallHost::Binding(binding) = call.host else {
-        return false;
-    };
-    let Some(shape) = file
-        .bindings
-        .get(binding.as_usize())
-        .and_then(|binding| binding.import.as_ref())
-        .and_then(|import| import.hook_return.as_ref())
-    else {
+    let Some(shape) = imported_hook_return_shape(file, call) else {
         return false;
     };
     if shape.direct_accessor.is_some() {
@@ -1578,6 +1570,22 @@ fn imported_hook_reactive_dependency(
         DependencySegment::Dynamic { .. } => return false,
     };
     shape.resolve_property(&projection).is_some()
+}
+
+fn imported_hook_return_shape<'a>(
+    file: &'a HirFile,
+    call: &fict_hir::CallInstruction,
+) -> Option<&'a fict_hir::ImportedHookReturn> {
+    let CallHost::Binding(binding) = call.host else {
+        return None;
+    };
+    let import = file.bindings.get(binding.as_usize())?.import.as_ref()?;
+    match call.callee_reference.as_ref() {
+        Some(place) if !place.projections.is_empty() => {
+            import.resolve_hook_member(&place.projections)
+        }
+        Some(_) | None => import.hook_return.as_ref(),
+    }
 }
 
 fn imported_hook_binding_call(

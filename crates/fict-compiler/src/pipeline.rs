@@ -1024,6 +1024,121 @@ mod tests {
     }
 
     #[test]
+    fn consumes_recursive_namespace_hook_metadata() {
+        let mut input = request(
+            r#"
+                import * as hooks from './hooks?client';
+                import { group as named } from './hooks?client';
+                import * as wrongRequest from './hooks';
+                export function App(key) {
+                    const count = hooks.useCount();
+                    const api = hooks.useCounter();
+                    const pair = named.deep.usePair();
+                    const reader = () => api.count;
+                    const explicit = hooks.useCount()();
+                    const dynamic = hooks[key]();
+                    const ordinary = wrongRequest.useCount();
+                    return [
+                        count,
+                        api.count,
+                        pair[0],
+                        hooks.useCounter().count,
+                        reader,
+                        explicit,
+                        dynamic,
+                        ordinary,
+                    ];
+                }
+            "#,
+            "namespace-hook-consumer.jsx",
+        );
+        input.metadata.push(ResolvedMetadataInput {
+            request: "./hooks?client".into(),
+            resolved_id: Some("/src/hooks.ts?client".into()),
+            status: MetadataResolutionStatus::Resolved,
+            metadata: Some(ModuleReactiveMetadata {
+                hooks: BTreeMap::from([
+                    (
+                        "useCount".into(),
+                        HookReturnInfo {
+                            direct_accessor: Some(ReactiveExportKind::Signal),
+                            ..HookReturnInfo::default()
+                        },
+                    ),
+                    (
+                        "useCounter".into(),
+                        HookReturnInfo {
+                            object_props: BTreeMap::from([(
+                                "count".into(),
+                                ReactiveExportKind::Signal,
+                            )]),
+                            ..HookReturnInfo::default()
+                        },
+                    ),
+                ]),
+                namespaces: BTreeMap::from([(
+                    "group".into(),
+                    ModuleReactiveMetadata {
+                        namespaces: BTreeMap::from([(
+                            "deep".into(),
+                            ModuleReactiveMetadata {
+                                hooks: BTreeMap::from([(
+                                    "usePair".into(),
+                                    HookReturnInfo {
+                                        array_props: BTreeMap::from([(
+                                            "0".into(),
+                                            ReactiveExportKind::Memo,
+                                        )]),
+                                        ..HookReturnInfo::default()
+                                    },
+                                )]),
+                                ..ModuleReactiveMetadata::new()
+                            },
+                        )]),
+                        ..ModuleReactiveMetadata::new()
+                    },
+                )]),
+                ..ModuleReactiveMetadata::new()
+            }),
+            fingerprint: "sha256:namespace-hooks-client".into(),
+        });
+
+        let result = compile(input);
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.code.contains("count()"), "{}", result.code);
+        assert!(result.code.contains("api.count()"), "{}", result.code);
+        assert!(result.code.contains("pair[0]()"), "{}", result.code);
+        assert!(
+            result.code.contains("hooks.useCounter().count()"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("() => api.count()"), "{}", result.code);
+        assert!(
+            result.code.contains("hooks.useCount()()"),
+            "{}",
+            result.code
+        );
+        assert!(
+            !result.code.contains("hooks.useCount()()()"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.contains("hooks[key]()"), "{}", result.code);
+        assert!(
+            result.code.contains("wrongRequest.useCount()"),
+            "{}",
+            result.code
+        );
+        assert!(
+            !result.code.contains("wrongRequest.useCount()()"),
+            "{}",
+            result.code
+        );
+        assert_eq!(result.metadata_dependencies, ["/src/hooks.ts?client"]);
+    }
+
+    #[test]
     fn consumes_recursive_namespace_metadata_for_static_member_reads() {
         let mut input = request(
             r#"

@@ -1002,12 +1002,13 @@ fn imported_hook_return<'a>(
     let CallHost::Binding(binding) = call.host else {
         return None;
     };
-    file.bindings
-        .get(binding.as_usize())?
-        .import
-        .as_ref()?
-        .hook_return
-        .as_ref()
+    let import = file.bindings.get(binding.as_usize())?.import.as_ref()?;
+    match call.callee_reference.as_ref() {
+        Some(place) if !place.projections.is_empty() => {
+            import.resolve_hook_member(&place.projections)
+        }
+        Some(_) | None => import.hook_return.as_ref(),
+    }
 }
 
 fn imported_hook_member_kind(

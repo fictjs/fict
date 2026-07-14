@@ -113,6 +113,7 @@ pub fn verify_emit_program(
             }
             if let crate::ReactiveSlotStorage::CapturedHookReturn {
                 owner,
+                call,
                 import,
                 property,
             } = slot.storage
@@ -124,16 +125,18 @@ pub fn verify_emit_program(
                         .get(owner.as_usize())
                         .is_some_and(|owner| {
                             owner.slots.iter().any(|candidate| {
-                            matches!(
-                                candidate.storage,
-                                crate::ReactiveSlotStorage::HookReturn {
-                                    import: candidate_import,
-                                    property: Some(candidate_property),
-                                    ..
-                                } if candidate_import == import && candidate_property == property
-                            ) && candidate.binding == slot.binding
-                                && candidate.kind == slot.kind
-                        })
+                                matches!(
+                                    candidate.storage,
+                                    crate::ReactiveSlotStorage::HookReturn {
+                                        call: candidate_call,
+                                        import: candidate_import,
+                                        property: Some(candidate_property),
+                                    } if candidate_call == call
+                                        && candidate_import == import
+                                        && candidate_property == property
+                                ) && candidate.binding == slot.binding
+                                    && candidate.kind == slot.kind
+                            })
                         });
                 if !capture_valid {
                     diagnostics.push(emit_error(
@@ -185,11 +188,9 @@ pub fn verify_emit_program(
                 property,
             } = slot.storage
             {
-                let hook = hir
-                    .bindings
-                    .get(import.as_usize())
-                    .and_then(|binding| binding.import.as_ref())
-                    .and_then(|import| import.hook_return.as_ref());
+                let source_call = hook_call_instruction(hir_function, call);
+                let hook =
+                    source_call.and_then(|call| imported_hook_return_shape(hir, call, import));
                 let imported_kind = match property {
                     None => hook.and_then(|hook| hook.direct_accessor),
                     Some(property) => hook.and_then(|hook| {
@@ -207,18 +208,7 @@ pub fn verify_emit_program(
                             .map(|candidate| candidate.kind)
                     }),
                 };
-                let call_matches = hir_function
-                    .blocks
-                    .iter()
-                    .flat_map(|block| &block.instructions)
-                    .find(|instruction| instruction.result == Some(call))
-                    .is_some_and(|instruction| {
-                        matches!(
-                            &instruction.kind,
-                            fict_hir::HirInstructionKind::Call(call)
-                                if call.host == fict_hir::CallHost::Binding(import)
-                        )
-                    });
+                let call_matches = source_call.is_some() && hook.is_some();
                 let kind_matches = matches!(
                     (imported_kind, slot.kind),
                     (
@@ -1016,6 +1006,45 @@ fn verify_source_result(
     }
 }
 
+fn hook_call_instruction(
+    function: &fict_hir::HirFunction,
+    value: fict_hir::ValueId,
+) -> Option<&fict_hir::CallInstruction> {
+    function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| instruction.result == Some(value))
+        .and_then(|instruction| match &instruction.kind {
+            fict_hir::HirInstructionKind::Call(call) => Some(call),
+            _ => None,
+        })
+}
+
+fn imported_hook_return_shape<'a>(
+    hir: &'a HirFile,
+    call: &fict_hir::CallInstruction,
+    expected_import: fict_hir::BindingId,
+) -> Option<&'a fict_hir::ImportedHookReturn> {
+    let fict_hir::CallHost::Binding(import_binding) = call.host else {
+        return None;
+    };
+    if import_binding != expected_import {
+        return None;
+    }
+    let import = hir
+        .bindings
+        .get(import_binding.as_usize())?
+        .import
+        .as_ref()?;
+    match call.callee_reference.as_ref() {
+        Some(place) if !place.projections.is_empty() => {
+            import.resolve_hook_member(&place.projections)
+        }
+        Some(_) | None => import.hook_return.as_ref(),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn verify_reactive_read(
     hir: &HirFile,
@@ -1065,7 +1094,10 @@ fn verify_reactive_read(
             (basic_valid, storage_valid)
         }
         Some(crate::ReactiveSlotStorage::CapturedHookReturn {
-            import, property, ..
+            owner,
+            call,
+            import,
+            property,
         }) => {
             let local = source_place.and_then(|place| match place.base {
                 fict_hir::PlaceBase::Local(local) => Some(local),
@@ -1082,10 +1114,10 @@ fn verify_reactive_read(
                     })
             });
             let hook = hir
-                .bindings
-                .get(import.as_usize())
-                .and_then(|binding| binding.import.as_ref())
-                .and_then(|import| import.hook_return.as_ref());
+                .functions
+                .get(owner.as_usize())
+                .and_then(|owner| hook_call_instruction(owner, call))
+                .and_then(|call| imported_hook_return_shape(hir, call, import));
             let resolved_property = source_place
                 .and_then(|place| place.projections.first())
                 .and_then(|projection| hook?.resolve_property(projection));
@@ -1152,11 +1184,8 @@ fn verify_reactive_read(
                             .and_then(|local| local.binding)
                 })
             });
-            let hook = hir
-                .bindings
-                .get(import.as_usize())
-                .and_then(|binding| binding.import.as_ref())
-                .and_then(|import| import.hook_return.as_ref());
+            let hook = hook_call_instruction(hir_function, call)
+                .and_then(|call| imported_hook_return_shape(hir, call, import));
             let imported_kind = match property {
                 None => hook.and_then(|hook| hook.direct_accessor),
                 Some(property) => Some(property.kind),

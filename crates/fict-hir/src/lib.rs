@@ -22,7 +22,7 @@ pub use ir::{
     FictMacroKind, FunctionFlags, FunctionKind, HirBlock, HirFile, HirFunction, HirGlobal,
     HirInstruction, HirInstructionKind, HirLocal, HirObjectParameterCheck, HirObjectParameterMode,
     HirObjectParameterProperty, HirObjectParameterRest, HirParameter, HirPatternWrite, HirScope,
-    HirTerminator, HirValue, ImportBinding, ImportKind, ImportPhase,
+    HirTerminator, HirValue, ImportBinding, ImportKind, ImportPhase, ImportedHookMember,
     ImportedHookPropertyCollection, ImportedHookPropertyMatch, ImportedHookReturn, ImportedName,
     ImportedReactiveKind, ImportedReactiveMember, ImportedReactiveMemberMatch,
     ImportedReactiveProperty, InstructionSemantics, IterationKind, LocalKind, MutationEffect,

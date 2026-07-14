@@ -188,6 +188,7 @@ pub(crate) fn generate_module_metadata(
             import.reactive.is_some()
                 || !import.reactive_members.is_empty()
                 || import.hook_return.is_some()
+                || !import.hook_members.is_empty()
         })
     {
         let _ = builder.resolve(&import.source);

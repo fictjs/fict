@@ -91,6 +91,7 @@ struct CapturedHookMemberSite {
     local: LocalId,
     binding: fict_hir::BindingId,
     owner: FunctionId,
+    call: ValueId,
     import: fict_hir::BindingId,
     property: ImportedHookPropertyMatch,
     kind: ReactiveSlotKind,
@@ -726,17 +727,24 @@ fn lower_function(
         }
         captured_hook_member_uses
             .entry((local, property))
-            .or_insert((root.binding, root.owner, root.import, instruction.origin));
+            .or_insert((
+                root.binding,
+                root.owner,
+                root.call,
+                root.import,
+                instruction.origin,
+            ));
     }
     let captured_hook_member_sites: Vec<_> = captured_hook_member_uses
         .into_iter()
         .enumerate()
         .map(
-            |(index, ((local, property), (binding, owner, import, origin)))| {
+            |(index, ((local, property), (binding, owner, call, import, origin)))| {
                 CapturedHookMemberSite {
                     local,
                     binding,
                     owner,
+                    call,
                     import,
                     property,
                     kind: match property.kind {
@@ -975,6 +983,7 @@ fn lower_function(
         kind: site.kind,
         storage: ReactiveSlotStorage::CapturedHookReturn {
             owner: site.owner,
+            call: site.call,
             import: site.import,
             property: site.property,
         },
@@ -3463,13 +3472,13 @@ fn imported_hook_return<'a>(
     let CallHost::Binding(binding) = call.host else {
         return None;
     };
-    let shape = hir
-        .bindings
-        .get(binding.as_usize())?
-        .import
-        .as_ref()?
-        .hook_return
-        .as_ref()?;
+    let import = hir.bindings.get(binding.as_usize())?.import.as_ref()?;
+    let shape = match call.callee_reference.as_ref() {
+        Some(place) if !place.projections.is_empty() => {
+            import.resolve_hook_member(&place.projections)?
+        }
+        Some(_) | None => import.hook_return.as_ref()?,
+    };
     Some((binding, shape))
 }
 

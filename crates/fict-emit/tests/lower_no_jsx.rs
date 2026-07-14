@@ -874,6 +874,7 @@ fn lowers_only_binding_aware_runtime_keyed_list_calls() {
             reactive: None,
             reactive_members: Vec::new(),
             hook_return: None,
+            hook_members: Vec::new(),
         }),
         origin: origin(),
     }];
@@ -1011,6 +1012,7 @@ fn tracks_preserved_store_resource_and_selector_calls() {
             reactive: None,
             reactive_members: Vec::new(),
             hook_return: None,
+            hook_members: Vec::new(),
         }),
         origin: origin(),
     })

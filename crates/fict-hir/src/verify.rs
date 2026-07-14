@@ -188,17 +188,45 @@ impl Verifier<'_> {
                             Some(binding.origin),
                         );
                     }
-                    if import.hook_return.as_ref().is_some_and(|hook| {
-                        [&hook.object_properties, &hook.array_properties]
-                            .into_iter()
-                            .any(|properties| {
-                                properties.windows(2).any(|pair| pair[0].key >= pair[1].key)
-                            })
-                    }) {
+                    if import
+                        .hook_members
+                        .iter()
+                        .any(|member| member.path.is_empty())
+                        || import
+                            .hook_members
+                            .windows(2)
+                            .any(|pair| pair[0].path >= pair[1].path)
+                    {
                         self.error(
                             "FICT-HIR-BINDING",
                             format!(
-                                "import binding{} has non-canonical hook return properties",
+                                "import binding{} has non-canonical hook member paths",
+                                binding.id.index()
+                            ),
+                            Some(binding.origin),
+                        );
+                    }
+                    if import
+                        .hook_return
+                        .iter()
+                        .chain(
+                            import
+                                .hook_members
+                                .iter()
+                                .map(|member| &member.return_shape),
+                        )
+                        .any(|hook| {
+                            [&hook.object_properties, &hook.array_properties]
+                                .into_iter()
+                                .any(|properties| {
+                                    properties.windows(2).any(|pair| pair[0].key >= pair[1].key)
+                                })
+                        })
+                    {
+                        self.error(
+                            "FICT-HIR-BINDING",
+                            format!(
+                                "import binding{} has non-canonical hook return metadata",
                                 binding.id.index()
                             ),
                             Some(binding.origin),

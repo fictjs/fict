@@ -10,16 +10,16 @@ use fict_hir::{
     GlobalId, HirBlock, HirFile, HirFunction, HirGlobal, HirInstruction, HirInstructionKind,
     HirLocal, HirObjectParameterCheck, HirObjectParameterMode, HirObjectParameterProperty,
     HirObjectParameterRest, HirParameter, HirPatternWrite, HirScope, HirTerminator, HirValue,
-    ImportPhase, ImportedHookReturn, ImportedReactiveKind, ImportedReactiveMember,
-    ImportedReactiveMemberMatch, ImportedReactiveProperty, InstructionSemantics, IterationKind,
-    JavaScriptString, JsxAttribute, JsxAttributeValue, JsxChild, JsxElement, JsxElementName,
-    JsxExpressionKind, JsxListExpression, JsxListReceiver, JsxNode, JsxTemplate, LiteralValue,
-    LocalId, LocalKind, ModuleExport, ModuleLocalExport, ModulePlan, MutationEffect, NumberLiteral,
-    ObjectEntry, ObjectPropertyKind, Origin, PatternSummary, PropertyKey, Purity, ReactiveCallKind,
-    ReactiveScopeHost, ReactiveScopeKind, RegionId, ScopeId, ScopeKind, StructuredSourceHint,
-    SyntaxFragment, SyntaxFragmentId, SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi,
-    TemplateId, TerminatorKind, UnaryOperator, UpdateOperator, ValueId, ValueKind, verify_hir,
-    verify_module_plan,
+    ImportPhase, ImportedHookMember, ImportedHookReturn, ImportedReactiveKind,
+    ImportedReactiveMember, ImportedReactiveMemberMatch, ImportedReactiveProperty,
+    InstructionSemantics, IterationKind, JavaScriptString, JsxAttribute, JsxAttributeValue,
+    JsxChild, JsxElement, JsxElementName, JsxExpressionKind, JsxListExpression, JsxListReceiver,
+    JsxNode, JsxTemplate, LiteralValue, LocalId, LocalKind, ModuleExport, ModuleLocalExport,
+    ModulePlan, MutationEffect, NumberLiteral, ObjectEntry, ObjectPropertyKind, Origin,
+    PatternSummary, PropertyKey, Purity, ReactiveCallKind, ReactiveScopeHost, ReactiveScopeKind,
+    RegionId, ScopeId, ScopeKind, StructuredSourceHint, SyntaxFragment, SyntaxFragmentId,
+    SyntaxFragmentKind, SyntaxSummary, TaggedTemplateQuasi, TemplateId, TerminatorKind,
+    UnaryOperator, UpdateOperator, ValueId, ValueKind, verify_hir, verify_module_plan,
 };
 use fict_metadata::{
     HookReturnInfo, MetadataResolutionStatus, ModuleReactiveMetadata, ReactiveExportKind,
@@ -1622,6 +1622,7 @@ fn apply_resolved_import_metadata(
             fict_hir::ImportedName::Named(exported) => metadata.namespaces.get(exported),
         };
         import.reactive_members = namespace.map_or_else(Vec::new, flatten_reactive_members);
+        import.hook_members = namespace.map_or_else(Vec::new, flatten_hook_members);
     }
 }
 
@@ -1665,6 +1666,28 @@ fn flatten_reactive_members(metadata: &ModuleReactiveMetadata) -> Vec<ImportedRe
             members.push(ImportedReactiveMember {
                 path: member_path,
                 kind: imported_reactive_kind(kind),
+            });
+        }
+        for (name, namespace) in &metadata.namespaces {
+            let mut namespace_path = path.clone();
+            namespace_path.push(name.clone());
+            stack.push((namespace_path, namespace));
+        }
+    }
+    members.sort_unstable_by(|left, right| left.path.cmp(&right.path));
+    members
+}
+
+fn flatten_hook_members(metadata: &ModuleReactiveMetadata) -> Vec<ImportedHookMember> {
+    let mut members = Vec::new();
+    let mut stack = vec![(Vec::new(), metadata)];
+    while let Some((path, metadata)) = stack.pop() {
+        for (exported, shape) in &metadata.hooks {
+            let mut member_path = path.clone();
+            member_path.push(exported.clone());
+            members.push(ImportedHookMember {
+                path: member_path,
+                return_shape: imported_hook_return(shape),
             });
         }
         for (name, namespace) in &metadata.namespaces {
@@ -1812,6 +1835,25 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 })
                 .filter_map(|binding| self.old_to_new.get(&binding.id.index()).copied())
                 .collect();
+        let imported_hook_member_paths: BTreeMap<_, BTreeSet<_>> = self
+            .frontend
+            .bindings
+            .iter()
+            .filter_map(|binding| {
+                let mapped = self.old_to_new.get(&binding.id.index()).copied()?;
+                let import = binding.import.as_ref()?;
+                (!import.hook_members.is_empty()).then(|| {
+                    (
+                        mapped,
+                        import
+                            .hook_members
+                            .iter()
+                            .map(|member| member.path.clone())
+                            .collect(),
+                    )
+                })
+            })
+            .collect();
         let mut immediate_invocation_spans = ImmediateInvocationCollector::default();
         immediate_invocation_spans.visit_program(program);
         let immediate_invocations = immediate_invocation_spans
@@ -1826,6 +1868,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             symbol_to_binding: &symbol_to_binding,
             hook_bindings: &hook_bindings,
             namespace_imports: &namespace_imports,
+            imported_hook_member_paths: &imported_hook_member_paths,
             reactive_bindings: &reactive_bindings,
             reactive_namespace_sources: &reactive_namespace_sources,
             immediate_invocations: &immediate_invocations,
@@ -2144,14 +2187,33 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .and_then(|import| import.reactive)
     }
 
-    fn imported_hook_direct_kind(&self, binding: BindingId) -> Option<ImportedReactiveKind> {
-        self.frontend
+    fn imported_hook_direct_kind(
+        &self,
+        binding: BindingId,
+        callee_reference: Option<&PlannedPlace>,
+    ) -> Option<ImportedReactiveKind> {
+        let import = self
+            .frontend
             .bindings
             .iter()
             .find(|candidate| self.old_to_new.get(&candidate.id.index()).copied() == Some(binding))
-            .and_then(|binding| binding.import.as_ref())
-            .and_then(|import| import.hook_return.as_ref())
-            .and_then(|hook| hook.direct_accessor)
+            .and_then(|binding| binding.import.as_ref())?;
+        let shape = match callee_reference {
+            Some(place) if !place.projections.is_empty() => {
+                let path: Option<Vec<_>> = place
+                    .projections
+                    .iter()
+                    .map(|projection| match projection {
+                        PlannedProjection::Static { name, .. } => Some(name.clone()),
+                        PlannedProjection::Index { index, .. } => Some(index.to_string()),
+                        PlannedProjection::Computed { .. } => None,
+                    })
+                    .collect();
+                import.resolve_hook_member_path(&path?)
+            }
+            Some(_) | None => import.hook_return.as_ref(),
+        };
+        shape.and_then(|hook| hook.direct_accessor)
     }
 
     fn planned_imported_reactive_member(
@@ -3287,7 +3349,9 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 .iter()
                 .filter(|call| {
                     call.binding
-                        .and_then(|binding| self.imported_hook_direct_kind(binding))
+                        .and_then(|binding| {
+                            self.imported_hook_direct_kind(binding, call.callee_reference.as_ref())
+                        })
                         .is_some_and(|kind| {
                             matches!(
                                 kind,
@@ -7613,6 +7677,7 @@ struct CallCollector<'facts, 'semantic> {
     symbol_to_binding: &'facts BTreeMap<SymbolId, BindingId>,
     hook_bindings: &'facts BTreeSet<BindingId>,
     namespace_imports: &'facts BTreeSet<BindingId>,
+    imported_hook_member_paths: &'facts BTreeMap<BindingId, BTreeSet<Vec<String>>>,
     reactive_bindings: &'facts BTreeMap<BindingId, ReactiveCallKind>,
     reactive_namespace_sources: &'facts BTreeMap<BindingId, String>,
     immediate_invocations: &'facts BTreeSet<FunctionId>,
@@ -7691,13 +7756,23 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             direct_variable_symbol.and_then(|symbol| self.symbol_to_binding.get(&symbol).copied());
         let direct_binding = resolved_callee_symbol(self.scoping, &call.callee)
             .and_then(|symbol| self.symbol_to_binding.get(&symbol).copied());
+        let callee_reference = planned_invocation_reference(self.scoping, &call.callee);
         let namespace_reactive = namespace_reactive_call_kind(
             self.scoping,
             &call.callee,
             self.symbol_to_binding,
             self.reactive_namespace_sources,
         );
-        let binding = direct_binding.or(namespace_reactive.map(|(binding, _)| binding));
+        let imported_hook_member_binding = callee_reference.as_ref().and_then(|place| {
+            resolved_imported_hook_member_binding(
+                place,
+                self.symbol_to_binding,
+                self.imported_hook_member_paths,
+            )
+        });
+        let binding = direct_binding
+            .or(namespace_reactive.map(|(binding, _)| binding))
+            .or(imported_hook_member_binding);
         let reactive_kind = direct_binding
             .and_then(|binding| self.reactive_bindings.get(&binding).copied())
             .or(namespace_reactive.map(|(_, kind)| kind));
@@ -7748,7 +7823,7 @@ impl<'a> Visit<'a> for CallCollector<'_, '_> {
             span: call_span,
             callee_span: source_span(call.callee.get_inner_expression().span()),
             callee_has_effects: structured_control_flow::expression_has_effects(&call.callee),
-            callee_reference: planned_invocation_reference(self.scoping, &call.callee),
+            callee_reference,
             binding,
             reactive_kind,
             callback: arguments.first().and_then(|argument| argument.function),
@@ -9479,6 +9554,28 @@ fn planned_invocation_reference(
 ) -> Option<PlannedPlace> {
     let place = planned_expression_place(scoping, expression)?;
     (!place.projections.is_empty()).then_some(place)
+}
+
+fn resolved_imported_hook_member_binding(
+    place: &PlannedPlace,
+    symbol_to_binding: &BTreeMap<SymbolId, BindingId>,
+    imported_hook_member_paths: &BTreeMap<BindingId, BTreeSet<Vec<String>>>,
+) -> Option<BindingId> {
+    let PlannedPlaceBase::Binding(symbol) = place.base else {
+        return None;
+    };
+    let binding = symbol_to_binding.get(&symbol).copied()?;
+    let members = imported_hook_member_paths.get(&binding)?;
+    let path: Option<Vec<_>> = place
+        .projections
+        .iter()
+        .map(|projection| match projection {
+            PlannedProjection::Static { name, .. } => Some(name.clone()),
+            PlannedProjection::Index { index, .. } => Some(index.to_string()),
+            PlannedProjection::Computed { .. } => None,
+        })
+        .collect();
+    members.contains(&path?).then_some(binding)
 }
 
 fn planned_expression_place(

@@ -516,6 +516,120 @@ fn propagates_structured_imported_hook_members_into_scopes_and_regions() {
 }
 
 #[test]
+fn propagates_namespace_hook_members_into_scopes_and_regions() {
+    let frontend = build_hir(
+        r#"
+            import * as hooks from './hooks';
+            export function App() {
+                const api = hooks.useCounter();
+                const derived = api.count === 1;
+                const reader = () => {
+                    const nestedDerived = api.count === 2;
+                    return nestedDerived;
+                };
+                return [derived, reader];
+            }
+        "#,
+        OxcCompileOptions {
+            language: OxcSourceLanguage::JavaScript,
+            module_kind: OxcModuleKind::Module,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+        &HirBuildOptions {
+            resolved_metadata: vec![ResolvedMetadataInput {
+                request: "./hooks".into(),
+                resolved_id: Some("/src/hooks.ts".into()),
+                status: MetadataResolutionStatus::Resolved,
+                metadata: Some(ModuleReactiveMetadata {
+                    hooks: [(
+                        "useCounter".into(),
+                        HookReturnInfo {
+                            object_props: [("count".into(), ReactiveExportKind::Signal)]
+                                .into_iter()
+                                .collect(),
+                            ..HookReturnInfo::default()
+                        },
+                    )]
+                    .into_iter()
+                    .collect(),
+                    ..ModuleReactiveMetadata::new()
+                }),
+                fingerprint: "sha256:namespace-hooks".into(),
+            }],
+            ..HirBuildOptions::default()
+        },
+    );
+    assert!(
+        frontend.diagnostics.is_empty(),
+        "{:?}",
+        frontend.diagnostics
+    );
+    let output = run_core_passes(
+        &frontend.hir.expect("verified namespace hook HIR"),
+        CorePassOptions {
+            optimize: false,
+            ..CorePassOptions::default()
+        },
+    )
+    .expect("core passes over namespace hook members");
+    let assert_count_dependency = |function: &fict_hir::HirFunction, local_name: &str| {
+        let local = function
+            .locals
+            .iter()
+            .find(|local| local.debug_name.as_deref() == Some(local_name))
+            .unwrap_or_else(|| panic!("{local_name} local"));
+        let analysis = &output.functions[function.id.as_usize()];
+        let binding = analysis
+            .scopes
+            .bindings
+            .iter()
+            .find(|binding| binding.name.local == local.id)
+            .unwrap_or_else(|| panic!("{local_name} reactive binding"));
+        assert_eq!(binding.kind, ReactiveBindingKind::Derived);
+        assert!(binding.dependencies.iter().any(|path| {
+            path.segments.first()
+                == Some(&DependencySegment::Static {
+                    name: "count".into(),
+                    optional: false,
+                })
+        }));
+        assert!(analysis.regions.regions.iter().any(|region| {
+            region.inputs.iter().any(|path| {
+                path.segments.first()
+                    == Some(&DependencySegment::Static {
+                        name: "count".into(),
+                        optional: false,
+                    })
+            })
+        }));
+    };
+    let app = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| {
+            function.binding.is_some_and(|binding| {
+                output.hir.bindings[binding.as_usize()].display_name == "App"
+            })
+        })
+        .expect("App function");
+    assert_count_dependency(app, "derived");
+    let reader = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .locals
+                .iter()
+                .any(|local| local.debug_name.as_deref() == Some("nestedDerived"))
+        })
+        .expect("capturing reader function");
+    assert_count_dependency(reader, "nestedDerived");
+}
+
+#[test]
 fn keeps_dynamic_reads_closed_and_only_treats_the_first_component_parameter_as_props() {
     let frontend = build_hir(
         r#"

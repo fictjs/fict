@@ -92,6 +92,7 @@ pub enum ReactiveSlotStorage {
     /// The function closes over a structured accessor returned by an imported hook.
     CapturedHookReturn {
         owner: FunctionId,
+        call: ValueId,
         import: BindingId,
         property: ImportedHookPropertyMatch,
     },

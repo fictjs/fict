@@ -167,6 +167,15 @@ pub struct ImportedHookReturn {
     pub array_properties: Vec<ImportedReactiveProperty>,
 }
 
+/// One hook exported below an imported namespace value.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ImportedHookMember {
+    /// Static path from the imported namespace root to the hook export.
+    pub path: Vec<String>,
+    /// Reactive shape returned by the hook.
+    pub return_shape: ImportedHookReturn,
+}
+
 impl ImportedHookReturn {
     /// Resolve one statically known return property.
     #[must_use]
@@ -228,6 +237,8 @@ pub struct ImportBinding {
     pub reactive_members: Vec<ImportedReactiveMember>,
     /// Reactive return shape when this direct import is an exported hook.
     pub hook_return: Option<ImportedHookReturn>,
+    /// Sorted static hook paths below an imported namespace value.
+    pub hook_members: Vec<ImportedHookMember>,
 }
 
 /// Semantic binding. `display_name` is never an identity key.
@@ -501,6 +512,31 @@ impl ImportBinding {
             }
         }
         None
+    }
+
+    /// Resolve an exact statically known hook path below an imported namespace value.
+    #[must_use]
+    pub fn resolve_hook_member(&self, projections: &[Projection]) -> Option<&ImportedHookReturn> {
+        let path: Option<Vec<_>> = projections
+            .iter()
+            .map(|projection| match projection {
+                Projection::StaticProperty { name, .. } => Some(name.clone()),
+                Projection::Index { index, .. } => Some(index.to_string()),
+                Projection::ComputedProperty { .. } => None,
+            })
+            .collect();
+        let path = path?;
+        self.resolve_hook_member_path(&path)
+    }
+
+    /// Resolve an exact canonical hook path below an imported namespace value.
+    #[must_use]
+    pub fn resolve_hook_member_path(&self, path: &[String]) -> Option<&ImportedHookReturn> {
+        let member_index = self
+            .hook_members
+            .binary_search_by(|member| member.path.as_slice().cmp(path))
+            .ok()?;
+        Some(&self.hook_members[member_index].return_shape)
     }
 }
 
