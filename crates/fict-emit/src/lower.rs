@@ -1610,6 +1610,7 @@ enum TemplateBinding {
         path: Vec<u32>,
         event: String,
         handler: ValueId,
+        resumable_explicit: bool,
     },
     Ref {
         path: Vec<u32>,
@@ -2013,6 +2014,7 @@ fn lower_jsx_instruction(
                 path,
                 event,
                 handler,
+                resumable_explicit,
             } => {
                 let origin =
                     hir.functions[function_id.as_usize()].values[handler.as_usize()].origin;
@@ -2030,6 +2032,7 @@ fn lower_jsx_instruction(
                     element,
                     event,
                     handler: lower_value(handler, value_temporaries),
+                    resumable_explicit,
                     delegated,
                     helper: if delegated {
                         RuntimeHelper::AddEventListener
@@ -2660,11 +2663,13 @@ fn serialize_node(
                                         path: path.clone(),
                                         reference: *value,
                                     });
-                                } else if let Some(event) = event_name(&name) {
+                                } else if let Some((event, resumable_explicit)) = event_name(&name)
+                                {
                                     bindings.push(TemplateBinding::Event {
                                         path: path.clone(),
                                         event,
                                         handler: *value,
+                                        resumable_explicit,
                                     });
                                 } else {
                                     bindings.push(TemplateBinding::Attribute {
@@ -3329,22 +3334,26 @@ fn escape_attribute(value: &str, output: &mut String) {
 
 fn valid_markup_name(value: &str) -> bool {
     !value.is_empty()
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':' | b'.'))
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':' | b'.' | b'$')
+        })
 }
 
-fn event_name(attribute: &str) -> Option<String> {
+fn event_name(attribute: &str) -> Option<(String, bool)> {
+    let (attribute, resumable_explicit) = match attribute.strip_suffix('$') {
+        Some(attribute) => (attribute, true),
+        None => (attribute, false),
+    };
     if let Some(event) = attribute.strip_prefix("on:")
         && !event.is_empty()
     {
-        return Some(event.to_ascii_lowercase());
+        return Some((event.to_ascii_lowercase(), resumable_explicit));
     }
     let event = attribute.strip_prefix("on")?;
     if event.is_empty() {
         return None;
     }
-    Some(event.to_ascii_lowercase())
+    Some((event.to_ascii_lowercase(), resumable_explicit))
 }
 
 fn creation_helper(kind: FunctionKind, macro_kind: FictMacroKind) -> RuntimeHelper {
@@ -4000,5 +4009,56 @@ mod namespace_tests {
                 .iter()
                 .any(|diagnostic| diagnostic.code.as_str() == "FICT-EMIT-VOID-CHILD")
         );
+    }
+
+    #[test]
+    fn preserves_explicit_resumable_event_intent_without_polluting_the_dom_event_name() {
+        let root = element(
+            "button",
+            vec![
+                JsxAttribute::Named {
+                    name: "onClick$".into(),
+                    value: JsxAttributeValue::Expression {
+                        value: ValueId::new(1),
+                        function_like: true,
+                        contains_fragment: false,
+                    },
+                    origin: test_origin(),
+                },
+                JsxAttribute::Named {
+                    name: "on:Input$".into(),
+                    value: JsxAttributeValue::Expression {
+                        value: ValueId::new(2),
+                        function_like: true,
+                        contains_fragment: false,
+                    },
+                    origin: test_origin(),
+                },
+                JsxAttribute::Named {
+                    name: "onBlur".into(),
+                    value: JsxAttributeValue::Expression {
+                        value: ValueId::new(3),
+                        function_like: true,
+                        contains_fragment: false,
+                    },
+                    origin: test_origin(),
+                },
+            ],
+            Vec::new(),
+        );
+        let serialized = serialize_template(&root).expect("event serialization");
+        let events: Vec<_> = serialized
+            .bindings
+            .iter()
+            .filter_map(|binding| match binding {
+                TemplateBinding::Event {
+                    event,
+                    resumable_explicit,
+                    ..
+                } => Some((event.as_str(), *resumable_explicit)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(events, [("click", true), ("input", true), ("blur", false)]);
     }
 }

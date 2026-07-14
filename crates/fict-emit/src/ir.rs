@@ -372,6 +372,8 @@ pub enum EmitOperation {
         element: EmitTemporaryId,
         event: String,
         handler: EmitValueRef,
+        /// Whether the authored JSX event name used the explicit Preview `$` suffix.
+        resumable_explicit: bool,
         delegated: bool,
         helper: RuntimeHelper,
         cleanup_helper: Option<RuntimeHelper>,
