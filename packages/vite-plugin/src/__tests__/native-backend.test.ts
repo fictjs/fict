@@ -324,4 +324,29 @@ describe('Rust compiler backend', () => {
       'does not yet support Preview resumability',
     )
   })
+
+  it('preserves the Vite full-reload contract without loading the native compiler', () => {
+    const plugin = fict({
+      backend: 'rust',
+      cache: false,
+      functionSplitting: false,
+      useTypeScriptProject: false,
+      publicIdentityNamespace: 'native-test@1',
+    })
+    const send = vi.fn()
+
+    plugin.configResolved?.({ ...config, command: 'serve' } as never)
+    const result = plugin.handleHotUpdate?.({
+      file: '/project/src/App.tsx',
+      server: { ws: { send } },
+    } as never)
+
+    expect(result).toEqual([])
+    expect(send).toHaveBeenCalledOnce()
+    expect(send).toHaveBeenCalledWith({ type: 'full-reload', path: '*' })
+    expect(native.load).not.toHaveBeenCalled()
+    expect(native.scan).not.toHaveBeenCalled()
+    expect(native.scanSync).not.toHaveBeenCalled()
+    expect(native.transform).not.toHaveBeenCalled()
+  })
 })
