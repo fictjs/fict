@@ -69,7 +69,9 @@ The package root remains the Babel plugin during the beta compatibility window.
 Code that intentionally owns legacy rollback should import
 `@fictjs/compiler/legacy`; this explicit subpath will remain the compatibility
 entry when the package root becomes the Rust request facade in a breaking
-release.
+release. The beta root and explicit subpath currently expose the same function
+identity, but the legacy entrypoint imports its implementation directly rather
+than depending on the package-root facade.
 
 The request boundary is serializable. Host callbacks, filesystem resolution,
 and bundler graph objects must stay outside Rust. A build must use one compiler

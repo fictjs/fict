@@ -261,6 +261,7 @@ function assertLegacySourcesRemoved(workspaceRoot) {
     '.github/compiler-shadow-allowlist.json',
     'packages/babel-preset',
     'packages/compiler/src/ir',
+    'packages/compiler/src/legacy-compiler.ts',
     'packages/compiler/src/legacy.ts',
     'packages/compiler/test/babel-typescript-integration.test.ts',
     'packages/compiler/test/differential',

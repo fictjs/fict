@@ -223,6 +223,14 @@ if (
   fail('@fictjs/compiler/graph-host must not load the legacy compiler or Babel')
 }
 
+const compilerLegacyEntrypoint = readText('packages/compiler/src/legacy.ts')
+if (
+  compilerLegacyEntrypoint.includes("from './index'") ||
+  !compilerLegacyEntrypoint.includes("from './legacy-compiler'")
+) {
+  fail('@fictjs/compiler/legacy must own its implementation edge instead of importing the root')
+}
+
 const viteForbiddenRuntimeImports = /^@babel\/|^@fictjs\/compiler\/legacy$/
 for (const file of [
   'packages/vite-plugin/src/index.ts',

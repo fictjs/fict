@@ -3,7 +3,7 @@ import { parseSync, transformSync } from '@babel/core'
 import transformTypeScript from '@babel/plugin-transform-typescript'
 import * as BabelTypes from '@babel/types'
 
-import createFictPlugin from '../index'
+import createFictPlugin from '../legacy-compiler'
 import { buildHIR } from '../ir/build-hir'
 import { functionContainsJSX } from '../ir/codegen-analysis'
 import type { Expression, HIRFunction, Instruction } from '../ir/hir'

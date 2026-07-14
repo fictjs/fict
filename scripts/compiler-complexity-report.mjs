@@ -18,7 +18,7 @@ const fileBudgets = new Map([
   ['packages/compiler/src/ir/codegen.ts', 10000],
   ['packages/compiler/src/ir/optimize.ts', 7391],
   ['packages/compiler/src/ir/regions.ts', 7129],
-  ['packages/compiler/src/index.ts', 4791],
+  ['packages/compiler/src/legacy-compiler.ts', 4791],
   ['packages/compiler/src/ir/build-hir.ts', 3611],
   ['packages/compiler/src/ir/structurize.ts', 1602],
 ])

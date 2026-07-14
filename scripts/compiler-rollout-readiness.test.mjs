@@ -411,6 +411,10 @@ test('legacy removal requires a bound review and a completed stable minor window
   assert.throws(() => validateCompilerRolloutReadiness({ root }), /SCOPE\.md/)
 
   await rm(path.join(root, 'SCOPE.md'))
+  await writeFile(path.join(root, 'packages', 'compiler', 'src', 'legacy-compiler.ts'), 'export {}')
+  assert.throws(() => validateCompilerRolloutReadiness({ root }), /legacy-compiler\.ts/)
+
+  await rm(path.join(root, 'packages', 'compiler', 'src', 'legacy-compiler.ts'))
   await writeFile(path.join(root, 'packages', 'compiler', 'src', 'legacy.ts'), 'export {}')
   assert.throws(() => validateCompilerRolloutReadiness({ root }), /src\/legacy\.ts/)
 
