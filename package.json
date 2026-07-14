@@ -48,6 +48,7 @@
     "test:runtime-bundler-smoke": "node scripts/runtime-bundler-smoke.mjs",
     "test:bundlers": "pnpm build:compiler:native-host && pnpm -C examples/counter-webpack build && pnpm -C examples/counter-basic build && pnpm examples:verify",
     "test:bundlers:strict-guarantee": "FICT_STRICT_GUARANTEE=1 pnpm test:bundlers",
+    "test:babel-preset:deprecation": "pnpm --filter @fictjs/babel-preset build && node --test scripts/babel-preset-deprecation.test.mjs",
     "examples:build-real-apps": "pnpm -C examples/real-apps build && pnpm -C examples/ssr-basic build && pnpm -C examples/ssr-streaming build",
     "examples:verify": "pnpm examples:build-real-apps && pnpm -C examples/ssr-streaming smoke:production",
     "security:audit:prod": "pnpm audit --prod --audit-level=low",

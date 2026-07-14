@@ -123,6 +123,29 @@ const OPAQUE_MODULE_METADATA: ModuleReactiveMetadata = Object.freeze({
   exports: Object.freeze({}),
 })
 const EXPECTED_MODULE_REQUEST = Symbol('fict-expected-module-request')
+const DEPRECATION_WARNING_KEY = Symbol.for('@fictjs/babel-preset/deprecation-warning')
+
+type DeprecationWarningGlobal = typeof globalThis & {
+  [DEPRECATION_WARNING_KEY]?: boolean
+}
+
+function warnLegacyPresetDeprecation(): void {
+  if (
+    process.env.NODE_ENV === 'production' ||
+    process.env.FICT_SUPPRESS_BABEL_DEPRECATION === '1'
+  ) {
+    return
+  }
+  const processGlobal = globalThis as DeprecationWarningGlobal
+  if (processGlobal[DEPRECATION_WARNING_KEY]) return
+  processGlobal[DEPRECATION_WARNING_KEY] = true
+  process.emitWarning(
+    '@fictjs/babel-preset is the legacy Fict compiler and is deprecated. ' +
+      'Migrate Vite builds to @fictjs/vite-plugin with backend: "rust", Webpack builds to ' +
+      '@fictjs/webpack-plugin, or direct transforms to @fictjs/compiler/native.',
+    { code: 'FICT_BABEL_PRESET_DEPRECATED', type: 'DeprecationWarning' },
+  )
+}
 
 type TrackedModuleRequest = BabelCore.types.StringLiteral & {
   [EXPECTED_MODULE_REQUEST]?: string
@@ -1601,6 +1624,7 @@ export default function fictPreset(
   options: FictPresetOptions = {},
 ): TransformOptions {
   api.assertVersion(7)
+  warnLegacyPresetDeprecation()
 
   const {
     typescript = true,

@@ -192,7 +192,9 @@ During Phases A–C:
 ```bash
 pnpm -C packages/compiler test -- babel-typescript-integration.test.ts
 pnpm -C packages/babel-preset build
+pnpm test:babel-preset:deprecation
 pnpm test:compiler:differential
+pnpm test:compiler:rollout-state
 pnpm test:bundlers:strict-guarantee
 pnpm test:api-boundaries
 pnpm test:release-publish-plan
