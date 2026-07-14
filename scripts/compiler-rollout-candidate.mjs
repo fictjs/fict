@@ -7,6 +7,8 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
+import { validateWorkflowGateArtifact } from './compiler-rollout-workflow-contract.mjs'
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 function readArgument(name, fallback) {
@@ -111,6 +113,7 @@ function validateNativePackage(artifact) {
 function validatePreviousCandidate(previous) {
   const { candidateDigest, ...payload } = previous
   const requiredDigests = [
+    payload.workflowGateDigest,
     payload.shadowDigest,
     payload.benchmarkDigest,
     payload.runtimeDigest,
@@ -122,26 +125,38 @@ function validatePreviousCandidate(previous) {
     (payload.consecutiveGreenCandidates > 1 &&
       /^sha256:[0-9a-f]{64}$/.test(payload.previousCandidateDigest ?? ''))
   if (
-    payload.schemaVersion !== 3 ||
+    payload.schemaVersion !== 4 ||
     payload.status !== 'pass' ||
     payload.promotionEligible !== true ||
     payload.workflowEvent !== 'push' ||
     payload.sourceRef !== 'refs/heads/main' ||
     digest(payload) !== candidateDigest ||
+    typeof payload.workflowGate !== 'object' ||
+    payload.workflowGate === null ||
+    digest(payload.workflowGate) !== payload.workflowGateDigest ||
     requiredDigests.some(value => !/^sha256:[0-9a-f]{64}$/.test(value ?? '')) ||
     !Number.isSafeInteger(payload.consecutiveGreenCandidates) ||
     payload.consecutiveGreenCandidates < 1 ||
     !hasValidChain ||
-    !/^\d+$/.test(String(payload.runId)) ||
-    !/^\d+$/.test(String(payload.runAttempt)) ||
+    typeof payload.runId !== 'string' ||
+    !/^\d+$/.test(payload.runId) ||
+    typeof payload.runAttempt !== 'string' ||
+    !/^\d+$/.test(payload.runAttempt) ||
     !/^[0-9a-f]{40}$/.test(payload.sourceRevision ?? '') ||
     typeof payload.compilerBuildId !== 'string' ||
     !payload.compilerBuildId
   ) {
-    throw new Error('Previous candidate artifact is not a promotion-eligible schema-v3 candidate')
+    throw new Error('Previous candidate artifact is not a promotion-eligible schema-v4 candidate')
   }
+  validateWorkflowGateArtifact(payload.workflowGate, payload)
 }
 
+const workflowGatePath = path.resolve(
+  readArgument(
+    'workflow-gate',
+    path.join(root, '.fict-cache', 'compiler-rollout-workflow-gate.json'),
+  ),
+)
 const shadowPath = path.resolve(
   readArgument('shadow', path.join(root, '.fict-cache', 'compiler-shadow.json')),
 )
@@ -182,6 +197,14 @@ if (!/^refs\//.test(sourceRef)) throw new Error('Candidate source ref must be a 
 
 const promotionEligible = workflowEvent === 'push' && sourceRef === 'refs/heads/main'
 
+const workflowGate = readJson(workflowGatePath, 'Workflow gate artifact')
+validateWorkflowGateArtifact(workflowGate, {
+  runId,
+  runAttempt,
+  sourceRevision,
+  workflowEvent,
+  sourceRef,
+})
 const shadow = readJson(shadowPath, 'Shadow artifact')
 const benchmark = readJson(benchmarkPath, 'Benchmark artifact')
 const runtime = readJson(runtimePath, 'Runtime parity artifact')
@@ -220,7 +243,7 @@ if (previousPath) {
 }
 
 const payload = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   status: 'pass',
   runId,
   runAttempt,
@@ -229,6 +252,8 @@ const payload = {
   sourceRef,
   promotionEligible,
   compilerBuildId: [...compilerBuildIds][0],
+  workflowGate,
+  workflowGateDigest: digest(workflowGate),
   shadowDigest: digest(shadow),
   benchmarkDigest: digest(benchmark),
   runtimeDigest: digest(runtime),

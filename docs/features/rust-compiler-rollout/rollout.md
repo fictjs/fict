@@ -126,14 +126,23 @@ compiler build identifier:
 
 `compiler-rollout-candidate.mjs` hashes those artifacts, requires one native
 compiler build identifier across them, and chains the previous green candidate
-digest. Candidate schema v3 binds native package evidence and workflow
-event/ref provenance, validates first/continuation digest topology, and rejects
-any modified payload whose digest no longer matches. Pull-request and scheduled
-candidates record zero promotion-eligible builds. A first main-push candidate
-records one; only the immediately following successful main-push workflow can
-record two. A failed or artifact-less intervening workflow resets the chain.
-An overlapping newer run does not skip an unfinished predecessor; it starts a
-fresh count. Local smoke runs do not become release evidence.
+digest. Candidate schema v4 also binds a finalizer-produced workflow gate: the
+canonical repository/workflow/job identity, run/attempt, revision, event/ref,
+and the result of every required CI job. The finalizer depends on native,
+integration, lint, typecheck, strict-guarantee, performance, unit, browser,
+real-app, SSR, opt-out, and build jobs; it cannot seal a candidate while one of
+those jobs is failed, cancelled, or incomplete. The scheduled fuzz job must
+pass when selected and may only be `skipped` on events where its workflow
+condition does not run it. Unknown/missing jobs and modified payloads fail
+closed.
+
+Pull-request and scheduled candidates record zero promotion-eligible builds. A
+first main-push candidate records one; only the immediately following
+successful main-push workflow can record two. A failed or artifact-less
+intervening workflow resets the chain. An overlapping newer run does not skip
+an unfinished predecessor; it starts a fresh count. Schema v3 and older
+artifacts cannot extend a v4 chain. Local smoke runs do not become release
+evidence.
 
 The performance budget is owned by
 [`compiler-backend-budget.json`](../../../.github/compiler-backend-budget.json).

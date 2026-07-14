@@ -6,6 +6,7 @@ import path from 'node:path'
 import test from 'node:test'
 
 import { validateCompilerRolloutReadiness } from './compiler-rollout-readiness.mjs'
+import { REQUIRED_ROLLOUT_JOBS } from './compiler-rollout-workflow-contract.mjs'
 
 const approvedAreas = {
   coreSemantics: true,
@@ -62,9 +63,14 @@ function rustDefaultState(overrides = {}) {
 }
 
 function candidateEvidence(overrides = {}) {
+  const {
+    workflowGate: workflowGateOverride,
+    workflowGateDigest: workflowGateDigestOverride,
+    ...payloadOverrides
+  } = overrides
   const artifactDigest = `sha256:${'b'.repeat(64)}`
-  const payload = {
-    schemaVersion: 3,
+  const identity = {
+    schemaVersion: 4,
     status: 'pass',
     runId: '101',
     runAttempt: '1',
@@ -80,7 +86,29 @@ function candidateEvidence(overrides = {}) {
     nativePackageDigest: artifactDigest,
     previousCandidateDigest: `sha256:${'d'.repeat(64)}`,
     consecutiveGreenCandidates: 2,
-    ...overrides,
+    ...payloadOverrides,
+  }
+  const workflowGate = workflowGateOverride ?? {
+    schemaVersion: 1,
+    status: 'pass',
+    repository: 'fictjs/fict',
+    workflowName: 'CI',
+    workflowJob: 'compiler-rollout-finalize',
+    runId: identity.runId,
+    runAttempt: identity.runAttempt,
+    sourceRevision: identity.sourceRevision,
+    workflowEvent: identity.workflowEvent,
+    sourceRef: identity.sourceRef,
+    jobs: Object.fromEntries(
+      REQUIRED_ROLLOUT_JOBS.map(job => [job, job === 'rust-fuzz' ? 'skipped' : 'success']),
+    ),
+  }
+  const payload = {
+    ...identity,
+    workflowGate,
+    workflowGateDigest:
+      workflowGateDigestOverride ??
+      `sha256:${createHash('sha256').update(JSON.stringify(workflowGate)).digest('hex')}`,
   }
   return {
     ...payload,
@@ -179,7 +207,27 @@ test('rust default rejects candidate content modified after sealing', async t =>
   t.after(() => rm(root, { recursive: true }))
   assert.throws(
     () => validateCompilerRolloutReadiness({ root }),
-    /intact consecutive main-push schema-v3/,
+    /intact consecutive main-push schema-v4/,
+  )
+})
+
+test('rust default rejects a re-signed candidate with an unbound workflow gate digest', async t => {
+  const evidence = candidateEvidence({ workflowGateDigest: `sha256:${'e'.repeat(64)}` })
+  const root = await fixture(
+    rustDefaultState(),
+    {
+      schemaVersion: 2,
+      status: 'approved',
+      candidateDigest: evidence.candidateDigest,
+      reviewer: 'maintainer',
+      areas: approvedAreas,
+    },
+    evidence,
+  )
+  t.after(() => rm(root, { recursive: true }))
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root }),
+    /intact consecutive main-push schema-v4/,
   )
 })
 
@@ -205,7 +253,7 @@ test('rust default rejects non-main candidate provenance', async t => {
   t.after(() => rm(root, { recursive: true }))
   assert.throws(
     () => validateCompilerRolloutReadiness({ root }),
-    /intact consecutive main-push schema-v3/,
+    /intact consecutive main-push schema-v4/,
   )
 })
 

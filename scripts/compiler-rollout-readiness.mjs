@@ -5,6 +5,8 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { validateWorkflowGateArtifact } from './compiler-rollout-workflow-contract.mjs'
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const REQUIRED_REVIEW_AREAS = [
   'coreSemantics',
@@ -314,6 +316,7 @@ function assertLegacySourcesRemoved(workspaceRoot) {
 function assertCandidate(evidence) {
   const { candidateDigest, ...payload } = evidence
   const requiredDigests = [
+    payload.workflowGateDigest,
     payload.shadowDigest,
     payload.benchmarkDigest,
     payload.runtimeDigest,
@@ -324,7 +327,7 @@ function assertCandidate(evidence) {
     .update(JSON.stringify(payload))
     .digest('hex')}`
   if (
-    payload.schemaVersion !== 3 ||
+    payload.schemaVersion !== 4 ||
     payload.status !== 'pass' ||
     payload.promotionEligible !== true ||
     payload.workflowEvent !== 'push' ||
@@ -332,18 +335,25 @@ function assertCandidate(evidence) {
     !Number.isSafeInteger(payload.consecutiveGreenCandidates) ||
     payload.consecutiveGreenCandidates < 2 ||
     !/^sha256:[0-9a-f]{64}$/.test(payload.previousCandidateDigest ?? '') ||
-    !/^\d+$/.test(String(payload.runId)) ||
-    !/^\d+$/.test(String(payload.runAttempt)) ||
+    typeof payload.runId !== 'string' ||
+    !/^\d+$/.test(payload.runId) ||
+    typeof payload.runAttempt !== 'string' ||
+    !/^\d+$/.test(payload.runAttempt) ||
     !/^[0-9a-f]{40}$/.test(payload.sourceRevision ?? '') ||
     typeof payload.compilerBuildId !== 'string' ||
     !payload.compilerBuildId ||
     requiredDigests.some(value => !/^sha256:[0-9a-f]{64}$/.test(value ?? '')) ||
+    typeof payload.workflowGate !== 'object' ||
+    payload.workflowGate === null ||
+    `sha256:${createHash('sha256').update(JSON.stringify(payload.workflowGate)).digest('hex')}` !==
+      payload.workflowGateDigest ||
     computedDigest !== candidateDigest
   ) {
     throw new Error(
-      'Rust-default rollout requires two intact consecutive main-push schema-v3 candidates',
+      'Rust-default rollout requires two intact consecutive main-push schema-v4 candidates',
     )
   }
+  validateWorkflowGateArtifact(payload.workflowGate, payload)
 }
 
 export function validateCompilerRolloutReadiness(options = {}) {

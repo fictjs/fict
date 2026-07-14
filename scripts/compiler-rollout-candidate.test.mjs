@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { writeFileSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+
+import { REQUIRED_ROLLOUT_JOBS } from './compiler-rollout-workflow-contract.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const script = path.join(root, 'scripts', 'compiler-rollout-candidate.mjs')
@@ -80,7 +83,35 @@ async function evidence(directory, compilerBuildId = 'fict-rust-test') {
   }
 }
 
-function run(directory, runId, output, extra = []) {
+function argumentValue(extra, name, fallback) {
+  return (
+    extra.find(argument => argument.startsWith(`--${name}=`))?.slice(name.length + 3) ?? fallback
+  )
+}
+
+function run(directory, runId, output, extra = [], gateOverrides = {}) {
+  const workflowEvent = argumentValue(extra, 'event', 'push')
+  const sourceRef = argumentValue(extra, 'ref', 'refs/heads/main')
+  const runAttempt = argumentValue(extra, 'run-attempt', '1')
+  const gatePath = path.join(directory, `workflow-gate-${runId}-${runAttempt}.json`)
+  const jobs = Object.fromEntries(
+    REQUIRED_ROLLOUT_JOBS.map(job => [job, job === 'rust-fuzz' ? 'skipped' : 'success']),
+  )
+  const workflowGate = {
+    schemaVersion: 1,
+    status: 'pass',
+    repository: 'fictjs/fict',
+    workflowName: 'CI',
+    workflowJob: 'compiler-rollout-finalize',
+    runId,
+    runAttempt,
+    sourceRevision: revision,
+    workflowEvent,
+    sourceRef,
+    ...gateOverrides,
+    jobs: { ...jobs, ...gateOverrides.jobs },
+  }
+  writeFileSync(gatePath, JSON.stringify(workflowGate))
   return spawnSync(
     process.execPath,
     [
@@ -90,6 +121,7 @@ function run(directory, runId, output, extra = []) {
       `--runtime=${path.join(directory, 'runtime.json')}`,
       `--rollback=${path.join(directory, 'rollback.json')}`,
       `--package=${path.join(directory, 'package.json')}`,
+      `--workflow-gate=${gatePath}`,
       `--revision=${revision}`,
       `--run-id=${runId}`,
       `--output=${output}`,
@@ -124,11 +156,13 @@ test('candidate evidence chains two distinct green builds', async t => {
   assert.equal(firstArtifact.consecutiveGreenCandidates, 1)
   assert.equal(secondArtifact.consecutiveGreenCandidates, 2)
   assert.equal(secondArtifact.previousCandidateDigest, firstArtifact.candidateDigest)
-  assert.equal(firstArtifact.schemaVersion, 3)
+  assert.equal(firstArtifact.schemaVersion, 4)
   assert.equal(firstArtifact.promotionEligible, true)
   assert.equal(firstArtifact.workflowEvent, 'push')
   assert.equal(firstArtifact.sourceRef, 'refs/heads/main')
   assert.match(firstArtifact.nativePackageDigest, /^sha256:[0-9a-f]{64}$/)
+  assert.match(firstArtifact.workflowGateDigest, /^sha256:[0-9a-f]{64}$/)
+  assert.equal(firstArtifact.workflowGate.jobs.e2e, 'success')
 })
 
 test('non-main candidates cannot count toward or extend the promotion chain', async t => {
@@ -151,7 +185,7 @@ test('non-main candidates cannot count toward or extend the promotion chain', as
     `--previous=${pullRequestPath}`,
   ])
   assert.notEqual(chained.status, 0)
-  assert.match(chained.stderr, /promotion-eligible schema-v3 candidate/)
+  assert.match(chained.stderr, /promotion-eligible schema-v4 candidate/)
 })
 
 test('candidate evidence rejects mixed native compiler builds', async t => {
@@ -181,6 +215,17 @@ test('candidate evidence rejects native packages that failed their size gate', a
   assert.match(result.stderr, /Native package evidence is incomplete or exceeds its size budget/)
 })
 
+test('candidate evidence rejects an incomplete final workflow gate', async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'fict-candidate-workflow-'))
+  t.after(() => rm(directory, { recursive: true }))
+  await evidence(directory)
+  const result = run(directory, '100', path.join(directory, 'candidate.json'), [], {
+    jobs: { e2e: 'failure' },
+  })
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /CI job e2e did not pass/)
+})
+
 test('candidate evidence rejects non-CI run identities and malformed previous chains', async t => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'fict-candidate-identity-'))
   t.after(() => rm(directory, { recursive: true }))
@@ -194,7 +239,7 @@ test('candidate evidence rejects non-CI run identities and malformed previous ch
   await writeFile(
     previousPath,
     JSON.stringify({
-      schemaVersion: 3,
+      schemaVersion: 4,
       status: 'pass',
       runId: '99',
       runAttempt: '1',
@@ -209,7 +254,7 @@ test('candidate evidence rejects non-CI run identities and malformed previous ch
     `--previous=${previousPath}`,
   ])
   assert.notEqual(malformed.status, 0)
-  assert.match(malformed.stderr, /not a promotion-eligible schema-v3 candidate/)
+  assert.match(malformed.stderr, /not a promotion-eligible schema-v4 candidate/)
 })
 
 test('candidate evidence rejects a re-signed continuation without a previous digest', async t => {
@@ -231,5 +276,5 @@ test('candidate evidence rejects a re-signed continuation without a previous dig
     `--previous=${previousPath}`,
   ])
   assert.notEqual(result.status, 0)
-  assert.match(result.stderr, /promotion-eligible schema-v3 candidate/)
+  assert.match(result.stderr, /promotion-eligible schema-v4 candidate/)
 })

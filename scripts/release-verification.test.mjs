@@ -60,8 +60,50 @@ test('rollout candidates only chain the immediately preceding successful main pu
   assert.match(ciWorkflow, /\.sort\(\(left, right\) => right\.id - left\.id\)\[0\]/)
   assert.match(ciWorkflow, /if \(run\?\.status === 'completed' && run\.conclusion === 'success'\)/)
   assert.doesNotMatch(ciWorkflow, /runs\.find\([^\n]+conclusion === 'success'/)
-  assert.match(ciWorkflow, /value\.schemaVersion === 3/)
+  assert.match(ciWorkflow, /value\.schemaVersion === 4/)
   assert.match(ciWorkflow, /restarting the consecutive count/)
+})
+
+test('rollout candidates are finalized only after every required CI gate succeeds', () => {
+  const rawEvidenceUpload = ciWorkflow.indexOf('name: Upload raw rollout evidence')
+  const finalizer = ciWorkflow.indexOf('compiler-rollout-finalize:')
+  assert.notEqual(rawEvidenceUpload, -1)
+  assert.notEqual(finalizer, -1)
+  assert.ok(rawEvidenceUpload < finalizer)
+
+  const producer = ciWorkflow.slice(rawEvidenceUpload, finalizer)
+  const finalizerSource = ciWorkflow.slice(finalizer)
+  assert.match(producer, /name: compiler-rollout-raw-evidence/)
+  assert.doesNotMatch(producer, /name: compiler-rollout-candidate/)
+  assert.doesNotMatch(producer, /Seal candidate evidence/)
+
+  for (const job of [
+    'rust-fuzz',
+    'rust-native',
+    'compiler-rollout',
+    'lint',
+    'typecheck',
+    'strict-guarantee',
+    'perf-guardrails',
+    'test',
+    'e2e',
+    'test-opt-out',
+    'test-ssr-edge',
+    'build',
+  ]) {
+    assert.match(finalizerSource, new RegExp(`^\\s+- ${job}$`, 'm'))
+  }
+  assert.match(finalizerSource, /always\(\)/)
+  assert.match(finalizerSource, /needs\['compiler-rollout'\]\.result == 'success'/)
+  assert.match(finalizerSource, /needs\.e2e\.result == 'success'/)
+  assert.match(finalizerSource, /needs\['test-ssr-edge'\]\.result == 'success'/)
+  assert.match(finalizerSource, /name: compiler-rollout-raw-evidence/)
+  assert.match(finalizerSource, /name: Bind required workflow job results/)
+  assert.match(finalizerSource, /COMPILER_ROLLOUT_NEEDS: \$\{\{ toJSON\(needs\) \}\}/)
+  assert.match(finalizerSource, /compiler-rollout-workflow-gate\.mjs/)
+  assert.match(finalizerSource, /name: Seal candidate evidence/)
+  assert.match(finalizerSource, /name: compiler-rollout-candidate/)
+  assert.doesNotMatch(finalizerSource, /Upload finalized rollout candidate\n\s+if: always\(\)/)
 })
 
 test('browser E2E continuously includes production-shaped real applications and scheduled soak', () => {

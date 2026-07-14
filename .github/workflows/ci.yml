@@ -209,71 +209,13 @@ jobs:
           --host-binary target/release/fict_compiler_napi.node
           --evidence "${RUNNER_TEMP}/compiler-rollout/package.json"
 
-      - name: Find the immediately previous rollout candidate attempt
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        id: previous_candidate
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
-              ...context.repo,
-              workflow_id: 'ci.yml',
-              branch: 'main',
-              event: 'push',
-              per_page: 50,
-            })
-            const run = runs
-              .filter(candidate => candidate.id < context.runId)
-              .sort((left, right) => right.id - left.id)[0]
-            if (run?.status === 'completed' && run.conclusion === 'success') {
-              const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
-                ...context.repo,
-                run_id: run.id,
-                per_page: 100,
-              })
-              if (artifacts.some(artifact => artifact.name === 'compiler-rollout-candidate' && !artifact.expired)) {
-                core.setOutput('run_id', String(run.id))
-                return
-              }
-            }
-            core.setOutput('run_id', '')
-
-      - name: Download the previous rollout candidate
-        if: steps.previous_candidate.outputs.run_id != ''
-        uses: actions/download-artifact@v4
-        with:
-          name: compiler-rollout-candidate
-          path: ${{ runner.temp }}/compiler-rollout/previous
-          github-token: ${{ github.token }}
-          run-id: ${{ steps.previous_candidate.outputs.run_id }}
-
-      - name: Seal candidate evidence
-        run: |
-          set -euo pipefail
-          previous_args=()
-          previous="${RUNNER_TEMP}/compiler-rollout/previous/candidate.json"
-          if [[ -f "${previous}" ]] && node -e "const fs = require('node:fs'); const value = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); process.exit(value.schemaVersion === 3 ? 0 : 1)" "${previous}"; then
-            previous_args+=("--previous=${previous}")
-          elif [[ -f "${previous}" ]]; then
-            echo "::notice::The previous rollout candidate uses an incompatible schema; restarting the consecutive count."
-          fi
-          node scripts/compiler-rollout-candidate.mjs \
-            --shadow="${RUNNER_TEMP}/compiler-rollout/shadow.json" \
-            --benchmark="${RUNNER_TEMP}/compiler-rollout/benchmark.json" \
-            --runtime="${RUNNER_TEMP}/compiler-rollout/runtime.json" \
-            --rollback="${RUNNER_TEMP}/compiler-rollout/rollback.json" \
-            --package="${RUNNER_TEMP}/compiler-rollout/package.json" \
-            --output="${RUNNER_TEMP}/compiler-rollout/candidate.json" \
-            "${previous_args[@]}"
-
-      - name: Upload rollout evidence
-        if: always()
+      - name: Upload raw rollout evidence
         uses: actions/upload-artifact@v4
         with:
-          name: compiler-rollout-candidate
+          name: compiler-rollout-raw-evidence
           path: ${{ runner.temp }}/compiler-rollout/*.json
-          if-no-files-found: warn
-          retention-days: 90
+          if-no-files-found: error
+          retention-days: 7
 
   lint:
     name: Lint
@@ -646,3 +588,132 @@ jobs:
 
       - name: Check bundle size
         run: pnpm size
+
+  compiler-rollout-finalize:
+    name: Finalize Rust Compiler Rollout Candidate
+    needs:
+      - rust-fuzz
+      - rust-native
+      - compiler-rollout
+      - lint
+      - typecheck
+      - strict-guarantee
+      - perf-guardrails
+      - test
+      - e2e
+      - test-opt-out
+      - test-ssr-edge
+      - build
+    if: >-
+      always() &&
+      (needs['rust-fuzz'].result == 'success' || needs['rust-fuzz'].result == 'skipped') &&
+      needs['rust-native'].result == 'success' &&
+      needs['compiler-rollout'].result == 'success' &&
+      needs.lint.result == 'success' &&
+      needs.typecheck.result == 'success' &&
+      needs['strict-guarantee'].result == 'success' &&
+      needs['perf-guardrails'].result == 'success' &&
+      needs.test.result == 'success' &&
+      needs.e2e.result == 'success' &&
+      needs['test-opt-out'].result == 'success' &&
+      needs['test-ssr-edge'].result == 'success' &&
+      needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        id: checkout
+        uses: actions/checkout@v4
+        continue-on-error: true
+
+      - name: Fallback checkout from codeload archive
+        if: steps.checkout.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          echo "::warning::actions/checkout failed; falling back to archive download."
+          archive_url="https://codeload.github.com/${GITHUB_REPOSITORY}/tar.gz/${GITHUB_SHA}"
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "${tmp_dir}"' EXIT
+          curl --fail --location --retry 5 --retry-all-errors --retry-delay 3 "${archive_url}" \
+            | tar -xz -C "${tmp_dir}" --strip-components=1
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          cp -a "${tmp_dir}"/. .
+
+      - name: Download current rollout evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: compiler-rollout-raw-evidence
+          path: ${{ runner.temp }}/compiler-rollout/current
+
+      - name: Find the immediately previous rollout candidate attempt
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: previous_candidate
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              ...context.repo,
+              workflow_id: 'ci.yml',
+              branch: 'main',
+              event: 'push',
+              per_page: 50,
+            })
+            const run = runs
+              .filter(candidate => candidate.id < context.runId)
+              .sort((left, right) => right.id - left.id)[0]
+            if (run?.status === 'completed' && run.conclusion === 'success') {
+              const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+                ...context.repo,
+                run_id: run.id,
+                per_page: 100,
+              })
+              if (artifacts.some(artifact => artifact.name === 'compiler-rollout-candidate' && !artifact.expired)) {
+                core.setOutput('run_id', String(run.id))
+                return
+              }
+            }
+            core.setOutput('run_id', '')
+
+      - name: Download the previous rollout candidate
+        if: steps.previous_candidate.outputs.run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: compiler-rollout-candidate
+          path: ${{ runner.temp }}/compiler-rollout/previous
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.previous_candidate.outputs.run_id }}
+
+      - name: Bind required workflow job results
+        env:
+          COMPILER_ROLLOUT_NEEDS: ${{ toJSON(needs) }}
+        run: >-
+          node scripts/compiler-rollout-workflow-gate.mjs
+          --output="${RUNNER_TEMP}/compiler-rollout/current/workflow-gate.json"
+
+      - name: Seal candidate evidence
+        run: |
+          set -euo pipefail
+          previous_args=()
+          previous="${RUNNER_TEMP}/compiler-rollout/previous/candidate.json"
+          if [[ -f "${previous}" ]] && node -e "const fs = require('node:fs'); const value = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); process.exit(value.schemaVersion === 4 ? 0 : 1)" "${previous}"; then
+            previous_args+=("--previous=${previous}")
+          elif [[ -f "${previous}" ]]; then
+            echo "::notice::The previous rollout candidate uses an incompatible schema; restarting the consecutive count."
+          fi
+          node scripts/compiler-rollout-candidate.mjs \
+            --workflow-gate="${RUNNER_TEMP}/compiler-rollout/current/workflow-gate.json" \
+            --shadow="${RUNNER_TEMP}/compiler-rollout/current/shadow.json" \
+            --benchmark="${RUNNER_TEMP}/compiler-rollout/current/benchmark.json" \
+            --runtime="${RUNNER_TEMP}/compiler-rollout/current/runtime.json" \
+            --rollback="${RUNNER_TEMP}/compiler-rollout/current/rollback.json" \
+            --package="${RUNNER_TEMP}/compiler-rollout/current/package.json" \
+            --output="${RUNNER_TEMP}/compiler-rollout/current/candidate.json" \
+            "${previous_args[@]}"
+
+      - name: Upload finalized rollout candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiler-rollout-candidate
+          path: ${{ runner.temp }}/compiler-rollout/current/*.json
+          if-no-files-found: error
+          retention-days: 90
