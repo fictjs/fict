@@ -5148,6 +5148,125 @@ mod tests {
 
     #[cfg(feature = "preview")]
     #[test]
+    fn clones_stable_local_preview_handler_definitions_into_artifacts() {
+        let source = "export function App({ label }: { label: string }) { const localConstHandler = (event: MouseEvent): string => label + event.type; function localFunctionHandler(event: MouseEvent): string { return label + event.type; } return <><button onClick$={localConstHandler}>Const</button><button onClick$={localFunctionHandler}>Declared</button></>; }";
+        let mut input = request(source, "preview-stable-local-handler.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: false,
+            ..CompilerPreviewOptions::default()
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(result.artifacts.len(), 2, "{:?}", result.artifacts);
+        let const_artifact = &result.artifacts[0].code;
+        assert!(
+            const_artifact.contains("const localConstHandler = (event) =>"),
+            "{const_artifact}"
+        );
+        assert!(
+            const_artifact.contains("const __handler = localConstHandler"),
+            "{const_artifact}"
+        );
+        assert!(const_artifact.contains("label()"), "{const_artifact}");
+        assert!(!const_artifact.contains("MouseEvent"), "{const_artifact}");
+
+        let declaration_artifact = &result.artifacts[1].code;
+        assert!(
+            declaration_artifact
+                .contains("const localFunctionHandler = function localFunctionHandler(event)"),
+            "{declaration_artifact}"
+        );
+        assert!(
+            declaration_artifact.contains("const __handler = localFunctionHandler"),
+            "{declaration_artifact}"
+        );
+        assert!(
+            declaration_artifact.contains("label()"),
+            "{declaration_artifact}"
+        );
+        assert!(
+            !declaration_artifact.contains("MouseEvent"),
+            "{declaration_artifact}"
+        );
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn rejects_mutable_or_aliased_local_preview_handler_identifiers() {
+        for (name, source) in [
+            (
+                "let",
+                "export function App() { let handler = () => 1; return <button onClick$={handler}>Click</button>; }",
+            ),
+            (
+                "alias",
+                "export function App() { const base = () => 1; const handler = base; return <button onClick$={handler}>Click</button>; }",
+            ),
+            (
+                "reassigned-declaration",
+                "export function App() { function handler() { return 1; } handler = () => 2; return <button onClick$={handler}>Click</button>; }",
+            ),
+        ] {
+            let mut input = request(source, &format!("preview-local-handler-{name}.tsx"));
+            input.options.preview = Some(CompilerPreviewOptions {
+                resumable: true,
+                auto_extract_handlers: false,
+                ..CompilerPreviewOptions::default()
+            });
+            let result = compile(input);
+
+            assert!(result.has_errors(), "{name}: {:?}", result.diagnostics);
+            assert!(result.code.is_empty(), "{name}: {}", result.code);
+            assert!(
+                result.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code.as_str() == "FICT-PREVIEW-HANDLER"
+                        && diagnostic.message.contains("mutable or aliased local")
+                }),
+                "{name}: {:?}",
+                result.diagnostics
+            );
+        }
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn keeps_auto_mutable_or_aliased_local_preview_handlers_eager() {
+        for (name, declaration) in [
+            ("let", "let handler = () => console.log('let');"),
+            (
+                "alias",
+                "const base = () => console.log('alias'); const handler = base;",
+            ),
+        ] {
+            let source = format!(
+                "export function App() {{ {declaration} return <button onClick={{handler}}>Click</button>; }}"
+            );
+            let mut input = request(&source, &format!("preview-local-handler-auto-{name}.tsx"));
+            input.options.preview = Some(CompilerPreviewOptions {
+                resumable: true,
+                auto_extract_handlers: true,
+                auto_extract_threshold: 1,
+            });
+            let result = compile(input);
+
+            assert!(!result.has_errors(), "{name}: {:?}", result.diagnostics);
+            assert!(
+                result.artifacts.is_empty(),
+                "{name}: {:?}",
+                result.artifacts
+            );
+            assert!(
+                result.code.contains("addEventListener"),
+                "{name}: {}",
+                result.code
+            );
+        }
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
     fn keeps_auto_mutable_module_preview_handler_identifiers_eager() {
         let source = "export let handler = () => 1; export function App() { return <button onClick={handler}>Click</button>; }";
         let mut input = request(source, "preview-mutable-module-auto.tsx");

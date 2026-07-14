@@ -13,7 +13,7 @@ use fict_hir::{
     CompoundAssignmentOperator, JavaScriptString, LiteralValue, TemplateId, UpdateOperator,
 };
 use oxc::{
-    allocator::{Allocator, CloneIn, TakeIn, Vec as ArenaVec},
+    allocator::{Allocator, Box as ArenaBox, CloneIn, TakeIn, Vec as ArenaVec},
     ast::{
         AstBuilder, NONE,
         ast::{
@@ -24,7 +24,7 @@ use oxc::{
             FunctionType, IdentifierName, IdentifierReference, ImportDeclarationSpecifier,
             ImportOrExportKind, JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild,
             JSXElement, JSXElementName, JSXFragment, JSXMemberExpression,
-            JSXMemberExpressionObject, ObjectPropertyKind, PropertyKey, PropertyKind,
+            JSXMemberExpressionObject, ObjectPropertyKind, Program, PropertyKey, PropertyKind,
             SimpleAssignmentTarget, Statement, VariableDeclarationKind, VariableDeclarator,
         },
     },
@@ -317,7 +317,33 @@ pub fn emit_program(
     if !diagnostics.is_empty() {
         return failed_output(diagnostics);
     }
-    let prepared_preview_handlers = std::mem::take(&mut rewriter.prepared_preview_handlers);
+    let mut prepared_preview_handlers = std::mem::take(&mut rewriter.prepared_preview_handlers);
+    for prepared in prepared_preview_handlers.values_mut() {
+        let Some(local) = &prepared.plan.local_handler else {
+            continue;
+        };
+        let Some(origin) = local.definition_origin.primary_span else {
+            diagnostics.push(emit_error(
+                "FICT-OXC-PREVIEW-ORIGIN",
+                "Preview local handler definition has no source origin",
+                GuaranteeClass::Internal,
+            ));
+            continue;
+        };
+        let Some(definition) = clone_source_function_expression(&allocator, &program, origin)
+        else {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-PREVIEW-ORIGIN",
+                    "Preview local handler origin does not identify a function definition",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(origin),
+            );
+            continue;
+        };
+        prepared.expression = definition;
+    }
     for location in preview_handlers.keys() {
         if !prepared_preview_handlers.contains_key(location) {
             diagnostics.push(
@@ -2926,6 +2952,43 @@ impl<'a> Visit<'a> for SourceExpressionCloner<'a> {
         }
         walk::walk_expression(self, expression);
     }
+
+    fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+        if self.found.is_some() {
+            return;
+        }
+        if function.r#type == FunctionType::FunctionDeclaration
+            && (function.span.start, function.span.end) == self.target
+        {
+            let mut function = function.clone_in(self.allocator);
+            function.r#type = FunctionType::FunctionExpression;
+            self.found = Some(Expression::FunctionExpression(ArenaBox::new_in(
+                function,
+                &self.allocator,
+            )));
+            return;
+        }
+        walk::walk_function(self, function, flags);
+    }
+}
+
+fn clone_source_function_expression<'a>(
+    allocator: &'a Allocator,
+    program: &Program<'a>,
+    origin: SourceSpan,
+) -> Option<Expression<'a>> {
+    let mut cloner = SourceExpressionCloner {
+        allocator,
+        target: (origin.start(), origin.end()),
+        found: None,
+    };
+    cloner.visit_program(program);
+    cloner.found.filter(|expression| {
+        matches!(
+            expression,
+            Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_)
+        )
+    })
 }
 
 fn clone_callback_expression<'a>(

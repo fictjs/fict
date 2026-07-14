@@ -9,8 +9,9 @@ use fict_diagnostics::{
 };
 use fict_emit::{
     EmitOperation, EmitPreviewComponent, EmitPreviewHandler, EmitPreviewLexicalCapture,
-    EmitPreviewModuleCapture, EmitPreviewPlan, EmitPreviewPropCapture, EmitPreviewPropRestCapture,
-    EmitProgram, EmitValueRef, ReactiveSlotStorage, RuntimeHelper, RuntimeImportIntent,
+    EmitPreviewLocalHandler, EmitPreviewModuleCapture, EmitPreviewPlan, EmitPreviewPropCapture,
+    EmitPreviewPropRestCapture, EmitProgram, EmitValueRef, ReactiveSlotStorage, RuntimeHelper,
+    RuntimeImportIntent,
 };
 use fict_hir::{
     BindingId, BindingKind, ContextValueKind, FunctionId, FunctionKind, HirFile,
@@ -75,12 +76,8 @@ pub fn attach_preview_plan(
             }
 
             let direct_handler_binding = handler_binding(owner, &candidate.handler);
-            let module_handler_binding = direct_handler_binding.filter(|binding| {
-                hir.bindings
-                    .get(binding.as_usize())
-                    .and_then(|binding| hir.scopes.get(binding.scope.as_usize()))
-                    .is_some_and(|scope| scope.kind == fict_hir::ScopeKind::Module)
-            });
+            let module_handler_binding =
+                direct_handler_binding.filter(|binding| binding_is_module_scoped(hir, *binding));
             if module_handler_binding
                 .is_some_and(|binding| !is_stable_module_handler_binding(hir, binding))
             {
@@ -98,6 +95,45 @@ pub fn attach_preview_plan(
                         .with_primary_span(handler_origin)
                         .with_help(
                             "use a module const/function/class binding, or remove the `$` suffix",
+                        ),
+                    );
+                }
+                continue;
+            }
+
+            let local_handler_binding =
+                direct_handler_binding.filter(|binding| module_handler_binding != Some(*binding));
+            let local_handler = local_handler_binding.and_then(|binding| {
+                let binding_info = hir.bindings.get(binding.as_usize())?;
+                let function =
+                    handler_function.and_then(|function| hir.functions.get(function.as_usize()))?;
+                (matches!(
+                    binding_info.kind,
+                    BindingKind::Const | BindingKind::Function
+                ) && function.binding == Some(binding)
+                    && !binding_has_runtime_write(hir, binding))
+                .then(|| EmitPreviewLocalHandler {
+                    binding,
+                    local: binding_info.display_name.clone(),
+                    function: function.id,
+                    definition_origin: function.origin,
+                })
+            });
+            if local_handler_binding.is_some() && local_handler.is_none() {
+                if candidate.explicit {
+                    let name = local_handler_binding
+                        .and_then(|binding| hir.bindings.get(binding.as_usize()))
+                        .map_or("<unknown>", |binding| binding.display_name.as_str());
+                    diagnostics.push(
+                        preview_error(
+                            "FICT-PREVIEW-HANDLER",
+                            format!(
+                                "resumable handlers cannot use mutable or aliased local handler identifier `{name}`"
+                            ),
+                        )
+                        .with_primary_span(handler_origin)
+                        .with_help(
+                            "use a local const initialized directly with a function, a function declaration, or remove the `$` suffix",
                         ),
                     );
                 }
@@ -193,6 +229,12 @@ pub fn attach_preview_plan(
                 let Some(binding_info) = hir.bindings.get(binding.as_usize()) else {
                     continue;
                 };
+                if local_handler
+                    .as_ref()
+                    .is_some_and(|handler| handler.binding == binding)
+                {
+                    continue;
+                }
                 if let Some(local) = slot_bindings.get(&binding) {
                     lexical_captures.push(EmitPreviewLexicalCapture {
                         binding,
@@ -281,6 +323,7 @@ pub fn attach_preview_plan(
                 props_object_local: props_parameter
                     .map(|binding| hir.bindings[binding.as_usize()].display_name.clone()),
                 module_captures,
+                local_handler,
             });
         }
     }
@@ -829,6 +872,54 @@ fn is_stable_module_binding(hir: &HirFile, binding: BindingId) -> bool {
     hir.scopes
         .get(binding.scope.as_usize())
         .is_some_and(|scope| scope.kind == fict_hir::ScopeKind::Module)
+}
+
+fn binding_is_module_scoped(hir: &HirFile, binding: BindingId) -> bool {
+    hir.bindings
+        .get(binding.as_usize())
+        .and_then(|binding| hir.scopes.get(binding.scope.as_usize()))
+        .is_some_and(|scope| scope.kind == fict_hir::ScopeKind::Module)
+}
+
+fn binding_has_runtime_write(hir: &HirFile, binding: BindingId) -> bool {
+    hir.functions.iter().any(|function| {
+        function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .any(|instruction| match &instruction.kind {
+                HirInstructionKind::Write { place, .. }
+                | HirInstructionKind::ReadWrite { place, .. } => {
+                    place_binding(function, place) == Some(binding)
+                }
+                HirInstructionKind::Iteration { targets, .. } => targets.iter().any(|local| {
+                    function
+                        .locals
+                        .get(local.as_usize())
+                        .and_then(|local| local.binding)
+                        == Some(binding)
+                }),
+                HirInstructionKind::PatternAssignment { writes, .. } => {
+                    writes.iter().any(|write| {
+                        function
+                            .locals
+                            .get(write.local.as_usize())
+                            .and_then(|local| local.binding)
+                            == Some(binding)
+                    })
+                }
+                _ => false,
+            })
+    })
+}
+
+fn place_binding(function: &fict_hir::HirFunction, place: &fict_hir::Place) -> Option<BindingId> {
+    let local = match place.base {
+        PlaceBase::Local(local) => local,
+        PlaceBase::Ssa(name) => name.local,
+        PlaceBase::Global(_) | PlaceBase::Value(_) => return None,
+    };
+    function.locals.get(local.as_usize())?.binding
 }
 
 fn is_stable_module_handler_binding(hir: &HirFile, binding: BindingId) -> bool {

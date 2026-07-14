@@ -52,6 +52,7 @@ pub fn verify_emit_program(
     }
     verify_module_plan(hir, program, &mut diagnostics);
     verify_imports(program, &mut diagnostics);
+    verify_preview_plan(hir, program, &mut diagnostics);
     let import_names: BTreeSet<_> = program
         .imports
         .iter()
@@ -532,6 +533,44 @@ fn verify_imports(program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {
             "FICT-EMIT-PREVIEW",
             "Core EmitIR cannot carry a Preview plan",
         ));
+    }
+}
+
+fn verify_preview_plan(hir: &HirFile, program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {
+    let Some(preview) = &program.preview_plan else {
+        return;
+    };
+    for handler in &preview.handlers {
+        let Some(local) = &handler.local_handler else {
+            continue;
+        };
+        let binding = hir.bindings.get(local.binding.as_usize());
+        let function = hir.functions.get(local.function.as_usize());
+        let valid = binding.is_some_and(|binding| {
+            binding.display_name == local.local
+                && matches!(
+                    binding.kind,
+                    fict_hir::BindingKind::Const | fict_hir::BindingKind::Function
+                )
+                && !hir
+                    .scopes
+                    .get(binding.scope.as_usize())
+                    .is_some_and(|scope| scope.kind == fict_hir::ScopeKind::Module)
+        }) && function.is_some_and(|function| {
+            function.binding == Some(local.binding)
+                && function.parent == handler.owner
+                && function.origin == local.definition_origin
+        }) && handler.handler_function == Some(local.function)
+            && !handler
+                .module_captures
+                .iter()
+                .any(|capture| capture.binding == local.binding);
+        if !valid {
+            diagnostics.push(emit_error(
+                "FICT-EMIT-PREVIEW-HANDLER",
+                "Preview local handlers must identify a stable source function owned by the component",
+            ));
+        }
     }
 }
 

@@ -807,6 +807,15 @@ pub struct EmitPreviewModuleCapture {
     pub source_export_name: String,
 }
 
+/// One stable component-local function definition cloned into an isolated handler artifact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmitPreviewLocalHandler {
+    pub binding: BindingId,
+    pub local: String,
+    pub function: FunctionId,
+    pub definition_origin: Origin,
+}
+
 /// Structured handler plan produced by the optional Preview crate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmitPreviewHandler {
@@ -823,6 +832,7 @@ pub struct EmitPreviewHandler {
     pub prop_rest_captures: Vec<EmitPreviewPropRestCapture>,
     pub props_object_local: Option<String>,
     pub module_captures: Vec<EmitPreviewModuleCapture>,
+    pub local_handler: Option<EmitPreviewLocalHandler>,
 }
 
 /// Structured component-resume plan produced by the optional Preview crate.

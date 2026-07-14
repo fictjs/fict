@@ -60,6 +60,9 @@ pub(crate) fn generate_handler_artifact<'a>(
     for capture in &prepared.plan.module_captures {
         identifiers.names.insert(capture.local.clone());
     }
+    if let Some(local) = &prepared.plan.local_handler {
+        identifiers.names.insert(local.local.clone());
+    }
     if let Some(local) = &prepared.plan.props_object_local {
         identifiers.names.insert(local.clone());
     }
@@ -217,11 +220,24 @@ pub(crate) fn generate_handler_artifact<'a>(
             wrapper.push_str("]);\n");
         }
     }
-    wrapper.push_str("const ");
-    wrapper.push_str(&handler);
-    wrapper.push_str(" = ");
-    wrapper.push_str(HANDLER_SENTINEL);
-    wrapper.push_str(";\nif (typeof ");
+    if let Some(local) = &prepared.plan.local_handler {
+        wrapper.push_str("const ");
+        wrapper.push_str(&local.local);
+        wrapper.push_str(" = ");
+        wrapper.push_str(HANDLER_SENTINEL);
+        wrapper.push_str(";\nconst ");
+        wrapper.push_str(&handler);
+        wrapper.push_str(" = ");
+        wrapper.push_str(&local.local);
+        wrapper.push_str(";\n");
+    } else {
+        wrapper.push_str("const ");
+        wrapper.push_str(&handler);
+        wrapper.push_str(" = ");
+        wrapper.push_str(HANDLER_SENTINEL);
+        wrapper.push_str(";\n");
+    }
+    wrapper.push_str("if (typeof ");
     wrapper.push_str(&handler);
     wrapper.push_str(" === \"function\") {\nconst ");
     wrapper.push_str(&result);
@@ -275,6 +291,7 @@ pub(crate) fn generate_handler_artifact<'a>(
         ));
     }
     let mut program = parsed.program;
+    program.source_type = source_type;
     ZeroSpans.visit_program(&mut program);
     let mut replacer = HandlerExpressionReplacer {
         replacement: Some(prepared.expression),
