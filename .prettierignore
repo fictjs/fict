@@ -6,6 +6,10 @@ pnpm-lock.yaml
 CHANGELOG.md
 packages/compiler/src/runtime-abi.generated.ts
 
+# Generated compiler rollout evidence (preserve artifact bytes)
+.github/compiler-rollout-evidence.json
+.github/compiler-native-certification.json
+
 # Snapshot files
 **/__snapshots__/**
 *.snap
