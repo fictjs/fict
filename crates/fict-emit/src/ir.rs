@@ -249,6 +249,7 @@ pub enum EmitOperation {
         slot: EmitSlotId,
         source_result: ValueId,
         local: Option<LocalId>,
+        name: Option<String>,
         initializer: Option<EmitValueRef>,
         helper: RuntimeHelper,
         origin: Origin,
@@ -423,6 +424,14 @@ pub enum EmitOperation {
         cleanup: CleanupOwner,
         origin: Origin,
     },
+    /// Replace an authored reactive `if`/return pair with a root conditional binding.
+    ConditionalReturn {
+        target: EmitTemporaryId,
+        helper: RuntimeHelper,
+        create_helper: RuntimeHelper,
+        cleanup_helper: RuntimeHelper,
+        origin: Origin,
+    },
     /// Materialize a binding-aware keyed `.map()` child between template-owned markers.
     KeyedChild {
         target: EmitTemporaryId,
@@ -491,6 +500,7 @@ impl EmitOperation {
             | Self::BindRef { helper, .. }
             | Self::Insert { helper, .. }
             | Self::Conditional { helper, .. }
+            | Self::ConditionalReturn { helper, .. }
             | Self::KeyedChild { helper, .. }
             | Self::KeyedList { helper, .. }
             | Self::ResolveElement { helper, .. } => Some(*helper),
@@ -541,6 +551,7 @@ impl EmitOperation {
             Self::Insert { create_helper, .. } => Some(*create_helper),
             Self::BindEvent { cleanup_helper, .. } => *cleanup_helper,
             Self::Conditional { create_helper, .. } => Some(*create_helper),
+            Self::ConditionalReturn { create_helper, .. } => Some(*create_helper),
             Self::KeyedChild { cleanup_helper, .. } => Some(*cleanup_helper),
             Self::InvokeComponent {
                 prop_helper: Some(_),
@@ -555,6 +566,7 @@ impl EmitOperation {
     pub const fn tertiary_helper(&self) -> Option<RuntimeHelper> {
         match self {
             Self::Conditional { cleanup_helper, .. } => Some(*cleanup_helper),
+            Self::ConditionalReturn { cleanup_helper, .. } => Some(*cleanup_helper),
             Self::Insert {
                 fragment_helper, ..
             } => *fragment_helper,
@@ -631,6 +643,7 @@ impl EmitOperation {
             | Self::InvokeComponent { target, .. }
             | Self::CreateElement { target, .. }
             | Self::Conditional { target, .. }
+            | Self::ConditionalReturn { target, .. }
             | Self::KeyedChild { target, .. }
             | Self::KeyedList { target, .. } => Some(*target),
             Self::UpdateReactive {
@@ -697,6 +710,7 @@ impl EmitOperation {
             | Self::CreateVNode { .. }
             | Self::DeclareTemplate { .. }
             | Self::CloneTemplate { .. }
+            | Self::ConditionalReturn { .. }
             | Self::KeyedChild { .. }
             | Self::ResolveElement { .. } => {}
         }

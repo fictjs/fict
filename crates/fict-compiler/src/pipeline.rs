@@ -1,16 +1,3 @@
-use std::mem;
-
-use fict_compiler_oxc::{
-    HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, OxcTypeScriptOptions,
-    build_hir, emit_program,
-};
-use fict_diagnostics::{
-    Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
-};
-use fict_emit::{NoJsxLoweringOptions, RuntimeFamily, lower_core};
-use fict_hir::{FictMacroKind, HirFile, HirInstructionKind, StructuredSourceKind};
-use fict_metadata::MetadataResolutionStatus;
-
 use crate::control_flow_diagnostics::reactive_control_flow_diagnostics;
 use crate::diagnostic_policy::{apply_diagnostic_policy, configured_diagnostic_severity};
 use crate::metadata_analysis::generate_module_metadata;
@@ -21,7 +8,17 @@ use crate::{
     HandlerArtifactMetadata, ModuleKind, NormalizedCompileRequest, RawSourceMap, SourceLanguage,
     run_core_passes,
 };
-
+use fict_compiler_oxc::{
+    HirBuildOptions, OxcCompileOptions, OxcModuleKind, OxcSourceLanguage, OxcTypeScriptOptions,
+    build_hir, emit_program,
+};
+use fict_diagnostics::{
+    Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
+};
+use fict_emit::{NoJsxLoweringOptions, RuntimeFamily, lower_core};
+use fict_hir::{FictMacroKind, HirFile, HirInstructionKind, StructuredSourceKind};
+use fict_metadata::MetadataResolutionStatus;
+use std::mem;
 /// Execute the currently connected native pipeline and return a complete result.
 #[must_use]
 pub fn compile(request: CompileRequest) -> CompileResult {
@@ -30,7 +27,6 @@ pub fn compile(request: CompileRequest) -> CompileResult {
         Err(error) => invalid_request_result(error.to_string()),
     }
 }
-
 /// Construct a structured result for malformed public input.
 #[must_use]
 pub fn invalid_request_result(message: impl Into<String>) -> CompileResult {
@@ -41,7 +37,6 @@ pub fn invalid_request_result(message: impl Into<String>) -> CompileResult {
         Some("fix the request shape before invoking the native compiler"),
     )
 }
-
 /// Construct the generic result returned when the N-API panic boundary fires.
 #[must_use]
 pub fn internal_error_result() -> CompileResult {
@@ -52,11 +47,9 @@ pub fn internal_error_result() -> CompileResult {
         Some("retry with the legacy backend for the entire build and report the failing fixture"),
     )
 }
-
 fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     let mut result = CompileResult::empty();
     result.diagnostics = request.integration_diagnostics.clone();
-
     #[cfg(not(feature = "preview"))]
     if request
         .options
@@ -2011,7 +2004,7 @@ mod tests {
                 .code
                 .contains("const __fictCtx_1 = __fictUseContext()")
         );
-        assert!(state.code.contains("__fictUseSignal(__fictCtx_1, 0)"));
+        assert!(state.code.contains("name: \"count\""), "{}", state.code);
         assert!(state.code.contains("count(__fict_value)"));
         assert!(state.code.contains("count(__fict_previous + 1)"));
         assert!(state.code.contains("count(),"), "{}", state.code);
@@ -3504,7 +3497,23 @@ mod tests {
                 .iter()
                 .all(|diagnostic| diagnostic.code.as_str() != "FICT-R006")
         );
-        assert!(result.code.contains("if (count() > 10)"), "{}", result.code);
+        assert!(
+            result.code.contains("createConditional(() => count() > 10"),
+            "{}",
+            result.code
+        );
+        let prop_ternary = compile(request(
+            "export function App(props) { return props.broken ? <Broken /> : <Ready />; }",
+            "prop-ternary-return.tsx",
+        ));
+        assert!(!prop_ternary.has_errors(), "{:?}", prop_ternary.diagnostics);
+        assert!(
+            prop_ternary
+                .code
+                .contains("createConditional(() => props.broken"),
+            "{}",
+            prop_ternary.code
+        );
 
         let non_jsx = compile(request(
             "import { $state } from 'fict'; export function App() { const count = $state(0); if (count > 10 && maybe()) return count; return 0; }",
@@ -4014,7 +4023,7 @@ mod tests {
     #[test]
     fn emits_fine_grained_ternary_and_logical_conditions() {
         let result = compile(request(
-            "import { $state } from 'fict'; const Yes = () => null; const No = () => null; export function App() { let show = $state(true); return <main>{show ? <><Yes /></> : <No />}{show && <span>{show}</span>}</main>; }",
+            "import { $state } from 'fict'; const Yes = () => null; const No = () => null; export function App() { let show = $state(true); let count = $state(0); return <main>{show ? <><Yes /></> : <No />}{show && <span>{count}</span>}</main>; }",
             "conditional.tsx",
         ));
 
@@ -4037,6 +4046,11 @@ mod tests {
         assert!(result.code.contains("type: Yes"), "{}", result.code);
         assert!(result.code.contains("type: No"), "{}", result.code);
         assert!(result.code.contains("void 0"), "{}", result.code);
+        assert!(
+            result.code.contains("trackBranchReads: true"),
+            "{}",
+            result.code
+        );
         assert!(
             result.code.matches("onDestroy(").count() >= 2,
             "{}",

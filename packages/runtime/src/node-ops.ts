@@ -6,9 +6,11 @@
 import { isDocumentFragmentLike, isNodeLike } from './dom-guards'
 
 const HYDRATED_FRAGMENT_NODES = Symbol.for('fict:hydration-fragment-nodes')
+const HYDRATED_TEMPLATE_NODE = Symbol.for('fict:hydration-template-node')
 const DOCUMENT_FRAGMENT_NODE = 11
 
 type HydratedFragment = DocumentFragment & { [HYDRATED_FRAGMENT_NODES]?: Node[] }
+type HydratedTemplateNode = Node & { [HYDRATED_TEMPLATE_NODE]?: Node }
 
 function getHydratedFragmentNodes(node: Node): Node[] | undefined {
   if (node.nodeType !== DOCUMENT_FRAGMENT_NODE) return undefined
@@ -221,14 +223,77 @@ export function getSlotEnd(start: Comment): Comment {
 
 export function resolvePath(root: Node, path: number[]): Node | null {
   let current: Node | null = root
+  let expected: Node | null = (root as HydratedTemplateNode)[HYDRATED_TEMPLATE_NODE] ?? null
   for (const index of path) {
     if (!current) return null
-    current = getChildAtPathIndex(current, index)
+    current = expected
+      ? getHydratedChildAtPathIndex(current, expected, index)
+      : getChildAtPathIndex(current, index)
+    expected = expected ? getChildAtPathIndex(expected, index) : null
     if (!current) {
       return null
     }
   }
   return current
+}
+
+function getHydratedChildAtPathIndex(current: Node, expected: Node, index: number): Node | null {
+  const actualChildren = getLogicalChildren(current)
+  const expectedChildren = getLogicalChildren(expected)
+  let actualIndex = 0
+  for (let expectedIndex = 0; expectedIndex <= index; expectedIndex += 1) {
+    const expectedChild = expectedChildren[expectedIndex]
+    if (!expectedChild) return null
+    while (
+      actualIndex < actualChildren.length &&
+      !isHydrationPathCompatible(expectedChild, actualChildren[actualIndex]!)
+    ) {
+      actualIndex += 1
+    }
+    if (actualIndex >= actualChildren.length) return null
+    if (expectedIndex === index) {
+      return attachHydratedTemplateNode(actualChildren[actualIndex]!, expectedChild)
+    }
+    actualIndex += 1
+  }
+  return null
+}
+
+function attachHydratedTemplateNode(actual: Node, expected: Node): Node {
+  Object.defineProperty(actual as HydratedTemplateNode, HYDRATED_TEMPLATE_NODE, {
+    configurable: true,
+    value: expected,
+  })
+  return actual
+}
+
+function getLogicalChildren(current: Node): Node[] {
+  const childRoot = getTemplateContentRoot(current) ?? current
+  const children = getHydratedFragmentNodes(childRoot) ?? Array.from(childRoot.childNodes)
+  const logical: Node[] = []
+  for (let index = 0; index < children.length; index += 1) {
+    const child = children[index]!
+    logical.push(child)
+    if (isSlotStart(child)) {
+      const endIndex = children.indexOf(getSlotEnd(child as Comment), index + 1)
+      if (endIndex !== -1) index = endIndex
+    }
+  }
+  return logical
+}
+
+function isHydrationPathCompatible(expected: Node, actual: Node): boolean {
+  if (expected.nodeType !== actual.nodeType) return false
+  if (expected.nodeType === 1) {
+    return (
+      (expected as Element).localName === (actual as Element).localName &&
+      (expected as Element).namespaceURI === (actual as Element).namespaceURI
+    )
+  }
+  if (expected.nodeType === 8) {
+    return (expected as Comment).data === (actual as Comment).data
+  }
+  return true
 }
 
 function getChildAtPathIndex(current: Node, index: number): Node | null {

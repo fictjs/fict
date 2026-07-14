@@ -2,6 +2,7 @@
 
 //! OXC-independent EmitIR and verified runtime-helper intent for Fict output.
 
+mod conditional_return;
 mod ir;
 mod lower;
 mod name_allocator;

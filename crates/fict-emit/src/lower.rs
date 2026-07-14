@@ -1,5 +1,12 @@
-use std::collections::{BTreeMap, BTreeSet};
-
+use crate::{
+    CleanupOwner, ComponentChild, ComponentProp, ComponentTarget, ConditionalKind,
+    DELEGATED_EVENTS, DomBindingKind, DomNamespace, EmitContext, EmitFunction, EmitModulePlan,
+    EmitOperation, EmitProgram, EmitPropBinding, EmitPropCheck, EmitPropMode, EmitPropsDefault,
+    EmitPropsPlan, EmitPropsRest, EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef,
+    EventOptions, PropsOperation, ReactivePatternTarget, ReactiveSlot, ReactiveSlotKind,
+    ReactiveSlotStorage, RuntimeFamily, RuntimeHelper, RuntimeImportIntent,
+    name_allocator::NameAllocator, verify_emit_program,
+};
 use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
@@ -15,17 +22,7 @@ use fict_reactivity::{
     ReactiveBindingKind, ReactiveCycleAnalysis, ReactiveScopeAnalysis, RegionAnalysis,
     SsaDefinitionLocation, analyze_cfg, structurize_cfg,
 };
-
-use crate::{
-    CleanupOwner, ComponentChild, ComponentProp, ComponentTarget, ConditionalKind,
-    DELEGATED_EVENTS, DomBindingKind, DomNamespace, EmitContext, EmitFunction, EmitModulePlan,
-    EmitOperation, EmitProgram, EmitPropBinding, EmitPropCheck, EmitPropMode, EmitPropsDefault,
-    EmitPropsPlan, EmitPropsRest, EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef,
-    EventOptions, PropsOperation, ReactivePatternTarget, ReactiveSlot, ReactiveSlotKind,
-    ReactiveSlotStorage, RuntimeFamily, RuntimeHelper, RuntimeImportIntent,
-    name_allocator::NameAllocator, verify_emit_program,
-};
-
+use std::collections::{BTreeMap, BTreeSet};
 /// Phase-1 Core lowering configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NoJsxLoweringOptions {
@@ -38,7 +35,6 @@ pub struct NoJsxLoweringOptions {
     /// Emit fine-grained DOM operations instead of the complete VNode fallback.
     pub fine_grained_dom: bool,
 }
-
 impl Default for NoJsxLoweringOptions {
     fn default() -> Self {
         Self {
@@ -49,7 +45,6 @@ impl Default for NoJsxLoweringOptions {
         }
     }
 }
-
 #[derive(Debug, Clone, Copy)]
 struct ReactiveSite {
     result: ValueId,
@@ -57,7 +52,6 @@ struct ReactiveSite {
     kind: ReactiveSiteKind,
     slot: EmitSlotId,
 }
-
 #[derive(Debug, Clone, Copy)]
 struct HookReturnSite {
     result: ValueId,
@@ -67,7 +61,6 @@ struct HookReturnSite {
     origin: Origin,
     slot: EmitSlotId,
 }
-
 #[derive(Debug, Clone, Copy)]
 struct HookMemberSite {
     call: ValueId,
@@ -78,7 +71,6 @@ struct HookMemberSite {
     origin: Origin,
     slot: EmitSlotId,
 }
-
 #[derive(Debug, Clone)]
 struct StructuredHookRootSite {
     owner: FunctionId,
@@ -89,7 +81,6 @@ struct StructuredHookRootSite {
     shape: ImportedHookReturn,
     origin: Origin,
 }
-
 #[derive(Debug, Clone, Copy)]
 struct CapturedHookMemberSite {
     local: LocalId,
@@ -102,7 +93,6 @@ struct CapturedHookMemberSite {
     origin: Origin,
     slot: EmitSlotId,
 }
-
 #[derive(Debug, Clone, Copy)]
 struct ReactiveBindingSite {
     owner: FunctionId,
@@ -110,7 +100,6 @@ struct ReactiveBindingSite {
     kind: ReactiveSlotKind,
     origin: Origin,
 }
-
 #[derive(Debug, Clone, Copy)]
 struct CrossFunctionFacts<'a> {
     reactive_bindings: &'a BTreeMap<BindingId, ReactiveBindingSite>,
@@ -119,13 +108,11 @@ struct CrossFunctionFacts<'a> {
     list_item_bindings: &'a BTreeSet<BindingId>,
     jsx_getter_bindings: &'a BTreeSet<BindingId>,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReactiveSiteKind {
     Macro(FictMacroKind),
     Runtime(ReactiveCallKind),
 }
-
 /// Lower state/memo/effect and reactive reads/writes while preserving ordinary HIR.
 pub fn lower_no_jsx(
     hir: &HirFile,
@@ -136,7 +123,6 @@ pub fn lower_no_jsx(
 ) -> Result<EmitProgram, DiagnosticBundle> {
     lower_program(hir, regions, cycles, scopes, options, false)
 }
-
 /// Lower Core intrinsic JSX in addition to no-JSX reactivity.
 pub fn lower_core(
     hir: &HirFile,
@@ -147,7 +133,6 @@ pub fn lower_core(
 ) -> Result<EmitProgram, DiagnosticBundle> {
     lower_program(hir, regions, cycles, scopes, options, true)
 }
-
 fn lower_program(
     hir: &HirFile,
     regions: &[RegionAnalysis],
@@ -341,7 +326,6 @@ fn lower_program(
     verify_emit_program(hir, regions, &program)?;
     Ok(program)
 }
-
 fn module_source_fragment(hir: &HirFile) -> Option<fict_hir::SyntaxFragmentId> {
     hir.functions
         .get(hir.root_function.as_usize())?
@@ -356,7 +340,6 @@ fn module_source_fragment(hir: &HirFile) -> Option<fict_hir::SyntaxFragmentId> {
             _ => None,
         })
 }
-
 fn declaration_initializer(
     function: &HirFunction,
     instruction: &HirInstruction,
@@ -383,7 +366,6 @@ fn declaration_initializer(
         _ => None,
     }
 }
-
 fn derived_declarations(
     function: &HirFunction,
     scopes: Option<&ReactiveScopeAnalysis>,
@@ -437,7 +419,6 @@ fn derived_declarations(
     }
     declarations.into_values().flatten().collect()
 }
-
 fn insert_reactive_binding_site(
     sites: &mut BTreeMap<BindingId, ReactiveBindingSite>,
     site: ReactiveBindingSite,
@@ -451,7 +432,6 @@ fn insert_reactive_binding_site(
     }
     Ok(())
 }
-
 fn collect_reactive_binding_sites(
     hir: &HirFile,
     scopes: Option<&[ReactiveScopeAnalysis]>,
@@ -523,7 +503,6 @@ fn collect_reactive_binding_sites(
     }
     Ok(sites)
 }
-
 fn collect_structured_hook_root_sites(
     hir: &HirFile,
 ) -> Result<BTreeMap<BindingId, StructuredHookRootSite>, DiagnosticBundle> {
@@ -590,7 +569,6 @@ fn collect_structured_hook_root_sites(
     }
     Ok(sites)
 }
-
 fn collect_structured_hook_member_uses(
     hir: &HirFile,
     roots: &BTreeMap<BindingId, StructuredHookRootSite>,
@@ -617,7 +595,6 @@ fn collect_structured_hook_member_uses(
     }
     uses
 }
-
 fn lower_function(
     hir: &HirFile,
     function_id: FunctionId,
@@ -1156,6 +1133,9 @@ fn lower_function(
                             slot: site.slot,
                             source_result: result,
                             local: site.local,
+                            name: site.local.and_then(|local| {
+                                function.locals[local.as_usize()].debug_name.clone()
+                            }),
                             initializer: call
                                 .arguments
                                 .first()
@@ -1514,6 +1494,14 @@ fn lower_function(
             | TerminatorKind::Unreachable => {}
         }
     }
+    let control_flow = structurize_cfg(function, &analyze_cfg(function)?)?;
+    crate::conditional_return::lower_conditional_returns(
+        function,
+        &control_flow,
+        &mut temporaries,
+        &mut temporary_names,
+        &mut operations,
+    );
     let context = operations
         .iter()
         .filter_map(EmitOperation::helper)
@@ -1530,11 +1518,10 @@ fn lower_function(
         slots,
         temporaries,
         regions: regions.top_level_regions.clone(),
-        control_flow: structurize_cfg(function, &analyze_cfg(function)?)?,
+        control_flow,
         operations,
     })
 }
-
 fn jsx_contains_direct_yield(function: &HirFunction, jsx: &HirInstruction) -> bool {
     if !function.flags.is_generator {
         return false;
@@ -1553,7 +1540,6 @@ fn jsx_contains_direct_yield(function: &HirFunction, jsx: &HirInstruction) -> bo
                 })
         })
 }
-
 fn lower_component_props_plan(
     hir: &HirFile,
     function: &HirFunction,
@@ -1640,14 +1626,12 @@ fn lower_component_props_plan(
         helper,
     }))
 }
-
 fn is_scoped_helper(helper: RuntimeHelper) -> bool {
     matches!(
         helper,
         RuntimeHelper::UseSignal | RuntimeHelper::UseMemo | RuntimeHelper::UseEffect
     )
 }
-
 #[derive(Debug)]
 enum TemplateBinding {
     Attribute {
@@ -1712,7 +1696,6 @@ enum TemplateBinding {
         reference: ValueId,
     },
 }
-
 #[derive(Debug)]
 struct SerializedTemplate {
     html: String,
@@ -1720,7 +1703,6 @@ struct SerializedTemplate {
     force_fragment: bool,
     bindings: Vec<TemplateBinding>,
 }
-
 #[allow(clippy::too_many_arguments)]
 fn lower_jsx_instruction(
     hir: &HirFile,
@@ -2169,7 +2151,6 @@ fn lower_jsx_instruction(
     }
     Ok(())
 }
-
 #[allow(clippy::too_many_arguments)]
 fn register_component_nodes(
     hir: &HirFile,
@@ -2286,7 +2267,6 @@ fn register_component_nodes(
     }
     Ok(())
 }
-
 fn jsx_value_needs_getter(
     hir: &HirFile,
     function: &HirFunction,
@@ -2302,7 +2282,6 @@ fn jsx_value_needs_getter(
         .iter()
         .any(|binding| bindings.contains(binding))
 }
-
 #[allow(clippy::too_many_arguments)]
 fn lower_component_operation(
     hir: &HirFile,
@@ -2482,7 +2461,6 @@ fn lower_component_operation(
     });
     Ok(target)
 }
-
 fn is_runtime_resettable_boundary(hir: &HirFile, name: &JsxElementName) -> bool {
     match name {
         JsxElementName::Component(binding) => hir
@@ -2512,7 +2490,6 @@ fn is_runtime_resettable_boundary(hir: &HirFile, name: &JsxElementName) -> bool 
         JsxElementName::Intrinsic(_) | JsxElementName::Dynamic(_) => false,
     }
 }
-
 fn trusted_jsx_list_values(
     root: &JsxNode,
     reactive_bindings: &BTreeMap<BindingId, ReactiveBindingSite>,
@@ -2522,7 +2499,6 @@ fn trusted_jsx_list_values(
         Node(&'a JsxNode),
         Child(&'a JsxChild),
     }
-
     let mut trusted = BTreeSet::new();
     let mut stack = vec![Item::Node(root)];
     while let Some(item) = stack.pop() {
@@ -2559,7 +2535,6 @@ fn trusted_jsx_list_values(
     }
     trusted
 }
-
 fn trusted_jsx_list_receiver(
     receiver: JsxListReceiver,
     reactive_bindings: &BTreeMap<BindingId, ReactiveBindingSite>,
@@ -2587,12 +2562,10 @@ fn trusted_jsx_list_receiver(
             .is_some_and(|site| site.kind == ReactiveSlotKind::Store),
     }
 }
-
 #[cfg(test)]
 fn serialize_template(root: &JsxNode) -> Result<SerializedTemplate, DiagnosticBundle> {
     serialize_template_with_lists(root, &BTreeSet::new())
 }
-
 fn serialize_template_with_lists(
     root: &JsxNode,
     trusted_lists: &BTreeSet<ValueId>,
@@ -2625,7 +2598,6 @@ fn serialize_template_with_lists(
         bindings,
     })
 }
-
 fn serialize_node(
     node: &JsxNode,
     parent_namespace: Option<DomNamespace>,
@@ -2791,7 +2763,6 @@ fn serialize_node(
         }
     }
 }
-
 #[allow(clippy::too_many_arguments)]
 fn serialize_children(
     children: &[JsxChild],
@@ -3001,7 +2972,6 @@ fn serialize_children(
     }
     Ok(child_index)
 }
-
 fn resolve_element_namespace(
     tag: &str,
     parent: Option<DomNamespace>,
@@ -3043,7 +3013,6 @@ fn resolve_element_namespace(
         Some(DomNamespace::Parent) => DomNamespace::Parent,
     }
 }
-
 fn resolve_child_namespace(
     tag: &str,
     element_namespace: DomNamespace,
@@ -3069,14 +3038,12 @@ fn resolve_child_namespace(
     }
     element_namespace
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AnnotationXmlEncoding {
     Html,
     Other,
     Dynamic,
 }
-
 fn annotation_xml_encoding(attributes: &[JsxAttribute]) -> AnnotationXmlEncoding {
     let mut encoding = AnnotationXmlEncoding::Other;
     for attribute in attributes {
@@ -3105,7 +3072,6 @@ fn annotation_xml_encoding(attributes: &[JsxAttribute]) -> AnnotationXmlEncoding
     }
     encoding
 }
-
 fn normalize_attribute_name(tag: &str, name: &str, namespace: DomNamespace) -> String {
     if tag.eq_ignore_ascii_case("annotation-xml") && name.eq_ignore_ascii_case("encoding") {
         return "encoding".to_owned();
@@ -3147,7 +3113,6 @@ fn normalize_attribute_name(tag: &str, name: &str, namespace: DomNamespace) -> S
     }
     .to_owned()
 }
-
 fn is_implicit_table_child(
     parent_tag: Option<&str>,
     parent_namespace: DomNamespace,
@@ -3169,11 +3134,9 @@ fn is_implicit_table_child(
             )
     )
 }
-
 fn renderable_child(child: &JsxChild) -> bool {
     !matches!(child, JsxChild::Text { value, .. } if value.is_empty())
 }
-
 fn is_html_void_element(tag: &str, namespace: DomNamespace) -> bool {
     namespace == DomNamespace::Html
         && matches!(
@@ -3194,7 +3157,6 @@ fn is_html_void_element(tag: &str, namespace: DomNamespace) -> bool {
                 | "wbr"
         )
 }
-
 fn is_standalone_svg_tag(tag: &str) -> bool {
     matches!(
         tag,
@@ -3257,7 +3219,6 @@ fn is_standalone_svg_tag(tag: &str) -> bool {
             | "view"
     )
 }
-
 fn is_standalone_mathml_tag(tag: &str) -> bool {
     matches!(
         tag,
@@ -3300,7 +3261,6 @@ fn is_standalone_mathml_tag(tag: &str) -> bool {
             | "semantics"
     )
 }
-
 fn resolved_element(
     root: EmitTemporaryId,
     path: Vec<u32>,
@@ -3332,7 +3292,6 @@ fn resolved_element(
     resolved.insert(path, target);
     target
 }
-
 fn dom_binding_kind(name: &str) -> DomBindingKind {
     match name {
         "class" | "className" => DomBindingKind::Class,
@@ -3343,7 +3302,6 @@ fn dom_binding_kind(name: &str) -> DomBindingKind {
         _ => DomBindingKind::Attribute(name.to_owned()),
     }
 }
-
 fn create_element_helper(namespace: DomNamespace) -> RuntimeHelper {
     match namespace {
         DomNamespace::Html => RuntimeHelper::CreateElement,
@@ -3354,7 +3312,6 @@ fn create_element_helper(namespace: DomNamespace) -> RuntimeHelper {
         DomNamespace::Parent => RuntimeHelper::CreateElementInParentNamespace,
     }
 }
-
 fn dom_binding_helper(kind: &DomBindingKind, reactive: bool) -> RuntimeHelper {
     match (kind, reactive) {
         (DomBindingKind::Text, true) => RuntimeHelper::BindText,
@@ -3372,7 +3329,6 @@ fn dom_binding_helper(kind: &DomBindingKind, reactive: bool) -> RuntimeHelper {
         (DomBindingKind::Spread, _) => RuntimeHelper::Spread,
     }
 }
-
 fn escape_text(value: &str, output: &mut String) {
     for character in value.chars() {
         match character {
@@ -3383,7 +3339,6 @@ fn escape_text(value: &str, output: &mut String) {
         }
     }
 }
-
 fn escape_attribute(value: &str, output: &mut String) {
     for character in value.chars() {
         match character {
@@ -3395,14 +3350,12 @@ fn escape_attribute(value: &str, output: &mut String) {
         }
     }
 }
-
 fn valid_markup_name(value: &str) -> bool {
     !value.is_empty()
         && value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':' | b'.' | b'$')
         })
 }
-
 pub fn parse_event_attribute(attribute: &str) -> Option<(String, bool, EventOptions)> {
     let (attribute, resumable_explicit) = match attribute.strip_suffix('$') {
         Some(attribute) => (attribute, true),
@@ -3459,7 +3412,6 @@ pub fn parse_event_attribute(attribute: &str) -> Option<(String, bool, EventOpti
     }
     (!event.is_empty()).then(|| (event.to_ascii_lowercase(), resumable_explicit, options))
 }
-
 fn parse_event_modifier_suffixes(mut suffix: &str) -> Option<EventOptions> {
     let mut options = EventOptions::default();
     while !suffix.is_empty() {
@@ -3477,7 +3429,6 @@ fn parse_event_modifier_suffixes(mut suffix: &str) -> Option<EventOptions> {
     }
     Some(options)
 }
-
 fn creation_helper(kind: FunctionKind, macro_kind: FictMacroKind) -> RuntimeHelper {
     let scoped = matches!(
         kind,
@@ -3491,7 +3442,6 @@ fn creation_helper(kind: FunctionKind, macro_kind: FictMacroKind) -> RuntimeHelp
         (FictMacroKind::Effect, _) => unreachable!("effect has a dedicated helper"),
     }
 }
-
 fn is_runtime_helper_call(
     hir: &HirFile,
     call: &fict_hir::CallInstruction,
@@ -3516,19 +3466,16 @@ fn is_runtime_helper_call(
             .into_iter()
             .any(|family| import.source == spec.module_request(family))
 }
-
 fn function_value(function: &HirFunction, value: ValueId) -> Option<FunctionId> {
     match function.values.get(value.as_usize())?.kind {
         ValueKind::Function(function) => Some(function),
         _ => None,
     }
 }
-
 fn hook_return_accessor_reads(function: &HirFunction) -> BTreeSet<ValueId> {
     if function.kind != FunctionKind::Hook {
         return BTreeSet::new();
     }
-
     let mut visited = BTreeSet::new();
     let mut reads = BTreeSet::new();
     for value in function.blocks.iter().filter_map(|block| {
@@ -3541,7 +3488,6 @@ fn hook_return_accessor_reads(function: &HirFunction) -> BTreeSet<ValueId> {
     }
     reads
 }
-
 fn collect_hook_return_accessor_reads(
     function: &HirFunction,
     value: ValueId,
@@ -3554,7 +3500,6 @@ fn collect_hook_return_accessor_reads(
     let Some(instruction) = function.instruction_for_result(value) else {
         return;
     };
-
     match &instruction.kind {
         HirInstructionKind::Read { .. } | HirInstructionKind::Call(_) => {
             reads.insert(value);
@@ -3597,7 +3542,6 @@ fn collect_hook_return_accessor_reads(
         _ => {}
     }
 }
-
 fn effect_helper(kind: FunctionKind) -> RuntimeHelper {
     if matches!(
         kind,
@@ -3608,7 +3552,6 @@ fn effect_helper(kind: FunctionKind) -> RuntimeHelper {
         RuntimeHelper::Effect
     }
 }
-
 fn place_local(base: PlaceBase) -> Option<LocalId> {
     match base {
         PlaceBase::Local(local) => Some(local),
@@ -3616,7 +3559,6 @@ fn place_local(base: PlaceBase) -> Option<LocalId> {
         PlaceBase::Global(_) | PlaceBase::Value(_) => None,
     }
 }
-
 fn reassigned_locals(function: &HirFunction) -> BTreeSet<LocalId> {
     function
         .blocks
@@ -3636,7 +3578,6 @@ fn reassigned_locals(function: &HirFunction) -> BTreeSet<LocalId> {
         })
         .collect()
 }
-
 fn structured_hook_member_by_binding<'a>(
     function: &HirFunction,
     roots: &'a BTreeMap<BindingId, StructuredHookRootSite>,
@@ -3652,7 +3593,6 @@ fn structured_hook_member_by_binding<'a>(
     let property = root.shape.resolve_property(place.projections.first()?)?;
     Some((local, root, property))
 }
-
 fn imported_reactive_member(
     hir: &HirFile,
     function: &HirFunction,
@@ -3668,7 +3608,6 @@ fn imported_reactive_member(
         .resolve_reactive_member(&place.projections)?;
     Some((local, binding, resolved))
 }
-
 fn imported_hook_direct(
     hir: &HirFile,
     call: &fict_hir::CallInstruction,
@@ -3677,7 +3616,6 @@ fn imported_hook_direct(
     let kind = shape.direct_accessor?;
     Some((binding, kind))
 }
-
 fn imported_hook_return<'a>(
     hir: &'a HirFile,
     call: &fict_hir::CallInstruction,
@@ -3694,7 +3632,6 @@ fn imported_hook_return<'a>(
     };
     Some((binding, shape))
 }
-
 fn imported_hook_member(
     calls: &BTreeMap<ValueId, (BindingId, ImportedHookReturn, Origin)>,
     locals: &BTreeMap<LocalId, ValueId>,
@@ -3718,7 +3655,6 @@ fn imported_hook_member(
     let property = shape.resolve_property(place.projections.first()?)?;
     Some((call, local, *import, property))
 }
-
 fn reject_imported_hook_member_mutation(
     calls: &BTreeMap<ValueId, (BindingId, ImportedHookReturn, Origin)>,
     locals: &BTreeMap<LocalId, ValueId>,
@@ -3729,7 +3665,6 @@ fn reject_imported_hook_member_mutation(
     };
     reject_hook_property_mutation(property, place)
 }
-
 fn reject_captured_hook_member_mutation(
     function: &HirFunction,
     function_id: FunctionId,
@@ -3745,7 +3680,6 @@ fn reject_captured_hook_member_mutation(
     }
     reject_hook_property_mutation(property, place)
 }
-
 fn reject_hook_property_mutation(
     property: ImportedHookPropertyMatch,
     place: &fict_hir::Place,
@@ -3768,7 +3702,6 @@ fn reject_hook_property_mutation(
         }
     }
 }
-
 fn ensure_writable_hook_return(
     slots: &[ReactiveSlot],
     slot: EmitSlotId,
@@ -3785,14 +3718,12 @@ fn ensure_writable_hook_return(
     }
     Ok(())
 }
-
 fn lower_value(value: ValueId, temporaries: &BTreeMap<ValueId, EmitTemporaryId>) -> EmitValueRef {
     temporaries
         .get(&value)
         .copied()
         .map_or(EmitValueRef::Hir(value), EmitValueRef::Temporary)
 }
-
 fn allocate_temporary(
     temporaries: &mut Vec<EmitTemporary>,
     names: &mut NameAllocator,
@@ -3804,7 +3735,6 @@ fn allocate_temporary(
     temporaries.push(EmitTemporary { id, name, origin });
     id
 }
-
 fn preserve(
     operations: &mut Vec<EmitOperation>,
     block: BlockId,
@@ -3817,13 +3747,11 @@ fn preserve(
         origin: hir.origin,
     });
 }
-
 fn reactive_site_origin(function: &HirFunction, result: ValueId) -> Origin {
     function
         .instruction_for_result(result)
         .map_or(function.origin, |instruction| instruction.origin)
 }
-
 fn lower_error(
     code: &'static str,
     message: impl Into<String>,
@@ -3836,21 +3764,17 @@ fn lower_error(
     )
     .with_guarantee_class(guarantee)
 }
-
 fn count_u32(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
-
 #[cfg(test)]
 mod namespace_tests {
     use super::*;
     use fict_diagnostics::SourceSpan;
     use fict_hir::{JsxElement, Origin};
-
     fn test_origin() -> Origin {
         Origin::source(SourceSpan::empty(0))
     }
-
     fn element(tag: &str, attributes: Vec<JsxAttribute>, children: Vec<JsxChild>) -> JsxNode {
         JsxNode::Element(JsxElement {
             name: JsxElementName::Intrinsic(tag.to_owned()),
@@ -3859,11 +3783,9 @@ mod namespace_tests {
             origin: test_origin(),
         })
     }
-
     fn node(node: JsxNode) -> JsxChild {
         JsxChild::Node(Box::new(node))
     }
-
     fn spread(value: u32) -> JsxAttribute {
         JsxAttribute::Spread {
             value: ValueId::new(value),
@@ -3871,7 +3793,6 @@ mod namespace_tests {
             origin: test_origin(),
         }
     }
-
     fn expression(value: u32) -> JsxChild {
         JsxChild::Expression {
             value: ValueId::new(value),
@@ -3882,7 +3803,6 @@ mod namespace_tests {
             origin: test_origin(),
         }
     }
-
     #[test]
     fn resolves_svg_integration_points_and_normalizes_attributes() {
         let root = element(
@@ -3948,7 +3868,6 @@ mod namespace_tests {
             ]
         );
     }
-
     #[test]
     fn resolves_mathml_text_annotation_and_runtime_parent_contexts() {
         let root = element(
@@ -4033,7 +3952,6 @@ mod namespace_tests {
             } if *value == ValueId::new(12)
         )));
     }
-
     #[test]
     fn materializes_implicit_table_groups_and_browser_paths() {
         let root = element(
@@ -4069,7 +3987,6 @@ mod namespace_tests {
             .collect();
         assert_eq!(paths, [vec![0, 0], vec![1, 0, 0], vec![1, 1, 0]]);
     }
-
     #[test]
     fn rejects_static_children_when_annotation_namespace_is_runtime_selected() {
         let root = element(
@@ -4089,7 +4006,6 @@ mod namespace_tests {
                 .any(|diagnostic| diagnostic.code.as_str() == "FICT-EMIT-NAMESPACE-DYNAMIC")
         );
     }
-
     #[test]
     fn classifies_standalone_foreign_roots_and_rejects_void_children() {
         assert_eq!(
@@ -4120,7 +4036,6 @@ mod namespace_tests {
                 .any(|diagnostic| diagnostic.code.as_str() == "FICT-EMIT-VOID-CHILD")
         );
     }
-
     #[test]
     fn preserves_explicit_resumable_event_intent_without_polluting_the_dom_event_name() {
         let root = element(
@@ -4171,7 +4086,6 @@ mod namespace_tests {
             .collect();
         assert_eq!(events, [("click", true), ("input", true), ("blur", false)]);
     }
-
     #[test]
     fn normalizes_dom_event_options_and_pointer_capture_names() {
         let (event, explicit, options) =

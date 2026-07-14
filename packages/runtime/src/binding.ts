@@ -70,6 +70,7 @@ const REACTIVE_FN_MARKER = Symbol.for('fict:reactive-fn')
 const NON_REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:non-reactive-fn-registry')
 const REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:reactive-fn-registry')
 const PROP_GETTER_REGISTRY_KEY = Symbol.for('fict:prop-getter-registry')
+const HYDRATED_TEMPLATE_NODE = Symbol.for('fict:hydration-template-node')
 const DELEGATED_DATA_ONLY_MARKER = '__fictDataOnly'
 const DELEGATED_DATA_PLAIN_MARKER = '__fictDataOnlyPlain'
 
@@ -1132,6 +1133,20 @@ export function insert(
   let currentNodes: Node[] = []
   let currentText: Text | null = null
   let currentRoot: RootContext | null = null
+
+  const expectedMarker = (marker as Node & { [HYDRATED_TEMPLATE_NODE]?: Node })[
+    HYDRATED_TEMPLATE_NODE
+  ]
+  if (
+    __fictIsHydrating() &&
+    !ownsMarker &&
+    expectedMarker?.nodeType === 8 &&
+    expectedMarker.previousSibling === null &&
+    marker.previousSibling?.nodeType === 3
+  ) {
+    currentText = marker.previousSibling as Text
+    currentNodes = [currentText]
+  }
 
   const clearCurrentNodes = () => {
     const root = currentRoot

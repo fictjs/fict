@@ -132,6 +132,7 @@ fn program() -> EmitProgram {
                     slot: EmitSlotId::new(0),
                     source_result: fict_hir::ValueId::new(0),
                     local: None,
+                    name: None,
                     initializer: Some(EmitValueRef::Literal(LiteralValue::Undefined)),
                     helper: RuntimeHelper::Signal,
                     origin: origin(),

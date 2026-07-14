@@ -38,8 +38,10 @@ const isDev =
 const hydrationStack: HydrationContext[] = []
 let hydrationClaimSuppressionDepth = 0
 const HYDRATED_FRAGMENT_NODES = Symbol.for('fict:hydration-fragment-nodes')
+const HYDRATED_TEMPLATE_NODE = Symbol.for('fict:hydration-template-node')
 
 type HydratedFragment = DocumentFragment & { [HYDRATED_FRAGMENT_NODES]?: Node[] }
+type HydratedTemplateNode = Node & { [HYDRATED_TEMPLATE_NODE]?: Node }
 
 interface HydrationRepairPlan {
   parent: ParentNode & Node
@@ -170,10 +172,18 @@ export function claimNodes(templateRoot: Node, fallback: () => Node): Node {
   ctx.cursor = cursor
 
   if (claimed.length === 1) {
-    return claimed[0]!
+    return attachHydrationTemplate(claimed[0]!, templateRoot)
   }
 
-  return createHydratedFragment(ctx.owner, claimed)
+  return attachHydrationTemplate(createHydratedFragment(ctx.owner, claimed), templateRoot)
+}
+
+function attachHydrationTemplate<T extends Node>(node: T, templateRoot: Node): T {
+  Object.defineProperty(node as HydratedTemplateNode, HYDRATED_TEMPLATE_NODE, {
+    configurable: true,
+    value: templateRoot,
+  })
+  return node
 }
 
 export function claimText(value: string, fallback: () => Text): Text {
