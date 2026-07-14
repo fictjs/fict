@@ -4976,6 +4976,7 @@ export type {
   NativeCompilerExplainArtifact,
   NativeCompilerExplainEvent,
   NativeCompilerOptions,
+  NativeTypeScriptOptions,
   NativeAnalyzeOptions,
   NativeAnalyzeVerbosity,
   NativeOptimizeLevel,

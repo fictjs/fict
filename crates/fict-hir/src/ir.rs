@@ -83,6 +83,9 @@ pub enum ImportedName {
     Default,
     /// Namespace import.
     Namespace,
+    /// TypeScript `import binding = require("module")`, callable as the CommonJS default while
+    /// also exposing the module namespace's static members.
+    ImportEquals,
     /// Named import using the exported spelling.
     Named(String),
 }

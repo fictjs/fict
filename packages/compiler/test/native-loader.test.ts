@@ -5,6 +5,7 @@ import {
   detectLinuxLibc,
   loadNativeCompilerBinding,
   nativeCompilerPackageName,
+  resolveNativeCompilerRuntimeHelper,
   resolveNativeTarget,
   type NativeCompilerBinding,
 } from '../src/native-loader'
@@ -199,5 +200,15 @@ describe('native compiler loader', () => {
 
   it('uses stable optional package names', () => {
     expect(nativeCompilerPackageName('linux-x64-musl')).toBe('@fictjs/compiler-linux-x64-musl')
+  })
+
+  it('resolves only canonical helpers from the pinned OXC runtime', () => {
+    expect(resolveNativeCompilerRuntimeHelper('@oxc-project/runtime/helpers/decorate')).toMatch(
+      /@oxc-project[/+]runtime.*helpers[/+]decorate\.js$/,
+    )
+    expect(resolveNativeCompilerRuntimeHelper('@oxc-project/runtime/helpers/../package')).toBe(
+      undefined,
+    )
+    expect(resolveNativeCompilerRuntimeHelper('consumer-package/helpers/decorate')).toBe(undefined)
   })
 })

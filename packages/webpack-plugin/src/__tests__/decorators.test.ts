@@ -277,7 +277,7 @@ describe('@fictjs/webpack-plugin decorator handoff', () => {
     }
   })
 
-  it('hands legacy parameter decorators to downstream lowering in a real build', async () => {
+  it('lowers legacy parameter decorators natively before downstream TypeScript', async () => {
     const root = await createFixture({
       'entry.ts': `
         const calls: number[] = []
@@ -305,7 +305,9 @@ describe('@fictjs/webpack-plugin decorator handoff', () => {
       expect(runApp(root)).toBe(12)
       const bundle = await readFile(path.join(root, 'dist', 'bundle.cjs'), 'utf8')
       expect(bundle).not.toMatch(/@parameter/)
-      expect(bundle).toContain('__param')
+      expect(bundle).toContain('decorateParam')
+      expect(bundle).toContain('decorate')
+      expect(bundle).not.toContain('__param')
     } finally {
       await rm(root, { recursive: true, force: true })
     }

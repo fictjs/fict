@@ -259,6 +259,28 @@ pub(crate) fn configure_transform(
     }
 }
 
+pub(crate) fn rewrite_import_equals_extensions<'a>(
+    allocator: &'a Allocator,
+    program: &mut Program<'a>,
+) {
+    for statement in &mut program.body {
+        let Statement::TSImportEqualsDeclaration(declaration) = statement else {
+            continue;
+        };
+        let TSModuleReference::ExternalModuleReference(reference) =
+            &mut declaration.module_reference
+        else {
+            continue;
+        };
+        let Some(rewritten) = rewrite_typescript_extension(reference.expression.value.as_str())
+        else {
+            continue;
+        };
+        reference.expression.value = allocator.alloc_str(&rewritten).into();
+        reference.expression.raw = None;
+    }
+}
+
 fn unsupported_diagnostics(plan: &TypeScriptCompatibilityPlan) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     for feature in &plan.features {
@@ -526,6 +548,13 @@ impl<'a> Visit<'a> for CompatibilityCollector {
             declaration.module_reference,
             TSModuleReference::ExternalModuleReference(_)
         );
+        if let TSModuleReference::ExternalModuleReference(reference) = &declaration.module_reference
+        {
+            self.add_module_source(
+                reference.expression.value.as_str(),
+                reference.expression.span,
+            );
+        }
         self.add(
             TypeScriptFeatureKind::ImportEquals { external },
             if external && self.module_kind != OxcModuleKind::CommonJs {

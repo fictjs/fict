@@ -59,6 +59,7 @@ export class NativeCompilerLoadError extends Error {
 }
 
 const requireFromCompiler = createRequire(import.meta.url)
+const OXC_RUNTIME_HELPER_PREFIX = '@oxc-project/runtime/helpers/'
 const EXPECTED_OXC_VERSION = '0.139.0'
 const EXPECTED_COMPILER_PROTOCOL_VERSION = 1
 const EXPECTED_METADATA_SCHEMA_VERSION = 1
@@ -95,6 +96,16 @@ export function resolveNativeTarget(
 
 export function nativeCompilerPackageName(target: string): string {
   return `@fictjs/compiler-${target}`
+}
+
+/** Resolve an OXC-generated helper from the compiler's pinned runtime dependency. */
+export function resolveNativeCompilerRuntimeHelper(request: string): string | undefined {
+  if (!request.startsWith(OXC_RUNTIME_HELPER_PREFIX)) return undefined
+  const subpath = request.slice(OXC_RUNTIME_HELPER_PREFIX.length)
+  if (!subpath || subpath.split('/').some(segment => !/^[A-Za-z0-9_-]+$/.test(segment))) {
+    return undefined
+  }
+  return requireFromCompiler.resolve(request)
 }
 
 function toNativeBinding(value: unknown, candidate: string): NativeCompilerBinding {

@@ -21,6 +21,59 @@ fn summary(source: &str, language: OxcSourceLanguage) -> fict_compiler_oxc::Fron
 }
 
 #[test]
+fn records_external_import_equals_as_callable_namespace_identity() {
+    let output = analyze_frontend(
+        "import hook = require('./hook'); hook(); hook.useCounter();",
+        OxcCompileOptions {
+            language: OxcSourceLanguage::TypeScript,
+            module_kind: OxcModuleKind::CommonJs,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let frontend = output.summary.expect("frontend summary");
+    let hook = frontend
+        .bindings
+        .iter()
+        .find(|binding| binding.display_name == "hook")
+        .expect("import-equals binding");
+    let import = hook.import.as_ref().expect("import identity");
+    assert_eq!(hook.kind, FrontendBindingKind::Import);
+    assert_eq!(import.source, "./hook");
+    assert_eq!(import.imported, ImportedName::ImportEquals);
+}
+
+#[test]
+fn records_typescript_export_assignment_as_the_commonjs_default_export() {
+    let output = analyze_frontend(
+        "function useCounter() { return 1; } export = useCounter;",
+        OxcCompileOptions {
+            language: OxcSourceLanguage::TypeScript,
+            module_kind: OxcModuleKind::CommonJs,
+            typescript: Default::default(),
+            sourcemap: false,
+        },
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let frontend = output.summary.expect("frontend summary");
+    let binding = frontend
+        .bindings
+        .iter()
+        .find(|binding| binding.display_name == "useCounter")
+        .expect("export-assignment binding");
+    assert!(frontend.has_module_syntax);
+    assert!(matches!(
+        frontend.module_exports.as_slice(),
+        [ModuleExport::Local {
+            exported,
+            target: ModuleLocalExport::Binding(target),
+            ..
+        }] if exported == "default" && *target == binding.id
+    ));
+}
+
+#[test]
 fn recognizes_aliased_macro_calls_by_import_binding_identity() {
     let frontend = summary(
         r#"

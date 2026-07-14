@@ -1,10 +1,24 @@
+import { createHash } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import path from 'node:path'
 
-import { transformAsync, type TransformOptions } from '@babel/core'
-import type { FictPresetOptions } from '@fictjs/babel-preset'
-import { resolvePackageModuleMetadata, type ModuleReactiveMetadata } from '@fictjs/compiler'
+import {
+  resolvePackageModuleMetadata,
+  type CompileRequest,
+  type CompilerExplainArtifact,
+  type CompilerWarning,
+  type FictCompilerOptions,
+  type FictDiagnostic,
+  type ModuleReactiveMetadata,
+  type NativeCompilerExplainArtifact,
+  type NativeCompilerOptions,
+  type NativeTypeScriptOptions,
+  type RawSourceMap,
+  type ResolvedMetadataInput,
+  type ScanResult,
+  type SourceLanguage,
+} from '@fictjs/compiler'
+import { loadNativeCompilerBinding, type NativeCompilerBinding } from '@fictjs/compiler/native'
 
 import { isUnresolvedPackageResolution, readPackageMetadataAtBoundary } from './package-metadata'
 import {
@@ -16,8 +30,23 @@ import {
   storeFictModuleMetadata,
 } from './shared'
 
+export interface FictWebpackTypeScriptOptions extends NativeTypeScriptOptions {
+  /** Compatibility-only; native parsing mode is inferred from the resource extension. */
+  isTSX?: boolean
+  /** Compatibility-only; native parsing mode is inferred from the resource extension. */
+  allExtensions?: boolean
+  /** Native TypeScript lowering always accepts legal declare fields. */
+  allowDeclareFields?: boolean
+  /** Compatibility-only JSX import retention hint. */
+  jsxPragma?: string
+  /** Compatibility-only JSX fragment import retention hint. */
+  jsxPragmaFrag?: string
+  /** Compatibility-only; `.mts`/`.cts` ambiguity is enforced by the native parser. */
+  disallowAmbiguousJSXLike?: boolean
+}
+
 export type FictWebpackLoaderOptions = Omit<
-  FictPresetOptions,
+  FictCompilerOptions,
   | 'emitModuleMetadata'
   | 'filename'
   | 'integrationDiagnostics'
@@ -29,22 +58,25 @@ export type FictWebpackLoaderOptions = Omit<
   | 'sourcemap'
   | 'validateIntegrationMetadata'
 > & {
+  /** Enable TypeScript syntax lowering. Native mode infers the grammar from the filename. */
+  typescript?: boolean
+  /** Serializable OXC TypeScript lowering controls. */
+  typescriptOptions?: FictWebpackTypeScriptOptions
   /** Webpack resumability is not supported until the integration owns chunks and a manifest. */
   resumable?: false | undefined
   /** Public module identities are integration-owned and unavailable in the Webpack loader. */
   publicModuleId?: never
+  /** Explicit native addon path for local development and release verification. @internal */
+  nativeCompilerPath?: string
 }
 
 interface FictLoaderContext {
-  async(): (
-    error?: Error | null,
-    content?: string,
-    sourceMap?: NonNullable<TransformOptions['inputSourceMap']> | null,
-  ) => void
+  async(): (error?: Error | null, content?: string, sourceMap?: RawSourceMap | null) => void
   addDependency(file: string): void
   addMissingDependency(file: string): void
   cacheable(flag?: boolean): void
-  getOptions(): FictPresetOptions
+  emitWarning?(warning: Error): void
+  getOptions(): FictWebpackLoaderOptions
   mode?: string
   resource: string
   resourcePath: string
@@ -52,45 +84,26 @@ interface FictLoaderContext {
   sourceMap: boolean
 }
 
-function readModuleRequestMappings(metadata: unknown): Map<string, string> {
-  if (!metadata || typeof metadata !== 'object') return new Map()
-  const value = (metadata as { fictModuleRequestMappings?: unknown }).fictModuleRequestMappings
-  if (value === undefined) return new Map()
-  if (
-    !Array.isArray(value) ||
-    value.some(
-      mapping =>
-        !Array.isArray(mapping) ||
-        mapping.length !== 2 ||
-        mapping.some(request => typeof request !== 'string'),
-    )
-  ) {
-    throw new Error('[fict] Babel returned malformed module request mappings.')
+const nativeBindings = new Map<string, NativeCompilerBinding>()
+
+function getNativeCompiler(options: FictWebpackLoaderOptions): NativeCompilerBinding {
+  const nativePath = options.nativeCompilerPath ?? process.env.FICT_COMPILER_NATIVE_PATH
+  const key = nativePath ?? '<platform-package>'
+  let binding = nativeBindings.get(key)
+  if (!binding) {
+    binding = loadNativeCompilerBinding(nativePath ? { nativePath } : {})
+    nativeBindings.set(key, binding)
   }
-  const mappings = new Map<string, string>()
-  for (const [source, emitted] of value as [string, string][]) {
-    const previous = mappings.get(source)
-    if (previous !== undefined && previous !== emitted) {
-      throw new Error(`[fict] Babel emitted conflicting request mappings for "${source}".`)
-    }
-    mappings.set(source, emitted)
-  }
-  return mappings
+  return binding
 }
 
-const require = createRequire(import.meta.url)
-const fictPresetPath = require.resolve('@fictjs/babel-preset')
-const fictPresetDirectory = path.dirname(fictPresetPath)
-
-function normalizeInputSourceMap(
-  sourceMap: string | object | undefined,
-): TransformOptions['inputSourceMap'] {
+function normalizeInputSourceMap(sourceMap: string | object | undefined): RawSourceMap | undefined {
   if (!sourceMap) return undefined
   if (typeof sourceMap !== 'string') {
-    return sourceMap as NonNullable<TransformOptions['inputSourceMap']>
+    return sourceMap as RawSourceMap
   }
   try {
-    return JSON.parse(sourceMap) as NonNullable<TransformOptions['inputSourceMap']>
+    return JSON.parse(sourceMap) as RawSourceMap
   } catch {
     return undefined
   }
@@ -111,8 +124,8 @@ function resolveThroughExistingAncestor(filename: string): string {
   }
 }
 
-function unsupportedResumabilityError(options: FictPresetOptions): Error | null {
-  if (options.resumable === true) {
+function unsupportedResumabilityError(options: FictWebpackLoaderOptions): Error | null {
+  if ((options as { resumable?: unknown }).resumable === true) {
     return new Error(
       '[fict] @fictjs/webpack-plugin does not support `resumable: true`: the Webpack ' +
         'integration does not emit split handler chunks, assign public resumable module ' +
@@ -129,6 +142,289 @@ function unsupportedResumabilityError(options: FictPresetOptions): Error | null 
     )
   }
   return null
+}
+
+function stableStringify(value: unknown): string {
+  if (value === undefined || typeof value === 'function' || typeof value === 'symbol') return 'null'
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
+  return `{${Object.keys(value)
+    .sort()
+    .map(
+      key => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`,
+    )
+    .join(',')}}`
+}
+
+function metadataSnapshot(
+  request: string,
+  resolvedId: string | null,
+  status: ResolvedMetadataInput['status'],
+  metadata: ModuleReactiveMetadata | null,
+): ResolvedMetadataInput {
+  return {
+    request,
+    resolvedId,
+    status,
+    metadata,
+    fingerprint: createHash('sha256')
+      .update(stableStringify({ request, resolvedId, status, metadata }))
+      .digest('hex'),
+  }
+}
+
+function opaqueMetadataSnapshot(request: string, moduleIdentifier: string): ResolvedMetadataInput {
+  return metadataSnapshot(request, `webpack:opaque:${moduleIdentifier}:${request}`, 'opaque', null)
+}
+
+function missingMetadataSnapshot(request: string): ResolvedMetadataInput {
+  return metadataSnapshot(request, null, 'missing', null)
+}
+
+function resolveMetadataSnapshot(
+  sourceRequest: string,
+  importer: string,
+  moduleIdentifier: string,
+  binding: NonNullable<ReturnType<typeof getLoaderBinding>>,
+  registerMetadataDependency: (dependency: string) => void,
+): ResolvedMetadataInput {
+  binding.state.metadataSourcesByIdentifier.get(moduleIdentifier)!.add(sourceRequest)
+  const packageResolutions = binding.state.packageResolutionsByIdentifier.get(moduleIdentifier)
+  if (packageResolutions?.has(sourceRequest)) {
+    const packageResolution = packageResolutions.get(sourceRequest)
+    if (packageResolution === 'opaque') {
+      return opaqueMetadataSnapshot(sourceRequest, moduleIdentifier)
+    }
+    if (
+      !packageResolution ||
+      packageResolution === 'unresolved' ||
+      isUnresolvedPackageResolution(packageResolution)
+    ) {
+      return missingMetadataSnapshot(sourceRequest)
+    }
+    const result = readPackageMetadataAtBoundary(packageResolution, registerMetadataDependency)
+    const resolvedId = `${packageResolution.packageJsonPath}#${packageResolution.publicSubpath ?? '.'}`
+    if (result.kind === 'resolved') {
+      return metadataSnapshot(sourceRequest, resolvedId, 'resolved', result.metadata)
+    }
+    if (result.kind === 'stale-boundary') throw new Error(result.message)
+    return result.kind === 'plain'
+      ? metadataSnapshot(sourceRequest, resolvedId, 'opaque', null)
+      : missingMetadataSnapshot(sourceRequest)
+  }
+
+  if (sourceRequest.includes('!')) {
+    return opaqueMetadataSnapshot(sourceRequest, moduleIdentifier)
+  }
+  const dependency = binding.state.resolvedLocalModules.get(
+    createLocalResolutionKey(moduleIdentifier, sourceRequest),
+  )
+  if (dependency) {
+    const metadata = binding.state.moduleMetadata.get(dependency)
+    if (!metadata) return missingMetadataSnapshot(sourceRequest)
+    return metadataSnapshot(
+      sourceRequest,
+      dependency,
+      binding.state.incompleteModuleMetadata.has(dependency) ? 'incompleteCycle' : 'resolved',
+      metadata,
+    )
+  }
+  if (sourceRequest.includes('?')) {
+    return opaqueMetadataSnapshot(sourceRequest, moduleIdentifier)
+  }
+
+  const fallback = resolvePackageModuleMetadata(sourceRequest, importer, {
+    emitModuleMetadata: false,
+    moduleMetadata: binding.state.moduleMetadata,
+    onModuleMetadataDependency: registerMetadataDependency,
+  })
+  if (fallback) {
+    return metadataSnapshot(
+      sourceRequest,
+      `webpack:fallback:${moduleIdentifier}:${sourceRequest}`,
+      'resolved',
+      fallback,
+    )
+  }
+  return binding.state.metadataGraphPrepared
+    ? missingMetadataSnapshot(sourceRequest)
+    : opaqueMetadataSnapshot(sourceRequest, moduleIdentifier)
+}
+
+function rewriteTypeScriptRequest(source: string): string {
+  if (!source.startsWith('./') && !source.startsWith('../')) return source
+  const match = /^(.*?)(\.tsx?|\.mts|\.cts)([?#].*)?$/.exec(source)
+  if (!match) return source
+  const extension = match[2]
+  const emittedExtension = extension === '.mts' ? '.mjs' : extension === '.cts' ? '.cjs' : '.js'
+  return `${match[1]}${emittedExtension}${match[3] ?? ''}`
+}
+
+function sourcePositionForByteOffset(
+  source: string,
+  byteOffset: number,
+): { line: number; column: number } {
+  const bytes = Buffer.from(source)
+  const prefix = bytes.subarray(0, Math.min(Math.max(0, byteOffset), bytes.length)).toString('utf8')
+  const lines = prefix.split('\n')
+  return {
+    line: lines.length,
+    column: (lines[lines.length - 1]?.replace(/\r$/, '').length ?? 0) + 1,
+  }
+}
+
+function sourceByteOffsetForPosition(source: string, line: number, column: number): number | null {
+  if (line <= 0 || column <= 0) return null
+  let index = 0
+  for (let currentLine = 1; currentLine < line; currentLine += 1) {
+    const newline = source.indexOf('\n', index)
+    if (newline === -1) return null
+    index = newline + 1
+  }
+  const lineEnd = source.indexOf('\n', index)
+  const end = lineEnd === -1 ? source.length : lineEnd
+  return Buffer.byteLength(source.slice(0, Math.min(index + column - 1, end)))
+}
+
+function nativeDiagnosticToWarning(
+  diagnostic: FictDiagnostic,
+  source: string,
+  filename: string,
+): CompilerWarning {
+  const position = diagnostic.primarySpan
+    ? sourcePositionForByteOffset(source, diagnostic.primarySpan.start)
+    : { line: 0, column: 0 }
+  return {
+    code: diagnostic.code,
+    message: diagnostic.message,
+    fileName: filename,
+    line: position.line,
+    column: position.column,
+  }
+}
+
+function nativeExplainToLegacy(
+  artifact: NativeCompilerExplainArtifact,
+  source: string,
+  filename: string,
+): CompilerExplainArtifact {
+  return {
+    version: 1,
+    fileName: artifact.fileName,
+    helpers: artifact.helpers,
+    diagnostics: artifact.diagnostics.map(diagnostic =>
+      nativeDiagnosticToWarning(diagnostic, source, filename),
+    ),
+    events: artifact.events.map(event => {
+      const position = event.span
+        ? sourcePositionForByteOffset(source, event.span.start)
+        : undefined
+      return {
+        kind: event.kind,
+        message: event.message,
+        ...(event.name ? { name: event.name } : {}),
+        ...(event.code ? { code: event.code } : {}),
+        ...(position ? { line: position.line, column: position.column } : {}),
+      }
+    }),
+  }
+}
+
+function nativeCompilerOptions(
+  options: FictWebpackLoaderOptions,
+  sourcemap: boolean,
+): NativeCompilerOptions {
+  const typescript = options.typescriptOptions
+  return {
+    dev: options.dev ?? false,
+    sourcemap,
+    explain: options.explain === true || typeof options.explain === 'function',
+    lazyConditional: options.lazyConditional ?? true,
+    getterCache: options.getterCache ?? true,
+    fineGrainedDom: options.fineGrainedDom ?? true,
+    optimize: options.optimize ?? true,
+    optimizeLevel: options.optimizeLevel ?? 'safe',
+    inlineDerivedMemos: options.inlineDerivedMemos ?? true,
+    strictReactivity: options.strictReactivity ?? false,
+    strictGuarantee:
+      process.env.FICT_STRICT_GUARANTEE === '1' ||
+      process.env.NODE_ENV === 'production' ||
+      options.strictGuarantee !== false,
+    warningsAsErrors: options.warningsAsErrors ?? false,
+    warningLevels: options.warningLevels ?? {},
+    reactiveScopes: options.reactiveScopes ?? [],
+    typescript: {
+      allowNamespaces: typescript?.allowNamespaces ?? true,
+      onlyRemoveTypeImports: typescript?.onlyRemoveTypeImports ?? false,
+      optimizeConstEnums: typescript?.optimizeConstEnums ?? false,
+      optimizeEnums: typescript?.optimizeEnums ?? false,
+      rewriteImportExtensions: typescript?.rewriteImportExtensions ?? false,
+      removeClassFieldsWithoutInitializer: typescript?.removeClassFieldsWithoutInitializer ?? false,
+    },
+  }
+}
+
+function nativeIntegrationDiagnostics(
+  source: string,
+  warnings: readonly CompilerWarning[] | undefined,
+): FictDiagnostic[] {
+  return (warnings ?? []).map(warning => {
+    const offset = sourceByteOffsetForPosition(source, warning.line, warning.column)
+    return {
+      code: warning.code,
+      severity: 'warning',
+      message: warning.message,
+      primarySpan: offset === null ? null : { start: offset, end: offset },
+      secondaryLabels: [],
+      help: null,
+      notes: [],
+      guaranteeClass: 'advisory',
+    }
+  })
+}
+
+function nativeDiagnosticsError(
+  diagnostics: readonly FictDiagnostic[],
+  source: string,
+  filename: string,
+): Error | null {
+  const errors = diagnostics.filter(diagnostic => diagnostic.severity === 'error')
+  if (errors.length === 0) return null
+  const format = (diagnostic: FictDiagnostic): string => {
+    const warning = nativeDiagnosticToWarning(diagnostic, source, filename)
+    const location = warning.line > 0 ? `\n  at ${filename}:${warning.line}:${warning.column}` : ''
+    const help = diagnostic.help ? `\n  help: ${diagnostic.help}` : ''
+    return `[${diagnostic.code}] ${diagnostic.message}${location}${help}`
+  }
+  const error = new SyntaxError(errors.map(format).join('\n')) as SyntaxError & {
+    code?: string
+    loc?: { line: number; column: number }
+  }
+  const first = errors[0]!
+  error.code = first.code
+  if (first.primarySpan) error.loc = sourcePositionForByteOffset(source, first.primarySpan.start)
+  return error
+}
+
+function runtimeModuleRequests(scan: ScanResult): string[] {
+  return Array.from(
+    new Set(
+      scan.moduleRequests.filter(request => !request.typeOnly).map(request => request.source),
+    ),
+  ).sort()
+}
+
+function configuredSourceLanguage(
+  filename: string,
+  options: FictWebpackLoaderOptions,
+): SourceLanguage | undefined {
+  if (options.typescriptOptions?.allExtensions) {
+    return options.typescriptOptions.isTSX === false ? 'ts' : 'tsx'
+  }
+  if (options.typescript !== false) return undefined
+  return filename.toLowerCase().endsWith('.jsx') || filename.toLowerCase().endsWith('.tsx')
+    ? 'jsx'
+    : 'js'
 }
 
 export default function fictWebpackLoader(
@@ -172,10 +468,6 @@ export default function fictWebpackLoader(
 
   const webpackResource = normalizeWebpackResource(this.resource)
   const compilerFilename = normalizeFileName(this.resourcePath)
-  // The compiler deliberately strips URL-like suffixes from filenames. Give each loader
-  // invocation a private store, then hand its result back under Webpack's module identifier.
-  // This prevents resource-query and loader-chain variants from sharing one physical-path entry.
-  const compilerModuleMetadata = new Map<string, ModuleReactiveMetadata>()
   const registerMetadataDependency = (dependency: string): void => {
     const normalized = path.resolve(dependency)
     const dependencies = new Set([normalized, resolveThroughExistingAncestor(normalized)])
@@ -185,110 +477,91 @@ export default function fictWebpackLoader(
       else this.addMissingDependency(watched)
     }
   }
-  const compilerOptions: FictPresetOptions = {
+  const compilerOptions: FictWebpackLoaderOptions = {
     ...options,
     dev: options.dev ?? this.mode !== 'production',
-    emitModuleMetadata: false,
-    ...(binding.state.metadataGraphPrepared
-      ? { integrationDiagnostics: [], validateIntegrationMetadata: true }
-      : {}),
-    moduleMetadata: compilerModuleMetadata,
-    resolveModuleMetadata: (sourceRequest, importer) => {
-      if (!importer) return undefined
-      binding.state.metadataSourcesByIdentifier.get(moduleIdentifier)!.add(sourceRequest)
-      const packageResolutions = binding.state.packageResolutionsByIdentifier.get(moduleIdentifier)
-      if (packageResolutions?.has(sourceRequest)) {
-        const packageResolution = packageResolutions.get(sourceRequest)
-        if (packageResolution === 'opaque') return { exports: {} }
-        if (
-          !packageResolution ||
-          packageResolution === 'unresolved' ||
-          isUnresolvedPackageResolution(packageResolution)
-        ) {
-          return null
-        }
-        const result = readPackageMetadataAtBoundary(packageResolution, registerMetadataDependency)
-        if (result.kind === 'resolved') return result.metadata
-        if (result.kind === 'stale-boundary') throw new Error(result.message)
-        return result.kind === 'plain' ? { exports: {} } : null
-      }
-      if (sourceRequest.includes('!')) return { exports: {} }
-      const dependency = binding.state.resolvedLocalModules.get(
-        createLocalResolutionKey(moduleIdentifier, sourceRequest),
-      )
-      if (dependency) {
-        if (binding.state.incompleteModuleMetadata.has(dependency)) return null
-        return binding.state.moduleMetadata.get(dependency) ?? null
-      }
-      if (sourceRequest.includes('?')) return { exports: {} }
-      return resolvePackageModuleMetadata(sourceRequest, importer, {
-        emitModuleMetadata: false,
-        moduleMetadata: binding.state.moduleMetadata,
-        onModuleMetadataDependency: registerMetadataDependency,
-      })
-    },
-    sourcemap: this.sourceMap,
   }
+  let nativeCompiler: NativeCompilerBinding
+  try {
+    nativeCompiler = getNativeCompiler(compilerOptions)
+  } catch (error) {
+    callback(error instanceof Error ? error : new Error(String(error)))
+    return
+  }
+  const language = configuredSourceLanguage(compilerFilename, compilerOptions)
+  const normalizedInputSourceMap = normalizeInputSourceMap(inputSourceMap)
 
-  void transformAsync(source, {
-    babelrc: false,
-    caller: {
-      name: '@fictjs/webpack-plugin',
-      supportsDynamicImport: true,
-      supportsStaticESM: true,
-      supportsTopLevelAwait: true,
-    },
-    configFile: false,
-    cwd: fictPresetDirectory,
-    filename: webpackResource,
-    inputSourceMap: normalizeInputSourceMap(inputSourceMap),
-    presets: [[fictPresetPath, compilerOptions]],
-    sourceFileName: webpackResource,
-    sourceMaps: this.sourceMap,
-  }).then(
-    result => {
-      if (typeof result?.code !== 'string') {
-        callback(new Error(`[fict] Babel returned no output for ${moduleIdentifier}.`))
-        return
+  void nativeCompiler
+    .scan({
+      code: source,
+      filename: webpackResource,
+      moduleId: moduleIdentifier,
+      ...(language ? { language } : {}),
+    })
+    .then(scan => {
+      const scanError = nativeDiagnosticsError(scan.diagnostics, source, compilerFilename)
+      if (scanError) throw scanError
+      const requests = runtimeModuleRequests(scan)
+      const requestMappings =
+        binding.state.metadataRequestMappingsByIdentifier.get(moduleIdentifier)!
+      const metadata = requests.map(sourceRequest => {
+        requestMappings.set(
+          sourceRequest,
+          compilerOptions.typescriptOptions?.rewriteImportExtensions
+            ? rewriteTypeScriptRequest(sourceRequest)
+            : sourceRequest,
+        )
+        return resolveMetadataSnapshot(
+          sourceRequest,
+          compilerFilename,
+          moduleIdentifier,
+          binding,
+          registerMetadataDependency,
+        )
+      })
+      const request: CompileRequest = {
+        code: source,
+        filename: webpackResource,
+        moduleId: moduleIdentifier,
+        ...(language ? { language } : {}),
+        ...(normalizedInputSourceMap ? { inputSourceMap: normalizedInputSourceMap } : {}),
+        options: nativeCompilerOptions(compilerOptions, this.sourceMap),
+        metadata,
+        integrationDiagnostics: nativeIntegrationDiagnostics(source, []),
       }
-      if (
-        (result.metadata as Record<string, unknown> | undefined)?.fictModuleMetadataIncomplete ===
-        true
-      ) {
+      return nativeCompiler.transform(request)
+    })
+    .then(result => {
+      for (const diagnostic of result.diagnostics) {
+        if (diagnostic.severity !== 'warning') continue
+        const warning = nativeDiagnosticToWarning(diagnostic, source, compilerFilename)
+        if (compilerOptions.onWarn) {
+          compilerOptions.onWarn(warning)
+        } else if (this.emitWarning) {
+          const emitted = new Error(`[${warning.code}] ${warning.message}`)
+          emitted.name = 'FictCompilerWarning'
+          this.emitWarning(emitted)
+        }
+      }
+      if (result.explain && typeof compilerOptions.explain === 'function') {
+        compilerOptions.explain(nativeExplainToLegacy(result.explain, source, compilerFilename))
+      }
+      const transformError = nativeDiagnosticsError(result.diagnostics, source, compilerFilename)
+      if (transformError) throw transformError
+
+      if (result.metadataIncomplete) {
         binding.state.incompleteModuleMetadata.add(moduleIdentifier)
       } else {
         binding.state.incompleteModuleMetadata.delete(moduleIdentifier)
       }
-      const metadata = compilerModuleMetadata.get(compilerFilename)
-      if (!metadata) {
-        callback(new Error(`[fict] Compiler did not emit module metadata for ${moduleIdentifier}.`))
-        return
-      }
-      binding.state.moduleMetadata.set(moduleIdentifier, metadata)
-      try {
-        const emittedMappings = readModuleRequestMappings(result.metadata)
-        const requestMappings =
-          binding.state.metadataRequestMappingsByIdentifier.get(moduleIdentifier)!
-        for (const source of binding.state.metadataSourcesByIdentifier.get(moduleIdentifier) ??
-          []) {
-          requestMappings.set(source, emittedMappings.get(source) ?? source)
-        }
-        storeFictModuleMetadata(
-          binding.state,
-          binding.module,
-          metadata,
-          binding.state.pendingDependencyFingerprints.get(moduleIdentifier) ?? null,
-        )
-      } catch (error) {
-        callback(error instanceof Error ? error : new Error(String(error)))
-        return
-      }
-      callback(
-        null,
-        result.code,
-        (result.map as NonNullable<TransformOptions['inputSourceMap']> | null) ?? null,
+      binding.state.moduleMetadata.set(moduleIdentifier, result.moduleMetadata)
+      storeFictModuleMetadata(
+        binding.state,
+        binding.module,
+        result.moduleMetadata,
+        binding.state.pendingDependencyFingerprints.get(moduleIdentifier) ?? null,
       )
-    },
-    error => callback(error instanceof Error ? error : new Error(String(error))),
-  )
+      callback(null, result.code, result.map)
+    })
+    .catch(error => callback(error instanceof Error ? error : new Error(String(error))))
 }

@@ -71,8 +71,8 @@ use oxc::{
 };
 
 use crate::{
-    FictDirectiveKind, FrontendBindingKind, FrontendSummary, OxcCompileOptions, OxcSourceLanguage,
-    analyze_frontend, analyze_typescript_compatibility,
+    FictDirectiveKind, FrontendBinding, FrontendBindingKind, FrontendSummary, OxcCompileOptions,
+    OxcSourceLanguage, analyze_frontend, analyze_typescript_compatibility,
 };
 
 use super::compile::{convert_diagnostics, sorted, source_type};
@@ -1570,6 +1570,7 @@ struct Builder<'source, 'semantic> {
     macro_bindings: BTreeMap<BindingId, FictMacroKind>,
     reactive_bindings: BTreeMap<BindingId, ReactiveCallKind>,
     reactive_namespace_sources: BTreeMap<BindingId, String>,
+    unavailable_metadata_sources: BTreeSet<String>,
     configured_bindings: BTreeSet<BindingId>,
     reactive_value_bindings: BTreeSet<BindingId>,
     reactive_functions: BTreeMap<FunctionId, ReactiveScopeKind>,
@@ -1606,7 +1607,9 @@ fn apply_resolved_import_metadata(
             continue;
         };
         let exported = match &import.imported {
-            fict_hir::ImportedName::Default => Some("default"),
+            fict_hir::ImportedName::Default | fict_hir::ImportedName::ImportEquals => {
+                Some("default")
+            }
             fict_hir::ImportedName::Named(exported) => Some(exported.as_str()),
             fict_hir::ImportedName::Namespace => None,
         };
@@ -1617,7 +1620,9 @@ fn apply_resolved_import_metadata(
             .and_then(|exported| metadata.hooks.get(exported))
             .map(imported_hook_return);
         let namespace = match &import.imported {
-            fict_hir::ImportedName::Namespace => Some(metadata),
+            fict_hir::ImportedName::Namespace | fict_hir::ImportedName::ImportEquals => {
+                Some(metadata)
+            }
             fict_hir::ImportedName::Default => metadata.namespaces.get("default"),
             fict_hir::ImportedName::Named(exported) => metadata.namespaces.get(exported),
         };
@@ -1744,12 +1749,14 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                         reactive_bindings.insert(mapped, kind);
                     }
                 }
-                fict_hir::ImportedName::Namespace
+                fict_hir::ImportedName::Namespace | fict_hir::ImportedName::ImportEquals
                     if runtime_reactive_namespace_source(&import.source) =>
                 {
                     reactive_namespace_sources.insert(mapped, import.source.clone());
                 }
-                fict_hir::ImportedName::Default | fict_hir::ImportedName::Namespace => {}
+                fict_hir::ImportedName::Default
+                | fict_hir::ImportedName::Namespace
+                | fict_hir::ImportedName::ImportEquals => {}
             }
         }
         let option_names: BTreeSet<_> = options.reactive_scopes.iter().cloned().collect();
@@ -1762,6 +1769,17 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     && option_names.contains(&binding.display_name)
             })
             .filter_map(|binding| old_to_new.get(&binding.id.index()).copied())
+            .collect();
+        let unavailable_metadata_sources = options
+            .resolved_metadata
+            .iter()
+            .filter(|metadata| {
+                matches!(
+                    metadata.status,
+                    MetadataResolutionStatus::Missing | MetadataResolutionStatus::IncompleteCycle
+                )
+            })
+            .map(|metadata| metadata.request.clone())
             .collect();
         Self {
             source,
@@ -1781,6 +1799,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             macro_bindings,
             reactive_bindings,
             reactive_namespace_sources,
+            unavailable_metadata_sources,
             configured_bindings,
             reactive_value_bindings: BTreeSet::new(),
             reactive_functions: BTreeMap::new(),
@@ -1823,18 +1842,22 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                     .flatten()
             }))
             .collect();
-        let namespace_imports: BTreeSet<_> =
-            self.frontend
-                .bindings
-                .iter()
-                .filter(|binding| {
-                    binding.kind == FrontendBindingKind::Import
-                        && binding.import.as_ref().is_some_and(|import| {
-                            import.imported == fict_hir::ImportedName::Namespace
-                        })
-                })
-                .filter_map(|binding| self.old_to_new.get(&binding.id.index()).copied())
-                .collect();
+        let namespace_imports: BTreeSet<_> = self
+            .frontend
+            .bindings
+            .iter()
+            .filter(|binding| {
+                binding.kind == FrontendBindingKind::Import
+                    && binding.import.as_ref().is_some_and(|import| {
+                        matches!(
+                            import.imported,
+                            fict_hir::ImportedName::Namespace
+                                | fict_hir::ImportedName::ImportEquals
+                        )
+                    })
+            })
+            .filter_map(|binding| self.old_to_new.get(&binding.id.index()).copied())
+            .collect();
         let imported_hook_member_paths: BTreeMap<_, BTreeSet<_>> = self
             .frontend
             .bindings
@@ -1977,6 +2000,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
         self.apply_call_classification(&calls.calls);
         self.validate_macro_placement(&calls.calls);
         self.validate_runtime_reactive_placement(&calls.calls);
+        self.validate_missing_hook_metadata(&calls.calls);
         self.validate_hook_placement(&calls.calls);
         self.populate_function_bodies(
             &calls.calls,
@@ -3225,6 +3249,46 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
                 .with_primary_span(call.span)
                 .with_help(
                     "move createSelector outside the control-flow branch or wrap it in createScope/runInScope",
+                )
+                .with_guarantee_class(GuaranteeClass::Fallback),
+            );
+        }
+    }
+
+    fn validate_missing_hook_metadata(&mut self, calls: &[CallFact]) {
+        for call in calls {
+            let binding = call.binding.or_else(|| {
+                let PlannedPlaceBase::Binding(symbol) = &call.callee_reference.as_ref()?.base
+                else {
+                    return None;
+                };
+                self.symbol_to_binding.get(symbol).copied()
+            });
+            let Some(binding) = binding else {
+                continue;
+            };
+            let Some(frontend_binding) = self.frontend.bindings.iter().find(|candidate| {
+                self.old_to_new.get(&candidate.id.index()).copied() == Some(binding)
+            }) else {
+                continue;
+            };
+            let Some(import) = frontend_binding.import.as_ref() else {
+                continue;
+            };
+            if !self.unavailable_metadata_sources.contains(&import.source)
+                || !requires_imported_hook_metadata(frontend_binding, import, call.hook.as_ref())
+            {
+                continue;
+            }
+            self.diagnostics.push(
+                Diagnostic::new(
+                    DiagnosticCode::new("FICT-H003").expect("diagnostic literal"),
+                    DiagnosticSeverity::Warning,
+                    "imported hook metadata is unavailable or belongs to an unresolved module boundary",
+                )
+                .with_primary_span(call.callee_span)
+                .with_help(
+                    "provide an authoritative resolved metadata snapshot or make the bundler resolution unambiguous",
                 )
                 .with_guarantee_class(GuaranteeClass::Fallback),
             );
@@ -9804,6 +9868,44 @@ fn runtime_reactive_namespace_source(source: &str) -> bool {
             | "fict/internal"
             | "@fictjs/runtime/advanced"
             | "@fictjs/runtime/internal"
+    )
+}
+
+fn requires_imported_hook_metadata(
+    binding: &FrontendBinding,
+    import: &fict_hir::ImportBinding,
+    hook: Option<&HookCall>,
+) -> bool {
+    if is_fict_runtime_source(&import.source) {
+        return false;
+    }
+    match &import.imported {
+        fict_hir::ImportedName::Named(imported) => {
+            is_hook_name(imported) || is_hook_name(&binding.display_name) || hook.is_some()
+        }
+        fict_hir::ImportedName::Default => is_hook_name(&binding.display_name) || hook.is_some(),
+        fict_hir::ImportedName::Namespace | fict_hir::ImportedName::ImportEquals => hook.is_some(),
+    }
+}
+
+fn is_fict_runtime_source(source: &str) -> bool {
+    matches!(
+        source,
+        "fict"
+            | "fict/advanced"
+            | "fict/internal"
+            | "fict/internal/list"
+            | "fict/plus"
+            | "fict/slim"
+            | "fict/jsx-runtime"
+            | "fict/jsx-dev-runtime"
+            | "@fictjs/runtime"
+            | "@fictjs/runtime/advanced"
+            | "@fictjs/runtime/internal"
+            | "@fictjs/runtime/internal/list"
+            | "@fictjs/runtime/jsx-runtime"
+            | "@fictjs/runtime/jsx-dev-runtime"
+            | "@fictjs/runtime/experimental/loader"
     )
 }
 

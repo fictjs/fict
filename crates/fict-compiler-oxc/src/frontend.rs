@@ -11,9 +11,13 @@ use oxc::{
     allocator::Allocator,
     ast::ast::{
         CallExpression, Expression, ImportDeclaration, ImportDeclarationSpecifier,
-        ImportOrExportKind,
+        ImportOrExportKind, Statement, TSExportAssignment, TSImportEqualsDeclaration,
+        TSModuleReference,
     },
-    ast_visit::{Visit, walk::walk_call_expression},
+    ast_visit::{
+        Visit,
+        walk::{walk_call_expression, walk_ts_import_equals_declaration},
+    },
     parser::{ParseOptions, Parser},
     semantic::{Scoping, Semantic, SemanticBuilder},
     span::{GetSpan, Span},
@@ -349,8 +353,17 @@ fn build_summary(
         .enumerate()
         .map(|(index, symbol)| (symbol, binding_id(index)))
         .collect();
-    let module_exports =
-        build_module_exports(module_record, scoping, &symbol_to_binding, &bindings);
+    let module_exports = build_module_exports(
+        program,
+        module_record,
+        scoping,
+        &symbol_to_binding,
+        &bindings,
+    );
+    let has_typescript_export_assignment = program
+        .body
+        .iter()
+        .any(|statement| matches!(statement, Statement::TSExportAssignment(_)));
 
     let mut direct_macros = BTreeMap::new();
     let mut namespace_macros = BTreeMap::new();
@@ -376,10 +389,12 @@ fn build_summary(
                     });
                 }
             }
-            ImportedName::Namespace if FICT_MACRO_MODULES.contains(&record.source.as_str()) => {
+            ImportedName::Namespace | ImportedName::ImportEquals
+                if FICT_MACRO_MODULES.contains(&record.source.as_str()) =>
+            {
                 namespace_macros.insert(record.symbol, (binding, record.source.clone()));
             }
-            ImportedName::Default | ImportedName::Namespace => {}
+            ImportedName::Default | ImportedName::Namespace | ImportedName::ImportEquals => {}
         }
     }
 
@@ -437,7 +452,7 @@ fn build_summary(
         source_facts: collect_source_facts(source_text, program),
         scopes,
         bindings,
-        has_module_syntax: module_record.has_module_syntax,
+        has_module_syntax: module_record.has_module_syntax || has_typescript_export_assignment,
         module_exports,
         macro_imports,
         macro_calls: macro_collector.calls,
@@ -447,12 +462,26 @@ fn build_summary(
 }
 
 fn build_module_exports(
+    program: &oxc::ast::ast::Program<'_>,
     module_record: &ModuleRecord<'_>,
     scoping: &Scoping,
     symbol_to_binding: &BTreeMap<SymbolId, BindingId>,
     bindings: &[FrontendBinding],
 ) -> Vec<ModuleExport> {
     let mut exports = Vec::new();
+
+    for assignment in program.body.iter().filter_map(|statement| {
+        let Statement::TSExportAssignment(assignment) = statement else {
+            return None;
+        };
+        Some(assignment)
+    }) {
+        exports.push(ModuleExport::Local {
+            exported: "default".into(),
+            target: export_assignment_target(assignment, scoping, symbol_to_binding, bindings),
+            origin: Origin::source(source_span(assignment.span)),
+        });
+    }
 
     for entry in &module_record.local_export_entries {
         if entry.is_type {
@@ -531,6 +560,35 @@ fn build_module_exports(
         )
     });
     exports
+}
+
+fn export_assignment_target(
+    assignment: &TSExportAssignment<'_>,
+    scoping: &Scoping,
+    symbol_to_binding: &BTreeMap<SymbolId, BindingId>,
+    bindings: &[FrontendBinding],
+) -> ModuleLocalExport {
+    let Expression::Identifier(identifier) = &assignment.expression else {
+        return ModuleLocalExport::DefaultExpression;
+    };
+    let Some(symbol) = identifier
+        .reference_id
+        .get()
+        .and_then(|reference| scoping.get_reference(reference).symbol_id())
+    else {
+        return ModuleLocalExport::DefaultExpression;
+    };
+    let Some(binding) = symbol_to_binding.get(&symbol).copied() else {
+        return ModuleLocalExport::DefaultExpression;
+    };
+    if bindings
+        .get(binding.as_usize())
+        .is_some_and(|binding| binding.is_runtime)
+    {
+        ModuleLocalExport::Binding(binding)
+    } else {
+        ModuleLocalExport::DefaultExpression
+    }
 }
 
 fn export_name(name: &ExportExportName<'_>) -> Option<String> {
@@ -700,6 +758,25 @@ impl<'a> Visit<'a> for ImportCollector {
                 span: source_span(specifier.span()),
             });
         }
+    }
+
+    fn visit_ts_import_equals_declaration(&mut self, declaration: &TSImportEqualsDeclaration<'a>) {
+        let TSModuleReference::ExternalModuleReference(reference) = &declaration.module_reference
+        else {
+            walk_ts_import_equals_declaration(self, declaration);
+            return;
+        };
+        if let Some(symbol) = declaration.id.symbol_id.get() {
+            self.records.push(ImportRecord {
+                symbol,
+                source: reference.expression.value.to_string(),
+                imported: ImportedName::ImportEquals,
+                local_name: declaration.id.name.to_string(),
+                type_only: declaration.import_kind == ImportOrExportKind::Type,
+                span: source_span(declaration.id.span),
+            });
+        }
+        walk_ts_import_equals_declaration(self, declaration);
     }
 }
 

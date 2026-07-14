@@ -48,7 +48,10 @@ use crate::commonjs::lower_standard_esm_to_commonjs;
 use crate::{OxcCompileOptions, OxcCompileOutput, OxcModuleKind};
 
 use super::compile::{convert_diagnostics, failed_output, sorted, source_type};
-use super::typescript::{configure_transform, passthrough_blockers, plan_typescript_program};
+use super::typescript::{
+    configure_transform, passthrough_blockers, plan_typescript_program,
+    rewrite_import_equals_extensions,
+};
 
 /// Lower the currently supported EmitIR subset into the original OXC program, run TypeScript
 /// lowering and OXC code generation, and parse the generated JavaScript again as a hard backend
@@ -355,6 +358,9 @@ pub fn emit_program(
         configure_transform(plan, &options.typescript, &mut transform_options);
     }
     let scoping = semantic.semantic.into_scoping();
+    if options.typescript.rewrite_import_extensions {
+        rewrite_import_equals_extensions(&allocator, &mut program);
+    }
     let transformed = Transformer::new(&allocator, Path::new(filename), &transform_options)
         .build_with_scoping(scoping, &mut program);
     let transform_has_errors = transformed.diagnostics.has_errors();

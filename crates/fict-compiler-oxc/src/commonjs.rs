@@ -2,15 +2,18 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use fict_diagnostics::{Diagnostic, DiagnosticCode, DiagnosticSeverity, GuaranteeClass};
 use oxc::{
-    allocator::{Allocator, ReplaceWith},
+    allocator::{Allocator, ReplaceWith, Vec as ArenaVec},
     ast::{
-        AstBuilder,
-        ast::{BindingIdentifier, Directive, Expression, IdentifierReference, Program, Statement},
+        AstBuilder, NONE,
+        ast::{
+            Argument, BindingIdentifier, Directive, Expression, IdentifierReference, Program,
+            Statement,
+        },
     },
     ast_visit::{VisitMut, walk_mut},
     parser::Parser,
     semantic::Scoping,
-    span::{SourceType, Span},
+    span::{GetSpan, SourceType, Span},
     transformer_plugins::ModuleRunnerTransform,
 };
 use oxc_traverse::{Traverse, TraverseCtx, traverse_mut};
@@ -172,11 +175,26 @@ impl<'a> Traverse<'a, ()> for CommonJsRunnerAdapter<'a> {
         let Expression::AwaitExpression(awaited) = expression else {
             return;
         };
-        let Expression::CallExpression(call) = &awaited.argument else {
+        let Expression::CallExpression(call) = &mut awaited.argument else {
             return;
         };
         if !callee_is_runner_import(&call.callee) {
             return;
+        }
+        if let Some(source) = call
+            .arguments
+            .first_mut()
+            .and_then(Argument::as_expression_mut)
+        {
+            let builder = AstBuilder::new(self.allocator);
+            let span = source.span();
+            source.replace_with(|source| {
+                let callee =
+                    Expression::new_identifier(span, self.allocator.alloc_str("require"), &builder);
+                let mut arguments = ArenaVec::new_in(&self.allocator);
+                arguments.push(Argument::from(source));
+                Expression::new_call_expression(span, callee, NONE, arguments, false, &builder)
+            });
         }
         expression.replace_with(|expression| {
             let Expression::AwaitExpression(awaited) = expression else {
@@ -217,7 +235,6 @@ impl<'a> Traverse<'a, ()> for CommonJsRunnerAdapter<'a> {
 
         let replacement = match identifier.name.as_str() {
             RUNNER_IMPORT => {
-                self.uses_require = true;
                 self.uses_static_import = true;
                 self.static_import_local
             }
@@ -271,8 +288,8 @@ fn inject_commonjs_prelude<'a>(
     }
     if adapter.uses_static_import {
         sources.push(format!(
-            "const {} = (request, metadata) => {{ const value = {}(request); if (!metadata || !metadata.importedNames || !metadata.importedNames.includes(\"default\") || (value && value.__esModule)) return value; const wrapper = Object.create(value !== null && (typeof value === \"object\" || typeof value === \"function\") ? value : null); Object.defineProperty(wrapper, \"default\", {{ enumerable: true, value }}); return wrapper; }};",
-            adapter.static_import_local, adapter.require_local
+            "const {} = (value, metadata) => {{ if (!metadata || !metadata.importedNames || !metadata.importedNames.includes(\"default\") || (value && value.__esModule)) return value; const wrapper = Object.create(value !== null && (typeof value === \"object\" || typeof value === \"function\") ? value : null); Object.defineProperty(wrapper, \"default\", {{ enumerable: true, value }}); return wrapper; }};",
+            adapter.static_import_local
         ));
     }
     if adapter.uses_exports {

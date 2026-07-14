@@ -258,3 +258,26 @@ fn extension_rewrite_is_explicit_and_ignores_non_terminal_extensions() {
     let rewritten = compile_passthrough(source, "extensions.ts", compile_options);
     assert!(rewritten.code.contains("./setup.ts?worker"));
 }
+
+#[test]
+fn rewrites_external_import_equals_extensions_in_commonjs_mode() {
+    let mut compile_options = options(OxcModuleKind::CommonJs);
+    compile_options.typescript.rewrite_import_extensions = true;
+    let rewritten = compile_passthrough(
+        "import dependency = require('./dependency.cts'); export = dependency;",
+        "entry.cts",
+        compile_options,
+    );
+
+    assert!(
+        rewritten.diagnostics.is_empty(),
+        "{:?}",
+        rewritten.diagnostics
+    );
+    assert!(
+        rewritten.code.contains("require(\"./dependency.cjs\")"),
+        "{}",
+        rewritten.code
+    );
+    assert!(!rewritten.code.contains("./dependency.cts"));
+}

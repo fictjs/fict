@@ -3,9 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use fict_compiler_oxc::{FictReturnShape, FrontendSummary, ReactiveValueKind};
 use fict_hir::{
     ArrayElement, BindingId, CallHost, FictMacroKind, FunctionId, FunctionKind, HirFile,
-    HirFunction, HirInstructionKind, ImportedName, ModuleExport, ModuleLocalExport, ModulePlan,
-    ObjectEntry, ObjectPropertyKind, PlaceBase, Projection, PropertyKey, ReactiveCallKind,
-    TerminatorKind, ValueId,
+    HirFunction, HirInstructionKind, ImportedName, ImportedReactiveKind, ModuleExport,
+    ModuleLocalExport, ModulePlan, ObjectEntry, ObjectPropertyKind, PlaceBase, Projection,
+    PropertyKey, ReactiveCallKind, TerminatorKind, ValueId,
 };
 use fict_metadata::{
     HookReturnInfo, MetadataResolutionStatus, ModuleReactiveMetadata, ReactiveExportKind,
@@ -96,7 +96,7 @@ impl<'snapshot> MetadataBuilder<'snapshot> {
 
     fn add_re_export(&mut self, exported: &str, source: &str, imported: &ImportedName) {
         self.mark_explicit(exported);
-        let Some(metadata) = self.resolve(source) else {
+        let Some(metadata) = self.resolve_export(source) else {
             return;
         };
         if matches!(imported, ImportedName::Namespace) {
@@ -120,7 +120,7 @@ impl<'snapshot> MetadataBuilder<'snapshot> {
     }
 
     fn add_star(&mut self, source: &str) {
-        let Some(metadata) = self.resolve(source) else {
+        let Some(metadata) = self.resolve_export(source) else {
             return;
         };
         let mut names = BTreeSet::new();
@@ -166,6 +166,15 @@ impl<'snapshot> MetadataBuilder<'snapshot> {
             }
             MetadataResolutionStatus::Opaque | MetadataResolutionStatus::Missing => None,
         }
+    }
+
+    fn resolve_export(&mut self, request: &str) -> Option<ModuleReactiveMetadata> {
+        let metadata = self.resolve(request);
+        if metadata.is_none() {
+            self.incomplete = true;
+            self.unresolved_requests.insert(request.to_owned());
+        }
+        metadata
     }
 }
 
@@ -288,7 +297,7 @@ fn collect_local_facts(core: &CorePassOutput, frontend: &FrontendSummary) -> Loc
             .and_then(|annotation| annotation.shape.as_ref())
             .map(hook_info_from_annotation);
         let inferred = function_analysis(core, function.id)
-            .and_then(|analysis| infer_hook_return(function, analysis));
+            .and_then(|analysis| infer_hook_return(&core.hir, function, analysis));
         if let Some(info) = annotation.or(inferred)
             && !hook_info_is_empty(&info)
         {
@@ -417,12 +426,31 @@ fn classify_call_with_import(
         CallHost::Function(_) | CallHost::Unknown => return None,
     };
     let import = file.bindings.get(binding.as_usize())?.import.as_ref()?;
+    let hook = match call.callee_reference.as_ref() {
+        Some(reference) if !reference.projections.is_empty() => {
+            import.resolve_hook_member(&reference.projections)
+        }
+        Some(_) | None => import.hook_return.as_ref(),
+    };
+    if let Some(kind) = hook.and_then(|hook| hook.direct_accessor) {
+        return Some(imported_reactive_export_kind(kind));
+    }
     let imported = match &import.imported {
         ImportedName::Named(imported) => imported.as_str(),
-        ImportedName::Namespace => namespace_call_member(function, call, binding)?,
+        ImportedName::Namespace | ImportedName::ImportEquals => {
+            namespace_call_member(function, call, binding)?
+        }
         ImportedName::Default => return None,
     };
     runtime_creator_kind(&import.source, imported)
+}
+
+const fn imported_reactive_export_kind(kind: ImportedReactiveKind) -> ReactiveExportKind {
+    match kind {
+        ImportedReactiveKind::Signal => ReactiveExportKind::Signal,
+        ImportedReactiveKind::Memo => ReactiveExportKind::Memo,
+        ImportedReactiveKind::Store => ReactiveExportKind::Store,
+    }
 }
 
 fn namespace_call_member<'function>(
@@ -472,6 +500,7 @@ fn runtime_creator_kind(source: &str, imported: &str) -> Option<ReactiveExportKi
 }
 
 fn infer_hook_return(
+    file: &HirFile,
     function: &HirFunction,
     analysis: &FunctionPassAnalysis,
 ) -> Option<HookReturnInfo> {
@@ -484,13 +513,14 @@ fn infer_hook_return(
         };
         Some(value)
     });
-    let first = hook_info_for_value(function, analysis, returns.next()?)?;
+    let first = hook_info_for_value(file, function, analysis, returns.next()?)?;
     returns
-        .all(|value| hook_info_for_value(function, analysis, value).as_ref() == Some(&first))
+        .all(|value| hook_info_for_value(file, function, analysis, value).as_ref() == Some(&first))
         .then_some(first)
 }
 
 fn hook_info_for_value(
+    file: &HirFile,
     function: &HirFunction,
     analysis: &FunctionPassAnalysis,
     value: ValueId,
@@ -515,7 +545,8 @@ fn hook_info_for_value(
                     PropertyKey::Index(index) => index.to_string(),
                     PropertyKey::Computed(_) => continue,
                 };
-                if let Some(kind) = classify_value(function, analysis, *value, &mut BTreeSet::new())
+                if let Some(kind) =
+                    classify_value(file, function, analysis, *value, &mut BTreeSet::new())
                 {
                     object_props.insert(key, kind);
                 }
@@ -531,7 +562,8 @@ fn hook_info_for_value(
                 let ArrayElement::Value(value) = element else {
                     continue;
                 };
-                if let Some(kind) = classify_value(function, analysis, *value, &mut BTreeSet::new())
+                if let Some(kind) =
+                    classify_value(file, function, analysis, *value, &mut BTreeSet::new())
                 {
                     array_props.insert(index.to_string(), kind);
                 }
@@ -541,7 +573,7 @@ fn hook_info_for_value(
                 ..HookReturnInfo::default()
             })
         }
-        _ => classify_value(function, analysis, value, &mut BTreeSet::new()).map(|kind| {
+        _ => classify_value(file, function, analysis, value, &mut BTreeSet::new()).map(|kind| {
             HookReturnInfo {
                 direct_accessor: Some(kind),
                 ..HookReturnInfo::default()
@@ -551,6 +583,7 @@ fn hook_info_for_value(
 }
 
 fn classify_value(
+    file: &HirFile,
     function: &HirFunction,
     analysis: &FunctionPassAnalysis,
     value: ValueId,
@@ -578,17 +611,17 @@ fn classify_value(
         return Some(kind);
     }
     match &instruction.kind {
-        HirInstructionKind::Call(call) => classify_call(call),
+        HirInstructionKind::Call(call) => classify_call_with_import(file, function, call),
         HirInstructionKind::Sequence { values } => values
             .last()
-            .and_then(|value| classify_value(function, analysis, *value, visited)),
+            .and_then(|value| classify_value(file, function, analysis, *value, visited)),
         HirInstructionKind::Conditional {
             consequent,
             alternate,
             ..
         } => {
-            let consequent = classify_value(function, analysis, *consequent, visited)?;
-            let alternate = classify_value(function, analysis, *alternate, visited)?;
+            let consequent = classify_value(file, function, analysis, *consequent, visited)?;
+            let alternate = classify_value(file, function, analysis, *alternate, visited)?;
             (consequent == alternate).then_some(consequent)
         }
         _ => None,
@@ -660,7 +693,7 @@ fn hook_info_is_empty(info: &HookReturnInfo) -> bool {
 
 fn imported_key(imported: &ImportedName) -> &str {
     match imported {
-        ImportedName::Default => "default",
+        ImportedName::Default | ImportedName::ImportEquals => "default",
         ImportedName::Named(name) => name,
         ImportedName::Namespace => "*",
     }

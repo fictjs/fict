@@ -4,7 +4,7 @@ import path from 'node:path'
 import { createFixture, createWebpackConfiguration, runApp, runCompiler } from './fixture'
 
 describe('@fictjs/webpack-plugin cold metadata graph', () => {
-  it('accepts Babel empty-string output for an empty entry module', async () => {
+  it('accepts native empty-string output for an empty entry module', async () => {
     const root = await createFixture({ 'entry.ts': '' })
 
     try {

@@ -359,6 +359,9 @@ importers:
       '@babel/traverse':
         specifier: ^7.29.0
         version: 7.29.0
+      '@oxc-project/runtime':
+        specifier: 0.137.0
+        version: 0.137.0
       '@types/babel__core':
         specifier: ^7.20.5
         version: 7.20.5
@@ -656,16 +659,19 @@ importers:
 
   packages/webpack-plugin:
     dependencies:
+      '@fictjs/compiler':
+        specifier: workspace:*
+        version: link:../compiler
+    devDependencies:
       '@babel/core':
         specifier: ^7.29.7
         version: 7.29.7
       '@fictjs/babel-preset':
         specifier: workspace:*
         version: link:../babel-preset
-      '@fictjs/compiler':
-        specifier: workspace:*
-        version: link:../compiler
-    devDependencies:
+      '@jridgewell/trace-mapping':
+        specifier: ^0.3.31
+        version: 0.3.31
       fict:
         specifier: workspace:*
         version: link:../fict
@@ -2106,6 +2112,10 @@ packages:
   '@nodelib/fs.walk@1.2.8':
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
+
+  '@oxc-project/runtime@0.137.0':
+    resolution: {integrity: sha512-eg4nbD+t3awY/gxhcc5M5IX556O6q17mGJKvl/brL86uDZn41ZwrVO6MEAMJVNf3Q1mhhoIOzNxbNE70UUFK3Q==}
+    engines: {node: ^20.19.0 || >=22.12.0}
 
   '@oxc-project/types@0.138.0':
     resolution: {integrity: sha512-1a7ZKmrRTCoN1XMZ4L0PyyqrMnrNlLyPuOkdSX2MZg7IiIGRUyurNhAm73ptDOraoBcIordsIGKNPKUzy3ZmfA==}
@@ -8171,6 +8181,8 @@ snapshots:
     dependencies:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.19.1
+
+  '@oxc-project/runtime@0.137.0': {}
 
   '@oxc-project/types@0.138.0': {}
 

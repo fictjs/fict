@@ -1053,7 +1053,7 @@ fn lower_function(
                 .and_then(|result| hook_return_by_result.get(&result).copied())
             {
                 preserve(&mut operations, block.id, instruction_index, instruction);
-                if site.local.is_none() {
+                if site.local.is_none() && !hook_return_accessor_reads.contains(&site.result) {
                     let target = allocate_temporary(
                         &mut temporaries,
                         &mut temporary_names,
@@ -2384,7 +2384,10 @@ fn is_runtime_resettable_boundary(hir: &HirFile, name: &JsxElementName) -> bool 
             .and_then(|binding| binding.import.as_ref())
             .is_some_and(|import| {
                 matches!(import.source.as_str(), "fict" | "@fictjs/runtime")
-                    && import.imported == ImportedName::Namespace
+                    && matches!(
+                        import.imported,
+                        ImportedName::Namespace | ImportedName::ImportEquals
+                    )
                     && matches!(properties.as_slice(), [name] if matches!(name.as_str(), "ErrorBoundary" | "Suspense"))
             }),
         JsxElementName::Intrinsic(_) | JsxElementName::Dynamic(_) => false,
@@ -3427,7 +3430,7 @@ fn collect_hook_return_accessor_reads(
     };
 
     match &instruction.kind {
-        HirInstructionKind::Read { .. } => {
+        HirInstructionKind::Read { .. } | HirInstructionKind::Call(_) => {
             reads.insert(value);
         }
         HirInstructionKind::Object { entries } => {

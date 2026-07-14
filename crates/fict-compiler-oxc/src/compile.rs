@@ -14,7 +14,10 @@ use oxc::{
 };
 
 use crate::commonjs::lower_standard_esm_to_commonjs;
-use crate::typescript::{configure_transform, passthrough_blockers, plan_typescript_program};
+use crate::typescript::{
+    configure_transform, passthrough_blockers, plan_typescript_program,
+    rewrite_import_equals_extensions,
+};
 
 /// Source grammar supplied by the Fict orchestration layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,6 +141,9 @@ pub fn compile_passthrough(
         configure_transform(plan, &options.typescript, &mut transform_options);
     }
     let scoping = semantic.semantic.into_scoping();
+    if options.typescript.rewrite_import_extensions {
+        rewrite_import_equals_extensions(&allocator, &mut program);
+    }
     let transformed = Transformer::new(&allocator, path, &transform_options)
         .build_with_scoping(scoping, &mut program);
     let transform_has_errors = transformed.diagnostics.has_errors();
@@ -343,7 +349,7 @@ mod tests {
 
         assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
         assert!(
-            output.code.contains("__fict_cjs_load(\"./value\""),
+            output.code.contains("__fict_cjs_load(require(\"./value\")"),
             "{}",
             output.code
         );
@@ -380,7 +386,9 @@ mod tests {
 
         assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
         assert!(
-            output.code.contains("const __fict_cjs_require_1 = require"),
+            output
+                .code
+                .contains("__fict_cjs_load(require(\"./dependency\")"),
             "{}",
             output.code
         );

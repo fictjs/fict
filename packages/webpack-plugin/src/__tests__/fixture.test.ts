@@ -47,4 +47,15 @@ describe('@fictjs/webpack-plugin package entrypoints', () => {
 
     for (const entry of entries) expect(entry).not.toContain('findPackageJSON')
   })
+
+  it('ships the native loader without Babel production dependencies', async () => {
+    const packageJson = JSON.parse(
+      await readFile(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { dependencies?: Record<string, string> }
+    const dependencies = Object.keys(packageJson.dependencies ?? {})
+
+    expect(dependencies.some(dependency => dependency.startsWith('@babel/'))).toBe(false)
+    expect(dependencies).not.toContain('@fictjs/babel-preset')
+    expect(dependencies).toEqual(['@fictjs/compiler'])
+  })
 })

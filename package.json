@@ -39,6 +39,7 @@
     "test:vite:native": "pnpm --filter @fictjs/compiler build && pnpm --filter @fictjs/vite-plugin build && pnpm build:compiler:native-host && node scripts/native-vite-plugin-smoke.mjs && node scripts/native-vite-library-metadata-smoke.mjs && node scripts/native-vite-metadata-graph-smoke.mjs",
     "test:playground:native": "pnpm --filter @fictjs/compiler build && pnpm --filter @fictjs/playground build && pnpm build:compiler:native-host && node scripts/native-playground-diagnostics-smoke.mjs",
     "test:vscode:native": "pnpm --filter @fictjs/compiler build && pnpm --filter @fictjs/vscode-extension build && pnpm build:compiler:native-host && node scripts/native-vscode-tooling-smoke.mjs",
+    "test:webpack:native": "pnpm --filter @fictjs/compiler build && pnpm --filter @fictjs/webpack-plugin build && pnpm build:compiler:native-host && node scripts/native-webpack-plugin-test.mjs",
     "test:compiler:fuzz-build": "cargo +nightly-2026-04-28 fuzz build compiler_pipeline",
     "test:compiler:fuzz-smoke": "cargo +nightly-2026-04-28 fuzz run compiler_pipeline -- -runs=5000 -timeout=10 -rss_limit_mb=4096",
     "test:runtime-package-smoke": "node scripts/runtime-package-smoke.mjs",

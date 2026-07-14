@@ -78,18 +78,6 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     }
     result.unresolved_metadata_requests.sort();
     result.unresolved_metadata_requests.dedup();
-    if result.metadata_incomplete {
-        result.diagnostics.push(
-            diagnostic(
-                "FICT-METADATA-INCOMPLETE",
-                DiagnosticSeverity::Error,
-                "resolved metadata snapshot contains an incomplete module cycle",
-                GuaranteeClass::Fallback,
-            )
-            .with_help("let the bundler graph converge before compiling this module"),
-        );
-    }
-
     finalize_diagnostics(&mut result, &request.options);
     if result.has_errors() {
         attach_explain_if_requested(&mut result, &request, &[], &[]);
@@ -205,8 +193,12 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     let metadata = generate_module_metadata(&core, &module_plan, &frontend, &request.metadata);
     result.module_metadata = metadata.metadata;
     result.metadata_dependencies = metadata.dependencies;
-    result.unresolved_metadata_requests = metadata.unresolved_requests;
-    result.metadata_incomplete = metadata.incomplete;
+    result
+        .unresolved_metadata_requests
+        .extend(metadata.unresolved_requests);
+    result.unresolved_metadata_requests.sort();
+    result.unresolved_metadata_requests.dedup();
+    result.metadata_incomplete |= metadata.incomplete;
     result
         .diagnostics
         .extend(reactive_control_flow_diagnostics(&core));
@@ -590,7 +582,9 @@ mod tests {
 
         assert!(!result.has_errors(), "{:?}", result.diagnostics);
         assert!(
-            result.code.contains("__fict_cjs_load(\"fict/internal\""),
+            result
+                .code
+                .contains("__fict_cjs_load(require(\"fict/internal\")"),
             "{}",
             result.code
         );
@@ -1094,6 +1088,171 @@ mod tests {
             diagnostic.code.as_str() == "FICT-METADATA-READONLY"
                 && diagnostic.message.contains("imported hook")
         }));
+    }
+
+    #[test]
+    fn consumes_callable_and_member_metadata_from_import_equals() {
+        let mut input = request(
+            r#"
+                import hook = require('./hook');
+                export function App() {
+                    const direct = hook();
+                    const member = hook.useCounter();
+                    return direct + member;
+                }
+            "#,
+            "import-equals.cts",
+        );
+        input.metadata.push(ResolvedMetadataInput {
+            request: "./hook".into(),
+            resolved_id: Some("/src/hook.cts".into()),
+            status: MetadataResolutionStatus::Resolved,
+            metadata: Some(ModuleReactiveMetadata {
+                hooks: BTreeMap::from([
+                    (
+                        "default".into(),
+                        HookReturnInfo {
+                            direct_accessor: Some(ReactiveExportKind::Signal),
+                            ..HookReturnInfo::default()
+                        },
+                    ),
+                    (
+                        "useCounter".into(),
+                        HookReturnInfo {
+                            direct_accessor: Some(ReactiveExportKind::Signal),
+                            ..HookReturnInfo::default()
+                        },
+                    ),
+                ]),
+                ..ModuleReactiveMetadata::new()
+            }),
+            fingerprint: "sha256:import-equals".into(),
+        });
+
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result.code.contains("direct() + member()"),
+            "{}",
+            result.code
+        );
+        assert!(!result.code.contains("hook()()"), "{}", result.code);
+        assert!(
+            !result.code.contains("hook.useCounter()()"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn fails_closed_for_a_hook_call_with_authoritatively_missing_metadata() {
+        let mut input = request(
+            "import { useCounter } from 'package'; export function App() { const count = useCounter(); return count * 2; }",
+            "missing-hook.ts",
+        );
+        input.metadata.push(ResolvedMetadataInput {
+            request: "package".into(),
+            resolved_id: None,
+            status: MetadataResolutionStatus::Missing,
+            metadata: None,
+            fingerprint: "sha256:missing-hook".into(),
+        });
+
+        let result = compile(input);
+
+        assert!(result.has_errors());
+        assert!(result.code.is_empty());
+        assert!(result.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-H003"
+                && diagnostic.severity == DiagnosticSeverity::Error
+        }));
+    }
+
+    #[test]
+    fn publishes_hook_metadata_from_typescript_export_assignment() {
+        let result = compile(request(
+            "import { $state } from 'fict'; function useCounter() { const count = $state(2); return count; } export = useCounter;",
+            "hook.cts",
+        ));
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(
+            result
+                .module_metadata
+                .hooks
+                .get("default")
+                .and_then(|hook| hook.direct_accessor),
+            Some(ReactiveExportKind::Signal)
+        );
+    }
+
+    #[test]
+    fn marks_metadata_incomplete_for_an_opaque_star_re_export() {
+        let mut input = request(
+            "import { $state } from 'fict'; export function useCounter() { const count = $state(2); return count; } export * from 'ordinary-package';",
+            "hook.ts",
+        );
+        input.metadata.push(ResolvedMetadataInput {
+            request: "ordinary-package".into(),
+            resolved_id: Some("package:ordinary-package".into()),
+            status: MetadataResolutionStatus::Opaque,
+            metadata: None,
+            fingerprint: "sha256:opaque-star".into(),
+        });
+
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.metadata_incomplete);
+        assert_eq!(result.unresolved_metadata_requests, ["ordinary-package"]);
+        assert!(result.module_metadata.hooks.contains_key("useCounter"));
+    }
+
+    #[test]
+    fn preserves_an_imported_accessor_forwarded_from_a_hook() {
+        let mut input = request(
+            "import { useCounter as usePackageCounter } from './hooks'; export function useCounter() { return usePackageCounter(); }",
+            "forwarded-hook.ts",
+        );
+        input.metadata.push(ResolvedMetadataInput {
+            request: "./hooks".into(),
+            resolved_id: Some("/src/hooks.ts".into()),
+            status: MetadataResolutionStatus::Resolved,
+            metadata: Some(ModuleReactiveMetadata {
+                hooks: BTreeMap::from([(
+                    "useCounter".into(),
+                    HookReturnInfo {
+                        direct_accessor: Some(ReactiveExportKind::Signal),
+                        ..HookReturnInfo::default()
+                    },
+                )]),
+                ..ModuleReactiveMetadata::new()
+            }),
+            fingerprint: "sha256:forwarded-hook".into(),
+        });
+
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result.code.contains("return usePackageCounter()"),
+            "{}",
+            result.code
+        );
+        assert!(
+            !result.code.contains("usePackageCounter()()"),
+            "{}",
+            result.code
+        );
+        assert_eq!(
+            result
+                .module_metadata
+                .hooks
+                .get("useCounter")
+                .and_then(|hook| hook.direct_accessor),
+            Some(ReactiveExportKind::Signal)
+        );
     }
 
     #[test]
