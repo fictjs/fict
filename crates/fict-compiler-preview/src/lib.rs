@@ -11,7 +11,8 @@ use fict_emit::{
     DELEGATED_EVENTS, EmitOperation, EmitPreviewComponent, EmitPreviewHandler,
     EmitPreviewLexicalCapture, EmitPreviewLocalHandler, EmitPreviewModuleCapture, EmitPreviewPlan,
     EmitPreviewPropCapture, EmitPreviewPropRestCapture, EmitProgram, EmitPropBinding, EmitValueRef,
-    EventOptions, ReactiveSlotStorage, RuntimeHelper, RuntimeImportIntent, parse_event_attribute,
+    EventOptions, ReactiveSlotKind, ReactiveSlotStorage, RuntimeHelper, RuntimeImportIntent,
+    parse_event_attribute,
 };
 use fict_hir::{
     BindingId, BindingKind, ContextValueKind, FunctionId, FunctionKind, HirFile,
@@ -41,6 +42,19 @@ pub fn attach_preview_plan(
     let mut handler_index = 0_u32;
     let mut dependency_index = 0_u32;
     let mut handlers = Vec::new();
+    let signal_owners: BTreeMap<_, _> = emit
+        .functions
+        .iter()
+        .flat_map(|function| {
+            function.slots.iter().filter_map(move |slot| {
+                (slot.kind == ReactiveSlotKind::Signal
+                    && slot.storage == ReactiveSlotStorage::Owned)
+                    .then_some(slot.binding)
+                    .flatten()
+                    .map(|binding| (binding, function.source))
+            })
+        })
+        .collect();
 
     for owner_emit in &emit.functions {
         let Some(owner) = hir.functions.get(owner_emit.source.as_usize()) else {
@@ -210,6 +224,7 @@ pub fn attach_preview_plan(
                 .and_then(|function| hir.functions.get(function.as_usize()))
                 .map(captured_bindings)
                 .unwrap_or_default();
+            let non_serializable_signals = non_serializable_signal_bindings(owner, owner_emit);
             let slot_bindings: BTreeMap<_, _> = owner_emit
                 .slots
                 .iter()
@@ -224,7 +239,10 @@ pub fn attach_preview_plan(
                     slot.binding.map(|binding| {
                         (
                             binding,
-                            hir.bindings[binding.as_usize()].display_name.clone(),
+                            (
+                                hir.bindings[binding.as_usize()].display_name.clone(),
+                                slot.storage,
+                            ),
                         )
                     })
                 })
@@ -284,6 +302,8 @@ pub fn attach_preview_plan(
                 });
             }
             let mut unsupported = Vec::new();
+            let mut unsafe_signals = Vec::new();
+            let mut outer_signals = Vec::new();
             for binding in captures {
                 let Some(binding_info) = hir.bindings.get(binding.as_usize()) else {
                     continue;
@@ -294,11 +314,26 @@ pub fn attach_preview_plan(
                 {
                     continue;
                 }
-                if let Some(local) = slot_bindings.get(&binding) {
+                if let Some((local, storage)) = slot_bindings.get(&binding) {
+                    if matches!(storage, ReactiveSlotStorage::Captured { .. }) {
+                        outer_signals.push(local.clone());
+                        continue;
+                    }
+                    if non_serializable_signals.contains(&binding) {
+                        unsafe_signals.push(local.clone());
+                        continue;
+                    }
                     lexical_captures.push(EmitPreviewLexicalCapture {
                         binding,
                         local: local.clone(),
                     });
+                    continue;
+                }
+                if signal_owners
+                    .get(&binding)
+                    .is_some_and(|owner| *owner != owner_emit.source)
+                {
+                    outer_signals.push(binding_info.display_name.clone());
                     continue;
                 }
                 if let Some(prop) = prop_bindings.get(&binding) {
@@ -343,19 +378,34 @@ pub fn attach_preview_plan(
                 unsupported.push(binding_info.display_name.clone());
             }
 
-            if !unsupported.is_empty() {
+            if !unsupported.is_empty() || !unsafe_signals.is_empty() || !outer_signals.is_empty() {
                 if candidate.explicit {
                     unsupported.sort();
+                    unsafe_signals.sort();
+                    outer_signals.sort();
+                    let mut details = Vec::new();
+                    if !unsupported.is_empty() {
+                        details.push(format!(
+                            "non-serializable locals: {}",
+                            unsupported.join(", ")
+                        ));
+                    }
+                    if !unsafe_signals.is_empty() {
+                        details.push(format!("signals: {}", unsafe_signals.join(", ")));
+                    }
+                    if !outer_signals.is_empty() {
+                        details.push(format!("outer signals: {}", outer_signals.join(", ")));
+                    }
                     diagnostics.push(
                         preview_error(
                             "FICT-PREVIEW-CAPTURE",
                             format!(
-                                "resumable handler captures non-serializable locals: {}",
-                                unsupported.join(", ")
+                                "resumable handler captures values that cannot be restored: {}",
+                                details.join("; ")
                             ),
                         )
                         .with_primary_span(handler_origin)
-                        .with_help("use signals, serializable props, or stable module bindings; otherwise remove the `$` suffix"),
+                        .with_help("use only component-owned serializable signals, serializable props, or stable module bindings; otherwise remove the `$` suffix"),
                     );
                 }
                 continue;
@@ -1031,6 +1081,154 @@ fn expand_prop_default_dependencies(
                 queue.push(dependency);
             }
         }
+    }
+}
+
+fn non_serializable_signal_bindings(
+    function: &fict_hir::HirFunction,
+    emit: &fict_emit::EmitFunction,
+) -> BTreeSet<BindingId> {
+    let mut bindings = BTreeSet::new();
+    for operation in &emit.operations {
+        let candidate = match operation {
+            EmitOperation::CreateReactive {
+                slot,
+                initializer: Some(value),
+                ..
+            } => Some((*slot, value)),
+            EmitOperation::WriteReactive {
+                slot,
+                projections,
+                value,
+                ..
+            } if projections.is_empty() => Some((*slot, value)),
+            EmitOperation::UpdateReactive {
+                slot,
+                projections,
+                value: Some(value),
+                ..
+            } if projections.is_empty() => Some((*slot, value)),
+            _ => None,
+        };
+        let Some((slot_id, value)) = candidate else {
+            continue;
+        };
+        let Some(slot) = emit.slots.get(slot_id.as_usize()) else {
+            continue;
+        };
+        if slot.kind == ReactiveSlotKind::Signal
+            && emit_value_contains_function(function, value, &mut BTreeSet::new())
+            && let Some(binding) = slot.binding
+        {
+            bindings.insert(binding);
+        }
+    }
+    let signal_bindings: BTreeSet<_> = emit
+        .slots
+        .iter()
+        .filter(|slot| slot.kind == ReactiveSlotKind::Signal)
+        .filter_map(|slot| slot.binding)
+        .collect();
+    for call in function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter_map(|instruction| match &instruction.kind {
+            HirInstructionKind::Call(call) => Some(call),
+            _ => None,
+        })
+    {
+        let fict_hir::CallHost::Binding(binding) = call.host else {
+            continue;
+        };
+        let Some(argument) = call.arguments.first() else {
+            continue;
+        };
+        if signal_bindings.contains(&binding)
+            && hir_value_contains_function(function, argument.value, &mut BTreeSet::new())
+        {
+            bindings.insert(binding);
+        }
+    }
+    bindings
+}
+
+fn emit_value_contains_function(
+    function: &fict_hir::HirFunction,
+    value: &EmitValueRef,
+    visited: &mut BTreeSet<ValueId>,
+) -> bool {
+    match value {
+        EmitValueRef::Function(_) => true,
+        EmitValueRef::Hir(value) => hir_value_contains_function(function, *value, visited),
+        EmitValueRef::Ssa(_)
+        | EmitValueRef::Slot(_)
+        | EmitValueRef::Temporary(_)
+        | EmitValueRef::Literal(_)
+        | EmitValueRef::Binding(_) => false,
+    }
+}
+
+fn hir_value_contains_function(
+    function: &fict_hir::HirFunction,
+    value: ValueId,
+    visited: &mut BTreeSet<ValueId>,
+) -> bool {
+    if !visited.insert(value) {
+        return false;
+    }
+    if matches!(
+        function
+            .values
+            .get(value.as_usize())
+            .map(|value| &value.kind),
+        Some(ValueKind::Function(_))
+    ) {
+        return true;
+    }
+    let Some(instruction) = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| instruction.result == Some(value))
+    else {
+        return false;
+    };
+    match &instruction.kind {
+        HirInstructionKind::Array { elements } => elements.iter().any(|element| match element {
+            fict_hir::ArrayElement::Hole(_) => false,
+            fict_hir::ArrayElement::Value(value) | fict_hir::ArrayElement::Spread { value, .. } => {
+                hir_value_contains_function(function, *value, visited)
+            }
+        }),
+        HirInstructionKind::Object { entries } => entries.iter().any(|entry| match entry {
+            fict_hir::ObjectEntry::Property { value, kind, .. } => {
+                *kind != fict_hir::ObjectPropertyKind::Init
+                    || hir_value_contains_function(function, *value, visited)
+            }
+            fict_hir::ObjectEntry::Spread { value, .. } => {
+                hir_value_contains_function(function, *value, visited)
+            }
+        }),
+        HirInstructionKind::SyntaxFragment { .. } => {
+            let Some(origin) = function
+                .values
+                .get(value.as_usize())
+                .and_then(|value| value.origin.primary_span)
+            else {
+                return false;
+            };
+            function
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .filter_map(|candidate| candidate.result.map(|result| (candidate, result)))
+                .filter(|(candidate, result)| {
+                    *result != value && candidate.origin.primary_span == Some(origin)
+                })
+                .any(|(_, result)| hir_value_contains_function(function, result, visited))
+        }
+        _ => false,
     }
 }
 

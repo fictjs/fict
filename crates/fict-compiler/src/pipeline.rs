@@ -5173,6 +5173,109 @@ mod tests {
 
     #[cfg(feature = "preview")]
     #[test]
+    fn rejects_non_serializable_signal_captures_in_preview_handlers() {
+        for (name, source, signal) in [
+            (
+                "function",
+                "import { $state } from 'fict'; export function App() { const callback = $state(() => 'hit'); return <button onClick$={() => console.log(typeof callback())}>Click</button>; }",
+                "callback",
+            ),
+            (
+                "object-function",
+                "import { $state } from 'fict'; export function App() { const state = $state({ label: 'x', run: () => 'hit' }); return <button onClick$={() => console.log(state().label)}>Click</button>; }",
+                "state",
+            ),
+            (
+                "array-function",
+                "import { $state } from 'fict'; export function App() { const state = $state([1, () => 'hit']); return <button onClick$={() => console.log(state()[0])}>Click</button>; }",
+                "state",
+            ),
+            (
+                "object-getter",
+                "import { $state } from 'fict'; export function App() { const state = $state({ get value() { return 1; } }); return <button onClick$={() => console.log(state().value)}>Click</button>; }",
+                "state",
+            ),
+            (
+                "setter-assignment",
+                "import { $state } from 'fict'; export function App() { const callback = $state(null); callback(() => 'hit'); return <button onClick$={() => console.log(typeof callback())}>Click</button>; }",
+                "callback",
+            ),
+        ] {
+            let mut input = request(source, &format!("preview-signal-{name}.tsx"));
+            input.options.preview = Some(CompilerPreviewOptions {
+                resumable: true,
+                auto_extract_handlers: false,
+                ..CompilerPreviewOptions::default()
+            });
+            let result = compile(input);
+
+            assert!(result.has_errors(), "{name}: {:?}", result.diagnostics);
+            assert!(result.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-PREVIEW-CAPTURE"
+                    && diagnostic.message.contains(&format!("signals: {signal}"))
+            }));
+        }
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn rejects_preview_handlers_that_capture_outer_signals() {
+        let source = "import { $state } from 'fict'; export function Outer() { const count = $state(0); function Inner() { return <button onClick$={() => console.log(count())}>Click</button>; } return <Inner />; }";
+        let mut input = request(source, "preview-outer-signal.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: false,
+            ..CompilerPreviewOptions::default()
+        });
+        let result = compile(input);
+
+        assert!(result.has_errors(), "{:?}", result.diagnostics);
+        assert!(
+            result.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-PREVIEW-CAPTURE"
+                    && diagnostic.message.contains("outer signals: count")
+            }),
+            "{:?}",
+            result.diagnostics
+        );
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn keeps_auto_non_serializable_signal_handlers_eager() {
+        let source = "import { $state } from 'fict'; export function App() { const callback = $state(() => 'hit'); return <button onClick={() => { console.log(typeof callback()); console.log('again'); }}>Click</button>; }";
+        let mut input = request(source, "preview-signal-auto.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: true,
+            auto_extract_threshold: 1,
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.artifacts.is_empty(), "{:?}", result.artifacts);
+        assert!(result.code.contains("addEventListener"), "{}", result.code);
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn keeps_auto_outer_signal_handlers_eager() {
+        let source = "import { $state } from 'fict'; export function Outer() { const count = $state(0); function Inner() { return <button onClick={() => { console.log(count()); console.log('again'); }}>Click</button>; } return <Inner />; }";
+        let mut input = request(source, "preview-outer-signal-auto.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: true,
+            auto_extract_threshold: 1,
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.artifacts.is_empty(), "{:?}", result.artifacts);
+        assert!(result.code.contains("addEventListener"), "{}", result.code);
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
     fn rejects_explicit_preview_handlers_that_capture_lexical_execution_context() {
         for (name, source, expected) in [
             (
