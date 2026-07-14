@@ -6203,6 +6203,64 @@ mod tests {
 
     #[cfg(feature = "preview")]
     #[test]
+    fn allocates_preview_module_names_and_deduplicates_source_handlers() {
+        let source = "export const __fict_e0 = 'event'; export const __fict_r0 = 'resume'; export const __fict_meta_App = 'meta'; export const __fict_dep_0 = 'dependency'; const moduleValue = 1; function Button() { return <button onClick$={() => moduleValue}>Click</button>; } export function App() { return <div><Button /><svg><g><Button /></g></svg></div>; }";
+        let mut input = request(source, "preview-module-name-collisions.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: false,
+            ..CompilerPreviewOptions::default()
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(result.artifacts.len(), 1, "{:?}", result.artifacts);
+        assert_eq!(
+            result.artifacts[0]
+                .handler
+                .as_ref()
+                .expect("handler metadata")
+                .source_export_name,
+            "__fict_e1"
+        );
+        for preserved in [
+            "export const __fict_e0 = \"event\"",
+            "export const __fict_r0 = \"resume\"",
+            "export const __fict_meta_App = \"meta\"",
+            "export const __fict_dep_0 = \"dependency\"",
+        ] {
+            assert!(
+                result.code.contains(preserved),
+                "{preserved}: {}",
+                result.code
+            );
+        }
+        assert!(
+            result
+                .code
+                .contains("export { moduleValue as __fict_dep_1 }"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("export const __fict_r1"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("export const __fict_r2"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("const __fict_meta_App_1"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
     fn preserves_async_and_generator_preview_function_dependencies() {
         let source = "export function App() { const asyncHelper = async () => await Promise.resolve(1); function* generatorHelper() { yield 1; } return <><button onClick$={async () => await asyncHelper()}>Async</button><button onClick$={() => generatorHelper().next()}>Generator</button></>; }";
         let mut input = request(source, "preview-async-generator-functions.tsx");
