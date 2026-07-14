@@ -54,6 +54,12 @@ test('precommit, release verification, and CI enforce the review regression suit
   assert.match(ciWorkflow, /run: pnpm test:review-regressions/)
 })
 
+test('compiler and top-level release gates enforce Rust architecture and complexity budgets', () => {
+  assert.match(rootPackage.scripts['release:verify'], /pnpm guardrails:rust-crates/)
+  assert.match(rootPackage.scripts['release:compiler:verify'], /pnpm guardrails:rust-crates/)
+  assert.match(ciWorkflow, /^\s+pnpm guardrails:rust-crates$/m)
+})
+
 test('rollout candidates only chain the immediately preceding successful main push', () => {
   assert.doesNotMatch(ciWorkflow, /^\s+status: 'completed'$/m)
   assert.match(ciWorkflow, /\.filter\(candidate => candidate\.id < context\.runId\)/)
