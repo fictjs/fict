@@ -14,12 +14,11 @@
  */
 
 import {
-  RUNTIME_ALIASES,
-  RUNTIME_HELPERS,
   RUNTIME_HELPER_MODULES,
   RUNTIME_MODULES,
   RUNTIME_DELEGATED_EVENTS,
 } from './runtime-abi.generated'
+import type { RUNTIME_HELPERS } from './runtime-abi.generated'
 
 export { RUNTIME_ABI_VERSION, RUNTIME_ALIASES, RUNTIME_HELPERS } from './runtime-abi.generated'
 

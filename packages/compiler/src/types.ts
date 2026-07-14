@@ -213,7 +213,7 @@ export interface RawSourceMap {
   file?: string
   sourceRoot?: string
   sources: string[]
-  sourcesContent?: Array<string | null>
+  sourcesContent?: (string | null)[]
   names?: string[]
   mappings: string
   x_google_ignoreList?: number[]
