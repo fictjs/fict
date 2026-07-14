@@ -18,9 +18,9 @@ use crate::{
     DELEGATED_EVENTS, DomBindingKind, DomNamespace, EmitContext, EmitFunction, EmitModulePlan,
     EmitOperation, EmitProgram, EmitPropBinding, EmitPropCheck, EmitPropMode, EmitPropsDefault,
     EmitPropsPlan, EmitPropsRest, EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef,
-    PropsOperation, ReactivePatternTarget, ReactiveSlot, ReactiveSlotKind, ReactiveSlotStorage,
-    RuntimeFamily, RuntimeHelper, RuntimeImportIntent, name_allocator::NameAllocator,
-    verify_emit_program,
+    EventOptions, PropsOperation, ReactivePatternTarget, ReactiveSlot, ReactiveSlotKind,
+    ReactiveSlotStorage, RuntimeFamily, RuntimeHelper, RuntimeImportIntent,
+    name_allocator::NameAllocator, verify_emit_program,
 };
 
 /// Phase-1 Core lowering configuration.
@@ -1614,6 +1614,7 @@ enum TemplateBinding {
         path: Vec<u32>,
         event: String,
         handler: ValueId,
+        options: EventOptions,
         resumable_explicit: bool,
     },
     Ref {
@@ -2018,6 +2019,7 @@ fn lower_jsx_instruction(
                 path,
                 event,
                 handler,
+                options,
                 resumable_explicit,
             } => {
                 let origin =
@@ -2031,11 +2033,12 @@ fn lower_jsx_instruction(
                     operations,
                     origin,
                 );
-                let delegated = DELEGATED_EVENTS.contains(&event.as_str());
+                let delegated = options.is_empty() && DELEGATED_EVENTS.contains(&event.as_str());
                 operations.push(EmitOperation::BindEvent {
                     element,
                     event,
                     handler: lower_value(handler, value_temporaries),
+                    options,
                     resumable_explicit,
                     delegated,
                     helper: if delegated {
@@ -2667,12 +2670,14 @@ fn serialize_node(
                                         path: path.clone(),
                                         reference: *value,
                                     });
-                                } else if let Some((event, resumable_explicit)) = event_name(&name)
+                                } else if let Some((event, resumable_explicit, options)) =
+                                    parse_event_attribute(&name)
                                 {
                                     bindings.push(TemplateBinding::Event {
                                         path: path.clone(),
                                         event,
                                         handler: *value,
+                                        options,
                                         resumable_explicit,
                                     });
                                 } else {
@@ -3343,21 +3348,80 @@ fn valid_markup_name(value: &str) -> bool {
         })
 }
 
-fn event_name(attribute: &str) -> Option<(String, bool)> {
+pub fn parse_event_attribute(attribute: &str) -> Option<(String, bool, EventOptions)> {
     let (attribute, resumable_explicit) = match attribute.strip_suffix('$') {
         Some(attribute) => (attribute, true),
         None => (attribute, false),
     };
-    if let Some(event) = attribute.strip_prefix("on:")
-        && !event.is_empty()
-    {
-        return Some((event.to_ascii_lowercase(), resumable_explicit));
+    if let Some(event) = attribute.strip_prefix("oncapture:") {
+        return (!event.is_empty()).then_some((
+            event.to_ascii_lowercase(),
+            resumable_explicit,
+            EventOptions {
+                capture: true,
+                ..EventOptions::default()
+            },
+        ));
     }
-    let event = attribute.strip_prefix("on")?;
-    if event.is_empty() {
+    if let Some(event) = attribute.strip_prefix("on:") {
+        return (!event.is_empty()).then_some((
+            event.to_ascii_lowercase(),
+            resumable_explicit,
+            EventOptions::default(),
+        ));
+    }
+    let mut event = attribute.strip_prefix("on")?.to_owned();
+    if !event.chars().next().is_some_and(char::is_uppercase) {
         return None;
     }
-    Some((event.to_ascii_lowercase(), resumable_explicit))
+    let mut options = EventOptions::default();
+    if let Some((known, suffix)) = ["GotPointerCapture", "LostPointerCapture"]
+        .into_iter()
+        .find_map(|known| event.strip_prefix(known).map(|suffix| (known, suffix)))
+        && let Some(parsed) = parse_event_modifier_suffixes(suffix)
+    {
+        event = known.to_owned();
+        options = parsed;
+    } else {
+        loop {
+            if let Some(base) = event.strip_suffix("Capture") {
+                event = base.to_owned();
+                options.capture = true;
+                continue;
+            }
+            if let Some(base) = event.strip_suffix("Passive") {
+                event = base.to_owned();
+                options.passive = true;
+                continue;
+            }
+            if let Some(base) = event.strip_suffix("Once") {
+                event = base.to_owned();
+                options.once = true;
+                continue;
+            }
+            break;
+        }
+    }
+    (!event.is_empty()).then(|| (event.to_ascii_lowercase(), resumable_explicit, options))
+}
+
+fn parse_event_modifier_suffixes(mut suffix: &str) -> Option<EventOptions> {
+    let mut options = EventOptions::default();
+    while !suffix.is_empty() {
+        if let Some(rest) = suffix.strip_prefix("Capture") {
+            options.capture = true;
+            suffix = rest;
+        } else if let Some(rest) = suffix.strip_prefix("Passive") {
+            options.passive = true;
+            suffix = rest;
+        } else if let Some(rest) = suffix.strip_prefix("Once") {
+            options.once = true;
+            suffix = rest;
+        } else {
+            return None;
+        }
+    }
+    Some(options)
 }
 
 fn creation_helper(kind: FunctionKind, macro_kind: FictMacroKind) -> RuntimeHelper {
@@ -4064,5 +4128,32 @@ mod namespace_tests {
             })
             .collect();
         assert_eq!(events, [("click", true), ("input", true), ("blur", false)]);
+    }
+
+    #[test]
+    fn normalizes_dom_event_options_and_pointer_capture_names() {
+        let (event, explicit, options) =
+            parse_event_attribute("onClickCapturePassiveOnce$").expect("combined event");
+        assert_eq!(event, "click");
+        assert!(explicit);
+        assert!(options.capture && options.passive && options.once);
+
+        let (event, explicit, options) =
+            parse_event_attribute("onGotPointerCapture$").expect("pointer capture event");
+        assert_eq!(event, "gotpointercapture");
+        assert!(explicit);
+        assert!(options.is_empty());
+
+        let (event, explicit, options) =
+            parse_event_attribute("onGotPointerCaptureOnce").expect("pointer capture once event");
+        assert_eq!(event, "gotpointercapture");
+        assert!(!explicit);
+        assert!(options.once && !options.capture && !options.passive);
+
+        let (event, explicit, options) =
+            parse_event_attribute("oncapture:Input$").expect("namespaced capture event");
+        assert_eq!(event, "input");
+        assert!(explicit && options.capture);
+        assert!(parse_event_attribute("onclick").is_none());
     }
 }

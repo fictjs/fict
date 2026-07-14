@@ -8,10 +8,10 @@ use fict_diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
 };
 use fict_emit::{
-    EmitOperation, EmitPreviewComponent, EmitPreviewHandler, EmitPreviewLexicalCapture,
-    EmitPreviewLocalHandler, EmitPreviewModuleCapture, EmitPreviewPlan, EmitPreviewPropCapture,
-    EmitPreviewPropRestCapture, EmitProgram, EmitPropBinding, EmitValueRef, ReactiveSlotStorage,
-    RuntimeHelper, RuntimeImportIntent,
+    DELEGATED_EVENTS, EmitOperation, EmitPreviewComponent, EmitPreviewHandler,
+    EmitPreviewLexicalCapture, EmitPreviewLocalHandler, EmitPreviewModuleCapture, EmitPreviewPlan,
+    EmitPreviewPropCapture, EmitPreviewPropRestCapture, EmitProgram, EmitPropBinding, EmitValueRef,
+    EventOptions, ReactiveSlotStorage, RuntimeHelper, RuntimeImportIntent, parse_event_attribute,
 };
 use fict_hir::{
     BindingId, BindingKind, ContextValueKind, FunctionId, FunctionKind, HirFile,
@@ -56,6 +56,42 @@ pub fn attach_preview_plan(
                     handler_node_count(hir, function) >= options.auto_extract_threshold
                 });
             if !candidate.explicit && !automatically_selected {
+                continue;
+            }
+
+            if !candidate.options.is_empty() {
+                if candidate.explicit {
+                    diagnostics.push(
+                        preview_error(
+                            "FICT-PREVIEW-EVENT-OPTIONS",
+                            format!(
+                                "resumable event handler on:{} does not support event options ({})",
+                                candidate.event,
+                                event_option_labels(candidate.options).join(", ")
+                            ),
+                        )
+                        .with_primary_span(handler_origin)
+                        .with_help("remove the `$` suffix or the event modifier"),
+                    );
+                }
+                continue;
+            }
+            if !DELEGATED_EVENTS.contains(&candidate.event.as_str()) {
+                if candidate.explicit {
+                    diagnostics.push(
+                        preview_error(
+                            "FICT-PREVIEW-EVENT-LOADER",
+                            format!(
+                                "resumable event handler on:{} is not observed by the default loader",
+                                candidate.event
+                            ),
+                        )
+                        .with_primary_span(handler_origin)
+                        .with_help(
+                            "remove the `$` suffix or configure the loader to observe this event",
+                        ),
+                    );
+                }
                 continue;
             }
 
@@ -444,6 +480,7 @@ pub fn attach_preview_plan(
 struct PreviewEventCandidate {
     event: String,
     handler: EmitValueRef,
+    options: EventOptions,
     explicit: bool,
     origin: Origin,
 }
@@ -458,6 +495,7 @@ fn preview_event_candidates(
         let EmitOperation::BindEvent {
             event,
             handler,
+            options,
             resumable_explicit,
             origin,
             ..
@@ -471,6 +509,7 @@ fn preview_event_candidates(
             PreviewEventCandidate {
                 event: event.clone(),
                 handler: handler.clone(),
+                options: *options,
                 explicit: *resumable_explicit,
                 origin: *origin,
             },
@@ -521,7 +560,7 @@ fn collect_template_event_candidates(
                     let JsxAttribute::Named { name, value, .. } = attribute else {
                         continue;
                     };
-                    let Some((event, explicit)) = preview_event_name(name) else {
+                    let Some((event, explicit, options)) = parse_event_attribute(name) else {
                         continue;
                     };
                     let JsxAttributeValue::Expression { value, .. } = value else {
@@ -537,6 +576,7 @@ fn collect_template_event_candidates(
                         PreviewEventCandidate {
                             event,
                             handler: EmitValueRef::Hir(*value),
+                            options,
                             explicit,
                             origin,
                         },
@@ -563,19 +603,18 @@ fn collect_template_event_candidates(
     }
 }
 
-fn preview_event_name(name: &str) -> Option<(String, bool)> {
-    let (name, explicit) = name
-        .strip_suffix('$')
-        .map_or((name, false), |name| (name, true));
-    if let Some(event) = name.strip_prefix("on:") {
-        return (!event.is_empty()).then(|| (event.to_ascii_lowercase(), explicit));
+fn event_option_labels(options: EventOptions) -> Vec<&'static str> {
+    let mut labels = Vec::new();
+    if options.capture {
+        labels.push("capture");
     }
-    let event = name.strip_prefix("on")?;
-    event
-        .chars()
-        .next()
-        .is_some_and(char::is_uppercase)
-        .then(|| (event.to_ascii_lowercase(), explicit))
+    if options.passive {
+        labels.push("passive");
+    }
+    if options.once {
+        labels.push("once");
+    }
+    labels
 }
 
 fn resolve_handler_function(

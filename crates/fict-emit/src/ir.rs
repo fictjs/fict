@@ -372,6 +372,7 @@ pub enum EmitOperation {
         element: EmitTemporaryId,
         event: String,
         handler: EmitValueRef,
+        options: EventOptions,
         /// Whether the authored JSX event name used the explicit Preview `$` suffix.
         resumable_explicit: bool,
         delegated: bool,
@@ -451,6 +452,21 @@ pub enum EmitOperation {
         value: Option<EmitValueRef>,
         origin: Origin,
     },
+}
+
+/// DOM listener options normalized from JSX event-name suffixes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EventOptions {
+    pub capture: bool,
+    pub passive: bool,
+    pub once: bool,
+}
+
+impl EventOptions {
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        !self.capture && !self.passive && !self.once
+    }
 }
 
 impl EmitOperation {

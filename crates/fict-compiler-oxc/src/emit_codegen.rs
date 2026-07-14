@@ -6,8 +6,8 @@ use fict_diagnostics::{
 };
 use fict_emit::{
     ComponentChild, ComponentProp, ConditionalKind, DomBindingKind, DomNamespace, EmitOperation,
-    EmitPreviewHandler, EmitPreviewPlan, EmitProgram, EmitPropMode, EmitValueRef, PropsOperation,
-    RuntimeHelper,
+    EmitPreviewHandler, EmitPreviewPlan, EmitProgram, EmitPropMode, EmitValueRef, EventOptions,
+    PropsOperation, RuntimeHelper,
 };
 use fict_hir::{
     CompoundAssignmentOperator, JavaScriptString, LiteralValue, TemplateId, UpdateOperator,
@@ -1471,6 +1471,7 @@ enum FineJsxStep {
     Event {
         element: String,
         event: String,
+        options: EventOptions,
         delegated: bool,
         helper: String,
         cleanup_helper: Option<String>,
@@ -1899,6 +1900,7 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                     element,
                     event,
                     handler,
+                    options,
                     delegated,
                     helper,
                     cleanup_helper,
@@ -1977,6 +1979,7 @@ fn template_rewrites(emit: &EmitProgram) -> TemplateRewrites {
                     plan.steps.push(FineJsxStep::Event {
                         element: (*element).to_owned(),
                         event: event.clone(),
+                        options: *options,
                         delegated: *delegated,
                         helper: (*helper).to_owned(),
                         cleanup_helper,
@@ -4009,6 +4012,7 @@ impl<'a> AstRewriter<'a, '_> {
                 FineJsxStep::Event {
                     element,
                     event,
+                    options,
                     delegated,
                     helper,
                     cleanup_helper,
@@ -4087,6 +4091,33 @@ impl<'a> AstRewriter<'a, '_> {
                         )),
                         Argument::from(handler),
                     ]);
+                    if !options.is_empty() {
+                        let mut properties = ArenaVec::new_in(&self.allocator);
+                        if options.capture {
+                            properties.push(self.object_property(
+                                span,
+                                "capture",
+                                Expression::new_boolean_literal(span, true, &builder),
+                            ));
+                        }
+                        if options.passive {
+                            properties.push(self.object_property(
+                                span,
+                                "passive",
+                                Expression::new_boolean_literal(span, true, &builder),
+                            ));
+                        }
+                        if options.once {
+                            properties.push(self.object_property(
+                                span,
+                                "once",
+                                Expression::new_boolean_literal(span, true, &builder),
+                            ));
+                        }
+                        arguments.push(Argument::from(Expression::new_object_expression(
+                            span, properties, &builder,
+                        )));
+                    }
                     if delegated {
                         arguments.push(Argument::from(Expression::new_boolean_literal(
                             span, true, &builder,

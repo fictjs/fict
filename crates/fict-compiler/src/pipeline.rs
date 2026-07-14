@@ -5079,6 +5079,100 @@ mod tests {
 
     #[cfg(feature = "preview")]
     #[test]
+    fn rejects_explicit_preview_event_options() {
+        for (attribute, expected) in [
+            ("onClickCapture$", "capture"),
+            ("onClickPassive$", "passive"),
+            ("onClickOnce$", "once"),
+            ("onClickCapturePassiveOnce$", "capture, passive, once"),
+        ] {
+            for fine_grained_dom in [true, false] {
+                let source = format!(
+                    "export function Button() {{ return <button {attribute}={{() => console.log('x')}}>Click</button>; }}"
+                );
+                let mut input = request(&source, "preview-event-options.tsx");
+                input.options.fine_grained_dom = fine_grained_dom;
+                input.options.preview = Some(CompilerPreviewOptions {
+                    resumable: true,
+                    auto_extract_handlers: false,
+                    ..CompilerPreviewOptions::default()
+                });
+                let result = compile(input);
+
+                assert!(
+                    result.has_errors(),
+                    "{attribute}/{fine_grained_dom}: {:?}",
+                    result.diagnostics
+                );
+                assert!(result.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code.as_str() == "FICT-PREVIEW-EVENT-OPTIONS"
+                        && diagnostic.message.contains(expected)
+                }));
+            }
+        }
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn rejects_explicit_preview_events_unobserved_by_default_loader() {
+        for attribute in ["onSubmit$", "onChange$", "onFocus$", "onBlur$", "onScroll$"] {
+            let source = format!(
+                "export function Form() {{ return <form {attribute}={{() => console.log('x')}}>Save</form>; }}"
+            );
+            let mut input = request(&source, "preview-unobserved-event.tsx");
+            input.options.preview = Some(CompilerPreviewOptions {
+                resumable: true,
+                auto_extract_handlers: false,
+                ..CompilerPreviewOptions::default()
+            });
+            let result = compile(input);
+
+            assert!(result.has_errors(), "{attribute}: {:?}", result.diagnostics);
+            assert!(result.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-PREVIEW-EVENT-LOADER"
+                    && diagnostic
+                        .message
+                        .contains("not observed by the default loader")
+            }));
+        }
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn keeps_auto_event_options_and_unobserved_events_eager() {
+        for (name, attribute, expected) in [
+            ("capture", "onClickCapture", "capture: true"),
+            ("submit", "onSubmit", "\"submit\""),
+        ] {
+            let source = format!(
+                "export function Form() {{ return <form {attribute}={{() => {{ console.log('before'); console.log('after'); }}}}>Save</form>; }}"
+            );
+            let mut input = request(&source, &format!("preview-event-eager-{name}.tsx"));
+            input.options.preview = Some(CompilerPreviewOptions {
+                resumable: true,
+                auto_extract_handlers: true,
+                auto_extract_threshold: 1,
+            });
+            let result = compile(input);
+
+            assert!(!result.has_errors(), "{name}: {:?}", result.diagnostics);
+            assert!(
+                result.artifacts.is_empty(),
+                "{name}: {:?}",
+                result.artifacts
+            );
+            assert!(result.code.contains("bindEvent"), "{name}: {}", result.code);
+            assert!(result.code.contains(expected), "{name}: {}", result.code);
+            assert!(
+                !result.code.contains("fict:compiler-artifact:"),
+                "{name}: {}",
+                result.code
+            );
+        }
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
     fn rejects_explicit_preview_handlers_that_capture_lexical_execution_context() {
         for (name, source, expected) in [
             (

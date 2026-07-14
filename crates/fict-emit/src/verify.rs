@@ -1406,13 +1406,19 @@ fn verify_helper_semantics(
             crate::PropsOperation::Keyed(_) => *helper == RuntimeHelper::Keyed,
         },
         EmitOperation::BindEvent {
+            event,
+            options,
             delegated,
             helper,
             cleanup_helper,
             ..
         } => {
-            if *delegated {
-                *helper == RuntimeHelper::AddEventListener && cleanup_helper.is_none()
+            if event.is_empty() {
+                false
+            } else if *delegated {
+                options.is_empty()
+                    && *helper == RuntimeHelper::AddEventListener
+                    && cleanup_helper.is_none()
             } else {
                 *helper == RuntimeHelper::BindEvent
                     && *cleanup_helper == Some(RuntimeHelper::OnDestroy)

@@ -14,11 +14,11 @@ pub use ir::{
     EmitPreviewComponent, EmitPreviewHandler, EmitPreviewLexicalCapture, EmitPreviewLocalHandler,
     EmitPreviewModuleCapture, EmitPreviewPlan, EmitPreviewPropCapture, EmitPreviewPropRestCapture,
     EmitProgram, EmitPropBinding, EmitPropCheck, EmitPropMode, EmitPropsDefault, EmitPropsPlan,
-    EmitPropsRest, EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef, PropsOperation,
-    ReactivePatternTarget, ReactiveSlot, ReactiveSlotKind, ReactiveSlotStorage,
+    EmitPropsRest, EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef, EventOptions,
+    PropsOperation, ReactivePatternTarget, ReactiveSlot, ReactiveSlotKind, ReactiveSlotStorage,
     RuntimeImportIntent,
 };
-pub use lower::{NoJsxLoweringOptions, lower_core, lower_no_jsx};
+pub use lower::{NoJsxLoweringOptions, lower_core, lower_no_jsx, parse_event_attribute};
 
 pub use runtime_abi::{
     ALL_RUNTIME_HELPERS, DELEGATED_EVENTS, FICT_INTERNAL_MODULE, FICT_LIST_MODULE,
