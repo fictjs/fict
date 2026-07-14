@@ -192,8 +192,11 @@ are one release unit. Their versions must match exactly. The release workflow:
    evidence for every target;
 3. installs each tarball with lifecycle scripts disabled and no Rust toolchain,
    then executes ESM/CJS and sync/async compiler calls on Node 22.18 and 24;
-4. preflights all eight artifacts before any npm publish;
-5. publishes every pending tarball in dependency order, waiting for registry
+4. aggregates all 16 runtime evidence documents and rejects missing or duplicate
+   target/Node pairs, mixed compiler build IDs or source revisions, and Node
+   lanes that did not execute the exact same target tarball;
+5. preflights all eight artifacts before any npm publish;
+6. publishes every pending tarball in dependency order, waiting for registry
    visibility after each package; all native packages precede `@fictjs/compiler`.
 
 Npm has no multi-package transaction. Fict's atomicity guarantee therefore
@@ -207,7 +210,10 @@ version.
 
 The `fict-native-package-*` and `fict-native-evidence-*` workflow artifacts are
 retained for 90 days. Preserve them with the release plan when investigating a
-registry-side partial publication.
+registry-side partial publication. The publishing job accepts runtime evidence
+only when all 16 documents embed `GITHUB_SHA`, share one compiler build ID and
+package version, and the two Node lanes for each target report identical bundle
+hashes and size measurements.
 
 Before tagging a release, make sure each publishable NPM package is configured
 on npmjs.com with:

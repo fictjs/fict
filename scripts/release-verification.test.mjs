@@ -76,6 +76,25 @@ test('controlled native builds embed the workflow source revision', () => {
   assert.match(releaseWorkflow, revisionBinding)
 })
 
+test('release aggregates and certifies all revision-bound native runtime evidence', () => {
+  assert.equal((releaseWorkflow.match(/--node-lane/g) ?? []).length, 2)
+  assert.equal((releaseWorkflow.match(/--expected-revision/g) ?? []).length, 2)
+  assert.match(releaseWorkflow, /pattern: fict-native-evidence-\*/)
+  assert.match(releaseWorkflow, /merge-multiple: true/)
+  assert.match(releaseWorkflow, /verify-runtime-evidence/)
+  assert.match(releaseWorkflow, /--revision "\$\{GITHUB_SHA\}"/)
+
+  const download = releaseWorkflow.indexOf('name: Download all native runtime evidence')
+  const certification = releaseWorkflow.indexOf(
+    'name: Certify the complete native runtime evidence matrix',
+  )
+  const publishPreflight = releaseWorkflow.indexOf(
+    'name: Preflight the complete atomic native publish set',
+  )
+  assert.ok(download >= 0 && download < certification)
+  assert.ok(certification < publishPreflight)
+})
+
 test('rollout candidates are finalized only after every required CI gate succeeds', () => {
   const rawEvidenceUpload = ciWorkflow.indexOf('name: Upload raw rollout evidence')
   const finalizer = ciWorkflow.indexOf('compiler-rollout-finalize:')

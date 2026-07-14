@@ -645,6 +645,242 @@ export function bundleNativePackage({
   return evidence
 }
 
+const GIT_REVISION_PATTERN = /^[0-9a-f]{40}$/
+const SHA256_PATTERN = /^[0-9a-f]{64}$/
+
+function nativeRuntimePairKey(target, nodeLane) {
+  return `${target}:node-${nodeLane}`
+}
+
+export function nativeNodeVersionMatchesLane(version, nodeLane) {
+  if (nodeLane === '22.18.0') return version === 'v22.18.0'
+  if (nodeLane === '24') return /^v24\.\d+\.\d+$/.test(version ?? '')
+  return false
+}
+
+function collectJsonFiles(directory, files = []) {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const entryPath = path.join(directory, entry.name)
+    if (entry.isDirectory()) collectJsonFiles(entryPath, files)
+    else if (entry.isFile() && entry.name.endsWith('.json')) files.push(entryPath)
+  }
+  return files
+}
+
+function loadNativeRuntimeEvidence(directory) {
+  const evidenceDirectory = path.resolve(directory)
+  if (!existsSync(evidenceDirectory) || !statSync(evidenceDirectory).isDirectory()) {
+    throw new Error(`Native runtime evidence directory does not exist: ${evidenceDirectory}`)
+  }
+  const files = collectJsonFiles(evidenceDirectory).sort()
+  if (files.length === 0) {
+    throw new Error(
+      `Native runtime evidence directory contains no JSON files: ${evidenceDirectory}`,
+    )
+  }
+  return files.map(file => {
+    try {
+      return readJson(file)
+    } catch (error) {
+      throw new Error(`Invalid native runtime evidence JSON ${file}: ${error.message}`, {
+        cause: error,
+      })
+    }
+  })
+}
+
+export function validateNativeRuntimeEvidenceMatrix(documents, { expectedRevision } = {}) {
+  if (!Array.isArray(documents)) {
+    throw new TypeError('Native runtime evidence must be an array')
+  }
+  if (!GIT_REVISION_PATTERN.test(expectedRevision ?? '')) {
+    throw new TypeError('expectedRevision must be a lowercase 40-character Git SHA-1')
+  }
+
+  const expectedPairs = new Set(
+    NATIVE_COMPILER_TARGETS.flatMap(definition =>
+      NATIVE_COMPILER_NODE_LANES.map(nodeLane => nativeRuntimePairKey(definition.target, nodeLane)),
+    ),
+  )
+  const evidenceByPair = new Map()
+  const compilerBuildIds = new Set()
+  const packageVersions = new Set()
+  const budgetFingerprints = new Set()
+  const failures = []
+
+  if (documents.length !== expectedPairs.size) {
+    failures.push(
+      `expected exactly ${expectedPairs.size} target/Node certifications; found ${documents.length}`,
+    )
+  }
+
+  for (const [index, evidence] of documents.entries()) {
+    const label = `evidence[${index}]`
+    if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) {
+      failures.push(`${label} must be a JSON object`)
+      continue
+    }
+
+    const definition = NATIVE_COMPILER_TARGETS.find(
+      candidate => candidate.target === evidence.target,
+    )
+    const validNodeLane = NATIVE_COMPILER_NODE_LANES.includes(evidence.nodeLane)
+    const pair =
+      definition && validNodeLane
+        ? nativeRuntimePairKey(definition.target, evidence.nodeLane)
+        : null
+    const evidenceLabel = pair ?? label
+
+    if (!definition) failures.push(`${label} has unsupported target ${String(evidence.target)}`)
+    if (!validNodeLane) {
+      failures.push(`${label} has unsupported Node lane ${String(evidence.nodeLane)}`)
+    }
+    if (pair) {
+      if (evidenceByPair.has(pair)) failures.push(`duplicate certification for ${pair}`)
+      else evidenceByPair.set(pair, evidence)
+    }
+
+    if (evidence.schemaVersion !== 2) {
+      failures.push(`${evidenceLabel} must use runtime evidence schema v2`)
+    }
+    if (definition) {
+      for (const [field, expected] of [
+        ['rustTarget', definition.rustTarget],
+        ['platform', definition.platform],
+        ['arch', definition.arch],
+        ['libc', definition.libc],
+        ['packageName', definition.packageName],
+      ]) {
+        if (evidence[field] !== expected) {
+          failures.push(`${evidenceLabel}.${field} must be ${String(expected)}`)
+        }
+      }
+    }
+    if (validNodeLane && !nativeNodeVersionMatchesLane(evidence.node, evidence.nodeLane)) {
+      failures.push(
+        `${evidenceLabel}.node ${String(evidence.node)} does not match lane ${evidence.nodeLane}`,
+      )
+    }
+    if (typeof evidence.packageVersion !== 'string' || !evidence.packageVersion) {
+      failures.push(`${evidenceLabel}.packageVersion must be a non-empty string`)
+    } else {
+      packageVersions.add(evidence.packageVersion)
+    }
+    for (const field of ['binarySha256', 'tarballSha256']) {
+      if (!SHA256_PATTERN.test(evidence[field] ?? '')) {
+        failures.push(`${evidenceLabel}.${field} must be a lowercase SHA-256`)
+      }
+    }
+    for (const field of ['tarballBytes', 'unpackedBytes']) {
+      if (!Number.isSafeInteger(evidence[field]) || evidence[field] <= 0) {
+        failures.push(`${evidenceLabel}.${field} must be a positive integer`)
+      }
+    }
+    if (typeof evidence.compilerBuildId !== 'string' || !evidence.compilerBuildId) {
+      failures.push(`${evidenceLabel}.compilerBuildId must be a non-empty string`)
+    } else {
+      compilerBuildIds.add(evidence.compilerBuildId)
+    }
+    if (evidence.compilerBuildRevision !== expectedRevision) {
+      failures.push(
+        `${evidenceLabel}.compilerBuildRevision must equal release source revision ${expectedRevision}`,
+      )
+    }
+    if (!sameMembers(evidence.formats, ['cjs', 'esm'])) {
+      failures.push(`${evidenceLabel}.formats must contain exactly cjs and esm`)
+    }
+    if (evidence.syncAndAsync !== true) {
+      failures.push(`${evidenceLabel}.syncAndAsync must be true`)
+    }
+    if (evidence.rustToolchainRequired !== false) {
+      failures.push(`${evidenceLabel}.rustToolchainRequired must be false`)
+    }
+
+    const sizeGate = evidence.sizeGate
+    if (
+      sizeGate?.schemaVersion !== 1 ||
+      sizeGate.target !== evidence.target ||
+      typeof sizeGate.profile !== 'string' ||
+      !sizeGate.profile ||
+      sizeGate.tarballBytes !== evidence.tarballBytes ||
+      sizeGate.unpackedBytes !== evidence.unpackedBytes ||
+      !Number.isSafeInteger(sizeGate.maximumTarballBytes) ||
+      sizeGate.maximumTarballBytes <= 0 ||
+      !Number.isSafeInteger(sizeGate.maximumUnpackedBytes) ||
+      sizeGate.maximumUnpackedBytes <= 0 ||
+      evidence.tarballBytes > sizeGate.maximumTarballBytes ||
+      evidence.unpackedBytes > sizeGate.maximumUnpackedBytes ||
+      sizeGate.passed !== true ||
+      !Array.isArray(sizeGate.violations) ||
+      sizeGate.violations.length !== 0
+    ) {
+      failures.push(`${evidenceLabel}.sizeGate is incomplete or does not pass`)
+    } else {
+      budgetFingerprints.add(
+        JSON.stringify([
+          sizeGate.profile,
+          sizeGate.maximumTarballBytes,
+          sizeGate.maximumUnpackedBytes,
+        ]),
+      )
+    }
+  }
+
+  for (const pair of expectedPairs) {
+    if (!evidenceByPair.has(pair)) failures.push(`missing certification for ${pair}`)
+  }
+  if (compilerBuildIds.size !== 1) {
+    failures.push('all runtime certifications must report one compiler build ID')
+  }
+  if (packageVersions.size !== 1) {
+    failures.push('all runtime certifications must report one native package version')
+  }
+  if (budgetFingerprints.size !== 1) {
+    failures.push('all runtime certifications must use one native package size budget')
+  }
+
+  const bundleFields = [
+    'packageVersion',
+    'binarySha256',
+    'tarballSha256',
+    'tarballBytes',
+    'unpackedBytes',
+    'compilerBuildId',
+    'compilerBuildRevision',
+    'sizeGate',
+  ]
+  for (const definition of NATIVE_COMPILER_TARGETS) {
+    const certifications = NATIVE_COMPILER_NODE_LANES.map(nodeLane =>
+      evidenceByPair.get(nativeRuntimePairKey(definition.target, nodeLane)),
+    )
+    if (certifications.some(evidence => !evidence)) continue
+    const [baseline, comparison] = certifications
+    const changedFields = bundleFields.filter(
+      field => JSON.stringify(baseline[field]) !== JSON.stringify(comparison[field]),
+    )
+    if (changedFields.length > 0) {
+      failures.push(
+        `${definition.target} Node lanes must certify the same bundle; changed ${changedFields.join(', ')}`,
+      )
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`Invalid native runtime evidence matrix:\n- ${failures.join('\n- ')}`)
+  }
+
+  return Object.freeze({
+    schemaVersion: 1,
+    status: 'pass',
+    targets: NATIVE_COMPILER_TARGETS.length,
+    nodeLanes: Object.freeze([...NATIVE_COMPILER_NODE_LANES]),
+    certifications: expectedPairs.size,
+    packageVersion: [...packageVersions][0],
+    compilerBuildId: [...compilerBuildIds][0],
+    compilerBuildRevision: expectedRevision,
+  })
+}
+
 function parseArguments(args) {
   const [command, ...rest] = args
   const options = {}
@@ -700,7 +936,17 @@ function main() {
     )
     return
   }
-  throw new Error(`Usage: native-compiler-packages.mjs <check|matrix|bundle|verify-bundle>`)
+  if (command === 'verify-runtime-evidence') {
+    const result = validateNativeRuntimeEvidenceMatrix(
+      loadNativeRuntimeEvidence(options.evidence),
+      { expectedRevision: options.revision },
+    )
+    process.stdout.write(`${JSON.stringify(result)}\n`)
+    return
+  }
+  throw new Error(
+    'Usage: native-compiler-packages.mjs <check|matrix|bundle|verify-bundle|verify-runtime-evidence>',
+  )
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

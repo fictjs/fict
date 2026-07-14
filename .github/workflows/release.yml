@@ -128,6 +128,8 @@ jobs:
           node scripts/native-compiler-package-smoke.mjs
           --target ${{ matrix.target }}
           --bundle "${{ runner.temp }}/native-package"
+          --node-lane ${{ matrix.node }}
+          --expected-revision ${{ github.sha }}
           --evidence "${{ runner.temp }}/native-evidence/${{ matrix.target }}-node-${{ matrix.node }}.json"
 
       - name: Clean-install and execute ESM/CJS in musl
@@ -143,7 +145,7 @@ jobs:
             -v "${RUNNER_TEMP}/native-evidence:/native-evidence" \
             -w /workspace \
             "${{ matrix.dockerImage }}" \
-            sh -lc 'corepack enable && corepack prepare pnpm@9.1.1 --activate && pnpm install --frozen-lockfile && pnpm --filter @fictjs/compiler build && node scripts/native-compiler-package-smoke.mjs --target "${{ matrix.target }}" --bundle /native-package --evidence "/native-evidence/${{ matrix.target }}-node-${{ matrix.node }}.json"'
+            sh -lc 'corepack enable && corepack prepare pnpm@9.1.1 --activate && pnpm install --frozen-lockfile && pnpm --filter @fictjs/compiler build && node scripts/native-compiler-package-smoke.mjs --target "${{ matrix.target }}" --bundle /native-package --node-lane "${{ matrix.node }}" --expected-revision "${{ github.sha }}" --evidence "/native-evidence/${{ matrix.target }}-node-${{ matrix.node }}.json"'
 
       - name: Upload native runtime evidence
         uses: actions/upload-artifact@v4
@@ -209,6 +211,20 @@ jobs:
         with:
           pattern: fict-native-package-*
           path: ${{ runner.temp }}/native-packages
+
+      - name: Download all native runtime evidence
+        uses: actions/download-artifact@v4
+        with:
+          pattern: fict-native-evidence-*
+          path: ${{ runner.temp }}/native-evidence
+          merge-multiple: true
+
+      - name: Certify the complete native runtime evidence matrix
+        run: >-
+          node scripts/native-compiler-packages.mjs
+          verify-runtime-evidence
+          --evidence "${RUNNER_TEMP}/native-evidence"
+          --revision "${GITHUB_SHA}"
 
       - name: Preflight the complete atomic native publish set
         run: >-

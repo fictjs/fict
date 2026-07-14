@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import {
   NATIVE_COMPILER_NODE_LANES,
@@ -14,8 +16,10 @@ import {
   nativeArtifactName,
   nativeBuildMatrix,
   nativeHostTarget,
+  nativeNodeVersionMatchesLane,
   nativeRuntimeMatrix,
   validateNativePackageConfiguration,
+  validateNativeRuntimeEvidenceMatrix,
   validateOxcVersionAlignment,
   verifyNativeBundle,
   verifyNativePackageArtifact,
@@ -25,6 +29,52 @@ import {
   validateNativePublishPlan,
 } from './publish-native-compiler-packages.mjs'
 import { prepareReleaseArtifacts, validateReleasePublishPlan } from './publish-release-packages.mjs'
+
+const RUNTIME_REVISION = 'a'.repeat(40)
+const RUNTIME_BUILD_ID = `fict-rust-p1-oxc0.139.0-m1-${'b'.repeat(64)}`
+
+function nativeRuntimeEvidenceFixture() {
+  const hashCharacters = '123456789abcdef0'
+  return NATIVE_COMPILER_TARGETS.flatMap((target, targetIndex) => {
+    const binarySha256 = hashCharacters[targetIndex].repeat(64)
+    const tarballSha256 = hashCharacters[targetIndex + 8].repeat(64)
+    const tarballBytes = 1_000 + targetIndex
+    const unpackedBytes = 2_000 + targetIndex
+    const sizeGate = {
+      schemaVersion: 1,
+      target: target.target,
+      profile: 'ci',
+      tarballBytes,
+      unpackedBytes,
+      maximumTarballBytes: 10_000,
+      maximumUnpackedBytes: 20_000,
+      passed: true,
+      violations: [],
+    }
+    return NATIVE_COMPILER_NODE_LANES.map(nodeLane => ({
+      schemaVersion: 2,
+      target: target.target,
+      rustTarget: target.rustTarget,
+      nodeLane,
+      node: nodeLane === '22.18.0' ? 'v22.18.0' : 'v24.7.0',
+      platform: target.platform,
+      arch: target.arch,
+      libc: target.libc,
+      packageName: target.packageName,
+      packageVersion: '1.2.3',
+      binarySha256,
+      tarballSha256,
+      tarballBytes,
+      unpackedBytes,
+      sizeGate: structuredClone(sizeGate),
+      compilerBuildId: RUNTIME_BUILD_ID,
+      compilerBuildRevision: RUNTIME_REVISION,
+      formats: ['esm', 'cjs'],
+      syncAndAsync: true,
+      rustToolchainRequired: false,
+    }))
+  })
+}
 
 test('defines eight blocking native targets and two Node runtime lanes', () => {
   assert.equal(NATIVE_COMPILER_TARGETS.length, 8)
@@ -40,6 +90,81 @@ test('defines eight blocking native targets and two Node runtime lanes', () => {
       assert.ok(runtimePairs.has(`${target.target}:${node}`))
     }
   }
+
+  assert.equal(nativeNodeVersionMatchesLane('v22.18.0', '22.18.0'), true)
+  assert.equal(nativeNodeVersionMatchesLane('v22.18.1', '22.18.0'), false)
+  assert.equal(nativeNodeVersionMatchesLane('v24.7.0', '24'), true)
+  assert.equal(nativeNodeVersionMatchesLane('v25.0.0', '24'), false)
+})
+
+test('certifies one complete revision-bound native runtime evidence matrix', () => {
+  assert.deepEqual(
+    validateNativeRuntimeEvidenceMatrix(nativeRuntimeEvidenceFixture(), {
+      expectedRevision: RUNTIME_REVISION,
+    }),
+    {
+      schemaVersion: 1,
+      status: 'pass',
+      targets: 8,
+      nodeLanes: ['22.18.0', '24'],
+      certifications: 16,
+      packageVersion: '1.2.3',
+      compilerBuildId: RUNTIME_BUILD_ID,
+      compilerBuildRevision: RUNTIME_REVISION,
+    },
+  )
+})
+
+test('verifies downloaded native runtime evidence through the release CLI', () => {
+  const evidenceDirectory = mkdtempSync(path.join(os.tmpdir(), 'fict-native-evidence-test-'))
+  try {
+    for (const evidence of nativeRuntimeEvidenceFixture()) {
+      writeFileSync(
+        path.join(evidenceDirectory, `${evidence.target}-node-${evidence.nodeLane}.json`),
+        `${JSON.stringify(evidence)}\n`,
+      )
+    }
+    const result = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL('./native-compiler-packages.mjs', import.meta.url)),
+        'verify-runtime-evidence',
+        '--evidence',
+        evidenceDirectory,
+        '--revision',
+        RUNTIME_REVISION,
+      ],
+      { encoding: 'utf8' },
+    )
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(JSON.parse(result.stdout).certifications, 16)
+  } finally {
+    rmSync(evidenceDirectory, { recursive: true, force: true })
+  }
+})
+
+test('rejects incomplete, duplicate, mixed-build, and mixed-bundle runtime evidence', () => {
+  const validate = documents =>
+    validateNativeRuntimeEvidenceMatrix(documents, { expectedRevision: RUNTIME_REVISION })
+  const complete = nativeRuntimeEvidenceFixture()
+
+  assert.throws(() => validate(complete.slice(1)), /missing certification for/)
+  assert.throws(
+    () => validate([...complete, structuredClone(complete[0])]),
+    /duplicate certification/,
+  )
+
+  const mixedRevision = structuredClone(complete)
+  mixedRevision[0].compilerBuildRevision = 'c'.repeat(40)
+  assert.throws(() => validate(mixedRevision), /must equal release source revision/)
+
+  const mixedBuild = structuredClone(complete)
+  mixedBuild[0].compilerBuildId = `${RUNTIME_BUILD_ID}-different`
+  assert.throws(() => validate(mixedBuild), /must report one compiler build ID/)
+
+  const mixedBundle = structuredClone(complete)
+  mixedBundle[1].binarySha256 = 'd'.repeat(64)
+  assert.throws(() => validate(mixedBundle), /Node lanes must certify the same bundle/)
 })
 
 test('maps supported development hosts to their release package target', () => {

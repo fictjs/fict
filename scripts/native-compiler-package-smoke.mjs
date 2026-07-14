@@ -16,8 +16,10 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
+  NATIVE_COMPILER_NODE_LANES,
   NATIVE_COMPILER_TARGETS,
   bundleNativePackage,
+  nativeNodeVersionMatchesLane,
   repositoryRoot,
   verifyNativeBundle,
 } from './native-compiler-packages.mjs'
@@ -186,6 +188,26 @@ function main() {
   const host = detectHostTarget()
   const target = options.target ?? host.target
   assert.equal(target, host.target, `Runtime host ${host.target} cannot certify ${target}`)
+  const nodeLane = options['node-lane'] ?? null
+  if (nodeLane !== null) {
+    assert.ok(
+      NATIVE_COMPILER_NODE_LANES.includes(nodeLane),
+      `Unsupported native runtime Node lane: ${nodeLane}`,
+    )
+    assert.ok(
+      nativeNodeVersionMatchesLane(process.version, nodeLane),
+      `Runtime Node ${process.version} does not match declared lane ${nodeLane}`,
+    )
+  }
+  const expectedRevision =
+    options['expected-revision'] ?? process.env.FICT_COMPILER_BUILD_REVISION ?? null
+  if (expectedRevision !== null) {
+    assert.match(
+      expectedRevision,
+      /^[0-9a-f]{40}$/,
+      'Expected native compiler revision must be a lowercase 40-character Git SHA-1',
+    )
+  }
 
   const tempRoot = mkdtempSync(path.join(os.tmpdir(), `fict-native-${target}-`))
   const packsDirectory = path.join(tempRoot, 'packs')
@@ -279,6 +301,9 @@ function main() {
       assert.equal(result.info.nativeTarget, host.rustTarget)
       assert.equal(result.info.nodeApiVersion, 10)
       assert.equal(result.info.compilerBuildId, result.compilerBuildId)
+      if (expectedRevision !== null) {
+        assert.equal(result.info.compilerBuildRevision, expectedRevision)
+      }
     }
     assert.equal(esm.info.compilerBuildId, cjs.info.compilerBuildId)
     assert.equal(esm.info.compilerBuildRevision, cjs.info.compilerBuildRevision)
@@ -287,6 +312,7 @@ function main() {
       schemaVersion: 2,
       target,
       rustTarget: host.rustTarget,
+      nodeLane,
       node: process.version,
       platform: process.platform,
       arch: process.arch,
