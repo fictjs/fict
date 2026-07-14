@@ -19,6 +19,7 @@ import {
   nativeHostTarget,
   nativeNodeVersionMatchesLane,
   nativeRuntimeMatrix,
+  npmInvocation,
   validateNativePackageConfiguration,
   validateNativeRuntimeEvidenceMatrix,
   validateOxcVersionAlignment,
@@ -300,6 +301,25 @@ test('maps supported development hosts to their release package target', () => {
     () => nativeHostTarget({ platform: 'freebsd', arch: 'x64' }),
     /Unsupported Fict native compiler host/,
   )
+})
+
+test('invokes npm through the Windows command interpreter for native package assembly', () => {
+  const args = ['pack', 'D:\\a\\fict package', '--json']
+  assert.deepEqual(
+    npmInvocation(args, {
+      platform: 'win32',
+      commandInterpreter: 'C:\\Windows\\System32\\cmd.exe',
+    }),
+    {
+      command: 'C:\\Windows\\System32\\cmd.exe',
+      args: ['/d', '/s', '/c', 'npm.cmd', ...args],
+    },
+  )
+  assert.deepEqual(npmInvocation(args, { platform: 'linux' }), {
+    command: 'npm',
+    args,
+  })
+  assert.throws(() => npmInvocation(['pack', 1], { platform: 'win32' }), /must be strings/)
 })
 
 test('keeps facade optional dependencies, package manifests, allowlist, and Changesets aligned', () => {

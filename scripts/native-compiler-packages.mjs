@@ -519,13 +519,33 @@ function parseNpmPackOutput(output) {
   return entries[0]
 }
 
+export function npmInvocation(
+  args,
+  { platform = process.platform, commandInterpreter = process.env.ComSpec } = {},
+) {
+  if (!Array.isArray(args) || args.some(argument => typeof argument !== 'string')) {
+    throw new TypeError('npm invocation arguments must be strings')
+  }
+  return platform === 'win32'
+    ? {
+        command: commandInterpreter || 'cmd.exe',
+        args: ['/d', '/s', '/c', 'npm.cmd', ...args],
+      }
+    : { command: 'npm', args: [...args] }
+}
+
 export function packNativePackage({ target, packageDirectory, outputDirectory }) {
   const artifact = verifyNativePackageArtifact({ target, packageDirectory })
   const destination = path.resolve(outputDirectory)
   mkdirSync(destination, { recursive: true })
-  const packed = parseNpmPackOutput(
-    run('npm', ['pack', artifact.directory, '--json', '--pack-destination', destination]),
-  )
+  const invocation = npmInvocation([
+    'pack',
+    artifact.directory,
+    '--json',
+    '--pack-destination',
+    destination,
+  ])
+  const packed = parseNpmPackOutput(run(invocation.command, invocation.args))
   const requiredEntries = new Set([
     'package.json',
     NATIVE_COMPILER_BINARY,
