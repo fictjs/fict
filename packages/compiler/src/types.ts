@@ -224,6 +224,8 @@ export interface CompileRequest {
   code: string
   filename: string
   moduleId?: string | null
+  /** Stable graph-host identity embedded in Preview QRLs instead of a physical path. */
+  publicModuleId?: string | null
   language?: SourceLanguage | null
   moduleKind?: ModuleKind | null
   inputSourceMap?: RawSourceMap | null
@@ -285,11 +287,23 @@ export interface AnalyzeRequest {
 
 export type CompilerArtifactKind = 'handlerModule' | 'auxiliaryModule'
 
+export interface HandlerArtifactMetadata {
+  /** Request-local source export retained for QRL and diagnostic identity. */
+  sourceExportName: string
+  /** Export loaded from the standalone handler module, normally `default`. */
+  artifactExportName: string
+  /** Compiler-owned placeholder embedded in main output for graph-host replacement. */
+  moduleSpecifier: string
+  /** Authored handler expression used by artifact source-map probes. */
+  sourceSpan: FictSourceSpan
+}
+
 export interface CompilerArtifact {
   id: string
   kind: CompilerArtifactKind
   code: string
   map: RawSourceMap | null
+  handler: HandlerArtifactMetadata | null
 }
 
 export interface NativeCompilerExplainEvent {

@@ -28,6 +28,22 @@ pub struct CompilerArtifact {
     pub code: String,
     /// Optional map back to the original source.
     pub map: Option<RawSourceMap>,
+    /// Handler-only routing metadata. Auxiliary modules leave this absent.
+    pub handler: Option<HandlerArtifactMetadata>,
+}
+
+/// Structured routing data for a lazily loaded Preview handler module.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HandlerArtifactMetadata {
+    /// Request-local source export retained for QRL and diagnostic identity.
+    pub source_export_name: String,
+    /// Export loaded from the standalone artifact module, normally `default`.
+    pub artifact_export_name: String,
+    /// Compiler-owned placeholder embedded in the main output for host replacement.
+    pub module_specifier: String,
+    /// Authored handler expression span used by artifact source-map probes.
+    pub source_span: SourceSpan,
 }
 
 /// Native explanation event category.
@@ -153,9 +169,10 @@ impl CompileResult {
 
 #[cfg(test)]
 mod tests {
+    use fict_diagnostics::SourceSpan;
     use serde_json::json;
 
-    use super::CompileResult;
+    use super::{CompileResult, CompilerArtifact, CompilerArtifactKind, HandlerArtifactMetadata};
     use crate::COMPILER_PROTOCOL_VERSION;
 
     #[test]
@@ -177,6 +194,37 @@ mod tests {
                 "artifacts": [],
                 "stats": null,
                 "compilerBuildId": crate::COMPILER_BUILD_ID
+            })
+        );
+    }
+
+    #[test]
+    fn serializes_structured_handler_routing_without_host_specific_state() {
+        let artifact = CompilerArtifact {
+            id: "handler-0".into(),
+            kind: CompilerArtifactKind::HandlerModule,
+            code: "export default () => 1;\n".into(),
+            map: None,
+            handler: Some(HandlerArtifactMetadata {
+                source_export_name: "__fict_e0".into(),
+                artifact_export_name: "default".into(),
+                module_specifier: "fict:compiler-artifact:handler-0".into(),
+                source_span: SourceSpan::new(10, 17).expect("ordered test span"),
+            }),
+        };
+        assert_eq!(
+            serde_json::to_value(artifact).expect("serialize handler artifact"),
+            json!({
+                "id": "handler-0",
+                "kind": "handlerModule",
+                "code": "export default () => 1;\n",
+                "map": null,
+                "handler": {
+                    "sourceExportName": "__fict_e0",
+                    "artifactExportName": "default",
+                    "moduleSpecifier": "fict:compiler-artifact:handler-0",
+                    "sourceSpan": { "start": 10, "end": 17 }
+                }
             })
         );
     }

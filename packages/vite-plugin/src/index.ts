@@ -4538,6 +4538,7 @@ async function compileFictCompilerStage(
         code,
         filename,
         moduleId: stage.moduleId,
+        ...(fictOptions.publicModuleId ? { publicModuleId: fictOptions.publicModuleId } : {}),
         options: nativeCompilerOptions({ ...fictOptions, explain: true }, tsImportElision),
         metadata: stage.metadata,
         integrationDiagnostics: nativeIntegrationDiagnostics(
@@ -4582,6 +4583,7 @@ async function compileFictCompilerStage(
       code,
       filename,
       moduleId: stage.moduleId,
+      ...(fictOptions.publicModuleId ? { publicModuleId: fictOptions.publicModuleId } : {}),
       options: nativeCompilerOptions(fictOptions, tsImportElision),
       metadata: stage.metadata,
       integrationDiagnostics: nativeIntegrationDiagnostics(

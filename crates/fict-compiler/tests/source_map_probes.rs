@@ -26,6 +26,7 @@ impl MappedOutput {
             code: source.to_owned(),
             filename: filename.to_owned(),
             module_id: None,
+            public_module_id: None,
             language: None,
             module_kind,
             input_source_map: None,

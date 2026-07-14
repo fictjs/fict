@@ -36,7 +36,7 @@ pub use request::{
 };
 pub use result::{
     CompileResult, CompilerArtifact, CompilerArtifactKind, CompilerExplainArtifact,
-    CompilerExplainEvent, CompilerExplainEventKind, CompilerStats,
+    CompilerExplainEvent, CompilerExplainEventKind, CompilerStats, HandlerArtifactMetadata,
 };
 pub use scan::{
     ScanModuleRequest, ScanModuleRequestKind, ScanResult, internal_scan_error_result,

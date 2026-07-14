@@ -213,6 +213,9 @@ pub struct CompileRequest {
     /// Bundler identity. Query and fragment suffixes are semantically significant.
     #[serde(default)]
     pub module_id: Option<String>,
+    /// Stable, host-owned identity embedded in Preview QRLs instead of a physical path.
+    #[serde(default)]
+    pub public_module_id: Option<String>,
     /// Explicit grammar, or infer from a recognized filename extension.
     #[serde(default)]
     pub language: Option<SourceLanguage>,
@@ -334,6 +337,9 @@ impl CompileRequest {
         if let Some(module_id) = &self.module_id {
             validate_identity("moduleId", module_id, false)?;
         }
+        if let Some(public_module_id) = &self.public_module_id {
+            validate_identity("publicModuleId", public_module_id, false)?;
+        }
 
         let physical_name = strip_query_and_fragment(&self.filename);
         validate_identity("filename", physical_name, false)?;
@@ -389,6 +395,7 @@ impl CompileRequest {
             code: self.code,
             filename,
             module_id,
+            public_module_id: self.public_module_id,
             language,
             module_kind,
             input_source_map: self.input_source_map,
@@ -442,6 +449,7 @@ impl AnalyzeRequest {
             code: self.code,
             filename: self.filename,
             module_id: self.module_id,
+            public_module_id: None,
             language: self.language,
             module_kind: self.module_kind,
             input_source_map: None,
@@ -477,6 +485,8 @@ pub struct NormalizedCompileRequest {
     pub filename: String,
     /// Complete graph/cache identity with query/fragment preserved.
     pub module_id: String,
+    /// Optional stable identity supplied by the graph host for Preview output.
+    pub public_module_id: Option<String>,
     /// Explicit source grammar.
     pub language: SourceLanguage,
     /// Explicit module grammar.
@@ -682,6 +692,7 @@ mod tests {
             code: "export const value = 1".to_owned(),
             filename: filename.to_owned(),
             module_id: None,
+            public_module_id: None,
             language: None,
             module_kind: None,
             input_source_map: None,
@@ -695,12 +706,17 @@ mod tests {
     fn infers_language_and_preserves_complete_module_identity() {
         let mut input = request("/src/view.tsx?worker#client");
         input.module_id = Some("/@id/view.tsx?worker#client".to_owned());
+        input.public_module_id = Some("fict:module:m0123456789abcdef".to_owned());
         let normalized = input.normalize().expect("normalize request");
 
         assert_eq!(normalized.language, SourceLanguage::TypeScriptJsx);
         assert_eq!(normalized.module_kind, ModuleKind::Module);
         assert_eq!(normalized.filename, "/src/view.tsx");
         assert_eq!(normalized.module_id, "/@id/view.tsx?worker#client");
+        assert_eq!(
+            normalized.public_module_id.as_deref(),
+            Some("fict:module:m0123456789abcdef")
+        );
     }
 
     #[test]
