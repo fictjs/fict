@@ -9,6 +9,8 @@ import {
   NATIVE_COMPILER_TARGETS,
   assembleNativePackage,
   bundleNativePackage,
+  evaluateNativePackageSize,
+  loadNativePackageSizeBudget,
   nativeArtifactName,
   nativeBuildMatrix,
   nativeHostTarget,
@@ -63,6 +65,29 @@ test('keeps facade optional dependencies, package manifests, allowlist, and Chan
   assert.deepEqual(validateNativePackageConfiguration(), [])
 })
 
+test('enforces compressed and unpacked native package size budgets', () => {
+  const budget = loadNativePackageSizeBudget()
+  const withinBudget = evaluateNativePackageSize({
+    target: 'darwin-arm64',
+    tarballBytes: budget.maximumTarballBytes,
+    unpackedBytes: budget.maximumUnpackedBytes,
+    budget,
+  })
+  assert.equal(withinBudget.passed, true)
+  assert.deepEqual(withinBudget.violations, [])
+
+  const oversized = evaluateNativePackageSize({
+    target: 'darwin-arm64',
+    tarballBytes: budget.maximumTarballBytes + 1,
+    unpackedBytes: budget.maximumUnpackedBytes + 1,
+    budget,
+  })
+  assert.equal(oversized.passed, false)
+  assert.equal(oversized.violations.length, 2)
+  assert.match(oversized.violations[0], /tarball .* exceeds/)
+  assert.match(oversized.violations[1], /unpacked package .* exceeds/)
+})
+
 test('assembles and verifies deterministic binary metadata and checksums', () => {
   const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'fict-native-package-test-'))
   try {
@@ -104,9 +129,45 @@ test('packs a complete native bundle with a tarball checksum', () => {
     })
     const verified = verifyNativeBundle({ target: 'darwin-arm64', bundleDirectory })
     assert.equal(evidence.tarballSha256, verified.tarballSha256)
+    assert.equal(evidence.schemaVersion, 2)
+    assert.equal(evidence.sizeGate.passed, true)
+    assert.deepEqual(evidence.sizeGate, verified.buildEvidence.sizeGate)
     assert.match(
       readFileSync(`${verified.tarballPath}.sha256`, 'utf8'),
       new RegExp(`^${verified.tarballSha256}  `),
+    )
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
+test('refuses to certify a native bundle that exceeds its package budget', () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'fict-native-size-gate-test-'))
+  try {
+    const binaryPath = path.join(tempRoot, 'compiler.node')
+    const budgetPath = path.join(tempRoot, 'budget.json')
+    writeFileSync(binaryPath, 'native-test-binary')
+    writeFileSync(
+      budgetPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        profiles: {
+          ci: {
+            maximumNativeTarballBytes: 1,
+            maximumNativeUnpackedBytes: 1,
+          },
+        },
+      })}\n`,
+    )
+    assert.throws(
+      () =>
+        bundleNativePackage({
+          target: 'darwin-arm64',
+          binaryPath,
+          outputDirectory: path.join(tempRoot, 'bundle'),
+          budgetPath,
+        }),
+      /exceeds the ci size budget/,
     )
   } finally {
     rmSync(tempRoot, { recursive: true, force: true })

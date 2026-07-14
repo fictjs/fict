@@ -96,8 +96,12 @@ distinct CI run can record two. Local smoke runs do not become release evidence.
 
 The performance budget is owned by
 [`compiler-backend-budget.json`](../../../.github/compiler-backend-budget.json).
-Raw paired samples remain in the downloadable CI artifact; documentation MUST
-NOT replace them with a hand-maintained benchmark claim.
+It also owns the native tarball and npm unpacked-size ceilings. Every platform
+bundle records the measured bytes, selected profile, limits, and pass/fail
+result in its checksummed build evidence; bundle verification recalculates the
+result before publication. Raw paired samples and platform evidence remain in
+downloadable CI artifacts; documentation MUST NOT replace them with a
+hand-maintained benchmark or package-size claim.
 
 ## Human review gate
 
@@ -114,7 +118,7 @@ Reviewer focus:
 - TypeScript namespace/CTS ownership and cross-module metadata;
 - runtime helper, metadata schema, and N-API build identity;
 - source-map origins and platform-package coverage;
-- p95 throughput, peak RSS, and output-size budgets;
+- p95 throughput, peak RSS, output-size, and native-package size budgets;
 - proof that the rollback purges every compatibility cache and artifact.
 
 ## Monitoring and stop conditions

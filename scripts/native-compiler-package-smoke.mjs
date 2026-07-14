@@ -296,6 +296,7 @@ function main() {
       tarballSha256: nativeBundle.tarballSha256,
       tarballBytes: nativeBundle.buildEvidence.tarballBytes,
       unpackedBytes: nativeBundle.buildEvidence.unpackedBytes,
+      sizeGate: nativeBundle.buildEvidence.sizeGate,
       compilerBuildId: esm.info.compilerBuildId,
       formats: [esm.format, cjs.format],
       syncAndAsync: true,

@@ -20,6 +20,11 @@ export const NATIVE_COMPILER_BINARY = 'fict_compiler_napi.node'
 export const NATIVE_COMPILER_MANIFEST = 'binding-manifest.json'
 export const NATIVE_COMPILER_CHECKSUMS = 'SHASUMS256.txt'
 export const NATIVE_COMPILER_NODE_LANES = Object.freeze(['22.18.0', '24'])
+export const NATIVE_COMPILER_BUDGET_PATH = path.join(
+  repositoryRoot,
+  '.github',
+  'compiler-backend-budget.json',
+)
 
 const targetDefinitions = [
   {
@@ -169,6 +174,75 @@ export function nativeRuntimeMatrix() {
 
 function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, 'utf8'))
+}
+
+export function loadNativePackageSizeBudget({
+  budgetPath = NATIVE_COMPILER_BUDGET_PATH,
+  profile = 'ci',
+} = {}) {
+  const document = readJson(path.resolve(budgetPath))
+  if (document.schemaVersion !== 1 || !document.profiles?.[profile]) {
+    throw new Error(`Unknown native compiler package budget profile ${profile}`)
+  }
+  const source = document.profiles[profile]
+  for (const name of ['maximumNativeTarballBytes', 'maximumNativeUnpackedBytes']) {
+    if (!Number.isSafeInteger(source[name]) || source[name] <= 0) {
+      throw new TypeError(
+        `Native compiler package budget ${profile}.${name} must be a positive integer`,
+      )
+    }
+  }
+  return Object.freeze({
+    profile,
+    maximumTarballBytes: source.maximumNativeTarballBytes,
+    maximumUnpackedBytes: source.maximumNativeUnpackedBytes,
+  })
+}
+
+export function evaluateNativePackageSize({ target, tarballBytes, unpackedBytes, budget }) {
+  nativeTargetDefinition(target)
+  for (const [name, value] of Object.entries({ tarballBytes, unpackedBytes })) {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new TypeError(`${name} must be a positive integer`)
+    }
+  }
+  if (
+    !budget ||
+    typeof budget.profile !== 'string' ||
+    !Number.isSafeInteger(budget.maximumTarballBytes) ||
+    !Number.isSafeInteger(budget.maximumUnpackedBytes)
+  ) {
+    throw new TypeError('A validated native compiler package size budget is required')
+  }
+
+  const violations = []
+  if (tarballBytes > budget.maximumTarballBytes) {
+    violations.push(`tarball ${tarballBytes} bytes exceeds ${budget.maximumTarballBytes} bytes`)
+  }
+  if (unpackedBytes > budget.maximumUnpackedBytes) {
+    violations.push(
+      `unpacked package ${unpackedBytes} bytes exceeds ${budget.maximumUnpackedBytes} bytes`,
+    )
+  }
+  return Object.freeze({
+    schemaVersion: 1,
+    target,
+    profile: budget.profile,
+    tarballBytes,
+    unpackedBytes,
+    maximumTarballBytes: budget.maximumTarballBytes,
+    maximumUnpackedBytes: budget.maximumUnpackedBytes,
+    passed: violations.length === 0,
+    violations: Object.freeze(violations),
+  })
+}
+
+function assertNativePackageSize(sizeGate) {
+  if (!sizeGate.passed) {
+    throw new Error(
+      `Native compiler package ${sizeGate.target} exceeds the ${sizeGate.profile} size budget:\n- ${sizeGate.violations.join('\n- ')}`,
+    )
+  }
 }
 
 function hashFile(filePath) {
@@ -429,7 +503,12 @@ export function packNativePackage({ target, packageDirectory, outputDirectory })
   return { ...artifact, packed, tarballPath, tarballSha256 }
 }
 
-export function verifyNativeBundle({ target, bundleDirectory }) {
+export function verifyNativeBundle({
+  target,
+  bundleDirectory,
+  budgetPath = NATIVE_COMPILER_BUDGET_PATH,
+  budgetProfile = 'ci',
+}) {
   const directory = path.resolve(bundleDirectory)
   const artifact = verifyNativePackageArtifact({
     target,
@@ -449,8 +528,14 @@ export function verifyNativeBundle({ target, bundleDirectory }) {
   const evidencePath = path.join(directory, 'build-evidence.json')
   if (!existsSync(evidencePath)) throw new Error(`${target} build evidence is missing`)
   const buildEvidence = readJson(evidencePath)
+  const sizeGate = evaluateNativePackageSize({
+    target,
+    tarballBytes: statSync(tarballPath).size,
+    unpackedBytes: buildEvidence.unpackedBytes,
+    budget: loadNativePackageSizeBudget({ budgetPath, profile: budgetProfile }),
+  })
   if (
-    buildEvidence.schemaVersion !== 1 ||
+    buildEvidence.schemaVersion !== 2 ||
     buildEvidence.target !== target ||
     buildEvidence.rustTarget !== artifact.definition.rustTarget ||
     buildEvidence.packageName !== artifact.definition.packageName ||
@@ -461,14 +546,22 @@ export function verifyNativeBundle({ target, bundleDirectory }) {
     !Number.isInteger(buildEvidence.tarballBytes) ||
     buildEvidence.tarballBytes !== statSync(tarballPath).size ||
     !Number.isInteger(buildEvidence.unpackedBytes) ||
-    typeof buildEvidence.npmIntegrity !== 'string'
+    typeof buildEvidence.npmIntegrity !== 'string' ||
+    JSON.stringify(buildEvidence.sizeGate) !== JSON.stringify(sizeGate)
   ) {
     throw new Error(`${target} build evidence does not match the certified bundle`)
   }
+  assertNativePackageSize(sizeGate)
   return { ...artifact, tarballPath, tarballSha256, buildEvidence }
 }
 
-export function bundleNativePackage({ target, binaryPath, outputDirectory }) {
+export function bundleNativePackage({
+  target,
+  binaryPath,
+  outputDirectory,
+  budgetPath = NATIVE_COMPILER_BUDGET_PATH,
+  budgetProfile = 'ci',
+}) {
   const destination = path.resolve(outputDirectory)
   rmSync(destination, { recursive: true, force: true })
   mkdirSync(destination, { recursive: true })
@@ -482,8 +575,17 @@ export function bundleNativePackage({ target, binaryPath, outputDirectory }) {
     packageDirectory: path.join(destination, 'package'),
     outputDirectory: destination,
   })
+  const tarballBytes = statSync(packed.tarballPath).size
+  const unpackedBytes = packed.packed.unpackedSize
+  const sizeGate = evaluateNativePackageSize({
+    target,
+    tarballBytes,
+    unpackedBytes,
+    budget: loadNativePackageSizeBudget({ budgetPath, profile: budgetProfile }),
+  })
+  assertNativePackageSize(sizeGate)
   const evidence = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     target,
     rustTarget: packed.definition.rustTarget,
     packageName: packed.definition.packageName,
@@ -491,9 +593,10 @@ export function bundleNativePackage({ target, binaryPath, outputDirectory }) {
     binarySha256: packed.sha256,
     tarball: path.basename(packed.tarballPath),
     tarballSha256: packed.tarballSha256,
-    tarballBytes: statSync(packed.tarballPath).size,
-    unpackedBytes: packed.packed.unpackedSize,
+    tarballBytes,
+    unpackedBytes,
     npmIntegrity: packed.packed.integrity,
+    sizeGate,
   }
   writeFileSync(
     path.join(destination, 'build-evidence.json'),
@@ -539,6 +642,8 @@ function main() {
       target: options.target,
       binaryPath: options.binary,
       outputDirectory: options.output,
+      budgetPath: options.budget,
+      budgetProfile: options.profile,
     })
     process.stdout.write(`${JSON.stringify(evidence)}\n`)
     return
@@ -547,6 +652,8 @@ function main() {
     const bundle = verifyNativeBundle({
       target: options.target,
       bundleDirectory: options.bundle,
+      budgetPath: options.budget,
+      budgetProfile: options.profile,
     })
     process.stdout.write(
       `${JSON.stringify({ target: options.target, tarballSha256: bundle.tarballSha256 })}\n`,

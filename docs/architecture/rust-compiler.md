@@ -218,8 +218,11 @@ Preview artifacts MUST NOT be reused by a legacy rebuild.
 
 Correctness gates take precedence over throughput. Benchmarks MUST distinguish
 addon load, warm per-file latency, large-project throughput, source maps,
-metadata SCCs, peak RSS, output size, and native package size. Published claims
-must come from paired/interleaved samples and retain raw artifacts.
+metadata SCCs, peak RSS, output size, and native package size. The versioned
+compiler budget owns both compressed tarball and npm unpacked-size ceilings;
+native bundle creation and verification MUST independently evaluate those
+ceilings and retain the result in build evidence. Published claims must come
+from paired/interleaved samples and retain raw artifacts.
 
 The native compiler MUST bound AST depth, node/block/region counts, and
 fixed-point iterations. Each request owns its OXC allocator; AST and semantic
@@ -227,8 +230,10 @@ references MUST NOT enter global caches. Parallel requests MUST produce the
 same observable result as sequential requests.
 
 Verification: compiler differential benchmarks, HIR/output guardrails, repeated
-thread-count comparisons, fuzz targets, and clean native-package installation
-are required before default switching.
+thread-count comparisons, fuzz targets, native bundle size evidence, and clean
+native-package installation are required before default switching. Budget
+values live in `.github/compiler-backend-budget.json`; changing a ceiling
+requires the same maintainer review as changing a performance or RSS budget.
 
 The executable M7 promotion policy, candidate chain, privacy-safe allowlist,
 performance/RSS budget, and human approval are owned by the
