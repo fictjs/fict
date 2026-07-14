@@ -15,7 +15,10 @@ use fict_compiler::{
     COMPILER_PROTOCOL_VERSION, MODULE_REACTIVE_METADATA_VERSION, OXC_VERSION, ParseProbe,
     compiler_build_id, compiler_build_revision, parse_tsx_probe,
 };
-use napi::{Env, Result, Task, bindgen_prelude::AsyncTask};
+use napi::{
+    Env, Result, Task,
+    bindgen_prelude::{AsyncTask, Either, Null},
+};
 use napi_derive::napi;
 use panic_boundary::{analyze_safely, catch_panic, compile_safely, scan_safely};
 use serde_json::Value;
@@ -34,7 +37,7 @@ pub struct NativeCompilerInfo {
     /// Immutable cache/rollback identity for this native artifact.
     pub compiler_build_id: String,
     /// Exact Git source revision embedded by controlled builds, or null for local builds.
-    pub compiler_build_revision: Option<String>,
+    pub compiler_build_revision: Either<String, Null>,
     /// Request/result protocol accepted by this artifact.
     pub compiler_protocol_version: u32,
     /// Module metadata schema accepted by this artifact.
@@ -68,7 +71,10 @@ pub fn native_compiler_info() -> NativeCompilerInfo {
         oxc_version: OXC_VERSION.to_owned(),
         node_api_version: 10,
         compiler_build_id: compiler_build_id().to_owned(),
-        compiler_build_revision: compiler_build_revision().map(str::to_owned),
+        compiler_build_revision: match compiler_build_revision() {
+            Some(revision) => Either::A(revision.to_owned()),
+            None => Either::B(Null),
+        },
         compiler_protocol_version: COMPILER_PROTOCOL_VERSION,
         metadata_schema_version: MODULE_REACTIVE_METADATA_VERSION,
     }
