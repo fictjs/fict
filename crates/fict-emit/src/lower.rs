@@ -1527,6 +1527,7 @@ fn lower_component_props_plan(
             )]));
         };
         Some(EmitPropsRest {
+            binding: rest.binding,
             local: binding.display_name.clone(),
             excluded: rest.excluded.clone(),
             helper: RuntimeHelper::PropsRest,

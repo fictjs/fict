@@ -54,6 +54,9 @@ pub(crate) fn generate_handler_artifact<'a>(
     for capture in &prepared.plan.prop_captures {
         identifiers.names.insert(capture.local.clone());
     }
+    for capture in &prepared.plan.prop_rest_captures {
+        identifiers.names.insert(capture.local.clone());
+    }
     for capture in &prepared.plan.module_captures {
         identifiers.names.insert(capture.local.clone());
     }
@@ -75,7 +78,14 @@ pub(crate) fn generate_handler_artifact<'a>(
     let props_helper = helper_alias(
         &mut names,
         RuntimeHelper::GetScopeProps.spec(),
-        prepared.plan.props_object_local.is_some() || !prepared.plan.prop_captures.is_empty(),
+        prepared.plan.props_object_local.is_some()
+            || !prepared.plan.prop_captures.is_empty()
+            || !prepared.plan.prop_rest_captures.is_empty(),
+    );
+    let props_rest_helper = helper_alias(
+        &mut names,
+        RuntimeHelper::PropsRest.spec(),
+        !prepared.plan.prop_rest_captures.is_empty(),
     );
 
     let mut wrapper = String::new();
@@ -91,6 +101,14 @@ pub(crate) fn generate_handler_artifact<'a>(
         push_helper_import(
             &mut wrapper,
             RuntimeHelper::GetScopeProps.spec(),
+            local,
+            runtime_family,
+        );
+    }
+    if let Some(local) = &props_rest_helper {
+        push_helper_import(
+            &mut wrapper,
+            RuntimeHelper::PropsRest.spec(),
             local,
             runtime_family,
         );
@@ -177,6 +195,26 @@ pub(crate) fn generate_handler_artifact<'a>(
                 wrapper.push_str(&read);
             }
             wrapper.push_str(";\n");
+        }
+        for capture in &prepared.plan.prop_rest_captures {
+            wrapper.push_str("const ");
+            wrapper.push_str(&capture.local);
+            wrapper.push_str(" = ");
+            wrapper.push_str(
+                props_rest_helper
+                    .as_deref()
+                    .expect("props-rest captures require their runtime helper"),
+            );
+            wrapper.push('(');
+            wrapper.push_str(&scope_props);
+            wrapper.push_str(", [");
+            for (index, excluded) in capture.excluded.iter().enumerate() {
+                if index > 0 {
+                    wrapper.push_str(", ");
+                }
+                wrapper.push_str(&quote_javascript_string(excluded));
+            }
+            wrapper.push_str("]);\n");
         }
     }
     wrapper.push_str("const ");

@@ -9,8 +9,8 @@ use fict_diagnostics::{
 };
 use fict_emit::{
     EmitOperation, EmitPreviewComponent, EmitPreviewHandler, EmitPreviewLexicalCapture,
-    EmitPreviewModuleCapture, EmitPreviewPlan, EmitPreviewPropCapture, EmitProgram, EmitValueRef,
-    ReactiveSlotStorage, RuntimeHelper, RuntimeImportIntent,
+    EmitPreviewModuleCapture, EmitPreviewPlan, EmitPreviewPropCapture, EmitPreviewPropRestCapture,
+    EmitProgram, EmitValueRef, ReactiveSlotStorage, RuntimeHelper, RuntimeImportIntent,
 };
 use fict_hir::{
     BindingId, BindingKind, ContextValueKind, FunctionId, FunctionKind, HirFile,
@@ -163,6 +163,11 @@ pub fn attach_preview_plan(
                 .flat_map(|props| &props.bindings)
                 .map(|prop| (prop.binding, prop))
                 .collect();
+            let prop_rest_binding = owner_emit
+                .props
+                .as_ref()
+                .and_then(|props| props.rest.as_ref())
+                .map(|rest| (rest.binding, rest));
             let props_parameter = owner
                 .parameters
                 .first()
@@ -171,6 +176,7 @@ pub fn attach_preview_plan(
 
             let mut lexical_captures = Vec::new();
             let mut prop_captures = Vec::new();
+            let mut prop_rest_captures = Vec::new();
             let mut module_captures = Vec::new();
             if let Some(binding) = module_handler_binding {
                 let binding_info = &hir.bindings[binding.as_usize()];
@@ -200,6 +206,16 @@ pub fn attach_preview_plan(
                         local: prop.local.clone(),
                         path: prop.path.clone(),
                         default_value: prop.default_value,
+                    });
+                    continue;
+                }
+                if let Some((_, rest)) =
+                    prop_rest_binding.filter(|(candidate, _)| *candidate == binding)
+                {
+                    prop_rest_captures.push(EmitPreviewPropRestCapture {
+                        binding,
+                        local: rest.local.clone(),
+                        excluded: rest.excluded.clone(),
                     });
                     continue;
                 }
@@ -245,6 +261,7 @@ pub fn attach_preview_plan(
 
             lexical_captures.sort_by_key(|capture| capture.binding);
             prop_captures.sort_by_key(|capture| capture.binding);
+            prop_rest_captures.sort_by_key(|capture| capture.binding);
             module_captures.sort_by_key(|capture| capture.binding);
             let source_export_name =
                 allocate_indexed(&mut reserved, "__fict_e", &mut handler_index);
@@ -260,6 +277,7 @@ pub fn attach_preview_plan(
                 artifact_id,
                 lexical_captures,
                 prop_captures,
+                prop_rest_captures,
                 props_object_local: props_parameter
                     .map(|binding| hir.bindings[binding.as_usize()].display_name.clone()),
                 module_captures,
@@ -313,11 +331,18 @@ pub fn attach_preview_plan(
     {
         helpers.insert(RuntimeHelper::UseLexicalScope);
     }
+    if handlers.iter().any(|handler| {
+        handler.props_object_local.is_some()
+            || !handler.prop_captures.is_empty()
+            || !handler.prop_rest_captures.is_empty()
+    }) {
+        helpers.insert(RuntimeHelper::GetScopeProps);
+    }
     if handlers
         .iter()
-        .any(|handler| handler.props_object_local.is_some() || !handler.prop_captures.is_empty())
+        .any(|handler| !handler.prop_rest_captures.is_empty())
     {
-        helpers.insert(RuntimeHelper::GetScopeProps);
+        helpers.insert(RuntimeHelper::PropsRest);
     }
     if !components.is_empty() {
         helpers.extend([

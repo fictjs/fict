@@ -757,6 +757,7 @@ pub struct EmitPropsDefault {
 /// Top-level reactive props-rest declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmitPropsRest {
+    pub binding: BindingId,
     pub local: String,
     pub excluded: Vec<String>,
     pub helper: RuntimeHelper,
@@ -790,6 +791,14 @@ pub struct EmitPreviewPropCapture {
     pub default_value: Option<Origin>,
 }
 
+/// One component-props rest object reconstructed from the serialized Preview scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmitPreviewPropRestCapture {
+    pub binding: BindingId,
+    pub local: String,
+    pub excluded: Vec<String>,
+}
+
 /// One stable module binding made available to an isolated handler artifact.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmitPreviewModuleCapture {
@@ -811,6 +820,7 @@ pub struct EmitPreviewHandler {
     pub module_specifier: String,
     pub lexical_captures: Vec<EmitPreviewLexicalCapture>,
     pub prop_captures: Vec<EmitPreviewPropCapture>,
+    pub prop_rest_captures: Vec<EmitPreviewPropRestCapture>,
     pub props_object_local: Option<String>,
     pub module_captures: Vec<EmitPreviewModuleCapture>,
 }

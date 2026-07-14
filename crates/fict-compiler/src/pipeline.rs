@@ -4911,6 +4911,38 @@ mod tests {
 
     #[cfg(feature = "preview")]
     #[test]
+    fn restores_component_prop_rest_objects_in_preview_artifacts() {
+        let source = "export function Button({ id, kind, ...rest }) { return <button onClick$={() => console.log(rest.title)}>Click</button>; }";
+        let mut input = request(source, "preview-prop-rest.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: false,
+            ..CompilerPreviewOptions::default()
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        let artifact = result
+            .artifacts
+            .first()
+            .expect("prop-rest handler artifact");
+        assert!(
+            artifact.code.contains("__fictPropsRest"),
+            "{}",
+            artifact.code
+        );
+        assert!(
+            artifact
+                .code
+                .contains("const rest = __fictPropsRest(__scopeProps, [\"id\", \"kind\"]);"),
+            "{}",
+            artifact.code
+        );
+        assert!(artifact.code.contains("rest.title"), "{}", artifact.code);
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
     fn rejects_explicit_preview_handlers_that_capture_lexical_execution_context() {
         for (name, source, expected) in [
             (

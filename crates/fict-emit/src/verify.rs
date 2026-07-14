@@ -304,7 +304,8 @@ pub fn verify_emit_program(
                             .bindings
                             .get(source.binding.as_usize())
                             .is_some_and(|binding| {
-                                planned.local == binding.display_name
+                                planned.binding == source.binding
+                                    && planned.local == binding.display_name
                                     && planned.excluded == source.excluded
                                     && planned.origin == source.origin
                             }),
