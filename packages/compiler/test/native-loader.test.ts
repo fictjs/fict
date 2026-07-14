@@ -78,6 +78,7 @@ function createBinding(): NativeCompilerBinding {
       oxcVersion: '0.139.0',
       nodeApiVersion: 10,
       compilerBuildId: `fict-rust-p1-oxc0.139.0-m1-${'0'.repeat(64)}`,
+      compilerBuildRevision: null,
       compilerProtocolVersion: 1,
       metadataSchemaVersion: 1,
     }),
@@ -192,6 +193,23 @@ describe('native compiler loader', () => {
     binding.nativeCompilerInfo = () => ({
       ...createBinding().nativeCompilerInfo(),
       compilerProtocolVersion: 2,
+    })
+
+    expect(() =>
+      loadNativeCompilerBinding({
+        nativePath: '/tmp/incompatible.node',
+        platform: 'darwin',
+        arch: 'arm64',
+        load: () => binding,
+      }),
+    ).toThrow('reported incompatible compiler metadata')
+  })
+
+  it('rejects a malformed compiled source revision', () => {
+    const binding = createBinding()
+    binding.nativeCompilerInfo = () => ({
+      ...createBinding().nativeCompilerInfo(),
+      compilerBuildRevision: 'local-build',
     })
 
     expect(() =>

@@ -68,9 +68,10 @@ export interface CompilerShadowModuleResult {
 }
 
 export interface CompilerShadowArtifact {
-  schemaVersion: 1
+  schemaVersion: 2
   backend: 'shadow'
   compilerBuildId: string
+  compilerBuildRevision: string | null
   allowlistVersion: number | null
   summary: {
     modules: number
@@ -84,6 +85,7 @@ export interface CompilerShadowArtifact {
 export interface CompilerShadowRecorderOptions {
   root: string
   compilerBuildId: string
+  compilerBuildRevision: string | null
   reportPath: string
   allowlistPath?: string
   onResult?: (result: CompilerShadowModuleResult) => void
@@ -304,6 +306,7 @@ export class CompilerShadowRecorder {
   readonly reportPath: string
   private readonly root: string
   private readonly compilerBuildId: string
+  private readonly compilerBuildRevision: string | null
   private readonly allowlist: CompilerShadowAllowlist | null
   private readonly onResult: ((result: CompilerShadowModuleResult) => void) | undefined
   private readonly results = new Map<string, CompilerShadowModuleResult>()
@@ -311,6 +314,7 @@ export class CompilerShadowRecorder {
   constructor(options: CompilerShadowRecorderOptions) {
     this.root = path.resolve(options.root)
     this.compilerBuildId = options.compilerBuildId
+    this.compilerBuildRevision = options.compilerBuildRevision
     this.reportPath = path.resolve(this.root, options.reportPath)
     this.allowlist = readAllowlist(
       options.allowlistPath ? path.resolve(this.root, options.allowlistPath) : undefined,
@@ -371,9 +375,10 @@ export class CompilerShadowRecorder {
     )
     const differences = modules.flatMap(module => module.differences)
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       backend: 'shadow',
       compilerBuildId: this.compilerBuildId,
+      compilerBuildRevision: this.compilerBuildRevision,
       allowlistVersion: this.allowlist?.version ?? null,
       summary: {
         modules: modules.length,

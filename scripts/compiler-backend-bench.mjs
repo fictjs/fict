@@ -91,6 +91,7 @@ async function runWorker() {
   const sources = corpus(modules, rows)
   let compile
   let compilerBuildId = 'legacy-babel'
+  let compilerBuildRevision = null
   const loadStarted = performance.now()
 
   if (backend === 'legacy') {
@@ -137,7 +138,9 @@ async function runWorker() {
     )
     if (!existsSync(nativePath)) throw new Error(`Native compiler does not exist: ${nativePath}`)
     const binding = require(nativePath)
-    compilerBuildId = binding.nativeCompilerInfo().compilerBuildId
+    const info = binding.nativeCompilerInfo()
+    compilerBuildId = info.compilerBuildId
+    compilerBuildRevision = info.compilerBuildRevision
     compile = (source, index) => {
       const result = binding.transformSync({
         code: source,
@@ -173,6 +176,7 @@ async function runWorker() {
     `${JSON.stringify({
       backend,
       compilerBuildId,
+      compilerBuildRevision,
       modules,
       rows,
       sourcemap,
@@ -319,8 +323,13 @@ async function runParent() {
     violations.push('Rust benchmark samples used different compiler build identifiers')
   }
   const compilerBuildId = samples.rust[0].compilerBuildId
+  const compilerBuildRevisions = new Set(samples.rust.map(sample => sample.compilerBuildRevision))
+  if (compilerBuildRevisions.size !== 1) {
+    violations.push('Rust benchmark samples used different compiler build revisions')
+  }
+  const compilerBuildRevision = samples.rust[0].compilerBuildRevision
   const artifact = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     corpus: {
       modules,
       rowsPerModule: rows,
@@ -332,6 +341,7 @@ async function runParent() {
     },
     samples: sampleCount,
     compilerBuildId,
+    compilerBuildRevision,
     legacy,
     rust,
     metrics,

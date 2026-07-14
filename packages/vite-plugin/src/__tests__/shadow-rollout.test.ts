@@ -55,6 +55,7 @@ describe('compiler shadow rollout artifacts', () => {
     const recorder = new CompilerShadowRecorder({
       root,
       compilerBuildId: 'fict-rust-test',
+      compilerBuildRevision: null,
       reportPath,
     })
 
@@ -63,6 +64,8 @@ describe('compiler shadow rollout artifacts', () => {
     const serialized = await readFile(reportPath, 'utf8')
 
     expect(artifact.summary.unexplainedDifferences).toBe(1)
+    expect(artifact.schemaVersion).toBe(2)
+    expect(artifact.compilerBuildRevision).toBeNull()
     expect(serialized).not.toContain(source)
     expect(serialized).not.toContain('privateCustomerName')
     expect(serialized).not.toContain(root)
@@ -93,6 +96,7 @@ describe('compiler shadow rollout artifacts', () => {
     const recorder = new CompilerShadowRecorder({
       root,
       compilerBuildId: 'fict-rust-test',
+      compilerBuildRevision: null,
       reportPath: 'shadow.json',
       allowlistPath,
     })

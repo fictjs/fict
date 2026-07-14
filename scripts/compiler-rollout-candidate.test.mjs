@@ -21,20 +21,23 @@ function digest(value) {
 async function evidence(directory, compilerBuildId = 'fict-rust-test') {
   const documents = {
     shadow: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       backend: 'shadow',
       compilerBuildId,
+      compilerBuildRevision: revision,
       summary: { modules: 1, unexplainedDifferences: 0 },
     },
     benchmark: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       compilerBuildId,
+      compilerBuildRevision: revision,
       status: 'pass',
       violations: [],
     },
     runtime: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       compilerBuildId,
+      compilerBuildRevision: revision,
       status: 'pass',
       contracts: {
         coreRuntimeParity: true,
@@ -43,8 +46,9 @@ async function evidence(directory, compilerBuildId = 'fict-rust-test') {
       },
     },
     rollback: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       compilerBuildId,
+      compilerBuildRevision: revision,
       status: 'pass',
       rollbackUnit: 'whole-build',
       purged: {
@@ -55,9 +59,10 @@ async function evidence(directory, compilerBuildId = 'fict-rust-test') {
       },
     },
     package: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       target: 'linux-x64-gnu',
       compilerBuildId,
+      compilerBuildRevision: revision,
       binarySha256: 'b'.repeat(64),
       tarballSha256: 'c'.repeat(64),
       tarballBytes: 3_000_000,
@@ -156,7 +161,8 @@ test('candidate evidence chains two distinct green builds', async t => {
   assert.equal(firstArtifact.consecutiveGreenCandidates, 1)
   assert.equal(secondArtifact.consecutiveGreenCandidates, 2)
   assert.equal(secondArtifact.previousCandidateDigest, firstArtifact.candidateDigest)
-  assert.equal(firstArtifact.schemaVersion, 4)
+  assert.equal(firstArtifact.schemaVersion, 5)
+  assert.equal(firstArtifact.compilerBuildRevision, revision)
   assert.equal(firstArtifact.promotionEligible, true)
   assert.equal(firstArtifact.workflowEvent, 'push')
   assert.equal(firstArtifact.sourceRef, 'refs/heads/main')
@@ -185,7 +191,7 @@ test('non-main candidates cannot count toward or extend the promotion chain', as
     `--previous=${pullRequestPath}`,
   ])
   assert.notEqual(chained.status, 0)
-  assert.match(chained.stderr, /promotion-eligible schema-v4 candidate/)
+  assert.match(chained.stderr, /promotion-eligible schema-v5 candidate/)
 })
 
 test('candidate evidence rejects mixed native compiler builds', async t => {
@@ -199,6 +205,19 @@ test('candidate evidence rejects mixed native compiler builds', async t => {
   const result = run(directory, '100', path.join(directory, 'candidate.json'))
   assert.notEqual(result.status, 0)
   assert.match(result.stderr, /one native compiler build/)
+})
+
+test('candidate evidence rejects native artifacts built from another revision', async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'fict-candidate-revision-'))
+  t.after(() => rm(directory, { recursive: true }))
+  await evidence(directory)
+  const runtime = JSON.parse(await readFile(path.join(directory, 'runtime.json'), 'utf8'))
+  runtime.compilerBuildRevision = 'b'.repeat(40)
+  await writeFile(path.join(directory, 'runtime.json'), JSON.stringify(runtime))
+
+  const result = run(directory, '100', path.join(directory, 'candidate.json'))
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /candidate source revision/)
 })
 
 test('candidate evidence rejects native packages that failed their size gate', async t => {
@@ -239,7 +258,7 @@ test('candidate evidence rejects non-CI run identities and malformed previous ch
   await writeFile(
     previousPath,
     JSON.stringify({
-      schemaVersion: 4,
+      schemaVersion: 5,
       status: 'pass',
       runId: '99',
       runAttempt: '1',
@@ -254,7 +273,7 @@ test('candidate evidence rejects non-CI run identities and malformed previous ch
     `--previous=${previousPath}`,
   ])
   assert.notEqual(malformed.status, 0)
-  assert.match(malformed.stderr, /not a promotion-eligible schema-v4 candidate/)
+  assert.match(malformed.stderr, /not a promotion-eligible schema-v5 candidate/)
 })
 
 test('candidate evidence rejects a re-signed continuation without a previous digest', async t => {
@@ -276,5 +295,5 @@ test('candidate evidence rejects a re-signed continuation without a previous dig
     `--previous=${previousPath}`,
   ])
   assert.notEqual(result.status, 0)
-  assert.match(result.stderr, /promotion-eligible schema-v4 candidate/)
+  assert.match(result.stderr, /promotion-eligible schema-v5 candidate/)
 })

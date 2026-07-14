@@ -40,6 +40,9 @@ it does not redefine those semantics.
   existing contract processes.
 - A build MUST use one compiler backend, build identifier, runtime ABI, and
   metadata schema. Per-file fallback is forbidden.
+- Promotion and release binaries MUST embed the exact Git source revision; all
+  rollout evidence MUST report that same revision before a candidate can be
+  sealed. Local builds MAY omit it but cannot become promotion evidence.
 
 ## Non-goals
 
@@ -140,8 +143,8 @@ JavaScript resolver callback, or retain OXC arena data across requests.
   and thread counts.
 
 Verification: `cargo metadata`, workspace dependency tests, deterministic
-fixture repetitions, and the existing API/Preview boundary checks are release
-gates.
+fixture repetitions, the rollout candidate source-revision contract, and the
+existing API/Preview boundary checks are release gates.
 
 ## Compilation lifecycle
 

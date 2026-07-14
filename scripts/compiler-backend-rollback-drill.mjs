@@ -59,7 +59,9 @@ const { default: fict } = await import(
   pathToFileURL(path.join(root, 'packages', 'vite-plugin', 'dist', 'index.js')).href
 )
 const binding = createRequire(import.meta.url)(nativePath)
-const compilerBuildId = binding.nativeCompilerInfo().compilerBuildId
+const compilerInfo = binding.nativeCompilerInfo()
+const compilerBuildId = compilerInfo.compilerBuildId
+const compilerBuildRevision = compilerInfo.compilerBuildRevision
 const project = await realpath(await mkdtemp(path.join(os.tmpdir(), 'fict-rollback-')))
 const compilerCache = path.join(project, '.fict-cache', 'compiler')
 const metadataCache = path.join(project, '.fict-cache', 'metadata')
@@ -160,10 +162,11 @@ try {
   }
 
   const artifact = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     status: 'pass',
     rollbackUnit: 'whole-build',
     compilerBuildId,
+    compilerBuildRevision,
     purged: {
       compilerCache: true,
       metadataCache: true,

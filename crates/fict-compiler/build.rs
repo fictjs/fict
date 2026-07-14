@@ -38,8 +38,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         b"preview=0\0".as_slice()
     });
     if let Some(revision) = env::var_os("FICT_COMPILER_BUILD_REVISION") {
+        let revision = revision
+            .into_string()
+            .map_err(|_| "FICT_COMPILER_BUILD_REVISION must be valid UTF-8")?;
+        if revision.len() != 40
+            || !revision
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(
+                "FICT_COMPILER_BUILD_REVISION must be a lowercase 40-character Git SHA-1".into(),
+            );
+        }
+        println!("cargo:rustc-env=FICT_COMPILER_BUILD_REVISION={revision}");
         hasher.update(b"revision\0");
-        hasher.update(revision.to_string_lossy().as_bytes());
+        hasher.update(revision.as_bytes());
         hasher.update(b"\0");
     }
 

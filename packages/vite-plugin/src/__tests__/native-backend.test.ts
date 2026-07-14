@@ -18,6 +18,7 @@ const native = vi.hoisted(() => {
     oxcVersion: '0.139.0',
     nodeApiVersion: 10,
     compilerBuildId: `fict-rust-p1-oxc0.139.0-m1-${'1'.repeat(64)}`,
+    compilerBuildRevision: null,
     compilerProtocolVersion: 1,
     metadataSchemaVersion: 1,
   }

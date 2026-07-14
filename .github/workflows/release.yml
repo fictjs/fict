@@ -13,6 +13,8 @@ concurrency:
 env:
   # Changesets 2.x expects the npm 11 `npm info --json` object shape.
   NPM_VERSION: 11.18.0
+  # Make every native artifact self-identify the exact release source revision.
+  FICT_COMPILER_BUILD_REVISION: ${{ github.sha }}
 
 jobs:
   native-matrix:

@@ -47,8 +47,9 @@ if (result.status !== 0) {
 const binding = require(nativePath)
 const info = binding.nativeCompilerInfo()
 const artifact = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   compilerBuildId: info.compilerBuildId,
+  compilerBuildRevision: info.compilerBuildRevision,
   status: 'pass',
   contracts: {
     coreRuntimeParity: true,

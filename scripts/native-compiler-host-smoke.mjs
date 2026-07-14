@@ -51,6 +51,9 @@ for (const [format, facade] of [
   assert.equal(info.compilerProtocolVersion, 1)
   assert.equal(info.metadataSchemaVersion, 1)
   assert.match(info.compilerBuildId, /^fict-rust-p1-oxc0\.139\.0-m1-[0-9a-f]{64}$/)
+  assert.ok(
+    info.compilerBuildRevision === null || /^[0-9a-f]{40}$/.test(info.compilerBuildRevision),
+  )
   expectedBuildId ??= info.compilerBuildId
   assert.equal(info.compilerBuildId, expectedBuildId)
 

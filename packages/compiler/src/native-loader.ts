@@ -17,6 +17,7 @@ export interface NativeCompilerInfo {
   oxcVersion: string
   nodeApiVersion: number
   compilerBuildId: string
+  compilerBuildRevision: string | null
   compilerProtocolVersion: number
   metadataSchemaVersion: number
 }
@@ -185,7 +186,9 @@ function toNativeBinding(
     info.compilerProtocolVersion !== EXPECTED_COMPILER_PROTOCOL_VERSION ||
     info.metadataSchemaVersion !== EXPECTED_METADATA_SCHEMA_VERSION ||
     !info.compilerBuildId?.startsWith(expectedBuildPrefix) ||
-    !/^[0-9a-f]{64}$/.test(sourceHash ?? '')
+    !/^[0-9a-f]{64}$/.test(sourceHash ?? '') ||
+    (info.compilerBuildRevision !== null &&
+      !/^[0-9a-f]{40}$/.test(info.compilerBuildRevision ?? ''))
   ) {
     throw new Error(`Native package ${candidate} reported incompatible compiler metadata.`)
   }

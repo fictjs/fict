@@ -68,9 +68,11 @@ performance/RSS, runtime parity, native package clean-install/size, and
 rollback-drill evidence. The `compiler-rollout-finalize` job can seal and upload
 the `compiler-rollout-candidate` artifact only after every required native,
 integration, lint, typecheck, strict-guarantee, performance, test, browser,
-real-app, SSR, opt-out, and build job passes. Candidate schema v4 binds all five
-evidence digests plus the canonical finalizer identity, workflow event/ref, and
-the exact required-job result map; schema v3 and older candidates restart the
+real-app, SSR, opt-out, and build job passes. Candidate schema v5 binds all five
+evidence digests plus the canonical finalizer identity, workflow event/ref,
+compiled Git revision, and the exact required-job result map. Every evidence
+producer must report the revision embedded in its native binary, and it must
+equal the workflow source revision. Schema v4 and older candidates restart the
 chain. Pull-request and scheduled candidates remain useful diagnostics but
 record zero promotion-eligible builds. A successful main-branch run chains the
 previous green candidate digest when one exists. The chain is fail-closed: the
@@ -95,8 +97,11 @@ the exact pending/approved checklist shape even during beta. Do not stage a
 partial approval: update the digest, reviewer, status, and all areas atomically.
 
 Do not manufacture a second candidate by running the sealer twice locally.
-Only distinct CI runs from committed source count. Raw benchmark values remain
-in CI artifacts and are not copied into release prose.
+Controlled CI and release builds embed `github.sha`; a local binary without an
+embedded revision cannot be sealed. Injecting a value during a local contract
+smoke still does not turn that output into canonical CI evidence. Only distinct
+CI runs from committed source count. Raw benchmark values remain in CI artifacts
+and are not copied into release prose.
 
 Legacy removal is a later release operation, not part of candidate approval.
 Before entering `legacy-removal`, update the four exact stable release fields

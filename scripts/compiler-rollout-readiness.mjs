@@ -482,7 +482,7 @@ function assertCandidate(evidence) {
     .update(JSON.stringify(payload))
     .digest('hex')}`
   if (
-    payload.schemaVersion !== 4 ||
+    payload.schemaVersion !== 5 ||
     payload.status !== 'pass' ||
     payload.promotionEligible !== true ||
     payload.workflowEvent !== 'push' ||
@@ -495,6 +495,7 @@ function assertCandidate(evidence) {
     typeof payload.runAttempt !== 'string' ||
     !/^\d+$/.test(payload.runAttempt) ||
     !/^[0-9a-f]{40}$/.test(payload.sourceRevision ?? '') ||
+    payload.compilerBuildRevision !== payload.sourceRevision ||
     typeof payload.compilerBuildId !== 'string' ||
     !payload.compilerBuildId ||
     requiredDigests.some(value => !/^sha256:[0-9a-f]{64}$/.test(value ?? '')) ||
@@ -505,7 +506,7 @@ function assertCandidate(evidence) {
     computedDigest !== candidateDigest
   ) {
     throw new Error(
-      'Rust-default rollout requires two intact consecutive main-push schema-v4 candidates',
+      'Rust-default rollout requires two intact consecutive main-push schema-v5 candidates',
     )
   }
   validateWorkflowGateArtifact(payload.workflowGate, payload)

@@ -70,11 +70,12 @@ function candidateEvidence(overrides = {}) {
   } = overrides
   const artifactDigest = `sha256:${'b'.repeat(64)}`
   const identity = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     status: 'pass',
     runId: '101',
     runAttempt: '1',
     sourceRevision: 'c'.repeat(40),
+    compilerBuildRevision: 'c'.repeat(40),
     workflowEvent: 'push',
     sourceRef: 'refs/heads/main',
     promotionEligible: true,
@@ -263,7 +264,7 @@ test('rust default rejects candidate content modified after sealing', async t =>
   t.after(() => rm(root, { recursive: true }))
   assert.throws(
     () => validateCompilerRolloutReadiness({ root }),
-    /intact consecutive main-push schema-v4/,
+    /intact consecutive main-push schema-v5/,
   )
 })
 
@@ -283,7 +284,7 @@ test('rust default rejects a re-signed candidate with an unbound workflow gate d
   t.after(() => rm(root, { recursive: true }))
   assert.throws(
     () => validateCompilerRolloutReadiness({ root }),
-    /intact consecutive main-push schema-v4/,
+    /intact consecutive main-push schema-v5/,
   )
 })
 
@@ -309,7 +310,7 @@ test('rust default rejects non-main candidate provenance', async t => {
   t.after(() => rm(root, { recursive: true }))
   assert.throws(
     () => validateCompilerRolloutReadiness({ root }),
-    /intact consecutive main-push schema-v4/,
+    /intact consecutive main-push schema-v5/,
   )
 })
 

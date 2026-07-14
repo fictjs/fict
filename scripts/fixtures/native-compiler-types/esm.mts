@@ -55,6 +55,7 @@ const directAsyncScanResult: Promise<ScanResult> = scan(scanRequest)
 const directAnalysis: AnalyzeResult = analyzeSync(analyzeRequest)
 const directAsyncAnalysis: Promise<AnalyzeResult> = analyze(analyzeRequest)
 const buildId: string = nativeCompilerInfo().compilerBuildId
+const buildRevision: string | null = nativeCompilerInfo().compilerBuildRevision
 const legacyFactory: typeof explicitLegacyCompiler = legacyCompiler
 const parsedMetadata = parseModuleReactiveMetadata('{"version":1,"exports":{}}')
 const packageMetadata = resolvePackageModuleMetadata('fict-library', import.meta.filename)
@@ -71,6 +72,7 @@ void directAsyncScanResult
 void directAnalysis
 void directAsyncAnalysis
 void buildId
+void buildRevision
 void legacyFactory
 void parsedMetadata
 void packageMetadata

@@ -1,5 +1,8 @@
 name: CI
 
+env:
+  FICT_COMPILER_BUILD_REVISION: ${{ github.sha }}
+
 on:
   push:
     branches: [main]
@@ -695,7 +698,7 @@ jobs:
           set -euo pipefail
           previous_args=()
           previous="${RUNNER_TEMP}/compiler-rollout/previous/candidate.json"
-          if [[ -f "${previous}" ]] && node -e "const fs = require('node:fs'); const value = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); process.exit(value.schemaVersion === 4 ? 0 : 1)" "${previous}"; then
+          if [[ -f "${previous}" ]] && node -e "const fs = require('node:fs'); const value = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); process.exit(value.schemaVersion === 5 ? 0 : 1)" "${previous}"; then
             previous_args+=("--previous=${previous}")
           elif [[ -f "${previous}" ]]; then
             echo "::notice::The previous rollout candidate uses an incompatible schema; restarting the consecutive count."

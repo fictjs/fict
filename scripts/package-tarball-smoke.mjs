@@ -334,6 +334,7 @@ const nativeFacade = {
       oxcVersion: '0.139.0',
       nodeApiVersion: 10,
       compilerBuildId,
+      compilerBuildRevision: null,
       compilerProtocolVersion: 1,
       metadataSchemaVersion: 1,
     }),

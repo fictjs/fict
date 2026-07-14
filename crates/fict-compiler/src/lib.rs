@@ -50,6 +50,9 @@ pub const COMPILER_PROTOCOL_VERSION: u32 = 1;
 /// SHA-256 of native source, manifests, lockfile, toolchain, feature mode, and build revision.
 pub const COMPILER_SOURCE_HASH: &str = env!("FICT_COMPILER_SOURCE_HASH");
 
+/// Exact source revision embedded by controlled CI/release builds, when available.
+pub const COMPILER_BUILD_REVISION: Option<&str> = option_env!("FICT_COMPILER_BUILD_REVISION");
+
 /// Stable cross-platform identity used by caches, shadow comparisons, and rollback checks.
 pub const COMPILER_BUILD_ID: &str = concat!(
     "fict-rust-p1-oxc0.139.0-m1-",
@@ -62,6 +65,12 @@ pub const fn compiler_build_id() -> &'static str {
     COMPILER_BUILD_ID
 }
 
+/// Return the source revision embedded in this native artifact.
+#[must_use]
+pub const fn compiler_build_revision() -> Option<&'static str> {
+    COMPILER_BUILD_REVISION
+}
+
 /// Parse-only compatibility probe retained while the complete compile pipeline
 /// is assembled behind this orchestration boundary.
 #[must_use]
@@ -72,13 +81,23 @@ pub fn parse_tsx_probe(source: &str) -> ParseProbe {
 #[cfg(test)]
 mod build_id_tests {
     use super::{
-        COMPILER_BUILD_ID, COMPILER_PROTOCOL_VERSION, COMPILER_SOURCE_HASH,
-        MODULE_REACTIVE_METADATA_VERSION, OXC_VERSION, compiler_build_id,
+        COMPILER_BUILD_ID, COMPILER_BUILD_REVISION, COMPILER_PROTOCOL_VERSION,
+        COMPILER_SOURCE_HASH, MODULE_REACTIVE_METADATA_VERSION, OXC_VERSION, compiler_build_id,
+        compiler_build_revision,
     };
 
     #[test]
     fn build_id_contains_protocol_dependency_and_sha256_identity() {
         assert_eq!(compiler_build_id(), COMPILER_BUILD_ID);
+        assert_eq!(compiler_build_revision(), COMPILER_BUILD_REVISION);
+        if let Some(revision) = COMPILER_BUILD_REVISION {
+            assert_eq!(revision.len(), 40);
+            assert!(
+                revision
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            );
+        }
         assert_eq!(COMPILER_SOURCE_HASH.len(), 64);
         assert!(
             COMPILER_SOURCE_HASH

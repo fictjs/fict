@@ -281,9 +281,10 @@ function main() {
       assert.equal(result.info.compilerBuildId, result.compilerBuildId)
     }
     assert.equal(esm.info.compilerBuildId, cjs.info.compilerBuildId)
+    assert.equal(esm.info.compilerBuildRevision, cjs.info.compilerBuildRevision)
 
     const evidence = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       target,
       rustTarget: host.rustTarget,
       node: process.version,
@@ -298,6 +299,7 @@ function main() {
       unpackedBytes: nativeBundle.buildEvidence.unpackedBytes,
       sizeGate: nativeBundle.buildEvidence.sizeGate,
       compilerBuildId: esm.info.compilerBuildId,
+      compilerBuildRevision: esm.info.compilerBuildRevision,
       formats: [esm.format, cjs.format],
       syncAndAsync: true,
       rustToolchainRequired: false,

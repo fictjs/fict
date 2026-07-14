@@ -561,6 +561,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       shadowRecorder = new CompilerShadowRecorder({
         root,
         compilerBuildId: nativeCompilerInfo!.compilerBuildId,
+        compilerBuildRevision: nativeCompilerInfo!.compilerBuildRevision,
         reportPath:
           shadowOption?.reportPath ??
           process.env.FICT_COMPILER_SHADOW_REPORT ??

@@ -75,8 +75,12 @@ than depending on the package-root facade.
 
 The request boundary is serializable. Host callbacks, filesystem resolution,
 and bundler graph objects must stay outside Rust. A build must use one compiler
-build identifier and one backend; do not catch a native failure and compile
-only that file with the legacy Babel plugin.
+build identifier and one backend; controlled CI/release binaries also expose
+the exact Git revision through `nativeCompilerInfo().compilerBuildRevision`.
+Ordinary local builds without `FICT_COMPILER_BUILD_REVISION` report `null` and
+cannot become promotion evidence. A manually injected local value is useful for
+contract testing but is not canonical CI provenance. Do not catch a native
+failure and compile only that file with the legacy Babel plugin.
 
 Platform support and installation behavior are defined by
 [ADR-0002](../../docs/adr/0002-native-compiler-support-matrix.md). Promotion,

@@ -66,8 +66,14 @@ test('rollout candidates only chain the immediately preceding successful main pu
   assert.match(ciWorkflow, /\.sort\(\(left, right\) => right\.id - left\.id\)\[0\]/)
   assert.match(ciWorkflow, /if \(run\?\.status === 'completed' && run\.conclusion === 'success'\)/)
   assert.doesNotMatch(ciWorkflow, /runs\.find\([^\n]+conclusion === 'success'/)
-  assert.match(ciWorkflow, /value\.schemaVersion === 4/)
+  assert.match(ciWorkflow, /value\.schemaVersion === 5/)
   assert.match(ciWorkflow, /restarting the consecutive count/)
+})
+
+test('controlled native builds embed the workflow source revision', () => {
+  const revisionBinding = /FICT_COMPILER_BUILD_REVISION: \$\{\{ github\.sha \}\}/
+  assert.match(ciWorkflow, revisionBinding)
+  assert.match(releaseWorkflow, revisionBinding)
 })
 
 test('rollout candidates are finalized only after every required CI gate succeeds', () => {

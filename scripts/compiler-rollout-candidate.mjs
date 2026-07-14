@@ -36,8 +36,9 @@ function gitRevision() {
 
 function validateShadow(artifact) {
   if (
-    artifact.schemaVersion !== 1 ||
+    artifact.schemaVersion !== 2 ||
     artifact.backend !== 'shadow' ||
+    !/^[0-9a-f]{40}$/.test(artifact.compilerBuildRevision ?? '') ||
     artifact.summary?.modules < 1 ||
     artifact.summary?.unexplainedDifferences !== 0
   ) {
@@ -46,14 +47,20 @@ function validateShadow(artifact) {
 }
 
 function validateBenchmark(artifact) {
-  if (artifact.schemaVersion !== 1 || artifact.status !== 'pass' || artifact.violations?.length) {
+  if (
+    artifact.schemaVersion !== 2 ||
+    !/^[0-9a-f]{40}$/.test(artifact.compilerBuildRevision ?? '') ||
+    artifact.status !== 'pass' ||
+    artifact.violations?.length
+  ) {
     throw new Error('Compiler backend benchmark did not pass its performance/RSS budgets')
   }
 }
 
 function validateRuntime(artifact) {
   if (
-    artifact.schemaVersion !== 1 ||
+    artifact.schemaVersion !== 2 ||
+    !/^[0-9a-f]{40}$/.test(artifact.compilerBuildRevision ?? '') ||
     artifact.status !== 'pass' ||
     !artifact.contracts?.coreRuntimeParity ||
     !artifact.contracts?.strictGuaranteeMatrix ||
@@ -65,7 +72,8 @@ function validateRuntime(artifact) {
 
 function validateRollback(artifact) {
   if (
-    artifact.schemaVersion !== 1 ||
+    artifact.schemaVersion !== 2 ||
+    !/^[0-9a-f]{40}$/.test(artifact.compilerBuildRevision ?? '') ||
     artifact.status !== 'pass' ||
     artifact.rollbackUnit !== 'whole-build' ||
     Object.values(artifact.purged ?? {}).length !== 4 ||
@@ -78,11 +86,12 @@ function validateRollback(artifact) {
 function validateNativePackage(artifact) {
   const sizeGate = artifact.sizeGate
   if (
-    artifact.schemaVersion !== 1 ||
+    artifact.schemaVersion !== 2 ||
     typeof artifact.target !== 'string' ||
     !artifact.target ||
     typeof artifact.compilerBuildId !== 'string' ||
     !artifact.compilerBuildId ||
+    !/^[0-9a-f]{40}$/.test(artifact.compilerBuildRevision ?? '') ||
     !/^sha256:[0-9a-f]{64}$/.test(`sha256:${artifact.binarySha256 ?? ''}`) ||
     !/^sha256:[0-9a-f]{64}$/.test(`sha256:${artifact.tarballSha256 ?? ''}`) ||
     !Number.isSafeInteger(artifact.tarballBytes) ||
@@ -125,7 +134,7 @@ function validatePreviousCandidate(previous) {
     (payload.consecutiveGreenCandidates > 1 &&
       /^sha256:[0-9a-f]{64}$/.test(payload.previousCandidateDigest ?? ''))
   if (
-    payload.schemaVersion !== 4 ||
+    payload.schemaVersion !== 5 ||
     payload.status !== 'pass' ||
     payload.promotionEligible !== true ||
     payload.workflowEvent !== 'push' ||
@@ -143,10 +152,11 @@ function validatePreviousCandidate(previous) {
     typeof payload.runAttempt !== 'string' ||
     !/^\d+$/.test(payload.runAttempt) ||
     !/^[0-9a-f]{40}$/.test(payload.sourceRevision ?? '') ||
+    payload.compilerBuildRevision !== payload.sourceRevision ||
     typeof payload.compilerBuildId !== 'string' ||
     !payload.compilerBuildId
   ) {
-    throw new Error('Previous candidate artifact is not a promotion-eligible schema-v4 candidate')
+    throw new Error('Previous candidate artifact is not a promotion-eligible schema-v5 candidate')
   }
   validateWorkflowGateArtifact(payload.workflowGate, payload)
 }
@@ -226,6 +236,20 @@ const compilerBuildIds = new Set([
 if (compilerBuildIds.size !== 1 || compilerBuildIds.has(undefined)) {
   throw new Error('Candidate artifacts were not produced by one native compiler build')
 }
+const compilerBuildRevisions = new Set([
+  shadow.compilerBuildRevision,
+  benchmark.compilerBuildRevision,
+  runtime.compilerBuildRevision,
+  rollback.compilerBuildRevision,
+  nativePackage.compilerBuildRevision,
+])
+if (
+  compilerBuildRevisions.size !== 1 ||
+  compilerBuildRevisions.has(undefined) ||
+  !compilerBuildRevisions.has(sourceRevision)
+) {
+  throw new Error('Candidate artifacts were not compiled from the candidate source revision')
+}
 
 let previous = null
 if (previousPath) {
@@ -243,7 +267,7 @@ if (previousPath) {
 }
 
 const payload = {
-  schemaVersion: 4,
+  schemaVersion: 5,
   status: 'pass',
   runId,
   runAttempt,
@@ -252,6 +276,7 @@ const payload = {
   sourceRef,
   promotionEligible,
   compilerBuildId: [...compilerBuildIds][0],
+  compilerBuildRevision: [...compilerBuildRevisions][0],
   workflowGate,
   workflowGateDigest: digest(workflowGate),
   shadowDigest: digest(shadow),
