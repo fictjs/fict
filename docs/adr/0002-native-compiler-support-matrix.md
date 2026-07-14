@@ -110,7 +110,7 @@ Positive:
 - the facade's support claim matches packages that CI actually installs and
   executes;
 - native package publication becomes an atomic, auditable release unit;
-- publication is blocked unless one release job aggregates the exact 16
+- publication is blocked unless one dedicated certification job aggregates the exact 16
   target/Node certifications from one source revision and compiler build;
 - ARM64, Alpine/musl, and Windows behavior cannot silently lag the common
   Linux x64 path;
@@ -177,16 +177,19 @@ eligible. A manual workflow dispatch builds and certifies the same artifacts
 without publishing, which is the supported bootstrap path for new npm package
 names.
 
-The publish job MUST download and validate all 16 runtime evidence documents as
-one set. The set must contain each target/Node pair exactly once, report the
-actual Node version for its declared lane, use one package version, compiler
-build ID, size budget, and embedded Git revision, and bind that revision to the
-release workflow SHA. Both Node lanes for a target must certify identical
-binary and tarball hashes and byte measurements. Missing, duplicate,
-wrong-target, mixed-revision, mixed-build, or mixed-bundle evidence blocks
-publication even when every matrix job individually reported success.
+The dedicated native-certification job MUST run after the matrix for both tag
+pushes and manual dispatches, download and validate all 16 runtime evidence
+documents as one set, and retain its machine-readable result. The set must
+contain each target/Node pair exactly once, report the actual Node version for
+its declared lane, use one package version, compiler build ID, size budget, and
+embedded Git revision, and bind that revision to the release workflow SHA. Both
+Node lanes for a target must certify identical binary and tarball hashes and
+byte measurements. Missing, duplicate, wrong-target, mixed-revision,
+mixed-build, or mixed-bundle evidence blocks publication even when every matrix
+job individually reported success. The npm publishing job MUST depend on this
+certification job.
 The evidence hashes, byte measurements, package version, and size result must
-also match the eight downloaded bundle artifacts that the same release job will
+also match the eight downloaded bundle artifacts that the release will
 preflight and publish; agreement only among the 16 evidence documents is not
 sufficient.
 

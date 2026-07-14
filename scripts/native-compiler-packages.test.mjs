@@ -119,11 +119,32 @@ test('defines eight blocking native targets and two Node runtime lanes', () => {
 
 test('certifies one complete revision-bound native runtime evidence matrix', () => {
   const documents = nativeRuntimeEvidenceFixture()
+  const result = validateNativeRuntimeEvidenceMatrix(documents, {
+    expectedRevision: RUNTIME_REVISION,
+    nativeBundles: nativeBundleIdentitiesFixture(documents),
+  })
   assert.deepEqual(
-    validateNativeRuntimeEvidenceMatrix(documents, {
-      expectedRevision: RUNTIME_REVISION,
-      nativeBundles: nativeBundleIdentitiesFixture(documents),
-    }),
+    (({
+      schemaVersion,
+      status,
+      targets,
+      nodeLanes,
+      certifications,
+      bundles,
+      packageVersion,
+      compilerBuildId,
+      compilerBuildRevision,
+    }) => ({
+      schemaVersion,
+      status,
+      targets,
+      nodeLanes,
+      certifications,
+      bundles,
+      packageVersion,
+      compilerBuildId,
+      compilerBuildRevision,
+    }))(result),
     {
       schemaVersion: 1,
       status: 'pass',
@@ -136,12 +157,20 @@ test('certifies one complete revision-bound native runtime evidence matrix', () 
       compilerBuildRevision: RUNTIME_REVISION,
     },
   )
+  assert.equal(result.certifiedPairs.length, 16)
+  assert.equal(new Set(result.certifiedPairs).size, 16)
+  assert.equal(result.releaseBundles.length, 8)
+  assert.deepEqual(
+    result.releaseBundles.map(bundle => bundle.target),
+    NATIVE_COMPILER_TARGETS.map(target => target.target),
+  )
 })
 
 test('verifies downloaded native runtime evidence through the release CLI', () => {
   const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'fict-native-evidence-test-'))
   const evidenceDirectory = path.join(tempRoot, 'runtime-evidence')
   const artifactsDirectory = path.join(tempRoot, 'native-artifacts')
+  const certificationPath = path.join(tempRoot, 'native-certification.json')
   mkdirSync(evidenceDirectory)
   try {
     const nativeBundles = new Map()
@@ -179,12 +208,16 @@ test('verifies downloaded native runtime evidence through the release CLI', () =
         artifactsDirectory,
         '--revision',
         RUNTIME_REVISION,
+        '--output',
+        certificationPath,
       ],
       { encoding: 'utf8' },
     )
     assert.equal(result.status, 0, result.stderr)
+    const certification = JSON.parse(result.stdout)
+    assert.deepEqual(JSON.parse(readFileSync(certificationPath, 'utf8')), certification)
     assert.deepEqual(
-      (({ certifications, bundles }) => ({ certifications, bundles }))(JSON.parse(result.stdout)),
+      (({ certifications, bundles }) => ({ certifications, bundles }))(certification),
       { certifications: 16, bundles: 8 },
     )
   } finally {

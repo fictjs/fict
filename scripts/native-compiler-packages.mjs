@@ -931,6 +931,15 @@ export function validateNativeRuntimeEvidenceMatrix(
     nodeLanes: Object.freeze([...NATIVE_COMPILER_NODE_LANES]),
     certifications: expectedPairs.size,
     bundles: NATIVE_COMPILER_TARGETS.length,
+    certifiedPairs: Object.freeze([...expectedPairs]),
+    releaseBundles: Object.freeze(
+      NATIVE_COMPILER_TARGETS.map(definition =>
+        Object.freeze({
+          target: definition.target,
+          ...nativeBundles.get(definition.target),
+        }),
+      ),
+    ),
     packageVersion: [...packageVersions][0],
     compilerBuildId: [...compilerBuildIds][0],
     compilerBuildRevision: expectedRevision,
@@ -1003,7 +1012,13 @@ function main() {
         nativeBundles: loadNativeReleaseBundleIdentities(options.artifacts),
       },
     )
-    process.stdout.write(`${JSON.stringify(result)}\n`)
+    const output = `${JSON.stringify(result, null, 2)}\n`
+    if (options.output) {
+      const outputPath = path.resolve(options.output)
+      mkdirSync(path.dirname(outputPath), { recursive: true })
+      writeFileSync(outputPath, output)
+    }
+    process.stdout.write(output)
     return
   }
   throw new Error(

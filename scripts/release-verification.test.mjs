@@ -84,7 +84,11 @@ test('release aggregates and certifies all revision-bound native runtime evidenc
   assert.match(releaseWorkflow, /verify-runtime-evidence/)
   assert.match(releaseWorkflow, /--artifacts "\$\{RUNNER_TEMP\}\/native-packages"/)
   assert.match(releaseWorkflow, /--revision "\$\{GITHUB_SHA\}"/)
+  assert.match(releaseWorkflow, /--output "\$\{RUNNER_TEMP\}\/native-certification\.json"/)
+  assert.match(releaseWorkflow, /name: fict-native-certification-\$\{\{ github\.sha \}\}/)
 
+  const certificationJob = releaseWorkflow.indexOf('native-certification:')
+  const releaseJob = releaseWorkflow.indexOf('\n  release:')
   const download = releaseWorkflow.indexOf('name: Download all native runtime evidence')
   const certification = releaseWorkflow.indexOf(
     'name: Certify the complete native runtime evidence matrix',
@@ -92,8 +96,16 @@ test('release aggregates and certifies all revision-bound native runtime evidenc
   const publishPreflight = releaseWorkflow.indexOf(
     'name: Preflight the complete atomic native publish set',
   )
+  assert.ok(certificationJob >= 0 && certificationJob < releaseJob)
   assert.ok(download >= 0 && download < certification)
   assert.ok(certification < publishPreflight)
+
+  const certificationSource = releaseWorkflow.slice(certificationJob, releaseJob)
+  const releaseSource = releaseWorkflow.slice(releaseJob)
+  assert.match(certificationSource, /needs: \[native-build, native-runtime\]/)
+  assert.doesNotMatch(certificationSource, /github\.event_name == 'push'/)
+  assert.match(releaseSource, /needs: native-certification/)
+  assert.doesNotMatch(releaseSource, /Download all native runtime evidence/)
 })
 
 test('rollout candidates are finalized only after every required CI gate succeeds', () => {

@@ -196,7 +196,8 @@ are one release unit. Their versions must match exactly. The release workflow:
    target/Node pairs, mixed compiler build IDs or source revisions, and Node
    lanes that did not execute the exact same target tarball; every evidence
    hash, byte count, version, and size result must match the eight downloaded
-   bundles that will be published;
+   bundles that will be published; this dedicated certification job runs for
+   both manual dispatches and tag pushes and retains a machine-readable result;
 5. preflights all eight artifacts before any npm publish;
 6. publishes every pending tarball in dependency order, waiting for registry
    visibility after each package; all native packages precede `@fictjs/compiler`.
@@ -210,12 +211,13 @@ closed; publish the missing certified tarball, confirm registry visibility, and
 only then rerun. Never move the tag or publish a different binary under the same
 version.
 
-The `fict-native-package-*` and `fict-native-evidence-*` workflow artifacts are
-retained for 90 days. Preserve them with the release plan when investigating a
-registry-side partial publication. The publishing job accepts runtime evidence
-only when all 16 documents embed `GITHUB_SHA`, share one compiler build ID and
-package version, and the two Node lanes for each target report identical bundle
-hashes and size measurements that match the downloaded release bundle.
+The `fict-native-package-*`, `fict-native-evidence-*`, and
+`fict-native-certification-*` workflow artifacts are retained for 90 days.
+Preserve them with the release plan when investigating a registry-side partial
+publication. The publishing job runs only after certification proves that all
+16 documents embed `GITHUB_SHA`, share one compiler build ID and package
+version, and the two Node lanes for each target report identical bundle hashes
+and size measurements that match the downloaded release bundle.
 
 Before tagging a release, make sure each publishable NPM package is configured
 on npmjs.com with:
@@ -276,8 +278,10 @@ as `new-package` and its trusted publisher is configured.
 
 For the eight native compiler packages, manually dispatch `release.yml`. Manual
 dispatch builds and certifies the full matrix but deliberately skips the npm
-release job. Download every `fict-native-package-*` artifact, publish its `.tgz`
-once with an authenticated maintainer account and `--provenance=false`, then
-configure the same `release.yml` trusted publisher for each package. Run
+release job. Confirm that `fict-native-certification-<sha>` exists and reports
+all 16 certifications and eight matching bundles, then download every
+`fict-native-package-*` artifact, publish its `.tgz` once with an authenticated
+maintainer account and `--provenance=false`, and configure the same
+`release.yml` trusted publisher for each package. Run
 `pnpm release:plan --require-existing-packages` only after all eight names are
 visible. A partial bootstrap is not sufficient to tag a release.
