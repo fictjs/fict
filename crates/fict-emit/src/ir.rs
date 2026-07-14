@@ -842,6 +842,7 @@ pub struct EmitPreviewHandler {
     pub handler_origin: Origin,
     pub event: String,
     pub explicit: bool,
+    pub prevent_default: bool,
     pub source_export_name: String,
     pub artifact_id: String,
     pub module_specifier: String,

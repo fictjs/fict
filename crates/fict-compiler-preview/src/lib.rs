@@ -462,6 +462,8 @@ pub fn attach_preview_plan(
                 handler_origin: candidate.origin,
                 event: candidate.event,
                 explicit: candidate.explicit,
+                prevent_default: handler_function
+                    .is_some_and(|function| function_may_prevent_default(hir, function)),
                 source_export_name,
                 module_specifier: format!("fict:compiler-artifact:{artifact_id}"),
                 artifact_id,
@@ -806,6 +808,74 @@ fn handler_node_count(hir: &HirFile, function: FunctionId) -> u32 {
         })
         .and_then(|count| u32::try_from(count).ok())
         .unwrap_or(u32::MAX)
+}
+
+fn function_may_prevent_default(hir: &HirFile, root: FunctionId) -> bool {
+    let Some(root_function) = hir.functions.get(root.as_usize()) else {
+        return false;
+    };
+    let Some(event_parameter) = root_function
+        .parameters
+        .first()
+        .and_then(|parameter| parameter.binding)
+    else {
+        return false;
+    };
+    let mut visited = BTreeSet::new();
+    let mut stack = vec![root];
+    while let Some(function_id) = stack.pop() {
+        if !visited.insert(function_id) {
+            continue;
+        }
+        let Some(function) = hir.functions.get(function_id.as_usize()) else {
+            continue;
+        };
+        stack.extend(
+            hir.functions
+                .iter()
+                .filter(|child| child.parent == function_id)
+                .map(|child| child.id),
+        );
+        if function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .filter_map(|instruction| match &instruction.kind {
+                HirInstructionKind::Call(call) => call.callee_reference.as_ref(),
+                _ => None,
+            })
+            .any(|callee| {
+                place_binding(function, callee) == Some(event_parameter)
+                    && match callee.projections.as_slice() {
+                        [fict_hir::Projection::StaticProperty { name, .. }] => {
+                            name == "preventDefault"
+                        }
+                        [fict_hir::Projection::ComputedProperty { key, .. }] => {
+                            value_is_string(function, *key, "preventDefault")
+                        }
+                        [fict_hir::Projection::Index { .. }] | [] | [_, _, ..] => false,
+                    }
+            })
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn value_is_string(function: &fict_hir::HirFunction, value: ValueId, expected: &str) -> bool {
+    function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| instruction.result == Some(value))
+        .is_some_and(|instruction| {
+            matches!(
+                &instruction.kind,
+                HirInstructionKind::Literal(fict_hir::LiteralValue::String(value))
+                    if value.to_utf8().as_deref() == Some(expected)
+            )
+        })
 }
 
 fn handler_is_member_read(function: &fict_hir::HirFunction, handler: &EmitValueRef) -> bool {

@@ -3761,6 +3761,7 @@ impl<'a> AstRewriter<'a, '_> {
         span: Span,
     ) -> Option<Expression<'a>> {
         let plan = self.preview_handlers.get(&location)?.clone();
+        let prevent_default = prevent_default || plan.prevent_default;
         self.prepared_preview_handlers
             .entry(location)
             .or_insert(PreparedHandler {

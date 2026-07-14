@@ -4927,6 +4927,50 @@ mod tests {
 
     #[cfg(feature = "preview")]
     #[test]
+    fn marks_prevent_default_for_referenced_preview_handlers() {
+        let source = r#"
+            function moduleHandler(event) { event["preventDefault"](); }
+            export function App() {
+                const localHandler = event => event.preventDefault();
+                const shadowedHandler = event => ((event) => event.preventDefault())({ preventDefault() {} });
+                return <>
+                    <button onClick$={moduleHandler}>Module</button>
+                    <button onClick$={localHandler}>Local</button>
+                    <button onClick$={shadowedHandler}>Shadowed</button>
+                </>;
+            }
+        "#;
+        let mut input = request(source, "preview-prevent-default-reference.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: false,
+            ..CompilerPreviewOptions::default()
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(result.artifacts.len(), 3);
+        assert_eq!(result.code.matches("\"default\", \"pd\"").count(), 2);
+        for handler in 0..=1 {
+            assert!(
+                result.code.contains(&format!(
+                    "__fictQrl(\"fict:compiler-artifact:handler-{handler}\", \"default\", \"pd\")"
+                )),
+                "{}",
+                result.code
+            );
+        }
+        assert!(
+            result
+                .code
+                .contains("__fictQrl(\"fict:compiler-artifact:handler-2\", \"default\")"),
+            "{}",
+            result.code
+        );
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
     fn emits_preview_vnode_qrls_with_prop_and_module_capture_artifacts() {
         let source = "const moduleHelper = () => 1; export function App({ label = 'fallback' }) { return <button on:click$={() => { moduleHelper(); console.log(label); }}>{label}</button>; }";
         let mut input = request(source, "preview-vnode.tsx");
