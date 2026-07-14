@@ -22,6 +22,16 @@ import {
 import { guardrailSampleFilename } from './hir-guardrails.mjs'
 
 const rootPackage = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+const rolloutState = JSON.parse(
+  readFileSync(new URL('../.github/compiler-rollout-state.json', import.meta.url), 'utf8'),
+)
+const rolloutReview = JSON.parse(
+  readFileSync(new URL('../.github/compiler-rollout-review.json', import.meta.url), 'utf8'),
+)
+const rolloutReadiness = readFileSync(
+  new URL('./compiler-rollout-readiness.mjs', import.meta.url),
+  'utf8',
+)
 const releaseWorkflow = readFileSync(
   new URL('../.github/workflows/release.yml', import.meta.url),
   'utf8',
@@ -106,6 +116,20 @@ test('release aggregates and certifies all revision-bound native runtime evidenc
   assert.doesNotMatch(certificationSource, /github\.event_name == 'push'/)
   assert.match(releaseSource, /needs: native-certification/)
   assert.doesNotMatch(releaseSource, /Download all native runtime evidence/)
+})
+
+test('Rust-default approval binds the complete native certification to its candidate', () => {
+  assert.equal(rolloutState.schemaVersion, 3)
+  assert.equal(rolloutState.nativeCertificationPath, '.github/compiler-native-certification.json')
+  assert.equal(rolloutReview.schemaVersion, 3)
+  assert.equal(rolloutReview.nativeCertificationDigest, null)
+  assert.match(rolloutReadiness, /assertNativeCertification\(nativeCertification, evidence\)/)
+  assert.match(rolloutReadiness, /payload\.compilerBuildRevision !== evidence\.sourceRevision/)
+  assert.match(rolloutReadiness, /payload\.compilerBuildId !== evidence\.compilerBuildId/)
+  assert.match(
+    rolloutReadiness,
+    /review\.nativeCertificationDigest !== nativeCertification\.certificationDigest/,
+  )
 })
 
 test('rollout candidates are finalized only after every required CI gate succeeds', () => {

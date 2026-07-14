@@ -5,6 +5,11 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import {
+  NATIVE_COMPILER_NODE_LANES,
+  NATIVE_COMPILER_TARGETS,
+  nativeNodeVersionMatchesLane,
+} from './native-compiler-packages.mjs'
 import { validateWorkflowGateArtifact } from './compiler-rollout-workflow-contract.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -70,13 +75,14 @@ function assertAreaShape(areas, requiredAreas, label) {
 }
 
 function assertReviewDocumentShape(review) {
-  if (review.schemaVersion !== 2 || !['pending', 'approved'].includes(review.status)) {
+  if (review.schemaVersion !== 3 || !['pending', 'approved'].includes(review.status)) {
     throw new Error('Compiler rollout review has an unsupported schema or status')
   }
   assertAreaShape(review.areas, REQUIRED_REVIEW_AREAS, 'Reviewer checklist')
   if (
     review.status === 'pending' &&
     (review.candidateDigest !== null ||
+      review.nativeCertificationDigest !== null ||
       review.reviewer !== null ||
       Object.values(review.areas).some(Boolean))
   ) {
@@ -86,7 +92,8 @@ function assertReviewDocumentShape(review) {
     review.status === 'approved' &&
     (typeof review.reviewer !== 'string' ||
       !review.reviewer.trim() ||
-      !/^sha256:[0-9a-f]{64}$/.test(review.candidateDigest ?? ''))
+      !/^sha256:[0-9a-f]{64}$/.test(review.candidateDigest ?? '') ||
+      !/^sha256:[0-9a-f]{64}$/.test(review.nativeCertificationDigest ?? ''))
   ) {
     throw new Error('Approved compiler rollout review must be complete and digest-bound')
   }
@@ -139,9 +146,9 @@ function assertLegacyRemovalReviewDocumentShape(review) {
   }
 }
 
-function assertReview(review, evidence) {
+function assertReview(review, evidence, nativeCertification) {
   if (
-    review.schemaVersion !== 2 ||
+    review.schemaVersion !== 3 ||
     review.status !== 'approved' ||
     typeof review.reviewer !== 'string' ||
     !review.reviewer.trim()
@@ -151,12 +158,117 @@ function assertReview(review, evidence) {
   if (review.candidateDigest !== evidence.candidateDigest) {
     throw new Error('Reviewer approval does not bind the current candidate evidence')
   }
+  if (review.nativeCertificationDigest !== nativeCertification.certificationDigest) {
+    throw new Error('Reviewer approval does not bind the current native certification')
+  }
   const reviewAreas = review.areas ?? {}
   const missingAreas = Object.entries(reviewAreas)
     .filter(([, approved]) => approved !== true)
     .map(([area]) => area)
   if (missingAreas.length > 0) {
     throw new Error(`Reviewer checklist is incomplete: ${missingAreas.join(', ')}`)
+  }
+}
+
+function assertNativeCertification(certification, evidence) {
+  if (!certification || typeof certification !== 'object' || Array.isArray(certification)) {
+    throw new Error('Rust-default rollout requires one intact complete native certification')
+  }
+  const { certificationDigest, ...payload } = certification
+  const expectedPairs = NATIVE_COMPILER_TARGETS.flatMap(target =>
+    NATIVE_COMPILER_NODE_LANES.map(nodeLane => `${target.target}:node-${nodeLane}`),
+  )
+  const expectedRuntimeEvidence = NATIVE_COMPILER_TARGETS.flatMap(target =>
+    NATIVE_COMPILER_NODE_LANES.map(nodeLane => ({
+      pair: `${target.target}:node-${nodeLane}`,
+      target: target.target,
+      nodeLane,
+    })),
+  )
+  const releaseBundles = payload.releaseBundles
+  const runtimeEvidence = payload.runtimeEvidence
+  const computedDigest = `sha256:${createHash('sha256')
+    .update(JSON.stringify(payload))
+    .digest('hex')}`
+  const hasValidEnvelope =
+    payload.schemaVersion === 2 &&
+    payload.status === 'pass' &&
+    payload.targets === NATIVE_COMPILER_TARGETS.length &&
+    JSON.stringify(payload.nodeLanes) === JSON.stringify(NATIVE_COMPILER_NODE_LANES) &&
+    payload.certifications === expectedPairs.length &&
+    payload.bundles === NATIVE_COMPILER_TARGETS.length &&
+    JSON.stringify(payload.certifiedPairs) === JSON.stringify(expectedPairs) &&
+    Array.isArray(runtimeEvidence) &&
+    runtimeEvidence.length === expectedRuntimeEvidence.length &&
+    runtimeEvidence.every((entry, index) => {
+      const expected = expectedRuntimeEvidence[index]
+      return (
+        entry &&
+        typeof entry === 'object' &&
+        !Array.isArray(entry) &&
+        entry.pair === expected.pair &&
+        entry.target === expected.target &&
+        entry.nodeLane === expected.nodeLane &&
+        nativeNodeVersionMatchesLane(entry.node, entry.nodeLane) &&
+        /^sha256:[0-9a-f]{64}$/.test(entry.evidenceDigest ?? '')
+      )
+    }) &&
+    typeof payload.packageVersion === 'string' &&
+    Boolean(payload.packageVersion) &&
+    typeof payload.compilerBuildId === 'string' &&
+    Boolean(payload.compilerBuildId) &&
+    /^[0-9a-f]{40}$/.test(payload.compilerBuildRevision ?? '') &&
+    /^sha256:[0-9a-f]{64}$/.test(certificationDigest ?? '') &&
+    certificationDigest === computedDigest &&
+    Array.isArray(releaseBundles) &&
+    releaseBundles.length === NATIVE_COMPILER_TARGETS.length &&
+    releaseBundles.every(
+      bundle => bundle && typeof bundle === 'object' && !Array.isArray(bundle),
+    ) &&
+    JSON.stringify(releaseBundles.map(bundle => bundle.target)) ===
+      JSON.stringify(NATIVE_COMPILER_TARGETS.map(target => target.target))
+
+  if (!hasValidEnvelope) {
+    throw new Error('Rust-default rollout requires one intact complete native certification')
+  }
+
+  for (const [index, bundle] of releaseBundles.entries()) {
+    const target = NATIVE_COMPILER_TARGETS[index]
+    const sizeGate = bundle.sizeGate
+    if (
+      bundle.target !== target.target ||
+      bundle.packageVersion !== payload.packageVersion ||
+      !/^[0-9a-f]{64}$/.test(bundle.binarySha256 ?? '') ||
+      !/^[0-9a-f]{64}$/.test(bundle.tarballSha256 ?? '') ||
+      !Number.isSafeInteger(bundle.tarballBytes) ||
+      bundle.tarballBytes <= 0 ||
+      !Number.isSafeInteger(bundle.unpackedBytes) ||
+      bundle.unpackedBytes <= 0 ||
+      sizeGate?.schemaVersion !== 1 ||
+      sizeGate.target !== target.target ||
+      typeof sizeGate.profile !== 'string' ||
+      !sizeGate.profile ||
+      sizeGate.tarballBytes !== bundle.tarballBytes ||
+      sizeGate.unpackedBytes !== bundle.unpackedBytes ||
+      !Number.isSafeInteger(sizeGate.maximumTarballBytes) ||
+      sizeGate.maximumTarballBytes <= 0 ||
+      !Number.isSafeInteger(sizeGate.maximumUnpackedBytes) ||
+      sizeGate.maximumUnpackedBytes <= 0 ||
+      bundle.tarballBytes > sizeGate.maximumTarballBytes ||
+      bundle.unpackedBytes > sizeGate.maximumUnpackedBytes ||
+      sizeGate.passed !== true ||
+      !Array.isArray(sizeGate.violations) ||
+      sizeGate.violations.length !== 0
+    ) {
+      throw new Error('Rust-default rollout requires one intact complete native certification')
+    }
+  }
+
+  if (
+    payload.compilerBuildRevision !== evidence.sourceRevision ||
+    payload.compilerBuildId !== evidence.compilerBuildId
+  ) {
+    throw new Error('Native certification does not bind the rollout candidate source and build')
   }
 }
 
@@ -524,7 +636,7 @@ export function validateCompilerRolloutReadiness(options = {}) {
   )
   const state = readJson(statePath, 'Compiler rollout state')
   if (
-    state.schemaVersion !== 2 ||
+    state.schemaVersion !== 3 ||
     !['beta', 'rust-default', 'legacy-removal'].includes(state.phase)
   ) {
     throw new Error('Compiler rollout state has an unsupported phase')
@@ -543,6 +655,11 @@ export function validateCompilerRolloutReadiness(options = {}) {
     workspaceRoot,
     state.candidateEvidencePath,
     'candidateEvidencePath',
+  )
+  const nativeCertificationPath = resolveWorkspaceStatePath(
+    workspaceRoot,
+    state.nativeCertificationPath,
+    'nativeCertificationPath',
   )
   const reviewPath = resolveWorkspaceStatePath(workspaceRoot, state.reviewPath, 'reviewPath')
   const legacyRemovalReviewPath = resolveWorkspaceStatePath(
@@ -572,8 +689,10 @@ export function validateCompilerRolloutReadiness(options = {}) {
   const requiresApproval = state.phase !== 'beta' || options.requireDefaultReady === true
   if (requiresApproval) {
     const evidence = readJson(candidateEvidencePath, 'Compiler candidate evidence')
+    const nativeCertification = readJson(nativeCertificationPath, 'Compiler native certification')
     assertCandidate(evidence)
-    assertReview(review, evidence)
+    assertNativeCertification(nativeCertification, evidence)
+    assertReview(review, evidence, nativeCertification)
   }
   if (state.phase === 'legacy-removal') {
     assertLegacyRemovalReview(legacyRemovalReview, state)

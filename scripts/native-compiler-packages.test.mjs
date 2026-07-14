@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -146,7 +147,7 @@ test('certifies one complete revision-bound native runtime evidence matrix', () 
       compilerBuildRevision,
     }))(result),
     {
-      schemaVersion: 1,
+      schemaVersion: 2,
       status: 'pass',
       targets: 8,
       nodeLanes: ['22.18.0', '24'],
@@ -159,7 +160,21 @@ test('certifies one complete revision-bound native runtime evidence matrix', () 
   )
   assert.equal(result.certifiedPairs.length, 16)
   assert.equal(new Set(result.certifiedPairs).size, 16)
+  assert.equal(result.runtimeEvidence.length, 16)
+  assert.deepEqual(
+    result.runtimeEvidence.map(evidence => evidence.pair),
+    result.certifiedPairs,
+  )
+  assert.ok(
+    result.runtimeEvidence.every(evidence => /^sha256:[0-9a-f]{64}$/.test(evidence.evidenceDigest)),
+  )
   assert.equal(result.releaseBundles.length, 8)
+  assert.match(result.certificationDigest, /^sha256:[0-9a-f]{64}$/)
+  const { certificationDigest, ...payload } = result
+  assert.equal(
+    certificationDigest,
+    `sha256:${createHash('sha256').update(JSON.stringify(payload)).digest('hex')}`,
+  )
   assert.deepEqual(
     result.releaseBundles.map(bundle => bundle.target),
     NATIVE_COMPILER_TARGETS.map(target => target.target),

@@ -1,7 +1,8 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "status": "pending",
   "candidateDigest": null,
+  "nativeCertificationDigest": null,
   "reviewer": null,
   "areas": {
     "coreSemantics": false,

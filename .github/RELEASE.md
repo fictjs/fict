@@ -85,23 +85,31 @@ unfinished evidence.
 
 Before changing the Vite default to Rust, download the latest candidate and
 confirm `consecutiveGreenCandidates >= 2`. Copy the reviewed candidate record
-to the evidence path named by `.github/compiler-rollout-state.json`, then have a
-maintainer bind every item in `.github/compiler-rollout-review.json` to that
-exact `candidateDigest`. `node scripts/compiler-rollout-readiness.mjs
---require-default-ready` MUST pass before the state may enter `rust-default`.
-Review schema v2 includes an explicit `nativePackageSizeBudget` approval; since
-the candidate digest binds the package evidence, this approval covers the exact
-compressed/unpacked ceilings and measurements in that candidate.
+to the candidate path named by `.github/compiler-rollout-state.json`. Manually
+dispatch `release.yml` for that exact candidate source revision, download its
+`fict-native-certification-<sha>` artifact, and copy the JSON record to the
+state's native-certification path. The certification digest, source revision,
+compiler build ID, 16 raw-evidence digests, and recorded Node versions must
+remain intact, and the source/build must match the candidate. Then
+have a maintainer bind every item in `.github/compiler-rollout-review.json` to
+both the exact `candidateDigest` and `nativeCertificationDigest`.
+`node scripts/compiler-rollout-readiness.mjs --require-default-ready` MUST pass
+before the state may enter `rust-default`. Review schema v3 includes an explicit
+`nativePackageSizeBudget` approval; the two bound digests make that approval
+cover both the candidate host measurement and the exact size gates for all
+eight release bundles.
 Rollout evidence/review paths are restricted to the repository, and CI validates
 the exact pending/approved checklist shape even during beta. Do not stage a
-partial approval: update the digest, reviewer, status, and all areas atomically.
+partial approval: update both digests, reviewer, status, and all areas
+atomically. The state schema is v3; older state or review documents fail closed.
 
 Do not manufacture a second candidate by running the sealer twice locally.
 Controlled CI and release builds embed `github.sha`; a local binary without an
 embedded revision cannot be sealed. Injecting a value during a local contract
 smoke still does not turn that output into canonical CI evidence. Only distinct
-CI runs from committed source count. Raw benchmark values remain in CI artifacts
-and are not copied into release prose.
+CI runs from committed source count. Likewise, a locally assembled native
+certification cannot replace the retained 8×2 Release workflow artifact. Raw
+benchmark values remain in CI artifacts and are not copied into release prose.
 
 Legacy removal is a later release operation, not part of candidate approval.
 Before entering `legacy-removal`, update the four exact stable release fields

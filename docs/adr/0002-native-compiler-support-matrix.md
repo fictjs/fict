@@ -193,6 +193,14 @@ also match the eight downloaded bundle artifacts that the release will
 preflight and publish; agreement only among the 16 evidence documents is not
 sufficient.
 
+The retained certification document MUST contain the SHA-256 digest and actual
+Node version of every raw runtime evidence record, plus a self-verifying digest
+over the complete summary. A Rust-default approval must bind that summary
+digest alongside the consecutive rollout candidate digest, and readiness must
+prove that both records report the same embedded source revision and compiler
+build ID. A complete matrix from another commit is not valid promotion
+evidence.
+
 ## Related decisions
 
 - [ADR-0001 — Adopt an OXC-native Rust compiler](0001-adopt-oxc-rust-compiler.md)

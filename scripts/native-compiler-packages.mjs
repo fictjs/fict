@@ -924,14 +924,28 @@ export function validateNativeRuntimeEvidenceMatrix(
     throw new Error(`Invalid native runtime evidence matrix:\n- ${failures.join('\n- ')}`)
   }
 
-  return Object.freeze({
-    schemaVersion: 1,
+  const payload = {
+    schemaVersion: 2,
     status: 'pass',
     targets: NATIVE_COMPILER_TARGETS.length,
     nodeLanes: Object.freeze([...NATIVE_COMPILER_NODE_LANES]),
     certifications: expectedPairs.size,
     bundles: NATIVE_COMPILER_TARGETS.length,
     certifiedPairs: Object.freeze([...expectedPairs]),
+    runtimeEvidence: Object.freeze(
+      [...expectedPairs].map(pair => {
+        const evidence = evidenceByPair.get(pair)
+        return Object.freeze({
+          pair,
+          target: evidence.target,
+          nodeLane: evidence.nodeLane,
+          node: evidence.node,
+          evidenceDigest: `sha256:${createHash('sha256')
+            .update(JSON.stringify(evidence))
+            .digest('hex')}`,
+        })
+      }),
+    ),
     releaseBundles: Object.freeze(
       NATIVE_COMPILER_TARGETS.map(definition =>
         Object.freeze({
@@ -943,6 +957,12 @@ export function validateNativeRuntimeEvidenceMatrix(
     packageVersion: [...packageVersions][0],
     compilerBuildId: [...compilerBuildIds][0],
     compilerBuildRevision: expectedRevision,
+  }
+  return Object.freeze({
+    ...payload,
+    certificationDigest: `sha256:${createHash('sha256')
+      .update(JSON.stringify(payload))
+      .digest('hex')}`,
   })
 }
 

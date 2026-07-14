@@ -7,6 +7,7 @@ import test from 'node:test'
 
 import { validateCompilerRolloutReadiness } from './compiler-rollout-readiness.mjs'
 import { REQUIRED_ROLLOUT_JOBS } from './compiler-rollout-workflow-contract.mjs'
+import { NATIVE_COMPILER_NODE_LANES, NATIVE_COMPILER_TARGETS } from './native-compiler-packages.mjs'
 
 const approvedAreas = {
   coreSemantics: true,
@@ -32,9 +33,10 @@ const approvedRemovalAreas = {
 
 function pendingReview() {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     status: 'pending',
     candidateDigest: null,
+    nativeCertificationDigest: null,
     reviewer: null,
     areas: Object.fromEntries(Object.keys(approvedAreas).map(area => [area, false])),
   }
@@ -117,21 +119,100 @@ function candidateEvidence(overrides = {}) {
   }
 }
 
-async function fixture(state, review, evidence, removalReview) {
+function nativeCertification(evidence, overrides = {}) {
+  const releaseBundles = NATIVE_COMPILER_TARGETS.map((target, index) => {
+    const tarballBytes = 1_000 + index
+    const unpackedBytes = 2_000 + index
+    return {
+      target: target.target,
+      packageVersion: '0.28.0',
+      binarySha256: (index + 1).toString(16).repeat(64),
+      tarballSha256: (index + 8).toString(16).slice(-1).repeat(64),
+      tarballBytes,
+      unpackedBytes,
+      sizeGate: {
+        schemaVersion: 1,
+        target: target.target,
+        profile: 'ci',
+        tarballBytes,
+        unpackedBytes,
+        maximumTarballBytes: 10_000,
+        maximumUnpackedBytes: 20_000,
+        passed: true,
+        violations: [],
+      },
+    }
+  })
+  const payload = {
+    schemaVersion: 2,
+    status: 'pass',
+    targets: NATIVE_COMPILER_TARGETS.length,
+    nodeLanes: [...NATIVE_COMPILER_NODE_LANES],
+    certifications: NATIVE_COMPILER_TARGETS.length * NATIVE_COMPILER_NODE_LANES.length,
+    bundles: NATIVE_COMPILER_TARGETS.length,
+    certifiedPairs: NATIVE_COMPILER_TARGETS.flatMap(target =>
+      NATIVE_COMPILER_NODE_LANES.map(nodeLane => `${target.target}:node-${nodeLane}`),
+    ),
+    runtimeEvidence: NATIVE_COMPILER_TARGETS.flatMap(target =>
+      NATIVE_COMPILER_NODE_LANES.map(nodeLane => {
+        const pair = `${target.target}:node-${nodeLane}`
+        return {
+          pair,
+          target: target.target,
+          nodeLane,
+          node: nodeLane === '22.18.0' ? 'v22.18.0' : 'v24.7.0',
+          evidenceDigest: `sha256:${createHash('sha256').update(pair).digest('hex')}`,
+        }
+      }),
+    ),
+    releaseBundles,
+    packageVersion: '0.28.0',
+    compilerBuildId: evidence.compilerBuildId,
+    compilerBuildRevision: evidence.sourceRevision,
+    ...overrides,
+  }
+  return {
+    ...payload,
+    certificationDigest: `sha256:${createHash('sha256')
+      .update(JSON.stringify(payload))
+      .digest('hex')}`,
+  }
+}
+
+function approvedReview(evidence, overrides = {}) {
+  return {
+    schemaVersion: 3,
+    status: 'approved',
+    candidateDigest: evidence.candidateDigest,
+    nativeCertificationDigest: nativeCertification(evidence).certificationDigest,
+    reviewer: 'maintainer',
+    areas: approvedAreas,
+    ...overrides,
+  }
+}
+
+async function fixture(state, review, evidence, removalReview, certificationOverride) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'fict-rollout-'))
+  const certification =
+    certificationOverride === undefined
+      ? evidence
+        ? nativeCertification(evidence)
+        : null
+      : certificationOverride
   await mkdir(path.join(root, '.github'), { recursive: true })
   await mkdir(path.join(root, 'packages', 'compiler', 'src'), { recursive: true })
   await mkdir(path.join(root, 'packages', 'vite-plugin', 'src'), { recursive: true })
   await writeFile(
     path.join(root, '.github', 'compiler-rollout-state.json'),
     JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       rollbackBackend: 'legacy',
       rustDefaultRelease: null,
       compatibilityRelease: null,
       finalLegacyRelease: null,
       legacyRemovalRelease: null,
       candidateEvidencePath: '.github/compiler-rollout-evidence.json',
+      nativeCertificationPath: '.github/compiler-native-certification.json',
       reviewPath: '.github/compiler-rollout-review.json',
       legacyRemovalReviewPath: '.github/compiler-legacy-removal-review.json',
       ...state,
@@ -159,6 +240,12 @@ async function fixture(state, review, evidence, removalReview) {
     await writeFile(
       path.join(root, '.github', 'compiler-rollout-evidence.json'),
       JSON.stringify(evidence),
+    )
+  }
+  if (certification) {
+    await writeFile(
+      path.join(root, '.github', 'compiler-native-certification.json'),
+      JSON.stringify(certification),
     )
   }
   await writeFile(
@@ -191,44 +278,116 @@ test('beta rejects a native package root before promotion', async t => {
   )
 })
 
-test('rust default requires chained candidates and a checklist bound to their digest', async t => {
+test('rust default requires chained candidates, native certification, and bound review', async t => {
   const evidence = candidateEvidence()
-  const { candidateDigest } = evidence
-  const areas = approvedAreas
-  const root = await fixture(
-    rustDefaultState(),
-    { schemaVersion: 2, status: 'approved', candidateDigest, reviewer: 'maintainer', areas },
-    evidence,
-  )
+  const root = await fixture(rustDefaultState(), approvedReview(evidence), evidence)
   t.after(() => rm(root, { recursive: true }))
   assert.equal(validateCompilerRolloutReadiness({ root }).phase, 'rust-default')
 
   await writeFile(
     path.join(root, '.github', 'compiler-rollout-review.json'),
-    JSON.stringify({
-      schemaVersion: 2,
-      status: 'approved',
-      candidateDigest: `sha256:${'b'.repeat(64)}`,
-      reviewer: 'maintainer',
-      areas,
-    }),
+    JSON.stringify(
+      approvedReview(evidence, {
+        candidateDigest: `sha256:${'b'.repeat(64)}`,
+      }),
+    ),
   )
   assert.throws(() => validateCompilerRolloutReadiness({ root }), /does not bind/)
 })
 
-test('rust default rejects a legacy or incomplete native package root', async t => {
+test('rust default rejects missing, tampered, or cross-revision native certification', async t => {
+  const evidence = candidateEvidence()
+
+  const missingRoot = await fixture(
+    rustDefaultState(),
+    approvedReview(evidence),
+    evidence,
+    undefined,
+    null,
+  )
+  t.after(() => rm(missingRoot, { recursive: true }))
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root: missingRoot }),
+    /native certification does not exist/,
+  )
+
+  const tampered = nativeCertification(evidence)
+  tampered.releaseBundles[0].tarballSha256 = 'f'.repeat(64)
+  const tamperedRoot = await fixture(
+    rustDefaultState(),
+    approvedReview(evidence),
+    evidence,
+    undefined,
+    tampered,
+  )
+  t.after(() => rm(tamperedRoot, { recursive: true }))
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root: tamperedRoot }),
+    /intact complete native certification/,
+  )
+
+  const invalidSizePayload = structuredClone(nativeCertification(evidence))
+  delete invalidSizePayload.certificationDigest
+  invalidSizePayload.releaseBundles[0].sizeGate.passed = false
+  const invalidSize = {
+    ...invalidSizePayload,
+    certificationDigest: `sha256:${createHash('sha256')
+      .update(JSON.stringify(invalidSizePayload))
+      .digest('hex')}`,
+  }
+  const invalidSizeRoot = await fixture(
+    rustDefaultState(),
+    approvedReview(evidence, {
+      nativeCertificationDigest: invalidSize.certificationDigest,
+    }),
+    evidence,
+    undefined,
+    invalidSize,
+  )
+  t.after(() => rm(invalidSizeRoot, { recursive: true }))
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root: invalidSizeRoot }),
+    /intact complete native certification/,
+  )
+
+  const crossRevision = nativeCertification(evidence, {
+    compilerBuildRevision: 'e'.repeat(40),
+  })
+  const crossRevisionRoot = await fixture(
+    rustDefaultState(),
+    approvedReview(evidence, {
+      nativeCertificationDigest: crossRevision.certificationDigest,
+    }),
+    evidence,
+    undefined,
+    crossRevision,
+  )
+  t.after(() => rm(crossRevisionRoot, { recursive: true }))
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root: crossRevisionRoot }),
+    /does not bind the rollout candidate source and build/,
+  )
+})
+
+test('human approval binds both candidate and native certification digests', async t => {
   const evidence = candidateEvidence()
   const root = await fixture(
     rustDefaultState(),
-    {
-      schemaVersion: 2,
-      status: 'approved',
-      candidateDigest: evidence.candidateDigest,
-      reviewer: 'maintainer',
-      areas: approvedAreas,
-    },
+    approvedReview(evidence, {
+      nativeCertificationDigest: `sha256:${'f'.repeat(64)}`,
+    }),
     evidence,
   )
+  t.after(() => rm(root, { recursive: true }))
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root }),
+    /does not bind the current native certification/,
+  )
+})
+
+test('rust default rejects a legacy or incomplete native package root', async t => {
+  const evidence = candidateEvidence()
+  const root = await fixture(rustDefaultState(), approvedReview(evidence), evidence)
   t.after(() => rm(root, { recursive: true }))
   const compilerRootPath = path.join(root, 'packages', 'compiler', 'src', 'index.ts')
 
@@ -250,17 +409,10 @@ test('rust default rejects a legacy or incomplete native package root', async t 
 
 test('rust default rejects candidate content modified after sealing', async t => {
   const evidence = candidateEvidence()
-  const root = await fixture(
-    rustDefaultState(),
-    {
-      schemaVersion: 2,
-      status: 'approved',
-      candidateDigest: evidence.candidateDigest,
-      reviewer: 'maintainer',
-      areas: approvedAreas,
-    },
-    { ...evidence, nativePackageDigest: `sha256:${'e'.repeat(64)}` },
-  )
+  const root = await fixture(rustDefaultState(), approvedReview(evidence), {
+    ...evidence,
+    nativePackageDigest: `sha256:${'e'.repeat(64)}`,
+  })
   t.after(() => rm(root, { recursive: true }))
   assert.throws(
     () => validateCompilerRolloutReadiness({ root }),
@@ -270,17 +422,7 @@ test('rust default rejects candidate content modified after sealing', async t =>
 
 test('rust default rejects a re-signed candidate with an unbound workflow gate digest', async t => {
   const evidence = candidateEvidence({ workflowGateDigest: `sha256:${'e'.repeat(64)}` })
-  const root = await fixture(
-    rustDefaultState(),
-    {
-      schemaVersion: 2,
-      status: 'approved',
-      candidateDigest: evidence.candidateDigest,
-      reviewer: 'maintainer',
-      areas: approvedAreas,
-    },
-    evidence,
-  )
+  const root = await fixture(rustDefaultState(), approvedReview(evidence), evidence)
   t.after(() => rm(root, { recursive: true }))
   assert.throws(
     () => validateCompilerRolloutReadiness({ root }),
@@ -296,17 +438,7 @@ test('rust default rejects non-main candidate provenance', async t => {
     consecutiveGreenCandidates: 0,
     previousCandidateDigest: null,
   })
-  const root = await fixture(
-    rustDefaultState(),
-    {
-      schemaVersion: 2,
-      status: 'approved',
-      candidateDigest: evidence.candidateDigest,
-      reviewer: 'maintainer',
-      areas: approvedAreas,
-    },
-    evidence,
-  )
+  const root = await fixture(rustDefaultState(), approvedReview(evidence), evidence)
   t.after(() => rm(root, { recursive: true }))
   assert.throws(
     () => validateCompilerRolloutReadiness({ root }),
@@ -316,18 +448,13 @@ test('rust default rejects non-main candidate provenance', async t => {
 
 test('human approval cannot substitute arbitrary checklist area names', async t => {
   const evidence = candidateEvidence()
-  const { candidateDigest } = evidence
   const root = await fixture(
     rustDefaultState(),
-    {
-      schemaVersion: 2,
-      status: 'approved',
-      candidateDigest,
-      reviewer: 'maintainer',
+    approvedReview(evidence, {
       areas: Object.fromEntries(
         Array.from({ length: 9 }, (_, index) => [`alternate${index}`, true]),
       ),
-    },
+    }),
     evidence,
   )
   t.after(() => rm(root, { recursive: true }))
@@ -341,13 +468,9 @@ test('human approval explicitly covers the candidate native package size budget'
   const evidence = candidateEvidence()
   const root = await fixture(
     rustDefaultState(),
-    {
-      schemaVersion: 2,
-      status: 'approved',
-      candidateDigest: evidence.candidateDigest,
-      reviewer: 'maintainer',
+    approvedReview(evidence, {
       areas: { ...approvedAreas, nativePackageSizeBudget: false },
-    },
+    }),
     evidence,
   )
   t.after(() => rm(root, { recursive: true }))
@@ -377,6 +500,14 @@ test('beta validates pending review shape before promotion', async t => {
     JSON.stringify(review),
   )
   assert.throws(() => validateCompilerRolloutReadiness({ root }), /cannot contain partial approval/)
+
+  const digestReview = pendingReview()
+  digestReview.nativeCertificationDigest = `sha256:${'f'.repeat(64)}`
+  await writeFile(
+    path.join(root, '.github', 'compiler-rollout-review.json'),
+    JSON.stringify(digestReview),
+  )
+  assert.throws(() => validateCompilerRolloutReadiness({ root }), /cannot contain partial approval/)
 })
 
 test('rollout state evidence paths cannot escape the workspace', async t => {
@@ -387,17 +518,22 @@ test('rollout state evidence paths cannot escape the workspace', async t => {
   })
   t.after(() => rm(root, { recursive: true }))
   assert.throws(() => validateCompilerRolloutReadiness({ root }), /must remain inside/)
+
+  const nativeRoot = await fixture({
+    phase: 'beta',
+    viteDefaultBackend: 'legacy',
+    nativeCertificationPath: '/tmp/compiler-native-certification.json',
+  })
+  t.after(() => rm(nativeRoot, { recursive: true }))
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root: nativeRoot }),
+    /nativeCertificationPath must remain inside/,
+  )
 })
 
 test('legacy removal requires a bound review and a completed stable minor window', async t => {
   const evidence = candidateEvidence()
-  const candidateReview = {
-    schemaVersion: 2,
-    status: 'approved',
-    candidateDigest: evidence.candidateDigest,
-    reviewer: 'maintainer',
-    areas: approvedAreas,
-  }
+  const candidateReview = approvedReview(evidence)
   const state = {
     phase: 'legacy-removal',
     viteDefaultBackend: 'rust',

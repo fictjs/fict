@@ -27,11 +27,13 @@ The machine-readable phase and default backend live in
 [`compiler-rollout-state.json`](../../../.github/compiler-rollout-state.json).
 Do not copy or infer the current phase from release prose. The readiness check
 rejects a mismatch between that file and the Vite implementation. State schema
-v2 also records the Rust-default, completed compatibility-minor, final legacy,
-and planned legacy-removal releases; beta keeps all four values `null`. Evidence
-and review paths must remain workspace-relative. The normal beta readiness check
-validates both pending review documents, so an unknown area, non-boolean value,
-or partial approval fails before promotion work starts.
+v3 records the candidate, full native-certification, rollout-review, and
+legacy-removal-review paths plus the Rust-default, completed
+compatibility-minor, final legacy, and planned legacy-removal releases; beta
+keeps all four version values `null`. Evidence and review paths must remain
+workspace-relative. The normal beta readiness check validates both pending
+review documents, so an unknown area, non-boolean value, or partial approval
+fails before promotion work starts.
 The same check binds the compiler package root to the phase: beta MUST retain
 the legacy facade, while `rust-default` and `legacy-removal` MUST expose the
 complete native request API without importing the legacy implementation.
@@ -181,12 +183,18 @@ hand-maintained benchmark or package-size claim.
 The checked-in
 [`compiler-rollout-review.json`](../../../.github/compiler-rollout-review.json)
 is intentionally pending until a maintainer reviews a two-candidate artifact.
-Approval MUST bind its `candidateDigest` and cover every listed area. The
-readiness check fails if an approval is missing, incomplete, or belongs to a
-different candidate. Review schema v2 requires an explicit
-`nativePackageSizeBudget` approval. Because the candidate digest binds the
-native package evidence, that checkbox approves the exact compressed/unpacked
-limits and measurements rather than an unversioned prose budget.
+The same candidate source revision MUST also complete the Release workflow's
+8-target × 2-Node certification; its retained JSON is copied to the
+`nativeCertificationPath` declared by rollout state. Approval MUST bind both
+its `candidateDigest` and `nativeCertificationDigest` and cover every listed
+area. The readiness check recomputes both digests, requires the certification's
+compiler revision and build ID to match the candidate, validates all 16 pairs
+with their actual Node versions and raw-evidence digests plus all eight bundle
+size records, and fails if either record is missing, incomplete, tampered, or
+from another source. Review schema v3 requires an
+explicit `nativePackageSizeBudget` approval, so that checkbox covers the exact
+candidate host measurement and every certified release bundle rather than an
+unversioned prose budget.
 
 Reviewer focus:
 
