@@ -1008,11 +1008,11 @@ fn creation_rewrites(
                 continue;
             }
             let signal_name = match operation {
-                EmitOperation::CreateReactive { name, helper, .. }
-                    if matches!(helper, RuntimeHelper::Signal | RuntimeHelper::UseSignal) =>
-                {
-                    name
-                }
+                EmitOperation::CreateReactive {
+                    name,
+                    helper: RuntimeHelper::Signal | RuntimeHelper::UseSignal,
+                    ..
+                } => name,
                 _ => &None,
             }
             .clone();

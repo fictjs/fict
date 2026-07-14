@@ -24,7 +24,12 @@ import {
 import { isNodeLike } from './dom-guards'
 import { assertValidDOMAttributeName } from './dom-names'
 import { createRenderEffect } from './effect'
-import { withHydration, withHydrationRange, isHydratingActive } from './hydration'
+import {
+  HYDRATED_TEMPLATE_NODE,
+  withHydration,
+  withHydrationRange,
+  isHydratingActive,
+} from './hydration'
 import {
   createRootContext,
   deferRootRefAssignments,
@@ -70,7 +75,6 @@ const REACTIVE_FN_MARKER = Symbol.for('fict:reactive-fn')
 const NON_REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:non-reactive-fn-registry')
 const REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:reactive-fn-registry')
 const PROP_GETTER_REGISTRY_KEY = Symbol.for('fict:prop-getter-registry')
-const HYDRATED_TEMPLATE_NODE = Symbol.for('fict:hydration-template-node')
 const DELEGATED_DATA_ONLY_MARKER = '__fictDataOnly'
 const DELEGATED_DATA_PLAIN_MARKER = '__fictDataOnlyPlain'
 

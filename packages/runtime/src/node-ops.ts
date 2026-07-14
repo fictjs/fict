@@ -4,9 +4,9 @@
  */
 
 import { isDocumentFragmentLike, isNodeLike } from './dom-guards'
+import { HYDRATED_TEMPLATE_NODE } from './hydration'
 
 const HYDRATED_FRAGMENT_NODES = Symbol.for('fict:hydration-fragment-nodes')
-const HYDRATED_TEMPLATE_NODE = Symbol.for('fict:hydration-template-node')
 const DOCUMENT_FRAGMENT_NODE = 11
 
 type HydratedFragment = DocumentFragment & { [HYDRATED_FRAGMENT_NODES]?: Node[] }

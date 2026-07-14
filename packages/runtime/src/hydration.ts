@@ -38,8 +38,7 @@ const isDev =
 const hydrationStack: HydrationContext[] = []
 let hydrationClaimSuppressionDepth = 0
 const HYDRATED_FRAGMENT_NODES = Symbol.for('fict:hydration-fragment-nodes')
-const HYDRATED_TEMPLATE_NODE = Symbol.for('fict:hydration-template-node')
-
+export const HYDRATED_TEMPLATE_NODE = Symbol.for('fict:hydration-template-node')
 type HydratedFragment = DocumentFragment & { [HYDRATED_FRAGMENT_NODES]?: Node[] }
 type HydratedTemplateNode = Node & { [HYDRATED_TEMPLATE_NODE]?: Node }
 
