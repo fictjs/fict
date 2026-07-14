@@ -1,3 +1,5 @@
+import type { CompileRequest, CompileResult } from '@fictjs/compiler'
+
 export type PlaygroundProfile = 'app-default' | 'ci-hard-gate' | 'migration'
 export type PlaygroundRole = 'viewer' | 'developer' | 'admin'
 
@@ -87,6 +89,18 @@ export interface PlaygroundDiagnosticsResult {
   }
 }
 
+/** Injectable native compiler boundary for embedding and deterministic host tests. */
+export interface PlaygroundCompiler {
+  transform(request: CompileRequest): Promise<CompileResult>
+}
+
+export interface PlaygroundDiagnosticsInput {
+  rootDir: string
+  config: PlaygroundConfig
+  /** Override native compiler loading when embedding or testing diagnostics. */
+  compiler?: PlaygroundCompiler
+}
+
 export interface PlaygroundBuildVerification {
   success: boolean
   durationMs: number
@@ -152,6 +166,8 @@ export interface PlaygroundServerOptions {
   auth?: PlaygroundAuthOptions
   quotas?: PlaygroundTenantQuotaOptions
   limits?: PlaygroundRuntimeLimits
+  /** Override native compiler loading when embedding the playground. */
+  compiler?: PlaygroundCompiler
 }
 
 export interface StartedPlaygroundServer {

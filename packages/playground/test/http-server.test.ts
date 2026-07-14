@@ -1,9 +1,26 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { createPlaygroundServer } from '../src/server/http-server'
-import type { StartedPlaygroundServer } from '../src/server/types'
+import type { PlaygroundCompiler, StartedPlaygroundServer } from '../src/server/types'
 
 let activeServer: StartedPlaygroundServer | null = null
+
+const compiler: PlaygroundCompiler = {
+  transform: async request => ({
+    protocolVersion: 1,
+    code: request.code,
+    map: null,
+    diagnostics: [],
+    moduleMetadata: { version: 1, exports: {} },
+    metadataDependencies: [],
+    unresolvedMetadataRequests: [],
+    metadataIncomplete: false,
+    explain: null,
+    artifacts: [],
+    stats: null,
+    compilerBuildId: `fict-rust-p1-oxc0.139.0-m1-${'0'.repeat(64)}`,
+  }),
+}
 
 afterEach(async () => {
   if (activeServer) {
@@ -95,6 +112,7 @@ describe('playground HTTP server', () => {
   it('enforces verification quota per tenant', async () => {
     activeServer = await createPlaygroundServer({
       port: 0,
+      compiler,
       auth: {
         allowAnonymous: false,
         tokens: {
@@ -296,7 +314,7 @@ describe('playground HTTP server', () => {
   })
 
   it('runs full verification for a session', async () => {
-    activeServer = await createPlaygroundServer({ port: 0 })
+    activeServer = await createPlaygroundServer({ port: 0, compiler })
 
     const create = await postJson(`${activeServer.url}/api/sessions`, {
       templateId: 'counter',
@@ -341,7 +359,7 @@ export function App() {
   }, 90_000)
 
   it('reports failed verification for invalid source', async () => {
-    activeServer = await createPlaygroundServer({ port: 0 })
+    activeServer = await createPlaygroundServer({ port: 0, compiler })
 
     const create = await postJson(`${activeServer.url}/api/sessions`, {
       templateId: 'counter',

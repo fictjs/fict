@@ -10,6 +10,7 @@ import type {
   PlaygroundAuthContext,
   PlaygroundBuildVerification,
   PlaygroundConfig,
+  PlaygroundCompiler,
   PlaygroundDiagnosticsResult,
   PlaygroundSessionSnapshot,
   PlaygroundSessionState,
@@ -44,6 +45,7 @@ interface SessionManagerOptions {
   maxSessions?: number
   maxConcurrentVerifications?: number
   verifyTimeoutMs?: number
+  compiler?: PlaygroundCompiler
 }
 
 const DEFAULT_IDLE_TIMEOUT_MS = 1000 * 60 * 30
@@ -98,6 +100,7 @@ export class PlaygroundSessionManager {
   private readonly sessionCreationLimiter = new AsyncLimiter(1)
   private readonly verifyLimiter: AsyncLimiter
   private readonly verifyTimeoutMs: number
+  private readonly compiler: PlaygroundCompiler | undefined
   private readonly cleanupTimer: NodeJS.Timeout
 
   constructor(options: SessionManagerOptions = {}) {
@@ -114,6 +117,7 @@ export class PlaygroundSessionManager {
       options.maxConcurrentVerifications ?? DEFAULT_MAX_CONCURRENT_VERIFICATIONS,
     )
     this.verifyTimeoutMs = options.verifyTimeoutMs ?? DEFAULT_VERIFY_TIMEOUT_MS
+    this.compiler = options.compiler
 
     this.cleanupTimer = setInterval(() => {
       void this.collectStaleSessions()
@@ -339,6 +343,7 @@ export class PlaygroundSessionManager {
       const diagnostics = await collectSessionDiagnostics({
         rootDir: session.summary.rootDir,
         config: session.summary.config,
+        ...(this.compiler ? { compiler: this.compiler } : {}),
       })
       session.summary.updatedAt = Date.now()
       return diagnostics
@@ -366,6 +371,7 @@ export class PlaygroundSessionManager {
         const diagnostics = await collectSessionDiagnostics({
           rootDir: session.summary.rootDir,
           config: session.summary.config,
+          ...(this.compiler ? { compiler: this.compiler } : {}),
         })
         const build = await this.runBuildVerification(
           session.summary.id,

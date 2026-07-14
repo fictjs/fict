@@ -1,29 +1,33 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 
-import { parseSync, transformAsync } from '@babel/core'
-import * as BabelTypes from '@babel/types'
-import { createFictPlugin, type CompilerWarning, type FictCompilerOptions } from '@fictjs/compiler'
+import type { CompileRequest, FictDiagnostic } from '@fictjs/compiler'
+import { loadNativeCompilerBinding } from '@fictjs/compiler/native'
 import type * as TypeScriptApi from 'typescript'
 
 import type {
   PlaygroundArtifact,
+  PlaygroundCompiler,
   PlaygroundConfig,
   PlaygroundDiagnostic,
+  PlaygroundDiagnosticsInput,
   PlaygroundDiagnosticsResult,
 } from './types'
 import { findWorkspaceRoot, listSourceFiles, relativeToRoot } from './utils'
 
-interface DiagnosticsInput {
-  rootDir: string
-  config: PlaygroundConfig
+let defaultCompiler: PlaygroundCompiler | undefined
+
+function getDefaultCompiler(): PlaygroundCompiler {
+  defaultCompiler ??= loadNativeCompilerBinding(
+    process.env.FICT_COMPILER_NATIVE_PATH
+      ? { nativePath: process.env.FICT_COMPILER_NATIVE_PATH }
+      : {},
+  )
+  return defaultCompiler
 }
 
-type CompilerErrorContext = 'loop-or-conditional' | 'nested-function'
-type CompilerMacroName = '$effect' | '$state'
-
 export async function collectSessionDiagnostics(
-  input: DiagnosticsInput,
+  input: PlaygroundDiagnosticsInput,
 ): Promise<PlaygroundDiagnosticsResult> {
   const [compiler, typescript] = await Promise.all([
     collectCompilerDiagnostics(input),
@@ -61,60 +65,135 @@ export async function collectSessionDiagnostics(
 }
 
 async function collectCompilerDiagnostics(
-  input: DiagnosticsInput,
+  input: PlaygroundDiagnosticsInput,
 ): Promise<{ diagnostics: PlaygroundDiagnostic[]; artifacts: PlaygroundArtifact[] }> {
   const sourceFiles = await listSourceFiles(input.rootDir)
   const diagnostics: PlaygroundDiagnostic[] = []
   const artifacts: PlaygroundArtifact[] = []
+  let compiler: PlaygroundCompiler
+
+  try {
+    compiler = input.compiler ?? getDefaultCompiler()
+  } catch (error) {
+    diagnostics.push(nativeHostFailure(error))
+    return { diagnostics, artifacts }
+  }
 
   for (const absolutePath of sourceFiles) {
     const relativePath = relativeToRoot(input.rootDir, absolutePath)
     const sourceCode = await fs.readFile(absolutePath, 'utf8')
-    const isTypeScript = /\.(tsx|ts)$/.test(absolutePath)
-
-    const warnings: PlaygroundDiagnostic[] = []
-
-    const options = toCompilerOptions(input.config, warning => {
-      warnings.push(fromCompilerWarning(input.rootDir, warning))
-    })
 
     try {
-      const result = await transformAsync(sourceCode, {
-        filename: absolutePath,
-        configFile: false,
-        babelrc: false,
-        sourceMaps: true,
-        sourceFileName: absolutePath,
-        presets: isTypeScript
-          ? [['@babel/preset-typescript', { isTSX: true, allExtensions: true }]]
-          : [],
-        plugins: [
-          ['@babel/plugin-syntax-jsx', {}],
-          [createFictPlugin, { ...options, filename: absolutePath }],
-        ],
-      })
+      const result = await compiler.transform(
+        toCompileRequest(sourceCode, absolutePath, input.config),
+      )
+      diagnostics.push(
+        ...result.diagnostics.map(diagnostic =>
+          fromNativeDiagnostic(input.rootDir, absolutePath, sourceCode, diagnostic),
+        ),
+      )
 
-      diagnostics.push(...warnings)
-
-      if (result?.code) {
+      if (result.code) {
         artifacts.push({
           filePath: relativePath,
           code: result.code,
         })
       }
     } catch (error) {
-      diagnostics.push(fromCompilerError(input.rootDir, absolutePath, sourceCode, error))
+      diagnostics.push(nativeTransformFailure(input.rootDir, absolutePath, error))
     }
   }
 
+  return { diagnostics, artifacts }
+}
+
+function toCompileRequest(
+  sourceCode: string,
+  absolutePath: string,
+  config: PlaygroundConfig,
+): CompileRequest {
   return {
-    diagnostics,
-    artifacts,
+    code: sourceCode,
+    filename: absolutePath,
+    moduleId: absolutePath,
+    options: {
+      dev: true,
+      strictGuarantee: config.strictGuarantee,
+      strictReactivity: config.strictReactivity,
+      lazyConditional: config.lazyConditional,
+      sourcemap: true,
+      ...(config.resumable
+        ? {
+            preview: {
+              resumable: true,
+              autoExtractHandlers: true,
+            },
+          }
+        : {}),
+    },
+  }
+}
+
+function fromNativeDiagnostic(
+  rootDir: string,
+  fileName: string,
+  sourceCode: string,
+  diagnostic: FictDiagnostic,
+): PlaygroundDiagnostic {
+  const view: PlaygroundDiagnostic = {
+    source: 'compiler',
+    severity: diagnostic.severity,
+    code: diagnostic.code,
+    message: diagnostic.message,
+    filePath: toRelativeFilePath(rootDir, fileName),
+  }
+  if (diagnostic.primarySpan) {
+    const location = byteOffsetToEditorLocation(sourceCode, diagnostic.primarySpan.start)
+    view.line = location.line
+    view.column = location.column
+  }
+  return view
+}
+
+function byteOffsetToEditorLocation(
+  sourceCode: string,
+  byteOffset: number,
+): { line: number; column: number } {
+  const bytes = Buffer.from(sourceCode)
+  const safeOffset = Math.max(0, Math.min(bytes.length, Math.trunc(byteOffset)))
+  const prefix = bytes.subarray(0, safeOffset).toString('utf8')
+  const lines = prefix.split(/\r?\n/)
+  return {
+    line: lines.length,
+    column: (lines[lines.length - 1]?.length ?? 0) + 1,
+  }
+}
+
+function nativeHostFailure(error: unknown): PlaygroundDiagnostic {
+  return {
+    source: 'compiler',
+    severity: 'error',
+    code: 'FICT-NATIVE-LOAD',
+    message: error instanceof Error ? error.message : String(error),
+  }
+}
+
+function nativeTransformFailure(
+  rootDir: string,
+  fileName: string,
+  error: unknown,
+): PlaygroundDiagnostic {
+  return {
+    source: 'compiler',
+    severity: 'error',
+    code: 'FICT-NATIVE-HOST',
+    message: error instanceof Error ? error.message : String(error),
+    filePath: toRelativeFilePath(rootDir, fileName),
   }
 }
 
 async function collectTypeScriptDiagnostics(
-  input: DiagnosticsInput,
+  input: PlaygroundDiagnosticsInput,
 ): Promise<PlaygroundDiagnostic[]> {
   try {
     const ts = (await import('typescript')) as typeof TypeScriptApi
@@ -191,272 +270,6 @@ function withWorkspaceModulePaths(
       '@fictjs/vite-plugin/*': ['packages/vite-plugin/src/*'],
     },
   }
-}
-
-function toCompilerOptions(
-  config: PlaygroundConfig,
-  onWarn: (warning: CompilerWarning) => void,
-): FictCompilerOptions {
-  return {
-    dev: true,
-    strictGuarantee: config.strictGuarantee,
-    strictReactivity: config.strictReactivity,
-    lazyConditional: config.lazyConditional,
-    resumable: config.resumable,
-    onWarn,
-  }
-}
-
-function fromCompilerWarning(rootDir: string, warning: CompilerWarning): PlaygroundDiagnostic {
-  const filePath = toRelativeFilePath(rootDir, warning.fileName)
-  const diagnostic: PlaygroundDiagnostic = {
-    source: 'compiler',
-    severity: 'warning',
-    code: warning.code,
-    message: warning.message,
-    filePath,
-  }
-  if (warning.line > 0) diagnostic.line = warning.line
-  if (warning.column > 0) diagnostic.column = warning.column
-  return diagnostic
-}
-
-function parseEscalatedCompilerWarning(message: string): { code: string; message: string } | null {
-  const match = /Fict warning treated as error \(([^)]+)\): ([^\n]+)/.exec(message)
-  if (!match) return null
-  const code = match[1]
-  const warningMessage = match[2]
-  if (!code || !warningMessage) return null
-  return {
-    code,
-    message: warningMessage,
-  }
-}
-
-function extractLocationFromCompilerMessage(
-  message: string,
-): { line: number; column: number } | null {
-  const lineMatch = /^>\s+(\d+)\s+\|/m.exec(message)
-  const columnMatch = /^\s*\|\s+(\^+)/m.exec(message)
-  if (lineMatch && columnMatch) {
-    const line = Number.parseInt(lineMatch[1] ?? '', 10)
-    const carets = columnMatch[1]
-    if (!Number.isFinite(line) || !carets) return null
-
-    const markerIndex = columnMatch.index + columnMatch[0].indexOf(carets)
-    const lineStart = message.lastIndexOf('\n', columnMatch.index) + 1
-    const column = markerIndex - lineStart
-
-    return { line, column: column + 1 }
-  }
-
-  const summaryMatch = /\((\d+):(\d+)\)(?:\s|$)/.exec(message)
-  if (!summaryMatch) return null
-
-  const line = Number.parseInt(summaryMatch[1] ?? '', 10)
-  const column = Number.parseInt(summaryMatch[2] ?? '', 10)
-  if (!Number.isFinite(line) || !Number.isFinite(column)) return null
-
-  return { line, column: column + 1 }
-}
-
-function classifyCompilerPlacementError(
-  message: string,
-): { context: CompilerErrorContext; macroName: CompilerMacroName } | null {
-  if (/\$state\(\) cannot be declared inside loops or conditionals\./.test(message)) {
-    return {
-      context: 'loop-or-conditional',
-      macroName: '$state',
-    }
-  }
-
-  if (/\$state\(\) cannot be declared inside nested functions\./.test(message)) {
-    return {
-      context: 'nested-function',
-      macroName: '$state',
-    }
-  }
-
-  if (/\$effect\(\) cannot be called inside loops or conditionals\./.test(message)) {
-    return {
-      context: 'loop-or-conditional',
-      macroName: '$effect',
-    }
-  }
-
-  if (/\$effect\(\) cannot be called inside nested functions\./.test(message)) {
-    return {
-      context: 'nested-function',
-      macroName: '$effect',
-    }
-  }
-
-  return null
-}
-
-function parseSourceAstSafely(sourceCode: string, filePath: string): BabelTypes.File | null {
-  try {
-    const ast = parseSync(sourceCode, {
-      filename: filePath,
-      configFile: false,
-      babelrc: false,
-      sourceType: 'module',
-      parserOpts: {
-        sourceType: 'module',
-        plugins: ['typescript', 'jsx'],
-        allowReturnOutsideFunction: true,
-      },
-    })
-
-    return ast && ast.type === 'File' ? ast : null
-  } catch {
-    return null
-  }
-}
-
-function isLoopNode(node: BabelTypes.Node): boolean {
-  return (
-    BabelTypes.isForStatement(node) ||
-    BabelTypes.isForInStatement(node) ||
-    BabelTypes.isForOfStatement(node) ||
-    BabelTypes.isWhileStatement(node) ||
-    BabelTypes.isDoWhileStatement(node)
-  )
-}
-
-function isConditionalNode(node: BabelTypes.Node): boolean {
-  return (
-    BabelTypes.isIfStatement(node) ||
-    BabelTypes.isSwitchStatement(node) ||
-    BabelTypes.isSwitchCase(node) ||
-    BabelTypes.isConditionalExpression(node) ||
-    BabelTypes.isLogicalExpression(node)
-  )
-}
-
-function findFirstMacroCallInContext(
-  node: BabelTypes.Node,
-  macroName: CompilerMacroName,
-  context: CompilerErrorContext,
-  ancestors: BabelTypes.Node[] = [],
-): { line: number; column: number } | null {
-  const nextAncestors = [...ancestors, node]
-
-  if (
-    BabelTypes.isCallExpression(node) &&
-    BabelTypes.isIdentifier(node.callee) &&
-    node.callee.name === macroName &&
-    node.loc
-  ) {
-    const hasLoop = nextAncestors.some(isLoopNode)
-    const hasConditional = nextAncestors.some(isConditionalNode)
-    const functionDepth = nextAncestors.filter(ancestor => BabelTypes.isFunction(ancestor)).length
-
-    if (context === 'loop-or-conditional' && (hasLoop || hasConditional)) {
-      return {
-        line: node.loc.start.line,
-        column: node.loc.start.column + 1,
-      }
-    }
-
-    if (context === 'nested-function' && functionDepth > 1) {
-      return {
-        line: node.loc.start.line,
-        column: node.loc.start.column + 1,
-      }
-    }
-  }
-
-  const visitorKeys = BabelTypes.VISITOR_KEYS[node.type] ?? []
-  for (const key of visitorKeys) {
-    const value = (node as unknown as Record<string, unknown>)[key]
-
-    if (Array.isArray(value)) {
-      for (const child of value) {
-        if (!child || typeof child !== 'object' || !('type' in child)) continue
-        const found = findFirstMacroCallInContext(
-          child as BabelTypes.Node,
-          macroName,
-          context,
-          nextAncestors,
-        )
-        if (found) return found
-      }
-      continue
-    }
-
-    if (!value || typeof value !== 'object' || !('type' in value)) continue
-    const found = findFirstMacroCallInContext(
-      value as BabelTypes.Node,
-      macroName,
-      context,
-      nextAncestors,
-    )
-    if (found) return found
-  }
-
-  return null
-}
-
-export function inferCompilerLocationFromSource(
-  sourceCode: string,
-  filePath: string,
-  message: string,
-): { line: number; column: number } | null {
-  const classification = classifyCompilerPlacementError(message)
-  if (!classification) return null
-
-  const ast = parseSourceAstSafely(sourceCode, filePath)
-  if (!ast) return null
-
-  return findFirstMacroCallInContext(ast, classification.macroName, classification.context)
-}
-
-function fromCompilerError(
-  rootDir: string,
-  fileName: string,
-  sourceCode: string,
-  error: unknown,
-): PlaygroundDiagnostic {
-  let message = 'Unknown compiler transform failure'
-  let line: number | undefined
-  let column: number | undefined
-
-  if (error instanceof Error) {
-    message = error.message
-    const derivedLocation = extractLocationFromCompilerMessage(message)
-    const inferredLocation = inferCompilerLocationFromSource(sourceCode, fileName, message)
-    const errorWithLocation = error as Error & {
-      loc?: {
-        line: number
-        column: number
-      }
-    }
-    if (errorWithLocation.loc) {
-      line = errorWithLocation.loc.line
-      column = errorWithLocation.loc.column + 1
-    } else if (derivedLocation) {
-      line = derivedLocation.line
-      column = derivedLocation.column
-    } else if (inferredLocation) {
-      line = inferredLocation.line
-      column = inferredLocation.column
-    }
-  }
-
-  const escalatedWarning = parseEscalatedCompilerWarning(message)
-  const conciseMessage = message.split('\n')[0] ?? message
-
-  const diagnostic: PlaygroundDiagnostic = {
-    source: 'compiler',
-    severity: 'error',
-    code: escalatedWarning?.code ?? 'FICT-COMPILE',
-    message: escalatedWarning?.message ?? conciseMessage,
-    filePath: toRelativeFilePath(rootDir, fileName),
-  }
-  if (line !== undefined) diagnostic.line = line
-  if (column !== undefined) diagnostic.column = column
-  return diagnostic
 }
 
 function fromTypeScriptDiagnostic(

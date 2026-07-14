@@ -1,4 +1,5 @@
 export { runCli } from './cli'
+export { collectSessionDiagnostics } from './server/diagnostics'
 export { createPlaygroundServer } from './server/http-server'
 export { PlaygroundSessionManager } from './server/session-manager'
 export { decodeSessionSnapshot, encodeSessionSnapshot } from './server/share'
@@ -16,6 +17,8 @@ export type {
   PlaygroundDiagnosticSeverity,
   PlaygroundDiagnosticSource,
   PlaygroundDiagnosticsResult,
+  PlaygroundDiagnosticsInput,
+  PlaygroundCompiler,
   PlaygroundProfile,
   PlaygroundRole,
   PlaygroundServerOptions,

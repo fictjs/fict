@@ -1,13 +1,11 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
+import type { CompileRequest, CompileResult, FictDiagnostic } from '@fictjs/compiler'
 import { describe, expect, it } from 'vitest'
 
-import {
-  collectSessionDiagnostics,
-  inferCompilerLocationFromSource,
-} from '../src/server/diagnostics'
-import type { PlaygroundConfig } from '../src/server/types'
+import { collectSessionDiagnostics } from '../src/server/diagnostics'
+import type { PlaygroundCompiler, PlaygroundConfig } from '../src/server/types'
 
 const config: PlaygroundConfig = {
   profile: 'app-default',
@@ -20,6 +18,74 @@ const config: PlaygroundConfig = {
 }
 
 const diagnosticTimeout = process.env.CI ? 60_000 : 20_000
+
+function diagnostic(
+  request: CompileRequest,
+  code: string,
+  message: string,
+  needle: string,
+  severity: FictDiagnostic['severity'],
+): FictDiagnostic {
+  const characterOffset = request.code.indexOf(needle)
+  const start = Buffer.byteLength(request.code.slice(0, Math.max(0, characterOffset)))
+  return {
+    code,
+    message,
+    severity,
+    primarySpan: { start, end: start + Buffer.byteLength(needle) },
+    secondaryLabels: [],
+    help: null,
+    notes: [],
+    guaranteeClass: severity === 'error' ? 'unsupported' : 'fallback',
+  }
+}
+
+function compileResult(request: CompileRequest): CompileResult {
+  const diagnostics: FictDiagnostic[] = []
+  if (request.code.includes('function inner()')) {
+    diagnostics.push(
+      diagnostic(
+        request,
+        'FICT-PLACEMENT-STATE-NESTED',
+        '$state() cannot be declared inside nested functions',
+        '$state(0)',
+        'error',
+      ),
+    )
+  }
+  if (request.code.includes('state.count = 1')) {
+    const strict = request.options?.strictGuarantee ?? true
+    diagnostics.push(
+      diagnostic(
+        request,
+        'FICT-M',
+        'nested state mutation cannot preserve the strict reactivity guarantee',
+        'state.count = 1',
+        strict ? 'error' : 'warning',
+      ),
+    )
+  }
+  return {
+    protocolVersion: 1,
+    code: diagnostics.some(item => item.severity === 'error')
+      ? ''
+      : request.code.replace(/\$state/g, '__fictUseSignal'),
+    map: null,
+    diagnostics,
+    moduleMetadata: { version: 1, exports: {} },
+    metadataDependencies: [],
+    unresolvedMetadataRequests: [],
+    metadataIncomplete: false,
+    explain: null,
+    artifacts: [],
+    stats: null,
+    compilerBuildId: `fict-rust-p1-oxc0.139.0-m1-${'0'.repeat(64)}`,
+  }
+}
+
+const compiler: PlaygroundCompiler = {
+  transform: async request => compileResult(request),
+}
 
 async function writeDiagnosticsProject(rootDir: string, source: string): Promise<void> {
   await writeFile(
@@ -63,7 +129,7 @@ describe('playground diagnostics', () => {
           JSON.stringify({ plugins: ['./missing-consumer-babel-plugin.cjs'] }),
         )
 
-        const result = await collectSessionDiagnostics({ rootDir, config })
+        const result = await collectSessionDiagnostics({ rootDir, config, compiler })
 
         expect(result.diagnostics).toEqual([])
         expect(result.artifacts[0]?.code).toContain('__fictUseSignal')
@@ -107,7 +173,7 @@ describe('playground diagnostics', () => {
         )
         process.chdir(rootDir)
 
-        const result = await collectSessionDiagnostics({ rootDir, config })
+        const result = await collectSessionDiagnostics({ rootDir, config, compiler })
         const code = result.artifacts[0]?.code ?? ''
 
         expect(result.diagnostics).toEqual([])
@@ -120,32 +186,6 @@ describe('playground diagnostics', () => {
     },
     diagnosticTimeout,
   )
-
-  it('ignores consumer Babel configuration while inferring compiler locations', async () => {
-    const sandboxRoot = path.join(process.cwd(), '.fict-playground-test')
-    await mkdir(sandboxRoot, { recursive: true })
-    const rootDir = await mkdtemp(path.join(sandboxRoot, 'diag-location-babelrc-'))
-    const sourceCode =
-      "import { $state } from 'fict'\n\nexport function App() {\n  function inner() {\n    let count = $state(0)\n    return count\n  }\n  return <div>{inner()}</div>\n}\n"
-    const filePath = path.join(rootDir, 'src/main.tsx')
-
-    try {
-      await writeFile(
-        path.join(rootDir, '.babelrc'),
-        JSON.stringify({ plugins: ['./missing-consumer-babel-plugin.cjs'] }),
-      )
-
-      expect(
-        inferCompilerLocationFromSource(
-          sourceCode,
-          filePath,
-          `${filePath}: $state() cannot be declared inside nested functions.`,
-        ),
-      ).toEqual({ line: 5, column: 17 })
-    } finally {
-      await rm(rootDir, { recursive: true, force: true })
-    }
-  })
 
   it(
     'reports diagnostics only for session files',
@@ -184,6 +224,7 @@ describe('playground diagnostics', () => {
         const result = await collectSessionDiagnostics({
           rootDir,
           config,
+          compiler,
         })
 
         expect(result.diagnostics).toEqual([])
@@ -230,7 +271,7 @@ describe('playground diagnostics', () => {
           "import { $state } from 'fict'\n\nexport function App() {\n  let state = $state({ count: 0 })\n  state.count = 1\n  return <div>{state.count}</div>\n}\n",
         )
 
-        const strictResult = await collectSessionDiagnostics({ rootDir, config })
+        const strictResult = await collectSessionDiagnostics({ rootDir, config, compiler })
         const relaxedResult = await collectSessionDiagnostics({
           rootDir,
           config: {
@@ -238,6 +279,7 @@ describe('playground diagnostics', () => {
             profile: 'migration',
             strictGuarantee: false,
           },
+          compiler,
         })
 
         expect(strictResult.diagnostics).toEqual(
@@ -258,7 +300,7 @@ describe('playground diagnostics', () => {
   )
 
   it(
-    'returns structured FICT-COMPILE diagnostics for direct compiler failures',
+    'uses structured native codes and spans for direct compiler failures',
     async () => {
       const sandboxRoot = path.join(process.cwd(), '.fict-playground-test')
       await mkdir(sandboxRoot, { recursive: true })
@@ -291,13 +333,13 @@ describe('playground diagnostics', () => {
           "import { $state } from 'fict'\n\nexport function App() {\n  function inner() {\n    let count = $state(0)\n    return count\n  }\n  return <div>{inner()}</div>\n}\n",
         )
 
-        const result = await collectSessionDiagnostics({ rootDir, config })
+        const result = await collectSessionDiagnostics({ rootDir, config, compiler })
 
         expect(result.diagnostics).toEqual(
           expect.arrayContaining([
             expect.objectContaining({
               source: 'compiler',
-              code: 'FICT-COMPILE',
+              code: 'FICT-PLACEMENT-STATE-NESTED',
               severity: 'error',
               line: 5,
             }),
@@ -306,13 +348,13 @@ describe('playground diagnostics', () => {
         const compilerDiagnostic = result.diagnostics.find(
           diagnostic =>
             diagnostic.source === 'compiler' &&
-            diagnostic.code === 'FICT-COMPILE' &&
+            diagnostic.code === 'FICT-PLACEMENT-STATE-NESTED' &&
             diagnostic.severity === 'error',
         )
         expect(compilerDiagnostic?.column ?? 0).toBeGreaterThan(0)
         expect(
           result.diagnostics.some(diagnostic =>
-            diagnostic.message.includes('$state() cannot be declared inside nested functions.'),
+            diagnostic.message.includes('$state() cannot be declared inside nested functions'),
           ),
         ).toBe(true)
       } finally {
@@ -322,19 +364,34 @@ describe('playground diagnostics', () => {
     diagnosticTimeout,
   )
 
-  it('infers compiler locations from summary-only nested-function failures', () => {
-    const sourceCode =
-      "import { $state } from 'fict'\n\nexport function App() {\n  function inner() {\n    let count = $state(0)\n    return count\n  }\n  return <div>{inner()}</div>\n}\n"
+  it('converts native UTF-8 byte spans to one-based UTF-16 editor columns', async () => {
+    const sandboxRoot = path.join(process.cwd(), '.fict-playground-test')
+    await mkdir(sandboxRoot, { recursive: true })
+    const rootDir = await mkdtemp(path.join(sandboxRoot, 'diag-unicode-'))
+    const source = "const emoji = '😀'; const target = 1\n"
+    const unicodeCompiler: PlaygroundCompiler = {
+      transform: async request => {
+        const result = compileResult(request)
+        result.code = ''
+        result.diagnostics = [
+          diagnostic(request, 'FICT-UNICODE-PROBE', 'unicode location probe', 'target', 'error'),
+        ]
+        return result
+      },
+    }
 
-    expect(
-      inferCompilerLocationFromSource(
-        sourceCode,
-        '/tmp/src/main.tsx',
-        '/tmp/src/main.tsx: $state() cannot be declared inside nested functions.',
-      ),
-    ).toEqual({
-      line: 5,
-      column: 17,
-    })
+    try {
+      await writeDiagnosticsProject(rootDir, source)
+      const result = await collectSessionDiagnostics({
+        rootDir,
+        config,
+        compiler: unicodeCompiler,
+      })
+      const finding = result.diagnostics.find(item => item.code === 'FICT-UNICODE-PROBE')
+
+      expect(finding).toMatchObject({ line: 1, column: source.indexOf('target') + 1 })
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
   })
 })
