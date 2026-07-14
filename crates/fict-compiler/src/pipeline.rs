@@ -6093,6 +6093,61 @@ mod tests {
 
     #[cfg(feature = "preview")]
     #[test]
+    fn preserves_preview_handler_invocation_shapes() {
+        let source = "const event = 42; const makeHandler = () => event => event.type; const makeObject = () => ({ handleEvent(event) { return event.type; } }); export function App() { return <><button onClick$={() => event}>Zero</button><button onClick$={makeHandler()}>Factory</button><button onClick$={() => () => event}>Returned</button><button onClick$={() => makeObject()}>Object</button></>; }";
+        for (mode, fine_grained_dom) in [("fine", true), ("vnode", false)] {
+            let mut input = request(source, &format!("preview-handler-shapes-{mode}.tsx"));
+            input.options.fine_grained_dom = fine_grained_dom;
+            input.options.preview = Some(CompilerPreviewOptions {
+                resumable: true,
+                auto_extract_handlers: false,
+                ..CompilerPreviewOptions::default()
+            });
+            let result = compile(input);
+
+            assert!(!result.has_errors(), "{mode}: {:?}", result.diagnostics);
+            assert_eq!(result.artifacts.len(), 4, "{mode}: {:?}", result.artifacts);
+
+            let zero = &result.artifacts[0].code;
+            assert!(
+                zero.contains("const __handler = () => event"),
+                "{mode}: {zero}"
+            );
+            assert!(
+                zero.contains("export default (scopeId, event_1, el)"),
+                "{mode}: {zero}"
+            );
+
+            let factory = &result.artifacts[1].code;
+            assert!(
+                factory.contains("const __handler = makeHandler()"),
+                "{mode}: {factory}"
+            );
+
+            let returned = &result.artifacts[2].code;
+            assert!(
+                returned.contains("const __handler = () => () => event"),
+                "{mode}: {returned}"
+            );
+            assert!(
+                returned.contains("__result !== __handler"),
+                "{mode}: {returned}"
+            );
+
+            let object = &result.artifacts[3].code;
+            assert!(
+                object.contains("const __handler = () => makeObject()"),
+                "{mode}: {object}"
+            );
+            assert!(
+                object.contains("__result.handleEvent.call(__result, event)"),
+                "{mode}: {object}"
+            );
+        }
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
     fn preserves_async_and_generator_preview_function_dependencies() {
         let source = "export function App() { const asyncHelper = async () => await Promise.resolve(1); function* generatorHelper() { yield 1; } return <><button onClick$={async () => await asyncHelper()}>Async</button><button onClick$={() => generatorHelper().next()}>Generator</button></>; }";
         let mut input = request(source, "preview-async-generator-functions.tsx");

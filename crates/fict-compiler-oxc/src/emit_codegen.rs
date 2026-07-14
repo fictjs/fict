@@ -4068,7 +4068,6 @@ impl<'a> AstRewriter<'a, '_> {
                     };
                     self.visit_expression(&mut handler);
                     let prevent_default = handler_may_prevent_default(&handler);
-                    handler = ignore_inline_event_handler_return(self.allocator, handler, span);
                     if self.preview_handlers.contains_key(&location) {
                         let Some(qrl) =
                             self.prepare_preview_qrl(location, handler, prevent_default, span)
@@ -4106,6 +4105,7 @@ impl<'a> AstRewriter<'a, '_> {
                         ));
                         continue;
                     }
+                    handler = ignore_inline_event_handler_return(self.allocator, handler, span);
                     let callee = Expression::new_identifier(
                         span,
                         self.allocator.alloc_str(&helper),
@@ -5253,14 +5253,9 @@ impl<'a> AstRewriter<'a, '_> {
                             .get(&location)
                             .map(|handler| (location, handler.event.clone()))
                     });
-                    let mut value = self.lower_jsx_attribute_value(attribute.value, attribute.span);
+                    let value = self.lower_jsx_attribute_value(attribute.value, attribute.span);
                     if let Some((location, event)) = preview {
                         let prevent_default = handler_may_prevent_default(&value);
-                        value = ignore_inline_event_handler_return(
-                            self.allocator,
-                            value,
-                            attribute.span,
-                        );
                         let Some(qrl) = self.prepare_preview_qrl(
                             location,
                             value,
