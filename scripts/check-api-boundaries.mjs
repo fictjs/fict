@@ -101,6 +101,7 @@ assertEqualSet('runtime package exports', packageExports('packages/runtime/packa
 
 assertEqualSet('compiler package exports', packageExports('packages/compiler/package.json'), [
   '.',
+  './graph-host',
   './legacy',
   './native',
 ])
@@ -173,6 +174,7 @@ for (const packagePath of [
 
 const compilerPackage = readJson('packages/compiler/package.json')
 for (const [subpath, basename] of [
+  ['./graph-host', 'graph-host'],
   ['./legacy', 'legacy'],
   ['./native', 'native-loader'],
 ]) {
@@ -185,6 +187,15 @@ for (const [subpath, basename] of [
   ) {
     fail(`@fictjs/compiler ${subpath} must expose format-specific declarations and runtime files`)
   }
+}
+
+const compilerGraphHost = readText('packages/compiler/src/graph-host.ts')
+if (
+  compilerGraphHost.includes("from './index'") ||
+  compilerGraphHost.includes("from './legacy'") ||
+  /from\s+['"]@babel\//.test(compilerGraphHost)
+) {
+  fail('@fictjs/compiler/graph-host must not load the legacy compiler or Babel')
 }
 
 for (const packagePath of [

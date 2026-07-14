@@ -4948,14 +4948,7 @@ export function getCompilerCacheFingerprint(): string {
   ]))
 }
 
-export {
-  clearModuleMetadata,
-  invalidateModuleMetadata,
-  parseModuleReactiveMetadata,
-  resolveModuleMetadata,
-  resolvePackageModuleMetadata,
-  setModuleMetadata,
-} from './module-metadata'
+export * from './graph-host'
 export type {
   CompilerExplainArtifact,
   CompilerExplainEvent,

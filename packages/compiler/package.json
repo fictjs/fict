@@ -28,6 +28,16 @@
         "default": "./dist/index.cjs"
       }
     },
+    "./graph-host": {
+      "import": {
+        "types": "./dist/graph-host.d.ts",
+        "default": "./dist/graph-host.js"
+      },
+      "require": {
+        "types": "./dist/graph-host.d.cts",
+        "default": "./dist/graph-host.cjs"
+      }
+    },
     "./legacy": {
       "import": {
         "types": "./dist/legacy.d.ts",

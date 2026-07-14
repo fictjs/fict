@@ -2,22 +2,22 @@ import { createHash } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 
-import {
-  resolvePackageModuleMetadata,
-  type CompileRequest,
-  type CompilerExplainArtifact,
-  type CompilerWarning,
-  type FictCompilerOptions,
-  type FictDiagnostic,
-  type ModuleReactiveMetadata,
-  type NativeCompilerExplainArtifact,
-  type NativeCompilerOptions,
-  type NativeTypeScriptOptions,
-  type RawSourceMap,
-  type ResolvedMetadataInput,
-  type ScanResult,
-  type SourceLanguage,
+import type {
+  CompileRequest,
+  CompilerExplainArtifact,
+  CompilerWarning,
+  FictCompilerOptions,
+  FictDiagnostic,
+  ModuleReactiveMetadata,
+  NativeCompilerExplainArtifact,
+  NativeCompilerOptions,
+  NativeTypeScriptOptions,
+  RawSourceMap,
+  ResolvedMetadataInput,
+  ScanResult,
+  SourceLanguage,
 } from '@fictjs/compiler'
+import { resolvePackageModuleMetadata } from '@fictjs/compiler/graph-host'
 import { loadNativeCompilerBinding, type NativeCompilerBinding } from '@fictjs/compiler/native'
 
 import { isUnresolvedPackageResolution, readPackageMetadataAtBoundary } from './package-metadata'

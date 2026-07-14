@@ -51,6 +51,20 @@ release verification; normal installations select the platform optional
 package automatically. Low-level hosts that need an isolated binding may use
 `createNativeCompilerFacade(options)` or `loadNativeCompilerBinding(options)`.
 
+Bundlers that own package resolution and metadata persistence should import
+those Node-side services from `@fictjs/compiler/graph-host`:
+
+```ts
+import {
+  parseModuleReactiveMetadata,
+  resolvePackageModuleMetadata,
+} from '@fictjs/compiler/graph-host'
+```
+
+The graph-host entry may access the filesystem, but it does not load Babel or
+the legacy compiler. Keep graph callbacks and bundler objects in this host
+layer; pass only serializable metadata snapshots to the native request facade.
+
 The package root remains the Babel plugin during the beta compatibility window.
 Code that intentionally owns legacy rollback should import
 `@fictjs/compiler/legacy`; this explicit subpath will remain the compatibility

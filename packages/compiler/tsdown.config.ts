@@ -4,6 +4,7 @@ import { packageOutExtensions } from '../../scripts/tsdown-presets.mjs'
 
 export default defineConfig({
   entry: {
+    'graph-host': 'src/graph-host.ts',
     index: 'src/index.ts',
     legacy: 'src/legacy.ts',
     'native-loader': 'src/native-loader.ts',

@@ -22,6 +22,10 @@ import {
 import legacyCompiler, {
   createFictPlugin as explicitLegacyCompiler,
 } from '../../../packages/compiler/dist/legacy.js'
+import {
+  parseModuleReactiveMetadata,
+  resolvePackageModuleMetadata,
+} from '../../../packages/compiler/dist/graph-host.js'
 
 const request: CompileRequest = {
   code: 'export const value: number = 1',
@@ -52,6 +56,8 @@ const directAnalysis: AnalyzeResult = analyzeSync(analyzeRequest)
 const directAsyncAnalysis: Promise<AnalyzeResult> = analyze(analyzeRequest)
 const buildId: string = nativeCompilerInfo().compilerBuildId
 const legacyFactory: typeof explicitLegacyCompiler = legacyCompiler
+const parsedMetadata = parseModuleReactiveMetadata('{"version":1,"exports":{}}')
+const packageMetadata = resolvePackageModuleMetadata('fict-library', import.meta.filename)
 
 void syncResult
 void asyncResult
@@ -66,3 +72,5 @@ void directAnalysis
 void directAsyncAnalysis
 void buildId
 void legacyFactory
+void parsedMetadata
+void packageMetadata

@@ -12,22 +12,22 @@ import transformTypeScript from '@babel/plugin-transform-typescript'
 import _traverse from '@babel/traverse'
 import type { NodePath, Scope } from '@babel/traverse'
 import * as t from '@babel/types'
-import {
-  resolvePackageModuleMetadata,
-  type CompileRequest,
-  type CompileResult,
-  type CompilerArtifact,
-  type CompilerExplainArtifact,
-  type CompilerWarning,
-  type FictDiagnostic,
-  type FictCompilerOptions,
-  type ModuleReactiveMetadata,
-  type NativeCompilerExplainArtifact,
-  type NativeCompilerOptions,
-  type RawSourceMap,
-  type ResolvedMetadataInput,
-  type ScanResult,
+import type {
+  CompileRequest,
+  CompileResult,
+  CompilerArtifact,
+  CompilerExplainArtifact,
+  CompilerWarning,
+  FictCompilerOptions,
+  FictDiagnostic,
+  ModuleReactiveMetadata,
+  NativeCompilerExplainArtifact,
+  NativeCompilerOptions,
+  RawSourceMap,
+  ResolvedMetadataInput,
+  ScanResult,
 } from '@fictjs/compiler'
+import { resolvePackageModuleMetadata } from '@fictjs/compiler/graph-host'
 import { createFictPlugin, getCompilerCacheFingerprint } from '@fictjs/compiler/legacy'
 import {
   loadNativeCompilerBinding,
