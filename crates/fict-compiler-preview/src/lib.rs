@@ -200,16 +200,38 @@ pub fn attach_preview_plan(
                 .map(|prop| (prop.binding, prop))
                 .collect();
             expand_prop_default_dependencies(&prop_bindings, &mut captures);
+            let props_parameter_binding = owner
+                .parameters
+                .first()
+                .and_then(|parameter| parameter.binding);
+            let function_prop_calls = handler_function.map_or_else(Vec::new, |function| {
+                handler_function_prop_calls(hir, function, props_parameter_binding, &prop_bindings)
+            });
+            if !function_prop_calls.is_empty() {
+                if candidate.explicit {
+                    diagnostics.push(
+                        preview_error(
+                            "FICT-PREVIEW-PROP-CALL",
+                            format!(
+                                "resumable handlers cannot call function props: {}",
+                                function_prop_calls.join(", ")
+                            ),
+                        )
+                        .with_primary_span(handler_origin)
+                        .with_help(
+                            "dispatch through a serializable signal or keep this handler eager by removing the `$` suffix",
+                        ),
+                    );
+                }
+                continue;
+            }
             let prop_rest_binding = owner_emit
                 .props
                 .as_ref()
                 .and_then(|props| props.rest.as_ref())
                 .map(|rest| (rest.binding, rest));
-            let props_parameter = owner
-                .parameters
-                .first()
-                .and_then(|parameter| parameter.binding)
-                .filter(|binding| captures.contains(binding));
+            let props_parameter =
+                props_parameter_binding.filter(|binding| captures.contains(binding));
 
             let mut lexical_captures = Vec::new();
             let mut prop_captures = Vec::new();
@@ -859,6 +881,94 @@ fn captured_bindings(function: &fict_hir::HirFunction) -> BTreeSet<BindingId> {
         .filter(|local| local.kind == LocalKind::Capture)
         .filter_map(|local| local.binding)
         .collect()
+}
+
+fn handler_function_prop_calls(
+    hir: &HirFile,
+    root: FunctionId,
+    props_parameter: Option<BindingId>,
+    props: &BTreeMap<BindingId, &EmitPropBinding>,
+) -> Vec<String> {
+    let mut calls = BTreeSet::new();
+    let mut stack = vec![root];
+    while let Some(function_id) = stack.pop() {
+        let Some(function) = hir.functions.get(function_id.as_usize()) else {
+            continue;
+        };
+        stack.extend(
+            hir.functions
+                .iter()
+                .filter(|child| child.parent == function_id)
+                .map(|child| child.id),
+        );
+        for call in function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .filter_map(|instruction| match &instruction.kind {
+                HirInstructionKind::Call(call) => Some(call),
+                _ => None,
+            })
+        {
+            if let Some(place) = &call.callee_reference
+                && let Some(label) = prop_call_label(function, place, props_parameter, props)
+            {
+                calls.insert(label);
+                continue;
+            }
+            let binding = match call.host {
+                fict_hir::CallHost::Binding(binding) => Some(binding),
+                fict_hir::CallHost::Unknown
+                | fict_hir::CallHost::Function(_)
+                | fict_hir::CallHost::ReactiveScope(_) => None,
+            };
+            if let Some(binding) = binding {
+                if props_parameter == Some(binding) {
+                    calls.insert(hir.bindings.get(binding.as_usize()).map_or_else(
+                        || "props".to_owned(),
+                        |binding| binding.display_name.clone(),
+                    ));
+                } else if let Some(prop) = props.get(&binding) {
+                    calls.insert(prop.local.clone());
+                }
+            }
+        }
+    }
+    calls.into_iter().collect()
+}
+
+fn prop_call_label(
+    function: &fict_hir::HirFunction,
+    place: &fict_hir::Place,
+    props_parameter: Option<BindingId>,
+    props: &BTreeMap<BindingId, &EmitPropBinding>,
+) -> Option<String> {
+    let binding = place_binding(function, place)?;
+    let mut label = if props_parameter == Some(binding) {
+        function
+            .locals
+            .iter()
+            .find(|local| local.binding == Some(binding))
+            .and_then(|local| local.debug_name.clone())
+            .unwrap_or_else(|| "props".to_owned())
+    } else {
+        props.get(&binding)?.local.clone()
+    };
+    for projection in &place.projections {
+        match projection {
+            fict_hir::Projection::StaticProperty { name, .. } => {
+                label.push('.');
+                label.push_str(name);
+            }
+            fict_hir::Projection::Index { index, .. } => {
+                label.push('[');
+                label.push_str(&index.to_string());
+                label.push(']');
+            }
+            fict_hir::Projection::ComputedProperty { .. } => label.push_str("[computed]"),
+        }
+    }
+    Some(label)
 }
 
 fn expand_prop_default_dependencies(

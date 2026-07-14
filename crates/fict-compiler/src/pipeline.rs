@@ -4886,7 +4886,7 @@ mod tests {
     #[cfg(feature = "preview")]
     #[test]
     fn emits_preview_vnode_qrls_with_prop_and_module_capture_artifacts() {
-        let source = "const moduleHelper = () => 1; export function App({ label = 'fallback' }) { return <button on:click$={() => { moduleHelper(); label(); }}>{label}</button>; }";
+        let source = "const moduleHelper = () => 1; export function App({ label = 'fallback' }) { return <button on:click$={() => { moduleHelper(); console.log(label); }}>{label}</button>; }";
         let mut input = request(source, "preview-vnode.tsx");
         input.options.fine_grained_dom = false;
         input.options.preview = Some(CompilerPreviewOptions {
@@ -4996,6 +4996,84 @@ mod tests {
                 .contains("console.log(b(), fnResult(), label())"),
             "{}",
             artifact.code
+        );
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn rejects_preview_handlers_that_call_function_props() {
+        for (name, source, expected) in [
+            (
+                "member",
+                "export function Button(props) { return <button onClick$={() => props.onClick()}>Click</button>; }",
+                "props.onClick",
+            ),
+            (
+                "optional-nested",
+                "export function Button(props) { return <button onClick$={() => props.handlers.save?.()}>Click</button>; }",
+                "props.handlers.save",
+            ),
+            (
+                "destructured",
+                "export function Button({ onClick }) { return <button onClick$={() => onClick()}>Click</button>; }",
+                "onClick",
+            ),
+            (
+                "local-handler",
+                "export function Button(props) { const handler = () => props.onClick(); return <button onClick$={handler}>Click</button>; }",
+                "props.onClick",
+            ),
+            (
+                "returned-closure",
+                "export function Button(props) { return <button onClick$={() => () => props.onClick()}>Click</button>; }",
+                "props.onClick",
+            ),
+            (
+                "optional-destructured",
+                "export function Button({ onClick }) { return <button onClick$={() => onClick?.()}>Click</button>; }",
+                "onClick",
+            ),
+        ] {
+            let mut input = request(source, &format!("preview-function-prop-{name}.tsx"));
+            input.options.preview = Some(CompilerPreviewOptions {
+                resumable: true,
+                auto_extract_handlers: false,
+                ..CompilerPreviewOptions::default()
+            });
+            let result = compile(input);
+
+            assert!(result.has_errors(), "{name}: {:?}", result.diagnostics);
+            assert!(result.code.is_empty(), "{name}: {}", result.code);
+            assert!(
+                result.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code.as_str() == "FICT-PREVIEW-PROP-CALL"
+                        && diagnostic.message.contains(expected)
+                }),
+                "{name}: {:?}",
+                result.diagnostics
+            );
+        }
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn keeps_auto_handlers_that_call_function_props_eager() {
+        let source = "export function Button(props) { return <button onClick={() => { if (props.enabled) props.onClick(); }}>Click</button>; }";
+        let mut input = request(source, "preview-function-prop-auto.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: true,
+            auto_extract_threshold: 1,
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.artifacts.is_empty(), "{:?}", result.artifacts);
+        assert!(result.code.contains("addEventListener"), "{}", result.code);
+        assert!(
+            !result.code.contains("fict:compiler-artifact:"),
+            "{}",
+            result.code
         );
     }
 
