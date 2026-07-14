@@ -628,12 +628,6 @@ importers:
 
   packages/vscode-extension:
     dependencies:
-      '@babel/core':
-        specifier: ^7.29.7
-        version: 7.29.7
-      '@babel/preset-typescript':
-        specifier: ^7.26.0
-        version: 7.28.5(@babel/core@7.29.7)
       '@fictjs/compiler':
         specifier: workspace:*
         version: link:../compiler

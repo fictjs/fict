@@ -148,8 +148,6 @@
     "package:vsix": "pnpm build && node scripts/package-vsix.mjs"
   },
   "dependencies": {
-    "@babel/core": "^7.29.7",
-    "@babel/preset-typescript": "^7.26.0",
     "@fictjs/compiler": "workspace:*",
     "ws": "^8.21.0"
   },
