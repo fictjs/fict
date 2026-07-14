@@ -111,6 +111,37 @@ pub fn verify_emit_program(
                     ));
                 }
             }
+            if let crate::ReactiveSlotStorage::CapturedHookReturn {
+                owner,
+                import,
+                property,
+            } = slot.storage
+            {
+                let capture_valid = owner != function.source
+                    && slot.binding.is_some()
+                    && program
+                        .functions
+                        .get(owner.as_usize())
+                        .is_some_and(|owner| {
+                            owner.slots.iter().any(|candidate| {
+                            matches!(
+                                candidate.storage,
+                                crate::ReactiveSlotStorage::HookReturn {
+                                    import: candidate_import,
+                                    property: Some(candidate_property),
+                                    ..
+                                } if candidate_import == import && candidate_property == property
+                            ) && candidate.binding == slot.binding
+                                && candidate.kind == slot.kind
+                        })
+                        });
+                if !capture_valid {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-HOOK-CAPTURE",
+                        "captured hook members must reference a matching owner accessor slot",
+                    ));
+                }
+            }
             if let crate::ReactiveSlotStorage::Imported { member } = slot.storage {
                 let import = slot
                     .binding
@@ -1032,6 +1063,53 @@ fn verify_reactive_read(
                     && slot.is_some_and(|slot| slot.binding == root_binding)
             });
             (basic_valid, storage_valid)
+        }
+        Some(crate::ReactiveSlotStorage::CapturedHookReturn {
+            import, property, ..
+        }) => {
+            let local = source_place.and_then(|place| match place.base {
+                fict_hir::PlaceBase::Local(local) => Some(local),
+                fict_hir::PlaceBase::Ssa(name) => Some(name.local),
+                fict_hir::PlaceBase::Global(_) | fict_hir::PlaceBase::Value(_) => None,
+            });
+            let binding_matches = local.is_some_and(|local| {
+                hir_function
+                    .locals
+                    .get(local.as_usize())
+                    .is_some_and(|local| {
+                        local.kind == fict_hir::LocalKind::Capture
+                            && slot.is_some_and(|slot| slot.binding == local.binding)
+                    })
+            });
+            let hook = hir
+                .bindings
+                .get(import.as_usize())
+                .and_then(|binding| binding.import.as_ref())
+                .and_then(|import| import.hook_return.as_ref());
+            let resolved_property = source_place
+                .and_then(|place| place.projections.first())
+                .and_then(|projection| hook?.resolve_property(projection));
+            let kind_matches = slot.is_some_and(|slot| {
+                matches!(
+                    (property.kind, slot.kind),
+                    (
+                        fict_hir::ImportedReactiveKind::Signal,
+                        crate::ReactiveSlotKind::Signal
+                    ) | (
+                        fict_hir::ImportedReactiveKind::Memo,
+                        crate::ReactiveSlotKind::Memo
+                    )
+                )
+            });
+            (
+                source_place.is_some_and(|place| place.projections == projections)
+                    && !projections.is_empty()
+                    && accessor_depth == 1,
+                binding_matches
+                    && kind_matches
+                    && hook.is_some_and(|hook| hook.direct_accessor.is_none())
+                    && resolved_property == Some(property),
+            )
         }
         Some(crate::ReactiveSlotStorage::Imported { member: None })
         | Some(crate::ReactiveSlotStorage::Owned)

@@ -370,7 +370,11 @@ fn propagates_structured_imported_hook_members_into_scopes_and_regions() {
                 const api = useCounter();
                 const derived = api.count === 1;
                 const dynamic = api[key] === 1;
-                return [derived, dynamic];
+                const reader = () => {
+                    const nestedDerived = api.count === 2;
+                    return nestedDerived;
+                };
+                return [derived, dynamic, reader];
             }
         "#,
         OxcCompileOptions {
@@ -460,6 +464,47 @@ fn propagates_structured_imported_hook_members_into_scopes_and_regions() {
             .all(|binding| binding.name.local != dynamic.id)
     );
     assert!(analysis.regions.regions.iter().any(|region| {
+        region.inputs.iter().any(|path| {
+            path.segments.first()
+                == Some(&DependencySegment::Static {
+                    name: "count".into(),
+                    optional: false,
+                })
+        })
+    }));
+
+    let nested = output
+        .hir
+        .functions
+        .iter()
+        .find(|function| {
+            function
+                .locals
+                .iter()
+                .any(|local| local.debug_name.as_deref() == Some("nestedDerived"))
+        })
+        .expect("capturing reader function");
+    let nested_derived = nested
+        .locals
+        .iter()
+        .find(|local| local.debug_name.as_deref() == Some("nestedDerived"))
+        .expect("nested derived local");
+    let nested_analysis = &output.functions[nested.id.as_usize()];
+    let nested_binding = nested_analysis
+        .scopes
+        .bindings
+        .iter()
+        .find(|binding| binding.name.local == nested_derived.id)
+        .expect("captured hook member derived binding");
+    assert_eq!(nested_binding.kind, ReactiveBindingKind::Derived);
+    assert!(nested_binding.dependencies.iter().any(|path| {
+        path.segments.first()
+            == Some(&DependencySegment::Static {
+                name: "count".into(),
+                optional: false,
+            })
+    }));
+    assert!(nested_analysis.regions.regions.iter().any(|region| {
         region.inputs.iter().any(|path| {
             path.segments.first()
                 == Some(&DependencySegment::Static {

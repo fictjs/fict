@@ -871,6 +871,13 @@ mod tests {
                     reassigned = { count: 1 };
                     const explicit = api.count();
                     const derived = api.count === 1;
+                    const reader = () => api.count;
+                    const tupleReader = () => pair[0];
+                    const storeReader = () => storeApi.state.value;
+                    const suffixReader = () => api.count.value;
+                    const optionalReader = () => api?.count;
+                    const explicitReader = () => api.count();
+                    const reassignedReader = () => reassigned.count;
                     return [
                         api.count,
                         api["doubled"],
@@ -884,6 +891,13 @@ mod tests {
                         useCounter()?.count,
                         explicit,
                         derived,
+                        reader,
+                        tupleReader,
+                        storeReader,
+                        suffixReader,
+                        optionalReader,
+                        explicitReader,
+                        reassignedReader,
                         reassigned.count,
                     ];
                 }
@@ -919,8 +933,35 @@ mod tests {
             "{}",
             result.code
         );
-        assert!(result.code.matches("?.()").count() >= 2, "{}", result.code);
         assert!(!result.code.contains("api.count()()"), "{}", result.code);
+        assert!(result.code.contains("() => api.count()"), "{}", result.code);
+        assert!(result.code.contains("() => pair[0]()"), "{}", result.code);
+        assert!(
+            result.code.contains("() => storeApi.state.value"),
+            "{}",
+            result.code
+        );
+        assert!(
+            !result.code.contains("() => storeApi.state()"),
+            "{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("() => api.count().value"),
+            "{}",
+            result.code
+        );
+        assert!(result.code.matches("?.()").count() >= 3, "{}", result.code);
+        assert!(
+            result.code.contains("() => reassigned.count"),
+            "{}",
+            result.code
+        );
+        assert!(
+            !result.code.contains("() => reassigned.count()"),
+            "{}",
+            result.code
+        );
         assert!(result.code.contains("reassigned.count"), "{}", result.code);
         assert!(
             !result.code.contains("reassigned.count()"),
@@ -967,6 +1008,19 @@ mod tests {
             "{}",
             store_write.code
         );
+
+        let mut captured_write = request(
+            "import { useCounter } from './hooks?client'; export function App() { const api = useCounter(); const write = () => { api.count = 2; }; return write; }",
+            "captured-structured-hook-write.jsx",
+        );
+        captured_write.metadata.push(snapshot());
+        let captured_write = compile(captured_write);
+        assert!(captured_write.has_errors());
+        assert!(captured_write.code.is_empty());
+        assert!(captured_write.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_str() == "FICT-M"
+                && diagnostic.message.contains("hook return accessor")
+        }));
     }
 
     #[test]

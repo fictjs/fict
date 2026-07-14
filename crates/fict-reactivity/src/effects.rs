@@ -1502,13 +1502,13 @@ fn imported_hook_reactive_dependency(
     function: &HirFunction,
     path: &DependencyPath,
 ) -> bool {
-    let call = match path.base {
-        DependencyBase::Value(value) => value,
+    let (owner, call) = match path.base {
+        DependencyBase::Value(value) => (function, value),
         DependencyBase::Ssa(name) => {
             if hook_root_reassigned(function, name.local) {
                 return false;
             }
-            let Some(call) = function
+            let local_call = function
                 .blocks
                 .iter()
                 .flat_map(|block| &block.instructions)
@@ -1519,15 +1519,26 @@ fn imported_hook_reactive_dependency(
                         ..
                     } if local == name.local => Some(initializer),
                     _ => None,
-                })
-            else {
-                return false;
-            };
-            call
+                });
+            if let Some(call) = local_call {
+                (function, call)
+            } else {
+                let Some(binding) = function
+                    .locals
+                    .get(name.local.as_usize())
+                    .and_then(|local| local.binding)
+                else {
+                    return false;
+                };
+                let Some(owner) = imported_hook_binding_call(file, binding) else {
+                    return false;
+                };
+                owner
+            }
         }
         DependencyBase::Global(_) => return false,
     };
-    let Some(call) = function
+    let Some(call) = owner
         .blocks
         .iter()
         .flat_map(|block| &block.instructions)
@@ -1567,6 +1578,40 @@ fn imported_hook_reactive_dependency(
         DependencySegment::Dynamic { .. } => return false,
     };
     shape.resolve_property(&projection).is_some()
+}
+
+fn imported_hook_binding_call(
+    file: &HirFile,
+    binding: fict_hir::BindingId,
+) -> Option<(&HirFunction, ValueId)> {
+    for function in &file.functions {
+        let Some(local) = function
+            .locals
+            .iter()
+            .find(|local| local.binding == Some(binding))
+        else {
+            continue;
+        };
+        if hook_root_reassigned(function, local.id) {
+            continue;
+        }
+        if let Some(call) = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find_map(|instruction| match instruction.kind {
+                HirInstructionKind::Declare {
+                    local: declared,
+                    initializer: Some(initializer),
+                    ..
+                } if declared == local.id => Some(initializer),
+                _ => None,
+            })
+        {
+            return Some((function, call));
+        }
+    }
+    None
 }
 
 fn hook_root_reassigned(function: &HirFunction, local: LocalId) -> bool {

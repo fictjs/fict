@@ -75,12 +75,44 @@ struct HookMemberSite {
     slot: EmitSlotId,
 }
 
+#[derive(Debug, Clone)]
+struct StructuredHookRootSite {
+    owner: FunctionId,
+    local: LocalId,
+    binding: fict_hir::BindingId,
+    call: ValueId,
+    import: fict_hir::BindingId,
+    shape: ImportedHookReturn,
+    origin: fict_hir::Origin,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CapturedHookMemberSite {
+    local: LocalId,
+    binding: fict_hir::BindingId,
+    owner: FunctionId,
+    import: fict_hir::BindingId,
+    property: ImportedHookPropertyMatch,
+    kind: ReactiveSlotKind,
+    origin: fict_hir::Origin,
+    slot: EmitSlotId,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ReactiveBindingSite {
     owner: FunctionId,
     binding: fict_hir::BindingId,
     kind: ReactiveSlotKind,
     origin: fict_hir::Origin,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CrossFunctionFacts<'a> {
+    reactive_bindings: &'a BTreeMap<fict_hir::BindingId, ReactiveBindingSite>,
+    structured_hook_roots: &'a BTreeMap<fict_hir::BindingId, StructuredHookRootSite>,
+    structured_hook_members:
+        &'a BTreeMap<(fict_hir::BindingId, ImportedHookPropertyMatch), fict_hir::Origin>,
+    list_item_bindings: &'a BTreeSet<fict_hir::BindingId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,7 +168,15 @@ fn lower_program(
         )]));
     }
     let reactive_bindings = collect_reactive_binding_sites(hir)?;
+    let structured_hook_roots = collect_structured_hook_root_sites(hir)?;
+    let structured_hook_members = collect_structured_hook_member_uses(hir, &structured_hook_roots);
     let list_item_bindings = collect_jsx_list_item_bindings(hir);
+    let facts = CrossFunctionFacts {
+        reactive_bindings: &reactive_bindings,
+        structured_hook_roots: &structured_hook_roots,
+        structured_hook_members: &structured_hook_members,
+        list_item_bindings: &list_item_bindings,
+    };
     let mut functions = Vec::with_capacity(hir.functions.len());
     for (function_index, function) in hir.functions.iter().enumerate() {
         if !allow_jsx
@@ -158,8 +198,7 @@ fn lower_program(
             hir,
             FunctionId::new(count_u32(function_index)),
             &regions[function_index],
-            &reactive_bindings,
-            &list_item_bindings,
+            &facts,
             allow_jsx,
             options.fine_grained_dom,
         )?);
@@ -384,15 +423,114 @@ fn collect_reactive_binding_sites(
     Ok(sites)
 }
 
+fn collect_structured_hook_root_sites(
+    hir: &HirFile,
+) -> Result<BTreeMap<fict_hir::BindingId, StructuredHookRootSite>, DiagnosticBundle> {
+    let mut sites = BTreeMap::new();
+    for (function_index, function) in hir.functions.iter().enumerate() {
+        let owner = FunctionId::new(count_u32(function_index));
+        let declarations: BTreeMap<_, _> = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .filter_map(|instruction| declaration_initializer(function, instruction))
+            .collect();
+        let reassigned = reassigned_locals(function);
+        for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
+            let HirInstructionKind::Call(call) = &instruction.kind else {
+                continue;
+            };
+            let Some(result) = instruction.result else {
+                continue;
+            };
+            let Some((import, shape)) = imported_hook_return(hir, call) else {
+                continue;
+            };
+            if shape.direct_accessor.is_some()
+                || (shape.object_properties.is_empty() && shape.array_properties.is_empty())
+            {
+                continue;
+            }
+            let Some(local) = declarations.get(&result).copied() else {
+                continue;
+            };
+            if reassigned.contains(&local) {
+                continue;
+            }
+            let Some(binding) = function
+                .locals
+                .get(local.as_usize())
+                .and_then(|local| local.binding)
+            else {
+                continue;
+            };
+            if sites
+                .insert(
+                    binding,
+                    StructuredHookRootSite {
+                        owner,
+                        local,
+                        binding,
+                        call: result,
+                        import,
+                        shape: shape.clone(),
+                        origin: instruction.origin,
+                    },
+                )
+                .is_some()
+            {
+                return Err(DiagnosticBundle::new(vec![lower_error(
+                    "FICT-EMIT-HOOK-ROOT",
+                    "one semantic binding cannot own multiple structured hook return sites",
+                    GuaranteeClass::Internal,
+                )]));
+            }
+        }
+    }
+    Ok(sites)
+}
+
+fn collect_structured_hook_member_uses(
+    hir: &HirFile,
+    roots: &BTreeMap<fict_hir::BindingId, StructuredHookRootSite>,
+) -> BTreeMap<(fict_hir::BindingId, ImportedHookPropertyMatch), fict_hir::Origin> {
+    let mut uses = BTreeMap::new();
+    for function in &hir.functions {
+        for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
+            let HirInstructionKind::Read { place } = &instruction.kind else {
+                continue;
+            };
+            let Some((_, root, property)) =
+                structured_hook_member_by_binding(function, roots, place)
+            else {
+                continue;
+            };
+            if matches!(
+                property.kind,
+                ImportedReactiveKind::Signal | ImportedReactiveKind::Memo
+            ) {
+                uses.entry((root.binding, property))
+                    .or_insert(instruction.origin);
+            }
+        }
+    }
+    uses
+}
+
 fn lower_function(
     hir: &HirFile,
     function_id: FunctionId,
     regions: &RegionAnalysis,
-    reactive_bindings: &BTreeMap<fict_hir::BindingId, ReactiveBindingSite>,
-    list_item_bindings: &BTreeSet<fict_hir::BindingId>,
+    facts: &CrossFunctionFacts<'_>,
     allow_jsx: bool,
     fine_grained_dom: bool,
 ) -> Result<EmitFunction, DiagnosticBundle> {
+    let CrossFunctionFacts {
+        reactive_bindings,
+        structured_hook_roots,
+        structured_hook_members,
+        list_item_bindings,
+    } = *facts;
     let function = &hir.functions[function_id.as_usize()];
     let declarations_by_value: BTreeMap<_, _> = function
         .blocks
@@ -459,23 +597,7 @@ fn lower_function(
                 .map(|(import, shape)| (result, (import, shape.clone(), instruction.origin)))
         })
         .collect();
-    let reassigned_hook_roots: BTreeSet<_> = function
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instructions)
-        .flat_map(|instruction| match &instruction.kind {
-            HirInstructionKind::Write { place, .. }
-            | HirInstructionKind::ReadWrite { place, .. }
-                if place.projections.is_empty() =>
-            {
-                place_local(place.base).into_iter().collect()
-            }
-            HirInstructionKind::PatternAssignment { writes, .. } => {
-                writes.iter().map(|write| write.local).collect()
-            }
-            _ => Vec::new(),
-        })
-        .collect();
+    let reassigned_hook_roots = reassigned_locals(function);
     let structured_hook_locals: BTreeMap<_, _> = declarations_by_value
         .iter()
         .filter_map(|(value, local)| {
@@ -524,6 +646,19 @@ fn lower_function(
         .map(|site| (site.result, *site))
         .collect();
     let mut hook_member_uses = BTreeMap::new();
+    for (binding, property) in structured_hook_members.keys() {
+        let Some(root) = structured_hook_roots
+            .get(binding)
+            .filter(|root| root.owner == function_id)
+        else {
+            continue;
+        };
+        hook_member_uses.entry((root.call, *property)).or_insert((
+            Some(root.local),
+            root.import,
+            root.origin,
+        ));
+    }
     for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
         let HirInstructionKind::Read { place } = &instruction.kind else {
             continue;
@@ -571,6 +706,62 @@ fn lower_function(
         .iter()
         .map(|site| ((site.call, site.property), site.slot))
         .collect();
+    let mut captured_hook_member_uses = BTreeMap::new();
+    for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
+        let HirInstructionKind::Read { place } = &instruction.kind else {
+            continue;
+        };
+        let Some((local, root, property)) =
+            structured_hook_member_by_binding(function, structured_hook_roots, place)
+        else {
+            continue;
+        };
+        if root.owner == function_id
+            || !matches!(
+                property.kind,
+                ImportedReactiveKind::Signal | ImportedReactiveKind::Memo
+            )
+        {
+            continue;
+        }
+        captured_hook_member_uses
+            .entry((local, property))
+            .or_insert((root.binding, root.owner, root.import, instruction.origin));
+    }
+    let captured_hook_member_sites: Vec<_> = captured_hook_member_uses
+        .into_iter()
+        .enumerate()
+        .map(
+            |(index, ((local, property), (binding, owner, import, origin)))| {
+                CapturedHookMemberSite {
+                    local,
+                    binding,
+                    owner,
+                    import,
+                    property,
+                    kind: match property.kind {
+                        ImportedReactiveKind::Signal => ReactiveSlotKind::Signal,
+                        ImportedReactiveKind::Memo => ReactiveSlotKind::Memo,
+                        ImportedReactiveKind::Store => {
+                            unreachable!("stores are not captured accessor slots")
+                        }
+                    },
+                    origin,
+                    slot: EmitSlotId::new(count_u32(
+                        sites
+                            .len()
+                            .saturating_add(hook_return_sites.len())
+                            .saturating_add(hook_member_sites.len())
+                            .saturating_add(index),
+                    )),
+                }
+            },
+        )
+        .collect();
+    let captured_hook_member_slots: BTreeMap<_, _> = captured_hook_member_sites
+        .iter()
+        .map(|site| ((site.local, site.property), site.slot))
+        .collect();
     let captured_sites: Vec<_> = function
         .locals
         .iter()
@@ -590,6 +781,7 @@ fn lower_function(
                         .len()
                         .saturating_add(hook_return_sites.len())
                         .saturating_add(hook_member_sites.len())
+                        .saturating_add(captured_hook_member_sites.len())
                         .saturating_add(index),
                 )),
             )
@@ -629,6 +821,7 @@ fn lower_function(
                         .len()
                         .saturating_add(hook_return_sites.len())
                         .saturating_add(hook_member_sites.len())
+                        .saturating_add(captured_hook_member_sites.len())
                         .saturating_add(captured_sites.len())
                         .saturating_add(index),
                 )),
@@ -674,6 +867,7 @@ fn lower_function(
                             .len()
                             .saturating_add(hook_return_sites.len())
                             .saturating_add(hook_member_sites.len())
+                            .saturating_add(captured_hook_member_sites.len())
                             .saturating_add(captured_sites.len())
                             .saturating_add(imported_sites.len())
                             .saturating_add(index),
@@ -775,6 +969,18 @@ fn lower_function(
             control_path: Vec::new(),
             origin: site.origin,
         }
+    }));
+    slots.extend(captured_hook_member_sites.iter().map(|site| ReactiveSlot {
+        id: site.slot,
+        kind: site.kind,
+        storage: ReactiveSlotStorage::CapturedHookReturn {
+            owner: site.owner,
+            import: site.import,
+            property: site.property,
+        },
+        binding: Some(site.binding),
+        control_path: Vec::new(),
+        origin: site.origin,
     }));
     slots.extend(captured_sites.iter().map(|(_, site, slot)| ReactiveSlot {
         id: *slot,
@@ -998,8 +1204,19 @@ fn lower_function(
                                     .copied()
                                     .map(|slot| (slot, 1_usize))
                             });
-                    let Some((slot, accessor_depth)) =
-                        direct_slot.or(member_slot).or(hook_member_slot)
+                    let captured_hook_member_slot =
+                        structured_hook_member_by_binding(function, structured_hook_roots, place)
+                            .filter(|(_, root, _)| root.owner != function_id)
+                            .and_then(|(local, _, property)| {
+                                captured_hook_member_slots
+                                    .get(&(local, property))
+                                    .copied()
+                                    .map(|slot| (slot, 1_usize))
+                            });
+                    let Some((slot, accessor_depth)) = direct_slot
+                        .or(member_slot)
+                        .or(hook_member_slot)
+                        .or(captured_hook_member_slot)
                     else {
                         preserve(&mut operations, block.id, instruction_index, instruction);
                         continue;
@@ -1041,6 +1258,12 @@ fn lower_function(
                         &structured_hook_locals,
                         place,
                     )?;
+                    reject_captured_hook_member_mutation(
+                        function,
+                        function_id,
+                        structured_hook_roots,
+                        place,
+                    )?;
                     let Some(slot) = place_local(place.base)
                         .and_then(|local| slot_by_local.get(&local).copied())
                     else {
@@ -1078,6 +1301,12 @@ fn lower_function(
                     reject_imported_hook_member_mutation(
                         &imported_hook_calls,
                         &structured_hook_locals,
+                        place,
+                    )?;
+                    reject_captured_hook_member_mutation(
+                        function,
+                        function_id,
+                        structured_hook_roots,
                         place,
                     )?;
                     let Some(slot) = place_local(place.base)
@@ -3162,6 +3391,42 @@ fn place_local(base: PlaceBase) -> Option<LocalId> {
     }
 }
 
+fn reassigned_locals(function: &HirFunction) -> BTreeSet<LocalId> {
+    function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .flat_map(|instruction| match &instruction.kind {
+            HirInstructionKind::Write { place, .. }
+            | HirInstructionKind::ReadWrite { place, .. }
+                if place.projections.is_empty() =>
+            {
+                place_local(place.base).into_iter().collect()
+            }
+            HirInstructionKind::PatternAssignment { writes, .. } => {
+                writes.iter().map(|write| write.local).collect()
+            }
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+fn structured_hook_member_by_binding<'a>(
+    function: &HirFunction,
+    roots: &'a BTreeMap<fict_hir::BindingId, StructuredHookRootSite>,
+    place: &fict_hir::Place,
+) -> Option<(
+    LocalId,
+    &'a StructuredHookRootSite,
+    ImportedHookPropertyMatch,
+)> {
+    let local = place_local(place.base)?;
+    let binding = function.locals.get(local.as_usize())?.binding?;
+    let root = roots.get(&binding)?;
+    let property = root.shape.resolve_property(place.projections.first()?)?;
+    Some((local, root, property))
+}
+
 fn imported_reactive_member(
     hir: &HirFile,
     function: &HirFunction,
@@ -3240,6 +3505,29 @@ fn reject_imported_hook_member_mutation(
     let Some((_, _, _, property)) = imported_hook_member(calls, locals, place) else {
         return Ok(());
     };
+    reject_hook_property_mutation(property, place)
+}
+
+fn reject_captured_hook_member_mutation(
+    function: &HirFunction,
+    function_id: FunctionId,
+    roots: &BTreeMap<fict_hir::BindingId, StructuredHookRootSite>,
+    place: &fict_hir::Place,
+) -> Result<(), DiagnosticBundle> {
+    let Some((_, root, property)) = structured_hook_member_by_binding(function, roots, place)
+    else {
+        return Ok(());
+    };
+    if root.owner == function_id {
+        return Ok(());
+    }
+    reject_hook_property_mutation(property, place)
+}
+
+fn reject_hook_property_mutation(
+    property: ImportedHookPropertyMatch,
+    place: &fict_hir::Place,
+) -> Result<(), DiagnosticBundle> {
     match property.kind {
         ImportedReactiveKind::Store => Ok(()),
         ImportedReactiveKind::Memo if place.projections.len() == 1 => {
