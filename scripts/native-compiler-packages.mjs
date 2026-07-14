@@ -113,6 +113,29 @@ export function nativeTargetDefinition(target) {
   return definition
 }
 
+export function nativeHostTarget({
+  platform = process.platform,
+  arch = process.arch,
+  report = process.report?.getReport(),
+} = {}) {
+  const libc =
+    platform === 'linux'
+      ? typeof report?.header?.glibcVersionRuntime === 'string'
+        ? 'gnu'
+        : 'musl'
+      : null
+  const definition = NATIVE_COMPILER_TARGETS.find(
+    candidate =>
+      candidate.platform === platform && candidate.arch === arch && candidate.libc === libc,
+  )
+  if (!definition) {
+    throw new Error(
+      `Unsupported Fict native compiler host: ${platform}/${arch}${libc ? `/${libc}` : ''}`,
+    )
+  }
+  return definition.target
+}
+
 export function nativeArtifactName(target) {
   nativeTargetDefinition(target)
   return `fict-native-package-${target}`

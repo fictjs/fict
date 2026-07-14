@@ -3,6 +3,12 @@
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
 
+import {
+  assembleNativePackage,
+  nativeHostTarget,
+  nativeTargetDefinition,
+} from './native-compiler-packages.mjs'
+
 const root = process.cwd()
 const releaseDirectory = path.join(root, 'target', 'release')
 const destination = path.resolve(
@@ -27,11 +33,21 @@ if (!sourceName) {
 
 mkdirSync(path.dirname(destination), { recursive: true })
 copyFileSync(path.join(releaseDirectory, sourceName), destination)
+const target = nativeHostTarget()
+const definition = nativeTargetDefinition(target)
+const workspacePackage = path.join(root, definition.packageDirectory)
+assembleNativePackage({
+  target,
+  binaryPath: destination,
+  outputDirectory: workspacePackage,
+  root,
+})
 console.log(
   JSON.stringify({
     platform: process.platform,
     arch: process.arch,
     source: sourceName,
     destination,
+    workspacePackage,
   }),
 )

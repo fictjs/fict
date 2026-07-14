@@ -11,6 +11,7 @@ import {
   bundleNativePackage,
   nativeArtifactName,
   nativeBuildMatrix,
+  nativeHostTarget,
   nativeRuntimeMatrix,
   validateNativePackageConfiguration,
   verifyNativeBundle,
@@ -36,6 +37,26 @@ test('defines eight blocking native targets and two Node runtime lanes', () => {
       assert.ok(runtimePairs.has(`${target.target}:${node}`))
     }
   }
+})
+
+test('maps supported development hosts to their release package target', () => {
+  assert.equal(nativeHostTarget({ platform: 'darwin', arch: 'arm64' }), 'darwin-arm64')
+  assert.equal(
+    nativeHostTarget({
+      platform: 'linux',
+      arch: 'x64',
+      report: { header: { glibcVersionRuntime: '2.39' } },
+    }),
+    'linux-x64-gnu',
+  )
+  assert.equal(
+    nativeHostTarget({ platform: 'linux', arch: 'arm64', report: { header: {} } }),
+    'linux-arm64-musl',
+  )
+  assert.throws(
+    () => nativeHostTarget({ platform: 'freebsd', arch: 'x64' }),
+    /Unsupported Fict native compiler host/,
+  )
 })
 
 test('keeps facade optional dependencies, package manifests, allowlist, and Changesets aligned', () => {
