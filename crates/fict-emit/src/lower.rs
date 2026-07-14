@@ -3433,11 +3433,10 @@ fn parse_event_modifier_suffixes(mut suffix: &str) -> Option<EventOptions> {
         } else if let Some(rest) = suffix.strip_prefix("Passive") {
             options.passive = true;
             suffix = rest;
-        } else if let Some(rest) = suffix.strip_prefix("Once") {
+        } else {
+            let rest = suffix.strip_prefix("Once")?;
             options.once = true;
             suffix = rest;
-        } else {
-            return None;
         }
     }
     Some(options)

@@ -50,7 +50,7 @@ use crate::commonjs::lower_standard_esm_to_commonjs;
 use crate::{OxcCompileOptions, OxcCompileOutput, OxcModuleKind};
 
 use super::compile::{convert_diagnostics, failed_output, sorted, source_type};
-use super::preview_codegen::{PreparedHandler, generate_handler_artifact};
+use super::preview_codegen::{HandlerArtifactContext, PreparedHandler, generate_handler_artifact};
 use super::typescript::{
     configure_transform, passthrough_blockers, plan_typescript_program,
     rewrite_import_equals_extensions,
@@ -446,7 +446,7 @@ pub fn emit_program(
     if let Some(preview) = &emit.preview_plan {
         let preview_source = match render_preview_module_statements(emit, preview) {
             Ok(source) => source,
-            Err(diagnostic) => return failed_output(vec![diagnostic]),
+            Err(diagnostic) => return failed_output(vec![*diagnostic]),
         };
         let preview_source = allocator.alloc_str(&preview_source);
         let statements = match parse_generated_module_statements(&allocator, preview_source) {
@@ -493,16 +493,18 @@ pub fn emit_program(
     if let Some(preview) = &emit.preview_plan {
         for prepared in prepared_preview_handlers.into_values() {
             match generate_handler_artifact(
-                &allocator,
-                source,
-                filename,
-                input_source_type,
-                options.module_kind,
-                &transform_options,
-                emit.runtime_family,
-                preview,
+                HandlerArtifactContext {
+                    allocator: &allocator,
+                    source,
+                    filename,
+                    source_type: input_source_type,
+                    module_kind: options.module_kind,
+                    transform_options: &transform_options,
+                    runtime_family: emit.runtime_family,
+                    preview,
+                    sourcemap: options.sourcemap,
+                },
                 prepared,
-                options.sourcemap,
             ) {
                 Ok(artifact) => handler_artifacts.push(artifact),
                 Err(findings) => diagnostics.extend(findings),
@@ -2797,24 +2799,27 @@ fn parse_generated_module_statements<'a>(
     Ok(program.body.into_iter().collect())
 }
 
-fn preview_helper_local(emit: &EmitProgram, helper: RuntimeHelper) -> Result<&str, Diagnostic> {
+fn preview_helper_local(
+    emit: &EmitProgram,
+    helper: RuntimeHelper,
+) -> Result<&str, Box<Diagnostic>> {
     emit.imports
         .iter()
         .find(|intent| intent.helper == helper)
         .map(|intent| intent.local.as_str())
         .ok_or_else(|| {
-            emit_error(
+            Box::new(emit_error(
                 "FICT-OXC-PREVIEW-IMPORT",
                 format!("Preview plan has no runtime import for {helper:?}"),
                 GuaranteeClass::Internal,
-            )
+            ))
         })
 }
 
 fn render_preview_module_statements(
     emit: &EmitProgram,
     preview: &EmitPreviewPlan,
-) -> Result<String, Diagnostic> {
+) -> Result<String, Box<Diagnostic>> {
     use std::fmt::Write;
 
     let mut source = String::new();

@@ -309,7 +309,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
                 "main output",
             ) {
                 Ok(map) => result.map = Some(map),
-                Err(diagnostic) => result.diagnostics.push(diagnostic),
+                Err(diagnostic) => result.diagnostics.push(*diagnostic),
             }
         }
         for artifact in output.handler_artifacts {
@@ -321,7 +321,7 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
                 ) {
                     Ok(map) => Some(map),
                     Err(diagnostic) => {
-                        result.diagnostics.push(diagnostic);
+                        result.diagnostics.push(*diagnostic);
                         break;
                     }
                 },
@@ -371,7 +371,7 @@ fn decode_native_source_map(
     source_map_json: &str,
     input_source_map: Option<&RawSourceMap>,
     output_name: &str,
-) -> Result<RawSourceMap, Diagnostic> {
+) -> Result<RawSourceMap, Box<Diagnostic>> {
     let map = serde_json::from_str::<RawSourceMap>(source_map_json)
         .map_err(|error| error.to_string())
         .and_then(|map| {
@@ -380,13 +380,15 @@ fn decode_native_source_map(
                 .map_err(|error| error.to_string())
         })
         .map_err(|error| {
-            diagnostic(
-                "FICT-I002",
-                DiagnosticSeverity::Error,
-                format!("OXC emitted an invalid source map for {output_name}: {error}"),
-                GuaranteeClass::Internal,
+            Box::new(
+                diagnostic(
+                    "FICT-I002",
+                    DiagnosticSeverity::Error,
+                    format!("OXC emitted an invalid source map for {output_name}: {error}"),
+                    GuaranteeClass::Internal,
+                )
+                .with_help("report the source-map fixture; partial output was discarded"),
             )
-            .with_help("report the source-map fixture; partial output was discarded")
         })?;
     let map = match input_source_map {
         Some(input) => compose_source_maps(&map, input),
@@ -398,13 +400,15 @@ fn decode_native_source_map(
             .map_err(|error| error.to_string())
     })
     .map_err(|error| {
-        diagnostic(
-            "FICT-SOURCEMAP-COMPOSE",
-            DiagnosticSeverity::Error,
-            format!("failed to compose the native source map for {output_name}: {error}"),
-            GuaranteeClass::Internal,
+        Box::new(
+            diagnostic(
+                "FICT-SOURCEMAP-COMPOSE",
+                DiagnosticSeverity::Error,
+                format!("failed to compose the native source map for {output_name}: {error}"),
+                GuaranteeClass::Internal,
+            )
+            .with_help("report the source-map fixture; partial output was discarded"),
         )
-        .with_help("report the source-map fixture; partial output was discarded")
     })?;
     Ok(map)
 }

@@ -34,18 +34,33 @@ pub(crate) struct PreparedHandler<'a> {
     pub local_functions: BTreeMap<BindingId, Expression<'a>>,
 }
 
+pub(crate) struct HandlerArtifactContext<'a> {
+    pub allocator: &'a Allocator,
+    pub source: &'a str,
+    pub filename: &'a str,
+    pub source_type: SourceType,
+    pub module_kind: OxcModuleKind,
+    pub transform_options: &'a TransformOptions,
+    pub runtime_family: RuntimeFamily,
+    pub preview: &'a EmitPreviewPlan,
+    pub sourcemap: bool,
+}
+
 pub(crate) fn generate_handler_artifact<'a>(
-    allocator: &'a Allocator,
-    source: &str,
-    filename: &str,
-    source_type: SourceType,
-    module_kind: OxcModuleKind,
-    transform_options: &TransformOptions,
-    runtime_family: RuntimeFamily,
-    preview: &EmitPreviewPlan,
+    context: HandlerArtifactContext<'a>,
     mut prepared: PreparedHandler<'a>,
-    sourcemap: bool,
 ) -> Result<OxcHandlerArtifact, Vec<Diagnostic>> {
+    let HandlerArtifactContext {
+        allocator,
+        source,
+        filename,
+        source_type,
+        module_kind,
+        transform_options,
+        runtime_family,
+        preview,
+        sourcemap,
+    } = context;
     if module_kind != OxcModuleKind::Module {
         return Err(vec![preview_error(
             "FICT-PREVIEW-MODULE",
