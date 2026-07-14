@@ -1851,7 +1851,6 @@ test('Rust compiler output preserves store, resource, and selector runtime react
     /const model = \$store\(.*const selected = createSelector\(\(\) => model\.selected\)/s,
     {
       options: { strictGuarantee: false },
-      diagnosticCodes: ['FICT-R002', 'FICT-R005'],
     },
   )
 

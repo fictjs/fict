@@ -2298,7 +2298,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .filter_map(|call| call.direct_variable_binding)
             .filter_map(|binding| binding_to_symbol.get(&binding).copied())
             .collect();
-        let mut reactive_symbols: BTreeSet<_> = calls
+        let source_reactive_symbols: BTreeSet<_> = calls
             .iter()
             .filter(|call| {
                 call.reactive_kind.is_some()
@@ -2312,43 +2312,60 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .filter_map(|call| call.direct_variable_binding)
             .filter_map(|binding| binding_to_symbol.get(&binding).copied())
             .collect();
-        reactive_symbols.extend(
-            self.function_facts
-                .iter()
-                .filter(|function| {
-                    classify_named_function(function.display_name.as_deref())
-                        == FunctionKind::Component
+        let mut source_escape_reactive_symbols: BTreeSet<_> = calls
+            .iter()
+            .filter(|call| {
+                call.binding
+                    .and_then(|binding| self.macro_bindings.get(&binding))
+                    .is_some_and(|kind| matches!(kind, FictMacroKind::State | FictMacroKind::Memo))
+            })
+            .filter_map(|call| call.direct_variable_binding)
+            .filter_map(|binding| binding_to_symbol.get(&binding).copied())
+            .collect();
+        let imported_reactive_symbols: BTreeSet<_> = self
+            .frontend
+            .bindings
+            .iter()
+            .filter(|binding| {
+                binding.import.as_ref().is_some_and(|import| {
+                    import.reactive.is_some() || !import.reactive_members.is_empty()
                 })
-                .flat_map(|function| function.parameters.iter())
-                .flat_map(|parameter| parameter.bindings.iter().copied()),
-        );
+            })
+            .filter_map(|binding| self.old_to_new.get(&binding.id.index()).copied())
+            .filter_map(|binding| binding_to_symbol.get(&binding).copied())
+            .collect();
+        source_escape_reactive_symbols.extend(imported_reactive_symbols.iter().copied());
+        let component_parameter_symbols: BTreeSet<_> = self
+            .function_facts
+            .iter()
+            .filter(|function| {
+                classify_named_function(function.display_name.as_deref()) == FunctionKind::Component
+            })
+            .flat_map(|function| function.parameters.iter())
+            .flat_map(|parameter| parameter.bindings.iter().copied())
+            .collect();
+        let mut reactive_symbols = source_reactive_symbols.clone();
+        reactive_symbols.extend(component_parameter_symbols.iter().copied());
 
         let mut dependencies = ReactiveBindingDependencyCollector {
             scoping: self.semantic.scoping(),
             facts: Vec::new(),
         };
         dependencies.visit_program(program);
-        loop {
-            let mut changed = false;
-            for fact in &dependencies.facts {
-                if fact
-                    .sources
-                    .iter()
-                    .any(|source| reactive_symbols.contains(source))
-                {
-                    for target in &fact.targets {
-                        changed |= reactive_symbols.insert(*target);
-                    }
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
+        propagate_reactive_symbols(&mut reactive_symbols, &dependencies.facts);
+        let mut escape_reactive_symbols = source_escape_reactive_symbols;
+        // The legacy escape pass propagates state/memo/imported-reactive aliases, but treats
+        // component parameters as direct roots only. Propagating every props-derived local would
+        // reject ordinary resource keys and event callbacks. Runtime reactive factory results
+        // still participate in DOM dependency tracking, but do not become escape roots merely
+        // because they came from store/resource/selector.
+        propagate_reactive_symbols(&mut escape_reactive_symbols, &dependencies.facts);
+        escape_reactive_symbols.extend(component_parameter_symbols);
 
         ReactiveSymbolAnalysis {
             state,
             reactive: reactive_symbols,
+            escape_reactive: escape_reactive_symbols,
             dependencies: dependencies.facts,
         }
     }
@@ -2493,7 +2510,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             .collect();
         let mut captures = FunctionCaptureCollector {
             scoping: self.semantic.scoping(),
-            reactive_symbols: &reactive.reactive,
+            reactive_symbols: &reactive.escape_reactive,
             binding_owners: &binding_owners,
             function_by_span: &self.function_by_span,
             stack: vec![FunctionId::new(0)],
@@ -2681,7 +2698,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             imports: &imports,
             known_arrays,
             state_symbols: &reactive.state,
-            reactive_symbols: &reactive.reactive,
+            reactive_symbols: &reactive.escape_reactive,
             capturing_functions: &capturing_functions,
             callback_captures: &callback_captures,
             callback_property_captures: &callback_property_captures,
@@ -8027,7 +8044,27 @@ fn deleted_member_span(expression: &Expression<'_>) -> Option<SourceSpan> {
 struct ReactiveSymbolAnalysis {
     state: BTreeSet<SymbolId>,
     reactive: BTreeSet<SymbolId>,
+    escape_reactive: BTreeSet<SymbolId>,
     dependencies: Vec<ReactiveBindingDependencyFact>,
+}
+
+fn propagate_reactive_symbols(
+    symbols: &mut BTreeSet<SymbolId>,
+    dependencies: &[ReactiveBindingDependencyFact],
+) {
+    loop {
+        let mut changed = false;
+        for fact in dependencies {
+            if fact.sources.iter().any(|source| symbols.contains(source)) {
+                for target in &fact.targets {
+                    changed |= symbols.insert(*target);
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

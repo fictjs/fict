@@ -2271,6 +2271,50 @@ fn propagates_reactive_dependencies_through_pattern_defaults() {
 }
 
 #[test]
+fn escape_diagnostics_keep_direct_props_roots_without_propagating_props_locals() {
+    let accepted = build_hir(
+        r#"
+            import { resource } from 'fict/plus';
+            const posts = resource(async (_context, id) => ({ id }));
+            export function App(props) {
+                const userId = props.userId;
+                const result = posts.read(userId);
+                return <button onClick={() => props.onSelect(result.data?.id ?? userId)}>
+                    {result.data?.id}
+                </button>;
+            }
+        "#,
+        options(OxcSourceLanguage::TypeScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(accepted.hir.is_some(), "{:?}", accepted.diagnostics);
+    assert!(
+        accepted
+            .diagnostics
+            .iter()
+            .all(|diagnostic| { !matches!(diagnostic.code.as_str(), "FICT-R002" | "FICT-R005") })
+    );
+
+    let direct_props = build_hir(
+        r#"
+            export function App(props) {
+                consume(props);
+                return <div>{props.value}</div>;
+            }
+        "#,
+        options(OxcSourceLanguage::TypeScriptJsx),
+        &HirBuildOptions::default(),
+    );
+    assert!(direct_props.hir.is_none());
+    assert!(
+        direct_props
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_str() == "FICT-R002")
+    );
+}
+
+#[test]
 fn materializes_plain_local_accesses_in_dependency_safe_source_order() {
     let source = r#"
         function plain(input) {

@@ -31,6 +31,12 @@
     "accepted": true
   },
   {
+    "name": "props-derived resource key and event callback",
+    "language": "tsx",
+    "source": "import { resource } from 'fict/plus'; const posts = resource(async (_context, id: number) => ({ id })); export function App(props: { userId: number; onSelect: (id: number) => void }) { const userId = props.userId; const result = posts.read(userId); return <button onClick={() => props.onSelect(result.data?.id ?? userId)}>{result.data?.id}</button>; }",
+    "accepted": true
+  },
+  {
     "name": "module state owner",
     "language": "js",
     "source": "import { $state } from 'fict'; export const count = $state(0);",
