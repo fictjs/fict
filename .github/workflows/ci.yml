@@ -477,9 +477,23 @@ jobs:
       - run: pnpm exec playwright install --with-deps chromium
       - run: FICT_STRICT_GUARANTEE=1 pnpm build
       - name: Run browser and real-application E2E
+        id: e2e
         env:
           FICT_REAL_APP_SOAK_MS: ${{ github.event_name == 'schedule' && '180000' || '10000' }}
         run: pnpm test:e2e
+
+      - name: Upload E2E failure diagnostics
+        if: steps.e2e.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure-diagnostics-${{ github.sha }}
+          path: |
+            packages/fict/playwright-report
+            packages/fict/test-results
+            examples/real-apps/playwright-report
+            examples/real-apps/test-results
+          if-no-files-found: warn
+          retention-days: 14
 
   test-opt-out:
     name: Test (Opt-out)

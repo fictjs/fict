@@ -203,6 +203,37 @@ test('browser E2E continuously includes production-shaped real applications and 
   assert.match(ciWorkflow, /180000/)
 })
 
+test('browser E2E failures retain annotations, reports, and retry traces', () => {
+  const fictPackage = JSON.parse(
+    readFileSync(new URL('../packages/fict/package.json', import.meta.url), 'utf8'),
+  )
+  const browserConfig = readFileSync(
+    new URL('../packages/fict/playwright.config.ts', import.meta.url),
+    'utf8',
+  )
+  const realAppsConfig = readFileSync(
+    new URL('../examples/real-apps/playwright.config.ts', import.meta.url),
+    'utf8',
+  )
+
+  assert.doesNotMatch(fictPackage.scripts['test:e2e'], /--reporter/)
+  assert.doesNotMatch(rootPackage.scripts['test:real-apps'], /--reporter/)
+  for (const config of [browserConfig, realAppsConfig]) {
+    assert.match(config, /process\.env\.GITHUB_ACTIONS/)
+    assert.match(config, /\['github'\]/)
+    assert.match(config, /\['html', \{ open: 'never' \}\]/)
+    assert.match(config, /trace: 'on-first-retry'/)
+  }
+
+  assert.match(ciWorkflow, /name: Run browser and real-application E2E\n\s+id: e2e/)
+  assert.match(ciWorkflow, /name: Upload E2E failure diagnostics/)
+  assert.match(ciWorkflow, /if: steps\.e2e\.outcome == 'failure'/)
+  assert.match(ciWorkflow, /packages\/fict\/playwright-report/)
+  assert.match(ciWorkflow, /packages\/fict\/test-results/)
+  assert.match(ciWorkflow, /examples\/real-apps\/playwright-report/)
+  assert.match(ciWorkflow, /examples\/real-apps\/test-results/)
+})
+
 test('packed manifests reject unresolved workspace protocols', () => {
   assert.deepEqual(
     findWorkspaceProtocols({

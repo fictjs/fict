@@ -11,7 +11,9 @@ export default defineConfig({
   workers: 1,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
-  reporter: 'list',
+  reporter: process.env.GITHUB_ACTIONS
+    ? [['list'], ['github'], ['html', { open: 'never' }]]
+    : 'list',
   timeout: Math.max(30_000, soakMs + 30_000),
   expect: { timeout: 5_000 },
   use: {
