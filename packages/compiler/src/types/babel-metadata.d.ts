@@ -1,4 +1,4 @@
-import type { CompilerExplainArtifact } from '../index'
+import type { CompilerExplainArtifact } from '../legacy-compiler'
 
 declare module '@babel/core' {
   interface BabelFileMetadata {

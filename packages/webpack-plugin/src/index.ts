@@ -3,6 +3,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { builtinModules, createRequire } from 'node:module'
 import path from 'node:path'
 
+import { resolveNativeCompilerRuntimeHelper } from '@fictjs/compiler/native'
 import type { Compilation, Compiler, NormalModule } from 'webpack'
 
 import {
@@ -1143,6 +1144,14 @@ export class FictWebpackPlugin {
   }
 
   apply(compiler: Compiler): void {
+    compiler.hooks.normalModuleFactory.tap(PLUGIN_NAME, normalModuleFactory => {
+      normalModuleFactory.hooks.beforeResolve.tap(PLUGIN_NAME, resolveData => {
+        if (!resolveData) return
+        const helper = resolveNativeCompilerRuntimeHelper(resolveData.request)
+        if (helper) resolveData.request = helper
+      })
+    })
+
     compiler.hooks.thisCompilation.tap(PLUGIN_NAME, compilation => {
       const state = createCompilationState()
       this.#states.set(compilation, state)

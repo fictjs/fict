@@ -5,6 +5,17 @@ import { transform } from './test-utils'
 const transformOptimized = (source: string) =>
   transform(source, { fineGrainedDom: false, optimize: true, dev: false })
 
+const transformWithCrossBlockConstants = (source: string) => {
+  const previous = process.env.FICT_OPT_CROSS_BLOCK_CONST
+  process.env.FICT_OPT_CROSS_BLOCK_CONST = '1'
+  try {
+    return transformOptimized(source)
+  } finally {
+    if (previous === undefined) delete process.env.FICT_OPT_CROSS_BLOCK_CONST
+    else process.env.FICT_OPT_CROSS_BLOCK_CONST = previous
+  }
+}
+
 describe('optimizer output snapshots', () => {
   it('stabilizes cross-block constants in a reactive function', () => {
     const source = `
@@ -19,7 +30,7 @@ describe('optimizer output snapshots', () => {
         return __b + count
       }
     `
-    const output = transformOptimized(source)
+    const output = transformWithCrossBlockConstants(source)
     expect(output).toMatchSnapshot()
   })
 

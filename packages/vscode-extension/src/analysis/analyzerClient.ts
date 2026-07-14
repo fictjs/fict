@@ -1,5 +1,10 @@
-import { analyzeFictFile } from '@fictjs/compiler'
 import type * as vscode from 'vscode'
+
+import {
+  getEditorNativeCompiler,
+  sourceLanguageForDocument,
+  type NativeAnalyzer,
+} from '../compiler/native'
 
 import {
   analyzeStaticFictSource,
@@ -48,46 +53,11 @@ function shouldFallbackToStaticAnalysis(result: {
   components: FictDocumentAnalysis['components']
   diagnostics: FictDocumentAnalysis['diagnostics']
 }): boolean {
-  const hasHIRFailure = result.diagnostics.some(diagnostic => {
-    return (
-      diagnostic.code === 'FICT-HIR-UNSUPPORTED' ||
-      (diagnostic.code === 'FICT-COMPILE' && diagnostic.message.includes('[HIR]'))
-    )
-  })
+  const hasHIRFailure = result.diagnostics.some(diagnostic =>
+    diagnostic.code.startsWith('FICT-HIR'),
+  )
 
   return result.components.length === 0 && hasHIRFailure
-}
-
-export function extractLocationFromCompilerMessage(
-  message: string,
-): { line: number; column: number } | null {
-  // Some Babel/parser builds only include a trailing `(line:column)` location
-  // on the summary line and omit the code frame entirely.
-  const summaryLocationMatch = /\((\d+):(\d+)\)\s*$/.exec(message.split('\n')[0] ?? message)
-  if (summaryLocationMatch) {
-    const line = Number.parseInt(summaryLocationMatch[1] ?? '', 10)
-    const column = Number.parseInt(summaryLocationMatch[2] ?? '', 10)
-    if (Number.isFinite(line) && Number.isFinite(column)) {
-      return {
-        line,
-        column: column + 1,
-      }
-    }
-  }
-
-  const lineMatch = /^>\s+(\d+)\s+\|/m.exec(message)
-  const columnMatch = /^\s*\|\s+(\^+)/m.exec(message)
-  if (!lineMatch || !columnMatch) return null
-
-  const line = Number.parseInt(lineMatch[1] ?? '', 10)
-  const carets = columnMatch[1]
-  if (!Number.isFinite(line) || !carets) return null
-
-  const markerIndex = columnMatch.index + columnMatch[0].indexOf(carets)
-  const lineStart = message.lastIndexOf('\n', columnMatch.index) + 1
-  const column = markerIndex - lineStart + 1
-
-  return { line, column }
 }
 
 export function mergeComponentTraces(
@@ -105,6 +75,7 @@ export async function analyzeDocument(
   document: vscode.TextDocument,
   settings: AnalyzerSettings = DEFAULT_SETTINGS,
   liveLineUpdates?: Map<number, LiveTraceLineUpdate>,
+  nativeAnalyzer?: NativeAnalyzer,
 ): Promise<FictDocumentAnalysis | null> {
   if (!isSupportedLanguageId(document.languageId)) {
     return null
@@ -123,10 +94,21 @@ export async function analyzeDocument(
   }
 
   try {
-    const compilerAnalysis = analyzeFictFile(source, fileName, {
-      includeRegions: settings.includeRegions,
-      includeDiagnostics: settings.includeDiagnostics,
-      verbosity: settings.verbosity,
+    const compiler = nativeAnalyzer ?? getEditorNativeCompiler()
+    const compilerAnalysis = compiler.analyzeSync({
+      code: source,
+      filename: fileName,
+      moduleId: document.uri.toString(),
+      language: sourceLanguageForDocument(document),
+      options: {
+        includeRegions: settings.includeRegions,
+        includeDiagnostics: settings.includeDiagnostics,
+        verbosity: settings.verbosity,
+        compilerOptions: {
+          dev: true,
+          strictGuarantee: true,
+        },
+      },
     })
 
     let analysis = shouldFallbackToStaticAnalysis(compilerAnalysis)
@@ -152,14 +134,20 @@ export async function analyzeDocument(
 
     if (settings.includeDiagnostics) {
       const message = error instanceof Error ? error.message : String(error)
-      const location = extractLocationFromCompilerMessage(message)
+      const code =
+        error &&
+        typeof error === 'object' &&
+        'code' in error &&
+        error.code === 'FICT_NATIVE_COMPILER_LOAD_FAILED'
+          ? 'FICT-NATIVE-LOAD'
+          : 'FICT-NATIVE-HOST'
       fallback.diagnostics = [
         {
-          code: 'FICT-COMPILE',
+          code,
           message: message.split('\n')[0] ?? message,
           severity: 'error',
-          line: location?.line ?? 1,
-          column: location?.column ?? 1,
+          line: 1,
+          column: 1,
         },
       ]
     }

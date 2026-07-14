@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 3,
+  "phase": "beta",
+  "viteDefaultBackend": "legacy",
+  "rollbackBackend": "legacy",
+  "rustDefaultRelease": null,
+  "compatibilityRelease": null,
+  "finalLegacyRelease": null,
+  "legacyRemovalRelease": null,
+  "candidateEvidencePath": ".github/compiler-rollout-evidence.json",
+  "nativeCertificationPath": ".github/compiler-native-certification.json",
+  "reviewPath": ".github/compiler-rollout-review.json",
+  "legacyRemovalReviewPath": ".github/compiler-legacy-removal-review.json"
+}

@@ -1,0 +1,7 @@
+10function decorate(value: unknown) { return value; }
+@decorate
+export class Model extends class {} {
+  field = 1;
+  static field = 2;
+  static { this.field++; }
+}

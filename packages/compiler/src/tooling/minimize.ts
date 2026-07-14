@@ -1,8 +1,23 @@
-export type SourceMinimizerPredicate = (source: string) => boolean | Promise<boolean>
+export type SourceMinimizerBackend = 'rust' | 'legacy'
+
+export interface SourceMinimizerPredicateContext {
+  /** Explicit compiler implementation selected for this reduction run. */
+  backend: SourceMinimizerBackend
+}
+
+export type SourceMinimizerPredicate = (
+  source: string,
+  context: SourceMinimizerPredicateContext,
+) => boolean | Promise<boolean>
 
 export interface SourceMinimizerOptions {
   source: string
   test: SourceMinimizerPredicate
+  /**
+   * Compiler implementation the predicate must exercise. Defaults to legacy for compatibility;
+   * differential tooling should run the same input once per backend.
+   */
+  backend?: SourceMinimizerBackend
   /**
    * Lines matching any preserve pattern are never removed.
    * Use this for imports, repro labels, or harness directives.
@@ -79,6 +94,7 @@ function normalizePredicateBudget(maxPasses: number): number {
 export async function minimizeSourceByLines({
   source,
   test,
+  backend = 'legacy',
   preserve = [],
   maxPasses = 200,
 }: SourceMinimizerOptions): Promise<SourceMinimizerResult> {
@@ -105,7 +121,7 @@ export async function minimizeSourceByLines({
       return undefined
     }
     predicateCalls += 1
-    return await test(candidate)
+    return await test(candidate, { backend })
   }
 
   const originalReproduces = await runPredicate(source)

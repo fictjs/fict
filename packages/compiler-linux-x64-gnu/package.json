@@ -1,0 +1,38 @@
+{
+  "name": "@fictjs/compiler-linux-x64-gnu",
+  "version": "0.28.0",
+  "description": "Fict Rust compiler native binding for Linux x64 (glibc)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fictjs/fict.git",
+    "directory": "packages/compiler-linux-x64-gnu"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "libc": [
+    "glibc"
+  ],
+  "main": "fict_compiler_napi.node",
+  "files": [
+    "fict_compiler_napi.node",
+    "binding-manifest.json",
+    "SHASUMS256.txt"
+  ],
+  "fictNative": {
+    "target": "linux-x64-gnu",
+    "rustTarget": "x86_64-unknown-linux-gnu",
+    "binary": "fict_compiler_napi.node"
+  }
+}

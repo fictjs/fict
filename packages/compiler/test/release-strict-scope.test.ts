@@ -36,9 +36,12 @@ describe('release strict guarantee scope', () => {
   })
 
   it('keeps behavior-first test entrypoints outside strict mode', () => {
-    for (const name of ['test', 'test:coverage', 'test:ssr-matrix']) {
-      expect(scripts[name]).toMatch(/^env -u FICT_STRICT_GUARANTEE /)
+    for (const name of ['test', 'test:coverage']) {
+      expect(scripts[name]).toMatch(
+        /^pnpm build:compiler:native-host && env -u FICT_STRICT_GUARANTEE /,
+      )
     }
+    expect(scripts['test:ssr-matrix']).toMatch(/^env -u FICT_STRICT_GUARANTEE /)
 
     const fictPackage = readPackage('packages/fict/package.json')
     expect(fictPackage.scripts['test:e2e']).toMatch(/^env -u FICT_STRICT_GUARANTEE /)

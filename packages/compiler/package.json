@@ -27,6 +27,36 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./graph-host": {
+      "import": {
+        "types": "./dist/graph-host.d.ts",
+        "default": "./dist/graph-host.js"
+      },
+      "require": {
+        "types": "./dist/graph-host.d.cts",
+        "default": "./dist/graph-host.cjs"
+      }
+    },
+    "./legacy": {
+      "import": {
+        "types": "./dist/legacy.d.ts",
+        "default": "./dist/legacy.js"
+      },
+      "require": {
+        "types": "./dist/legacy.d.cts",
+        "default": "./dist/legacy.cjs"
+      }
+    },
+    "./native": {
+      "import": {
+        "types": "./dist/native-loader.d.ts",
+        "default": "./dist/native-loader.js"
+      },
+      "require": {
+        "types": "./dist/native-loader.d.cts",
+        "default": "./dist/native-loader.cjs"
+      }
     }
   },
   "files": [
@@ -36,6 +66,7 @@
     "build": "tsdown",
     "dev": "tsdown --watch",
     "test": "vitest run",
+    "test:differential": "vitest run test/differential",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
@@ -45,12 +76,28 @@
   "peerDependencies": {
     "@babel/core": "^7.0.0-0"
   },
+  "peerDependenciesMeta": {
+    "@babel/core": {
+      "optional": true
+    }
+  },
   "dependencies": {
     "@babel/helper-plugin-utils": "^7.28.6",
     "@babel/plugin-transform-destructuring": "^7.27.1",
     "@babel/plugin-transform-typescript": "^7.28.5",
     "@babel/traverse": "^7.29.0",
+    "@oxc-project/runtime": "0.139.0",
     "@types/babel__core": "^7.20.5"
+  },
+  "optionalDependencies": {
+    "@fictjs/compiler-darwin-arm64": "workspace:*",
+    "@fictjs/compiler-darwin-x64": "workspace:*",
+    "@fictjs/compiler-linux-arm64-gnu": "workspace:*",
+    "@fictjs/compiler-linux-arm64-musl": "workspace:*",
+    "@fictjs/compiler-linux-x64-gnu": "workspace:*",
+    "@fictjs/compiler-linux-x64-musl": "workspace:*",
+    "@fictjs/compiler-win32-arm64-msvc": "workspace:*",
+    "@fictjs/compiler-win32-x64-msvc": "workspace:*"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",

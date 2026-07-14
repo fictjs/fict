@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "profiles": {
+    "ci": {
+      "minimumP95Speedup": 1.5,
+      "maximumRssRatio": 1.0,
+      "maximumOutputRatio": 1.25,
+      "maximumGzipOutputRatio": 1.25,
+      "maximumNativeTarballBytes": 8388608,
+      "maximumNativeUnpackedBytes": 20971520
+    },
+    "max": {
+      "minimumP95Speedup": 1.5,
+      "maximumRssRatio": 1.0,
+      "maximumOutputRatio": 1.25,
+      "maximumGzipOutputRatio": 1.25,
+      "maximumNativeTarballBytes": 8388608,
+      "maximumNativeUnpackedBytes": 20971520
+    }
+  }
+}

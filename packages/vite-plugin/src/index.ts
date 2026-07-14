@@ -5,20 +5,33 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { transformAsync, type PluginItem } from '@babel/core'
-import _generate from '@babel/generator'
-import { parse, parseExpression, type ParserPlugin } from '@babel/parser'
-import transformTypeScript from '@babel/plugin-transform-typescript'
-import _traverse from '@babel/traverse'
+import type { PluginItem } from '@babel/core'
+import type { ParserPlugin } from '@babel/parser'
 import type { NodePath, Scope } from '@babel/traverse'
-import * as t from '@babel/types'
-import {
-  createFictPlugin,
-  getCompilerCacheFingerprint,
-  resolvePackageModuleMetadata,
-  type FictCompilerOptions,
-  type ModuleReactiveMetadata,
+import type * as BabelTypes from '@babel/types'
+import type {
+  CompileRequest,
+  CompileResult,
+  CompilerArtifact,
+  CompilerExplainArtifact,
+  CompilerWarning,
+  FictCompilerOptions,
+  FictDiagnostic,
+  ModuleReactiveMetadata,
+  NativeCompilerExplainArtifact,
+  NativeCompilerOptions,
+  RawSourceMap,
+  ResolvedMetadataInput,
+  ScanResult,
 } from '@fictjs/compiler'
+import { resolvePackageModuleMetadata } from '@fictjs/compiler/graph-host'
+import {
+  loadNativeCompilerBinding,
+  type NativeCompilerBinding,
+  type NativeCompilerInfo,
+} from '@fictjs/compiler/native'
+import remapping, { type SourceMapInput as RemappingSourceMapInput } from '@jridgewell/remapping'
+import MagicString from 'magic-string'
 import {
   createFilter,
   transformWithEsbuild,
@@ -28,14 +41,31 @@ import {
 } from 'vite'
 
 import { createVitePluginCacheFingerprint } from './cache-fingerprint'
+import {
+  babelGenerate as generate,
+  babelParse as parse,
+  babelTraverse as traverse,
+  babelTypes as t,
+  getBabelLegacyRuntime,
+  type BabelGenerator,
+} from './legacy-compiler-runtime'
+import {
+  CompilerShadowRecorder,
+  type CompilerShadowBackendSnapshot,
+  type CompilerShadowDiagnostic,
+  type CompilerShadowModuleResult,
+  type CompilerShadowSemanticEvent,
+} from './shadow-rollout'
 
-// Handle ESM/CJS interop for Babel packages
-const traverse = (
-  typeof _traverse === 'function' ? _traverse : (_traverse as { default: typeof _traverse }).default
-) as typeof _traverse
-const generate = (
-  typeof _generate === 'function' ? _generate : (_generate as { default: typeof _generate }).default
-) as typeof _generate
+const requireFromVitePlugin = createRequire(import.meta.url)
+
+export type {
+  CompilerShadowArtifact,
+  CompilerShadowDifference,
+  CompilerShadowDifferenceCategory,
+  CompilerShadowModuleResult,
+} from './shadow-rollout'
+
 // Babel's parser exposes the current standard decorator grammar as `decorators`;
 // semantic version selection belongs to the downstream decorator transform.
 const STANDARD_DECORATOR_PARSER_PLUGINS: ParserPlugin[] = ['decorators', 'decoratorAutoAccessors']
@@ -50,7 +80,20 @@ const PACKAGE_METADATA_WATCH_GLOBS = [
   '!**/node_modules/**/*.json',
 ] as const
 
-type BabelGeneratorOptions = NonNullable<Parameters<typeof generate>[1]>
+type BabelGeneratorOptions = NonNullable<Parameters<BabelGenerator>[1]>
+
+export type FictCompilerBackend = 'legacy' | 'rust' | 'shadow'
+
+export interface FictShadowOptions {
+  /** Privacy-safe JSON artifact path, relative to the Vite root. */
+  reportPath?: string
+  /** Versioned allowlist path, relative to the Vite root. */
+  allowlistPath?: string
+  /** Fail buildEnd when a difference is not covered by the exact allowlist. */
+  failOnDifference?: boolean
+  /** Receives hashes and categories only; source, paths, and generated code are omitted. */
+  onResult?: (result: CompilerShadowModuleResult) => void
+}
 
 interface BabelGeneratorOptionsWithInputSourceMap extends BabelGeneratorOptions {
   retainLines?: boolean
@@ -61,6 +104,19 @@ interface BabelGeneratorOptionsWithInputSourceMap extends BabelGeneratorOptions 
 }
 
 export interface FictPluginOptions extends FictCompilerOptions {
+  /**
+   * Compiler implementation used by the Vite compile stage.
+   * @default 'legacy'
+   */
+  backend?: FictCompilerBackend
+  /** Shadow comparison controls. Used only with `backend: 'shadow'`. */
+  shadow?: FictShadowOptions
+  /**
+   * Explicit native addon path for local development and release verification.
+   * Production installations normally resolve the platform optional package.
+   * @internal
+   */
+  nativeCompilerPath?: string
   /**
    * File patterns to include for transformation.
    * Relative patterns are resolved from the Vite project root.
@@ -149,9 +205,13 @@ interface CachedTransform {
   moduleMetadata?: ModuleReactiveMetadata
 }
 
-interface PreparedCompilerTransform {
+interface CompilerStageResult {
   code: string
   map: TransformResult['map']
+  artifacts: CompilerArtifact[]
+}
+
+interface PreparedCompilerTransform extends CompilerStageResult {
   moduleMetadata: ModuleReactiveMetadata
   preparationKey: string
 }
@@ -362,7 +422,7 @@ let transformCacheFingerprint: string | undefined
 function getTransformCacheFingerprint(): string {
   return (transformCacheFingerprint ??= hashString(
     [
-      hashString(getCompilerCacheFingerprint()),
+      hashString(getBabelLegacyRuntime().getCompilerCacheFingerprint()),
       createVitePluginCacheFingerprint([String(extractAndRewriteHandlers)]),
     ].join('|'),
   ))
@@ -415,6 +475,10 @@ interface ExtractedHandler {
   code: string
   /** Which runtime package family this module uses for helper imports */
   runtimeImportFamily: 'fict' | 'runtime'
+  /** Complete compiler-owned module; present for Rust structured artifacts. */
+  moduleCode?: string
+  /** Source map for a complete compiler-owned module. */
+  moduleMap?: RawSourceMap | null
 }
 
 type RuntimeHelperUsage = string | { helperName: string; localName: string }
@@ -450,6 +514,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   const {
     include,
     exclude = ['**/node_modules/**'],
+    backend: backendOption,
+    shadow: shadowOption,
+    nativeCompilerPath,
     cache: cacheOption,
     tsconfigPath,
     useTypeScriptProject = true,
@@ -459,6 +526,86 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     publicModuleId: _integrationOwnedPublicModuleId,
     ...compilerOptions
   } = options
+  const backendFromEnvironment = process.env.FICT_COMPILER_BACKEND
+  const backend = (backendOption ?? backendFromEnvironment ?? 'legacy') as FictCompilerBackend
+  if (backend !== 'legacy' && backend !== 'rust' && backend !== 'shadow') {
+    throw new Error(`[fict] Unknown compiler backend ${JSON.stringify(backend)}.`)
+  }
+  if (shadowOption && backend !== 'shadow') {
+    throw new Error('[fict] The `shadow` options require backend: "shadow".')
+  }
+  const shadowFailOnDifference =
+    shadowOption?.failOnDifference ??
+    readBooleanEnv('FICT_COMPILER_SHADOW_FAIL_ON_DIFFERENCE') ??
+    false
+  let nativeCompilerBinding: NativeCompilerBinding | undefined
+  let nativeCompilerInfo: NativeCompilerInfo | undefined
+  let shadowRecorder: CompilerShadowRecorder | undefined
+  const getNativeCompiler = (): NativeCompilerBinding => {
+    if (!nativeCompilerBinding) {
+      const nativePath = nativeCompilerPath ?? process.env.FICT_COMPILER_NATIVE_PATH
+      nativeCompilerBinding = loadNativeCompilerBinding(nativePath ? { nativePath } : {})
+      nativeCompilerInfo = nativeCompilerBinding.nativeCompilerInfo()
+    }
+    return nativeCompilerBinding
+  }
+  const getShadowRecorder = (): CompilerShadowRecorder => {
+    if (backend !== 'shadow') {
+      throw new Error('[fict] Internal error: shadow recorder requested outside shadow mode.')
+    }
+    if (!shadowRecorder) {
+      getNativeCompiler()
+      const root = config?.root ?? process.cwd()
+      const allowlistPath =
+        shadowOption?.allowlistPath ?? process.env.FICT_COMPILER_SHADOW_ALLOWLIST
+      shadowRecorder = new CompilerShadowRecorder({
+        root,
+        compilerBuildId: nativeCompilerInfo!.compilerBuildId,
+        compilerBuildRevision: nativeCompilerInfo!.compilerBuildRevision,
+        reportPath:
+          shadowOption?.reportPath ??
+          process.env.FICT_COMPILER_SHADOW_REPORT ??
+          '.fict-cache/compiler-shadow.json',
+        ...(allowlistPath ? { allowlistPath } : {}),
+        ...(shadowOption?.onResult ? { onResult: shadowOption.onResult } : {}),
+      })
+    }
+    return shadowRecorder
+  }
+  const getCompilerStageFingerprint = (): string => {
+    if (backend === 'legacy') return `legacy:${getTransformCacheFingerprint()}`
+    getNativeCompiler()
+    const native = `${nativeCompilerInfo!.compilerBuildId}:oxc${nativeCompilerInfo!.oxcVersion}`
+    return backend === 'shadow'
+      ? `shadow:${getTransformCacheFingerprint()}:${native}`
+      : `rust:${native}`
+  }
+  const collectCompilerStaticModuleSources = async (
+    code: string,
+    filename: string,
+    moduleId = filename,
+  ): Promise<string[]> => {
+    if (backend === 'legacy') return collectStaticModuleSources(code)
+    const result = await getNativeCompiler().scan({ code, filename, moduleId })
+    return consumeNativeScanResult(result, code, filename)
+  }
+  const collectCompilerStaticModuleSourcesSync = (
+    code: string,
+    filename: string,
+    moduleId = filename,
+  ): string[] => {
+    if (backend === 'legacy') return collectStaticModuleSources(code)
+    const result = getNativeCompiler().scanSync({ code, filename, moduleId })
+    return consumeNativeScanResult(result, code, filename)
+  }
+  const collectNativeCompilerStaticModuleSources = async (
+    code: string,
+    filename: string,
+    moduleId = filename,
+  ): Promise<string[]> => {
+    const result = await getNativeCompiler().scan({ code, filename, moduleId })
+    return consumeNativeScanResult(result, code, filename)
+  }
   const publicIdentityNamespace = publicIdentityNamespaceOption?.trim()
   if (publicIdentityNamespaceOption !== undefined && !publicIdentityNamespace) {
     throw new Error('[fict] publicIdentityNamespace must be a non-empty string.')
@@ -1127,6 +1274,60 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     })
   }
 
+  const createNativeMetadataSnapshot = (
+    state: MetadataTransformState,
+    sources: readonly string[],
+    normalizedFilename: string,
+    importerKey: string,
+  ): ResolvedMetadataInput[] => {
+    const aliasEntries = normalizeAliases(config?.resolve?.alias)
+    return sources.map(source => {
+      const metadata = resolveCompilerModuleMetadata(state, source, normalizedFilename, importerKey)
+      const exactResolution = state.resolvedLocalModules.get(
+        createLocalResolutionKey(importerKey, source),
+      )
+      const localFile =
+        exactResolution?.filename ??
+        resolveLocalModuleSource(source, normalizedFilename, config?.root, aliasEntries)
+      const packageSource = resolveAliasedPackageSource(source, aliasEntries)
+      let resolvedId = exactResolution?.key ?? localFile ?? packageSource
+      let status: ResolvedMetadataInput['status']
+      let resolvedMetadata: ModuleReactiveMetadata | null = null
+
+      if (metadata === null) {
+        status = 'missing'
+        resolvedId = null
+      } else if (metadata !== undefined) {
+        status = 'resolved'
+        resolvedMetadata = metadata
+        resolvedId ??= `resolver:${source}`
+      } else if (
+        shouldSkipMetadataForModuleQuery(source, {
+          root: config?.root,
+          importer: normalizedFilename,
+        })
+      ) {
+        status = 'opaque'
+        resolvedId ??= source
+      } else if (resolvedId) {
+        status = 'opaque'
+      } else {
+        status = 'missing'
+        resolvedId = null
+      }
+
+      return {
+        request: source,
+        resolvedId,
+        status,
+        metadata: resolvedMetadata,
+        fingerprint: `sha256:${hashString(
+          stableStringify([source, resolvedId, status, resolvedMetadata]),
+        )}`,
+      }
+    })
+  }
+
   const createCompilerOptions = async (
     state: MetadataTransformState,
     code: string,
@@ -1142,6 +1343,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     fictOptions: FictCompilerOptions
     project: TypeScriptProject | null
     tsImportElision: TypeScriptImportElision
+    nativeMetadata: ResolvedMetadataInput[]
   }> => {
     assertTransformStateActive(state)
     let publicModuleId: string | undefined
@@ -1224,7 +1426,31 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         configPath: project.configPath,
       }
     }
-    return { fictOptions, project, tsImportElision }
+    let nativeModuleSources: string[] = []
+    if (backend !== 'legacy') {
+      try {
+        nativeModuleSources = await collectNativeCompilerStaticModuleSources(
+          code,
+          normalizedFilename,
+          transformOptions?.publicIdentityId ?? normalizedFilename,
+        )
+      } catch (error) {
+        if (backend !== 'shadow') throw error
+        // Shadow mode must preserve the legacy build. The native transform below records
+        // parser/diagnostic divergence without letting a native scan change graph discovery.
+        nativeModuleSources = collectStaticModuleSources(code)
+      }
+    }
+    const nativeMetadata =
+      backend === 'legacy'
+        ? []
+        : createNativeMetadataSnapshot(
+            state,
+            nativeModuleSources,
+            normalizedFilename,
+            transformOptions?.metadataKey ?? normalizedFilename,
+          )
+    return { fictOptions, project, tsImportElision, nativeMetadata }
   }
 
   const resolveGraphDependency = async (
@@ -1310,7 +1536,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       // pipeline loader retain the recursive on-disk preparation fallback.
       if (pipelineCode === undefined && hasMetadataPipelineLoader(context)) return
 
-      for (const source of collectStaticModuleSources(code)) {
+      for (const source of await collectCompilerStaticModuleSources(code, node.filename, node.id)) {
         const resolved = await resolveGraphDependency(context, source, node.id)
         if (!resolved || !shouldCompileModule(resolved.filename)) continue
         state.resolvedLocalModules.set(createLocalResolutionKey(identity.key, source), {
@@ -1335,13 +1561,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     fictOptions: FictCompilerOptions
     outputMetadata: Map<string, ModuleReactiveMetadata>
     tsImportElision: TypeScriptImportElision
+    nativeMetadata: ResolvedMetadataInput[]
   }> => {
     assertTransformStateActive(state)
     const isVariant = node.key !== node.filename
     const outputMetadata = isVariant
       ? new Map<string, ModuleReactiveMetadata>()
       : state.moduleMetadata
-    const { fictOptions, project } = await createCompilerOptions(
+    const { fictOptions, project, nativeMetadata } = await createCompilerOptions(
       state,
       node.code,
       node.filename,
@@ -1364,6 +1591,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       state.resolvedLocalModules,
       file => registerPackageMetadataDependency(state, file),
       node.key,
+      backend === 'rust' ? collectCompilerStaticModuleSourcesSync : undefined,
     )
     return {
       key: buildMetadataPreparationKey(
@@ -1373,10 +1601,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         project,
         tsImportElision,
         dependencyFingerprint,
+        getCompilerStageFingerprint(),
       ),
       fictOptions,
       outputMetadata,
       tsImportElision,
+      nativeMetadata,
     }
   }
 
@@ -1386,6 +1616,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     fictOptions: FictCompilerOptions,
     outputMetadata: Map<string, ModuleReactiveMetadata>,
     tsImportElision: TypeScriptImportElision,
+    nativeMetadata: ResolvedMetadataInput[],
   ): Promise<Omit<PreparedCompilerTransform, 'preparationKey'>> => {
     assertTransformStateActive(state)
     const compiled = await compileFictCompilerStage(
@@ -1393,6 +1624,13 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       node.filename,
       fictOptions,
       tsImportElision,
+      {
+        backend,
+        moduleId: node.id,
+        metadata: nativeMetadata,
+        ...(backend !== 'legacy' ? { nativeCompiler: getNativeCompiler() } : {}),
+        ...(backend === 'shadow' ? { shadowRecorder: getShadowRecorder() } : {}),
+      },
     )
     assertTransformStateActive(state)
     const generatedMetadata = outputMetadata.get(node.filename)
@@ -1403,6 +1641,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     return {
       code: compiled.code,
       map: compiled.map,
+      artifacts: compiled.artifacts,
       moduleMetadata: generatedMetadata,
     }
   }
@@ -1447,6 +1686,23 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         continue
       }
 
+      // Native compilation consumes an eager, serializable metadata snapshot while candidate
+      // keys are prepared. Seed every missing SCC member before that snapshot is built; otherwise
+      // the first Rust pass mistakes a legitimate back-edge for an unprepared local module and
+      // aborts before fixed-point convergence can start. Reuse a prepared result when available
+      // so watch/cache rebuilds compare against the last converged state instead of an empty seed.
+      if (hasCycle) {
+        for (const moduleKey of sortedComponent) {
+          if (!state.moduleMetadata.has(moduleKey)) {
+            state.moduleMetadata.set(
+              moduleKey,
+              state.preparedCompilerTransforms.get(moduleKey)?.moduleMetadata ??
+                createEmptyModuleMetadata(),
+            )
+          }
+        }
+      }
+
       const preparedCandidates: {
         moduleKey: string
         prepared: PreparedCompilerTransform | undefined
@@ -1454,6 +1710,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         fictOptions: FictCompilerOptions
         outputMetadata: Map<string, ModuleReactiveMetadata>
         tsImportElision: TypeScriptImportElision
+        nativeMetadata: ResolvedMetadataInput[]
       }[] = []
       // TypeScriptProject is a shared mutable language-service snapshot. Prepare
       // candidate keys deterministically so updateFile/getProgram never race.
@@ -1480,7 +1737,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         const moduleKey = sortedComponent[0]!
         const node = graph.get(moduleKey)!
         const tsImportElision = await getFixedTsImportElision(node)
-        const { fictOptions, outputMetadata } = await getPreparationKey(
+        const { fictOptions, outputMetadata, nativeMetadata } = await getPreparationKey(
           state,
           node,
           tsImportElision,
@@ -1491,16 +1748,11 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           fictOptions,
           outputMetadata,
           tsImportElision,
+          nativeMetadata,
         )
         const { key } = await getPreparationKey(state, node, tsImportElision)
         state.preparedCompilerTransforms.set(moduleKey, { ...compiled, preparationKey: key })
         continue
-      }
-
-      for (const moduleKey of sortedComponent) {
-        if (!state.moduleMetadata.has(moduleKey)) {
-          state.moduleMetadata.set(moduleKey, createEmptyModuleMetadata())
-        }
       }
 
       let latestResults = new Map<string, Omit<PreparedCompilerTransform, 'preparationKey'>>()
@@ -1514,14 +1766,21 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         for (const moduleKey of sortedComponent) {
           const node = graph.get(moduleKey)!
           const tsImportElision = await getFixedTsImportElision(node)
-          const { fictOptions, outputMetadata } = await getPreparationKey(
+          const { fictOptions, outputMetadata, nativeMetadata } = await getPreparationKey(
             state,
             node,
             tsImportElision,
           )
           passResults.set(
             moduleKey,
-            await compileMetadataNode(state, node, fictOptions, outputMetadata, tsImportElision),
+            await compileMetadataNode(
+              state,
+              node,
+              fictOptions,
+              outputMetadata,
+              tsImportElision,
+              nativeMetadata,
+            ),
           )
         }
         latestResults = passResults
@@ -1653,6 +1912,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         }
       }
       config = resolvedConfig
+      shadowRecorder = undefined
       transformFilter = createTransformFilter(config.root)
       if (resolvedConfig.build.watch) {
         const chokidar = (resolvedConfig.build.watch.chokidar ??= {})
@@ -1691,6 +1951,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     },
 
     buildStart() {
+      if (backend === 'shadow') getShadowRecorder().reset()
       const context = this as { addWatchFile?: (file: string) => void } | undefined
       const addWatchFile = context?.addWatchFile
       addTypeScriptConfigWatchFiles =
@@ -1714,6 +1975,18 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           )?.root ?? normalizeFileName(config.root)
       }
       replaceBuildTransformState()
+    },
+
+    async buildEnd(error) {
+      if (backend !== 'shadow') return
+      const recorder = getShadowRecorder()
+      const artifact = await recorder.write()
+      if (!error && shadowFailOnDifference && artifact.summary.unexplainedDifferences > 0) {
+        this.error(
+          `[fict] Rust shadow comparison found ${artifact.summary.unexplainedDifferences} ` +
+            'unexplained difference(s). Inspect the configured privacy-safe shadow report.',
+        )
+      }
     },
 
     configureServer: {
@@ -1763,7 +2036,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               `or unavailable generation (${identity.generationId}/${identity.environmentId}).`,
           )
         }
-        return generateHandlerModule(handler)
+        return handler.moduleCode !== undefined
+          ? {
+              code: handler.moduleCode,
+              map: handler.moduleMap ? JSON.stringify(handler.moduleMap) : null,
+            }
+          : generateHandlerModule(handler)
       }
 
       // Load virtual handler modules
@@ -1791,7 +2069,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       debugLog(`Generated virtual module (${generatedCode.length} chars)`, {
         preview: generatedCode.slice(0, 200),
       })
-      return generatedCode
+      return handler.moduleCode !== undefined
+        ? {
+            code: generatedCode,
+            map: handler.moduleMap ? JSON.stringify(handler.moduleMap) : null,
+          }
+        : generatedCode
     },
 
     config(userConfig, env) {
@@ -1937,6 +2220,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           fictOptions,
           project: tsProject,
           tsImportElision,
+          nativeMetadata,
         } = await createCompilerOptions(state, code, normalizedFilename, undefined, {
           metadataKey,
           moduleMetadata: transformMetadata,
@@ -1955,16 +2239,22 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           state.resolvedLocalModules,
           file => registerPackageMetadataDependency(state, file),
           metadataKey,
+          backend === 'rust' ? collectCompilerStaticModuleSourcesSync : undefined,
         )
         const cacheStore = ensureCache()
         const shouldSplit =
-          options.functionSplitting ??
-          (config?.command === 'build' && (compilerOptions.resumable || !config?.build?.ssr))
+          (backend === 'rust' && compilerOptions.resumable === true) ||
+          (options.functionSplitting ??
+            (config?.command === 'build' && (compilerOptions.resumable || !config?.build?.ssr)))
         // Function callbacks are observable compiler output. Replaying only code/maps from
-        // either cache would silently drop warnings and explain artifacts, so compile the
-        // requested root again while still allowing dependency metadata preparation to dedupe.
+        // either cache would silently drop warnings and explain artifacts. Shadow comparison is
+        // observable too: a cached legacy code/map has no Rust outcome and would create a false
+        // green report. Compile the requested root again while still allowing dependency
+        // metadata preparation to dedupe within the current build.
         const hasObservableCompilerCallbacks =
-          typeof fictOptions.onWarn === 'function' || typeof fictOptions.explain === 'function'
+          backend === 'shadow' ||
+          typeof fictOptions.onWarn === 'function' ||
+          typeof fictOptions.explain === 'function'
         const cacheKey =
           cacheStore.enabled && !hasObservableCompilerCallbacks
             ? buildCacheKey(
@@ -1975,6 +2265,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
                 tsImportElision,
                 shouldSplit,
                 dependencyFingerprint,
+                getCompilerStageFingerprint(),
                 state.devHandlerGeneration && state.devEnvironmentId
                   ? `${state.devHandlerGeneration.id}:${state.devEnvironmentId}`
                   : '',
@@ -2021,6 +2312,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
 
         let finalCode: string
         let finalMap: TransformResult['map']
+        let compilerArtifacts: CompilerArtifact[] = []
         let splitResult: { code: string; handlers: string[]; map: TransformResult['map'] } | null =
           null
 
@@ -2035,11 +2327,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             tsProject,
             tsImportElision,
             dependencyFingerprint,
+            getCompilerStageFingerprint(),
           )
           const prepared = isPassThroughVariant
             ? undefined
             : state.preparedCompilerTransforms.get(metadataKey)
-          let result: { code: string; map: TransformResult['map'] }
+          let result: CompilerStageResult
           if (!hasObservableCompilerCallbacks && prepared?.preparationKey === preparationKey) {
             result = prepared
           } else {
@@ -2048,6 +2341,13 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               normalizedFilename,
               fictOptions,
               tsImportElision,
+              {
+                backend,
+                moduleId: id,
+                metadata: nativeMetadata,
+                ...(backend !== 'legacy' ? { nativeCompiler: getNativeCompiler() } : {}),
+                ...(backend === 'shadow' ? { shadowRecorder: getShadowRecorder() } : {}),
+              },
             )
             assertTransformStateActive(state)
             const generatedMetadata = transformMetadata.get(normalizedFilename)
@@ -2064,6 +2364,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           }
           finalCode = result.code
           finalMap = result.map
+          compilerArtifacts = result.artifacts
         }
 
         // Apply function-level code splitting in production builds
@@ -2086,26 +2387,42 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
                     origin: config?.server.origin,
                   }
                 : undefined
-            splitResult = extractAndRewriteHandlers(
-              finalCode,
-              id,
-              state.extractedHandlers,
-              finalMap,
-              config?.root,
-              packageBoundaryCache,
-              publicIdentityNamespace,
-              config?.resolve?.preserveSymlinks === true,
-              devHandlerModuleOptions
-                ? handlerId =>
-                    createDevHandlerModuleId(
-                      handlerId,
-                      devHandlerModuleOptions.generationId,
-                      devHandlerModuleOptions.environmentId,
-                      devHandlerModuleOptions,
-                    )
-                : undefined,
-            )
+            const resolveHandlerModuleId = devHandlerModuleOptions
+              ? (handlerId: string) =>
+                  createDevHandlerModuleId(
+                    handlerId,
+                    devHandlerModuleOptions.generationId,
+                    devHandlerModuleOptions.environmentId,
+                    devHandlerModuleOptions,
+                  )
+              : undefined
+            splitResult =
+              backend === 'rust'
+                ? consumeStructuredHandlerArtifacts(
+                    finalCode,
+                    id,
+                    compilerArtifacts,
+                    state.extractedHandlers,
+                    finalMap,
+                    config?.root,
+                    packageBoundaryCache,
+                    publicIdentityNamespace,
+                    config?.resolve?.preserveSymlinks === true,
+                    resolveHandlerModuleId,
+                  )
+                : extractAndRewriteHandlers(
+                    finalCode,
+                    id,
+                    state.extractedHandlers,
+                    finalMap,
+                    config?.root,
+                    packageBoundaryCache,
+                    publicIdentityNamespace,
+                    config?.resolve?.preserveSymlinks === true,
+                    resolveHandlerModuleId,
+                  )
           } catch (error) {
+            if (backend === 'rust') throw error
             this.warn(buildPluginMessage('extractAndRewriteHandlers failed', filename, error))
           }
           debugLog('Split result', {
@@ -3441,43 +3758,140 @@ interface DeclaredTypeScriptConfigDependencies {
   referenced: string[]
 }
 
-function getStaticObjectProperty(object: t.ObjectExpression, name: string): t.Expression | null {
-  for (let index = object.properties.length - 1; index >= 0; index -= 1) {
-    const property = object.properties[index]
-    if (!t.isObjectProperty(property) || property.computed) continue
-    const key = property.key
-    const keyName = t.isIdentifier(key) ? key.name : t.isStringLiteral(key) ? key.value : null
-    if (keyName !== name || !t.isExpression(property.value)) continue
-    return property.value
+function stripJsonComments(source: string): string {
+  let output = ''
+  let inString = false
+  let escaped = false
+  let lineComment = false
+  let blockComment = false
+
+  for (let index = 0; index < source.length; index++) {
+    const char = source[index]!
+    const next = source[index + 1]
+    if (lineComment) {
+      if (char === '\n' || char === '\r') {
+        lineComment = false
+        output += char
+      }
+      continue
+    }
+    if (blockComment) {
+      if (char === '*' && next === '/') {
+        blockComment = false
+        output += '  '
+        index++
+      } else {
+        output += char === '\n' || char === '\r' ? char : ' '
+      }
+      continue
+    }
+    if (inString) {
+      output += char
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') inString = false
+      continue
+    }
+    if (char === '"') {
+      inString = true
+      output += char
+      continue
+    }
+    if (char === '/' && next === '/') {
+      lineComment = true
+      output += '  '
+      index++
+      continue
+    }
+    if (char === '/' && next === '*') {
+      blockComment = true
+      output += '  '
+      index++
+      continue
+    }
+    output += char
   }
-  return null
+  return output
+}
+
+function stripJsonTrailingCommas(source: string): string {
+  let output = ''
+  let inString = false
+  let escaped = false
+  for (let index = 0; index < source.length; index++) {
+    const char = source[index]!
+    if (inString) {
+      output += char
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') inString = false
+      continue
+    }
+    if (char === '"') {
+      inString = true
+      output += char
+      continue
+    }
+    if (char === ',') {
+      let nextIndex = index + 1
+      while (/\s/.test(source[nextIndex] ?? '')) nextIndex++
+      if (source[nextIndex] === '}' || source[nextIndex] === ']') continue
+    }
+    output += char
+  }
+  return output
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function parseTypeScriptConfigObject(
+  configPath: string,
+  source: string,
+): Record<string, unknown> | null {
+  const loaders = [createRequire(configPath), requireFromVitePlugin]
+  for (const load of loaders) {
+    try {
+      const ts = load('typescript') as Partial<TypeScriptApi>
+      const result = ts.parseConfigFileTextToJson?.(configPath, source)
+      if (result && !result.error && isObjectRecord(result.config)) return result.config
+    } catch {
+      // TypeScript is an optional host dependency; use the JSONC fallback below.
+    }
+  }
+  try {
+    const parsed = JSON.parse(stripJsonTrailingCommas(stripJsonComments(source))) as unknown
+    return isObjectRecord(parsed) ? parsed : null
+  } catch {
+    return null
+  }
 }
 
 function readDeclaredTypeScriptConfigDependencies(
   configPath: string,
 ): DeclaredTypeScriptConfigDependencies | null {
-  let expression: t.Expression
+  let source: string
   try {
-    expression = parseExpression(readFileSync(configPath, 'utf8').replace(/^\uFEFF/, ''), {
-      sourceType: 'script',
-    })
+    source = readFileSync(configPath, 'utf8').replace(/^\uFEFF/, '')
   } catch {
     return null
   }
-  if (!t.isObjectExpression(expression)) return null
+  const config = parseTypeScriptConfigObject(configPath, source)
+  if (!config) return null
 
-  const extendedValue = getStaticObjectProperty(expression, 'extends')
-  const extended = t.isStringLiteral(extendedValue)
-    ? [extendedValue.value]
-    : t.isArrayExpression(extendedValue)
-      ? extendedValue.elements.filter(t.isStringLiteral).map(element => element.value)
-      : []
-  const referencedValue = getStaticObjectProperty(expression, 'references')
-  const referenced = t.isArrayExpression(referencedValue)
-    ? referencedValue.elements.flatMap(element => {
-        if (!t.isObjectExpression(element)) return []
-        const referencePath = getStaticObjectProperty(element, 'path')
-        return t.isStringLiteral(referencePath) ? [referencePath.value] : []
+  const extendedValue = config.extends
+  const extended =
+    typeof extendedValue === 'string'
+      ? [extendedValue]
+      : Array.isArray(extendedValue)
+        ? extendedValue.filter((value): value is string => typeof value === 'string')
+        : []
+  const referencedValue = config.references
+  const referenced = Array.isArray(referencedValue)
+    ? referencedValue.flatMap(reference => {
+        if (!isObjectRecord(reference)) return []
+        return typeof reference.path === 'string' ? [reference.path] : []
       })
     : []
   return { extended, referenced }
@@ -3626,6 +4040,15 @@ function resolveTypeScriptImportElision(
   return pending
 }
 
+function classifyTypeScriptImportProbeOutput(code: string): TypeScriptImportElision {
+  const probeImport = new RegExp(
+    `(?:^|[;\\n])\\s*import\\s*([^;\\n]*?)["']${escapeRegExp(TYPESCRIPT_IMPORT_PROBE_SOURCE)}["']`,
+    'm',
+  ).exec(code)
+  if (!probeImport) return 'remove'
+  return probeImport[1]?.trim() ? 'verbatim' : 'preserve-side-effect'
+}
+
 async function resolveTypeScriptImportElisionUncached(
   state: MetadataTransformState,
   filename: string,
@@ -3672,13 +4095,7 @@ async function resolveTypeScriptImportElisionUncached(
     // that diagnostic or make standalone plugin integrations fail earlier.
     return 'remove'
   }
-  const ast = parse(result.code, { sourceType: 'module' })
-  const probeImport = ast.program.body.find(
-    (statement): statement is t.ImportDeclaration =>
-      t.isImportDeclaration(statement) && statement.source.value === TYPESCRIPT_IMPORT_PROBE_SOURCE,
-  )
-  if (!probeImport) return 'remove'
-  return probeImport.specifiers.length === 0 ? 'preserve-side-effect' : 'verbatim'
+  return classifyTypeScriptImportProbeOutput(result.code)
 }
 
 interface AliasEntry {
@@ -3808,7 +4225,7 @@ function getStronglyConnectedMetadataComponents(graph: Map<string, MetadataGraph
 
 function getImportSpecifierSemanticKey(
   source: string,
-  specifier: t.ImportDeclaration['specifiers'][number],
+  specifier: BabelTypes.ImportDeclaration['specifiers'][number],
 ): string {
   if (t.isImportDefaultSpecifier(specifier)) {
     return JSON.stringify([source, 'default', specifier.local.name])
@@ -3828,7 +4245,7 @@ function preserveTypeScriptImportSideEffects(): PluginItem {
     name: 'fict-preserve-typescript-import-side-effects',
     visitor: {
       Program: {
-        enter(programPath: NodePath<t.Program>) {
+        enter(programPath: NodePath<BabelTypes.Program>) {
           for (const statement of programPath.node.body) {
             if (!t.isImportDeclaration(statement)) continue
             for (const specifier of statement.specifiers) {
@@ -3836,7 +4253,7 @@ function preserveTypeScriptImportSideEffects(): PluginItem {
             }
           }
         },
-        exit(programPath: NodePath<t.Program>) {
+        exit(programPath: NodePath<BabelTypes.Program>) {
           programPath.scope.crawl()
           for (const statement of programPath.get('body')) {
             if (!statement.isImportDeclaration() || statement.node.specifiers.length === 0) {
@@ -3861,7 +4278,7 @@ function lowerCtsModuleSyntax(): PluginItem {
   return {
     name: 'fict-lower-cts-module-syntax',
     visitor: {
-      TSImportEqualsDeclaration(importPath: NodePath<t.TSImportEqualsDeclaration>) {
+      TSImportEqualsDeclaration(importPath: NodePath<BabelTypes.TSImportEqualsDeclaration>) {
         const { node } = importPath
         if (node.importKind === 'type') {
           importPath.remove()
@@ -3885,7 +4302,7 @@ function lowerCtsModuleSyntax(): PluginItem {
           importPath.replaceWith(declaration)
         }
       },
-      TSExportAssignment(exportPath: NodePath<t.TSExportAssignment>) {
+      TSExportAssignment(exportPath: NodePath<BabelTypes.TSExportAssignment>) {
         const declaration = t.exportDefaultDeclaration(exportPath.node.expression)
         t.inheritsComments(declaration, exportPath.node)
         exportPath.replaceWith(declaration)
@@ -3925,12 +4342,404 @@ function parseModuleWithDecoratorFallback(code: string): ReturnType<typeof parse
   }
 }
 
+interface CompilerStageOptions {
+  backend: FictCompilerBackend
+  moduleId: string
+  metadata: ResolvedMetadataInput[]
+  nativeCompiler?: NativeCompilerBinding
+  shadowRecorder?: CompilerShadowRecorder
+}
+
+function sourcePositionForByteOffset(
+  source: string,
+  byteOffset: number,
+): { line: number; column: number } {
+  const bytes = Buffer.from(source)
+  const prefix = bytes.subarray(0, Math.min(Math.max(0, byteOffset), bytes.length)).toString('utf8')
+  const lines = prefix.split('\n')
+  return {
+    line: lines.length,
+    column: (lines[lines.length - 1]?.replace(/\r$/, '').length ?? 0) + 1,
+  }
+}
+
+function sourceByteOffsetForPosition(source: string, line: number, column: number): number | null {
+  if (line <= 0 || column <= 0) return null
+  let index = 0
+  let currentLine = 1
+  while (currentLine < line) {
+    const newline = source.indexOf('\n', index)
+    if (newline === -1) return null
+    index = newline + 1
+    currentLine += 1
+  }
+  const lineEnd = source.indexOf('\n', index)
+  const end = lineEnd === -1 ? source.length : lineEnd
+  const sourceIndex = Math.min(index + column - 1, end)
+  return Buffer.byteLength(source.slice(0, sourceIndex))
+}
+
+function nativeDiagnosticToWarning(
+  diagnostic: FictDiagnostic,
+  source: string,
+  filename: string,
+): CompilerWarning {
+  const position = diagnostic.primarySpan
+    ? sourcePositionForByteOffset(source, diagnostic.primarySpan.start)
+    : { line: 0, column: 0 }
+  return {
+    code: diagnostic.code,
+    message: diagnostic.message,
+    fileName: filename,
+    line: position.line,
+    column: position.column,
+  }
+}
+
+function formatNativeDiagnostic(
+  diagnostic: FictDiagnostic,
+  source: string,
+  filename: string,
+): string {
+  const warning = nativeDiagnosticToWarning(diagnostic, source, filename)
+  const location = warning.line > 0 ? `\n  at ${filename}:${warning.line}:${warning.column}` : ''
+  const help = diagnostic.help ? `\n  help: ${diagnostic.help}` : ''
+  return `[${diagnostic.code}] ${diagnostic.message}${location}${help}`
+}
+
+function nativeExplainToLegacy(
+  artifact: NativeCompilerExplainArtifact,
+  source: string,
+  filename: string,
+): CompilerExplainArtifact {
+  return {
+    version: 1,
+    fileName: artifact.fileName,
+    helpers: artifact.helpers,
+    diagnostics: artifact.diagnostics.map(diagnostic =>
+      nativeDiagnosticToWarning(diagnostic, source, filename),
+    ),
+    events: artifact.events.map(event => {
+      const position = event.span
+        ? sourcePositionForByteOffset(source, event.span.start)
+        : undefined
+      return {
+        kind: event.kind,
+        message: event.message,
+        ...(event.name ? { name: event.name } : {}),
+        ...(event.code ? { code: event.code } : {}),
+        ...(position ? { line: position.line, column: position.column } : {}),
+      }
+    }),
+  }
+}
+
+function nativeCompilerOptions(
+  options: FictCompilerOptions,
+  tsImportElision: TypeScriptImportElision,
+): NativeCompilerOptions {
+  const strictGuaranteeFromEnv = readBooleanEnv('FICT_STRICT_GUARANTEE') === true
+  return {
+    dev: options.dev ?? false,
+    sourcemap: options.sourcemap ?? true,
+    explain: options.explain === true || typeof options.explain === 'function',
+    lazyConditional: options.lazyConditional ?? true,
+    getterCache: options.getterCache ?? true,
+    fineGrainedDom: options.fineGrainedDom ?? true,
+    optimize: options.optimize ?? true,
+    optimizeLevel: options.optimizeLevel ?? 'safe',
+    inlineDerivedMemos: options.inlineDerivedMemos ?? true,
+    strictReactivity: options.strictReactivity ?? false,
+    strictGuarantee:
+      strictGuaranteeFromEnv ||
+      process.env.NODE_ENV === 'production' ||
+      options.strictGuarantee !== false,
+    warningsAsErrors: options.warningsAsErrors ?? false,
+    warningLevels: options.warningLevels ?? {},
+    reactiveScopes: options.reactiveScopes ?? [],
+    typescript: {
+      allowNamespaces: true,
+      onlyRemoveTypeImports: tsImportElision !== 'remove',
+    },
+    ...(options.resumable === true
+      ? {
+          preview: {
+            resumable: true,
+            autoExtractHandlers: options.autoExtractHandlers ?? true,
+            autoExtractThreshold: options.autoExtractThreshold ?? 3,
+          },
+        }
+      : {}),
+  }
+}
+
+function nativeIntegrationDiagnostics(
+  source: string,
+  warnings: readonly CompilerWarning[] | undefined,
+): FictDiagnostic[] {
+  return (warnings ?? []).map(warning => {
+    const offset = sourceByteOffsetForPosition(source, warning.line, warning.column)
+    return {
+      code: warning.code,
+      severity: 'warning',
+      message: warning.message,
+      primarySpan: offset === null ? null : { start: offset, end: offset },
+      secondaryLabels: [],
+      help: null,
+      notes: [],
+      guaranteeClass: 'advisory',
+    }
+  })
+}
+
+function consumeNativeScanResult(result: ScanResult, source: string, filename: string): string[] {
+  const errors = result.diagnostics.filter(diagnostic => diagnostic.severity === 'error')
+  if (errors.length > 0) {
+    const error = new SyntaxError(
+      errors.map(diagnostic => formatNativeDiagnostic(diagnostic, source, filename)).join('\n'),
+    ) as SyntaxError & { code?: string; loc?: { line: number; column: number } }
+    const first = errors[0]!
+    error.code = first.code
+    if (first.primarySpan) {
+      error.loc = sourcePositionForByteOffset(source, first.primarySpan.start)
+    }
+    throw error
+  }
+
+  return Array.from(
+    new Set(
+      result.moduleRequests
+        .filter(request => request.kind !== 'importEquals' || !request.typeOnly)
+        .map(request => request.source),
+    ),
+  ).sort()
+}
+
+function consumeNativeCompileResult(
+  result: CompileResult,
+  source: string,
+  filename: string,
+  options: FictCompilerOptions,
+): CompilerStageResult {
+  for (const dependency of result.metadataDependencies) {
+    options.onModuleMetadataDependency?.(dependency)
+  }
+  for (const diagnostic of result.diagnostics) {
+    if (diagnostic.severity === 'warning') {
+      options.onWarn?.(nativeDiagnosticToWarning(diagnostic, source, filename))
+    }
+  }
+  if (result.explain && typeof options.explain === 'function') {
+    options.explain(nativeExplainToLegacy(result.explain, source, filename))
+  }
+
+  const errors = result.diagnostics.filter(diagnostic => diagnostic.severity === 'error')
+  if (errors.length > 0) {
+    const error = new SyntaxError(
+      errors.map(diagnostic => formatNativeDiagnostic(diagnostic, source, filename)).join('\n'),
+    ) as SyntaxError & { code?: string; loc?: { line: number; column: number } }
+    const first = errors[0]!
+    error.code = first.code
+    if (first.primarySpan) {
+      error.loc = sourcePositionForByteOffset(source, first.primarySpan.start)
+    }
+    throw error
+  }
+
+  options.moduleMetadata?.set(filename, result.moduleMetadata)
+  return {
+    code: result.code,
+    map: result.map as TransformResult['map'],
+    artifacts: result.artifacts,
+  }
+}
+
+function warningToShadowDiagnostic(warning: CompilerWarning): CompilerShadowDiagnostic {
+  return {
+    code: warning.code,
+    severity: 'warning',
+    ...(warning.line > 0 ? { line: warning.line } : {}),
+    ...(warning.column > 0 ? { column: warning.column } : {}),
+  }
+}
+
+function errorToShadowDiagnostic(
+  error: unknown,
+  backend: 'legacy' | 'rust',
+): CompilerShadowDiagnostic {
+  if (!error || typeof error !== 'object') {
+    return {
+      code: backend === 'legacy' ? 'FICT-LEGACY-THROW' : 'FICT-NATIVE-THROW',
+      severity: 'error',
+    }
+  }
+  const candidate = error as {
+    code?: unknown
+    message?: unknown
+    loc?: { line?: unknown; column?: unknown }
+  }
+  const messageCodes =
+    typeof candidate.message === 'string' ? (candidate.message.match(/FICT-[A-Z0-9-]+/g) ?? []) : []
+  const code =
+    typeof candidate.code === 'string' && candidate.code.startsWith('FICT-')
+      ? candidate.code
+      : (messageCodes[0] ?? (backend === 'legacy' ? 'FICT-LEGACY-THROW' : 'FICT-NATIVE-THROW'))
+  return {
+    code,
+    severity: 'error',
+    ...(typeof candidate.loc?.line === 'number' ? { line: candidate.loc.line } : {}),
+    ...(typeof candidate.loc?.column === 'number' ? { column: candidate.loc.column + 1 } : {}),
+  }
+}
+
+function explainEventsToShadow(
+  events:
+    | readonly {
+        kind: string
+        name?: string | null
+        code?: string | null
+      }[]
+    | undefined,
+): CompilerShadowSemanticEvent[] {
+  return (events ?? []).map(event => ({
+    kind: event.kind,
+    ...(event.name ? { name: event.name } : {}),
+    ...(event.code ? { code: event.code } : {}),
+  }))
+}
+
+function nativeResultToShadowSnapshot(
+  result: CompileResult,
+  source: string,
+): CompilerShadowBackendSnapshot {
+  return {
+    status: result.diagnostics.some(diagnostic => diagnostic.severity === 'error')
+      ? 'failure'
+      : 'success',
+    code: result.code,
+    diagnostics: result.diagnostics.map(diagnostic => {
+      const position = diagnostic.primarySpan
+        ? sourcePositionForByteOffset(source, diagnostic.primarySpan.start)
+        : undefined
+      return {
+        code: diagnostic.code,
+        severity: diagnostic.severity,
+        ...(position ? { line: position.line, column: position.column } : {}),
+      }
+    }),
+    metadata: result.moduleMetadata,
+    semanticEvents: explainEventsToShadow(result.explain?.events),
+    helpers: result.explain?.helpers ?? [],
+    sourceMap: result.map,
+    artifacts: result.artifacts,
+  }
+}
+
 async function compileFictCompilerStage(
   code: string,
   filename: string,
   fictOptions: FictCompilerOptions,
   tsImportElision: TypeScriptImportElision,
-): Promise<{ code: string; map: TransformResult['map'] }> {
+  stage: CompilerStageOptions,
+): Promise<CompilerStageResult> {
+  if (stage.backend === 'shadow') {
+    if (!stage.nativeCompiler || !stage.shadowRecorder) {
+      throw new Error('[fict] Shadow compiler backend selected without its native binding/report.')
+    }
+    const warnings: CompilerWarning[] = []
+    let explanation: CompilerExplainArtifact | undefined
+    const originalWarning = fictOptions.onWarn
+    const originalExplain = fictOptions.explain
+    const shadowOptions: FictCompilerOptions = {
+      ...fictOptions,
+      onWarn(warning) {
+        warnings.push(warning)
+        originalWarning?.(warning)
+      },
+      explain(artifact) {
+        explanation = artifact
+        if (typeof originalExplain === 'function') originalExplain(artifact)
+      },
+    }
+
+    let legacyResult: CompilerStageResult | undefined
+    let legacyError: unknown
+    try {
+      legacyResult = await compileFictCompilerStage(
+        code,
+        filename,
+        shadowOptions,
+        tsImportElision,
+        { backend: 'legacy', moduleId: stage.moduleId, metadata: [] },
+      )
+    } catch (error) {
+      legacyError = error
+    }
+
+    let rustSnapshot: CompilerShadowBackendSnapshot
+    try {
+      const nativeResult = await stage.nativeCompiler.transform({
+        code,
+        filename,
+        moduleId: stage.moduleId,
+        ...(fictOptions.publicModuleId ? { publicModuleId: fictOptions.publicModuleId } : {}),
+        options: nativeCompilerOptions({ ...fictOptions, explain: true }, tsImportElision),
+        metadata: stage.metadata,
+        integrationDiagnostics: nativeIntegrationDiagnostics(
+          code,
+          fictOptions.integrationDiagnostics,
+        ),
+      })
+      rustSnapshot = nativeResultToShadowSnapshot(nativeResult, code)
+    } catch (error) {
+      rustSnapshot = {
+        status: 'failure',
+        code: '',
+        diagnostics: [errorToShadowDiagnostic(error, 'rust')],
+      }
+    }
+
+    const legacyMetadata = shadowOptions.moduleMetadata?.get(filename)
+    const legacySourceMap = legacyResult?.map as RawSourceMap | null | undefined
+    const legacySnapshot: CompilerShadowBackendSnapshot = {
+      status: legacyError === undefined ? 'success' : 'failure',
+      code: legacyResult?.code ?? '',
+      diagnostics: [
+        ...warnings.map(warningToShadowDiagnostic),
+        ...(legacyError === undefined ? [] : [errorToShadowDiagnostic(legacyError, 'legacy')]),
+      ],
+      ...(legacyMetadata ? { metadata: legacyMetadata } : {}),
+      semanticEvents: explainEventsToShadow(explanation?.events),
+      helpers: explanation?.helpers ?? [],
+      ...(legacySourceMap === undefined ? {} : { sourceMap: legacySourceMap }),
+      artifacts: [],
+    }
+    stage.shadowRecorder.record(filename, code, legacySnapshot, rustSnapshot)
+    if (legacyError !== undefined) throw legacyError
+    return legacyResult!
+  }
+
+  if (stage.backend === 'rust') {
+    if (!stage.nativeCompiler) {
+      throw new Error('[fict] Rust compiler backend selected without a native compiler binding.')
+    }
+    const request: CompileRequest = {
+      code,
+      filename,
+      moduleId: stage.moduleId,
+      ...(fictOptions.publicModuleId ? { publicModuleId: fictOptions.publicModuleId } : {}),
+      options: nativeCompilerOptions(fictOptions, tsImportElision),
+      metadata: stage.metadata,
+      integrationDiagnostics: nativeIntegrationDiagnostics(
+        code,
+        fictOptions.integrationDiagnostics,
+      ),
+    }
+    const result = await stage.nativeCompiler.transform(request)
+    return consumeNativeCompileResult(result, code, filename, fictOptions)
+  }
+
+  const { createFictPlugin, transformAsync, transformTypeScript } = getBabelLegacyRuntime()
   const isTypeScript = TYPESCRIPT_EXTENSIONS.some(extension => filename.endsWith(extension))
   const isTSX = filename.endsWith('.tsx')
   const isExplicitModuleTypeScript = filename.endsWith('.mts') || filename.endsWith('.cts')
@@ -3981,6 +4790,7 @@ async function compileFictCompilerStage(
   return {
     code: result.code,
     map: result.map as TransformResult['map'],
+    artifacts: [],
   }
 }
 
@@ -4072,6 +4882,7 @@ function computePackageMetadataCacheFingerprint(
   resolvedLocalModules?: ReadonlyMap<string, ResolvedMetadataModule>,
   onPackageMetadataDependency?: (filename: string) => void,
   metadataKey?: string,
+  collectModuleSources?: (code: string, filename: string) => string[],
 ): string {
   const normalizedFilename = normalizeFileName(filename, root)
   const currentMetadataKey = metadataKey ?? normalizedFilename
@@ -4079,7 +4890,9 @@ function computePackageMetadataCacheFingerprint(
   visited.add(currentMetadataKey)
 
   const entries: [string, string | null, string?][] = []
-  for (const source of collectStaticModuleSources(code)) {
+  const sources =
+    collectModuleSources?.(code, normalizedFilename) ?? collectStaticModuleSources(code)
+  for (const source of sources) {
     const userMetadata = compilerOptions.resolveModuleMetadata?.(source, normalizedFilename)
     if (userMetadata !== undefined) {
       entries.push([
@@ -4110,6 +4923,7 @@ function computePackageMetadataCacheFingerprint(
           resolvedLocalModules,
           onPackageMetadataDependency,
           exactResolution?.key ?? localFile,
+          collectModuleSources,
         )
         entries.push([
           source,
@@ -4238,6 +5052,7 @@ function buildCacheKey(
   tsImportElision: TypeScriptImportElision,
   shouldSplit: boolean,
   packageMetadataFingerprint: string,
+  compilerStageFingerprint: string,
   devHandlerNamespace = '',
 ): string {
   const codeHash = hashString(code)
@@ -4246,7 +5061,7 @@ function buildCacheKey(
   return hashString(
     [
       CACHE_VERSION,
-      getTransformCacheFingerprint(),
+      compilerStageFingerprint,
       filename,
       codeHash,
       optionsHash,
@@ -4266,6 +5081,7 @@ function buildMetadataPreparationKey(
   tsProject: TypeScriptProject | null,
   tsImportElision: TypeScriptImportElision,
   dependencyMetadataFingerprint: string,
+  compilerStageFingerprint: string,
 ): string {
   const normalizedOptions = normalizeOptionsForCache(options)
   const typescript = normalizedOptions.typescript
@@ -4278,7 +5094,7 @@ function buildMetadataPreparationKey(
   return hashString(
     [
       CACHE_VERSION,
-      getTransformCacheFingerprint(),
+      compilerStageFingerprint,
       'metadata-preparation',
       filename,
       hashString(code),
@@ -4689,6 +5505,9 @@ function normalizeRuntimeHelperUsage(usage: RuntimeHelperUsage): {
  * local helpers trade split granularity for a stable dependency contract.
  */
 function generateHandlerModule(handler: ExtractedHandler): string {
+  if (handler.moduleCode !== undefined) {
+    return handler.moduleCode
+  }
   // If no code was extracted (fallback case), use re-export
   if (!handler.code) {
     return `export { ${handler.exportName} as default } from ${JSON.stringify(handler.sourceModule)};\n`
@@ -4729,6 +5548,130 @@ function generateHandlerModule(handler: ExtractedHandler): string {
 
   // Generate the complete standalone module
   return `${imports.join('\n')}${imports.length > 0 ? '\n\n' : ''}export default ${handler.code};\n`
+}
+
+/**
+ * Consume Rust compiler-owned handler modules without reparsing generated JavaScript.
+ * MagicString records exact placeholder edits and its map is composed through OXC's map.
+ */
+function consumeStructuredHandlerArtifacts(
+  code: string,
+  sourceModule: string,
+  artifacts: readonly CompilerArtifact[],
+  handlerRegistry: Map<string, ExtractedHandler>,
+  inputSourceMap: TransformResult['map'] = null,
+  rootDir?: string,
+  packageBoundaryCache?: Map<string, PackageBoundary | null>,
+  explicitNamespace?: string,
+  preserveSymlinks = false,
+  resolveHandlerModuleId?: (handlerId: string) => string,
+): { code: string; handlers: string[]; map: TransformResult['map'] } | null {
+  const handlers = artifacts.filter(artifact => artifact.kind === 'handlerModule')
+  if (handlers.length === 0) {
+    if (code.includes('fict:compiler-artifact:')) {
+      throw new Error('[fict] Rust output contains artifact placeholders but no handler artifacts.')
+    }
+    return null
+  }
+
+  const seenIds = new Set<string>()
+  const seenSpecifiers = new Set<string>()
+  const pending: {
+    artifact: CompilerArtifact
+    sourceExportName: string
+    handlerId: string
+    moduleId: string
+    start: number
+    end: number
+  }[] = []
+  for (const artifact of handlers) {
+    const metadata = artifact.handler
+    if (!metadata) {
+      throw new Error(
+        `[fict] Rust handler artifact ${JSON.stringify(artifact.id)} has no routing metadata.`,
+      )
+    }
+    if (!seenIds.add(artifact.id)) {
+      throw new Error(`[fict] Rust compiler emitted duplicate artifact id ${artifact.id}.`)
+    }
+    if (!seenSpecifiers.add(metadata.moduleSpecifier)) {
+      throw new Error(
+        `[fict] Rust compiler emitted duplicate artifact specifier ${metadata.moduleSpecifier}.`,
+      )
+    }
+    const encodedSpecifier = JSON.stringify(metadata.moduleSpecifier)
+    const start = code.indexOf(encodedSpecifier)
+    if (start < 0 || code.indexOf(encodedSpecifier, start + encodedSpecifier.length) >= 0) {
+      throw new Error(
+        `[fict] Rust artifact ${JSON.stringify(artifact.id)} must have exactly one ` +
+          `main-output placeholder ${encodedSpecifier}.`,
+      )
+    }
+    const handlerId = createHandlerId(
+      sourceModule,
+      metadata.sourceExportName,
+      rootDir,
+      packageBoundaryCache,
+      explicitNamespace,
+      preserveSymlinks,
+    )
+    pending.push({
+      artifact,
+      sourceExportName: metadata.sourceExportName,
+      handlerId,
+      moduleId:
+        resolveHandlerModuleId?.(handlerId) ?? `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}`,
+      start,
+      end: start + encodedSpecifier.length,
+    })
+  }
+
+  const edited = new MagicString(code)
+  for (const item of pending) {
+    edited.overwrite(item.start, item.end, JSON.stringify(item.moduleId))
+  }
+  if (edited.toString().includes('fict:compiler-artifact:')) {
+    throw new Error('[fict] Rust output contains an unclaimed compiler artifact placeholder.')
+  }
+
+  const editMap = JSON.parse(
+    edited
+      .generateMap({
+        hires: true,
+        includeContent: true,
+        source: sourceModule,
+      })
+      .toString(),
+  ) as RawSourceMap
+  const map = inputSourceMap
+    ? (JSON.parse(
+        remapping(
+          [
+            editMap as unknown as RemappingSourceMapInput,
+            inputSourceMap as unknown as RemappingSourceMapInput,
+          ],
+          () => null,
+          { excludeContent: false },
+        ).toString(),
+      ) as RawSourceMap)
+    : editMap
+  for (const item of pending) {
+    handlerRegistry.set(item.handlerId, {
+      sourceModule,
+      exportName: item.sourceExportName,
+      helpersUsed: [],
+      localDeps: [],
+      code: '',
+      runtimeImportFamily: 'fict',
+      moduleCode: item.artifact.code,
+      moduleMap: item.artifact.map,
+    })
+  }
+  return {
+    code: edited.toString(),
+    handlers: pending.map(item => item.sourceExportName),
+    map: map as TransformResult['map'],
+  }
 }
 
 /** Prefix for re-exported handler dependencies */
@@ -4841,7 +5784,7 @@ const GLOBAL_IDENTIFIERS = new Set([
   'HTMLElement',
 ])
 
-function collectRuntimeHelperImports(body: t.Statement[]): Map<string, string> {
+function collectRuntimeHelperImports(body: BabelTypes.Statement[]): Map<string, string> {
   const helperImports = new Map<string, string>()
 
   for (const stmt of body) {
@@ -4862,7 +5805,7 @@ function collectRuntimeHelperImports(body: t.Statement[]): Map<string, string> {
 }
 
 function collectRuntimeHelperUsages(
-  handlerPath: NodePath<t.Node>,
+  handlerPath: NodePath<BabelTypes.Node>,
   runtimeHelperImports: Map<string, string>,
 ): RuntimeHelperUsage[] {
   const used = new Map<string, string>()
@@ -4908,7 +5851,7 @@ function isRuntimeHelperImportBinding(
   return importedName === helperName
 }
 
-function isTypeOnlyIdentifierPath(path: NodePath<t.Identifier>): boolean {
+function isTypeOnlyIdentifierPath(path: NodePath<BabelTypes.Identifier>): boolean {
   return Boolean(
     path.findParent(
       parent =>
@@ -4925,12 +5868,14 @@ function isTypeOnlyIdentifierPath(path: NodePath<t.Identifier>): boolean {
   )
 }
 
-function isTypeOnlyImportSpecifier(specifier: t.ImportDeclaration['specifiers'][number]): boolean {
+function isTypeOnlyImportSpecifier(
+  specifier: BabelTypes.ImportDeclaration['specifiers'][number],
+): boolean {
   return t.isImportSpecifier(specifier) && specifier.importKind === 'type'
 }
 
 function collectHandlerTopLevelReferences(
-  handlerPath: NodePath<t.Node>,
+  handlerPath: NodePath<BabelTypes.Node>,
   programScope: Scope,
   topLevelDeclarations: Set<string>,
   runtimeHelperImports: Map<string, string>,
@@ -4959,13 +5904,13 @@ function collectHandlerTopLevelReferences(
 }
 
 function collectHandlerMutableTopLevelWrites(
-  handlerPath: NodePath<t.Node>,
+  handlerPath: NodePath<BabelTypes.Node>,
   programScope: Scope,
   mutableTopLevelDeclarations: Set<string>,
 ): Set<string> {
   const written = new Set<string>()
 
-  const addIdentifier = (identifierPath: NodePath<t.Identifier>) => {
+  const addIdentifier = (identifierPath: NodePath<BabelTypes.Identifier>) => {
     const name = identifierPath.node.name
     if (!mutableTopLevelDeclarations.has(name)) return
 
@@ -4975,7 +5920,7 @@ function collectHandlerMutableTopLevelWrites(
     written.add(name)
   }
 
-  const collectAssignedPattern = (patternPath: NodePath<t.Node>) => {
+  const collectAssignedPattern = (patternPath: NodePath<BabelTypes.Node>) => {
     if (patternPath.isIdentifier()) {
       addIdentifier(patternPath)
       return
@@ -4984,9 +5929,9 @@ function collectHandlerMutableTopLevelWrites(
     if (patternPath.isObjectPattern()) {
       for (const propertyPath of patternPath.get('properties')) {
         if (propertyPath.isObjectProperty()) {
-          collectAssignedPattern(propertyPath.get('value') as NodePath<t.Node>)
+          collectAssignedPattern(propertyPath.get('value') as NodePath<BabelTypes.Node>)
         } else if (propertyPath.isRestElement()) {
-          collectAssignedPattern(propertyPath.get('argument') as NodePath<t.Node>)
+          collectAssignedPattern(propertyPath.get('argument') as NodePath<BabelTypes.Node>)
         }
       }
       return
@@ -4995,25 +5940,25 @@ function collectHandlerMutableTopLevelWrites(
     if (patternPath.isArrayPattern()) {
       for (const elementPath of patternPath.get('elements')) {
         if (elementPath.node) {
-          collectAssignedPattern(elementPath as NodePath<t.Node>)
+          collectAssignedPattern(elementPath as NodePath<BabelTypes.Node>)
         }
       }
       return
     }
 
     if (patternPath.isRestElement()) {
-      collectAssignedPattern(patternPath.get('argument') as NodePath<t.Node>)
+      collectAssignedPattern(patternPath.get('argument') as NodePath<BabelTypes.Node>)
       return
     }
 
     if (patternPath.isAssignmentPattern()) {
-      collectAssignedPattern(patternPath.get('left') as NodePath<t.Node>)
+      collectAssignedPattern(patternPath.get('left') as NodePath<BabelTypes.Node>)
     }
   }
 
   handlerPath.traverse({
     AssignmentExpression(path) {
-      collectAssignedPattern(path.get('left') as NodePath<t.Node>)
+      collectAssignedPattern(path.get('left') as NodePath<BabelTypes.Node>)
     },
 
     UpdateExpression(path) {
@@ -5026,14 +5971,14 @@ function collectHandlerMutableTopLevelWrites(
     ForInStatement(path) {
       const leftPath = path.get('left')
       if (!leftPath.isVariableDeclaration()) {
-        collectAssignedPattern(leftPath as NodePath<t.Node>)
+        collectAssignedPattern(leftPath as NodePath<BabelTypes.Node>)
       }
     },
 
     ForOfStatement(path) {
       const leftPath = path.get('left')
       if (!leftPath.isVariableDeclaration()) {
-        collectAssignedPattern(leftPath as NodePath<t.Node>)
+        collectAssignedPattern(leftPath as NodePath<BabelTypes.Node>)
       }
     },
   })
@@ -5041,7 +5986,7 @@ function collectHandlerMutableTopLevelWrites(
   return written
 }
 
-function hasModuleContextSensitiveHandlerSyntax(handlerPath: NodePath<t.Node>): boolean {
+function hasModuleContextSensitiveHandlerSyntax(handlerPath: NodePath<BabelTypes.Node>): boolean {
   let found = false
 
   handlerPath.traverse({
@@ -5079,7 +6024,7 @@ function hasModuleContextSensitiveHandlerSyntax(handlerPath: NodePath<t.Node>): 
 /**
  * Collect identifier names from a pattern (for destructuring).
  */
-function collectPatternIdentifiers(pattern: t.LVal | t.PatternLike): string[] {
+function collectPatternIdentifiers(pattern: BabelTypes.LVal | BabelTypes.PatternLike): string[] {
   const names: string[] = []
 
   if (t.isIdentifier(pattern)) {
@@ -5107,11 +6052,11 @@ function collectPatternIdentifiers(pattern: t.LVal | t.PatternLike): string[] {
   return names
 }
 
-function getExportedName(exported: t.ExportSpecifier['exported']): string {
+function getExportedName(exported: BabelTypes.ExportSpecifier['exported']): string {
   return t.isIdentifier(exported) ? exported.name : exported.value
 }
 
-function collectExportedNames(body: t.Statement[]): Set<string> {
+function collectExportedNames(body: BabelTypes.Statement[]): Set<string> {
   const names = new Set<string>()
 
   for (const node of body) {
@@ -5323,8 +6268,8 @@ function extractAndRewriteHandlers(
   }
 
   const handlerNames: string[] = []
-  const nodesToRemove = new Set<t.Node>()
-  const handlerDeclaratorsToRemove = new Set<t.VariableDeclarator>()
+  const nodesToRemove = new Set<BabelTypes.Node>()
+  const handlerDeclaratorsToRemove = new Set<BabelTypes.VariableDeclarator>()
   const dependencyExportNames = new Map<string, string>()
   const runtimeImportFamily = detectRuntimeImportFamilyFromCode(ast.program.body)
 
@@ -5571,7 +6516,7 @@ function extractAndRewriteHandlers(
   // Add private re-exports for local dependencies used by handlers.
   // Generated names include a stable hash and collision suffix when needed.
   if (dependencyExportNames.size > 0) {
-    const reExports: t.ExportSpecifier[] = []
+    const reExports: BabelTypes.ExportSpecifier[] = []
     for (const [localName, exportName] of dependencyExportNames) {
       reExports.push(t.exportSpecifier(t.identifier(localName), t.identifier(exportName)))
     }

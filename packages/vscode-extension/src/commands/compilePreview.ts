@@ -1,52 +1,12 @@
-import { transformSync } from '@babel/core'
-import presetTypescript from '@babel/preset-typescript'
-import createFictPlugin from '@fictjs/compiler'
 import * as vscode from 'vscode'
 
-const COMPILED_SCHEME = 'fict-compiled'
+export { compileDocumentSource } from '../compiler/tooling'
 
-function documentUsesJsx(document: vscode.TextDocument): boolean {
-  if (document.languageId === 'typescriptreact' || document.languageId === 'javascriptreact') {
-    return true
-  }
-  const cleanFileName = document.fileName.split(/[?#]/, 1)[0]?.toLowerCase() ?? ''
-  return /\.(?:tsx|jsx)$/.test(cleanFileName)
-}
+const COMPILED_SCHEME = 'fict-compiled'
 
 function toCompiledUri(sourceUri: vscode.Uri): vscode.Uri {
   const encoded = encodeURIComponent(sourceUri.toString())
   return vscode.Uri.parse(`${COMPILED_SCHEME}://${encoded}.js`)
-}
-
-export function compileDocumentSource(document: vscode.TextDocument): string {
-  const isTSX = documentUsesJsx(document)
-  const result = transformSync(document.getText(), {
-    filename: document.fileName,
-    configFile: false,
-    babelrc: false,
-    sourceType: 'module',
-    parserOpts: {
-      sourceType: 'module',
-      plugins: isTSX ? ['typescript', 'jsx'] : ['typescript'],
-      allowReturnOutsideFunction: true,
-    },
-    plugins: [
-      [
-        createFictPlugin,
-        {
-          dev: true,
-          filename: document.fileName,
-          emitModuleMetadata: false,
-        },
-      ],
-    ],
-    presets: [[presetTypescript, { isTSX, allExtensions: true, allowDeclareFields: true }]],
-    generatorOpts: {
-      compact: false,
-    },
-  })
-
-  return result?.code ?? '// No compiler output generated.'
 }
 
 export class CompiledOutputProvider implements vscode.TextDocumentContentProvider {

@@ -359,9 +359,37 @@ importers:
       '@babel/traverse':
         specifier: ^7.29.0
         version: 7.29.0
+      '@oxc-project/runtime':
+        specifier: 0.139.0
+        version: 0.139.0
       '@types/babel__core':
         specifier: ^7.20.5
         version: 7.20.5
+    optionalDependencies:
+      '@fictjs/compiler-darwin-arm64':
+        specifier: workspace:*
+        version: link:../compiler-darwin-arm64
+      '@fictjs/compiler-darwin-x64':
+        specifier: workspace:*
+        version: link:../compiler-darwin-x64
+      '@fictjs/compiler-linux-arm64-gnu':
+        specifier: workspace:*
+        version: link:../compiler-linux-arm64-gnu
+      '@fictjs/compiler-linux-arm64-musl':
+        specifier: workspace:*
+        version: link:../compiler-linux-arm64-musl
+      '@fictjs/compiler-linux-x64-gnu':
+        specifier: workspace:*
+        version: link:../compiler-linux-x64-gnu
+      '@fictjs/compiler-linux-x64-musl':
+        specifier: workspace:*
+        version: link:../compiler-linux-x64-musl
+      '@fictjs/compiler-win32-arm64-msvc':
+        specifier: workspace:*
+        version: link:../compiler-win32-arm64-msvc
+      '@fictjs/compiler-win32-x64-msvc':
+        specifier: workspace:*
+        version: link:../compiler-win32-x64-msvc
     devDependencies:
       '@babel/core':
         specifier: ^7.29.7
@@ -396,6 +424,22 @@ importers:
       tsdown:
         specifier: ^0.22.3
         version: 0.22.3(typescript@5.9.3)
+
+  packages/compiler-darwin-arm64: {}
+
+  packages/compiler-darwin-x64: {}
+
+  packages/compiler-linux-arm64-gnu: {}
+
+  packages/compiler-linux-arm64-musl: {}
+
+  packages/compiler-linux-x64-gnu: {}
+
+  packages/compiler-linux-x64-musl: {}
+
+  packages/compiler-win32-arm64-msvc: {}
+
+  packages/compiler-win32-x64-msvc: {}
 
   packages/devtools:
     dependencies:
@@ -479,15 +523,6 @@ importers:
 
   packages/playground:
     dependencies:
-      '@babel/core':
-        specifier: ^7.29.7
-        version: 7.29.7
-      '@babel/plugin-syntax-jsx':
-        specifier: ^7.28.6
-        version: 7.28.6(@babel/core@7.29.7)
-      '@babel/preset-typescript':
-        specifier: ^7.26.0
-        version: 7.28.5(@babel/core@7.29.7)
       '@fictjs/compiler':
         specifier: workspace:*
         version: link:../compiler
@@ -618,6 +653,12 @@ importers:
       '@fictjs/compiler':
         specifier: workspace:*
         version: link:../compiler
+      '@jridgewell/remapping':
+        specifier: ^2.3.5
+        version: 2.3.5
+      magic-string:
+        specifier: ^0.30.21
+        version: 0.30.21
     devDependencies:
       '@types/babel__core':
         specifier: ^7.20.5
@@ -637,12 +678,6 @@ importers:
 
   packages/vscode-extension:
     dependencies:
-      '@babel/core':
-        specifier: ^7.29.7
-        version: 7.29.7
-      '@babel/preset-typescript':
-        specifier: ^7.26.0
-        version: 7.28.5(@babel/core@7.29.7)
       '@fictjs/compiler':
         specifier: workspace:*
         version: link:../compiler
@@ -671,16 +706,19 @@ importers:
 
   packages/webpack-plugin:
     dependencies:
+      '@fictjs/compiler':
+        specifier: workspace:*
+        version: link:../compiler
+    devDependencies:
       '@babel/core':
         specifier: ^7.29.7
         version: 7.29.7
       '@fictjs/babel-preset':
         specifier: workspace:*
         version: link:../babel-preset
-      '@fictjs/compiler':
-        specifier: workspace:*
-        version: link:../compiler
-    devDependencies:
+      '@jridgewell/trace-mapping':
+        specifier: ^0.3.31
+        version: 0.3.31
       fict:
         specifier: workspace:*
         version: link:../fict
@@ -2121,6 +2159,10 @@ packages:
   '@nodelib/fs.walk@1.2.8':
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
+
+  '@oxc-project/runtime@0.139.0':
+    resolution: {integrity: sha512-WnuGdceWtRdqD7f3alOIDXN6bnGuGtFjtQf/dHjzgn2im7eKaYRJTEl2T1kFEWPhBWCDk+UDYgsTLUE5L6jc0w==}
+    engines: {node: ^20.19.0 || >=22.12.0}
 
   '@oxc-project/types@0.138.0':
     resolution: {integrity: sha512-1a7ZKmrRTCoN1XMZ4L0PyyqrMnrNlLyPuOkdSX2MZg7IiIGRUyurNhAm73ptDOraoBcIordsIGKNPKUzy3ZmfA==}
@@ -8186,6 +8228,8 @@ snapshots:
     dependencies:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.19.1
+
+  '@oxc-project/runtime@0.139.0': {}
 
   '@oxc-project/types@0.138.0': {}
 

@@ -3,6 +3,6 @@
   "compilerOptions": {
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src/**/*.ts", "../babel-preset/src/*.d.ts", "../compiler/src/types/**/*.d.ts"],
+  "include": ["src/**/*.ts", "../compiler/src/types/**/*.d.ts"],
   "exclude": ["node_modules", "dist"]
 }

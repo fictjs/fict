@@ -3,6 +3,24 @@ import { describe, expect, it } from 'vitest'
 import { minimizeSourceByLines } from '../src'
 
 describe('source regression minimizer', () => {
+  it.each(['rust', 'legacy'] as const)(
+    'passes the selected %s compiler backend to every predicate evaluation',
+    async backend => {
+      const observed: string[] = []
+      const result = await minimizeSourceByLines({
+        source: ['target()', 'noise()'].join('\n'),
+        backend,
+        test: (candidate, context) => {
+          observed.push(context.backend)
+          return candidate.includes('target()')
+        },
+      })
+
+      expect(result.source).toBe('target()')
+      expect(new Set(observed)).toEqual(new Set([backend]))
+    },
+  )
+
   it('removes irrelevant lines while preserving the repro predicate', async () => {
     const result = await minimizeSourceByLines({
       source: [

@@ -1,0 +1,1780 @@
+use std::collections::BTreeSet;
+
+use fict_diagnostics::{
+    Diagnostic, DiagnosticBundle, DiagnosticCode, DiagnosticSeverity, GuaranteeClass,
+};
+use fict_hir::HirFile;
+use fict_reactivity::RegionAnalysis;
+use fict_reactivity::{analyze_cfg, verify_structurized_cfg};
+
+use crate::{
+    CleanupOwner, DomNamespace, EmitOperation, EmitProgram, EmitValueRef, RuntimeHelper,
+    RuntimeHelperStability, verify_runtime_abi,
+};
+
+/// Verify EmitIR helper, slot/temp, region/template, cleanup, and rejection invariants.
+pub fn verify_emit_program(
+    hir: &HirFile,
+    analyses: &[RegionAnalysis],
+    program: &EmitProgram,
+) -> Result<(), DiagnosticBundle> {
+    let mut diagnostics = DiagnosticBundle::default();
+    if verify_runtime_abi().is_err() {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-ABI",
+            "runtime ABI registry is inconsistent",
+        ));
+    }
+    if program.strict_rejected
+        && (!program.imports.is_empty()
+            || program
+                .functions
+                .iter()
+                .any(|function| !function.operations.is_empty()))
+    {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-REJECTED",
+            "strict-rejected modules cannot contain partial output",
+        ));
+    }
+    if program.functions.len() != hir.functions.len()
+        || analyses.len() != hir.functions.len()
+        || program
+            .functions
+            .iter()
+            .enumerate()
+            .any(|(index, function)| function.source.as_usize() != index)
+    {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-FUNCTION",
+            "EmitIR functions must match the HIR function arena",
+        ));
+    }
+    verify_module_plan(hir, program, &mut diagnostics);
+    verify_imports(program, &mut diagnostics);
+    verify_preview_plan(hir, program, &mut diagnostics);
+    let import_names: BTreeSet<_> = program
+        .imports
+        .iter()
+        .map(|intent| intent.local.as_str())
+        .collect();
+    let source_names: BTreeSet<_> = hir
+        .bindings
+        .iter()
+        .map(|binding| binding.display_name.as_str())
+        .chain(hir.functions.iter().flat_map(|function| {
+            function
+                .locals
+                .iter()
+                .filter_map(|local| local.debug_name.as_deref())
+        }))
+        .collect();
+    if import_names.iter().any(|name| source_names.contains(name)) {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-IMPORT-COLLISION",
+            "generated runtime import locals must not collide with any source binding",
+        ));
+    }
+    for function in &program.functions {
+        let Some(hir_function) = hir.functions.get(function.source.as_usize()) else {
+            continue;
+        };
+        let analysis = analyses.get(function.source.as_usize());
+        for (index, slot) in function.slots.iter().enumerate() {
+            if slot.id.as_usize() != index
+                || slot.control_path.windows(2).any(|pair| pair[0] >= pair[1])
+            {
+                diagnostics.push(emit_error(
+                    "FICT-EMIT-SLOT",
+                    "reactive slots must be dense with canonical control paths",
+                ));
+            }
+            if let crate::ReactiveSlotStorage::Captured { owner } = slot.storage {
+                let capture_valid = owner != function.source
+                    && slot.binding.is_some()
+                    && program
+                        .functions
+                        .get(owner.as_usize())
+                        .is_some_and(|owner| {
+                            owner.slots.iter().any(|candidate| {
+                                matches!(
+                                    candidate.storage,
+                                    crate::ReactiveSlotStorage::Owned
+                                        | crate::ReactiveSlotStorage::HookReturn { .. }
+                                ) && candidate.binding == slot.binding
+                                    && candidate.kind == slot.kind
+                            })
+                        });
+                if !capture_valid {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-CAPTURE",
+                        "captured reactive slots must reference an owned slot with the same binding and kind",
+                    ));
+                }
+            }
+            if let crate::ReactiveSlotStorage::CapturedHookReturn {
+                owner,
+                call,
+                import,
+                property,
+            } = slot.storage
+            {
+                let capture_valid = owner != function.source
+                    && slot.binding.is_some()
+                    && program
+                        .functions
+                        .get(owner.as_usize())
+                        .is_some_and(|owner| {
+                            owner.slots.iter().any(|candidate| {
+                                matches!(
+                                    candidate.storage,
+                                    crate::ReactiveSlotStorage::HookReturn {
+                                        call: candidate_call,
+                                        import: candidate_import,
+                                        property: Some(candidate_property),
+                                    } if candidate_call == call
+                                        && candidate_import == import
+                                        && candidate_property == property
+                                ) && candidate.binding == slot.binding
+                                    && candidate.kind == slot.kind
+                            })
+                        });
+                if !capture_valid {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-HOOK-CAPTURE",
+                        "captured hook members must reference a matching owner accessor slot",
+                    ));
+                }
+            }
+            if let crate::ReactiveSlotStorage::Imported { member } = slot.storage {
+                let import = slot
+                    .binding
+                    .and_then(|binding| hir.bindings.get(binding.as_usize()))
+                    .and_then(|binding| binding.import.as_ref());
+                let imported_kind = match member {
+                    None => import.and_then(|import| import.reactive),
+                    Some(member) => import
+                        .and_then(|import| import.reactive_members.get(member as usize))
+                        .map(|member| member.kind),
+                };
+                let kind_matches = matches!(
+                    (imported_kind, slot.kind),
+                    (
+                        Some(fict_hir::ImportedReactiveKind::Signal),
+                        crate::ReactiveSlotKind::Signal
+                    ) | (
+                        Some(fict_hir::ImportedReactiveKind::Memo),
+                        crate::ReactiveSlotKind::Memo
+                    ) | (
+                        Some(fict_hir::ImportedReactiveKind::Store),
+                        crate::ReactiveSlotKind::Store
+                    )
+                );
+                let local_exists = slot.binding.is_some_and(|binding| {
+                    hir_function
+                        .locals
+                        .iter()
+                        .any(|local| local.binding == Some(binding))
+                });
+                if !kind_matches || !local_exists {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-IMPORTED-SLOT",
+                        "imported reactive slots must match a metadata-annotated local binding",
+                    ));
+                }
+            }
+            if let crate::ReactiveSlotStorage::HookReturn {
+                call,
+                import,
+                property,
+            } = slot.storage
+            {
+                let source_call = hook_call_instruction(hir_function, call);
+                let hook =
+                    source_call.and_then(|call| imported_hook_return_shape(hir, call, import));
+                let imported_kind = match property {
+                    None => hook.and_then(|hook| hook.direct_accessor),
+                    Some(property) => hook.and_then(|hook| {
+                        let properties = match property.collection {
+                            fict_hir::ImportedHookPropertyCollection::Object => {
+                                &hook.object_properties
+                            }
+                            fict_hir::ImportedHookPropertyCollection::Array => {
+                                &hook.array_properties
+                            }
+                        };
+                        properties
+                            .get(property.property_index)
+                            .filter(|candidate| candidate.kind == property.kind)
+                            .map(|candidate| candidate.kind)
+                    }),
+                };
+                let call_matches = source_call.is_some() && hook.is_some();
+                let kind_matches = matches!(
+                    (imported_kind, slot.kind),
+                    (
+                        Some(fict_hir::ImportedReactiveKind::Signal),
+                        crate::ReactiveSlotKind::Signal
+                    ) | (
+                        Some(fict_hir::ImportedReactiveKind::Memo),
+                        crate::ReactiveSlotKind::Memo
+                    )
+                );
+                let binding_matches = slot.binding.is_none_or(|binding| {
+                    hir_function.locals.iter().any(|local| {
+                        local.binding == Some(binding)
+                            && hir_function
+                                .blocks
+                                .iter()
+                                .flat_map(|block| &block.instructions)
+                                .any(|instruction| {
+                                    matches!(
+                                        instruction.kind,
+                                        fict_hir::HirInstructionKind::Declare {
+                                            local: declared,
+                                            initializer: Some(initializer),
+                                            ..
+                                        } if declared == local.id && initializer == call
+                                    )
+                                })
+                    })
+                });
+                let shape_matches =
+                    hook.is_some_and(|hook| property.is_none() == hook.direct_accessor.is_some());
+                if !call_matches || !kind_matches || !binding_matches || !shape_matches {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-HOOK-RETURN-SLOT",
+                        "hook return slots must match imported accessor return metadata",
+                    ));
+                }
+            }
+        }
+        let mut temporary_names = BTreeSet::new();
+        for (index, temporary) in function.temporaries.iter().enumerate() {
+            if temporary.id.as_usize() != index
+                || !valid_identifier(&temporary.name)
+                || !temporary_names.insert(temporary.name.as_str())
+                || import_names.contains(temporary.name.as_str())
+                || source_names.contains(temporary.name.as_str())
+            {
+                diagnostics.push(emit_error(
+                    "FICT-EMIT-TEMP",
+                    "temporaries must be dense, unique identifiers without import collisions",
+                ));
+            }
+        }
+        let needs_context = function
+            .operations
+            .iter()
+            .filter_map(EmitOperation::helper)
+            .any(is_scoped_helper);
+        match &function.context {
+            Some(context)
+                if !needs_context
+                    || context.helper != RuntimeHelper::UseContext
+                    || context.origin != hir_function.origin
+                    || !valid_identifier(&context.local)
+                    || import_names.contains(context.local.as_str())
+                    || source_names.contains(context.local.as_str())
+                    || temporary_names.contains(context.local.as_str()) =>
+            {
+                diagnostics.push(emit_error(
+                    "FICT-EMIT-CONTEXT",
+                    "function context must be collision-free and exactly match scoped helper use",
+                ));
+            }
+            None if needs_context => diagnostics.push(emit_error(
+                "FICT-EMIT-CONTEXT",
+                "scoped runtime helpers require a function context plan",
+            )),
+            Some(_) | None => {}
+        }
+        if let Some(props) = &function.props {
+            let mut generated_names = BTreeSet::new();
+            generated_names.insert(props.source.as_str());
+            let expected = hir_function
+                .parameters
+                .first()
+                .and_then(|parameter| parameter.object_properties.as_ref());
+            let structurally_valid = expected.is_some_and(|expected| {
+                props.parameter == hir_function.parameters[0].origin
+                    && props.default.as_ref().map(|default| default.value)
+                        == hir_function.parameters[0].default_value
+                    && match (&props.rest, &hir_function.parameters[0].object_rest) {
+                        (Some(planned), Some(source)) => hir
+                            .bindings
+                            .get(source.binding.as_usize())
+                            .is_some_and(|binding| {
+                                planned.binding == source.binding
+                                    && planned.local == binding.display_name
+                                    && planned.excluded == source.excluded
+                                    && planned.origin == source.origin
+                            }),
+                        (None, None) => true,
+                        (Some(_), None) | (None, Some(_)) => false,
+                    }
+                    && props.bindings.len() == expected.len()
+                    && props
+                        .bindings
+                        .iter()
+                        .zip(expected)
+                        .all(|(planned, source)| {
+                            hir.bindings
+                                .get(source.binding.as_usize())
+                                .is_some_and(|binding| {
+                                    planned.path == source.path
+                                        && planned.local == binding.display_name
+                                        && planned.mode
+                                            == match source.mode {
+                                                fict_hir::HirObjectParameterMode::Accessor => {
+                                                    crate::EmitPropMode::Accessor
+                                                }
+                                                fict_hir::HirObjectParameterMode::Value => {
+                                                    crate::EmitPropMode::Value
+                                                }
+                                                fict_hir::HirObjectParameterMode::Mutable => {
+                                                    crate::EmitPropMode::Mutable
+                                                }
+                                            }
+                                        && planned.checks.len() == source.checks.len()
+                                        && planned.checks.iter().zip(&source.checks).all(
+                                            |(planned, source)| {
+                                                planned.path == source.path
+                                                    && planned.origin == source.origin
+                                            },
+                                        )
+                                        && planned.references == source.references
+                                        && planned.default_value == source.default_value
+                                        && planned.default_dependencies
+                                            == source.default_dependencies
+                                        && planned.default_local.is_some()
+                                            == source.default_value.is_some()
+                                        && planned.origin == source.origin
+                                })
+                        })
+            });
+            if hir_function.kind != fict_hir::FunctionKind::Component
+                || props.helper
+                    != props
+                        .bindings
+                        .iter()
+                        .any(|binding| binding.mode == crate::EmitPropMode::Accessor)
+                        .then_some(RuntimeHelper::Prop)
+                || !valid_identifier(&props.source)
+                || import_names.contains(props.source.as_str())
+                || source_names.contains(props.source.as_str())
+                || temporary_names.contains(props.source.as_str())
+                || function
+                    .context
+                    .as_ref()
+                    .is_some_and(|context| context.local == props.source)
+                || props.default.as_ref().is_some_and(|default| {
+                    default.value.primary_span.is_none()
+                        || !valid_identifier(&default.input)
+                        || !generated_names.insert(default.input.as_str())
+                        || import_names.contains(default.input.as_str())
+                        || source_names.contains(default.input.as_str())
+                        || temporary_names.contains(default.input.as_str())
+                        || function
+                            .context
+                            .as_ref()
+                            .is_some_and(|context| context.local == default.input)
+                })
+                || props.rest.as_ref().is_some_and(|rest| {
+                    rest.helper != RuntimeHelper::PropsRest
+                        || !valid_identifier(&rest.local)
+                        || rest.excluded.iter().any(String::is_empty)
+                        || rest.origin.primary_span.is_none()
+                })
+                || props.bindings.iter().any(|binding| {
+                    binding.path.is_empty()
+                        || binding.path.iter().any(String::is_empty)
+                        || !valid_identifier(&binding.local)
+                        || (binding.mode == crate::EmitPropMode::Value
+                            && (!binding.references.is_empty()
+                                || binding.default_value.is_some()
+                                || binding.default_local.is_some()))
+                        || (binding.mode == crate::EmitPropMode::Mutable
+                            && !binding.references.is_empty())
+                        || binding.checks.iter().any(|check| {
+                            check.path.is_empty()
+                                || check.path.iter().any(String::is_empty)
+                                || !valid_identifier(&check.local)
+                                || !generated_names.insert(check.local.as_str())
+                                || import_names.contains(check.local.as_str())
+                                || source_names.contains(check.local.as_str())
+                                || temporary_names.contains(check.local.as_str())
+                                || function
+                                    .context
+                                    .as_ref()
+                                    .is_some_and(|context| context.local == check.local)
+                        })
+                        || binding
+                            .default_value
+                            .is_some_and(|origin| origin.primary_span.is_none())
+                        || binding.default_local.as_ref().is_some_and(|local| {
+                            !valid_identifier(local)
+                                || !generated_names.insert(local.as_str())
+                                || import_names.contains(local.as_str())
+                                || source_names.contains(local.as_str())
+                                || temporary_names.contains(local.as_str())
+                                || local == &props.source
+                                || function
+                                    .context
+                                    .as_ref()
+                                    .is_some_and(|context| context.local == local.as_str())
+                        })
+                        || binding
+                            .references
+                            .iter()
+                            .any(|origin| origin.primary_span.is_none())
+                })
+                || !structurally_valid
+            {
+                diagnostics.push(emit_error(
+                    "FICT-EMIT-PROPS",
+                    "component props plans must exactly match a collision-free modeled object parameter",
+                ));
+            }
+        }
+        if function.regions.windows(2).any(|pair| pair[0] >= pair[1])
+            || function.regions.iter().any(|region| {
+                analysis.is_none_or(|analysis| analysis.regions.get(region.as_usize()).is_none())
+            })
+            || analysis.is_some_and(|analysis| function.regions != analysis.top_level_regions)
+        {
+            diagnostics.push(emit_error(
+                "FICT-EMIT-REGION",
+                "function regions must be sorted known analysis regions",
+            ));
+        }
+        match analyze_cfg(hir_function)
+            .and_then(|cfg| verify_structurized_cfg(hir_function, &cfg, &function.control_flow))
+        {
+            Ok(()) => {}
+            Err(bundle) => {
+                for diagnostic in bundle.as_slice() {
+                    diagnostics.push(diagnostic.clone());
+                }
+            }
+        }
+        verify_operations(hir, hir_function, function, analysis, &mut diagnostics);
+    }
+    if diagnostics.is_empty() {
+        Ok(())
+    } else {
+        Err(diagnostics)
+    }
+}
+
+fn verify_imports(program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {
+    let used: BTreeSet<_> = program
+        .functions
+        .iter()
+        .flat_map(|function| {
+            function
+                .operations
+                .iter()
+                .flat_map(|operation| operation.helper_slots().into_iter().flatten())
+                .chain(function.context.iter().map(|context| context.helper))
+                .chain(function.props.iter().filter_map(|props| props.helper))
+                .chain(
+                    function
+                        .props
+                        .iter()
+                        .filter_map(|props| props.rest.as_ref().map(|rest| rest.helper)),
+                )
+        })
+        .chain(
+            program
+                .preview_plan
+                .iter()
+                .flat_map(|preview| preview.helpers.iter().copied()),
+        )
+        .collect();
+    let imported: BTreeSet<_> = program.imports.iter().map(|intent| intent.helper).collect();
+    if imported != used
+        || imported.len() != program.imports.len()
+        || program
+            .imports
+            .windows(2)
+            .any(|pair| pair[0].helper >= pair[1].helper)
+    {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-IMPORTS",
+            "runtime imports must exactly match used helpers in ABI order",
+        ));
+    }
+    let mut names = BTreeSet::new();
+    for intent in &program.imports {
+        let spec = intent.helper.spec();
+        if !valid_identifier(&intent.local) || !names.insert(intent.local.as_str()) {
+            diagnostics.push(emit_error(
+                "FICT-EMIT-IMPORT-NAME",
+                "runtime import locals must be unique valid identifiers",
+            ));
+        }
+        if intent.imported != spec.export
+            || intent.module_request != spec.module_request(program.runtime_family)
+            || !program.module.reserved_names.contains(&intent.local)
+        {
+            diagnostics.push(emit_error(
+                "FICT-EMIT-IMPORT-ABI",
+                "runtime import source/export must match its ABI family and reserve its local",
+            ));
+        }
+        if !program.preview && intent.helper.spec().stability == RuntimeHelperStability::Preview {
+            diagnostics.push(emit_error(
+                "FICT-EMIT-PREVIEW",
+                "Core EmitIR cannot import a Preview-only helper",
+            ));
+        }
+    }
+    if !program.preview && program.preview_plan.is_some() {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-PREVIEW",
+            "Core EmitIR cannot carry a Preview plan",
+        ));
+    }
+}
+
+fn verify_preview_plan(hir: &HirFile, program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {
+    let Some(preview) = &program.preview_plan else {
+        return;
+    };
+    for handler in &preview.handlers {
+        let prop_sources = program
+            .functions
+            .get(handler.owner.as_usize())
+            .and_then(|function| function.props.as_ref());
+        let prop_captures_valid = handler
+            .prop_captures
+            .windows(2)
+            .all(|pair| pair[0].binding < pair[1].binding)
+            && handler.prop_captures.iter().all(|capture| {
+                prop_sources.is_some_and(|props| {
+                    props.bindings.iter().any(|source| {
+                        source.binding == capture.binding
+                            && source.local == capture.local
+                            && source.path == capture.path
+                            && source.mode == capture.mode
+                            && source.default_value == capture.default_value
+                    })
+                })
+            });
+        if !prop_captures_valid {
+            diagnostics.push(emit_error(
+                "FICT-EMIT-PREVIEW-PROPS",
+                "Preview prop captures must be ordered copies of the owning component props plan",
+            ));
+        }
+        let valid_local_function = |local: &crate::EmitPreviewLocalHandler| {
+            let binding = hir.bindings.get(local.binding.as_usize());
+            let function = hir.functions.get(local.function.as_usize());
+            binding.is_some_and(|binding| {
+                binding.display_name == local.local
+                    && matches!(
+                        binding.kind,
+                        fict_hir::BindingKind::Const | fict_hir::BindingKind::Function
+                    )
+                    && !hir
+                        .scopes
+                        .get(binding.scope.as_usize())
+                        .is_some_and(|scope| scope.kind == fict_hir::ScopeKind::Module)
+            }) && function.is_some_and(|function| {
+                function.binding == Some(local.binding)
+                    && function.parent == handler.owner
+                    && function.origin == local.definition_origin
+            }) && !preview_binding_has_runtime_write(hir, local.binding)
+        };
+        let local_functions_valid = handler
+            .local_functions
+            .windows(2)
+            .all(|pair| pair[0].binding < pair[1].binding)
+            && handler.local_functions.iter().all(|local| {
+                valid_local_function(local)
+                    && handler
+                        .local_handler
+                        .as_ref()
+                        .is_none_or(|handler| handler.binding != local.binding)
+                    && !handler
+                        .module_captures
+                        .iter()
+                        .any(|capture| capture.binding == local.binding)
+                    && !handler
+                        .lexical_captures
+                        .iter()
+                        .any(|capture| capture.binding == local.binding)
+                    && !handler
+                        .prop_captures
+                        .iter()
+                        .any(|capture| capture.binding == local.binding)
+                    && !handler
+                        .prop_rest_captures
+                        .iter()
+                        .any(|capture| capture.binding == local.binding)
+            });
+        if !local_functions_valid {
+            diagnostics.push(emit_error(
+                "FICT-EMIT-PREVIEW-FUNCTION",
+                "Preview local function dependencies must be ordered, disjoint stable functions owned by the component",
+            ));
+        }
+        let Some(local) = &handler.local_handler else {
+            continue;
+        };
+        let valid = valid_local_function(local)
+            && handler.handler_function == Some(local.function)
+            && !handler
+                .module_captures
+                .iter()
+                .any(|capture| capture.binding == local.binding);
+        if !valid {
+            diagnostics.push(emit_error(
+                "FICT-EMIT-PREVIEW-HANDLER",
+                "Preview local handlers must identify a stable source function owned by the component",
+            ));
+        }
+    }
+}
+
+fn preview_binding_has_runtime_write(hir: &HirFile, binding: fict_hir::BindingId) -> bool {
+    hir.functions.iter().any(|function| {
+        function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .any(|instruction| match &instruction.kind {
+                fict_hir::HirInstructionKind::Write { place, .. }
+                | fict_hir::HirInstructionKind::ReadWrite { place, .. } => {
+                    preview_place_binding(function, place) == Some(binding)
+                }
+                fict_hir::HirInstructionKind::Iteration { targets, .. } => {
+                    targets.iter().any(|local| {
+                        function
+                            .locals
+                            .get(local.as_usize())
+                            .and_then(|local| local.binding)
+                            == Some(binding)
+                    })
+                }
+                fict_hir::HirInstructionKind::PatternAssignment { writes, .. } => {
+                    writes.iter().any(|write| {
+                        function
+                            .locals
+                            .get(write.local.as_usize())
+                            .and_then(|local| local.binding)
+                            == Some(binding)
+                    })
+                }
+                _ => false,
+            })
+    })
+}
+
+fn preview_place_binding(
+    function: &fict_hir::HirFunction,
+    place: &fict_hir::Place,
+) -> Option<fict_hir::BindingId> {
+    let local = match place.base {
+        fict_hir::PlaceBase::Local(local) => local,
+        fict_hir::PlaceBase::Ssa(name) => name.local,
+        fict_hir::PlaceBase::Global(_) | fict_hir::PlaceBase::Value(_) => return None,
+    };
+    function.locals.get(local.as_usize())?.binding
+}
+
+fn verify_module_plan(hir: &HirFile, program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {
+    if program
+        .module
+        .reserved_names
+        .windows(2)
+        .any(|pair| pair[0] >= pair[1])
+        || program.module.reserved_names.iter().any(String::is_empty)
+    {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-MODULE-NAMES",
+            "module reserved names must be non-empty, sorted, and unique",
+        ));
+    }
+    let expected_fragment = hir
+        .functions
+        .get(hir.root_function.as_usize())
+        .and_then(|function| {
+            function
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .rev()
+                .find_map(|instruction| match instruction.kind {
+                    fict_hir::HirInstructionKind::SyntaxFragment { fragment, .. }
+                        if instruction.result.is_none() =>
+                    {
+                        Some(fragment)
+                    }
+                    _ => None,
+                })
+        });
+    if program.module.source_fragment != expected_fragment
+        || program.module.source_fragment.is_some_and(|fragment| {
+            hir.syntax_fragments
+                .get(fragment.as_usize())
+                .is_none_or(|fragment| fragment.kind != fict_hir::SyntaxFragmentKind::Statement)
+        })
+    {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-MODULE-SOURCE",
+            "module plan must preserve the root adapter-owned statement fragment",
+        ));
+    }
+    let required_names = hir
+        .bindings
+        .iter()
+        .map(|binding| binding.display_name.as_str())
+        .chain(hir.functions.iter().flat_map(|function| {
+            function
+                .locals
+                .iter()
+                .filter_map(|local| local.debug_name.as_deref())
+        }))
+        .chain(program.functions.iter().flat_map(|function| {
+            function
+                .temporaries
+                .iter()
+                .map(|temporary| temporary.name.as_str())
+                .chain(
+                    function
+                        .context
+                        .iter()
+                        .map(|context| context.local.as_str()),
+                )
+                .chain(function.props.iter().map(|props| props.source.as_str()))
+                .chain(function.props.iter().filter_map(|props| {
+                    props.default.as_ref().map(|default| default.input.as_str())
+                }))
+                .chain(function.props.iter().flat_map(|props| {
+                    props
+                        .bindings
+                        .iter()
+                        .filter_map(|binding| binding.default_local.as_deref())
+                }))
+                .chain(function.props.iter().flat_map(|props| {
+                    props
+                        .bindings
+                        .iter()
+                        .flat_map(|binding| binding.checks.iter().map(|check| check.local.as_str()))
+                }))
+                .chain(
+                    function
+                        .operations
+                        .iter()
+                        .filter_map(|operation| match operation {
+                            EmitOperation::DeclareTemplate { local, .. } => Some(local.as_str()),
+                            _ => None,
+                        }),
+                )
+        }));
+    if required_names.into_iter().any(|name| {
+        !program
+            .module
+            .reserved_names
+            .iter()
+            .any(|item| item == name)
+    }) {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-MODULE-NAMES",
+            "module name plan must reserve every source binding and generated temporary",
+        ));
+    }
+}
+
+fn is_scoped_helper(helper: RuntimeHelper) -> bool {
+    matches!(
+        helper,
+        RuntimeHelper::UseSignal | RuntimeHelper::UseMemo | RuntimeHelper::UseEffect
+    )
+}
+
+fn verify_operations(
+    hir: &HirFile,
+    hir_function: &fict_hir::HirFunction,
+    function: &crate::EmitFunction,
+    analysis: Option<&RegionAnalysis>,
+    diagnostics: &mut DiagnosticBundle,
+) {
+    let mut defined = BTreeSet::new();
+    let mut templates = BTreeSet::new();
+    for operation in &function.operations {
+        verify_helper_semantics(function, operation, diagnostics);
+        operation.visit_values(|value| {
+            let valid = match value {
+                EmitValueRef::Hir(value) => hir_function.values.get(value.as_usize()).is_some(),
+                EmitValueRef::Ssa(name) => hir_function.locals.get(name.local.as_usize()).is_some(),
+                EmitValueRef::Slot(slot) => function.slots.get(slot.as_usize()).is_some(),
+                EmitValueRef::Temporary(temporary) => defined.contains(temporary),
+                EmitValueRef::Literal(_) => true,
+                EmitValueRef::Function(function) => {
+                    hir.functions.get(function.as_usize()).is_some()
+                }
+                EmitValueRef::Binding(binding) => hir.bindings.get(binding.as_usize()).is_some(),
+            };
+            if !valid {
+                diagnostics.push(emit_error(
+                    "FICT-EMIT-VALUE",
+                    "value references an unknown or not-yet-defined arena entry",
+                ));
+            }
+        });
+        operation.visit_temporary_uses(|temporary| {
+            if !defined.contains(&temporary) {
+                diagnostics.push(emit_error(
+                    "FICT-EMIT-TEMP-USE",
+                    "temporary must be defined before use",
+                ));
+            }
+        });
+        if let Some(temporary) = operation.defined_temporary()
+            && (!defined.insert(temporary)
+                || function.temporaries.get(temporary.as_usize()).is_none())
+        {
+            diagnostics.push(emit_error(
+                "FICT-EMIT-TEMP-DEF",
+                "temporary must be declared and defined exactly once",
+            ));
+        }
+        match operation {
+            EmitOperation::PreserveHir {
+                block, instruction, ..
+            } => {
+                if hir_function
+                    .blocks
+                    .get(block.as_usize())
+                    .and_then(|block| block.instructions.get(*instruction as usize))
+                    .is_none()
+                {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-HIR",
+                        "preserved HIR location is invalid",
+                    ));
+                }
+            }
+            EmitOperation::CreateReactive {
+                slot,
+                source_result,
+                ..
+            } => {
+                verify_slot(function, *slot, diagnostics);
+                verify_source_result(hir_function, *source_result, diagnostics);
+            }
+            EmitOperation::ReadReactive {
+                slot,
+                source_result,
+                projections,
+                accessor_depth,
+                ..
+            } => verify_reactive_read(
+                hir,
+                hir_function,
+                function,
+                *slot,
+                *source_result,
+                projections,
+                *accessor_depth,
+                diagnostics,
+            ),
+            EmitOperation::TrackRuntimeReactive {
+                slot,
+                source_result,
+                local,
+                cleanup,
+                ..
+            } => {
+                verify_slot(function, *slot, diagnostics);
+                verify_source_result(hir_function, *source_result, diagnostics);
+                verify_cleanup(function, analysis, *cleanup, diagnostics);
+                verify_runtime_reactive_site(
+                    hir_function,
+                    function,
+                    *slot,
+                    *source_result,
+                    *local,
+                    diagnostics,
+                );
+            }
+            EmitOperation::WriteReactive {
+                slot,
+                source_result: None,
+                ..
+            }
+            | EmitOperation::UpdateReactive {
+                slot,
+                source_result: None,
+                ..
+            } => {
+                verify_slot(function, *slot, diagnostics);
+            }
+            EmitOperation::WriteReactive {
+                slot,
+                source_result: Some(source_result),
+                ..
+            }
+            | EmitOperation::UpdateReactive {
+                slot,
+                source_result: Some(source_result),
+                ..
+            } => {
+                verify_slot(function, *slot, diagnostics);
+                verify_source_result(hir_function, *source_result, diagnostics);
+            }
+            EmitOperation::WriteReactivePattern {
+                source_result,
+                targets,
+                origin,
+                ..
+            } => {
+                verify_source_result(hir_function, *source_result, diagnostics);
+                let source = hir_function
+                    .blocks
+                    .iter()
+                    .flat_map(|block| &block.instructions)
+                    .find(|instruction| instruction.result == Some(*source_result));
+                let source_writes = source.and_then(|instruction| {
+                    let fict_hir::HirInstructionKind::PatternAssignment { writes, .. } =
+                        &instruction.kind
+                    else {
+                        return None;
+                    };
+                    (instruction.origin == *origin).then_some(writes.as_slice())
+                });
+                let mut origins = BTreeSet::new();
+                if targets.is_empty()
+                    || source_writes.is_none()
+                    || targets.iter().any(|target| {
+                        verify_slot(function, target.slot, diagnostics);
+                        let slot_binding = function
+                            .slots
+                            .get(target.slot.as_usize())
+                            .and_then(|slot| slot.binding);
+                        let local_binding = hir_function
+                            .locals
+                            .get(target.local.as_usize())
+                            .and_then(|local| local.binding);
+                        target.origin.primary_span.is_none()
+                            || !origins.insert(target.origin)
+                            || slot_binding.is_none()
+                            || slot_binding != local_binding
+                            || source_writes.is_none_or(|writes| {
+                                !writes.iter().any(|write| {
+                                    write.local == target.local && write.origin == target.origin
+                                })
+                            })
+                    })
+                {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-PATTERN",
+                        "reactive pattern targets must match source HIR writes and slots",
+                    ));
+                }
+            }
+            EmitOperation::RegisterEffect {
+                slot,
+                source_result,
+                cleanup,
+                ..
+            } => {
+                verify_slot(function, *slot, diagnostics);
+                if let Some(source_result) = source_result {
+                    verify_source_result(hir_function, *source_result, diagnostics);
+                }
+                verify_cleanup(function, analysis, *cleanup, diagnostics);
+            }
+            EmitOperation::CreateVNode {
+                template,
+                source_result,
+                fragment_helper,
+                ..
+            } => {
+                verify_source_result(hir_function, *source_result, diagnostics);
+                let template = hir.templates.get(template.as_usize());
+                if template.is_none_or(|item| item.owner != function.source) {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-VNODE",
+                        "VNode operation must reference a JSX template owned by its function",
+                    ));
+                }
+                if template.is_some_and(|template| {
+                    template.contains_fragment
+                        != (*fragment_helper == Some(RuntimeHelper::Fragment))
+                }) {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-VNODE-FRAGMENT",
+                        "VNode operation fragment helper must match its JSX template",
+                    ));
+                }
+            }
+            EmitOperation::DeclareTemplate {
+                template,
+                local,
+                html,
+                namespace,
+                ..
+            } => {
+                if !valid_identifier(local)
+                    || html.is_empty()
+                    || *namespace == DomNamespace::Parent
+                    || hir
+                        .templates
+                        .get(template.as_usize())
+                        .is_none_or(|item| item.owner != function.source)
+                    || !templates.insert(*template)
+                {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-TEMPLATE",
+                        "template declarations must be non-empty, unique, owned, and concrete",
+                    ));
+                }
+            }
+            EmitOperation::CloneTemplate {
+                template,
+                source_result,
+                ..
+            } => {
+                verify_source_result(hir_function, *source_result, diagnostics);
+                if !templates.contains(template) {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-TEMPLATE-ORDER",
+                        "template must be declared before cloning",
+                    ));
+                }
+            }
+            EmitOperation::CreateElement {
+                namespace: DomNamespace::Parent,
+                helper,
+                ..
+            } if *helper != RuntimeHelper::CreateElementInParentNamespace => {
+                diagnostics.push(emit_error(
+                    "FICT-EMIT-NAMESPACE",
+                    "parent-derived namespace requires its dedicated helper",
+                ));
+            }
+            EmitOperation::InvokeComponent {
+                component,
+                props,
+                children,
+                ..
+            } => {
+                let target_valid = match component {
+                    crate::ComponentTarget::Binding(binding) => {
+                        hir.bindings.get(binding.as_usize()).is_some()
+                    }
+                    crate::ComponentTarget::Member { root, properties } => {
+                        hir.bindings.get(root.as_usize()).is_some()
+                            && !properties.is_empty()
+                            && properties.iter().all(|property| !property.is_empty())
+                    }
+                    crate::ComponentTarget::Dynamic(_) => true,
+                };
+                if !target_valid
+                    || props.iter().any(|prop| {
+                        matches!(
+                            prop,
+                            crate::ComponentProp::Named { name, .. }
+                                | crate::ComponentProp::Node { name, .. }
+                                if name.is_empty()
+                        )
+                    })
+                    || props.iter().any(|prop| {
+                        matches!(
+                            prop,
+                            crate::ComponentProp::Node { origin, .. }
+                                if origin.primary_span.is_none()
+                        )
+                    })
+                    || children.iter().any(|child| {
+                        matches!(
+                            child,
+                            crate::ComponentChild::Node(origin) if origin.primary_span.is_none()
+                        )
+                    })
+                {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-COMPONENT",
+                        "component target and prop names must retain valid semantic identity",
+                    ));
+                }
+            }
+            EmitOperation::BindEvent { cleanup, .. }
+            | EmitOperation::BindRef { cleanup, .. }
+            | EmitOperation::Conditional { cleanup, .. } => {
+                verify_cleanup(function, analysis, *cleanup, diagnostics);
+            }
+            EmitOperation::KeyedChild {
+                source_result,
+                render,
+                render_key,
+                items,
+                key,
+                key_source,
+                key_alias_initializer,
+                item_references,
+                index_references,
+                cleanup,
+                ..
+            } => {
+                verify_source_result(hir_function, *source_result, diagnostics);
+                verify_cleanup(function, analysis, *cleanup, diagnostics);
+                if hir.functions.get(render.as_usize()).is_none()
+                    || !valid_identifier(render_key)
+                    || items.primary_span.is_none()
+                    || key.is_some_and(|origin| origin.primary_span.is_none())
+                    || key_source.is_some_and(|origin| origin.primary_span.is_none())
+                    || key.is_some() != key_source.is_some()
+                    || key_alias_initializer.is_some() && key.is_none()
+                    || key_alias_initializer.is_some_and(|origin| origin.primary_span.is_none())
+                    || item_references
+                        .iter()
+                        .chain(index_references)
+                        .any(|origin| origin.primary_span.is_none())
+                {
+                    diagnostics.push(emit_error(
+                        "FICT-EMIT-KEYED-CHILD",
+                        "keyed child references must retain valid functions and source origins",
+                    ));
+                }
+            }
+            EmitOperation::KeyedList {
+                source_result,
+                cleanup,
+                ..
+            } => {
+                verify_source_result(hir_function, *source_result, diagnostics);
+                verify_cleanup(function, analysis, *cleanup, diagnostics);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn verify_source_result(
+    function: &fict_hir::HirFunction,
+    value: fict_hir::ValueId,
+    diagnostics: &mut DiagnosticBundle,
+) {
+    if function.values.get(value.as_usize()).is_none() {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-SOURCE-RESULT",
+            "lowered operation references a missing source HIR result",
+        ));
+    }
+}
+
+fn hook_call_instruction(
+    function: &fict_hir::HirFunction,
+    value: fict_hir::ValueId,
+) -> Option<&fict_hir::CallInstruction> {
+    function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| instruction.result == Some(value))
+        .and_then(|instruction| match &instruction.kind {
+            fict_hir::HirInstructionKind::Call(call) => Some(call),
+            _ => None,
+        })
+}
+
+fn imported_hook_return_shape<'a>(
+    hir: &'a HirFile,
+    call: &fict_hir::CallInstruction,
+    expected_import: fict_hir::BindingId,
+) -> Option<&'a fict_hir::ImportedHookReturn> {
+    let fict_hir::CallHost::Binding(import_binding) = call.host else {
+        return None;
+    };
+    if import_binding != expected_import {
+        return None;
+    }
+    let import = hir
+        .bindings
+        .get(import_binding.as_usize())?
+        .import
+        .as_ref()?;
+    match call.callee_reference.as_ref() {
+        Some(place) if !place.projections.is_empty() => {
+            import.resolve_hook_member(&place.projections)
+        }
+        Some(_) | None => import.hook_return.as_ref(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_reactive_read(
+    hir: &HirFile,
+    hir_function: &fict_hir::HirFunction,
+    function: &crate::EmitFunction,
+    slot_id: crate::EmitSlotId,
+    source_result: fict_hir::ValueId,
+    projections: &[fict_hir::Projection],
+    accessor_depth: u16,
+    diagnostics: &mut DiagnosticBundle,
+) {
+    verify_slot(function, slot_id, diagnostics);
+    verify_source_result(hir_function, source_result, diagnostics);
+    let source_instruction = hir_function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| instruction.result == Some(source_result));
+    let source_place = source_instruction.and_then(|instruction| match &instruction.kind {
+        fict_hir::HirInstructionKind::Read { place } => Some(place),
+        _ => None,
+    });
+    let slot = function.slots.get(slot_id.as_usize());
+    let (basic_valid, storage_valid) = match slot.map(|slot| slot.storage) {
+        Some(crate::ReactiveSlotStorage::Imported {
+            member: Some(member),
+        }) => {
+            let basic_valid = source_place.is_some_and(|place| place.projections == projections)
+                && usize::from(accessor_depth) <= projections.len();
+            let root_binding = source_place.and_then(|place| {
+                let local = match place.base {
+                    fict_hir::PlaceBase::Local(local) => local,
+                    fict_hir::PlaceBase::Ssa(name) => name.local,
+                    fict_hir::PlaceBase::Global(_) | fict_hir::PlaceBase::Value(_) => return None,
+                };
+                hir_function.locals.get(local.as_usize())?.binding
+            });
+            let resolved = root_binding
+                .and_then(|binding| hir.bindings.get(binding.as_usize()))
+                .and_then(|binding| binding.import.as_ref())
+                .and_then(|import| import.resolve_reactive_member(projections));
+            let storage_valid = resolved.is_some_and(|resolved| {
+                resolved.member_index == member as usize
+                    && resolved.accessor_depth == usize::from(accessor_depth)
+                    && slot.is_some_and(|slot| slot.binding == root_binding)
+            });
+            (basic_valid, storage_valid)
+        }
+        Some(crate::ReactiveSlotStorage::CapturedHookReturn {
+            owner,
+            call,
+            import,
+            property,
+        }) => {
+            let local = source_place.and_then(|place| match place.base {
+                fict_hir::PlaceBase::Local(local) => Some(local),
+                fict_hir::PlaceBase::Ssa(name) => Some(name.local),
+                fict_hir::PlaceBase::Global(_) | fict_hir::PlaceBase::Value(_) => None,
+            });
+            let binding_matches = local.is_some_and(|local| {
+                hir_function
+                    .locals
+                    .get(local.as_usize())
+                    .is_some_and(|local| {
+                        local.kind == fict_hir::LocalKind::Capture
+                            && slot.is_some_and(|slot| slot.binding == local.binding)
+                    })
+            });
+            let hook = hir
+                .functions
+                .get(owner.as_usize())
+                .and_then(|owner| hook_call_instruction(owner, call))
+                .and_then(|call| imported_hook_return_shape(hir, call, import));
+            let resolved_property = source_place
+                .and_then(|place| place.projections.first())
+                .and_then(|projection| hook?.resolve_property(projection));
+            let kind_matches = slot.is_some_and(|slot| {
+                matches!(
+                    (property.kind, slot.kind),
+                    (
+                        fict_hir::ImportedReactiveKind::Signal,
+                        crate::ReactiveSlotKind::Signal
+                    ) | (
+                        fict_hir::ImportedReactiveKind::Memo,
+                        crate::ReactiveSlotKind::Memo
+                    )
+                )
+            });
+            (
+                source_place.is_some_and(|place| place.projections == projections)
+                    && !projections.is_empty()
+                    && accessor_depth == 1,
+                binding_matches
+                    && kind_matches
+                    && hook.is_some_and(|hook| hook.direct_accessor.is_none())
+                    && resolved_property == Some(property),
+            )
+        }
+        Some(crate::ReactiveSlotStorage::Imported { member: None })
+        | Some(crate::ReactiveSlotStorage::Owned)
+        | Some(crate::ReactiveSlotStorage::Captured { .. }) => (
+            source_place.is_some_and(|place| place.projections == projections)
+                && usize::from(accessor_depth) <= projections.len(),
+            accessor_depth == 0,
+        ),
+        Some(crate::ReactiveSlotStorage::HookReturn {
+            call,
+            import,
+            property,
+        }) => {
+            let local = source_place.and_then(|place| match place.base {
+                fict_hir::PlaceBase::Local(local) => Some(local),
+                fict_hir::PlaceBase::Ssa(name) => Some(name.local),
+                fict_hir::PlaceBase::Global(_) | fict_hir::PlaceBase::Value(_) => None,
+            });
+            let local_call = local.is_some_and(|local| {
+                hir_function
+                    .blocks
+                    .iter()
+                    .flat_map(|block| &block.instructions)
+                    .any(|instruction| {
+                        matches!(
+                            instruction.kind,
+                            fict_hir::HirInstructionKind::Declare {
+                                local: declared,
+                                initializer: Some(initializer),
+                                ..
+                            } if declared == local && initializer == call
+                        )
+                    })
+            }) && local.is_some_and(|local| {
+                slot.is_some_and(|slot| {
+                    slot.binding
+                        == hir_function
+                            .locals
+                            .get(local.as_usize())
+                            .and_then(|local| local.binding)
+                })
+            });
+            let hook = hook_call_instruction(hir_function, call)
+                .and_then(|call| imported_hook_return_shape(hir, call, import));
+            let imported_kind = match property {
+                None => hook.and_then(|hook| hook.direct_accessor),
+                Some(property) => Some(property.kind),
+            };
+            let kind_matches = slot.is_some_and(|slot| {
+                matches!(
+                    (imported_kind, slot.kind),
+                    (
+                        Some(fict_hir::ImportedReactiveKind::Signal),
+                        crate::ReactiveSlotKind::Signal
+                    ) | (
+                        Some(fict_hir::ImportedReactiveKind::Memo),
+                        crate::ReactiveSlotKind::Memo
+                    )
+                )
+            });
+            match property {
+                None => {
+                    let direct_call = source_result == call
+                        && source_instruction.is_some_and(|instruction| {
+                            matches!(instruction.kind, fict_hir::HirInstructionKind::Call(_))
+                        });
+                    (
+                        projections.is_empty()
+                            && accessor_depth == 0
+                            && (direct_call
+                                || (local_call
+                                    && source_place
+                                        .is_some_and(|place| place.projections.is_empty()))),
+                        kind_matches,
+                    )
+                }
+                Some(property) => {
+                    let direct_call = source_place.is_some_and(|place| {
+                        matches!(place.base, fict_hir::PlaceBase::Value(value) if value == call)
+                    });
+                    let binding_matches = if direct_call {
+                        slot.is_some_and(|slot| slot.binding.is_none())
+                    } else {
+                        local_call
+                    };
+                    let resolved_property = source_place
+                        .and_then(|place| place.projections.first())
+                        .and_then(|projection| hook?.resolve_property(projection));
+                    (
+                        source_place.is_some_and(|place| place.projections == projections)
+                            && !projections.is_empty()
+                            && accessor_depth == 1
+                            && (direct_call || local_call),
+                        kind_matches
+                            && binding_matches
+                            && hook.is_some_and(|hook| hook.direct_accessor.is_none())
+                            && resolved_property == Some(property),
+                    )
+                }
+            }
+        }
+        None => (false, false),
+    };
+    if !basic_valid || !storage_valid {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-REACTIVE-READ",
+            "reactive reads must match their source place, slot storage, and accessor depth",
+        ));
+    }
+}
+
+fn verify_helper_semantics(
+    function: &crate::EmitFunction,
+    operation: &EmitOperation,
+    diagnostics: &mut DiagnosticBundle,
+) {
+    let valid = match operation {
+        EmitOperation::CreateReactive { slot, helper, .. } => {
+            function.slots.get(slot.as_usize()).is_some_and(|slot| {
+                slot.storage == crate::ReactiveSlotStorage::Owned
+                    && match slot.kind {
+                        crate::ReactiveSlotKind::Signal => {
+                            matches!(helper, RuntimeHelper::Signal | RuntimeHelper::UseSignal)
+                        }
+                        crate::ReactiveSlotKind::Memo => {
+                            matches!(helper, RuntimeHelper::Memo | RuntimeHelper::UseMemo)
+                        }
+                        crate::ReactiveSlotKind::Selector => {
+                            *helper == RuntimeHelper::CreateSelector
+                        }
+                        crate::ReactiveSlotKind::Effect
+                        | crate::ReactiveSlotKind::Context
+                        | crate::ReactiveSlotKind::Store
+                        | crate::ReactiveSlotKind::Resource => false,
+                    }
+            })
+        }
+        EmitOperation::RegisterEffect { helper, .. } => {
+            matches!(helper, RuntimeHelper::Effect | RuntimeHelper::UseEffect)
+        }
+        EmitOperation::DeclareTemplate { helper, .. } => *helper == RuntimeHelper::Template,
+        EmitOperation::CreateElement {
+            namespace, helper, ..
+        } => match namespace {
+            DomNamespace::Html => *helper == RuntimeHelper::CreateElement,
+            DomNamespace::Svg
+            | DomNamespace::MathMl
+            | DomNamespace::MathMlTextIntegration
+            | DomNamespace::MathMlAnnotationXml => {
+                *helper == RuntimeHelper::CreateElementInNamespace
+            }
+            DomNamespace::Parent => *helper == RuntimeHelper::CreateElementInParentNamespace,
+        },
+        EmitOperation::BindDom {
+            kind,
+            reactive,
+            helper,
+            ..
+        } => match (kind, reactive) {
+            (crate::DomBindingKind::Text, true) => *helper == RuntimeHelper::BindText,
+            (crate::DomBindingKind::Text, false) => *helper == RuntimeHelper::SetText,
+            (crate::DomBindingKind::TextContent, true) => *helper == RuntimeHelper::BindTextContent,
+            (crate::DomBindingKind::TextContent, false) => *helper == RuntimeHelper::SetTextContent,
+            (crate::DomBindingKind::Attribute(_), true) => *helper == RuntimeHelper::BindAttribute,
+            (crate::DomBindingKind::Attribute(_), false) => *helper == RuntimeHelper::SetAttr,
+            (crate::DomBindingKind::Property(_), true) => *helper == RuntimeHelper::BindProperty,
+            (crate::DomBindingKind::Property(_), false) => *helper == RuntimeHelper::SetProp,
+            (crate::DomBindingKind::Class, true) => *helper == RuntimeHelper::BindClass,
+            (crate::DomBindingKind::Class, false) => *helper == RuntimeHelper::SetClass,
+            (crate::DomBindingKind::Style, true) => *helper == RuntimeHelper::BindStyle,
+            (crate::DomBindingKind::Style, false) => *helper == RuntimeHelper::SetStyle,
+            (crate::DomBindingKind::Spread, _) => *helper == RuntimeHelper::Spread,
+        },
+        EmitOperation::ApplyProps {
+            operation, helper, ..
+        } => match operation {
+            crate::PropsOperation::Getter { .. } => *helper == RuntimeHelper::PropGetter,
+            crate::PropsOperation::Rest { .. } => {
+                matches!(helper, RuntimeHelper::PropsRest | RuntimeHelper::ObjectRest)
+            }
+            crate::PropsOperation::Merge(_) => *helper == RuntimeHelper::MergeProps,
+            crate::PropsOperation::Spread { .. } => *helper == RuntimeHelper::Spread,
+            crate::PropsOperation::Keyed(_) => *helper == RuntimeHelper::Keyed,
+        },
+        EmitOperation::BindEvent {
+            event,
+            options,
+            delegated,
+            helper,
+            cleanup_helper,
+            ..
+        } => {
+            if event.is_empty() {
+                false
+            } else if *delegated {
+                options.is_empty()
+                    && *helper == RuntimeHelper::AddEventListener
+                    && cleanup_helper.is_none()
+            } else {
+                *helper == RuntimeHelper::BindEvent
+                    && *cleanup_helper == Some(RuntimeHelper::OnDestroy)
+            }
+        }
+        EmitOperation::BindRef { helper, .. } => *helper == RuntimeHelper::BindRef,
+        EmitOperation::Insert {
+            namespace,
+            helper,
+            create_helper,
+            fragment_helper,
+            ..
+        } => {
+            *helper == RuntimeHelper::Insert
+                && fragment_helper.is_none_or(|helper| helper == RuntimeHelper::Fragment)
+                && match namespace {
+                    DomNamespace::Html => *create_helper == RuntimeHelper::CreateElement,
+                    DomNamespace::Svg
+                    | DomNamespace::MathMl
+                    | DomNamespace::MathMlTextIntegration
+                    | DomNamespace::MathMlAnnotationXml => {
+                        *create_helper == RuntimeHelper::CreateElementInNamespace
+                    }
+                    DomNamespace::Parent => {
+                        *create_helper == RuntimeHelper::CreateElementInParentNamespace
+                    }
+                }
+        }
+        EmitOperation::Conditional {
+            namespace,
+            helper,
+            create_helper,
+            cleanup_helper,
+            fragment_helper,
+            ..
+        } => {
+            *helper == RuntimeHelper::Conditional
+                && *cleanup_helper == RuntimeHelper::OnDestroy
+                && fragment_helper.is_none_or(|helper| helper == RuntimeHelper::Fragment)
+                && match namespace {
+                    DomNamespace::Html => *create_helper == RuntimeHelper::CreateElement,
+                    DomNamespace::Svg
+                    | DomNamespace::MathMl
+                    | DomNamespace::MathMlTextIntegration
+                    | DomNamespace::MathMlAnnotationXml => {
+                        *create_helper == RuntimeHelper::CreateElementInNamespace
+                    }
+                    DomNamespace::Parent => {
+                        *create_helper == RuntimeHelper::CreateElementInParentNamespace
+                    }
+                }
+        }
+        EmitOperation::KeyedChild {
+            helper,
+            cleanup_helper,
+            ..
+        } => *helper == RuntimeHelper::KeyedList && *cleanup_helper == RuntimeHelper::OnDestroy,
+        EmitOperation::KeyedList { helper, .. } => *helper == RuntimeHelper::KeyedList,
+        EmitOperation::ReadReactive { helper, .. } => {
+            helper.is_none_or(|helper| helper == RuntimeHelper::ReactiveGetter)
+        }
+        EmitOperation::CreateVNode {
+            fragment_helper, ..
+        } => fragment_helper.is_none_or(|helper| helper == RuntimeHelper::Fragment),
+        EmitOperation::ResolveElement { helper, path, .. } => {
+            *helper == RuntimeHelper::ResolvePath && !path.is_empty()
+        }
+        EmitOperation::InvokeComponent {
+            props,
+            children,
+            prop_helper,
+            children_helper,
+            merge_helper,
+            non_reactive_helper,
+            reactive_function_helper,
+            fragment_helper,
+            ..
+        } => {
+            let needs_prop = props.iter().any(|prop| {
+                matches!(
+                    prop,
+                    crate::ComponentProp::Named { getter: true, .. }
+                        | crate::ComponentProp::Spread { getter: true, .. }
+                )
+            });
+            let needs_merge = props
+                .iter()
+                .any(|prop| matches!(prop, crate::ComponentProp::Spread { .. }));
+            let needs_children = children
+                .iter()
+                .any(|child| matches!(child, crate::ComponentChild::Value { getter: true, .. }));
+            let needs_non_reactive = props.iter().any(|prop| {
+                matches!(
+                    prop,
+                    crate::ComponentProp::Named {
+                        non_reactive: true,
+                        ..
+                    }
+                )
+            }) || children.iter().any(|child| {
+                matches!(
+                    child,
+                    crate::ComponentChild::Value {
+                        non_reactive: true,
+                        ..
+                    }
+                )
+            });
+            let needs_reactive_function = props.iter().any(|prop| {
+                matches!(
+                    prop,
+                    crate::ComponentProp::Named {
+                        reactive_function: true,
+                        ..
+                    }
+                )
+            });
+            let wrappers_exclusive = props.iter().all(|prop| {
+                let crate::ComponentProp::Named {
+                    getter,
+                    non_reactive,
+                    reactive_function,
+                    ..
+                } = prop
+                else {
+                    return true;
+                };
+                usize::from(*getter) + usize::from(*non_reactive) + usize::from(*reactive_function)
+                    <= 1
+            }) && children.iter().all(|child| {
+                !matches!(
+                    child,
+                    crate::ComponentChild::Value {
+                        getter: true,
+                        non_reactive: true,
+                        ..
+                    }
+                )
+            });
+            wrappers_exclusive
+                && *prop_helper == needs_prop.then_some(RuntimeHelper::PropGetter)
+                && *children_helper == needs_children.then_some(RuntimeHelper::Prop)
+                && *merge_helper == needs_merge.then_some(RuntimeHelper::MergeProps)
+                && *non_reactive_helper == needs_non_reactive.then_some(RuntimeHelper::NonReactive)
+                && *reactive_function_helper
+                    == needs_reactive_function.then_some(RuntimeHelper::ReactiveGetter)
+                && fragment_helper.is_none_or(|helper| helper == RuntimeHelper::Fragment)
+        }
+        EmitOperation::PreserveHir { .. }
+        | EmitOperation::TrackRuntimeReactive { .. }
+        | EmitOperation::WriteReactive { .. }
+        | EmitOperation::WriteReactivePattern { .. }
+        | EmitOperation::UpdateReactive { .. }
+        | EmitOperation::Evaluate { .. }
+        | EmitOperation::CloneTemplate { .. }
+        | EmitOperation::Return { .. } => true,
+    };
+    if !valid {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-HELPER",
+            "operation uses a runtime helper incompatible with its semantics",
+        ));
+    }
+}
+
+fn verify_runtime_reactive_site(
+    hir_function: &fict_hir::HirFunction,
+    function: &crate::EmitFunction,
+    slot: crate::EmitSlotId,
+    source_result: fict_hir::ValueId,
+    local: Option<fict_hir::LocalId>,
+    diagnostics: &mut DiagnosticBundle,
+) {
+    let source_kind = hir_function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find_map(|instruction| {
+            (instruction.result == Some(source_result)).then_some(match &instruction.kind {
+                fict_hir::HirInstructionKind::Call(call) => call.reactive_kind,
+                _ => None,
+            })
+        })
+        .flatten();
+    let expected = match source_kind {
+        Some(fict_hir::ReactiveCallKind::Store) => crate::ReactiveSlotKind::Store,
+        Some(fict_hir::ReactiveCallKind::Resource) => crate::ReactiveSlotKind::Resource,
+        Some(fict_hir::ReactiveCallKind::Selector) => crate::ReactiveSlotKind::Selector,
+        None => {
+            diagnostics.push(emit_error(
+                "FICT-EMIT-RUNTIME-REACTIVE",
+                "tracked runtime reactive slot must originate from a classified HIR call",
+            ));
+            return;
+        }
+    };
+    if function
+        .slots
+        .get(slot.as_usize())
+        .is_none_or(|actual| actual.kind != expected)
+    {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-RUNTIME-REACTIVE",
+            "runtime reactive call kind must match its EmitIR slot kind",
+        ));
+    }
+    if let Some(local) = local
+        && (hir_function.locals.get(local.as_usize()).is_none()
+            || !hir_function.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instruction| {
+                    matches!(
+                        instruction.kind,
+                        fict_hir::HirInstructionKind::Declare {
+                            local: declared,
+                            initializer: Some(initializer),
+                            ..
+                        } if declared == local && initializer == source_result
+                    )
+                })
+            }))
+    {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-RUNTIME-REACTIVE",
+            "runtime reactive local must be declared from the classified call result",
+        ));
+    }
+}
+
+fn verify_slot(
+    function: &crate::EmitFunction,
+    slot: crate::EmitSlotId,
+    diagnostics: &mut DiagnosticBundle,
+) {
+    if function.slots.get(slot.as_usize()).is_none() {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-SLOT-USE",
+            "operation references an unknown slot",
+        ));
+    }
+}
+
+fn verify_cleanup(
+    function: &crate::EmitFunction,
+    analysis: Option<&RegionAnalysis>,
+    cleanup: CleanupOwner,
+    diagnostics: &mut DiagnosticBundle,
+) {
+    let valid = match cleanup {
+        CleanupOwner::Slot(slot) => function.slots.get(slot.as_usize()).is_some(),
+        CleanupOwner::Region(region) => {
+            analysis.is_some_and(|analysis| analysis.regions.get(region.as_usize()).is_some())
+        }
+        CleanupOwner::Function => true,
+    };
+    if !valid {
+        diagnostics.push(emit_error("FICT-EMIT-CLEANUP", "cleanup owner is unknown"));
+    }
+}
+
+fn valid_identifier(value: &str) -> bool {
+    let mut bytes = value.bytes();
+    let Some(first) = bytes.next() else {
+        return false;
+    };
+    (first == b'$' || first == b'_' || first.is_ascii_alphabetic())
+        && bytes.all(|byte| byte == b'$' || byte == b'_' || byte.is_ascii_alphanumeric())
+}
+
+fn emit_error(code: &'static str, message: impl Into<String>) -> Diagnostic {
+    Diagnostic::new(
+        DiagnosticCode::new(code).expect("EmitIR diagnostic literal"),
+        DiagnosticSeverity::Error,
+        message,
+    )
+    .with_guarantee_class(GuaranteeClass::Internal)
+}

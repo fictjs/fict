@@ -13,6 +13,8 @@ export { inferTraceMarkersForComponent } from './trace-infer'
 export { minimizeSourceByLines } from './minimize'
 export type {
   SourceMinimizerOptions,
+  SourceMinimizerBackend,
   SourceMinimizerPredicate,
+  SourceMinimizerPredicateContext,
   SourceMinimizerResult,
 } from './minimize'

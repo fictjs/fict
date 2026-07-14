@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "status": "pending",
+  "reviewer": null,
+  "rustDefaultRelease": null,
+  "compatibilityRelease": null,
+  "finalLegacyRelease": null,
+  "legacyRemovalRelease": null,
+  "areas": {
+    "replacementAvailability": false,
+    "migrationGuidance": false,
+    "candidateAndRollbackEvidence": false,
+    "rustDefaultPublished": false,
+    "subsequentMinorCompleted": false,
+    "finalPresetPublished": false,
+    "coreScopeChanges": false,
+    "legacyDependencyRemoval": false
+  }
+}

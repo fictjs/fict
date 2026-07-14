@@ -107,6 +107,19 @@ export function findWorkspaceProtocols(manifest) {
   return violations
 }
 
+export function findNativeCompilerVersionMismatches(manifest) {
+  if (manifest.name !== '@fictjs/compiler') return []
+  const nativeDependencies = Object.entries(manifest.optionalDependencies ?? {}).filter(([name]) =>
+    name.startsWith('@fictjs/compiler-'),
+  )
+  const failures = nativeDependencies
+    .filter(([, version]) => version !== manifest.version)
+    .map(([name, version]) => `${name}@${version}`)
+  if (nativeDependencies.length !== 8)
+    failures.push(`native-package-count:${nativeDependencies.length}`)
+  return failures
+}
+
 export function collectExportTargets(exportsField) {
   const targets = []
   function visit(value) {
@@ -235,6 +248,14 @@ function validateArchive(expected, packed, entries, tarballPath) {
     )
   }
 
+  const nativeVersionMismatches = findNativeCompilerVersionMismatches(packed)
+  if (nativeVersionMismatches.length > 0) {
+    throw new Error(
+      `${packed.name} tarball native versions do not match ${packed.version}: ` +
+        nativeVersionMismatches.join(', '),
+    )
+  }
+
   const missingTargets = collectExportTargets(packed.exports).filter(target => !entries.has(target))
   if (missingTargets.length > 0) {
     throw new Error(
@@ -281,6 +302,106 @@ function writeTypeConsumer(filePath, mode, specifiers) {
   writeFileSync(filePath, `${imports.join('\n')}\nvoid [${values}]\n`)
 }
 
+function writeViteRustIsolationConsumer(filePath) {
+  writeFileSync(
+    filePath,
+    `'use strict'
+const Module = require('node:module')
+const forbidden = new Set([
+  '@babel/core',
+  '@babel/generator',
+  '@babel/helper-plugin-utils',
+  '@babel/parser',
+  '@babel/plugin-syntax-jsx',
+  '@babel/plugin-transform-typescript',
+  '@babel/traverse',
+  '@babel/types',
+  '@fictjs/compiler/legacy',
+])
+const compilerBuildId = 'fict-rust-p1-oxc0.139.0-m1-' + '7'.repeat(64)
+const scanResult = {
+  protocolVersion: 1,
+  moduleRequests: [],
+  hasModuleSyntax: true,
+  diagnostics: [],
+  compilerBuildId,
+}
+const nativeFacade = {
+  loadNativeCompilerBinding: () => ({
+    nativeCompilerInfo: () => ({
+      backend: 'rust',
+      nativeTarget: 'tarball-test',
+      oxcVersion: '0.139.0',
+      nodeApiVersion: 10,
+      compilerBuildId,
+      compilerBuildRevision: null,
+      compilerProtocolVersion: 1,
+      metadataSchemaVersion: 1,
+    }),
+    scan: async () => scanResult,
+    scanSync: () => scanResult,
+    transform: async () => ({
+      protocolVersion: 1,
+      code: 'export const compiledFromTarball = true;\\n',
+      map: null,
+      diagnostics: [],
+      moduleMetadata: { version: 1, exports: {} },
+      metadataDependencies: [],
+      unresolvedMetadataRequests: [],
+      metadataIncomplete: false,
+      explain: null,
+      artifacts: [],
+      stats: null,
+      compilerBuildId,
+    }),
+  }),
+}
+const originalLoad = Module._load
+Module._load = function (request, parent, isMain) {
+  if (request === '@fictjs/compiler/native') return nativeFacade
+  if (forbidden.has(request)) throw new Error('Rust tarball path loaded ' + request)
+  return originalLoad.call(this, request, parent, isMain)
+}
+
+;(async () => {
+  const viteModule = require('@fictjs/vite-plugin')
+  const fict = viteModule.default ?? viteModule
+  const plugin = fict({
+    backend: 'rust',
+    functionSplitting: false,
+    useTypeScriptProject: false,
+    publicIdentityNamespace: 'tarball-test@1',
+  })
+  plugin.configResolved({
+    command: 'build',
+    mode: 'production',
+    root: '/project',
+    base: '/',
+    build: { ssr: true },
+    resolve: { alias: [], preserveSymlinks: false },
+  })
+  const result = await plugin.transform.call(
+    {
+      emitFile() {},
+      warn() {},
+      error(error) { throw error instanceof Error ? error : new Error(String(error)) },
+    },
+    'export function App() { return <main /> }',
+    '/project/src/App.tsx',
+  )
+  if (!result.code.includes('compiledFromTarball')) {
+    throw new Error('Vite Rust tarball transform did not use the native facade')
+  }
+})().finally(() => {
+  Module._load = originalLoad
+}).catch(error => {
+  console.error(error)
+  process.exitCode = 1
+})
+`,
+  )
+}
+
 function installedTargetUrl(consumerDir, entry) {
   const packageDir = path.resolve(consumerDir, 'node_modules', ...entry.packageName.split('/'))
   const targetPath = path.resolve(packageDir, entry.target)
@@ -297,7 +418,14 @@ function installedTargetUrl(consumerDir, entry) {
   return pathToFileURL(targetPath).href
 }
 
-function consumerDependencies(rootDir, sourcePackages, packedPackages, tarballPaths, resolutions) {
+function consumerDependencies(
+  rootDir,
+  sourcePackages,
+  packedPackages,
+  tarballPaths,
+  resolutions,
+  excludedDependencyNames = new Set(),
+) {
   const declaredVersions = declaredDependencyVersions(rootDir)
   const internalNames = new Set(packedPackages.map(manifest => manifest.name))
   const dependencies = {}
@@ -315,7 +443,9 @@ function consumerDependencies(rootDir, sourcePackages, packedPackages, tarballPa
     const sourceDir = path.dirname(sourcePackages[index].manifestPath)
     for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
       for (const [name, range] of Object.entries(manifest[field] ?? {})) {
-        if (internalNames.has(name) || dependencies[name]) continue
+        if (internalNames.has(name) || dependencies[name] || excludedDependencyNames.has(name)) {
+          continue
+        }
         const declared = declaredVersions.get(name)
         const version =
           resolutions.get(sourceDir)?.get(name) ??
@@ -336,6 +466,7 @@ function consumerDependencies(rootDir, sourcePackages, packedPackages, tarballPa
 export function verifyReleaseContract(rootPackage, releaseWorkflow) {
   const releaseVerify = rootPackage.scripts?.['release:verify'] ?? ''
   const requiredGates = [
+    'pnpm test:compiler:native-packages',
     'pnpm test:review-regressions',
     'pnpm test:package-tarballs',
     'pnpm test:ssr-matrix',
@@ -348,10 +479,24 @@ export function verifyReleaseContract(rootPackage, releaseWorkflow) {
   if (!releaseWorkflow.includes('pnpm release:verify:clean')) {
     missing.push('release workflow clean-checkout invocation')
   }
+  if (!releaseWorkflow.includes('name: Build native compiler packages')) {
+    missing.push('release workflow native build matrix')
+  }
+  if (!releaseWorkflow.includes('name: Certify native compiler packages')) {
+    missing.push('release workflow native runtime matrix')
+  }
+  if (!releaseWorkflow.includes('node scripts/publish-release-packages.mjs')) {
+    missing.push('dependency-ordered atomic package publisher')
+  }
   return missing
 }
 
-export function buildConsumerPnpmConfig(rootConfig, packages, dependencies) {
+export function buildConsumerPnpmConfig(
+  rootConfig,
+  packages,
+  dependencies,
+  excludedDependencies = new Set(),
+) {
   const tarballOverrides = {}
   for (const manifest of packages) {
     for (const field of ['dependencies', 'optionalDependencies']) {
@@ -361,6 +506,9 @@ export function buildConsumerPnpmConfig(rootConfig, packages, dependencies) {
         tarballOverrides[`${manifest.name}>${name}`] = dependency
       }
     }
+  }
+  for (const dependencyName of excludedDependencies) {
+    tarballOverrides[`@fictjs/compiler>${dependencyName}`] = '-'
   }
   return {
     ...rootConfig,
@@ -374,11 +522,17 @@ export function buildConsumerPnpmConfig(rootConfig, packages, dependencies) {
 async function main() {
   const config = readJson(path.join(repoRoot, '.github/npm-publish-packages.json'))
   const packages = packageByName(repoRoot)
-  const selected = config.packages.map(name => {
+  const configured = config.packages.map(name => {
     const packageInfo = packages.get(name)
     if (!packageInfo) throw new Error(`Publish allowlist references missing package ${name}`)
     return packageInfo
   })
+  const nativePackageNames = new Set(
+    configured
+      .filter(packageInfo => packageInfo.manifest.fictNative)
+      .map(packageInfo => packageInfo.manifest.name),
+  )
+  const selected = configured.filter(packageInfo => !packageInfo.manifest.fictNative)
 
   const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'fict-package-tarballs-'))
   const packsDir = path.join(tempRoot, 'packs')
@@ -398,6 +552,7 @@ async function main() {
       packedPackages,
       tarballPaths,
       resolutions,
+      nativePackageNames,
     )
     const rootResolutions = resolutions.get(repoRoot)
     const devDependencies = {
@@ -407,7 +562,12 @@ async function main() {
     if (!devDependencies['@types/node'] || !devDependencies.typescript) {
       throw new Error('Root TypeScript consumer dependencies are missing from the frozen install')
     }
-    const pnpmConfig = buildConsumerPnpmConfig(rootManifest.pnpm, packedPackages, dependencies)
+    const pnpmConfig = buildConsumerPnpmConfig(
+      rootManifest.pnpm,
+      packedPackages,
+      dependencies,
+      nativePackageNames,
+    )
 
     writeFileSync(
       path.join(consumerDir, 'package.json'),
@@ -455,6 +615,7 @@ async function main() {
     const esmTypesPath = path.join(consumerDir, 'consumer.mts')
     const cjsTypesPath = path.join(consumerDir, 'consumer.cts')
     const nonNodeEsmPath = path.join(consumerDir, 'consumer-non-node.mjs')
+    const viteRustIsolationPath = path.join(consumerDir, 'vite-rust-isolation.cjs')
     const nonNodeImports = collectNonNodeImportTargets(packedPackages)
     writeRuntimeConsumer(esmPath, 'esm', entries.esm)
     writeRuntimeConsumer(cjsPath, 'cjs', entries.cjs)
@@ -465,9 +626,11 @@ async function main() {
     )
     writeTypeConsumer(esmTypesPath, 'esm', entries.esmTypes)
     writeTypeConsumer(cjsTypesPath, 'cjs', entries.cjsTypes)
+    writeViteRustIsolationConsumer(viteRustIsolationPath)
 
     run(process.execPath, [esmPath], { cwd: consumerDir })
     run(process.execPath, [cjsPath], { cwd: consumerDir })
+    run(process.execPath, [viteRustIsolationPath], { cwd: consumerDir })
     if (nonNodeImports.length > 0) run(process.execPath, [nonNodeEsmPath], { cwd: consumerDir })
     const typeScriptBin = path.join(
       consumerDir,

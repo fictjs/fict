@@ -1,0 +1,15 @@
+00export function evaluate(input) {
+  let total = 0;
+  for (const value of input) total += value;
+  try {
+    switch (total) {
+      case 0: return null;
+      case 1: throw total;
+      default: return { total };
+    }
+  } catch (error) {
+    return error;
+  } finally {
+    total++;
+  }
+}

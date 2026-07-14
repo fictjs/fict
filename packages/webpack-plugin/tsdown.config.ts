@@ -19,6 +19,6 @@ export default defineConfig({
     exports: 'named',
   },
   deps: {
-    neverBundle: ['@babel/core', '@fictjs/babel-preset', '@fictjs/compiler', 'webpack'],
+    neverBundle: ['@fictjs/compiler', 'webpack'],
   },
 })

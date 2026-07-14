@@ -57,6 +57,7 @@ export async function createPlaygroundServer(
     ...(options.limits?.verifyTimeoutMs !== undefined
       ? { verifyTimeoutMs: options.limits.verifyTimeoutMs }
       : {}),
+    ...(options.compiler ? { compiler: options.compiler } : {}),
   }
   const manager = new PlaygroundSessionManager(managerOptions)
   const controllers: ServerControllers = {

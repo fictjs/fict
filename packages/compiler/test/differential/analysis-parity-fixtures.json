@@ -1,0 +1,173 @@
+[
+  {
+    "name": "state derived alias chain",
+    "language": "tsx",
+    "source": "import { $state as state } from 'fict'; export function Counter() { const count = state(0); const active = count !== 0; const alias = active; return alias; }",
+    "expected": {
+      "functions": [
+        {
+          "name": "Counter",
+          "reactiveBindings": [
+            { "name": "active", "kind": "derived", "dependencies": ["count"] },
+            { "name": "alias", "kind": "alias", "dependencies": ["active"] },
+            { "name": "count", "kind": "state", "dependencies": [] }
+          ],
+          "controlFlowReads": [],
+          "escapingBindings": ["active", "alias", "count"],
+          "shapes": [],
+          "region": { "hasControlFlow": false, "hasJsx": false, "hasAsync": false },
+          "hasEffect": false
+        }
+      ],
+      "hasDerivedCycle": false
+    }
+  },
+  {
+    "name": "reactive branch condition",
+    "language": "ts",
+    "source": "import { $state } from 'fict'; export function App() { const enabled = $state(false); let label = 'off'; if (enabled) label = 'on'; return label; }",
+    "expected": {
+      "functions": [
+        {
+          "name": "App",
+          "reactiveBindings": [{ "name": "enabled", "kind": "state", "dependencies": [] }],
+          "controlFlowReads": ["enabled"],
+          "escapingBindings": ["label"],
+          "shapes": [],
+          "region": { "hasControlFlow": true, "hasJsx": false, "hasAsync": false },
+          "hasEffect": false
+        }
+      ],
+      "hasDerivedCycle": false
+    }
+  },
+  {
+    "name": "closed object shape and property mutation",
+    "language": "js",
+    "source": "export function Card(props) { const model = { title: props.title, count: 0 }; model.count = 1; return model.title; }",
+    "expected": {
+      "functions": [
+        {
+          "name": "Card",
+          "reactiveBindings": [],
+          "controlFlowReads": [],
+          "escapingBindings": ["model", "props"],
+          "shapes": [
+            {
+              "name": "model",
+              "knownKeys": ["count", "title"],
+              "mutableKeys": ["count"],
+              "dynamicAccess": false,
+              "completeKeySet": true
+            },
+            {
+              "name": "props",
+              "knownKeys": ["title"],
+              "mutableKeys": [],
+              "dynamicAccess": false,
+              "completeKeySet": false
+            }
+          ],
+          "region": { "hasControlFlow": false, "hasJsx": false, "hasAsync": false },
+          "hasEffect": false
+        }
+      ],
+      "hasDerivedCycle": false
+    }
+  },
+  {
+    "name": "state read in jsx region",
+    "language": "jsx",
+    "source": "import { $state } from 'fict'; export function Badge() { const visible = $state(true); return <span>{visible}</span>; }",
+    "expected": {
+      "functions": [
+        {
+          "name": "Badge",
+          "reactiveBindings": [{ "name": "visible", "kind": "state", "dependencies": [] }],
+          "controlFlowReads": [],
+          "escapingBindings": ["visible"],
+          "shapes": [],
+          "region": { "hasControlFlow": false, "hasJsx": true, "hasAsync": false },
+          "hasEffect": false
+        }
+      ],
+      "hasDerivedCycle": false
+    }
+  },
+  {
+    "name": "effect callback host",
+    "language": "js",
+    "source": "import { $effect, $state } from 'fict'; export function useValue() { const value = $state(0); $effect(() => { console.log('tick'); }); return value; }",
+    "expected": {
+      "functions": [
+        {
+          "name": "useValue",
+          "reactiveBindings": [{ "name": "value", "kind": "state", "dependencies": [] }],
+          "controlFlowReads": [],
+          "escapingBindings": ["value"],
+          "shapes": [],
+          "region": { "hasControlFlow": false, "hasJsx": false, "hasAsync": false },
+          "hasEffect": true
+        }
+      ],
+      "hasDerivedCycle": false
+    }
+  },
+  {
+    "name": "mutual derived cycle",
+    "language": "js",
+    "source": "import { $state } from 'fict'; export function Loop() { const seed = $state(0); const a = seed === b; const b = seed === a; return a; }",
+    "expected": {
+      "functions": [
+        {
+          "name": "Loop",
+          "reactiveBindings": [
+            { "name": "a", "kind": "derived", "dependencies": ["b", "seed"] },
+            { "name": "b", "kind": "derived", "dependencies": ["a", "seed"] },
+            { "name": "seed", "kind": "state", "dependencies": [] }
+          ],
+          "controlFlowReads": [],
+          "escapingBindings": ["a", "b", "seed"],
+          "shapes": [],
+          "region": { "hasControlFlow": false, "hasJsx": false, "hasAsync": false },
+          "hasEffect": false
+        }
+      ],
+      "hasDerivedCycle": true
+    }
+  },
+  {
+    "name": "dynamic object access",
+    "language": "js",
+    "source": "export function Lookup(props, key) { const model = { a: 1, b: 2 }; return props[key] + model[key]; }",
+    "expected": {
+      "functions": [
+        {
+          "name": "Lookup",
+          "reactiveBindings": [],
+          "controlFlowReads": [],
+          "escapingBindings": ["key", "model", "props"],
+          "shapes": [
+            {
+              "name": "model",
+              "knownKeys": ["a", "b"],
+              "mutableKeys": [],
+              "dynamicAccess": true,
+              "completeKeySet": true
+            },
+            {
+              "name": "props",
+              "knownKeys": [],
+              "mutableKeys": [],
+              "dynamicAccess": true,
+              "completeKeySet": false
+            }
+          ],
+          "region": { "hasControlFlow": false, "hasJsx": false, "hasAsync": false },
+          "hasEffect": false
+        }
+      ],
+      "hasDerivedCycle": false
+    }
+  }
+]

@@ -1,0 +1,25 @@
+[package]
+name = "fict-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+fict-compiler = { path = "../crates/fict-compiler" }
+fict-compiler-oxc = { path = "../crates/fict-compiler-oxc" }
+fict-hir = { path = "../crates/fict-hir" }
+libfuzzer-sys = "=0.4.13"
+
+[[bin]]
+name = "compiler_pipeline"
+path = "fuzz_targets/compiler_pipeline.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
+resolver = "3"

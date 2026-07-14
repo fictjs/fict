@@ -4,6 +4,8 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { NATIVE_COMPILER_TARGETS } from './native-compiler-packages.mjs'
+
 const repoRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const defaultConfigPath = path.join(repoRoot, '.github/npm-publish-packages.json')
 const workspaceRoots = ['packages', 'examples']
@@ -62,6 +64,77 @@ export function buildPublishPlan(packages, registryDocuments) {
   })
 }
 
+export function buildAtomicPublishOrder(plan, packages = []) {
+  const nativeNames = new Set(NATIVE_COMPILER_TARGETS.map(target => target.packageName))
+  const native = plan
+    .filter(entry => nativeNames.has(entry.name))
+    .sort((left, right) => left.name.localeCompare(right.name))
+  const manifests = new Map(packages.map(pkg => [pkg.name, pkg]))
+  const remaining = new Map(
+    plan.filter(entry => !nativeNames.has(entry.name)).map(entry => [entry.name, entry]),
+  )
+  const ordered = [...native]
+  const published = new Set(native.map(entry => entry.name))
+
+  while (remaining.size > 0) {
+    const ready = [...remaining.values()]
+      .filter(entry => {
+        const manifest = manifests.get(entry.name)
+        const dependencies = [
+          ...Object.keys(manifest?.dependencies ?? {}),
+          ...Object.keys(manifest?.optionalDependencies ?? {}),
+        ]
+        return dependencies.every(name => !remaining.has(name) || published.has(name))
+      })
+      .sort((left, right) => left.name.localeCompare(right.name))
+    if (ready.length === 0) {
+      throw new Error(
+        `release dependency cycle prevents atomic publish ordering: ${[...remaining.keys()].join(', ')}`,
+      )
+    }
+    for (const entry of ready) {
+      ordered.push(entry)
+      published.add(entry.name)
+      remaining.delete(entry.name)
+    }
+  }
+  return ordered
+}
+
+export function validateAtomicNativeReleaseConfiguration(packages, allowedPackageNames) {
+  const failures = []
+  const byName = new Map(packages.map(pkg => [pkg.name, pkg]))
+  const compiler = byName.get('@fictjs/compiler')
+  const nativePackages = NATIVE_COMPILER_TARGETS.map(target =>
+    byName.get(target.packageName),
+  ).filter(Boolean)
+  if (!compiler && nativePackages.length === 0) return failures
+  if (!compiler) {
+    failures.push('native compiler packages require the @fictjs/compiler facade')
+    return failures
+  }
+
+  for (const target of NATIVE_COMPILER_TARGETS) {
+    const nativePackage = byName.get(target.packageName)
+    if (!nativePackage) {
+      failures.push(`native release matrix is missing ${target.packageName}`)
+      continue
+    }
+    if (nativePackage.version !== compiler.version) {
+      failures.push(
+        `${target.packageName}@${nativePackage.version} must match @fictjs/compiler@${compiler.version}`,
+      )
+    }
+    if (!allowedPackageNames.includes(target.packageName)) {
+      failures.push(`native release matrix is not allowlisted: ${target.packageName}`)
+    }
+    if (compiler.optionalDependencies?.[target.packageName] !== 'workspace:*') {
+      failures.push(`@fictjs/compiler must select ${target.packageName} through workspace:*`)
+    }
+  }
+  return failures
+}
+
 export function validateReleaseConfiguration({ packages, allowedPackageNames, registry }) {
   const failures = []
   const allowed = new Set(allowedPackageNames)
@@ -118,6 +191,8 @@ export function validateReleaseConfiguration({ packages, allowedPackageNames, re
       failures.push(`npm publish allowlist references missing workspace package: ${packageName}`)
     }
   }
+
+  failures.push(...validateAtomicNativeReleaseConfiguration(packages, allowedPackageNames))
 
   return failures
 }
@@ -244,9 +319,9 @@ function parseArguments(args) {
   return options
 }
 
-function printPlan(plan) {
+function printPlan(plan, packages) {
   console.log('NPM release publish plan:')
-  for (const entry of plan) {
+  for (const entry of buildAtomicPublishOrder(plan, packages)) {
     console.log(`- ${entry.name}@${entry.version}: ${entry.status}`)
   }
 }
@@ -265,14 +340,24 @@ async function main() {
     throw new Error(`invalid npm release configuration:\n- ${failures.join('\n- ')}`)
   }
 
+  const publicPackages = workspacePackages
+    .filter(pkg => config.packages.includes(pkg.name))
+    .sort((left, right) => left.name.localeCompare(right.name))
+  buildAtomicPublishOrder(
+    publicPackages.map(pkg => ({
+      name: pkg.name,
+      path: pkg.path,
+      version: pkg.version,
+      status: 'pending',
+    })),
+    publicPackages,
+  )
+
   if (options.offline) {
     console.log(`NPM release configuration passed for ${config.packages.length} public packages.`)
     return
   }
 
-  const publicPackages = workspacePackages
-    .filter(pkg => config.packages.includes(pkg.name))
-    .sort((left, right) => left.name.localeCompare(right.name))
   const registryDocuments = new Map(
     await Promise.all(
       publicPackages.map(async pkg => [
@@ -287,9 +372,10 @@ async function main() {
     registry: config.registry,
     tag: options.tag,
     packages: plan,
+    publishOrder: buildAtomicPublishOrder(plan, publicPackages).map(entry => entry.name),
   }
 
-  printPlan(plan)
+  printPlan(plan, publicPackages)
   if (options.outputPath) writeFileSync(options.outputPath, `${JSON.stringify(output, null, 2)}\n`)
 
   const unexpectedNewPackages = plan.filter(

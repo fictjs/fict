@@ -25,6 +25,68 @@ longer relies on zero-argument function arity to infer reactivity, so user
 callbacks such as `() => start()` stay callbacks unless code explicitly wraps
 them with `reactive(fn)`.
 
+## Native compiler beta
+
+Official Vite and Webpack integrations own module graphs and are preferred for
+applications. A direct integration can call the lazy OXC/Rust facade exported
+by `@fictjs/compiler/native`:
+
+```ts
+import { transformSync } from '@fictjs/compiler/native'
+
+const result = transformSync({
+  code: source,
+  filename: 'src/App.tsx',
+  moduleId: 'src/App.tsx',
+  options: { strictGuarantee: true, sourcemap: true },
+  metadata: [],
+})
+```
+
+The subpath also exports `transform`, `scan`/`scanSync`,
+`analyze`/`analyzeSync`, and `nativeCompilerInfo`. The native package is loaded
+on the first request and the facade reuses one validated compiler binding for
+the process. Set `FICT_COMPILER_NATIVE_PATH` only for local development or
+release verification; normal installations select the platform optional
+package automatically. Low-level hosts that need an isolated binding may use
+`createNativeCompilerFacade(options)` or `loadNativeCompilerBinding(options)`.
+
+Bundlers that own package resolution and metadata persistence should import
+those Node-side services from `@fictjs/compiler/graph-host`:
+
+```ts
+import {
+  parseModuleReactiveMetadata,
+  resolvePackageModuleMetadata,
+} from '@fictjs/compiler/graph-host'
+```
+
+The graph-host entry may access the filesystem, but it does not load Babel or
+the legacy compiler. Keep graph callbacks and bundler objects in this host
+layer; pass only serializable metadata snapshots to the native request facade.
+
+The package root remains the Babel plugin during the beta compatibility window.
+Code that intentionally owns legacy rollback should import
+`@fictjs/compiler/legacy`; this explicit subpath will remain the compatibility
+entry when the package root becomes the Rust request facade in a breaking
+release. The beta root and explicit subpath currently expose the same function
+identity, but the legacy entrypoint imports its implementation directly rather
+than depending on the package-root facade.
+
+The request boundary is serializable. Host callbacks, filesystem resolution,
+and bundler graph objects must stay outside Rust. A build must use one compiler
+build identifier and one backend; controlled CI/release binaries also expose
+the exact Git revision through `nativeCompilerInfo().compilerBuildRevision`.
+Ordinary local builds without `FICT_COMPILER_BUILD_REVISION` report `null` and
+cannot become promotion evidence. A manually injected local value is useful for
+contract testing but is not canonical CI provenance. Do not catch a native
+failure and compile only that file with the legacy Babel plugin.
+
+Platform support and installation behavior are defined by
+[ADR-0002](../../docs/adr/0002-native-compiler-support-matrix.md). Promotion,
+performance/RSS evidence, and rollback are defined by the
+[Rust compiler rollout](../../docs/features/rust-compiler-rollout/rollout.md).
+
 ## Options
 
 ```ts

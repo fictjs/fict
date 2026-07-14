@@ -4,6 +4,7 @@ coverage/
 *.d.ts
 pnpm-lock.yaml
 CHANGELOG.md
+packages/compiler/src/runtime-abi.generated.ts
 
 # Snapshot files
 **/__snapshots__/**

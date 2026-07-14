@@ -1,0 +1,501 @@
+{
+  "version": 1,
+  "families": {
+    "fict": {
+      "internal": "fict/internal",
+      "list": "fict/internal/list"
+    },
+    "runtime": {
+      "internal": "@fictjs/runtime/internal",
+      "list": "@fictjs/runtime/internal/list"
+    }
+  },
+  "delegatedEvents": [
+    "beforeinput",
+    "click",
+    "dblclick",
+    "contextmenu",
+    "focusin",
+    "focusout",
+    "input",
+    "keydown",
+    "keyup",
+    "mousedown",
+    "mousemove",
+    "mouseout",
+    "mouseover",
+    "mouseup",
+    "pointerdown",
+    "pointermove",
+    "pointerout",
+    "pointerover",
+    "pointerup",
+    "touchend",
+    "touchmove",
+    "touchstart"
+  ],
+  "helpers": [
+    {
+      "key": "signal",
+      "export": "createSignal",
+      "preferredLocal": "createSignal",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "createSelector",
+      "export": "createSelector",
+      "preferredLocal": "createSelector",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "memo",
+      "export": "createMemo",
+      "preferredLocal": "createMemo",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "effect",
+      "export": "createEffect",
+      "preferredLocal": "createEffect",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "useContext",
+      "export": "__fictUseContext",
+      "preferredLocal": "__fictUseContext",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "pushContext",
+      "export": "__fictPushContext",
+      "preferredLocal": "__fictPushContext",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "popContext",
+      "export": "__fictPopContext",
+      "preferredLocal": "__fictPopContext",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "useSignal",
+      "export": "__fictUseSignal",
+      "preferredLocal": "__fictUseSignal",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "useMemo",
+      "export": "__fictUseMemo",
+      "preferredLocal": "__fictUseMemo",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "useEffect",
+      "export": "__fictUseEffect",
+      "preferredLocal": "__fictUseEffect",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "render",
+      "export": "__fictRender",
+      "preferredLocal": "__fictRender",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "fragment",
+      "export": "Fragment",
+      "preferredLocal": "Fragment",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "propGetter",
+      "export": "__fictProp",
+      "preferredLocal": "__fictProp",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "propsRest",
+      "export": "__fictPropsRest",
+      "preferredLocal": "__fictPropsRest",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "objectRest",
+      "export": "__fictObjectRest",
+      "preferredLocal": "__fictObjectRest",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "reactiveGetter",
+      "export": "__fictReactive",
+      "preferredLocal": "__fictReactive",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "mergeProps",
+      "export": "mergeProps",
+      "preferredLocal": "mergeProps",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "prop",
+      "export": "prop",
+      "preferredLocal": "prop",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "keyed",
+      "export": "keyed",
+      "preferredLocal": "keyed",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "runInScope",
+      "export": "runInScope",
+      "preferredLocal": "runInScope",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "createElement",
+      "export": "createElement",
+      "preferredLocal": "createElement",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "createElementInNamespace",
+      "export": "createElementInNamespace",
+      "preferredLocal": "createElementInNamespace",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "createElementInParentNamespace",
+      "export": "createElementInParentNamespace",
+      "preferredLocal": "createElementInParentNamespace",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "elementNamespaceMatches",
+      "export": "__fictElementNamespaceMatches",
+      "preferredLocal": "__fictElementNamespaceMatches",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "conditional",
+      "export": "createConditional",
+      "preferredLocal": "createConditional",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "keyedList",
+      "export": "createKeyedList",
+      "preferredLocal": "createKeyedList",
+      "module": "list",
+      "stability": "core"
+    },
+    {
+      "key": "insert",
+      "export": "insert",
+      "preferredLocal": "insert",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "insertBetween",
+      "export": "insertBetween",
+      "preferredLocal": "insertBetween",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "resolvePath",
+      "export": "resolvePath",
+      "preferredLocal": "resolvePath",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "getSlotEnd",
+      "export": "getSlotEnd",
+      "preferredLocal": "getSlotEnd",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "onDestroy",
+      "export": "onDestroy",
+      "preferredLocal": "onDestroy",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "bindText",
+      "export": "bindText",
+      "preferredLocal": "bindText",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "bindTextContent",
+      "export": "bindTextContent",
+      "preferredLocal": "bindTextContent",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "bindAttribute",
+      "export": "bindAttribute",
+      "preferredLocal": "bindAttribute",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "bindProperty",
+      "export": "bindProperty",
+      "preferredLocal": "bindProperty",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "bindClass",
+      "export": "bindClass",
+      "preferredLocal": "bindClass",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "bindStyle",
+      "export": "bindStyle",
+      "preferredLocal": "bindStyle",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "setText",
+      "export": "setText",
+      "preferredLocal": "setText",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "setTextContent",
+      "export": "setTextContent",
+      "preferredLocal": "setTextContent",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "setAttr",
+      "export": "setAttr",
+      "preferredLocal": "setAttr",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "setProp",
+      "export": "setProp",
+      "preferredLocal": "setProp",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "setClass",
+      "export": "setClass",
+      "preferredLocal": "setClass",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "setStyle",
+      "export": "setStyle",
+      "preferredLocal": "setStyle",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "renderEffect",
+      "export": "createRenderEffect",
+      "preferredLocal": "createRenderEffect",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "bindEvent",
+      "export": "bindEvent",
+      "preferredLocal": "bindEvent",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "addEventListener",
+      "export": "addEventListener",
+      "preferredLocal": "addEventListener",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "callEventHandler",
+      "export": "callEventHandler",
+      "preferredLocal": "callEventHandler",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "bindRef",
+      "export": "bindRef",
+      "preferredLocal": "bindRef",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "spread",
+      "export": "spread",
+      "preferredLocal": "spread",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "nonReactive",
+      "export": "nonReactive",
+      "preferredLocal": "nonReactive",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "toNodeArray",
+      "export": "toNodeArray",
+      "preferredLocal": "toNodeArray",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "template",
+      "export": "template",
+      "preferredLocal": "template",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "delegateEvents",
+      "export": "delegateEvents",
+      "preferredLocal": "delegateEvents",
+      "module": "internal",
+      "stability": "core"
+    },
+    {
+      "key": "useLexicalScope",
+      "export": "__fictUseLexicalScope",
+      "preferredLocal": "__fictUseLexicalScope",
+      "module": "internal",
+      "stability": "preview"
+    },
+    {
+      "key": "getScopeProps",
+      "export": "__fictGetScopeProps",
+      "preferredLocal": "__fictGetScopeProps",
+      "module": "internal",
+      "stability": "preview"
+    },
+    {
+      "key": "setComponentMeta",
+      "export": "__fictSetComponentMeta",
+      "preferredLocal": "__fictSetComponentMeta",
+      "module": "internal",
+      "stability": "preview"
+    },
+    {
+      "key": "getComponentMeta",
+      "export": "__fictGetComponentMeta",
+      "preferredLocal": "__fictGetComponentMeta",
+      "module": "internal",
+      "stability": "preview"
+    },
+    {
+      "key": "qrl",
+      "export": "__fictQrl",
+      "preferredLocal": "__fictQrl",
+      "module": "internal",
+      "stability": "preview"
+    },
+    {
+      "key": "getSSRScope",
+      "export": "__fictGetSSRScope",
+      "preferredLocal": "__fictGetSSRScope",
+      "module": "internal",
+      "stability": "preview"
+    },
+    {
+      "key": "ensureScope",
+      "export": "__fictEnsureScope",
+      "preferredLocal": "__fictEnsureScope",
+      "module": "internal",
+      "stability": "preview"
+    },
+    {
+      "key": "prepareContext",
+      "export": "__fictPrepareContext",
+      "preferredLocal": "__fictPrepareContext",
+      "module": "internal",
+      "stability": "preview"
+    },
+    {
+      "key": "enterHydration",
+      "export": "__fictEnterHydration",
+      "preferredLocal": "__fictEnterHydration",
+      "module": "internal",
+      "stability": "preview"
+    },
+    {
+      "key": "exitHydration",
+      "export": "__fictExitHydration",
+      "preferredLocal": "__fictExitHydration",
+      "module": "internal",
+      "stability": "preview"
+    },
+    {
+      "key": "domRender",
+      "export": "render",
+      "preferredLocal": "render",
+      "module": "internal",
+      "stability": "preview"
+    },
+    {
+      "key": "hydrateComponent",
+      "export": "hydrateComponent",
+      "preferredLocal": "hydrateComponent",
+      "module": "internal",
+      "stability": "preview"
+    },
+    {
+      "key": "registerResume",
+      "export": "__fictRegisterResume",
+      "preferredLocal": "__fictRegisterResume",
+      "module": "internal",
+      "stability": "preview"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "name": "@fictjs/compiler-win32-x64-msvc",
+  "version": "0.28.0",
+  "description": "Fict Rust compiler native binding for Windows x64",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fictjs/fict.git",
+    "directory": "packages/compiler-win32-x64-msvc"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "fict_compiler_napi.node",
+  "files": [
+    "fict_compiler_napi.node",
+    "binding-manifest.json",
+    "SHASUMS256.txt"
+  ],
+  "fictNative": {
+    "target": "win32-x64-msvc",
+    "rustTarget": "x86_64-pc-windows-msvc",
+    "binary": "fict_compiler_napi.node"
+  }
+}

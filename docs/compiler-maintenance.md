@@ -4,22 +4,36 @@ Fict's compiler is intentionally deep: HIR, SSA, CFG structurizing, scope
 analysis, shape inference, region grouping, optimizer passes, and codegen all
 carry real product behavior. That depth needs explicit maintenance guardrails.
 
-## Complexity Report
+## Complexity Reports
 
 Run:
 
 ```bash
 pnpm guardrails:compiler-complexity
+pnpm guardrails:rust-crates
 ```
 
-The report scans `packages/compiler/src`, prints the largest TypeScript files,
-and fails when a file or total effective-source budget is exceeded. Effective
-source lines exclude blank lines and pure comment lines, so formatting-only
-changes cannot move the guardrail.
+The TypeScript report scans `packages/compiler/src`, prints the largest legacy
+compiler files, and fails when a file or total effective-source budget is
+exceeded. Effective source lines exclude blank lines and pure comment lines, so
+formatting-only changes cannot move that guardrail.
+
+The Rust guardrail checks both crate dependency boundaries and raw `.rs` source
+lines. It fails when the workspace crate set changes without review, any crate
+or the workspace exceeds its ceiling, or a file exceeds the default ceiling
+without an explicit exception. Existing oversized files are named explicitly,
+so splitting one below the default ceiling also requires deleting its stale
+exception.
 
 Budget values live in `scripts/compiler-complexity-report.mjs`; do not copy
 them into docs. Treat the script as the source of truth for large-file budgets,
 the default per-file budget, and the total compiler source budget.
+
+Rust budgets live in
+`.github/rust-compiler-complexity-budget.json`. Budget increases require a
+dedicated, justified commit. New crates must also be approved in
+`scripts/check-rust-crate-boundaries.mjs`; adding a directory alone is not
+enough.
 
 These budgets are not goals. They are ceilings that keep already-large files
 from growing silently while the compiler is split into smaller units.
@@ -44,8 +58,11 @@ When touching one of the budgeted files:
 3. Run `pnpm release:compiler:verify` for behavior changes.
 4. Run `pnpm guardrails:compiler-complexity` after any meaningful compiler
    refactor.
-5. Lower the relevant file budget only after the extraction lands.
-6. Preserve the pass ownership and invariants in
+5. Run `pnpm guardrails:rust-crates` after changing Rust compiler sources or
+   crate dependencies.
+6. Lower the relevant TypeScript or Rust file/crate budget after an extraction
+   lands; do not leave stale headroom.
+7. Preserve the pass ownership and invariants in
    `docs/compiler-pass-invariants.md`.
 
 ## Compile-Time Profiling
@@ -57,7 +74,7 @@ pnpm bench:optimizer:guard
 pnpm guardrails:hir
 ```
 
-For release candidates, `pnpm release:verify:clean` runs the complexity report as part
-of the top-level gate. `pnpm release:compiler:verify` also runs compiler lint,
-typecheck, tests, HIR guardrails, optimizer guardrails, and the complexity
-report for compiler-focused changes.
+For release candidates, `pnpm release:verify:clean` runs both complexity
+reports as part of the top-level gate. `pnpm release:compiler:verify` also runs
+compiler lint, typecheck, tests, Rust crate boundaries, HIR guardrails, and
+optimizer guardrails for compiler-focused changes.

@@ -17,6 +17,71 @@ compiles to a fine-grained graph with fail-closed reactivity guarantees.
 Use `strictGuarantee: false` as an inventory tool, not as a long-term app
 profile. Production builds force strict guarantee back on.
 
+## Compiler Backend Migration
+
+The OXC-native compiler is available as an explicit beta while Vite keeps the
+legacy backend as its default. Select one backend for the entire build:
+
+```ts
+import fict from '@fictjs/vite-plugin'
+
+export default {
+  plugins: [fict({ backend: 'rust' })],
+}
+```
+
+Use `FICT_COMPILER_BACKEND=rust` for an application-wide CI trial and
+`FICT_COMPILER_BACKEND=legacy` for operational rollback. An explicit plugin
+option takes precedence over the environment. Do not choose the backend from a
+per-file callback or retry a failed Rust file through Babel.
+
+With `backend: 'rust'`, the Vite runtime graph uses the native compiler and the
+Babel-free compiler graph host. Babel packages can remain installed during the
+compatibility window, but neither they nor `@fictjs/compiler/legacy` are
+evaluated by Rust compilation, including cache-key computation and structured
+handler consumption. `legacy` and `shadow` load that compatibility runtime only
+after their whole-build mode has been selected.
+
+Before changing an application, run shadow mode. It returns legacy output but
+creates a privacy-safe comparison artifact:
+
+```ts
+fict({
+  backend: 'shadow',
+  shadow: {
+    reportPath: '.fict-cache/compiler-shadow.json',
+    allowlistPath: '.github/compiler-shadow-allowlist.json',
+    failOnDifference: true,
+  },
+})
+```
+
+Copy and review the repository allowlist instead of adding a wildcard for a
+semantic category. Output-printer and helper-composition differences may be
+structural; diagnostics, metadata, semantic events, maps, and artifacts remain
+blocking.
+
+Webpack users should migrate from `@fictjs/babel-preset` to the native
+`@fictjs/webpack-plugin` loader. Direct compiler integrations can import the
+serializable `transformSync`, `transform`, `scan`, or `analyze` facade from
+`@fictjs/compiler/native`; the facade lazily selects and reuses the validated
+platform binding. Custom Babel pipelines that still
+need sibling plugins should run native Fict compilation as a separate first
+stage and compose source maps explicitly.
+
+`@fictjs/babel-preset` remains a tested whole-build legacy rollback during the
+compatibility window, but emits one development-time deprecation warning per
+process. Do not suppress that warning in committed configuration; migrate to an
+official Vite, Webpack, or direct native integration.
+
+Preview `resumable: true` is available with the Rust beta through compiler-owned
+structured handler artifacts. It remains explicit and Preview; native support
+does not graduate it or make it a Core default.
+
+See the [Rust compiler rollout](features/rust-compiler-rollout/rollout.md) and
+[rollback runbook](operations/runbooks/compiler-backend-rollback.md) for the
+candidate, cache, and review gates.
+
 ## Concept Map
 
 | Source concept           | Fict equivalent                                    |

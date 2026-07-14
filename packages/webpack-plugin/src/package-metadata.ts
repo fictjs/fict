@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto'
 import { readFileSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 
-import { parseModuleReactiveMetadata, type ModuleReactiveMetadata } from '@fictjs/compiler'
+import type { ModuleReactiveMetadata } from '@fictjs/compiler'
+import { parseModuleReactiveMetadata } from '@fictjs/compiler/graph-host'
 
 export type PackagePublicSubpath = '.' | `./${string}`
 

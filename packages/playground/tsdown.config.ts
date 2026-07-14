@@ -14,7 +14,6 @@ export default defineConfig([
     outExtensions: packageOutExtensions,
     deps: {
       neverBundle: external,
-      onlyBundle: [/^@babel\/(types|helper-validator-identifier|helper-string-parser)$/],
     },
   },
   {
@@ -31,7 +30,6 @@ export default defineConfig([
     },
     deps: {
       neverBundle: external,
-      onlyBundle: [/^@babel\/(types|helper-validator-identifier|helper-string-parser)$/],
     },
   },
 ])

@@ -5,6 +5,7 @@ import { packageOutExtensions } from '../../scripts/tsdown-presets.mjs'
 export default defineConfig({
   entry: {
     extension: 'src/extension.ts',
+    tooling: 'src/tooling.ts',
   },
   tsconfig: 'tsconfig.build.json',
   format: ['cjs'],

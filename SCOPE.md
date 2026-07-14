@@ -44,7 +44,7 @@ Fail any of the three → it is **not Core**. It is demoted, not deleted.
 | `fict`                     | **Core**      | Public API surface. Only `.`, `/jsx-runtime`, `/jsx-dev-runtime`, `/plus`, `/advanced` are guaranteed; `/experimental/loader` is Preview. |
 | `@fictjs/runtime`          | **Core**      | Reactive graph + fine-grained DOM.                                                                                                        |
 | `@fictjs/compiler`         | **Core**      | HIR/SSA/region lowering. The thesis lives here.                                                                                           |
-| `@fictjs/babel-preset`     | **Core**      | Compiler plumbing; versions with the compiler.                                                                                            |
+| `@fictjs/babel-preset`     | **Core**      | Legacy compiler plumbing during the Rust migration.                                                                                       |
 | `@fictjs/vite-plugin`      | **Core**      | The delivery mechanism. Without it nobody can use Fict.                                                                                   |
 | `@fictjs/eslint-plugin`    | **Core**      | Mirrors compiler diagnostics — part of the fail-closed DX, not an add-on.                                                                 |
 | `@fictjs/ssr`              | **Satellite** | `renderToString`/`renderToStream`/`renderToPipeableStream` are supported. Snapshot/resume/PPR behavior is **Preview** (see below).        |
@@ -55,6 +55,10 @@ Fail any of the three → it is **not Core**. It is demoted, not deleted.
 | `@fictjs/vscode-extension` | **Internal**  | Private editor extension distributed through the VS Code Marketplace, not npm. Feature-frozen.                                            |
 | `@fictjs/playground`       | **Internal**  | Private dev/demo tool.                                                                                                                    |
 | `fict-docs-site`           | **Internal**  | Already private.                                                                                                                          |
+
+`@fictjs/babel-preset` remains Core and lockstep throughout the compatibility
+window, then leaves Core in the coordinated breaking removal defined by
+[ADR-0003](./docs/adr/0003-retire-babel-preset.md).
 
 ### Preview surface (lives inside Core/Satellite packages, but NOT guaranteed)
 
