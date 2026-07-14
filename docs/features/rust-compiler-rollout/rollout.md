@@ -96,6 +96,16 @@ backend for only that file. Backend selection order and accepted values are
 owned by `FictPluginOptions` in the Vite plugin; `FICT_COMPILER_BACKEND` exists
 as the build-level operational override.
 
+The `rust` Vite runtime graph MUST use `@fictjs/compiler/graph-host` and the
+native facade without evaluating any Babel module or
+`@fictjs/compiler/legacy`. Compatibility packages may remain installed until
+M9. Only `legacy` and `shadow` may lazy-load the compatibility runtime after
+their whole-build mode is selected. Verification:
+`rust-backend-loading.test.ts` forces every forbidden module to fail on load
+while exercising cached TSX compilation and structured Preview handlers;
+`pnpm test:api-boundaries` rejects a static runtime import that would bypass
+that isolation.
+
 ## Shadow evidence
 
 Shadow mode compares status, diagnostic identity/location, module metadata,
@@ -192,6 +202,8 @@ Operational recovery is defined by the
 
 ```bash
 pnpm test:compiler:rollout-state
+pnpm --filter @fictjs/vite-plugin exec vitest run src/__tests__/rust-backend-loading.test.ts
+pnpm test:api-boundaries
 pnpm release:compiler:rust-rollout
 pnpm release:verify:clean
 ```

@@ -27,6 +27,31 @@ function containsStandaloneToken(text, token) {
   return new RegExp(`(^|[^\\w$])${escapeRegExp(token)}(?=$|[^\\w$])`).test(text)
 }
 
+function staticImports(text) {
+  const imports = []
+  const lines = text.split('\n')
+  for (let index = 0; index < lines.length; index += 1) {
+    const firstLine = lines[index]
+    if (!/^\s*import\s+(?!\()/.test(firstLine)) continue
+    let declaration = firstLine
+    while (
+      !/^\s*import\s*['"][^'"]+['"]\s*;?\s*$/.test(declaration) &&
+      !/\bfrom\s*['"][^'"]+['"]\s*;?\s*$/.test(declaration) &&
+      index + 1 < lines.length
+    ) {
+      index += 1
+      declaration += `\n${lines[index]}`
+    }
+    const source = /(?:\bfrom\s*|^\s*import\s*)['"]([^'"]+)['"]\s*;?\s*$/.exec(declaration)?.[1]
+    if (!source) continue
+    imports.push({
+      source,
+      typeOnly: /^\s*import\s+type\b/.test(declaration),
+    })
+  }
+  return imports
+}
+
 function trackedFiles() {
   try {
     return execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' })
@@ -196,6 +221,29 @@ if (
   /from\s+['"]@babel\//.test(compilerGraphHost)
 ) {
   fail('@fictjs/compiler/graph-host must not load the legacy compiler or Babel')
+}
+
+const viteForbiddenRuntimeImports = /^@babel\/|^@fictjs\/compiler\/legacy$/
+for (const file of [
+  'packages/vite-plugin/src/index.ts',
+  'packages/vite-plugin/src/legacy-compiler-runtime.ts',
+]) {
+  for (const imported of staticImports(readText(file))) {
+    if (!imported.typeOnly && viteForbiddenRuntimeImports.test(imported.source)) {
+      fail(`Vite Rust module graph must not statically load ${imported.source}: ${file}`)
+    }
+  }
+}
+
+for (const [source, expected] of [
+  ["import { transformAsync } from '@babel/core'", ['@babel/core']],
+  ["import type { PluginItem } from '@babel/core'", []],
+  ["type Core = typeof import('@babel/core')", []],
+]) {
+  const actual = staticImports(source)
+    .filter(imported => !imported.typeOnly && viteForbiddenRuntimeImports.test(imported.source))
+    .map(imported => imported.source)
+  assertEqualSet('Vite static runtime import matcher', actual, expected)
 }
 
 for (const packagePath of [

@@ -5,6 +5,8 @@ import path from 'node:path'
 import type { Plugin, ResolvedConfig, TransformResult } from 'vite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type * as LegacyCompilerRuntime from '../legacy-compiler-runtime'
+
 const mockBuildConfig = {
   command: 'build',
   mode: 'production',
@@ -36,6 +38,7 @@ const originalStrictGuaranteeEnv = process.env.FICT_STRICT_GUARANTEE
 afterEach(() => {
   vi.doUnmock('@fictjs/compiler/legacy')
   vi.doUnmock('../cache-fingerprint')
+  vi.doUnmock('../legacy-compiler-runtime')
   vi.resetModules()
   process.env.NODE_ENV = originalNodeEnv
   if (originalStrictGuaranteeEnv === undefined) {
@@ -138,13 +141,20 @@ async function transformWithFingerprints(
   cacheDir: string,
 ) {
   vi.resetModules()
-  vi.doMock('@fictjs/compiler/legacy', () => ({
-    getCompilerCacheFingerprint: () => compilerFingerprint,
-    createFictPlugin: () => ({
-      name: 'mock-fict-compiler',
-      visitor: {},
-    }),
-  }))
+  vi.doMock('../legacy-compiler-runtime', async importOriginal => {
+    const original = await importOriginal<typeof LegacyCompilerRuntime>()
+    return {
+      ...original,
+      getBabelLegacyRuntime: () => ({
+        ...original.getBabelLegacyRuntime(),
+        getCompilerCacheFingerprint: () => compilerFingerprint,
+        createFictPlugin: () => ({
+          name: 'mock-fict-compiler',
+          visitor: {},
+        }),
+      }),
+    }
+  })
   vi.doMock('../cache-fingerprint', () => ({
     createVitePluginCacheFingerprint: () => pluginFingerprint,
   }))
@@ -169,6 +179,7 @@ async function transformWithSplitMode(
   vi.resetModules()
   vi.doUnmock('@fictjs/compiler/legacy')
   vi.doUnmock('../cache-fingerprint')
+  vi.doUnmock('../legacy-compiler-runtime')
 
   const { default: fict } = await import('..')
   const plugin = fict({

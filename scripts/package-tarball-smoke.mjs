@@ -302,6 +302,105 @@ function writeTypeConsumer(filePath, mode, specifiers) {
   writeFileSync(filePath, `${imports.join('\n')}\nvoid [${values}]\n`)
 }
 
+function writeViteRustIsolationConsumer(filePath) {
+  writeFileSync(
+    filePath,
+    `'use strict'
+const Module = require('node:module')
+const forbidden = new Set([
+  '@babel/core',
+  '@babel/generator',
+  '@babel/helper-plugin-utils',
+  '@babel/parser',
+  '@babel/plugin-syntax-jsx',
+  '@babel/plugin-transform-typescript',
+  '@babel/traverse',
+  '@babel/types',
+  '@fictjs/compiler/legacy',
+])
+const compilerBuildId = 'fict-rust-p1-oxc0.139.0-m1-' + '7'.repeat(64)
+const scanResult = {
+  protocolVersion: 1,
+  moduleRequests: [],
+  hasModuleSyntax: true,
+  diagnostics: [],
+  compilerBuildId,
+}
+const nativeFacade = {
+  loadNativeCompilerBinding: () => ({
+    nativeCompilerInfo: () => ({
+      backend: 'rust',
+      nativeTarget: 'tarball-test',
+      oxcVersion: '0.139.0',
+      nodeApiVersion: 10,
+      compilerBuildId,
+      compilerProtocolVersion: 1,
+      metadataSchemaVersion: 1,
+    }),
+    scan: async () => scanResult,
+    scanSync: () => scanResult,
+    transform: async () => ({
+      protocolVersion: 1,
+      code: 'export const compiledFromTarball = true;\\n',
+      map: null,
+      diagnostics: [],
+      moduleMetadata: { version: 1, exports: {} },
+      metadataDependencies: [],
+      unresolvedMetadataRequests: [],
+      metadataIncomplete: false,
+      explain: null,
+      artifacts: [],
+      stats: null,
+      compilerBuildId,
+    }),
+  }),
+}
+const originalLoad = Module._load
+Module._load = function (request, parent, isMain) {
+  if (request === '@fictjs/compiler/native') return nativeFacade
+  if (forbidden.has(request)) throw new Error('Rust tarball path loaded ' + request)
+  return originalLoad.call(this, request, parent, isMain)
+}
+
+;(async () => {
+  const viteModule = require('@fictjs/vite-plugin')
+  const fict = viteModule.default ?? viteModule
+  const plugin = fict({
+    backend: 'rust',
+    functionSplitting: false,
+    useTypeScriptProject: false,
+    publicIdentityNamespace: 'tarball-test@1',
+  })
+  plugin.configResolved({
+    command: 'build',
+    mode: 'production',
+    root: '/project',
+    base: '/',
+    build: { ssr: true },
+    resolve: { alias: [], preserveSymlinks: false },
+  })
+  const result = await plugin.transform.call(
+    {
+      emitFile() {},
+      warn() {},
+      error(error) { throw error instanceof Error ? error : new Error(String(error)) },
+    },
+    'export function App() { return <main /> }',
+    '/project/src/App.tsx',
+  )
+  if (!result.code.includes('compiledFromTarball')) {
+    throw new Error('Vite Rust tarball transform did not use the native facade')
+  }
+})().finally(() => {
+  Module._load = originalLoad
+}).catch(error => {
+  console.error(error)
+  process.exitCode = 1
+})
+`,
+  )
+}
+
 function installedTargetUrl(consumerDir, entry) {
   const packageDir = path.resolve(consumerDir, 'node_modules', ...entry.packageName.split('/'))
   const targetPath = path.resolve(packageDir, entry.target)
@@ -515,6 +614,7 @@ async function main() {
     const esmTypesPath = path.join(consumerDir, 'consumer.mts')
     const cjsTypesPath = path.join(consumerDir, 'consumer.cts')
     const nonNodeEsmPath = path.join(consumerDir, 'consumer-non-node.mjs')
+    const viteRustIsolationPath = path.join(consumerDir, 'vite-rust-isolation.cjs')
     const nonNodeImports = collectNonNodeImportTargets(packedPackages)
     writeRuntimeConsumer(esmPath, 'esm', entries.esm)
     writeRuntimeConsumer(cjsPath, 'cjs', entries.cjs)
@@ -525,9 +625,11 @@ async function main() {
     )
     writeTypeConsumer(esmTypesPath, 'esm', entries.esmTypes)
     writeTypeConsumer(cjsTypesPath, 'cjs', entries.cjsTypes)
+    writeViteRustIsolationConsumer(viteRustIsolationPath)
 
     run(process.execPath, [esmPath], { cwd: consumerDir })
     run(process.execPath, [cjsPath], { cwd: consumerDir })
+    run(process.execPath, [viteRustIsolationPath], { cwd: consumerDir })
     if (nonNodeImports.length > 0) run(process.execPath, [nonNodeEsmPath], { cwd: consumerDir })
     const typeScriptBin = path.join(
       consumerDir,

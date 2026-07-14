@@ -35,6 +35,13 @@ Use `FICT_COMPILER_BACKEND=rust` for an application-wide CI trial and
 option takes precedence over the environment. Do not choose the backend from a
 per-file callback or retry a failed Rust file through Babel.
 
+With `backend: 'rust'`, the Vite runtime graph uses the native compiler and the
+Babel-free compiler graph host. Babel packages can remain installed during the
+compatibility window, but neither they nor `@fictjs/compiler/legacy` are
+evaluated by Rust compilation, including cache-key computation and structured
+handler consumption. `legacy` and `shadow` load that compatibility runtime only
+after their whole-build mode has been selected.
+
 Before changing an application, run shadow mode. It returns legacy output but
 creates a privacy-safe comparison artifact:
 
@@ -67,8 +74,9 @@ compatibility window, but emits one development-time deprecation warning per
 process. Do not suppress that warning in committed configuration; migrate to an
 official Vite, Webpack, or direct native integration.
 
-Preview `resumable: true` remains on legacy until the separate Preview native
-milestone completes. Core Rust readiness does not graduate Preview.
+Preview `resumable: true` is available with the Rust beta through compiler-owned
+structured handler artifacts. It remains explicit and Preview; native support
+does not graduate it or make it a Core default.
 
 See the [Rust compiler rollout](features/rust-compiler-rollout/rollout.md) and
 [rollback runbook](operations/runbooks/compiler-backend-rollback.md) for the

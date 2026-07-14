@@ -5,13 +5,10 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { transformAsync, type PluginItem } from '@babel/core'
-import _generate from '@babel/generator'
-import { parse, parseExpression, type ParserPlugin } from '@babel/parser'
-import transformTypeScript from '@babel/plugin-transform-typescript'
-import _traverse from '@babel/traverse'
+import type { PluginItem } from '@babel/core'
+import type { ParserPlugin } from '@babel/parser'
 import type { NodePath, Scope } from '@babel/traverse'
-import * as t from '@babel/types'
+import type * as BabelTypes from '@babel/types'
 import type {
   CompileRequest,
   CompileResult,
@@ -28,7 +25,6 @@ import type {
   ScanResult,
 } from '@fictjs/compiler'
 import { resolvePackageModuleMetadata } from '@fictjs/compiler/graph-host'
-import { createFictPlugin, getCompilerCacheFingerprint } from '@fictjs/compiler/legacy'
 import {
   loadNativeCompilerBinding,
   type NativeCompilerBinding,
@@ -46,12 +42,22 @@ import {
 
 import { createVitePluginCacheFingerprint } from './cache-fingerprint'
 import {
+  babelGenerate as generate,
+  babelParse as parse,
+  babelTraverse as traverse,
+  babelTypes as t,
+  getBabelLegacyRuntime,
+  type BabelGenerator,
+} from './legacy-compiler-runtime'
+import {
   CompilerShadowRecorder,
   type CompilerShadowBackendSnapshot,
   type CompilerShadowDiagnostic,
   type CompilerShadowModuleResult,
   type CompilerShadowSemanticEvent,
 } from './shadow-rollout'
+
+const requireFromVitePlugin = createRequire(import.meta.url)
 
 export type {
   CompilerShadowArtifact,
@@ -60,13 +66,6 @@ export type {
   CompilerShadowModuleResult,
 } from './shadow-rollout'
 
-// Handle ESM/CJS interop for Babel packages
-const traverse = (
-  typeof _traverse === 'function' ? _traverse : (_traverse as { default: typeof _traverse }).default
-) as typeof _traverse
-const generate = (
-  typeof _generate === 'function' ? _generate : (_generate as { default: typeof _generate }).default
-) as typeof _generate
 // Babel's parser exposes the current standard decorator grammar as `decorators`;
 // semantic version selection belongs to the downstream decorator transform.
 const STANDARD_DECORATOR_PARSER_PLUGINS: ParserPlugin[] = ['decorators', 'decoratorAutoAccessors']
@@ -81,7 +80,7 @@ const PACKAGE_METADATA_WATCH_GLOBS = [
   '!**/node_modules/**/*.json',
 ] as const
 
-type BabelGeneratorOptions = NonNullable<Parameters<typeof generate>[1]>
+type BabelGeneratorOptions = NonNullable<Parameters<BabelGenerator>[1]>
 
 export type FictCompilerBackend = 'legacy' | 'rust' | 'shadow'
 
@@ -423,7 +422,7 @@ let transformCacheFingerprint: string | undefined
 function getTransformCacheFingerprint(): string {
   return (transformCacheFingerprint ??= hashString(
     [
-      hashString(getCompilerCacheFingerprint()),
+      hashString(getBabelLegacyRuntime().getCompilerCacheFingerprint()),
       createVitePluginCacheFingerprint([String(extractAndRewriteHandlers)]),
     ].join('|'),
   ))
@@ -3758,43 +3757,140 @@ interface DeclaredTypeScriptConfigDependencies {
   referenced: string[]
 }
 
-function getStaticObjectProperty(object: t.ObjectExpression, name: string): t.Expression | null {
-  for (let index = object.properties.length - 1; index >= 0; index -= 1) {
-    const property = object.properties[index]
-    if (!t.isObjectProperty(property) || property.computed) continue
-    const key = property.key
-    const keyName = t.isIdentifier(key) ? key.name : t.isStringLiteral(key) ? key.value : null
-    if (keyName !== name || !t.isExpression(property.value)) continue
-    return property.value
+function stripJsonComments(source: string): string {
+  let output = ''
+  let inString = false
+  let escaped = false
+  let lineComment = false
+  let blockComment = false
+
+  for (let index = 0; index < source.length; index++) {
+    const char = source[index]!
+    const next = source[index + 1]
+    if (lineComment) {
+      if (char === '\n' || char === '\r') {
+        lineComment = false
+        output += char
+      }
+      continue
+    }
+    if (blockComment) {
+      if (char === '*' && next === '/') {
+        blockComment = false
+        output += '  '
+        index++
+      } else {
+        output += char === '\n' || char === '\r' ? char : ' '
+      }
+      continue
+    }
+    if (inString) {
+      output += char
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') inString = false
+      continue
+    }
+    if (char === '"') {
+      inString = true
+      output += char
+      continue
+    }
+    if (char === '/' && next === '/') {
+      lineComment = true
+      output += '  '
+      index++
+      continue
+    }
+    if (char === '/' && next === '*') {
+      blockComment = true
+      output += '  '
+      index++
+      continue
+    }
+    output += char
   }
-  return null
+  return output
+}
+
+function stripJsonTrailingCommas(source: string): string {
+  let output = ''
+  let inString = false
+  let escaped = false
+  for (let index = 0; index < source.length; index++) {
+    const char = source[index]!
+    if (inString) {
+      output += char
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') inString = false
+      continue
+    }
+    if (char === '"') {
+      inString = true
+      output += char
+      continue
+    }
+    if (char === ',') {
+      let nextIndex = index + 1
+      while (/\s/.test(source[nextIndex] ?? '')) nextIndex++
+      if (source[nextIndex] === '}' || source[nextIndex] === ']') continue
+    }
+    output += char
+  }
+  return output
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function parseTypeScriptConfigObject(
+  configPath: string,
+  source: string,
+): Record<string, unknown> | null {
+  const loaders = [createRequire(configPath), requireFromVitePlugin]
+  for (const load of loaders) {
+    try {
+      const ts = load('typescript') as Partial<TypeScriptApi>
+      const result = ts.parseConfigFileTextToJson?.(configPath, source)
+      if (result && !result.error && isObjectRecord(result.config)) return result.config
+    } catch {
+      // TypeScript is an optional host dependency; use the JSONC fallback below.
+    }
+  }
+  try {
+    const parsed = JSON.parse(stripJsonTrailingCommas(stripJsonComments(source))) as unknown
+    return isObjectRecord(parsed) ? parsed : null
+  } catch {
+    return null
+  }
 }
 
 function readDeclaredTypeScriptConfigDependencies(
   configPath: string,
 ): DeclaredTypeScriptConfigDependencies | null {
-  let expression: t.Expression
+  let source: string
   try {
-    expression = parseExpression(readFileSync(configPath, 'utf8').replace(/^\uFEFF/, ''), {
-      sourceType: 'script',
-    })
+    source = readFileSync(configPath, 'utf8').replace(/^\uFEFF/, '')
   } catch {
     return null
   }
-  if (!t.isObjectExpression(expression)) return null
+  const config = parseTypeScriptConfigObject(configPath, source)
+  if (!config) return null
 
-  const extendedValue = getStaticObjectProperty(expression, 'extends')
-  const extended = t.isStringLiteral(extendedValue)
-    ? [extendedValue.value]
-    : t.isArrayExpression(extendedValue)
-      ? extendedValue.elements.filter(t.isStringLiteral).map(element => element.value)
-      : []
-  const referencedValue = getStaticObjectProperty(expression, 'references')
-  const referenced = t.isArrayExpression(referencedValue)
-    ? referencedValue.elements.flatMap(element => {
-        if (!t.isObjectExpression(element)) return []
-        const referencePath = getStaticObjectProperty(element, 'path')
-        return t.isStringLiteral(referencePath) ? [referencePath.value] : []
+  const extendedValue = config.extends
+  const extended =
+    typeof extendedValue === 'string'
+      ? [extendedValue]
+      : Array.isArray(extendedValue)
+        ? extendedValue.filter((value): value is string => typeof value === 'string')
+        : []
+  const referencedValue = config.references
+  const referenced = Array.isArray(referencedValue)
+    ? referencedValue.flatMap(reference => {
+        if (!isObjectRecord(reference)) return []
+        return typeof reference.path === 'string' ? [reference.path] : []
       })
     : []
   return { extended, referenced }
@@ -3943,6 +4039,15 @@ function resolveTypeScriptImportElision(
   return pending
 }
 
+function classifyTypeScriptImportProbeOutput(code: string): TypeScriptImportElision {
+  const probeImport = new RegExp(
+    `(?:^|[;\\n])\\s*import\\s*([^;\\n]*?)["']${escapeRegExp(TYPESCRIPT_IMPORT_PROBE_SOURCE)}["']`,
+    'm',
+  ).exec(code)
+  if (!probeImport) return 'remove'
+  return probeImport[1]?.trim() ? 'verbatim' : 'preserve-side-effect'
+}
+
 async function resolveTypeScriptImportElisionUncached(
   state: MetadataTransformState,
   filename: string,
@@ -3989,13 +4094,7 @@ async function resolveTypeScriptImportElisionUncached(
     // that diagnostic or make standalone plugin integrations fail earlier.
     return 'remove'
   }
-  const ast = parse(result.code, { sourceType: 'module' })
-  const probeImport = ast.program.body.find(
-    (statement): statement is t.ImportDeclaration =>
-      t.isImportDeclaration(statement) && statement.source.value === TYPESCRIPT_IMPORT_PROBE_SOURCE,
-  )
-  if (!probeImport) return 'remove'
-  return probeImport.specifiers.length === 0 ? 'preserve-side-effect' : 'verbatim'
+  return classifyTypeScriptImportProbeOutput(result.code)
 }
 
 interface AliasEntry {
@@ -4125,7 +4224,7 @@ function getStronglyConnectedMetadataComponents(graph: Map<string, MetadataGraph
 
 function getImportSpecifierSemanticKey(
   source: string,
-  specifier: t.ImportDeclaration['specifiers'][number],
+  specifier: BabelTypes.ImportDeclaration['specifiers'][number],
 ): string {
   if (t.isImportDefaultSpecifier(specifier)) {
     return JSON.stringify([source, 'default', specifier.local.name])
@@ -4145,7 +4244,7 @@ function preserveTypeScriptImportSideEffects(): PluginItem {
     name: 'fict-preserve-typescript-import-side-effects',
     visitor: {
       Program: {
-        enter(programPath: NodePath<t.Program>) {
+        enter(programPath: NodePath<BabelTypes.Program>) {
           for (const statement of programPath.node.body) {
             if (!t.isImportDeclaration(statement)) continue
             for (const specifier of statement.specifiers) {
@@ -4153,7 +4252,7 @@ function preserveTypeScriptImportSideEffects(): PluginItem {
             }
           }
         },
-        exit(programPath: NodePath<t.Program>) {
+        exit(programPath: NodePath<BabelTypes.Program>) {
           programPath.scope.crawl()
           for (const statement of programPath.get('body')) {
             if (!statement.isImportDeclaration() || statement.node.specifiers.length === 0) {
@@ -4178,7 +4277,7 @@ function lowerCtsModuleSyntax(): PluginItem {
   return {
     name: 'fict-lower-cts-module-syntax',
     visitor: {
-      TSImportEqualsDeclaration(importPath: NodePath<t.TSImportEqualsDeclaration>) {
+      TSImportEqualsDeclaration(importPath: NodePath<BabelTypes.TSImportEqualsDeclaration>) {
         const { node } = importPath
         if (node.importKind === 'type') {
           importPath.remove()
@@ -4202,7 +4301,7 @@ function lowerCtsModuleSyntax(): PluginItem {
           importPath.replaceWith(declaration)
         }
       },
-      TSExportAssignment(exportPath: NodePath<t.TSExportAssignment>) {
+      TSExportAssignment(exportPath: NodePath<BabelTypes.TSExportAssignment>) {
         const declaration = t.exportDefaultDeclaration(exportPath.node.expression)
         t.inheritsComments(declaration, exportPath.node)
         exportPath.replaceWith(declaration)
@@ -4639,6 +4738,7 @@ async function compileFictCompilerStage(
     return consumeNativeCompileResult(result, code, filename, fictOptions)
   }
 
+  const { createFictPlugin, transformAsync, transformTypeScript } = getBabelLegacyRuntime()
   const isTypeScript = TYPESCRIPT_EXTENSIONS.some(extension => filename.endsWith(extension))
   const isTSX = filename.endsWith('.tsx')
   const isExplicitModuleTypeScript = filename.endsWith('.mts') || filename.endsWith('.cts')
@@ -5683,7 +5783,7 @@ const GLOBAL_IDENTIFIERS = new Set([
   'HTMLElement',
 ])
 
-function collectRuntimeHelperImports(body: t.Statement[]): Map<string, string> {
+function collectRuntimeHelperImports(body: BabelTypes.Statement[]): Map<string, string> {
   const helperImports = new Map<string, string>()
 
   for (const stmt of body) {
@@ -5704,7 +5804,7 @@ function collectRuntimeHelperImports(body: t.Statement[]): Map<string, string> {
 }
 
 function collectRuntimeHelperUsages(
-  handlerPath: NodePath<t.Node>,
+  handlerPath: NodePath<BabelTypes.Node>,
   runtimeHelperImports: Map<string, string>,
 ): RuntimeHelperUsage[] {
   const used = new Map<string, string>()
@@ -5750,7 +5850,7 @@ function isRuntimeHelperImportBinding(
   return importedName === helperName
 }
 
-function isTypeOnlyIdentifierPath(path: NodePath<t.Identifier>): boolean {
+function isTypeOnlyIdentifierPath(path: NodePath<BabelTypes.Identifier>): boolean {
   return Boolean(
     path.findParent(
       parent =>
@@ -5767,12 +5867,14 @@ function isTypeOnlyIdentifierPath(path: NodePath<t.Identifier>): boolean {
   )
 }
 
-function isTypeOnlyImportSpecifier(specifier: t.ImportDeclaration['specifiers'][number]): boolean {
+function isTypeOnlyImportSpecifier(
+  specifier: BabelTypes.ImportDeclaration['specifiers'][number],
+): boolean {
   return t.isImportSpecifier(specifier) && specifier.importKind === 'type'
 }
 
 function collectHandlerTopLevelReferences(
-  handlerPath: NodePath<t.Node>,
+  handlerPath: NodePath<BabelTypes.Node>,
   programScope: Scope,
   topLevelDeclarations: Set<string>,
   runtimeHelperImports: Map<string, string>,
@@ -5801,13 +5903,13 @@ function collectHandlerTopLevelReferences(
 }
 
 function collectHandlerMutableTopLevelWrites(
-  handlerPath: NodePath<t.Node>,
+  handlerPath: NodePath<BabelTypes.Node>,
   programScope: Scope,
   mutableTopLevelDeclarations: Set<string>,
 ): Set<string> {
   const written = new Set<string>()
 
-  const addIdentifier = (identifierPath: NodePath<t.Identifier>) => {
+  const addIdentifier = (identifierPath: NodePath<BabelTypes.Identifier>) => {
     const name = identifierPath.node.name
     if (!mutableTopLevelDeclarations.has(name)) return
 
@@ -5817,7 +5919,7 @@ function collectHandlerMutableTopLevelWrites(
     written.add(name)
   }
 
-  const collectAssignedPattern = (patternPath: NodePath<t.Node>) => {
+  const collectAssignedPattern = (patternPath: NodePath<BabelTypes.Node>) => {
     if (patternPath.isIdentifier()) {
       addIdentifier(patternPath)
       return
@@ -5826,9 +5928,9 @@ function collectHandlerMutableTopLevelWrites(
     if (patternPath.isObjectPattern()) {
       for (const propertyPath of patternPath.get('properties')) {
         if (propertyPath.isObjectProperty()) {
-          collectAssignedPattern(propertyPath.get('value') as NodePath<t.Node>)
+          collectAssignedPattern(propertyPath.get('value') as NodePath<BabelTypes.Node>)
         } else if (propertyPath.isRestElement()) {
-          collectAssignedPattern(propertyPath.get('argument') as NodePath<t.Node>)
+          collectAssignedPattern(propertyPath.get('argument') as NodePath<BabelTypes.Node>)
         }
       }
       return
@@ -5837,25 +5939,25 @@ function collectHandlerMutableTopLevelWrites(
     if (patternPath.isArrayPattern()) {
       for (const elementPath of patternPath.get('elements')) {
         if (elementPath.node) {
-          collectAssignedPattern(elementPath as NodePath<t.Node>)
+          collectAssignedPattern(elementPath as NodePath<BabelTypes.Node>)
         }
       }
       return
     }
 
     if (patternPath.isRestElement()) {
-      collectAssignedPattern(patternPath.get('argument') as NodePath<t.Node>)
+      collectAssignedPattern(patternPath.get('argument') as NodePath<BabelTypes.Node>)
       return
     }
 
     if (patternPath.isAssignmentPattern()) {
-      collectAssignedPattern(patternPath.get('left') as NodePath<t.Node>)
+      collectAssignedPattern(patternPath.get('left') as NodePath<BabelTypes.Node>)
     }
   }
 
   handlerPath.traverse({
     AssignmentExpression(path) {
-      collectAssignedPattern(path.get('left') as NodePath<t.Node>)
+      collectAssignedPattern(path.get('left') as NodePath<BabelTypes.Node>)
     },
 
     UpdateExpression(path) {
@@ -5868,14 +5970,14 @@ function collectHandlerMutableTopLevelWrites(
     ForInStatement(path) {
       const leftPath = path.get('left')
       if (!leftPath.isVariableDeclaration()) {
-        collectAssignedPattern(leftPath as NodePath<t.Node>)
+        collectAssignedPattern(leftPath as NodePath<BabelTypes.Node>)
       }
     },
 
     ForOfStatement(path) {
       const leftPath = path.get('left')
       if (!leftPath.isVariableDeclaration()) {
-        collectAssignedPattern(leftPath as NodePath<t.Node>)
+        collectAssignedPattern(leftPath as NodePath<BabelTypes.Node>)
       }
     },
   })
@@ -5883,7 +5985,7 @@ function collectHandlerMutableTopLevelWrites(
   return written
 }
 
-function hasModuleContextSensitiveHandlerSyntax(handlerPath: NodePath<t.Node>): boolean {
+function hasModuleContextSensitiveHandlerSyntax(handlerPath: NodePath<BabelTypes.Node>): boolean {
   let found = false
 
   handlerPath.traverse({
@@ -5921,7 +6023,7 @@ function hasModuleContextSensitiveHandlerSyntax(handlerPath: NodePath<t.Node>): 
 /**
  * Collect identifier names from a pattern (for destructuring).
  */
-function collectPatternIdentifiers(pattern: t.LVal | t.PatternLike): string[] {
+function collectPatternIdentifiers(pattern: BabelTypes.LVal | BabelTypes.PatternLike): string[] {
   const names: string[] = []
 
   if (t.isIdentifier(pattern)) {
@@ -5949,11 +6051,11 @@ function collectPatternIdentifiers(pattern: t.LVal | t.PatternLike): string[] {
   return names
 }
 
-function getExportedName(exported: t.ExportSpecifier['exported']): string {
+function getExportedName(exported: BabelTypes.ExportSpecifier['exported']): string {
   return t.isIdentifier(exported) ? exported.name : exported.value
 }
 
-function collectExportedNames(body: t.Statement[]): Set<string> {
+function collectExportedNames(body: BabelTypes.Statement[]): Set<string> {
   const names = new Set<string>()
 
   for (const node of body) {
@@ -6165,8 +6267,8 @@ function extractAndRewriteHandlers(
   }
 
   const handlerNames: string[] = []
-  const nodesToRemove = new Set<t.Node>()
-  const handlerDeclaratorsToRemove = new Set<t.VariableDeclarator>()
+  const nodesToRemove = new Set<BabelTypes.Node>()
+  const handlerDeclaratorsToRemove = new Set<BabelTypes.VariableDeclarator>()
   const dependencyExportNames = new Map<string, string>()
   const runtimeImportFamily = detectRuntimeImportFamilyFromCode(ast.program.body)
 
@@ -6413,7 +6515,7 @@ function extractAndRewriteHandlers(
   // Add private re-exports for local dependencies used by handlers.
   // Generated names include a stable hash and collision suffix when needed.
   if (dependencyExportNames.size > 0) {
-    const reExports: t.ExportSpecifier[] = []
+    const reExports: BabelTypes.ExportSpecifier[] = []
     for (const [localName, exportName] of dependencyExportNames) {
       reExports.push(t.exportSpecifier(t.identifier(localName), t.identifier(exportName)))
     }
