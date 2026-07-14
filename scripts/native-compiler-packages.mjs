@@ -689,12 +689,42 @@ function loadNativeRuntimeEvidence(directory) {
   })
 }
 
-export function validateNativeRuntimeEvidenceMatrix(documents, { expectedRevision } = {}) {
+function nativeBundleIdentity(bundle) {
+  return Object.freeze({
+    packageVersion: bundle.packageManifest.version,
+    binarySha256: bundle.sha256,
+    tarballSha256: bundle.tarballSha256,
+    tarballBytes: bundle.buildEvidence.tarballBytes,
+    unpackedBytes: bundle.buildEvidence.unpackedBytes,
+    sizeGate: bundle.buildEvidence.sizeGate,
+  })
+}
+
+function loadNativeReleaseBundleIdentities(directory) {
+  const artifactsRoot = path.resolve(directory)
+  return new Map(
+    NATIVE_COMPILER_TARGETS.map(definition => {
+      const bundle = verifyNativeBundle({
+        target: definition.target,
+        bundleDirectory: path.join(artifactsRoot, nativeArtifactName(definition.target)),
+      })
+      return [definition.target, nativeBundleIdentity(bundle)]
+    }),
+  )
+}
+
+export function validateNativeRuntimeEvidenceMatrix(
+  documents,
+  { expectedRevision, nativeBundles } = {},
+) {
   if (!Array.isArray(documents)) {
     throw new TypeError('Native runtime evidence must be an array')
   }
   if (!GIT_REVISION_PATTERN.test(expectedRevision ?? '')) {
     throw new TypeError('expectedRevision must be a lowercase 40-character Git SHA-1')
+  }
+  if (!(nativeBundles instanceof Map)) {
+    throw new TypeError('nativeBundles must be a Map of verified release bundle identities')
   }
 
   const expectedPairs = new Set(
@@ -711,6 +741,11 @@ export function validateNativeRuntimeEvidenceMatrix(documents, { expectedRevisio
   if (documents.length !== expectedPairs.size) {
     failures.push(
       `expected exactly ${expectedPairs.size} target/Node certifications; found ${documents.length}`,
+    )
+  }
+  if (nativeBundles.size !== NATIVE_COMPILER_TARGETS.length) {
+    failures.push(
+      `expected exactly ${NATIVE_COMPILER_TARGETS.length} native release bundles; found ${nativeBundles.size}`,
     )
   }
 
@@ -863,6 +898,26 @@ export function validateNativeRuntimeEvidenceMatrix(documents, { expectedRevisio
         `${definition.target} Node lanes must certify the same bundle; changed ${changedFields.join(', ')}`,
       )
     }
+
+    const releaseBundle = nativeBundles.get(definition.target)
+    if (!releaseBundle) {
+      failures.push(`missing release bundle for ${definition.target}`)
+      continue
+    }
+    const mismatchedReleaseFields = bundleFields
+      .filter(field => field !== 'compilerBuildId' && field !== 'compilerBuildRevision')
+      .filter(field => JSON.stringify(baseline[field]) !== JSON.stringify(releaseBundle[field]))
+    if (mismatchedReleaseFields.length > 0) {
+      failures.push(
+        `${definition.target} runtime evidence does not match the release bundle; changed ${mismatchedReleaseFields.join(', ')}`,
+      )
+    }
+  }
+
+  for (const target of nativeBundles.keys()) {
+    if (!NATIVE_COMPILER_TARGETS.some(definition => definition.target === target)) {
+      failures.push(`unexpected release bundle for ${String(target)}`)
+    }
   }
 
   if (failures.length > 0) {
@@ -875,6 +930,7 @@ export function validateNativeRuntimeEvidenceMatrix(documents, { expectedRevisio
     targets: NATIVE_COMPILER_TARGETS.length,
     nodeLanes: Object.freeze([...NATIVE_COMPILER_NODE_LANES]),
     certifications: expectedPairs.size,
+    bundles: NATIVE_COMPILER_TARGETS.length,
     packageVersion: [...packageVersions][0],
     compilerBuildId: [...compilerBuildIds][0],
     compilerBuildRevision: expectedRevision,
@@ -937,9 +993,15 @@ function main() {
     return
   }
   if (command === 'verify-runtime-evidence') {
+    if (!options.evidence || !options.artifacts || !options.revision) {
+      throw new Error('verify-runtime-evidence requires --evidence, --artifacts, and --revision')
+    }
     const result = validateNativeRuntimeEvidenceMatrix(
       loadNativeRuntimeEvidence(options.evidence),
-      { expectedRevision: options.revision },
+      {
+        expectedRevision: options.revision,
+        nativeBundles: loadNativeReleaseBundleIdentities(options.artifacts),
+      },
     )
     process.stdout.write(`${JSON.stringify(result)}\n`)
     return

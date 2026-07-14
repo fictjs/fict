@@ -224,6 +224,7 @@ jobs:
           node scripts/native-compiler-packages.mjs
           verify-runtime-evidence
           --evidence "${RUNNER_TEMP}/native-evidence"
+          --artifacts "${RUNNER_TEMP}/native-packages"
           --revision "${GITHUB_SHA}"
 
       - name: Preflight the complete atomic native publish set

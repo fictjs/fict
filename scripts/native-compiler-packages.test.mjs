@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -33,14 +33,15 @@ import { prepareReleaseArtifacts, validateReleasePublishPlan } from './publish-r
 const RUNTIME_REVISION = 'a'.repeat(40)
 const RUNTIME_BUILD_ID = `fict-rust-p1-oxc0.139.0-m1-${'b'.repeat(64)}`
 
-function nativeRuntimeEvidenceFixture() {
+function nativeRuntimeEvidenceFixture(nativeBundles = new Map()) {
   const hashCharacters = '123456789abcdef0'
   return NATIVE_COMPILER_TARGETS.flatMap((target, targetIndex) => {
-    const binarySha256 = hashCharacters[targetIndex].repeat(64)
-    const tarballSha256 = hashCharacters[targetIndex + 8].repeat(64)
-    const tarballBytes = 1_000 + targetIndex
-    const unpackedBytes = 2_000 + targetIndex
-    const sizeGate = {
+    const releaseBundle = nativeBundles.get(target.target)
+    const binarySha256 = releaseBundle?.binarySha256 ?? hashCharacters[targetIndex].repeat(64)
+    const tarballSha256 = releaseBundle?.tarballSha256 ?? hashCharacters[targetIndex + 8].repeat(64)
+    const tarballBytes = releaseBundle?.tarballBytes ?? 1_000 + targetIndex
+    const unpackedBytes = releaseBundle?.unpackedBytes ?? 2_000 + targetIndex
+    const sizeGate = releaseBundle?.sizeGate ?? {
       schemaVersion: 1,
       target: target.target,
       profile: 'ci',
@@ -61,7 +62,7 @@ function nativeRuntimeEvidenceFixture() {
       arch: target.arch,
       libc: target.libc,
       packageName: target.packageName,
-      packageVersion: '1.2.3',
+      packageVersion: releaseBundle?.packageVersion ?? '1.2.3',
       binarySha256,
       tarballSha256,
       tarballBytes,
@@ -74,6 +75,25 @@ function nativeRuntimeEvidenceFixture() {
       rustToolchainRequired: false,
     }))
   })
+}
+
+function nativeBundleIdentitiesFixture(documents) {
+  return new Map(
+    NATIVE_COMPILER_TARGETS.map(target => {
+      const evidence = documents.find(candidate => candidate.target === target.target)
+      return [
+        target.target,
+        {
+          packageVersion: evidence.packageVersion,
+          binarySha256: evidence.binarySha256,
+          tarballSha256: evidence.tarballSha256,
+          tarballBytes: evidence.tarballBytes,
+          unpackedBytes: evidence.unpackedBytes,
+          sizeGate: structuredClone(evidence.sizeGate),
+        },
+      ]
+    }),
+  )
 }
 
 test('defines eight blocking native targets and two Node runtime lanes', () => {
@@ -98,9 +118,11 @@ test('defines eight blocking native targets and two Node runtime lanes', () => {
 })
 
 test('certifies one complete revision-bound native runtime evidence matrix', () => {
+  const documents = nativeRuntimeEvidenceFixture()
   assert.deepEqual(
-    validateNativeRuntimeEvidenceMatrix(nativeRuntimeEvidenceFixture(), {
+    validateNativeRuntimeEvidenceMatrix(documents, {
       expectedRevision: RUNTIME_REVISION,
+      nativeBundles: nativeBundleIdentitiesFixture(documents),
     }),
     {
       schemaVersion: 1,
@@ -108,6 +130,7 @@ test('certifies one complete revision-bound native runtime evidence matrix', () 
       targets: 8,
       nodeLanes: ['22.18.0', '24'],
       certifications: 16,
+      bundles: 8,
       packageVersion: '1.2.3',
       compilerBuildId: RUNTIME_BUILD_ID,
       compilerBuildRevision: RUNTIME_REVISION,
@@ -116,9 +139,30 @@ test('certifies one complete revision-bound native runtime evidence matrix', () 
 })
 
 test('verifies downloaded native runtime evidence through the release CLI', () => {
-  const evidenceDirectory = mkdtempSync(path.join(os.tmpdir(), 'fict-native-evidence-test-'))
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'fict-native-evidence-test-'))
+  const evidenceDirectory = path.join(tempRoot, 'runtime-evidence')
+  const artifactsDirectory = path.join(tempRoot, 'native-artifacts')
+  mkdirSync(evidenceDirectory)
   try {
-    for (const evidence of nativeRuntimeEvidenceFixture()) {
+    const nativeBundles = new Map()
+    for (const target of NATIVE_COMPILER_TARGETS) {
+      const binaryPath = path.join(tempRoot, `${target.target}.node`)
+      writeFileSync(binaryPath, `native-runtime-evidence-test:${target.target}`)
+      const bundle = bundleNativePackage({
+        target: target.target,
+        binaryPath,
+        outputDirectory: path.join(artifactsDirectory, nativeArtifactName(target.target)),
+      })
+      nativeBundles.set(target.target, {
+        packageVersion: bundle.packageVersion,
+        binarySha256: bundle.binarySha256,
+        tarballSha256: bundle.tarballSha256,
+        tarballBytes: bundle.tarballBytes,
+        unpackedBytes: bundle.unpackedBytes,
+        sizeGate: bundle.sizeGate,
+      })
+    }
+    for (const evidence of nativeRuntimeEvidenceFixture(nativeBundles)) {
       writeFileSync(
         path.join(evidenceDirectory, `${evidence.target}-node-${evidence.nodeLane}.json`),
         `${JSON.stringify(evidence)}\n`,
@@ -131,22 +175,31 @@ test('verifies downloaded native runtime evidence through the release CLI', () =
         'verify-runtime-evidence',
         '--evidence',
         evidenceDirectory,
+        '--artifacts',
+        artifactsDirectory,
         '--revision',
         RUNTIME_REVISION,
       ],
       { encoding: 'utf8' },
     )
     assert.equal(result.status, 0, result.stderr)
-    assert.equal(JSON.parse(result.stdout).certifications, 16)
+    assert.deepEqual(
+      (({ certifications, bundles }) => ({ certifications, bundles }))(JSON.parse(result.stdout)),
+      { certifications: 16, bundles: 8 },
+    )
   } finally {
-    rmSync(evidenceDirectory, { recursive: true, force: true })
+    rmSync(tempRoot, { recursive: true, force: true })
   }
 })
 
 test('rejects incomplete, duplicate, mixed-build, and mixed-bundle runtime evidence', () => {
-  const validate = documents =>
-    validateNativeRuntimeEvidenceMatrix(documents, { expectedRevision: RUNTIME_REVISION })
   const complete = nativeRuntimeEvidenceFixture()
+  const nativeBundles = nativeBundleIdentitiesFixture(complete)
+  const validate = documents =>
+    validateNativeRuntimeEvidenceMatrix(documents, {
+      expectedRevision: RUNTIME_REVISION,
+      nativeBundles,
+    })
 
   assert.throws(() => validate(complete.slice(1)), /missing certification for/)
   assert.throws(
@@ -165,6 +218,20 @@ test('rejects incomplete, duplicate, mixed-build, and mixed-bundle runtime evide
   const mixedBundle = structuredClone(complete)
   mixedBundle[1].binarySha256 = 'd'.repeat(64)
   assert.throws(() => validate(mixedBundle), /Node lanes must certify the same bundle/)
+
+  const mismatchedReleaseBundles = new Map(nativeBundles)
+  mismatchedReleaseBundles.set('darwin-arm64', {
+    ...mismatchedReleaseBundles.get('darwin-arm64'),
+    tarballSha256: 'e'.repeat(64),
+  })
+  assert.throws(
+    () =>
+      validateNativeRuntimeEvidenceMatrix(complete, {
+        expectedRevision: RUNTIME_REVISION,
+        nativeBundles: mismatchedReleaseBundles,
+      }),
+    /runtime evidence does not match the release bundle/,
+  )
 })
 
 test('maps supported development hosts to their release package target', () => {

@@ -185,6 +185,10 @@ release workflow SHA. Both Node lanes for a target must certify identical
 binary and tarball hashes and byte measurements. Missing, duplicate,
 wrong-target, mixed-revision, mixed-build, or mixed-bundle evidence blocks
 publication even when every matrix job individually reported success.
+The evidence hashes, byte measurements, package version, and size result must
+also match the eight downloaded bundle artifacts that the same release job will
+preflight and publish; agreement only among the 16 evidence documents is not
+sufficient.
 
 ## Related decisions
 

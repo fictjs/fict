@@ -194,7 +194,9 @@ are one release unit. Their versions must match exactly. The release workflow:
    then executes ESM/CJS and sync/async compiler calls on Node 22.18 and 24;
 4. aggregates all 16 runtime evidence documents and rejects missing or duplicate
    target/Node pairs, mixed compiler build IDs or source revisions, and Node
-   lanes that did not execute the exact same target tarball;
+   lanes that did not execute the exact same target tarball; every evidence
+   hash, byte count, version, and size result must match the eight downloaded
+   bundles that will be published;
 5. preflights all eight artifacts before any npm publish;
 6. publishes every pending tarball in dependency order, waiting for registry
    visibility after each package; all native packages precede `@fictjs/compiler`.
@@ -213,7 +215,7 @@ retained for 90 days. Preserve them with the release plan when investigating a
 registry-side partial publication. The publishing job accepts runtime evidence
 only when all 16 documents embed `GITHUB_SHA`, share one compiler build ID and
 package version, and the two Node lanes for each target report identical bundle
-hashes and size measurements.
+hashes and size measurements that match the downloaded release bundle.
 
 Before tagging a release, make sure each publishable NPM package is configured
 on npmjs.com with:

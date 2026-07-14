@@ -82,6 +82,7 @@ test('release aggregates and certifies all revision-bound native runtime evidenc
   assert.match(releaseWorkflow, /pattern: fict-native-evidence-\*/)
   assert.match(releaseWorkflow, /merge-multiple: true/)
   assert.match(releaseWorkflow, /verify-runtime-evidence/)
+  assert.match(releaseWorkflow, /--artifacts "\$\{RUNNER_TEMP\}\/native-packages"/)
   assert.match(releaseWorkflow, /--revision "\$\{GITHUB_SHA\}"/)
 
   const download = releaseWorkflow.indexOf('name: Download all native runtime evidence')
