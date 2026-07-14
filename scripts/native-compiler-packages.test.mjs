@@ -16,6 +16,7 @@ import {
   nativeHostTarget,
   nativeRuntimeMatrix,
   validateNativePackageConfiguration,
+  validateOxcVersionAlignment,
   verifyNativeBundle,
   verifyNativePackageArtifact,
 } from './native-compiler-packages.mjs'
@@ -63,6 +64,24 @@ test('maps supported development hosts to their release package target', () => {
 
 test('keeps facade optional dependencies, package manifests, allowlist, and Changesets aligned', () => {
   assert.deepEqual(validateNativePackageConfiguration(), [])
+})
+
+test('keeps the npm helper runtime aligned with the exact Rust OXC release', () => {
+  const aligned = {
+    cargoManifest:
+      'oxc = { version = "=0.139.0", default-features = false }\noxc_traverse = "=0.139.0"\n',
+    adapterSource: 'pub const OXC_VERSION: &str = "0.139.0";\n',
+    loaderSource: "const EXPECTED_OXC_VERSION = '0.139.0'\n",
+    compilerManifest: { dependencies: { '@oxc-project/runtime': '0.139.0' } },
+  }
+  assert.deepEqual(validateOxcVersionAlignment(aligned), [])
+  assert.deepEqual(
+    validateOxcVersionAlignment({
+      ...aligned,
+      compilerManifest: { dependencies: { '@oxc-project/runtime': '0.137.0' } },
+    }),
+    ['@oxc-project/runtime must match OXC 0.139.0; found 0.137.0'],
+  )
 })
 
 test('enforces compressed and unpacked native package size budgets', () => {

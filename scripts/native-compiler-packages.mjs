@@ -271,9 +271,49 @@ function sameStringRecord(actual, expected) {
   return JSON.stringify(actualEntries) === JSON.stringify(expectedEntries)
 }
 
+export function validateOxcVersionAlignment({
+  cargoManifest,
+  adapterSource,
+  loaderSource,
+  compilerManifest,
+}) {
+  const failures = []
+  const cargoVersion = cargoManifest.match(/^oxc = \{ version = "=(\d+\.\d+\.\d+)",/m)?.[1]
+  const traverseVersion = cargoManifest.match(/^oxc_traverse = "=(\d+\.\d+\.\d+)"$/m)?.[1]
+  const adapterVersion = adapterSource.match(
+    /^pub const OXC_VERSION: &str = "(\d+\.\d+\.\d+)";$/m,
+  )?.[1]
+  const loaderVersion = loaderSource.match(/^const EXPECTED_OXC_VERSION = '(\d+\.\d+\.\d+)'$/m)?.[1]
+  const runtimeVersion = compilerManifest.dependencies?.['@oxc-project/runtime']
+
+  if (!cargoVersion) {
+    failures.push('Cargo.toml must exactly pin the OXC workspace dependency')
+    return failures
+  }
+  for (const [surface, version] of [
+    ['Cargo oxc_traverse', traverseVersion],
+    ['Rust adapter OXC_VERSION', adapterVersion],
+    ['native loader EXPECTED_OXC_VERSION', loaderVersion],
+    ['@oxc-project/runtime', runtimeVersion],
+  ]) {
+    if (version !== cargoVersion) {
+      failures.push(`${surface} must match OXC ${cargoVersion}; found ${version ?? 'missing'}`)
+    }
+  }
+  return failures
+}
+
 export function validateNativePackageConfiguration(root = repositoryRoot) {
   const failures = []
   const compiler = readJson(path.join(root, 'packages/compiler/package.json'))
+  failures.push(
+    ...validateOxcVersionAlignment({
+      cargoManifest: readFileSync(path.join(root, 'Cargo.toml'), 'utf8'),
+      adapterSource: readFileSync(path.join(root, 'crates/fict-compiler-oxc/src/lib.rs'), 'utf8'),
+      loaderSource: readFileSync(path.join(root, 'packages/compiler/src/native-loader.ts'), 'utf8'),
+      compilerManifest: compiler,
+    }),
+  )
   const expectedOptionalDependencies = Object.fromEntries(
     NATIVE_COMPILER_TARGETS.map(definition => [definition.packageName, 'workspace:*']),
   )

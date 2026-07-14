@@ -360,8 +360,8 @@ importers:
         specifier: ^7.29.0
         version: 7.29.0
       '@oxc-project/runtime':
-        specifier: 0.137.0
-        version: 0.137.0
+        specifier: 0.139.0
+        version: 0.139.0
       '@types/babel__core':
         specifier: ^7.20.5
         version: 7.20.5
@@ -2160,8 +2160,8 @@ packages:
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
 
-  '@oxc-project/runtime@0.137.0':
-    resolution: {integrity: sha512-eg4nbD+t3awY/gxhcc5M5IX556O6q17mGJKvl/brL86uDZn41ZwrVO6MEAMJVNf3Q1mhhoIOzNxbNE70UUFK3Q==}
+  '@oxc-project/runtime@0.139.0':
+    resolution: {integrity: sha512-WnuGdceWtRdqD7f3alOIDXN6bnGuGtFjtQf/dHjzgn2im7eKaYRJTEl2T1kFEWPhBWCDk+UDYgsTLUE5L6jc0w==}
     engines: {node: ^20.19.0 || >=22.12.0}
 
   '@oxc-project/types@0.138.0':
@@ -8229,7 +8229,7 @@ snapshots:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.19.1
 
-  '@oxc-project/runtime@0.137.0': {}
+  '@oxc-project/runtime@0.139.0': {}
 
   '@oxc-project/types@0.138.0': {}
 

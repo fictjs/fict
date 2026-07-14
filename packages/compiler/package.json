@@ -86,7 +86,7 @@
     "@babel/plugin-transform-destructuring": "^7.27.1",
     "@babel/plugin-transform-typescript": "^7.28.5",
     "@babel/traverse": "^7.29.0",
-    "@oxc-project/runtime": "0.137.0",
+    "@oxc-project/runtime": "0.139.0",
     "@types/babel__core": "^7.20.5"
   },
   "optionalDependencies": {
