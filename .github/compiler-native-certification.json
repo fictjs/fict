@@ -1,0 +1,301 @@
+{
+  "schemaVersion": 2,
+  "status": "pass",
+  "targets": 8,
+  "nodeLanes": [
+    "22.18.0",
+    "24"
+  ],
+  "certifications": 16,
+  "bundles": 8,
+  "certifiedPairs": [
+    "darwin-arm64:node-22.18.0",
+    "darwin-arm64:node-24",
+    "darwin-x64:node-22.18.0",
+    "darwin-x64:node-24",
+    "linux-arm64-gnu:node-22.18.0",
+    "linux-arm64-gnu:node-24",
+    "linux-arm64-musl:node-22.18.0",
+    "linux-arm64-musl:node-24",
+    "linux-x64-gnu:node-22.18.0",
+    "linux-x64-gnu:node-24",
+    "linux-x64-musl:node-22.18.0",
+    "linux-x64-musl:node-24",
+    "win32-arm64-msvc:node-22.18.0",
+    "win32-arm64-msvc:node-24",
+    "win32-x64-msvc:node-22.18.0",
+    "win32-x64-msvc:node-24"
+  ],
+  "runtimeEvidence": [
+    {
+      "pair": "darwin-arm64:node-22.18.0",
+      "target": "darwin-arm64",
+      "nodeLane": "22.18.0",
+      "node": "v22.18.0",
+      "evidenceDigest": "sha256:8d365d5913fbe7084abaccfcbcc253274d15271e8fd525ce2c4a5f390eaf6909"
+    },
+    {
+      "pair": "darwin-arm64:node-24",
+      "target": "darwin-arm64",
+      "nodeLane": "24",
+      "node": "v24.18.0",
+      "evidenceDigest": "sha256:e6fef9d766039f4627dfb4392d688b53f44a6cda32120ee75112623f53e2c94e"
+    },
+    {
+      "pair": "darwin-x64:node-22.18.0",
+      "target": "darwin-x64",
+      "nodeLane": "22.18.0",
+      "node": "v22.18.0",
+      "evidenceDigest": "sha256:8f97aa8ef0f8d15576bffe73639e6bcdcfe1e49b00e18b557516e8e0fe11bbd8"
+    },
+    {
+      "pair": "darwin-x64:node-24",
+      "target": "darwin-x64",
+      "nodeLane": "24",
+      "node": "v24.18.0",
+      "evidenceDigest": "sha256:2c96fda2bb4542e8c62066843ec50fbbd35bb44bea9de8f9571e2180004a460f"
+    },
+    {
+      "pair": "linux-arm64-gnu:node-22.18.0",
+      "target": "linux-arm64-gnu",
+      "nodeLane": "22.18.0",
+      "node": "v22.18.0",
+      "evidenceDigest": "sha256:634294bba9fa68b1e6df454bec1ae784d539fa162c9e614bf8bdbb7b761719a1"
+    },
+    {
+      "pair": "linux-arm64-gnu:node-24",
+      "target": "linux-arm64-gnu",
+      "nodeLane": "24",
+      "node": "v24.18.0",
+      "evidenceDigest": "sha256:a4db9cd7fb86397ad94bcaed3d7b3369f29d3dc43d6681be8f9177b33b789856"
+    },
+    {
+      "pair": "linux-arm64-musl:node-22.18.0",
+      "target": "linux-arm64-musl",
+      "nodeLane": "22.18.0",
+      "node": "v22.18.0",
+      "evidenceDigest": "sha256:f838fbddcb14db015f5807eb6ab0644f6662e598a72c510c19d1dc926c1f9a96"
+    },
+    {
+      "pair": "linux-arm64-musl:node-24",
+      "target": "linux-arm64-musl",
+      "nodeLane": "24",
+      "node": "v24.18.0",
+      "evidenceDigest": "sha256:63d4ce58cc1ba022625943f83afe403e8ca548892d82aa5e954d78920bc028ef"
+    },
+    {
+      "pair": "linux-x64-gnu:node-22.18.0",
+      "target": "linux-x64-gnu",
+      "nodeLane": "22.18.0",
+      "node": "v22.18.0",
+      "evidenceDigest": "sha256:770fbec2e0c8a8de3d83a426f731b6cfbaeddbcc32d89ecc1e08e8c7e6be3904"
+    },
+    {
+      "pair": "linux-x64-gnu:node-24",
+      "target": "linux-x64-gnu",
+      "nodeLane": "24",
+      "node": "v24.18.0",
+      "evidenceDigest": "sha256:b48f6676b9822ecb1fc17cbc0ba9f4db0e8d86c52ffc2167dbb557fe62b38374"
+    },
+    {
+      "pair": "linux-x64-musl:node-22.18.0",
+      "target": "linux-x64-musl",
+      "nodeLane": "22.18.0",
+      "node": "v22.18.0",
+      "evidenceDigest": "sha256:edf4e31b29b853f6dc63c6870baaa8ef027841952a2943487dbc17d46c49fe13"
+    },
+    {
+      "pair": "linux-x64-musl:node-24",
+      "target": "linux-x64-musl",
+      "nodeLane": "24",
+      "node": "v24.18.0",
+      "evidenceDigest": "sha256:d7e60d5c3f7a8cb2b146b86bc3d411cbe90122ebf3388fa6f460772381b67729"
+    },
+    {
+      "pair": "win32-arm64-msvc:node-22.18.0",
+      "target": "win32-arm64-msvc",
+      "nodeLane": "22.18.0",
+      "node": "v22.18.0",
+      "evidenceDigest": "sha256:7bf9e108b62d94890ce6bf50a2f015d3db0c1c8381cdc8ede195cf573503139d"
+    },
+    {
+      "pair": "win32-arm64-msvc:node-24",
+      "target": "win32-arm64-msvc",
+      "nodeLane": "24",
+      "node": "v24.18.0",
+      "evidenceDigest": "sha256:a56c413344dea799f1594f3625c5b6049804c4cc24e3097947fd626e6e3ab793"
+    },
+    {
+      "pair": "win32-x64-msvc:node-22.18.0",
+      "target": "win32-x64-msvc",
+      "nodeLane": "22.18.0",
+      "node": "v22.18.0",
+      "evidenceDigest": "sha256:013a1d7400eeedd0a8004d067bcc2a8d62579847300534840bab87f10ab55f9e"
+    },
+    {
+      "pair": "win32-x64-msvc:node-24",
+      "target": "win32-x64-msvc",
+      "nodeLane": "24",
+      "node": "v24.18.0",
+      "evidenceDigest": "sha256:fbb253b63ecbaa0f4eed70a5b337c6e7b5b90da1cc3669775d3f6d77da47a8f3"
+    }
+  ],
+  "releaseBundles": [
+    {
+      "target": "darwin-arm64",
+      "packageVersion": "0.28.0",
+      "binarySha256": "8f250fe411fde2e885a92c5751fb3ddf5d2d6042b903a291f1fa5152062f2cee",
+      "tarballSha256": "836e09cc690d1e98a3191fa5563c95713159d01e03fb4c33c202b8a1dac04d1b",
+      "tarballBytes": 2948735,
+      "unpackedBytes": 7059238,
+      "sizeGate": {
+        "schemaVersion": 1,
+        "target": "darwin-arm64",
+        "profile": "ci",
+        "tarballBytes": 2948735,
+        "unpackedBytes": 7059238,
+        "maximumTarballBytes": 8388608,
+        "maximumUnpackedBytes": 20971520,
+        "passed": true,
+        "violations": []
+      }
+    },
+    {
+      "target": "darwin-x64",
+      "packageVersion": "0.28.0",
+      "binarySha256": "b411ce5b78f4d28acc435b9b429858fba952979c16ddd3ccfec4688d6bc4926c",
+      "tarballSha256": "434d59803959e5e11998e5ab4a1d267d5db09bfe3920fbb4d98d4d47d263b7f2",
+      "tarballBytes": 3187828,
+      "unpackedBytes": 7651834,
+      "sizeGate": {
+        "schemaVersion": 1,
+        "target": "darwin-x64",
+        "profile": "ci",
+        "tarballBytes": 3187828,
+        "unpackedBytes": 7651834,
+        "maximumTarballBytes": 8388608,
+        "maximumUnpackedBytes": 20971520,
+        "passed": true,
+        "violations": []
+      }
+    },
+    {
+      "target": "linux-arm64-gnu",
+      "packageVersion": "0.28.0",
+      "binarySha256": "28dffb15298385a459af32838129395033c87ad1f2629b5d801aece6ebec4b0d",
+      "tarballSha256": "05e98b8727a402033078fac3d9ea02416b841bf0dfbb49367d8ed8019f7c3d4a",
+      "tarballBytes": 2997654,
+      "unpackedBytes": 7083843,
+      "sizeGate": {
+        "schemaVersion": 1,
+        "target": "linux-arm64-gnu",
+        "profile": "ci",
+        "tarballBytes": 2997654,
+        "unpackedBytes": 7083843,
+        "maximumTarballBytes": 8388608,
+        "maximumUnpackedBytes": 20971520,
+        "passed": true,
+        "violations": []
+      }
+    },
+    {
+      "target": "linux-arm64-musl",
+      "packageVersion": "0.28.0",
+      "binarySha256": "ff2a4012ec97e367ae71a8f7467b3d950a80a82405fcc60ea204a6c4188ee19f",
+      "tarballSha256": "54f647bb9ca3af29469dc808c705f82e95a5501be51fce936ad7b6e0c51d4f6f",
+      "tarballBytes": 3015852,
+      "unpackedBytes": 7073032,
+      "sizeGate": {
+        "schemaVersion": 1,
+        "target": "linux-arm64-musl",
+        "profile": "ci",
+        "tarballBytes": 3015852,
+        "unpackedBytes": 7073032,
+        "maximumTarballBytes": 8388608,
+        "maximumUnpackedBytes": 20971520,
+        "passed": true,
+        "violations": []
+      }
+    },
+    {
+      "target": "linux-x64-gnu",
+      "packageVersion": "0.28.0",
+      "binarySha256": "0d7fcbad9c85ba89992182d0b3b3713598d7c6e0fcf84a8e05c0ca53c9882774",
+      "tarballSha256": "66720853ab09315eda173a282b15261527218812607f547b9d25cacc8e41c809",
+      "tarballBytes": 3328688,
+      "unpackedBytes": 8320867,
+      "sizeGate": {
+        "schemaVersion": 1,
+        "target": "linux-x64-gnu",
+        "profile": "ci",
+        "tarballBytes": 3328688,
+        "unpackedBytes": 8320867,
+        "maximumTarballBytes": 8388608,
+        "maximumUnpackedBytes": 20971520,
+        "passed": true,
+        "violations": []
+      }
+    },
+    {
+      "target": "linux-x64-musl",
+      "packageVersion": "0.28.0",
+      "binarySha256": "bef9b559eaed17485f3a73149cfe591275095d623f61243b9a488f534bd6128b",
+      "tarballSha256": "fa5711994e96c78208cbd9eff562dd22779eb9a18404b6cea95a936207173dca",
+      "tarballBytes": 3340198,
+      "unpackedBytes": 8344176,
+      "sizeGate": {
+        "schemaVersion": 1,
+        "target": "linux-x64-musl",
+        "profile": "ci",
+        "tarballBytes": 3340198,
+        "unpackedBytes": 8344176,
+        "maximumTarballBytes": 8388608,
+        "maximumUnpackedBytes": 20971520,
+        "passed": true,
+        "violations": []
+      }
+    },
+    {
+      "target": "win32-arm64-msvc",
+      "packageVersion": "0.28.0",
+      "binarySha256": "265fa68ecd15183dc5441127a18fb92a1c1bf601df698393aad8153f679e3d9d",
+      "tarballSha256": "f7dd2e796f45e1bd7662a3b4b8b59ff688fb9b20517b42bf9d720c1fdb66e1ba",
+      "tarballBytes": 2981746,
+      "unpackedBytes": 7273124,
+      "sizeGate": {
+        "schemaVersion": 1,
+        "target": "win32-arm64-msvc",
+        "profile": "ci",
+        "tarballBytes": 2981746,
+        "unpackedBytes": 7273124,
+        "maximumTarballBytes": 8388608,
+        "maximumUnpackedBytes": 20971520,
+        "passed": true,
+        "violations": []
+      }
+    },
+    {
+      "target": "win32-x64-msvc",
+      "packageVersion": "0.28.0",
+      "binarySha256": "030bf13608eadc6cd957dd5530e948b244037f36c0c100df82af6e8a8182c445",
+      "tarballSha256": "0e91fa92a229d66eecd27072554b47b6c90dd3de4655e92cef6022b5223227f6",
+      "tarballBytes": 3281334,
+      "unpackedBytes": 8471188,
+      "sizeGate": {
+        "schemaVersion": 1,
+        "target": "win32-x64-msvc",
+        "profile": "ci",
+        "tarballBytes": 3281334,
+        "unpackedBytes": 8471188,
+        "maximumTarballBytes": 8388608,
+        "maximumUnpackedBytes": 20971520,
+        "passed": true,
+        "violations": []
+      }
+    }
+  ],
+  "packageVersion": "0.28.0",
+  "compilerBuildId": "fict-rust-p1-oxc0.139.0-m1-2b090aec3b4eb94a5ed2ddef9c0718a4519fd1f512acfd4106d970f40784446c",
+  "compilerBuildRevision": "7ec8778545d50f77eb5aaef5a3906ca951b1a866",
+  "certificationDigest": "sha256:02c000c451daa29a4cf74c3ab70e4cd7448bc1adfd98f2013a29cf8ac9836a48"
+}
