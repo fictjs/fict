@@ -31,6 +31,12 @@ jobs:
           rustup toolchain install nightly-2026-04-28 --profile minimal
           cargo install cargo-fuzz --version 0.13.2 --locked
 
+      - name: Verify the independent fuzz dependency lock
+        run: >-
+          cargo +nightly-2026-04-28 metadata
+          --manifest-path fuzz/Cargo.toml
+          --locked --format-version 1 --no-deps
+
       - name: Build compiler fuzz targets
         run: cargo +nightly-2026-04-28 fuzz build compiler_pipeline
 

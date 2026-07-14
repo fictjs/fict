@@ -187,6 +187,7 @@ dependencies = [
  "fict-hir",
  "fict-metadata",
  "fict-reactivity",
+ "oxc_sourcemap",
  "serde",
  "serde_json",
  "sha2",
@@ -718,9 +719,9 @@ dependencies = [
 
 [[package]]
 name = "oxc_sourcemap"
-version = "8.1.1"
+version = "8.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3a667d6fc9c079aae3d650fb4c3db3a8b6f14f7918e56854a94a0de5d7469dd"
+checksum = "73326286c78270f92c55e1a643a64daa558fc8a8e06fa0ddbe32fabb3d8eea11"
 dependencies = [
  "base64-simd",
  "json-escape-simd",

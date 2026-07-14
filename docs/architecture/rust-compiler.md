@@ -234,6 +234,9 @@ thread-count comparisons, fuzz targets, native bundle size evidence, and clean
 native-package installation are required before default switching. Budget
 values live in `.github/compiler-backend-budget.json`; changing a ceiling
 requires the same maintainer review as changing a performance or RSS budget.
+The standalone fuzz workspace owns an independent lockfile; CI MUST validate it
+with Cargo's locked metadata mode before building or running fuzz targets so an
+OXC pin change cannot silently resolve a different fuzz dependency graph.
 
 The executable M7 promotion policy, candidate chain, privacy-safe allowlist,
 performance/RSS budget, and human approval are owned by the
