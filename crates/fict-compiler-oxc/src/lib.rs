@@ -15,6 +15,7 @@ mod hir_builder;
 mod jsx_text;
 mod preview_codegen;
 mod scan;
+mod source_map;
 mod typescript;
 
 pub use compile::{
@@ -36,6 +37,7 @@ pub use hir_builder::{HirBuildOptions, HirBuildOutput, OxcSyntaxFragment, build_
 pub use scan::{
     OxcScanOutput, ScanModuleRequest, ScanModuleRequestKind, scan_static_module_requests,
 };
+pub use source_map::{compose_source_map_json, validate_source_map_json};
 pub use typescript::{
     OxcTypeScriptOptions, TypeScriptCompatibilityOutput, TypeScriptCompatibilityPlan,
     TypeScriptFeature, TypeScriptFeatureKind, TypeScriptLoweringOwner,

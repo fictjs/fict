@@ -1,6 +1,4 @@
-use std::borrow::Cow;
-
-use oxc_sourcemap::{SourceMap as OxcSourceMap, Token};
+use fict_compiler_oxc::{compose_source_map_json, validate_source_map_json};
 use serde::{Deserialize, Serialize};
 
 /// Standard non-indexed Source Map v3 payload.
@@ -57,7 +55,12 @@ impl RawSourceMap {
                 ));
             }
         }
-        decode_source_map(self).map_err(SourceMapValidationError::InvalidMappings)?;
+        let json = serde_json::to_string(self).map_err(|error| {
+            SourceMapValidationError::InvalidMappings(format!(
+                "cannot serialize source map: {error}"
+            ))
+        })?;
+        validate_source_map_json(&json).map_err(SourceMapValidationError::InvalidMappings)?;
         Ok(())
     }
 }
@@ -66,95 +69,13 @@ pub(crate) fn compose_source_maps(
     generated: &RawSourceMap,
     input: &RawSourceMap,
 ) -> Result<RawSourceMap, String> {
-    let generated_map = decode_source_map(generated)?;
-    let input_map = decode_source_map(input)?;
-    let lookup = input_map.generate_lookup_table();
-    let mut names = input.names.clone();
-    let mut tokens = Vec::with_capacity(generated_map.get_tokens().len());
-
-    for generated_token in generated_map.get_tokens() {
-        let traced = generated_token.get_source_id().and_then(|_| {
-            input_map.lookup_token_approx(
-                &lookup,
-                generated_token.get_src_line(),
-                generated_token.get_src_col(),
-            )
-        });
-        let Some(traced) = traced.filter(|token| token.get_source_id().is_some()) else {
-            tokens.push(Token::new(
-                generated_token.get_dst_line(),
-                generated_token.get_dst_col(),
-                0,
-                0,
-                None,
-                None,
-            ));
-            continue;
-        };
-
-        let name_id = if let Some(name_id) = traced.get_name_id() {
-            Some(name_id)
-        } else if let Some(name) = generated_token
-            .get_name_id()
-            .and_then(|id| generated_map.get_name(id))
-        {
-            Some(intern_name(&mut names, name)?)
-        } else {
-            None
-        };
-        tokens.push(Token::new(
-            generated_token.get_dst_line(),
-            generated_token.get_dst_col(),
-            traced.get_src_line(),
-            traced.get_src_col(),
-            traced.get_source_id(),
-            name_id,
-        ));
-    }
-
-    let mut composed = OxcSourceMap::new(
-        generated.file.clone().map(Cow::Owned),
-        names.into_iter().map(Cow::Owned).collect(),
-        input.source_root.clone().map(Cow::Owned),
-        input.sources.iter().cloned().map(Cow::Owned).collect(),
-        input
-            .sources_content
-            .as_ref()
-            .map(|contents| {
-                contents
-                    .iter()
-                    .cloned()
-                    .map(|content| content.map(Cow::Owned))
-                    .collect()
-            })
-            .unwrap_or_default(),
-        tokens.into_boxed_slice(),
-        None,
-    );
-    if !input.ignore_list.is_empty() {
-        composed.set_x_google_ignore_list(input.ignore_list.clone());
-    }
-    let json = composed.to_json_string();
-    serde_json::from_str(&json)
+    let generated_json = serde_json::to_string(generated)
+        .map_err(|error| format!("cannot serialize generated source map: {error}"))?;
+    let input_json = serde_json::to_string(input)
+        .map_err(|error| format!("cannot serialize input source map: {error}"))?;
+    let composed_json = compose_source_map_json(&generated_json, &input_json)?;
+    serde_json::from_str(&composed_json)
         .map_err(|error| format!("cannot encode composed source map: {error}"))
-}
-
-fn decode_source_map(map: &RawSourceMap) -> Result<OxcSourceMap<'static>, String> {
-    let json = serde_json::to_string(map)
-        .map_err(|error| format!("cannot serialize source map: {error}"))?;
-    OxcSourceMap::from_json_string(&json)
-        .map(OxcSourceMap::into_owned)
-        .map_err(|error| format!("invalid source-map mappings: {error}"))
-}
-
-fn intern_name(names: &mut Vec<String>, name: &str) -> Result<u32, String> {
-    if let Some(index) = names.iter().position(|existing| existing == name) {
-        return u32::try_from(index).map_err(|_| "source-map name count exceeds u32".to_owned());
-    }
-    let index =
-        u32::try_from(names.len()).map_err(|_| "source-map name count exceeds u32".to_owned())?;
-    names.push(name.to_owned());
-    Ok(index)
 }
 
 /// Fail-closed validation error for an input or output source map.
