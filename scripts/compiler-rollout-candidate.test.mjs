@@ -171,6 +171,14 @@ test('candidate evidence chains two distinct green builds', async t => {
   assert.equal(firstArtifact.workflowGate.jobs.e2e, 'success')
 })
 
+test('candidate CLI rejects an unknown flag instead of bypassing require-two', async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'fict-candidate-cli-'))
+  t.after(() => rm(directory, { recursive: true }))
+  const result = run(directory, '100', path.join(directory, 'candidate.json'), ['--require-tow'])
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /Unknown compiler rollout candidate argument: --require-tow/)
+})
+
 test('non-main candidates cannot count toward or extend the promotion chain', async t => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'fict-candidate-non-main-'))
   t.after(() => rm(directory, { recursive: true }))

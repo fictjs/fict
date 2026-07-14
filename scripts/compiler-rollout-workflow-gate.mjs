@@ -8,8 +8,13 @@ import {
   REQUIRED_ROLLOUT_JOBS,
   validateWorkflowGateArtifact,
 } from './compiler-rollout-workflow-contract.mjs'
+import { assertCliArguments } from './strict-cli-arguments.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+assertCliArguments(process.argv.slice(2), {
+  command: 'compiler rollout workflow gate',
+  valueArguments: ['output', 'needs-json'],
+})
 
 function readArgument(name, fallback) {
   const prefix = `--${name}=`

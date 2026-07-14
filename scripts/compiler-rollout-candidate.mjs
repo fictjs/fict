@@ -7,9 +7,29 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
+import { assertCliArguments } from './strict-cli-arguments.mjs'
 import { validateWorkflowGateArtifact } from './compiler-rollout-workflow-contract.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+assertCliArguments(process.argv.slice(2), {
+  command: 'compiler rollout candidate',
+  valueArguments: [
+    'workflow-gate',
+    'shadow',
+    'benchmark',
+    'runtime',
+    'rollback',
+    'package',
+    'output',
+    'previous',
+    'run-id',
+    'run-attempt',
+    'revision',
+    'event',
+    'ref',
+  ],
+  flagArguments: ['require-two'],
+})
 
 function readArgument(name, fallback) {
   const prefix = `--${name}=`

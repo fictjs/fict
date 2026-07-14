@@ -24,8 +24,8 @@ function needs(overrides = {}) {
   )
 }
 
-function run(output, workflowNeeds, env = {}) {
-  return spawnSync(process.execPath, [script, `--output=${output}`], {
+function run(output, workflowNeeds, env = {}, extra = []) {
+  return spawnSync(process.execPath, [script, `--output=${output}`, ...extra], {
     cwd: root,
     encoding: 'utf8',
     env: {
@@ -58,6 +58,14 @@ test('workflow gate records only validated job results and run identity', async 
   assert.deepEqual(Object.keys(artifact.jobs), REQUIRED_ROLLOUT_JOBS)
   assert.equal(artifact.jobs['rust-fuzz'], 'skipped')
   assert.equal(JSON.stringify(artifact).includes('ignored'), false)
+})
+
+test('workflow gate CLI rejects unknown arguments', async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'fict-workflow-gate-cli-'))
+  t.after(() => rm(directory, { recursive: true }))
+  const result = run(path.join(directory, 'gate.json'), needs(), {}, ['--needs-jsn={}'])
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /Unknown compiler rollout workflow gate argument: --needs-jsn/)
 })
 
 test('workflow gate rejects failed or missing required jobs', async t => {
