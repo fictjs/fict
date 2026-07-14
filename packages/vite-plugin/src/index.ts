@@ -26,6 +26,7 @@ import {
   type NativeCompilerExplainArtifact,
   type NativeCompilerOptions,
   type ResolvedMetadataInput,
+  type ScanResult,
 } from '@fictjs/compiler'
 import {
   loadNativeCompilerBinding,
@@ -508,6 +509,24 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     if (backend === 'legacy') return `legacy:${getTransformCacheFingerprint()}`
     getNativeCompiler()
     return `rust:${nativeCompilerInfo!.compilerBuildId}:oxc${nativeCompilerInfo!.oxcVersion}`
+  }
+  const collectCompilerStaticModuleSources = async (
+    code: string,
+    filename: string,
+    moduleId = filename,
+  ): Promise<string[]> => {
+    if (backend === 'legacy') return collectStaticModuleSources(code)
+    const result = await getNativeCompiler().scan({ code, filename, moduleId })
+    return consumeNativeScanResult(result, code, filename)
+  }
+  const collectCompilerStaticModuleSourcesSync = (
+    code: string,
+    filename: string,
+    moduleId = filename,
+  ): string[] => {
+    if (backend === 'legacy') return collectStaticModuleSources(code)
+    const result = getNativeCompiler().scanSync({ code, filename, moduleId })
+    return consumeNativeScanResult(result, code, filename)
   }
   const publicIdentityNamespace = publicIdentityNamespaceOption?.trim()
   if (publicIdentityNamespaceOption !== undefined && !publicIdentityNamespace) {
@@ -1179,12 +1198,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
 
   const createNativeMetadataSnapshot = (
     state: MetadataTransformState,
-    code: string,
+    sources: readonly string[],
     normalizedFilename: string,
     importerKey: string,
   ): ResolvedMetadataInput[] => {
     const aliasEntries = normalizeAliases(config?.resolve?.alias)
-    return collectStaticModuleSources(code).map(source => {
+    return sources.map(source => {
       const metadata = resolveCompilerModuleMetadata(state, source, normalizedFilename, importerKey)
       const exactResolution = state.resolvedLocalModules.get(
         createLocalResolutionKey(importerKey, source),
@@ -1333,7 +1352,11 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       backend === 'rust'
         ? createNativeMetadataSnapshot(
             state,
-            code,
+            await collectCompilerStaticModuleSources(
+              code,
+              normalizedFilename,
+              transformOptions?.publicIdentityId ?? normalizedFilename,
+            ),
             normalizedFilename,
             transformOptions?.metadataKey ?? normalizedFilename,
           )
@@ -1424,7 +1447,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       // pipeline loader retain the recursive on-disk preparation fallback.
       if (pipelineCode === undefined && hasMetadataPipelineLoader(context)) return
 
-      for (const source of collectStaticModuleSources(code)) {
+      for (const source of await collectCompilerStaticModuleSources(code, node.filename, node.id)) {
         const resolved = await resolveGraphDependency(context, source, node.id)
         if (!resolved || !shouldCompileModule(resolved.filename)) continue
         state.resolvedLocalModules.set(createLocalResolutionKey(identity.key, source), {
@@ -1479,6 +1502,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       state.resolvedLocalModules,
       file => registerPackageMetadataDependency(state, file),
       node.key,
+      backend === 'rust' ? collectCompilerStaticModuleSourcesSync : undefined,
     )
     return {
       key: buildMetadataPreparationKey(
@@ -2089,6 +2113,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           state.resolvedLocalModules,
           file => registerPackageMetadataDependency(state, file),
           metadataKey,
+          backend === 'rust' ? collectCompilerStaticModuleSourcesSync : undefined,
         )
         const cacheStore = ensureCache()
         const shouldSplit =
@@ -4207,6 +4232,29 @@ function nativeIntegrationDiagnostics(
   })
 }
 
+function consumeNativeScanResult(result: ScanResult, source: string, filename: string): string[] {
+  const errors = result.diagnostics.filter(diagnostic => diagnostic.severity === 'error')
+  if (errors.length > 0) {
+    const error = new SyntaxError(
+      errors.map(diagnostic => formatNativeDiagnostic(diagnostic, source, filename)).join('\n'),
+    ) as SyntaxError & { code?: string; loc?: { line: number; column: number } }
+    const first = errors[0]!
+    error.code = first.code
+    if (first.primarySpan) {
+      error.loc = sourcePositionForByteOffset(source, first.primarySpan.start)
+    }
+    throw error
+  }
+
+  return Array.from(
+    new Set(
+      result.moduleRequests
+        .filter(request => request.kind !== 'importEquals' || !request.typeOnly)
+        .map(request => request.source),
+    ),
+  ).sort()
+}
+
 function consumeNativeCompileResult(
   result: CompileResult,
   source: string,
@@ -4412,6 +4460,7 @@ function computePackageMetadataCacheFingerprint(
   resolvedLocalModules?: ReadonlyMap<string, ResolvedMetadataModule>,
   onPackageMetadataDependency?: (filename: string) => void,
   metadataKey?: string,
+  collectModuleSources?: (code: string, filename: string) => string[],
 ): string {
   const normalizedFilename = normalizeFileName(filename, root)
   const currentMetadataKey = metadataKey ?? normalizedFilename
@@ -4419,7 +4468,9 @@ function computePackageMetadataCacheFingerprint(
   visited.add(currentMetadataKey)
 
   const entries: [string, string | null, string?][] = []
-  for (const source of collectStaticModuleSources(code)) {
+  const sources =
+    collectModuleSources?.(code, normalizedFilename) ?? collectStaticModuleSources(code)
+  for (const source of sources) {
     const userMetadata = compilerOptions.resolveModuleMetadata?.(source, normalizedFilename)
     if (userMetadata !== undefined) {
       entries.push([
@@ -4450,6 +4501,7 @@ function computePackageMetadataCacheFingerprint(
           resolvedLocalModules,
           onPackageMetadataDependency,
           exactResolution?.key ?? localFile,
+          collectModuleSources,
         )
         entries.push([
           source,
