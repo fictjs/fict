@@ -377,10 +377,78 @@ describe('Rust compiler backend', () => {
     expect(native.transform).not.toHaveBeenCalled()
   })
 
-  it('fails fast when Preview output is requested from the stable Rust graph', () => {
-    expect(() => fict({ backend: 'rust', resumable: true })).toThrow(
-      'does not yet support Preview resumability',
+  it('consumes structured Rust Preview handlers without reparsing compiler output', async () => {
+    native.transform.mockResolvedValue(
+      compileResult({
+        code: `
+          import { __fictQrl } from 'fict/internal'
+          const button = document.createElement('button')
+          button.setAttribute('on:click', __fictQrl("fict:compiler-artifact:handler-0", "default"))
+          export { button }
+        `,
+        map: {
+          version: 3,
+          sources: ['/sources/App.tsx'],
+          sourcesContent: ['export const source = true'],
+          names: [],
+          mappings: 'AAAA;AACA;AACA;AACA;AACA',
+        },
+        artifacts: [
+          {
+            id: 'handler-0',
+            kind: 'handlerModule',
+            code: 'export default (_scopeId, event) => event.type;\n',
+            map: {
+              version: 3,
+              sources: ['/sources/App.tsx'],
+              sourcesContent: ['export const source = true'],
+              names: [],
+              mappings: 'AAAA',
+            },
+            handler: {
+              sourceExportName: '__fict_e0',
+              artifactExportName: 'default',
+              moduleSpecifier: 'fict:compiler-artifact:handler-0',
+              sourceSpan: { start: 0, end: 6 },
+            },
+          },
+        ],
+      }),
     )
+    const plugin = fict({
+      backend: 'rust',
+      resumable: true,
+      cache: false,
+      functionSplitting: false,
+      useTypeScriptProject: false,
+      publicIdentityNamespace: 'native-test@1',
+    })
+    plugin.configResolved?.(config as never)
+    const pluginContext = context()
+    const transformed = (await plugin.transform?.call(
+      pluginContext as never,
+      'export const source = true',
+      '/project/src/App.tsx',
+    )) as { code: string; map: unknown }
+
+    const request = native.transform.mock.calls[0]![0] as CompileRequest
+    expect(request.options?.preview).toEqual({
+      resumable: true,
+      autoExtractHandlers: true,
+      autoExtractThreshold: 3,
+    })
+    expect(transformed.code).not.toContain('fict:compiler-artifact:handler-0')
+    const handlerModuleId = transformed.code.match(/"(virtual:fict-handler:[^"]+)"/)?.[1]
+    expect(handlerModuleId).toBeTruthy()
+    expect(transformed.map).toMatchObject({ sources: ['/sources/App.tsx'] })
+
+    const resolved = await plugin.resolveId?.call(pluginContext as never, handlerModuleId!)
+    const loaded = (await plugin.load?.call(pluginContext as never, resolved as string)) as {
+      code: string
+      map: unknown
+    }
+    expect(loaded.code).toBe('export default (_scopeId, event) => event.type;\n')
+    expect(JSON.parse(loaded.map as string)).toMatchObject({ sources: ['/sources/App.tsx'] })
   })
 
   it('preserves the Vite full-reload contract without loading the native compiler', () => {

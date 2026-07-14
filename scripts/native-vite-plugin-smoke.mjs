@@ -49,6 +49,16 @@ try {
         }
       `,
     ),
+    writeFile(
+      path.join(sourceDirectory, 'preview.tsx'),
+      `
+        import { $state } from 'fict'
+        export function PreviewApp() {
+          const count = $state(0)
+          return <button onClick$={(event) => { event.preventDefault(); count++ }}>{count}</button>
+        }
+      `,
+    ),
   ])
 
   const result = await build({
@@ -107,8 +117,48 @@ try {
   )
   assert.equal(compiledModule.App(), 1)
 
+  const previewResult = await build({
+    root,
+    logLevel: 'silent',
+    plugins: [
+      fict({
+        backend: 'rust',
+        nativeCompilerPath,
+        cache: false,
+        functionSplitting: false,
+        resumable: true,
+        autoExtractHandlers: false,
+        useTypeScriptProject: false,
+      }),
+    ],
+    build: {
+      write: false,
+      minify: false,
+      lib: {
+        entry: path.join(sourceDirectory, 'preview.tsx'),
+        formats: ['es'],
+        fileName: () => 'preview.js',
+      },
+      rollupOptions: {
+        external: id => id === 'fict' || id.startsWith('fict/'),
+      },
+    },
+  })
+  const previewOutputs = (Array.isArray(previewResult) ? previewResult : [previewResult]).flatMap(
+    output => ('output' in output ? output.output : []),
+  )
+  const previewChunks = previewOutputs.filter(output => output.type === 'chunk')
+  const previewCode = previewChunks.map(output => output.code).join('\n')
+  const handlerChunk = previewChunks.find(output => output.name === 'handler-__fict_e0')
+
+  assert.doesNotMatch(previewCode, /fict:compiler-artifact:/)
+  assert.match(previewCode, /on:click/)
+  assert.ok(handlerChunk, 'Rust Preview build must emit the structured handler chunk')
+  assert.match(handlerChunk.code, /export\s*\{[^}]+ as default/)
+  assert.match(handlerChunk.code, /__fictUseLexicalScope/)
+
   process.stdout.write(
-    `${JSON.stringify({ backend: 'rust', nativeCompilerPath, outputBytes: code.length })}\n`,
+    `${JSON.stringify({ backend: 'rust', nativeCompilerPath, outputBytes: code.length, previewChunks: previewChunks.length })}\n`,
   )
 } finally {
   await rm(root, { recursive: true, force: true })

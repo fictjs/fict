@@ -653,6 +653,12 @@ importers:
       '@fictjs/compiler':
         specifier: workspace:*
         version: link:../compiler
+      '@jridgewell/remapping':
+        specifier: ^2.3.5
+        version: 2.3.5
+      magic-string:
+        specifier: ^0.30.21
+        version: 0.30.21
     devDependencies:
       '@types/babel__core':
         specifier: ^7.20.5

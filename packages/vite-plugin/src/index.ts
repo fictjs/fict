@@ -12,12 +12,14 @@ import transformTypeScript from '@babel/plugin-transform-typescript'
 import _traverse from '@babel/traverse'
 import type { NodePath, Scope } from '@babel/traverse'
 import * as t from '@babel/types'
+import remapping, { type SourceMapInput as RemappingSourceMapInput } from '@jridgewell/remapping'
 import {
   createFictPlugin,
   getCompilerCacheFingerprint,
   resolvePackageModuleMetadata,
   type CompileRequest,
   type CompileResult,
+  type CompilerArtifact,
   type CompilerExplainArtifact,
   type CompilerWarning,
   type FictDiagnostic,
@@ -29,6 +31,7 @@ import {
   type ResolvedMetadataInput,
   type ScanResult,
 } from '@fictjs/compiler'
+import MagicString from 'magic-string'
 import {
   loadNativeCompilerBinding,
   type NativeCompilerBinding,
@@ -204,9 +207,13 @@ interface CachedTransform {
   moduleMetadata?: ModuleReactiveMetadata
 }
 
-interface PreparedCompilerTransform {
+interface CompilerStageResult {
   code: string
   map: TransformResult['map']
+  artifacts: CompilerArtifact[]
+}
+
+interface PreparedCompilerTransform extends CompilerStageResult {
   moduleMetadata: ModuleReactiveMetadata
   preparationKey: string
 }
@@ -470,6 +477,10 @@ interface ExtractedHandler {
   code: string
   /** Which runtime package family this module uses for helper imports */
   runtimeImportFamily: 'fict' | 'runtime'
+  /** Complete compiler-owned module; present for Rust structured artifacts. */
+  moduleCode?: string
+  /** Source map for a complete compiler-owned module. */
+  moduleMap?: RawSourceMap | null
 }
 
 type RuntimeHelperUsage = string | { helperName: string; localName: string }
@@ -521,12 +532,6 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   const backend = (backendOption ?? backendFromEnvironment ?? 'legacy') as FictCompilerBackend
   if (backend !== 'legacy' && backend !== 'rust' && backend !== 'shadow') {
     throw new Error(`[fict] Unknown compiler backend ${JSON.stringify(backend)}.`)
-  }
-  if (backend !== 'legacy' && compilerOptions.resumable === true) {
-    throw new Error(
-      `[fict] The ${backend} compiler backend does not yet support Preview resumability. ` +
-        'Disable resumable output or use backend: "legacy".',
-    )
   }
   if (shadowOption && backend !== 'shadow') {
     throw new Error('[fict] The `shadow` options require backend: "shadow".')
@@ -1637,6 +1642,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     return {
       code: compiled.code,
       map: compiled.map,
+      artifacts: compiled.artifacts,
       moduleMetadata: generatedMetadata,
     }
   }
@@ -2031,7 +2037,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               `or unavailable generation (${identity.generationId}/${identity.environmentId}).`,
           )
         }
-        return generateHandlerModule(handler)
+        return handler.moduleCode !== undefined
+          ? {
+              code: handler.moduleCode,
+              map: handler.moduleMap ? JSON.stringify(handler.moduleMap) : null,
+            }
+          : generateHandlerModule(handler)
       }
 
       // Load virtual handler modules
@@ -2059,7 +2070,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       debugLog(`Generated virtual module (${generatedCode.length} chars)`, {
         preview: generatedCode.slice(0, 200),
       })
-      return generatedCode
+      return handler.moduleCode !== undefined
+        ? {
+            code: generatedCode,
+            map: handler.moduleMap ? JSON.stringify(handler.moduleMap) : null,
+          }
+        : generatedCode
     },
 
     config(userConfig, env) {
@@ -2228,8 +2244,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         )
         const cacheStore = ensureCache()
         const shouldSplit =
-          options.functionSplitting ??
-          (config?.command === 'build' && (compilerOptions.resumable || !config?.build?.ssr))
+          (backend === 'rust' && compilerOptions.resumable === true) ||
+          (options.functionSplitting ??
+            (config?.command === 'build' && (compilerOptions.resumable || !config?.build?.ssr)))
         // Function callbacks are observable compiler output. Replaying only code/maps from
         // either cache would silently drop warnings and explain artifacts. Shadow comparison is
         // observable too: a cached legacy code/map has no Rust outcome and would create a false
@@ -2296,6 +2313,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
 
         let finalCode: string
         let finalMap: TransformResult['map']
+        let compilerArtifacts: CompilerArtifact[] = []
         let splitResult: { code: string; handlers: string[]; map: TransformResult['map'] } | null =
           null
 
@@ -2315,7 +2333,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           const prepared = isPassThroughVariant
             ? undefined
             : state.preparedCompilerTransforms.get(metadataKey)
-          let result: { code: string; map: TransformResult['map'] }
+          let result: CompilerStageResult
           if (!hasObservableCompilerCallbacks && prepared?.preparationKey === preparationKey) {
             result = prepared
           } else {
@@ -2347,6 +2365,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           }
           finalCode = result.code
           finalMap = result.map
+          compilerArtifacts = result.artifacts
         }
 
         // Apply function-level code splitting in production builds
@@ -2369,26 +2388,42 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
                     origin: config?.server.origin,
                   }
                 : undefined
-            splitResult = extractAndRewriteHandlers(
-              finalCode,
-              id,
-              state.extractedHandlers,
-              finalMap,
-              config?.root,
-              packageBoundaryCache,
-              publicIdentityNamespace,
-              config?.resolve?.preserveSymlinks === true,
-              devHandlerModuleOptions
-                ? handlerId =>
-                    createDevHandlerModuleId(
-                      handlerId,
-                      devHandlerModuleOptions.generationId,
-                      devHandlerModuleOptions.environmentId,
-                      devHandlerModuleOptions,
-                    )
-                : undefined,
-            )
+            const resolveHandlerModuleId = devHandlerModuleOptions
+              ? (handlerId: string) =>
+                  createDevHandlerModuleId(
+                    handlerId,
+                    devHandlerModuleOptions.generationId,
+                    devHandlerModuleOptions.environmentId,
+                    devHandlerModuleOptions,
+                  )
+              : undefined
+            splitResult =
+              backend === 'rust'
+                ? consumeStructuredHandlerArtifacts(
+                    finalCode,
+                    id,
+                    compilerArtifacts,
+                    state.extractedHandlers,
+                    finalMap,
+                    config?.root,
+                    packageBoundaryCache,
+                    publicIdentityNamespace,
+                    config?.resolve?.preserveSymlinks === true,
+                    resolveHandlerModuleId,
+                  )
+                : extractAndRewriteHandlers(
+                    finalCode,
+                    id,
+                    state.extractedHandlers,
+                    finalMap,
+                    config?.root,
+                    packageBoundaryCache,
+                    publicIdentityNamespace,
+                    config?.resolve?.preserveSymlinks === true,
+                    resolveHandlerModuleId,
+                  )
           } catch (error) {
+            if (backend === 'rust') throw error
             this.warn(buildPluginMessage('extractAndRewriteHandlers failed', filename, error))
           }
           debugLog('Split result', {
@@ -4327,6 +4362,15 @@ function nativeCompilerOptions(
       allowNamespaces: true,
       onlyRemoveTypeImports: tsImportElision !== 'remove',
     },
+    ...(options.resumable === true
+      ? {
+          preview: {
+            resumable: true,
+            autoExtractHandlers: options.autoExtractHandlers ?? true,
+            autoExtractThreshold: options.autoExtractThreshold ?? 3,
+          },
+        }
+      : {}),
   }
 }
 
@@ -4377,7 +4421,7 @@ function consumeNativeCompileResult(
   source: string,
   filename: string,
   options: FictCompilerOptions,
-): { code: string; map: TransformResult['map'] } {
+): CompilerStageResult {
   for (const dependency of result.metadataDependencies) {
     options.onModuleMetadataDependency?.(dependency)
   }
@@ -4407,6 +4451,7 @@ function consumeNativeCompileResult(
   return {
     code: result.code,
     map: result.map as TransformResult['map'],
+    artifacts: result.artifacts,
   }
 }
 
@@ -4497,7 +4542,7 @@ async function compileFictCompilerStage(
   fictOptions: FictCompilerOptions,
   tsImportElision: TypeScriptImportElision,
   stage: CompilerStageOptions,
-): Promise<{ code: string; map: TransformResult['map'] }> {
+): Promise<CompilerStageResult> {
   if (stage.backend === 'shadow') {
     if (!stage.nativeCompiler || !stage.shadowRecorder) {
       throw new Error('[fict] Shadow compiler backend selected without its native binding/report.')
@@ -4518,7 +4563,7 @@ async function compileFictCompilerStage(
       },
     }
 
-    let legacyResult: { code: string; map: TransformResult['map'] } | undefined
+    let legacyResult: CompilerStageResult | undefined
     let legacyError: unknown
     try {
       legacyResult = await compileFictCompilerStage(
@@ -4645,6 +4690,7 @@ async function compileFictCompilerStage(
   return {
     code: result.code,
     map: result.map as TransformResult['map'],
+    artifacts: [],
   }
 }
 
@@ -5359,6 +5405,9 @@ function normalizeRuntimeHelperUsage(usage: RuntimeHelperUsage): {
  * local helpers trade split granularity for a stable dependency contract.
  */
 function generateHandlerModule(handler: ExtractedHandler): string {
+  if (handler.moduleCode !== undefined) {
+    return handler.moduleCode
+  }
   // If no code was extracted (fallback case), use re-export
   if (!handler.code) {
     return `export { ${handler.exportName} as default } from ${JSON.stringify(handler.sourceModule)};\n`
@@ -5399,6 +5448,130 @@ function generateHandlerModule(handler: ExtractedHandler): string {
 
   // Generate the complete standalone module
   return `${imports.join('\n')}${imports.length > 0 ? '\n\n' : ''}export default ${handler.code};\n`
+}
+
+/**
+ * Consume Rust compiler-owned handler modules without reparsing generated JavaScript.
+ * MagicString records exact placeholder edits and its map is composed through OXC's map.
+ */
+function consumeStructuredHandlerArtifacts(
+  code: string,
+  sourceModule: string,
+  artifacts: readonly CompilerArtifact[],
+  handlerRegistry: Map<string, ExtractedHandler>,
+  inputSourceMap: TransformResult['map'] = null,
+  rootDir?: string,
+  packageBoundaryCache?: Map<string, PackageBoundary | null>,
+  explicitNamespace?: string,
+  preserveSymlinks = false,
+  resolveHandlerModuleId?: (handlerId: string) => string,
+): { code: string; handlers: string[]; map: TransformResult['map'] } | null {
+  const handlers = artifacts.filter(artifact => artifact.kind === 'handlerModule')
+  if (handlers.length === 0) {
+    if (code.includes('fict:compiler-artifact:')) {
+      throw new Error('[fict] Rust output contains artifact placeholders but no handler artifacts.')
+    }
+    return null
+  }
+
+  const seenIds = new Set<string>()
+  const seenSpecifiers = new Set<string>()
+  const pending: {
+    artifact: CompilerArtifact
+    sourceExportName: string
+    handlerId: string
+    moduleId: string
+    start: number
+    end: number
+  }[] = []
+  for (const artifact of handlers) {
+    const metadata = artifact.handler
+    if (!metadata) {
+      throw new Error(
+        `[fict] Rust handler artifact ${JSON.stringify(artifact.id)} has no routing metadata.`,
+      )
+    }
+    if (!seenIds.add(artifact.id)) {
+      throw new Error(`[fict] Rust compiler emitted duplicate artifact id ${artifact.id}.`)
+    }
+    if (!seenSpecifiers.add(metadata.moduleSpecifier)) {
+      throw new Error(
+        `[fict] Rust compiler emitted duplicate artifact specifier ${metadata.moduleSpecifier}.`,
+      )
+    }
+    const encodedSpecifier = JSON.stringify(metadata.moduleSpecifier)
+    const start = code.indexOf(encodedSpecifier)
+    if (start < 0 || code.indexOf(encodedSpecifier, start + encodedSpecifier.length) >= 0) {
+      throw new Error(
+        `[fict] Rust artifact ${JSON.stringify(artifact.id)} must have exactly one ` +
+          `main-output placeholder ${encodedSpecifier}.`,
+      )
+    }
+    const handlerId = createHandlerId(
+      sourceModule,
+      metadata.sourceExportName,
+      rootDir,
+      packageBoundaryCache,
+      explicitNamespace,
+      preserveSymlinks,
+    )
+    pending.push({
+      artifact,
+      sourceExportName: metadata.sourceExportName,
+      handlerId,
+      moduleId:
+        resolveHandlerModuleId?.(handlerId) ?? `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}`,
+      start,
+      end: start + encodedSpecifier.length,
+    })
+  }
+
+  const edited = new MagicString(code)
+  for (const item of pending) {
+    edited.overwrite(item.start, item.end, JSON.stringify(item.moduleId))
+  }
+  if (edited.toString().includes('fict:compiler-artifact:')) {
+    throw new Error('[fict] Rust output contains an unclaimed compiler artifact placeholder.')
+  }
+
+  const editMap = JSON.parse(
+    edited
+      .generateMap({
+        hires: true,
+        includeContent: true,
+        source: sourceModule,
+      })
+      .toString(),
+  ) as RawSourceMap
+  const map = inputSourceMap
+    ? (JSON.parse(
+        remapping(
+          [
+            editMap as unknown as RemappingSourceMapInput,
+            inputSourceMap as unknown as RemappingSourceMapInput,
+          ],
+          () => null,
+          { excludeContent: false },
+        ).toString(),
+      ) as RawSourceMap)
+    : editMap
+  for (const item of pending) {
+    handlerRegistry.set(item.handlerId, {
+      sourceModule,
+      exportName: item.sourceExportName,
+      helpersUsed: [],
+      localDeps: [],
+      code: '',
+      runtimeImportFamily: 'fict',
+      moduleCode: item.artifact.code,
+      moduleMap: item.artifact.map,
+    })
+  }
+  return {
+    code: edited.toString(),
+    handlers: pending.map(item => item.sourceExportName),
+    map: map as TransformResult['map'],
+  }
 }
 
 /** Prefix for re-exported handler dependencies */
