@@ -30,10 +30,6 @@ import legacyCompiler, {
   createFictPlugin as explicitLegacyCompiler,
   getCompilerCacheFingerprint as getLegacyCompilerCacheFingerprint,
 } from '../src/legacy'
-import rootCompiler, {
-  createFictPlugin as rootLegacyCompiler,
-  getCompilerCacheFingerprint as getRootCompilerCacheFingerprint,
-} from '../src/index'
 
 function createCompileResult(): CompileResult {
   return {
@@ -94,10 +90,9 @@ function createBinding(): NativeCompilerBinding {
 }
 
 describe('native compiler loader', () => {
-  it('keeps the explicit legacy entrypoint identical during the beta window', () => {
-    expect(legacyCompiler).toBe(rootCompiler)
-    expect(explicitLegacyCompiler).toBe(rootLegacyCompiler)
-    expect(getLegacyCompilerCacheFingerprint).toBe(getRootCompilerCacheFingerprint)
+  it('keeps the explicit legacy entrypoint available during the compatibility window', () => {
+    expect(legacyCompiler).toBe(explicitLegacyCompiler)
+    expect(typeof getLegacyCompilerCacheFingerprint).toBe('function')
   })
 
   it('exports the complete serializable direct compiler facade', () => {

@@ -161,6 +161,7 @@ async function transformWithFingerprints(
 
   const { default: fict } = await import('..')
   const plugin = fict({
+    backend: 'legacy',
     cache: {
       persistent: true,
       dir: cacheDir,
@@ -183,6 +184,7 @@ async function transformWithSplitMode(
 
   const { default: fict } = await import('..')
   const plugin = fict({
+    backend: 'legacy',
     functionSplitting: shouldSplit,
     cache: {
       persistent: true,

@@ -35,7 +35,7 @@ export default defineConfig({
       tsconfigPath: './tsconfig.json',
       // Optional plugin debug logs (or set FICT_VITE_PLUGIN_DEBUG=1)
       debug: false,
-      // Native compiler beta. The current compatibility-window default is 'legacy'.
+      // Optional override. Rust is the compatibility-window default.
       backend: 'rust',
       // Required for resumable builds only when no named package.json owns the Vite root
       // publicIdentityNamespace: 'com.example.my-app',
@@ -68,12 +68,11 @@ Custom Babel plugins must run as a separate stage; `@fictjs/babel-preset` is a
 deprecated legacy-only adapter and cannot mix Rust and Babel output in one
 build.
 
-## Native compiler beta and shadow mode
+## Native compiler default and shadow mode
 
-`backend` accepts `legacy`, `rust`, or `shadow`. The current beta keeps
-`legacy` as the default. `FICT_COMPILER_BACKEND` selects the same mode for a
-whole build when no explicit option is present; use
-`FICT_COMPILER_BACKEND=legacy` for rollback.
+`backend` accepts `legacy`, `rust`, or `shadow`. Rust is the default;
+`FICT_COMPILER_BACKEND` selects the same mode for a whole build when no
+explicit option is present. Use `FICT_COMPILER_BACKEND=legacy` for rollback.
 
 ```ts
 fict({

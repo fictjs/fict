@@ -1,7 +1,7 @@
 import { transformSync } from '@babel/core'
 import { describe, expect, it } from 'vitest'
 
-import createFictPlugin, { type CompilerExplainArtifact } from '../src'
+import createFictPlugin, { type CompilerExplainArtifact } from '../src/legacy'
 
 import { transform } from './test-utils'
 

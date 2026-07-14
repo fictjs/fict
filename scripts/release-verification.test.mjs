@@ -28,6 +28,12 @@ const rolloutState = JSON.parse(
 const rolloutReview = JSON.parse(
   readFileSync(new URL('../.github/compiler-rollout-review.json', import.meta.url), 'utf8'),
 )
+const rolloutEvidence = JSON.parse(
+  readFileSync(new URL('../.github/compiler-rollout-evidence.json', import.meta.url), 'utf8'),
+)
+const nativeCertification = JSON.parse(
+  readFileSync(new URL('../.github/compiler-native-certification.json', import.meta.url), 'utf8'),
+)
 const rolloutReadiness = readFileSync(
   new URL('./compiler-rollout-readiness.mjs', import.meta.url),
   'utf8',
@@ -246,7 +252,9 @@ test('Rust-default approval binds the complete native certification to its candi
   assert.equal(rolloutState.schemaVersion, 3)
   assert.equal(rolloutState.nativeCertificationPath, '.github/compiler-native-certification.json')
   assert.equal(rolloutReview.schemaVersion, 3)
-  assert.equal(rolloutReview.nativeCertificationDigest, null)
+  assert.equal(rolloutReview.status, 'approved')
+  assert.equal(rolloutReview.candidateDigest, rolloutEvidence.candidateDigest)
+  assert.equal(rolloutReview.nativeCertificationDigest, nativeCertification.certificationDigest)
   assert.match(rolloutReadiness, /assertNativeCertification\(nativeCertification, evidence\)/)
   assert.match(rolloutReadiness, /payload\.compilerBuildRevision !== evidence\.sourceRevision/)
   assert.match(rolloutReadiness, /payload\.compilerBuildId !== evidence\.compilerBuildId/)

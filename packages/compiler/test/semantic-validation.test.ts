@@ -2,7 +2,7 @@ import { transformSync } from '@babel/core'
 import syntaxJsx from '@babel/plugin-syntax-jsx'
 import { describe, expect, it } from 'vitest'
 
-import createFictPlugin from '../src'
+import createFictPlugin from '../src/legacy'
 import { transform } from './test-utils'
 
 describe('semantic validation', () => {

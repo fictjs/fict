@@ -14,11 +14,11 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import { parse } from '@babel/parser'
-import { resolvePackageModuleMetadata } from '@fictjs/compiler'
+import { resolvePackageModuleMetadata } from '@fictjs/compiler/graph-host'
 import { build, createServer, resolveConfig, type Rollup, type TransformResult } from 'vite'
 import { describe, it, expect, vi } from 'vitest'
 
-import fict, { __fictVitePluginInternals } from '..'
+import createFictVitePlugin, { __fictVitePluginInternals } from '..'
 
 // Mock Vite config for testing
 const mockBuildConfig = {
@@ -33,6 +33,12 @@ const mockBuildConfig = {
 const mockSsrBuildConfig = {
   ...mockBuildConfig,
   build: { ssr: true },
+}
+
+function fict(
+  options?: Parameters<typeof createFictVitePlugin>[0],
+): ReturnType<typeof createFictVitePlugin> {
+  return createFictVitePlugin({ backend: 'legacy', ...options })
 }
 
 type TestPlugin = ReturnType<typeof fict> & {
@@ -5612,7 +5618,11 @@ describe('fict vite-plugin', () => {
     })
 
     it('preserves main-module sourcemaps when function splitting rewrites handlers', async () => {
-      const plugin = fict({ functionSplitting: true, resumable: true, sourcemap: true }) as any
+      const plugin = fict({
+        functionSplitting: true,
+        resumable: true,
+        sourcemap: true,
+      }) as any
 
       if (typeof plugin.configResolved === 'function') {
         plugin.configResolved(mockBuildConfig as any)
@@ -5655,7 +5665,11 @@ describe('fict vite-plugin', () => {
     })
 
     it('maps generated stack frame positions back to original TSX lines', async () => {
-      const plugin = fict({ functionSplitting: true, resumable: true, sourcemap: true }) as any
+      const plugin = fict({
+        functionSplitting: true,
+        resumable: true,
+        sourcemap: true,
+      }) as any
 
       if (typeof plugin.configResolved === 'function') {
         plugin.configResolved(mockBuildConfig as any)

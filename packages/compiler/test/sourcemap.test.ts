@@ -3,7 +3,7 @@ import pluginTransformTypescript from '@babel/plugin-transform-typescript'
 import { TraceMap, originalPositionFor, type SourceMapInput } from '@jridgewell/trace-mapping'
 import { describe, expect, it } from 'vitest'
 
-import createFictPlugin from '../src/index'
+import createFictPlugin from '../src/legacy'
 
 // ============================================================================
 // Helper Functions

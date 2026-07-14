@@ -106,7 +106,7 @@ interface BabelGeneratorOptionsWithInputSourceMap extends BabelGeneratorOptions 
 export interface FictPluginOptions extends FictCompilerOptions {
   /**
    * Compiler implementation used by the Vite compile stage.
-   * @default 'legacy'
+   * @default 'rust'
    */
   backend?: FictCompilerBackend
   /** Shadow comparison controls. Used only with `backend: 'shadow'`. */
@@ -527,7 +527,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     ...compilerOptions
   } = options
   const backendFromEnvironment = process.env.FICT_COMPILER_BACKEND
-  const backend = (backendOption ?? backendFromEnvironment ?? 'legacy') as FictCompilerBackend
+  const backend = (backendOption ?? backendFromEnvironment ?? 'rust') as FictCompilerBackend
   if (backend !== 'legacy' && backend !== 'rust' && backend !== 'shadow') {
     throw new Error(`[fict] Unknown compiler backend ${JSON.stringify(backend)}.`)
   }

@@ -7,7 +7,13 @@ import { fileURLToPath } from 'node:url'
 import { createServer, type ViteDevServer } from 'vite'
 import { describe, expect, it } from 'vitest'
 
-import fict, { __fictVitePluginInternals } from '..'
+import createFictVitePlugin, { __fictVitePluginInternals } from '..'
+
+function fict(
+  options?: Parameters<typeof createFictVitePlugin>[0],
+): ReturnType<typeof createFictVitePlugin> {
+  return createFictVitePlugin({ backend: 'legacy', ...options })
+}
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..')
 

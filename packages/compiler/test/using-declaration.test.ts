@@ -2,7 +2,7 @@ import { transformSync } from '@babel/core'
 import pluginTransformTypescript from '@babel/plugin-transform-typescript'
 import { describe, expect, it } from 'vitest'
 
-import createFictPlugin from '../src/index'
+import createFictPlugin from '../src/legacy'
 
 function transformWithExplicitResourceManagement(source: string): void {
   transformSync(source, {

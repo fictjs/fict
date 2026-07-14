@@ -5,7 +5,7 @@ import {
   type FictCompilerOptions,
   type SourceMinimizerOptions,
   type SourceMinimizerResult,
-} from '../../src'
+} from '../../src/legacy'
 
 type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false

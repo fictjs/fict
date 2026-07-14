@@ -31,9 +31,9 @@ v3 records the candidate, full native-certification, rollout-review, and
 legacy-removal-review paths plus the Rust-default, completed
 compatibility-minor, final legacy, and planned legacy-removal releases; beta
 keeps all four version values `null`. Evidence and review paths must remain
-workspace-relative. The normal beta readiness check validates both pending
-review documents, so an unknown area, non-boolean value, or partial approval
-fails before promotion work starts.
+workspace-relative. Readiness validates both review document shapes in every
+phase, so an unknown area, non-boolean value, or partial approval fails before
+promotion work starts.
 The same check binds the compiler package root to the phase: beta MUST retain
 the legacy facade, while `rust-default` and `legacy-removal` MUST expose the
 complete native request API without importing the legacy implementation.
@@ -93,8 +93,8 @@ compatibility, and a compiler root that does not expose the Rust
 
 | Mode     | Purpose                                        | Delivered output | Allowed use                                   |
 | -------- | ---------------------------------------------- | ---------------- | --------------------------------------------- |
-| `legacy` | Compatibility and whole-build rollback         | Babel/TypeScript | Supported during the bounded window           |
-| `rust`   | Native beta and eventual Core default          | OXC/Rust         | Explicit application/CI opt-in during beta    |
+| `legacy` | Compatibility and whole-build rollback         | Babel/TypeScript | Explicit recovery during the bounded window   |
+| `rust`   | Native Core compiler                           | OXC/Rust         | Core default; may also be selected explicitly |
 | `shadow` | Compare native behavior without changing build | Legacy           | CI or an explicit local diagnostic build only |
 
 One build MUST use one mode. A transform failure MUST NOT select another
@@ -182,7 +182,8 @@ hand-maintained benchmark or package-size claim.
 
 The checked-in
 [`compiler-rollout-review.json`](../../../.github/compiler-rollout-review.json)
-is intentionally pending until a maintainer reviews a two-candidate artifact.
+begins pending and may become approved only after a maintainer reviews a
+two-candidate artifact.
 The same candidate source revision MUST also complete the Release workflow's
 8-target × 2-Node certification; its retained JSON is copied to the
 `nativeCertificationPath` declared by rollout state. Approval MUST bind both
@@ -225,9 +226,9 @@ pnpm release:compiler:rust-rollout
 pnpm release:verify:clean
 ```
 
-The first command validates phase consistency. The second produces current
-Rust evidence. Only the clean detached release gate can count for publishing.
-Human approval remains required before changing the state to `rust-default`.
+The first command validates phase consistency and the digest-bound human
+approval. The second produces current Rust evidence. Only the clean detached
+release gate can count for publishing.
 
 ## Related decisions
 

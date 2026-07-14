@@ -1,9 +1,20 @@
 /**
- * Package-root compatibility facade for the beta rollout.
+ * OXC/Rust compiler package root.
  *
- * The root deliberately preserves the Babel plugin API until M7 promotion is authorized. The
- * implementation lives behind a legacy-owned module so a later Rust-default root can replace this
- * facade without making `@fictjs/compiler/legacy` depend on, or cycle through, the new root.
+ * The package root exposes the serializable native request API after M7 promotion. The
+ * Babel-based compiler remains available only through `@fictjs/compiler/legacy` during the
+ * compatibility window.
  */
-export { createFictPlugin as default } from './legacy-compiler'
-export * from './legacy-compiler'
+export {
+  nativeCompilerInfo,
+  transformSync,
+  transform,
+  scanSync,
+  scan,
+  analyzeSync,
+  analyze,
+} from './native-loader'
+export type { NativeCompilerInfo } from './native-loader'
+export { COMPILER_PROTOCOL_VERSION, MODULE_REACTIVE_METADATA_VERSION } from './types'
+export type * from './types'
+export type * from './tooling/types'

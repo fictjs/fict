@@ -98,7 +98,7 @@ async function runWorker() {
     const { transformSync } = require('../packages/compiler/node_modules/@babel/core')
     const transformTypeScript =
       require('../packages/compiler/node_modules/@babel/plugin-transform-typescript').default
-    const createFictPlugin = require('../packages/compiler/dist/index.cjs').default
+    const createFictPlugin = require('../packages/compiler/dist/legacy.cjs').default
     compile = (source, index) => {
       const result = transformSync(source, {
         filename: `/bench/module-${index}.tsx`,
