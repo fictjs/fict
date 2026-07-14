@@ -2930,6 +2930,7 @@ impl<'source, 'semantic> Builder<'source, 'semantic> {
             let origin = Origin::source(fact.span);
             self.functions.push(HirFunction {
                 id: fact.id,
+                parent: fact.parent,
                 binding,
                 scope: fact.scope,
                 kind,

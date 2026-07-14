@@ -27,6 +27,7 @@ fn empty_file() -> HirFile {
         globals: Vec::new(),
         functions: vec![HirFunction {
             id: FunctionId::new(0),
+            parent: FunctionId::new(0),
             binding: None,
             scope: ScopeId::new(0),
             kind: FunctionKind::Module,
@@ -64,7 +65,7 @@ fn valid_empty_hir_has_a_canonical_snapshot() {
         concat!(
             "file file0 source_len=0 root=fn0\n",
             "scope scope0 kind=Module parent=- origin=source@0..0\n",
-            "function fn0 kind=Module binding=- scope=scope0 async=false generator=false ",
+            "function fn0 parent=fn0 kind=Module binding=- scope=scope0 async=false generator=false ",
             "arrow=false no_memo=false pure=false entry=block0 regions=[] origin=source@0..0\n",
             "  block block0 scope=scope0 hint=None origin=source@0..0\n",
             "    terminator kind=Return { value: None } origin=source@0..0\n",
@@ -92,6 +93,20 @@ fn verifier_reports_arena_and_span_corruption_without_panicking() {
     assert!(codes.contains(&"FICT-HIR-SPAN"));
     assert!(diagnostics.iter().all(|diagnostic| {
         diagnostic.guarantee_class == fict_diagnostics::GuaranteeClass::Internal
+    }));
+}
+
+#[test]
+fn verifier_rejects_non_canonical_function_parent_ownership() {
+    let mut file = empty_file();
+    file.functions[0].parent = FunctionId::new(1);
+
+    let diagnostics = verify_hir(&file)
+        .expect_err("root ownership must be canonical")
+        .into_sorted();
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.code.as_str() == "FICT-HIR-FUNCTION"
+            && diagnostic.message.contains("lexical parent")
     }));
 }
 

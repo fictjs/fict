@@ -134,6 +134,7 @@ fn forms_versioned_alias_classes_and_invalidates_every_member() {
     ];
     let function = HirFunction {
         id: FunctionId::new(0),
+        parent: FunctionId::new(0),
         binding: None,
         scope: ScopeId::new(0),
         kind: FunctionKind::Module,
@@ -294,6 +295,7 @@ fn phi_aliases_only_when_all_reachable_sources_share_one_root() {
     ];
     let function = HirFunction {
         id: FunctionId::new(0),
+        parent: FunctionId::new(0),
         binding: None,
         scope: ScopeId::new(0),
         kind: FunctionKind::Module,

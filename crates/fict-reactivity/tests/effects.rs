@@ -132,6 +132,7 @@ fn tracks_static_dynamic_control_and_escape_paths_with_barriers() {
     ];
     let function = HirFunction {
         id: FunctionId::new(0),
+        parent: FunctionId::new(0),
         binding: None,
         scope: ScopeId::new(0),
         kind: FunctionKind::Module,
@@ -366,6 +367,7 @@ fn classifies_callback_hosts_captures_and_unknown_argument_escapes() {
         };
     let outer = HirFunction {
         id: FunctionId::new(0),
+        parent: FunctionId::new(0),
         binding: None,
         scope: ScopeId::new(0),
         kind: FunctionKind::Module,
@@ -426,6 +428,7 @@ fn classifies_callback_hosts_captures_and_unknown_argument_escapes() {
     };
     let nested = HirFunction {
         id: FunctionId::new(1),
+        parent: FunctionId::new(0),
         binding: None,
         scope: ScopeId::new(1),
         kind: FunctionKind::Plain,

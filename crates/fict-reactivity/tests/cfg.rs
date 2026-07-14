@@ -26,6 +26,7 @@ fn block(id: u32, terminator: TerminatorKind) -> HirBlock {
 fn function(blocks: Vec<HirBlock>) -> HirFunction {
     HirFunction {
         id: FunctionId::new(0),
+        parent: FunctionId::new(0),
         binding: None,
         scope: ScopeId::new(0),
         kind: FunctionKind::Module,

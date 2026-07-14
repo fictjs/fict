@@ -57,6 +57,7 @@ fn fixture(kind: FunctionKind) -> HirFile {
     };
     let function = HirFunction {
         id: FunctionId::new(0),
+        parent: FunctionId::new(0),
         binding: None,
         scope: ScopeId::new(0),
         kind,
@@ -205,6 +206,7 @@ fn analyses(hir: &HirFile) -> (Vec<RegionAnalysis>, Vec<ReactiveCycleAnalysis>) 
 fn empty_nested_function(id: u32, scope: u32) -> HirFunction {
     HirFunction {
         id: FunctionId::new(id),
+        parent: FunctionId::new(0),
         binding: None,
         scope: ScopeId::new(scope),
         kind: FunctionKind::Plain,

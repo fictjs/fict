@@ -109,6 +109,7 @@ fn splits_regions_at_barriers_and_memoizes_only_safe_derived_ranges() {
     let number = || LiteralValue::Number(NumberLiteral::from_f64(1.0));
     let function = HirFunction {
         id: FunctionId::new(0),
+        parent: FunctionId::new(0),
         binding: None,
         scope: ScopeId::new(0),
         kind: FunctionKind::Module,
@@ -249,6 +250,7 @@ fn assigns_control_flow_to_the_region_containing_the_controlling_read() {
     let number = || LiteralValue::Number(NumberLiteral::from_f64(1.0));
     let function = HirFunction {
         id: FunctionId::new(0),
+        parent: FunctionId::new(0),
         binding: None,
         scope: ScopeId::new(0),
         kind: FunctionKind::Module,

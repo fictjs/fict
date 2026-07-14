@@ -349,6 +349,31 @@ impl Verifier<'_> {
                     );
                 }
             }
+            self.function(function.parent, function.origin);
+            if function.id == self.file.root_function {
+                if function.parent != function.id {
+                    self.error(
+                        "FICT-HIR-FUNCTION",
+                        format!(
+                            "root fn{} must point to itself as its lexical parent",
+                            function.id.index()
+                        ),
+                        Some(function.origin),
+                    );
+                }
+            } else if function.parent == function.id
+                || function.parent.index() >= function.id.index()
+            {
+                self.error(
+                    "FICT-HIR-FUNCTION",
+                    format!(
+                        "fn{} lexical parent fn{} must precede its child",
+                        function.id.index(),
+                        function.parent.index()
+                    ),
+                    Some(function.origin),
+                );
+            }
             self.verify_function(function);
         }
         if module_functions != 1 {

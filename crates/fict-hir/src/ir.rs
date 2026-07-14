@@ -1379,6 +1379,8 @@ pub struct HirBlock {
 pub struct HirFunction {
     /// Request-local function identity.
     pub id: FunctionId,
+    /// Lexical parent function. The synthetic module function points to itself.
+    pub parent: FunctionId,
     /// Semantic function binding, absent for anonymous and module functions.
     pub binding: Option<BindingId>,
     /// Function body scope.

@@ -2958,6 +2958,7 @@ fn distinguishes_unresolved_typeof_from_binding_reads() {
                 .is_some_and(|binding| hir.bindings[binding.as_usize()].display_name == "inspect")
         })
         .expect("inspect function");
+    assert_eq!(function.parent, hir.root_function);
     let instructions: Vec<_> = function
         .blocks
         .iter()
@@ -3177,6 +3178,7 @@ fn materializes_this_new_target_and_import_meta_as_context_values() {
                 })
         })
         .expect("nested lexical-context arrow");
+    assert_eq!(nested.parent, function.id);
     let nested_contexts: std::collections::BTreeSet<_> = nested
         .blocks
         .iter()

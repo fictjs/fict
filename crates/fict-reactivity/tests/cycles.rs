@@ -31,6 +31,7 @@ fn local(id: u32) -> HirLocal {
 fn function(local_count: u32) -> HirFunction {
     HirFunction {
         id: FunctionId::new(0),
+        parent: FunctionId::new(0),
         binding: None,
         scope: ScopeId::new(0),
         kind: FunctionKind::Module,

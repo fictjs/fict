@@ -93,6 +93,7 @@ fn propagates_shape_state_across_aliases() {
     ];
     let function = HirFunction {
         id: FunctionId::new(0),
+        parent: FunctionId::new(0),
         binding: None,
         scope: ScopeId::new(0),
         kind: FunctionKind::Module,
@@ -296,6 +297,7 @@ fn propagates_shape_state_across_aliases() {
 fn spread_arrays_remain_open_and_have_no_exact_length() {
     let function = HirFunction {
         id: FunctionId::new(0),
+        parent: FunctionId::new(0),
         binding: None,
         scope: ScopeId::new(0),
         kind: FunctionKind::Module,
@@ -370,6 +372,7 @@ fn phi_join_keeps_object_kind_but_opens_different_key_sets() {
     };
     let function = HirFunction {
         id: FunctionId::new(0),
+        parent: FunctionId::new(0),
         binding: None,
         scope: ScopeId::new(0),
         kind: FunctionKind::Module,

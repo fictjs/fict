@@ -28,6 +28,7 @@ fn hir() -> HirFile {
         globals: Vec::new(),
         functions: vec![HirFunction {
             id: FunctionId::new(0),
+            parent: FunctionId::new(0),
             binding: None,
             scope: ScopeId::new(0),
             kind: FunctionKind::Module,

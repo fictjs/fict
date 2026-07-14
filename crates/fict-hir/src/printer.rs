@@ -76,8 +76,9 @@ pub fn print_hir(file: &HirFile) -> String {
     for function in &file.functions {
         writeln!(
             output,
-            "function fn{} kind={:?} binding={} scope=scope{} async={} generator={} arrow={} no_memo={} pure={} entry=block{} regions={:?} origin={}",
+            "function fn{} parent=fn{} kind={:?} binding={} scope=scope{} async={} generator={} arrow={} no_memo={} pure={} entry=block{} regions={:?} origin={}",
             function.id.index(),
+            function.parent.index(),
             function.kind,
             optional_binding(function.binding),
             function.scope.index(),

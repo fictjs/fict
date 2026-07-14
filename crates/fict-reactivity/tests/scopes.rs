@@ -95,6 +95,7 @@ fn propagates_state_into_pure_derived_bindings_and_active_blocks() {
     };
     let function = HirFunction {
         id: FunctionId::new(0),
+        parent: FunctionId::new(0),
         binding: None,
         scope: ScopeId::new(0),
         kind: FunctionKind::Module,

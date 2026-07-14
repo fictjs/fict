@@ -91,6 +91,7 @@ fn diamond_function() -> HirFunction {
     let two = LiteralValue::Number(NumberLiteral::from_f64(2.0));
     HirFunction {
         id: FunctionId::new(0),
+        parent: FunctionId::new(0),
         binding: None,
         scope: ScopeId::new(0),
         kind: FunctionKind::Module,

@@ -27,6 +27,7 @@ fn file() -> HirFile {
     let zero = LiteralValue::Number(NumberLiteral::from_f64(0.0));
     let function = HirFunction {
         id: FunctionId::new(0),
+        parent: FunctionId::new(0),
         binding: None,
         scope: ScopeId::new(0),
         kind: FunctionKind::Module,
