@@ -22,11 +22,14 @@ const approvedAreas = {
 function candidateEvidence(overrides = {}) {
   const artifactDigest = `sha256:${'b'.repeat(64)}`
   const payload = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     status: 'pass',
     runId: '101',
     runAttempt: '1',
     sourceRevision: 'c'.repeat(40),
+    workflowEvent: 'push',
+    sourceRef: 'refs/heads/main',
+    promotionEligible: true,
     compilerBuildId: 'fict-rust-test',
     shadowDigest: artifactDigest,
     benchmarkDigest: artifactDigest,
@@ -125,7 +128,36 @@ test('rust default rejects candidate content modified after sealing', async t =>
     { ...evidence, nativePackageDigest: `sha256:${'e'.repeat(64)}` },
   )
   t.after(() => rm(root, { recursive: true }))
-  assert.throws(() => validateCompilerRolloutReadiness({ root }), /intact consecutive schema-v2/)
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root }),
+    /intact consecutive main-push schema-v3/,
+  )
+})
+
+test('rust default rejects non-main candidate provenance', async t => {
+  const evidence = candidateEvidence({
+    workflowEvent: 'pull_request',
+    sourceRef: 'refs/pull/42/merge',
+    promotionEligible: false,
+    consecutiveGreenCandidates: 0,
+    previousCandidateDigest: null,
+  })
+  const root = await fixture(
+    { phase: 'rust-default', viteDefaultBackend: 'rust' },
+    {
+      schemaVersion: 2,
+      status: 'approved',
+      candidateDigest: evidence.candidateDigest,
+      reviewer: 'maintainer',
+      areas: approvedAreas,
+    },
+    evidence,
+  )
+  t.after(() => rm(root, { recursive: true }))
+  assert.throws(
+    () => validateCompilerRolloutReadiness({ root }),
+    /intact consecutive main-push schema-v3/,
+  )
 })
 
 test('human approval cannot substitute arbitrary checklist area names', async t => {

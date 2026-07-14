@@ -93,11 +93,14 @@ compiler build identifier:
 
 `compiler-rollout-candidate.mjs` hashes those artifacts, requires one native
 compiler build identifier across them, and chains the previous green candidate
-digest. Candidate schema v2 binds native package evidence and rejects any
-modified payload whose digest no longer matches. A first candidate records one
-green build; only the immediately following successful main-push workflow can
+digest. Candidate schema v3 binds native package evidence and workflow
+event/ref provenance, validates first/continuation digest topology, and rejects
+any modified payload whose digest no longer matches. Pull-request and scheduled
+candidates record zero promotion-eligible builds. A first main-push candidate
+records one; only the immediately following successful main-push workflow can
 record two. A failed or artifact-less intervening workflow resets the chain.
-Local smoke runs do not become release evidence.
+An overlapping newer run does not skip an unfinished predecessor; it starts a
+fresh count. Local smoke runs do not become release evidence.
 
 The performance budget is owned by
 [`compiler-backend-budget.json`](../../../.github/compiler-backend-budget.json).

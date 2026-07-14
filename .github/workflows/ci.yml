@@ -220,11 +220,12 @@ jobs:
               workflow_id: 'ci.yml',
               branch: 'main',
               event: 'push',
-              status: 'completed',
               per_page: 50,
             })
-            const run = runs.find(candidate => candidate.id !== context.runId)
-            if (run?.conclusion === 'success') {
+            const run = runs
+              .filter(candidate => candidate.id < context.runId)
+              .sort((left, right) => right.id - left.id)[0]
+            if (run?.status === 'completed' && run.conclusion === 'success') {
               const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
                 ...context.repo,
                 run_id: run.id,
@@ -251,8 +252,10 @@ jobs:
           set -euo pipefail
           previous_args=()
           previous="${RUNNER_TEMP}/compiler-rollout/previous/candidate.json"
-          if [[ -f "${previous}" ]]; then
+          if [[ -f "${previous}" ]] && node -e "const fs = require('node:fs'); const value = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); process.exit(value.schemaVersion === 3 ? 0 : 1)" "${previous}"; then
             previous_args+=("--previous=${previous}")
+          elif [[ -f "${previous}" ]]; then
+            echo "::notice::The previous rollout candidate uses an incompatible schema; restarting the consecutive count."
           fi
           node scripts/compiler-rollout-candidate.mjs \
             --shadow="${RUNNER_TEMP}/compiler-rollout/shadow.json" \

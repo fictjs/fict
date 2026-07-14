@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -9,6 +10,10 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const script = path.join(root, 'scripts', 'compiler-rollout-candidate.mjs')
 const revision = 'a'.repeat(40)
+
+function digest(value) {
+  return `sha256:${createHash('sha256').update(JSON.stringify(value)).digest('hex')}`
+}
 
 async function evidence(directory, compilerBuildId = 'fict-rust-test') {
   const documents = {
@@ -90,7 +95,15 @@ function run(directory, runId, output, extra = []) {
       `--output=${output}`,
       ...extra,
     ],
-    { cwd: root, encoding: 'utf8' },
+    {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        GITHUB_EVENT_NAME: 'push',
+        GITHUB_REF: 'refs/heads/main',
+      },
+    },
   )
 }
 
@@ -111,8 +124,34 @@ test('candidate evidence chains two distinct green builds', async t => {
   assert.equal(firstArtifact.consecutiveGreenCandidates, 1)
   assert.equal(secondArtifact.consecutiveGreenCandidates, 2)
   assert.equal(secondArtifact.previousCandidateDigest, firstArtifact.candidateDigest)
-  assert.equal(firstArtifact.schemaVersion, 2)
+  assert.equal(firstArtifact.schemaVersion, 3)
+  assert.equal(firstArtifact.promotionEligible, true)
+  assert.equal(firstArtifact.workflowEvent, 'push')
+  assert.equal(firstArtifact.sourceRef, 'refs/heads/main')
   assert.match(firstArtifact.nativePackageDigest, /^sha256:[0-9a-f]{64}$/)
+})
+
+test('non-main candidates cannot count toward or extend the promotion chain', async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'fict-candidate-non-main-'))
+  t.after(() => rm(directory, { recursive: true }))
+  await evidence(directory)
+  const pullRequestPath = path.join(directory, 'candidate-pr.json')
+
+  const pullRequest = run(directory, '100', pullRequestPath, [
+    '--event=pull_request',
+    '--ref=refs/pull/42/merge',
+  ])
+  assert.equal(pullRequest.status, 0, pullRequest.stderr)
+  const artifact = JSON.parse(await readFile(pullRequestPath, 'utf8'))
+  assert.equal(artifact.promotionEligible, false)
+  assert.equal(artifact.consecutiveGreenCandidates, 0)
+  assert.equal(artifact.previousCandidateDigest, null)
+
+  const chained = run(directory, '101', path.join(directory, 'candidate-main.json'), [
+    `--previous=${pullRequestPath}`,
+  ])
+  assert.notEqual(chained.status, 0)
+  assert.match(chained.stderr, /promotion-eligible schema-v3 candidate/)
 })
 
 test('candidate evidence rejects mixed native compiler builds', async t => {
@@ -155,10 +194,13 @@ test('candidate evidence rejects non-CI run identities and malformed previous ch
   await writeFile(
     previousPath,
     JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       status: 'pass',
       runId: '99',
       runAttempt: '1',
+      workflowEvent: 'push',
+      sourceRef: 'refs/heads/main',
+      promotionEligible: true,
       candidateDigest: `sha256:${'a'.repeat(64)}`,
       consecutiveGreenCandidates: '2',
     }),
@@ -167,5 +209,27 @@ test('candidate evidence rejects non-CI run identities and malformed previous ch
     `--previous=${previousPath}`,
   ])
   assert.notEqual(malformed.status, 0)
-  assert.match(malformed.stderr, /not a passing schema-v2 candidate/)
+  assert.match(malformed.stderr, /not a promotion-eligible schema-v3 candidate/)
+})
+
+test('candidate evidence rejects a re-signed continuation without a previous digest', async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'fict-candidate-topology-'))
+  t.after(() => rm(directory, { recursive: true }))
+  await evidence(directory)
+  const previousPath = path.join(directory, 'previous.json')
+  const first = run(directory, '100', previousPath)
+  assert.equal(first.status, 0, first.stderr)
+
+  const firstArtifact = JSON.parse(await readFile(previousPath, 'utf8'))
+  const payload = { ...firstArtifact }
+  delete payload.candidateDigest
+  payload.consecutiveGreenCandidates = 2
+  payload.previousCandidateDigest = null
+  await writeFile(previousPath, JSON.stringify({ ...payload, candidateDigest: digest(payload) }))
+
+  const result = run(directory, '101', path.join(directory, 'candidate.json'), [
+    `--previous=${previousPath}`,
+  ])
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /promotion-eligible schema-v3 candidate/)
 })

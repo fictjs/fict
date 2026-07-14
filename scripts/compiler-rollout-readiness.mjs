@@ -61,14 +61,24 @@ function assertCandidate(evidence) {
     .update(JSON.stringify(payload))
     .digest('hex')}`
   if (
-    payload.schemaVersion !== 2 ||
+    payload.schemaVersion !== 3 ||
     payload.status !== 'pass' ||
+    payload.promotionEligible !== true ||
+    payload.workflowEvent !== 'push' ||
+    payload.sourceRef !== 'refs/heads/main' ||
+    !Number.isSafeInteger(payload.consecutiveGreenCandidates) ||
     payload.consecutiveGreenCandidates < 2 ||
+    !/^sha256:[0-9a-f]{64}$/.test(payload.previousCandidateDigest ?? '') ||
+    !/^\d+$/.test(String(payload.runId)) ||
+    !/^\d+$/.test(String(payload.runAttempt)) ||
+    !/^[0-9a-f]{40}$/.test(payload.sourceRevision ?? '') ||
+    typeof payload.compilerBuildId !== 'string' ||
+    !payload.compilerBuildId ||
     requiredDigests.some(value => !/^sha256:[0-9a-f]{64}$/.test(value ?? '')) ||
     computedDigest !== candidateDigest
   ) {
     throw new Error(
-      'Rust-default rollout requires two intact consecutive schema-v2 candidate builds',
+      'Rust-default rollout requires two intact consecutive main-push schema-v3 candidates',
     )
   }
 }

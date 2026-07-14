@@ -66,13 +66,17 @@ so behavior-first test suites keep their documented non-strict configuration.
 The `compiler-rollout` CI job uploads one `compiler-rollout-candidate` artifact
 containing privacy-safe shadow differences, paired large-project performance
 and peak-RSS samples, runtime parity, native package clean-install/size evidence,
-rollback-drill evidence, and the sealed candidate record. Candidate schema v2
-binds all five evidence digests and rejects content changes after sealing. A
+rollback-drill evidence, and the sealed candidate record. Candidate schema v3
+binds all five evidence digests plus workflow event/ref provenance and rejects
+content changes after sealing. Pull-request and scheduled candidates remain
+useful diagnostics but record zero promotion-eligible builds. A
 successful main-branch run chains the previous green candidate digest when one
-exists. The chain is fail-closed: the immediately preceding completed
-main-branch push must have an overall workflow conclusion of `success` and an
+exists. The chain is fail-closed: the immediately preceding main-branch push
+must be completed with an overall workflow conclusion of `success` and an
 unexpired candidate artifact. A failed or artifact-less intervening run resets
-the count instead of allowing CI to skip backward to an older green run.
+the count instead of allowing CI to skip backward to an older green run. If the
+immediately preceding push is still running, the newer run also starts a fresh
+count rather than racing its unfinished evidence.
 
 Before changing the Vite default to Rust, download the latest candidate and
 confirm `consecutiveGreenCandidates >= 2`. Copy the reviewed candidate record

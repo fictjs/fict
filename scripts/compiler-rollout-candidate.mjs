@@ -117,20 +117,28 @@ function validatePreviousCandidate(previous) {
     payload.rollbackDigest,
     payload.nativePackageDigest,
   ]
+  const hasValidChain =
+    (payload.consecutiveGreenCandidates === 1 && payload.previousCandidateDigest === null) ||
+    (payload.consecutiveGreenCandidates > 1 &&
+      /^sha256:[0-9a-f]{64}$/.test(payload.previousCandidateDigest ?? ''))
   if (
-    payload.schemaVersion !== 2 ||
+    payload.schemaVersion !== 3 ||
     payload.status !== 'pass' ||
+    payload.promotionEligible !== true ||
+    payload.workflowEvent !== 'push' ||
+    payload.sourceRef !== 'refs/heads/main' ||
     digest(payload) !== candidateDigest ||
     requiredDigests.some(value => !/^sha256:[0-9a-f]{64}$/.test(value ?? '')) ||
     !Number.isSafeInteger(payload.consecutiveGreenCandidates) ||
     payload.consecutiveGreenCandidates < 1 ||
+    !hasValidChain ||
     !/^\d+$/.test(String(payload.runId)) ||
     !/^\d+$/.test(String(payload.runAttempt)) ||
     !/^[0-9a-f]{40}$/.test(payload.sourceRevision ?? '') ||
     typeof payload.compilerBuildId !== 'string' ||
     !payload.compilerBuildId
   ) {
-    throw new Error('Previous candidate artifact is not a passing schema-v2 candidate')
+    throw new Error('Previous candidate artifact is not a promotion-eligible schema-v3 candidate')
   }
 }
 
@@ -158,6 +166,8 @@ const runAttempt = String(readArgument('run-attempt', process.env.GITHUB_RUN_ATT
 const sourceRevision = String(
   readArgument('revision', process.env.GITHUB_SHA ?? gitRevision()),
 ).trim()
+const workflowEvent = String(readArgument('event', process.env.GITHUB_EVENT_NAME ?? '')).trim()
+const sourceRef = String(readArgument('ref', process.env.GITHUB_REF ?? '')).trim()
 
 if (!/^\d+$/.test(runId)) {
   throw new Error('A numeric --run-id or GITHUB_RUN_ID is required for candidate evidence')
@@ -167,6 +177,10 @@ if (!/^\d+$/.test(runAttempt) || BigInt(runAttempt) < 1n) {
 }
 if (!/^[0-9a-f]{40}$/.test(sourceRevision))
   throw new Error('Candidate revision must be a git SHA-1')
+if (!workflowEvent) throw new Error('Candidate workflow event is required')
+if (!/^refs\//.test(sourceRef)) throw new Error('Candidate source ref must be a full Git ref')
+
+const promotionEligible = workflowEvent === 'push' && sourceRef === 'refs/heads/main'
 
 const shadow = readJson(shadowPath, 'Shadow artifact')
 const benchmark = readJson(benchmarkPath, 'Benchmark artifact')
@@ -192,6 +206,9 @@ if (compilerBuildIds.size !== 1 || compilerBuildIds.has(undefined)) {
 
 let previous = null
 if (previousPath) {
+  if (!promotionEligible) {
+    throw new Error('Only a main-branch push candidate may chain previous rollout evidence')
+  }
   previous = readJson(path.resolve(previousPath), 'Previous candidate artifact')
   validatePreviousCandidate(previous)
   if (String(previous.runId) === runId && String(previous.runAttempt) === runAttempt) {
@@ -203,11 +220,14 @@ if (previousPath) {
 }
 
 const payload = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   status: 'pass',
   runId,
   runAttempt,
   sourceRevision,
+  workflowEvent,
+  sourceRef,
+  promotionEligible,
   compilerBuildId: [...compilerBuildIds][0],
   shadowDigest: digest(shadow),
   benchmarkDigest: digest(benchmark),
@@ -215,9 +235,11 @@ const payload = {
   rollbackDigest: digest(rollback),
   nativePackageDigest: digest(nativePackage),
   previousCandidateDigest: previous?.candidateDigest ?? null,
-  consecutiveGreenCandidates: previous
-    ? Math.max(2, Number(previous.consecutiveGreenCandidates ?? 1) + 1)
-    : 1,
+  consecutiveGreenCandidates: promotionEligible
+    ? previous
+      ? Number(previous.consecutiveGreenCandidates) + 1
+      : 1
+    : 0,
 }
 const candidate = { ...payload, candidateDigest: digest(payload) }
 
@@ -229,5 +251,5 @@ await mkdir(path.dirname(outputPath), { recursive: true })
 await writeFile(outputPath, `${JSON.stringify(candidate, null, 2)}\n`, 'utf8')
 process.stdout.write(
   `[compiler-rollout-candidate] ${candidate.consecutiveGreenCandidates} consecutive green ` +
-    `candidate(s); ${candidate.candidateDigest}.\n`,
+    `promotion-eligible candidate(s); ${candidate.candidateDigest}.\n`,
 )

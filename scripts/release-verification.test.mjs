@@ -55,13 +55,13 @@ test('precommit, release verification, and CI enforce the review regression suit
 })
 
 test('rollout candidates only chain the immediately preceding successful main push', () => {
-  assert.match(ciWorkflow, /status: 'completed'/)
-  assert.match(
-    ciWorkflow,
-    /const run = runs\.find\(candidate => candidate\.id !== context\.runId\)/,
-  )
-  assert.match(ciWorkflow, /if \(run\?\.conclusion === 'success'\)/)
+  assert.doesNotMatch(ciWorkflow, /^\s+status: 'completed'$/m)
+  assert.match(ciWorkflow, /\.filter\(candidate => candidate\.id < context\.runId\)/)
+  assert.match(ciWorkflow, /\.sort\(\(left, right\) => right\.id - left\.id\)\[0\]/)
+  assert.match(ciWorkflow, /if \(run\?\.status === 'completed' && run\.conclusion === 'success'\)/)
   assert.doesNotMatch(ciWorkflow, /runs\.find\([^\n]+conclusion === 'success'/)
+  assert.match(ciWorkflow, /value\.schemaVersion === 3/)
+  assert.match(ciWorkflow, /restarting the consecutive count/)
 })
 
 test('browser E2E continuously includes production-shaped real applications and scheduled soak', () => {
