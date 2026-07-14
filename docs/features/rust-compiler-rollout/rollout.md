@@ -95,8 +95,9 @@ compiler build identifier:
 compiler build identifier across them, and chains the previous green candidate
 digest. Candidate schema v2 binds native package evidence and rejects any
 modified payload whose digest no longer matches. A first candidate records one
-green build; only a later, distinct CI run can record two. Local smoke runs do
-not become release evidence.
+green build; only the immediately following successful main-push workflow can
+record two. A failed or artifact-less intervening workflow resets the chain.
+Local smoke runs do not become release evidence.
 
 The performance budget is owned by
 [`compiler-backend-budget.json`](../../../.github/compiler-backend-budget.json).
@@ -114,7 +115,10 @@ The checked-in
 is intentionally pending until a maintainer reviews a two-candidate artifact.
 Approval MUST bind its `candidateDigest` and cover every listed area. The
 readiness check fails if an approval is missing, incomplete, or belongs to a
-different candidate.
+different candidate. Review schema v2 requires an explicit
+`nativePackageSizeBudget` approval. Because the candidate digest binds the
+native package evidence, that checkbox approves the exact compressed/unpacked
+limits and measurements rather than an unversioned prose budget.
 
 Reviewer focus:
 

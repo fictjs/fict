@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "status": "pending",
   "candidateDigest": null,
   "reviewer": null,
@@ -10,6 +10,7 @@
     "runtimeAndMetadataAbi": false,
     "sourceMaps": false,
     "nativePlatformsAndRelease": false,
+    "nativePackageSizeBudget": false,
     "performanceAndRss": false,
     "rollbackDrill": false
   }

@@ -14,6 +14,7 @@ const approvedAreas = {
   runtimeAndMetadataAbi: true,
   sourceMaps: true,
   nativePlatformsAndRelease: true,
+  nativePackageSizeBudget: true,
   performanceAndRss: true,
   rollbackDrill: true,
 }
@@ -91,7 +92,7 @@ test('rust default requires chained candidates and a checklist bound to their di
   const areas = approvedAreas
   const root = await fixture(
     { phase: 'rust-default', viteDefaultBackend: 'rust' },
-    { schemaVersion: 1, status: 'approved', candidateDigest, reviewer: 'maintainer', areas },
+    { schemaVersion: 2, status: 'approved', candidateDigest, reviewer: 'maintainer', areas },
     evidence,
   )
   t.after(() => rm(root, { recursive: true }))
@@ -100,7 +101,7 @@ test('rust default requires chained candidates and a checklist bound to their di
   await writeFile(
     path.join(root, '.github', 'compiler-rollout-review.json'),
     JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 2,
       status: 'approved',
       candidateDigest: `sha256:${'b'.repeat(64)}`,
       reviewer: 'maintainer',
@@ -115,7 +116,7 @@ test('rust default rejects candidate content modified after sealing', async t =>
   const root = await fixture(
     { phase: 'rust-default', viteDefaultBackend: 'rust' },
     {
-      schemaVersion: 1,
+      schemaVersion: 2,
       status: 'approved',
       candidateDigest: evidence.candidateDigest,
       reviewer: 'maintainer',
@@ -133,12 +134,12 @@ test('human approval cannot substitute arbitrary checklist area names', async t 
   const root = await fixture(
     { phase: 'rust-default', viteDefaultBackend: 'rust' },
     {
-      schemaVersion: 1,
+      schemaVersion: 2,
       status: 'approved',
       candidateDigest,
       reviewer: 'maintainer',
       areas: Object.fromEntries(
-        Array.from({ length: 8 }, (_, index) => [`alternate${index}`, true]),
+        Array.from({ length: 9 }, (_, index) => [`alternate${index}`, true]),
       ),
     },
     evidence,
@@ -148,4 +149,21 @@ test('human approval cannot substitute arbitrary checklist area names', async t 
     () => validateCompilerRolloutReadiness({ root }),
     /does not use the required rollout areas/,
   )
+})
+
+test('human approval explicitly covers the candidate native package size budget', async t => {
+  const evidence = candidateEvidence()
+  const root = await fixture(
+    { phase: 'rust-default', viteDefaultBackend: 'rust' },
+    {
+      schemaVersion: 2,
+      status: 'approved',
+      candidateDigest: evidence.candidateDigest,
+      reviewer: 'maintainer',
+      areas: { ...approvedAreas, nativePackageSizeBudget: false },
+    },
+    evidence,
+  )
+  t.after(() => rm(root, { recursive: true }))
+  assert.throws(() => validateCompilerRolloutReadiness({ root }), /nativePackageSizeBudget/)
 })

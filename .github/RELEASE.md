@@ -80,6 +80,9 @@ to the evidence path named by `.github/compiler-rollout-state.json`, then have a
 maintainer bind every item in `.github/compiler-rollout-review.json` to that
 exact `candidateDigest`. `node scripts/compiler-rollout-readiness.mjs
 --require-default-ready` MUST pass before the state may enter `rust-default`.
+Review schema v2 includes an explicit `nativePackageSizeBudget` approval; since
+the candidate digest binds the package evidence, this approval covers the exact
+compressed/unpacked ceilings and measurements in that candidate.
 
 Do not manufacture a second candidate by running the sealer twice locally.
 Only distinct CI runs from committed source count. Raw benchmark values remain

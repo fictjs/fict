@@ -13,6 +13,7 @@ const REQUIRED_REVIEW_AREAS = [
   'runtimeAndMetadataAbi',
   'sourceMaps',
   'nativePlatformsAndRelease',
+  'nativePackageSizeBudget',
   'performanceAndRss',
   'rollbackDrill',
 ].sort()
@@ -24,7 +25,7 @@ function readJson(filename, label) {
 
 function assertReview(review, evidence) {
   if (
-    review.schemaVersion !== 1 ||
+    review.schemaVersion !== 2 ||
     review.status !== 'approved' ||
     typeof review.reviewer !== 'string' ||
     !review.reviewer.trim()
