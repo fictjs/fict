@@ -6148,6 +6148,61 @@ mod tests {
 
     #[cfg(feature = "preview")]
     #[test]
+    fn allocates_preview_artifact_names_without_changing_user_bindings() {
+        let source = "const scopeId = 'scope'; const event = 'event'; const el = 'element'; const __result = 'result'; const __scopeProps = 'props'; const __fictGetScopeProps = 'user helper'; export function App({ label }: { label: string }) { const __handler = () => 1; return <button onClick$={() => ({ scopeId, event, el, __handler, __result, __scopeProps, label, helper: __fictGetScopeProps, name: __handler.name, length: __handler.length })}>Click</button>; }";
+        let mut input = request(source, "preview-artifact-name-collisions.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: false,
+            ..CompilerPreviewOptions::default()
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        let artifact = &result
+            .artifacts
+            .first()
+            .expect("name-collision handler artifact")
+            .code;
+        assert!(
+            artifact.contains(
+                "import { __fictGetScopeProps as __fictGetScopeProps_1 } from \"fict/internal\""
+            ),
+            "{artifact}"
+        );
+        assert!(
+            artifact.contains("export default (scopeId_1, event_1, el_1)"),
+            "{artifact}"
+        );
+        assert!(
+            artifact.contains("const __scopeProps_1 = __fictGetScopeProps_1(scopeId_1) || {}"),
+            "{artifact}"
+        );
+        assert!(artifact.contains("const __handler = () => 1"), "{artifact}");
+        assert!(
+            artifact.contains("const __handler_1 = () => ({"),
+            "{artifact}"
+        );
+        assert!(
+            artifact.contains("const __result_1 = __handler_1.call(el_1, event_1)"),
+            "{artifact}"
+        );
+        for preserved in [
+            "scopeId,",
+            "event,",
+            "el,",
+            "__handler,",
+            "__result,",
+            "__scopeProps,",
+            "name: __handler.name",
+            "length: __handler.length",
+        ] {
+            assert!(artifact.contains(preserved), "{preserved}: {artifact}");
+        }
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
     fn preserves_async_and_generator_preview_function_dependencies() {
         let source = "export function App() { const asyncHelper = async () => await Promise.resolve(1); function* generatorHelper() { yield 1; } return <><button onClick$={async () => await asyncHelper()}>Async</button><button onClick$={() => generatorHelper().next()}>Generator</button></>; }";
         let mut input = request(source, "preview-async-generator-functions.tsx");
