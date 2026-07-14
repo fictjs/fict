@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "status": "pending",
+  "candidateDigest": null,
+  "reviewer": null,
+  "areas": {
+    "coreSemantics": false,
+    "strictGuarantee": false,
+    "typescriptNamespacesAndCts": false,
+    "runtimeAndMetadataAbi": false,
+    "sourceMaps": false,
+    "nativePlatformsAndRelease": false,
+    "performanceAndRss": false,
+    "rollbackDrill": false
+  }
+}

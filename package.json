@@ -33,6 +33,7 @@
     "test:ssr-matrix": "env -u FICT_STRICT_GUARANTEE pnpm --filter @fictjs/ssr test:matrix",
     "test:strict-guarantee": "FICT_STRICT_GUARANTEE=1 pnpm -C packages/compiler test -- reactivity-guarantee-contract.test.ts",
     "test:compiler:differential": "pnpm -C packages/compiler test:differential",
+    "test:compiler:rollout-state": "node --test scripts/compiler-rollout-readiness.test.mjs scripts/compiler-rollout-candidate.test.mjs && node scripts/compiler-rollout-readiness.mjs",
     "test:compiler:native-host": "pnpm --filter @fictjs/compiler build && pnpm build:compiler:native-host && node scripts/native-compiler-host-smoke.mjs",
     "test:compiler:native-runtime": "pnpm --filter @fictjs/runtime build && pnpm --filter fict build && pnpm --filter @fictjs/compiler build && cargo build --release -p fict-compiler-napi && node scripts/prepare-native-compiler-addon.mjs && node --test scripts/native-compiler-runtime.test.mjs",
     "test:compiler:native-types": "pnpm --filter @fictjs/compiler build && tsc -p scripts/fixtures/native-compiler-types/tsconfig.json",
