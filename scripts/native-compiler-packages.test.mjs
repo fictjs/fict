@@ -1,12 +1,21 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
+import { relativeFileDependency } from './native-compiler-package-smoke.mjs'
 import {
   NATIVE_COMPILER_NODE_LANES,
   NATIVE_COMPILER_TARGETS,
@@ -320,6 +329,31 @@ test('invokes npm through the Windows command interpreter for native package ass
     args,
   })
   assert.throws(() => npmInvocation(['pack', 1], { platform: 'win32' }), /must be strings/)
+})
+
+test('canonicalizes symlinked temp roots before creating local package dependencies', () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'fict-native-file-dependency-test-'))
+  try {
+    const physicalTempRoot = path.join(tempRoot, 'private', 'var')
+    const aliasedTempRoot = path.join(tempRoot, 'var')
+    const physicalConsumer = path.join(physicalTempRoot, 'folders', 'consumer')
+    const aliasedConsumer = path.join(aliasedTempRoot, 'folders', 'consumer')
+    const tarball = path.join(tempRoot, 'Users', 'runner', 'native-package.tgz')
+    mkdirSync(physicalConsumer, { recursive: true })
+    mkdirSync(path.dirname(tarball), { recursive: true })
+    writeFileSync(tarball, 'native package')
+    symlinkSync(physicalTempRoot, aliasedTempRoot, 'dir')
+
+    const dependency = relativeFileDependency(aliasedConsumer, tarball)
+    const resolvedByPackageManager = path.resolve(
+      realpathSync(aliasedConsumer),
+      dependency.slice('file:'.length),
+    )
+
+    assert.equal(realpathSync(resolvedByPackageManager), realpathSync(tarball))
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
 })
 
 test('keeps facade optional dependencies, package manifests, allowlist, and Changesets aligned', () => {

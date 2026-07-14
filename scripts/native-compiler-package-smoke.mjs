@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   writeFileSync,
@@ -90,8 +91,13 @@ function packCompilerFacade(packsDirectory) {
   return path.join(packsDirectory, created[0])
 }
 
-function relativeFileDependency(fromDirectory, filePath) {
-  return `file:${path.relative(fromDirectory, filePath).split(path.sep).join('/')}`
+export function relativeFileDependency(fromDirectory, filePath) {
+  const canonicalFromDirectory = realpathSync(fromDirectory)
+  const canonicalFilePath = realpathSync(filePath)
+  return `file:${path
+    .relative(canonicalFromDirectory, canonicalFilePath)
+    .split(path.sep)
+    .join('/')}`
 }
 
 function packResolutionOnlyNativePackages(tempRoot, packsDirectory, host, hostTarball) {
