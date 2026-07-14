@@ -110,7 +110,7 @@ jobs:
       - name: Audit locked Rust dependencies
         if: matrix.node == '24'
         run: |
-          test "$(cargo audit --version)" = "cargo-audit ${CARGO_AUDIT_VERSION}"
+          test "$(cargo-audit --version)" = "cargo-audit ${CARGO_AUDIT_VERSION}"
           pnpm security:audit:rust
 
       - name: Verify pinned Rust workspace

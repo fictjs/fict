@@ -83,8 +83,9 @@ test('CI and release fail closed on advisories in both Rust lockfiles', () => {
     )
     assert.match(
       workflow,
-      /test "\$\(cargo audit --version\)" = "cargo-audit \$\{CARGO_AUDIT_VERSION\}"/,
+      /test "\$\(cargo-audit --version\)" = "cargo-audit \$\{CARGO_AUDIT_VERSION\}"/,
     )
+    assert.doesNotMatch(workflow, /test "\$\(cargo audit --version\)"/)
     assert.doesNotMatch(workflow, /cargo audit[^\n]*--ignore/)
   }
 
