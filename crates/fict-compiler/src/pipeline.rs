@@ -14,6 +14,7 @@ use fict_metadata::MetadataResolutionStatus;
 use crate::control_flow_diagnostics::reactive_control_flow_diagnostics;
 use crate::diagnostic_policy::{apply_diagnostic_policy, configured_diagnostic_severity};
 use crate::metadata_analysis::generate_module_metadata;
+use crate::source_map::compose_source_maps;
 use crate::{
     CompileRequest, CompileResult, CompilerExplainArtifact, CompilerExplainEvent,
     CompilerExplainEventKind, CompilerStats, CorePassOptions, ModuleKind, NormalizedCompileRequest,
@@ -54,20 +55,6 @@ pub fn internal_error_result() -> CompileResult {
 fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     let mut result = CompileResult::empty();
     result.diagnostics = request.integration_diagnostics.clone();
-
-    if request.input_source_map.is_some() {
-        result.diagnostics.push(
-            diagnostic(
-                "FICT-SOURCEMAP-COMPOSE",
-                DiagnosticSeverity::Error,
-                "input source-map composition is not connected in the M1 pipeline",
-                GuaranteeClass::Unsupported,
-            )
-            .with_help(
-                "omit inputSourceMap or use the legacy backend until composition is enabled",
-            ),
-        );
-    }
 
     if request.options.preview.is_some() {
         result.diagnostics.push(
@@ -289,7 +276,30 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
                         .map(|()| map)
                         .map_err(|error| error.to_string())
                 }) {
-                Ok(map) => result.map = Some(map),
+                Ok(map) => {
+                    let composed = match request.input_source_map.as_ref() {
+                        Some(input) => compose_source_maps(&map, input),
+                        None => Ok(map),
+                    };
+                    match composed.and_then(|map| {
+                        map.validate()
+                            .map(|()| map)
+                            .map_err(|error| error.to_string())
+                    }) {
+                        Ok(map) => result.map = Some(map),
+                        Err(error) => result.diagnostics.push(
+                            diagnostic(
+                                "FICT-SOURCEMAP-COMPOSE",
+                                DiagnosticSeverity::Error,
+                                format!("failed to compose the native source map: {error}"),
+                                GuaranteeClass::Internal,
+                            )
+                            .with_help(
+                                "report the source-map fixture; partial output was discarded",
+                            ),
+                        ),
+                    }
+                }
                 Err(error) => result.diagnostics.push(
                     diagnostic(
                         "FICT-I002",
@@ -519,7 +529,7 @@ mod tests {
     use super::{compile, internal_error_result};
     use crate::{
         COMPILER_PROTOCOL_VERSION, CompileRequest, CompilerExplainEventKind, CompilerOptions,
-        ModuleKind, WarningLevel, WarningsAsErrors,
+        ModuleKind, RawSourceMap, WarningLevel, WarningsAsErrors,
     };
 
     fn request(code: &str, filename: &str) -> CompileRequest {
@@ -4581,6 +4591,35 @@ mod tests {
         assert_eq!(map.version, 3);
         assert_eq!(map.sources, ["value.ts"]);
         assert!(result.explain.is_some());
+    }
+
+    #[test]
+    fn composes_native_output_with_an_input_source_map() {
+        let mut input = request("export const value: number = 1", "intermediate.ts");
+        input.options.sourcemap = true;
+        input.input_source_map = Some(RawSourceMap {
+            version: 3,
+            file: Some("intermediate.ts".to_owned()),
+            source_root: Some("../sources".to_owned()),
+            sources: vec!["original.fict".to_owned()],
+            sources_content: Some(vec![Some("export const value = 1".to_owned())]),
+            names: Vec::new(),
+            mappings: "AAAA".to_owned(),
+            ignore_list: vec![0],
+        });
+
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        let map = result.map.expect("composed source map");
+        assert_eq!(map.file, None);
+        assert_eq!(map.source_root.as_deref(), Some("../sources"));
+        assert_eq!(map.sources, ["original.fict"]);
+        assert_eq!(
+            map.sources_content,
+            Some(vec![Some("export const value = 1".to_owned())])
+        );
+        assert_eq!(map.ignore_list, [0]);
     }
 
     #[test]

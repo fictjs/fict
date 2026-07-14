@@ -63,6 +63,27 @@ for (const [format, facade] of [
   assert.deepEqual(syncResult.map?.sources, ['/fixtures/value.ts'])
   assert.equal(syncResult.explain?.fileName, '/fixtures/value.ts')
 
+  const composedMapResult = binding.transformSync({
+    code: 'export const value: number = 1',
+    filename: '/fixtures/intermediate.ts',
+    inputSourceMap: {
+      version: 3,
+      file: '/fixtures/intermediate.ts',
+      sourceRoot: '/sources',
+      sources: ['original.fict'],
+      sourcesContent: ['export const value = 1'],
+      names: [],
+      mappings: 'AAAA',
+      x_google_ignoreList: [0],
+    },
+    options: { sourcemap: true },
+  })
+  assert.deepEqual(composedMapResult.diagnostics, [])
+  assert.equal(composedMapResult.map?.sourceRoot, '/sources')
+  assert.deepEqual(composedMapResult.map?.sources, ['original.fict'])
+  assert.deepEqual(composedMapResult.map?.sourcesContent, ['export const value = 1'])
+  assert.deepEqual(composedMapResult.map?.x_google_ignoreList, [0])
+
   const sourceExplain = binding.transformSync({
     code: `
       import { $effect, $memo, $state } from 'fict'

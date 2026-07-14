@@ -19,11 +19,9 @@ fict-emit.workspace = true
 fict-hir.workspace = true
 fict-metadata.workspace = true
 fict-reactivity.workspace = true
+oxc_sourcemap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
 [build-dependencies]
 sha2.workspace = true
-
-[dev-dependencies]
-oxc_sourcemap.workspace = true
