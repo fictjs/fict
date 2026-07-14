@@ -5237,6 +5237,82 @@ mod tests {
 
     #[cfg(feature = "preview")]
     #[test]
+    fn auto_extracts_semantically_expensive_and_stable_handlers() {
+        let source = r#"
+            const moduleHandler = () => 1;
+            export function App() {
+                const localHandler = () => 2;
+                return <>
+                    <button onClick={() => console.log('external')}>External</button>
+                    <button onClick={async () => await fetch('/data')}>Async</button>
+                    <button onClick={() => import('./lazy-handler.js')}>Import</button>
+                    <button onClick={moduleHandler}>Module</button>
+                    <button onClick={localHandler}>Local</button>
+                    <button onClick={() => 1}>Simple</button>
+                </>;
+            }
+        "#;
+        let mut input = request(source, "preview-auto-semantics.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: true,
+            auto_extract_threshold: 1_000,
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(result.artifacts.len(), 5, "{:?}", result.artifacts);
+        for handler in 0..5 {
+            assert!(
+                result
+                    .code
+                    .contains(&format!("fict:compiler-artifact:handler-{handler}")),
+                "{}",
+                result.code
+            );
+        }
+        assert!(result.code.contains("addEventListener"), "{}", result.code);
+        assert!(
+            result.artifacts[2]
+                .code
+                .contains("import(\"./lazy-handler.js\")"),
+            "{}",
+            result.artifacts[2].code
+        );
+        assert!(
+            result.artifacts[4]
+                .code
+                .contains("const localHandler = () => 2"),
+            "{}",
+            result.artifacts[4].code
+        );
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn auto_extracts_complex_non_function_handler_expressions() {
+        let source = "const first = () => 1; const second = () => 2; export function App({ enabled }) { return <button onClick={enabled ? first : second}>Click</button>; }";
+        let mut input = request(source, "preview-auto-expression.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: true,
+            auto_extract_threshold: 1,
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert_eq!(result.artifacts.len(), 1, "{:?}", result.artifacts);
+        let artifact = &result.artifacts[0].code;
+        assert!(
+            artifact.contains("enabled() ? first : second"),
+            "{artifact}"
+        );
+        assert!(artifact.contains("__fict_dep_0 as first"), "{artifact}");
+        assert!(artifact.contains("__fict_dep_1 as second"), "{artifact}");
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
     fn rejects_explicit_preview_event_options() {
         for (attribute, expected) in [
             ("onClickCapture$", "capture"),

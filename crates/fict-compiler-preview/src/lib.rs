@@ -66,9 +66,14 @@ pub fn attach_preview_plan(
             };
             let handler_function = resolve_handler_function(hir, owner, &candidate.handler);
             let automatically_selected = options.auto_extract_handlers
-                && handler_function.is_some_and(|function| {
-                    handler_node_count(hir, function) >= options.auto_extract_threshold
-                });
+                && should_auto_extract_handler(
+                    hir,
+                    owner,
+                    &candidate.handler,
+                    candidate.origin,
+                    handler_function,
+                    options.auto_extract_threshold,
+                );
             if !candidate.explicit && !automatically_selected {
                 continue;
             }
@@ -808,6 +813,168 @@ fn handler_node_count(hir: &HirFile, function: FunctionId) -> u32 {
         })
         .and_then(|count| u32::try_from(count).ok())
         .unwrap_or(u32::MAX)
+}
+
+fn should_auto_extract_handler(
+    hir: &HirFile,
+    owner: &fict_hir::HirFunction,
+    handler: &EmitValueRef,
+    origin: Origin,
+    handler_function: Option<FunctionId>,
+    threshold: u32,
+) -> bool {
+    if stable_bare_handler_binding(hir, owner, handler, handler_function) {
+        return true;
+    }
+    if let Some(function) = handler_function {
+        return function_has_auto_extract_trigger(hir, function)
+            || handler_node_count(hir, function) >= threshold;
+    }
+    handler_expression_node_count(owner, origin) >= threshold
+}
+
+fn stable_bare_handler_binding(
+    hir: &HirFile,
+    owner: &fict_hir::HirFunction,
+    handler: &EmitValueRef,
+    handler_function: Option<FunctionId>,
+) -> bool {
+    let Some(binding_id) = handler_binding(owner, handler) else {
+        return false;
+    };
+    if binding_is_module_scoped(hir, binding_id) {
+        return is_stable_module_handler_binding(hir, binding_id);
+    }
+    let Some(function) =
+        handler_function.and_then(|function| hir.functions.get(function.as_usize()))
+    else {
+        return false;
+    };
+    hir.bindings
+        .get(binding_id.as_usize())
+        .is_some_and(|binding| matches!(binding.kind, BindingKind::Const | BindingKind::Function))
+        && function.binding == Some(binding_id)
+        && function.parent == owner.id
+        && !binding_has_runtime_write(hir, binding_id)
+}
+
+fn function_has_auto_extract_trigger(hir: &HirFile, root: FunctionId) -> bool {
+    let mut visited = BTreeSet::new();
+    let mut stack = vec![root];
+    while let Some(function_id) = stack.pop() {
+        if !visited.insert(function_id) {
+            continue;
+        }
+        let Some(function) = hir.functions.get(function_id.as_usize()) else {
+            continue;
+        };
+        if function.flags.is_async {
+            return true;
+        }
+        stack.extend(
+            hir.functions
+                .iter()
+                .filter(|child| child.parent == function_id)
+                .map(|child| child.id),
+        );
+        if function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .any(|instruction| match &instruction.kind {
+                HirInstructionKind::Await { .. }
+                | HirInstructionKind::DynamicImport { .. }
+                | HirInstructionKind::New { .. }
+                | HirInstructionKind::TaggedTemplate { .. } => true,
+                HirInstructionKind::Call(call) => call_is_external(hir, function, call),
+                _ => false,
+            })
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn call_is_external(
+    hir: &HirFile,
+    function: &fict_hir::HirFunction,
+    call: &fict_hir::CallInstruction,
+) -> bool {
+    if call
+        .callee_reference
+        .as_ref()
+        .is_some_and(|place| !place.projections.is_empty())
+    {
+        return true;
+    }
+    match call.host {
+        fict_hir::CallHost::Binding(_) | fict_hir::CallHost::ReactiveScope(_) => true,
+        fict_hir::CallHost::Function(_) => false,
+        fict_hir::CallHost::Unknown => {
+            if matches!(
+                function
+                    .values
+                    .get(call.callee.as_usize())
+                    .map(|value| &value.kind),
+                Some(ValueKind::Function(_))
+            ) {
+                return false;
+            }
+            !value_global_name(hir, function, call.callee, &mut BTreeSet::new()).is_some_and(
+                |name| matches!(name, "console" | "Math" | "JSON" | "Object" | "Array"),
+            )
+        }
+    }
+}
+
+fn value_global_name<'hir>(
+    hir: &'hir HirFile,
+    function: &fict_hir::HirFunction,
+    value: ValueId,
+    visited: &mut BTreeSet<ValueId>,
+) -> Option<&'hir str> {
+    if !visited.insert(value) {
+        return None;
+    }
+    let instruction = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| instruction.result == Some(value))?;
+    match &instruction.kind {
+        HirInstructionKind::Read { place } if place.projections.is_empty() => {
+            let PlaceBase::Global(global) = place.base else {
+                return None;
+            };
+            hir.globals
+                .get(global.as_usize())
+                .map(|global| global.name.as_str())
+        }
+        HirInstructionKind::SyntaxFragment { inputs, .. } => inputs
+            .iter()
+            .find_map(|input| value_global_name(hir, function, *input, visited)),
+        _ => None,
+    }
+}
+
+fn handler_expression_node_count(function: &fict_hir::HirFunction, origin: Origin) -> u32 {
+    let Some(span) = origin.primary_span else {
+        return 0;
+    };
+    let count = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .filter(|instruction| {
+            instruction
+                .origin
+                .primary_span
+                .is_some_and(|candidate| span_contains(span, candidate))
+        })
+        .count()
+        .saturating_add(1);
+    u32::try_from(count).unwrap_or(u32::MAX)
 }
 
 fn function_may_prevent_default(hir: &HirFile, root: FunctionId) -> bool {
