@@ -2,12 +2,20 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   NativeCompilerLoadError,
+  analyze,
+  analyzeSync,
+  createNativeCompilerFacade,
   detectLinuxLibc,
   loadNativeCompilerBinding,
+  nativeCompilerInfo,
   nativeCompilerPackageName,
   nativeCompilerRustTarget,
   resolveNativeCompilerRuntimeHelper,
   resolveNativeTarget,
+  scan,
+  scanSync,
+  transform,
+  transformSync,
   type NativeCompilerBinding,
 } from '../src/native-loader'
 import type { AnalyzeResult } from '../src/tooling'
@@ -76,6 +84,40 @@ function createBinding(): NativeCompilerBinding {
 }
 
 describe('native compiler loader', () => {
+  it('exports the complete serializable direct compiler facade', () => {
+    expect(typeof nativeCompilerInfo).toBe('function')
+    expect(typeof transformSync).toBe('function')
+    expect(typeof transform).toBe('function')
+    expect(typeof scanSync).toBe('function')
+    expect(typeof scan).toBe('function')
+    expect(typeof analyzeSync).toBe('function')
+    expect(typeof analyze).toBe('function')
+  })
+
+  it('lazily loads one validated binding and forwards every request API', async () => {
+    const binding = createBinding()
+    const load = vi.fn(() => binding)
+    const facade = createNativeCompilerFacade({
+      nativePath: '/tmp/fict-compiler.node',
+      platform: 'darwin',
+      arch: 'arm64',
+      load,
+    })
+    const compileRequest = { code: '', filename: 'module.tsx' }
+    const scanRequest = { code: '', filename: 'module.tsx' }
+    const analyzeRequest = { code: '', filename: 'module.tsx' }
+
+    expect(load).not.toHaveBeenCalled()
+    expect(facade.nativeCompilerInfo()).toEqual(binding.nativeCompilerInfo())
+    expect(facade.transformSync(compileRequest)).toEqual(createCompileResult())
+    expect(await facade.transform(compileRequest)).toEqual(createCompileResult())
+    expect(facade.scanSync(scanRequest)).toEqual(createScanResult())
+    expect(await facade.scan(scanRequest)).toEqual(createScanResult())
+    expect(facade.analyzeSync(analyzeRequest)).toEqual(createAnalyzeResult())
+    expect(await facade.analyze(analyzeRequest)).toEqual(createAnalyzeResult())
+    expect(load).toHaveBeenCalledOnce()
+  })
+
   it('resolves the supported platform package matrix', () => {
     expect(resolveNativeTarget('darwin', 'arm64')).toBe('darwin-arm64')
     expect(resolveNativeTarget('darwin', 'x64')).toBe('darwin-x64')

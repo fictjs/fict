@@ -46,6 +46,24 @@ export interface NativeLoaderOptions {
   load?: (id: string) => unknown
 }
 
+/**
+ * Serializable direct-compiler API exposed by `@fictjs/compiler/native`.
+ *
+ * The facade intentionally omits the parser probes used by release verification. It owns only
+ * binding discovery and method forwarding; filesystem resolution and bundler graph callbacks
+ * remain integration responsibilities.
+ */
+export type NativeCompilerFacade = Pick<
+  NativeCompilerBinding,
+  | 'nativeCompilerInfo'
+  | 'transformSync'
+  | 'transform'
+  | 'scanSync'
+  | 'scan'
+  | 'analyzeSync'
+  | 'analyze'
+>
+
 export class NativeCompilerLoadError extends Error {
   readonly code = 'FICT_NATIVE_COMPILER_LOAD_FAILED'
   readonly target: string
@@ -209,3 +227,39 @@ export function loadNativeCompilerBinding(
     candidates,
   )
 }
+
+function defaultNativeLoaderOptions(): NativeLoaderOptions {
+  const nativePath = process.env.FICT_COMPILER_NATIVE_PATH
+  return nativePath ? { nativePath } : {}
+}
+
+/**
+ * Create a lazy direct-compiler facade. One validated native binding is shared by every request
+ * made through the returned facade, which guarantees a single compiler build id per host facade.
+ */
+export function createNativeCompilerFacade(options?: NativeLoaderOptions): NativeCompilerFacade {
+  let binding: NativeCompilerBinding | undefined
+  const compiler = (): NativeCompilerBinding =>
+    (binding ??= loadNativeCompilerBinding(options ?? defaultNativeLoaderOptions()))
+
+  return {
+    nativeCompilerInfo: () => compiler().nativeCompilerInfo(),
+    transformSync: request => compiler().transformSync(request),
+    transform: request => compiler().transform(request),
+    scanSync: request => compiler().scanSync(request),
+    scan: request => compiler().scan(request),
+    analyzeSync: request => compiler().analyzeSync(request),
+    analyze: request => compiler().analyze(request),
+  }
+}
+
+const defaultNativeCompiler = createNativeCompilerFacade()
+
+/** Direct OXC/Rust request functions. No function retries through the legacy compiler. */
+export const nativeCompilerInfo = defaultNativeCompiler.nativeCompilerInfo
+export const transformSync = defaultNativeCompiler.transformSync
+export const transform = defaultNativeCompiler.transform
+export const scanSync = defaultNativeCompiler.scanSync
+export const scan = defaultNativeCompiler.scan
+export const analyzeSync = defaultNativeCompiler.analyzeSync
+export const analyze = defaultNativeCompiler.analyze

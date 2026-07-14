@@ -55,9 +55,10 @@ structural; diagnostics, metadata, semantic events, maps, and artifacts remain
 blocking.
 
 Webpack users should migrate from `@fictjs/babel-preset` to the native
-`@fictjs/webpack-plugin` loader. Direct compiler integrations can load the
-platform binding from `@fictjs/compiler/native` and call its serializable
-`transformSync` or `transform` request API. Custom Babel pipelines that still
+`@fictjs/webpack-plugin` loader. Direct compiler integrations can import the
+serializable `transformSync`, `transform`, `scan`, or `analyze` facade from
+`@fictjs/compiler/native`; the facade lazily selects and reuses the validated
+platform binding. Custom Babel pipelines that still
 need sibling plugins should run native Fict compilation as a separate first
 stage and compose source maps explicitly.
 

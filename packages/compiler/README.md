@@ -28,14 +28,13 @@ them with `reactive(fn)`.
 ## Native compiler beta
 
 Official Vite and Webpack integrations own module graphs and are preferred for
-applications. A direct integration can load the prebuilt OXC/Rust binding from
-the platform package selected by `@fictjs/compiler/native`:
+applications. A direct integration can call the lazy OXC/Rust facade exported
+by `@fictjs/compiler/native`:
 
 ```ts
-import { loadNativeCompilerBinding } from '@fictjs/compiler/native'
+import { transformSync } from '@fictjs/compiler/native'
 
-const compiler = loadNativeCompilerBinding()
-const result = compiler.transformSync({
+const result = transformSync({
   code: source,
   filename: 'src/App.tsx',
   moduleId: 'src/App.tsx',
@@ -43,6 +42,14 @@ const result = compiler.transformSync({
   metadata: [],
 })
 ```
+
+The subpath also exports `transform`, `scan`/`scanSync`,
+`analyze`/`analyzeSync`, and `nativeCompilerInfo`. The native package is loaded
+on the first request and the facade reuses one validated compiler binding for
+the process. Set `FICT_COMPILER_NATIVE_PATH` only for local development or
+release verification; normal installations select the platform optional
+package automatically. Low-level hosts that need an isolated binding may use
+`createNativeCompilerFacade(options)` or `loadNativeCompilerBinding(options)`.
 
 The request boundary is serializable. Host callbacks, filesystem resolution,
 and bundler graph objects must stay outside Rust. A build must use one compiler
