@@ -91,10 +91,13 @@ structured difference categories, never source, generated code, absolute
 paths, or project names. Unknown differences fail at `buildEnd` when
 `failOnDifference` is enabled; no individual module falls back.
 
-The native backend does not yet support Preview `resumable: true`. Keep a
-resumable build on `legacy` until the separate Preview native milestone is
-complete. See the repository
-[rollout](../../docs/features/rust-compiler-rollout/rollout.md) and
+The Rust backend supports Preview `resumable: true` through compiler-owned
+structured handler artifacts that Vite consumes without reparsing generated
+code. This support remains opt-in and Preview: it does not graduate resumability
+to Core or change the failure and degradation policy in
+[PREVIEW](../../docs/PREVIEW.md). See the repository
+[rollout](../../docs/features/rust-compiler-rollout/rollout.md),
+[degradation audit](../../docs/preview-degradation-audit.md), and
 [rollback runbook](../../docs/operations/runbooks/compiler-backend-rollback.md).
 
 Decorator syntax is parsed and preserved, not lowered: the plugin accepts the current standard
