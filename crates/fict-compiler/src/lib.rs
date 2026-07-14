@@ -6,6 +6,8 @@
 //! filesystem, network, Node, N-API, or bundler state.
 
 mod analysis;
+#[cfg(test)]
+mod build_id_input;
 mod control_flow_diagnostics;
 mod diagnostic_policy;
 mod metadata_analysis;
