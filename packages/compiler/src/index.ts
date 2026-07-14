@@ -5002,7 +5002,9 @@ export type {
   TraceMarker,
   TraceMarkerKind,
   SourceMinimizerOptions,
+  SourceMinimizerBackend,
   SourceMinimizerPredicate,
+  SourceMinimizerPredicateContext,
   SourceMinimizerResult,
 } from './tooling'
 
