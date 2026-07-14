@@ -259,10 +259,5 @@ export function createNativeCompilerFacade(options?: NativeLoaderOptions): Nativ
 const defaultNativeCompiler = createNativeCompilerFacade()
 
 /** Direct OXC/Rust request functions. No function retries through the legacy compiler. */
-export const nativeCompilerInfo = defaultNativeCompiler.nativeCompilerInfo
-export const transformSync = defaultNativeCompiler.transformSync
-export const transform = defaultNativeCompiler.transform
-export const scanSync = defaultNativeCompiler.scanSync
-export const scan = defaultNativeCompiler.scan
-export const analyzeSync = defaultNativeCompiler.analyzeSync
-export const analyze = defaultNativeCompiler.analyze
+export const { nativeCompilerInfo, transformSync, transform, scanSync } = defaultNativeCompiler
+export const { scan, analyzeSync, analyze } = defaultNativeCompiler
