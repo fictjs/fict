@@ -6,7 +6,8 @@ use fict_diagnostics::{
 };
 use fict_emit::{
     ComponentChild, ComponentProp, ConditionalKind, DomBindingKind, DomNamespace, EmitOperation,
-    EmitProgram, EmitPropMode, EmitValueRef, PropsOperation, RuntimeHelper,
+    EmitPreviewHandler, EmitPreviewPlan, EmitProgram, EmitPropMode, EmitValueRef, PropsOperation,
+    RuntimeHelper,
 };
 use fict_hir::{
     CompoundAssignmentOperator, JavaScriptString, LiteralValue, TemplateId, UpdateOperator,
@@ -18,13 +19,13 @@ use oxc::{
         ast::{
             Argument, ArrayExpressionElement, ArrowFunctionExpression, AssignmentTarget,
             AssignmentTargetMaybeDefault, AssignmentTargetProperty, BindingPattern,
-            BindingRestElement, ChainElement, Expression, FormalParameter, FormalParameterKind,
-            FormalParameterRest, FormalParameters, Function, FunctionBody, FunctionType,
-            IdentifierName, IdentifierReference, ImportDeclarationSpecifier, ImportOrExportKind,
-            JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild, JSXElement,
-            JSXElementName, JSXFragment, JSXMemberExpression, JSXMemberExpressionObject,
-            ObjectPropertyKind, PropertyKey, PropertyKind, SimpleAssignmentTarget, Statement,
-            VariableDeclarationKind, VariableDeclarator,
+            BindingRestElement, CallExpression, ChainElement, Expression, FormalParameter,
+            FormalParameterKind, FormalParameterRest, FormalParameters, Function, FunctionBody,
+            FunctionType, IdentifierName, IdentifierReference, ImportDeclarationSpecifier,
+            ImportOrExportKind, JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXChild,
+            JSXElement, JSXElementName, JSXFragment, JSXMemberExpression,
+            JSXMemberExpressionObject, ObjectPropertyKind, PropertyKey, PropertyKind,
+            SimpleAssignmentTarget, Statement, VariableDeclarationKind, VariableDeclarator,
         },
     },
     ast_visit::{Visit, VisitMut, walk, walk_mut},
@@ -48,6 +49,7 @@ use crate::commonjs::lower_standard_esm_to_commonjs;
 use crate::{OxcCompileOptions, OxcCompileOutput, OxcModuleKind};
 
 use super::compile::{convert_diagnostics, failed_output, sorted, source_type};
+use super::preview_codegen::{PreparedHandler, generate_handler_artifact};
 use super::typescript::{
     configure_transform, passthrough_blockers, plan_typescript_program,
     rewrite_import_equals_extensions,
@@ -68,6 +70,13 @@ pub fn emit_program(
         diagnostics.push(emit_error(
             "FICT-OXC-EMIT-SCRIPT-IMPORT",
             "runtime helper imports cannot be injected into classic script output",
+            GuaranteeClass::Unsupported,
+        ));
+    }
+    if emit.preview_plan.is_some() && options.module_kind != OxcModuleKind::Module {
+        diagnostics.push(emit_error(
+            "FICT-OXC-PREVIEW-MODULE",
+            "Preview handler artifacts and resume entries require ESM output",
             GuaranteeClass::Unsupported,
         ));
     }
@@ -107,6 +116,22 @@ pub fn emit_program(
     let (vnodes, vnode_diagnostics) = vnode_rewrites(emit);
     let (components, component_diagnostics) = component_rewrites(emit);
     let templates = template_rewrites(emit);
+    let preview_handlers: BTreeMap<_, _> = emit
+        .preview_plan
+        .iter()
+        .flat_map(|preview| &preview.handlers)
+        .filter_map(|handler| {
+            handler
+                .handler_origin
+                .primary_span
+                .map(|span| ((span.start(), span.end()), handler.clone()))
+        })
+        .collect();
+    let preview_qrl_local = emit
+        .imports
+        .iter()
+        .find(|intent| intent.helper == RuntimeHelper::Qrl)
+        .map(|intent| intent.local.as_str());
     diagnostics.extend(rewrite_diagnostics);
     diagnostics.extend(props_rewrites.diagnostics);
     diagnostics.extend(read_diagnostics);
@@ -131,6 +156,9 @@ pub fn emit_program(
         vnodes: &vnodes,
         components: &components,
         clones: &templates.clones,
+        preview_handlers: &preview_handlers,
+        preview_qrl_local,
+        prepared_preview_handlers: BTreeMap::new(),
         context_declarations,
         matched_calls: BTreeSet::new(),
         matched_props: BTreeSet::new(),
@@ -289,6 +317,25 @@ pub fn emit_program(
     if !diagnostics.is_empty() {
         return failed_output(diagnostics);
     }
+    let prepared_preview_handlers = std::mem::take(&mut rewriter.prepared_preview_handlers);
+    for location in preview_handlers.keys() {
+        if !prepared_preview_handlers.contains_key(location) {
+            diagnostics.push(
+                emit_error(
+                    "FICT-OXC-PREVIEW-ORIGIN",
+                    "Preview handler origin does not identify a lowered JSX event expression",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(
+                    SourceSpan::new(location.0, location.1)
+                        .expect("ordered Preview handler location"),
+                ),
+            );
+        }
+    }
+    if !diagnostics.is_empty() {
+        return failed_output(diagnostics);
+    }
 
     let used_template_factories: BTreeSet<_> = rewriter
         .matched_clones
@@ -324,6 +371,19 @@ pub fn emit_program(
         }
     }
 
+    if let Some(preview) = &emit.preview_plan {
+        let preview_source = match render_preview_module_statements(emit, preview) {
+            Ok(source) => source,
+            Err(diagnostic) => return failed_output(vec![diagnostic]),
+        };
+        let preview_source = allocator.alloc_str(&preview_source);
+        let statements = match parse_generated_module_statements(&allocator, preview_source) {
+            Ok(statements) => statements,
+            Err(findings) => return failed_output(findings),
+        };
+        program.body.extend(statements);
+    }
+
     let semantic = SemanticBuilder::new()
         .with_check_syntax_error(true)
         .with_enum_eval(true)
@@ -356,6 +416,30 @@ pub fn emit_program(
     }
     if let Some(plan) = &typescript_plan {
         configure_transform(plan, &options.typescript, &mut transform_options);
+    }
+    let mut handler_artifacts = Vec::new();
+    if let Some(preview) = &emit.preview_plan {
+        for prepared in prepared_preview_handlers.into_values() {
+            match generate_handler_artifact(
+                &allocator,
+                source,
+                filename,
+                input_source_type,
+                options.module_kind,
+                &transform_options,
+                emit.runtime_family,
+                preview,
+                prepared,
+                options.sourcemap,
+            ) {
+                Ok(artifact) => handler_artifacts.push(artifact),
+                Err(findings) => diagnostics.extend(findings),
+            }
+        }
+        handler_artifacts.sort_by(|left, right| left.id.cmp(&right.id));
+        if !diagnostics.is_empty() {
+            return failed_output(diagnostics);
+        }
     }
     let scoping = semantic.semantic.into_scoping();
     if options.typescript.rewrite_import_extensions {
@@ -432,6 +516,7 @@ pub fn emit_program(
     OxcCompileOutput {
         code: generated.code,
         source_map_json: generated.map.map(|map| map.to_json_string()),
+        handler_artifacts,
         diagnostics: sorted(diagnostics),
     }
 }
@@ -2618,6 +2703,89 @@ fn parse_template_declarations<'a>(
     Ok(declarations)
 }
 
+fn parse_generated_module_statements<'a>(
+    allocator: &'a Allocator,
+    source: &'a str,
+) -> Result<Vec<Statement<'a>>, Vec<Diagnostic>> {
+    if source.is_empty() {
+        return Ok(Vec::new());
+    }
+    let parsed = Parser::new(allocator, source, SourceType::mjs()).parse();
+    if !parsed.diagnostics.is_empty() {
+        return Err(convert_diagnostics(
+            parsed.diagnostics,
+            "FICT-OXC-PREVIEW-GENERATED",
+        ));
+    }
+    let mut program = parsed.program;
+    ZeroSpans.visit_program(&mut program);
+    Ok(program.body.into_iter().collect())
+}
+
+fn preview_helper_local(emit: &EmitProgram, helper: RuntimeHelper) -> Result<&str, Diagnostic> {
+    emit.imports
+        .iter()
+        .find(|intent| intent.helper == helper)
+        .map(|intent| intent.local.as_str())
+        .ok_or_else(|| {
+            emit_error(
+                "FICT-OXC-PREVIEW-IMPORT",
+                format!("Preview plan has no runtime import for {helper:?}"),
+                GuaranteeClass::Internal,
+            )
+        })
+}
+
+fn render_preview_module_statements(
+    emit: &EmitProgram,
+    preview: &EmitPreviewPlan,
+) -> Result<String, Diagnostic> {
+    use std::fmt::Write;
+
+    let mut source = String::new();
+    let mut dependencies = BTreeSet::new();
+    for handler in &preview.handlers {
+        for capture in &handler.module_captures {
+            dependencies.insert((capture.local.as_str(), capture.source_export_name.as_str()));
+        }
+    }
+    for (local, exported) in dependencies {
+        writeln!(source, "export {{ {local} as {exported} }};")
+            .expect("writing generated Preview source cannot fail");
+    }
+
+    if preview.components.is_empty() {
+        return Ok(source);
+    }
+    let get_scope = preview_helper_local(emit, RuntimeHelper::GetSSRScope)?;
+    let ensure_scope = preview_helper_local(emit, RuntimeHelper::EnsureScope)?;
+    let prepare_context = preview_helper_local(emit, RuntimeHelper::PrepareContext)?;
+    let push_context = preview_helper_local(emit, RuntimeHelper::PushContext)?;
+    let pop_context = preview_helper_local(emit, RuntimeHelper::PopContext)?;
+    let hydrate_component = preview_helper_local(emit, RuntimeHelper::HydrateComponent)?;
+    let qrl = preview_helper_local(emit, RuntimeHelper::Qrl)?;
+    let register_resume = preview_helper_local(emit, RuntimeHelper::RegisterResume)?;
+    let set_component_meta = preview_helper_local(emit, RuntimeHelper::SetComponentMeta)?;
+    let public_module = preview
+        .public_module_id
+        .as_deref()
+        .map(quote_javascript_string)
+        .unwrap_or_else(|| "import.meta.url".to_owned());
+    for component in &preview.components {
+        writeln!(
+            source,
+            "export const {resume} = (scopeId, host) => {{\n  const snapshot = {get_scope}(scopeId);\n  if (!snapshot) return;\n  const ctx = {ensure_scope}(scopeId, host, snapshot);\n  try {{\n    {prepare_context}(ctx);\n    {push_context}();\n    {hydrate_component}(() => {component}(snapshot.props || {{}}), host);\n  }} finally {{\n    {pop_context}();\n  }}\n}};\n{register_resume}({qrl}(import.meta.url, {resume_name}), {resume});\nconst {metadata} = {{ id: {type_key} + {public_module}, resume: {qrl}({public_module}, {resume_name}) }};\n{set_component_meta}({component}, {metadata});",
+            resume = component.resume_export_name,
+            component = component.name,
+            resume_name = quote_javascript_string(&component.resume_export_name),
+            metadata = component.metadata_local,
+            type_key = quote_javascript_string(&format!("{}@", component.name)),
+        )
+        .expect("writing generated Preview source cannot fail");
+    }
+    Ok(source)
+}
+
 struct AstRewriter<'a, 'emit> {
     allocator: &'a Allocator,
     call_rewrites: &'emit BTreeMap<(u32, u32), CallRewrite>,
@@ -2628,6 +2796,9 @@ struct AstRewriter<'a, 'emit> {
     vnodes: &'emit BTreeMap<(u32, u32), VNodeRewrite>,
     components: &'emit BTreeMap<(u32, u32), ComponentRewrite>,
     clones: &'emit BTreeMap<(u32, u32), CloneRewrite>,
+    preview_handlers: &'emit BTreeMap<(u32, u32), EmitPreviewHandler>,
+    preview_qrl_local: Option<&'emit str>,
+    prepared_preview_handlers: BTreeMap<(u32, u32), PreparedHandler<'a>>,
     context_declarations: BTreeMap<(u32, u32), Statement<'a>>,
     matched_calls: BTreeSet<(u32, u32)>,
     matched_props: BTreeSet<(u32, u32)>,
@@ -3464,6 +3635,62 @@ impl<'a> AstRewriter<'a, '_> {
         )
     }
 
+    fn prepare_preview_qrl(
+        &mut self,
+        location: (u32, u32),
+        handler: Expression<'a>,
+        prevent_default: bool,
+        span: Span,
+    ) -> Option<Expression<'a>> {
+        let plan = self.preview_handlers.get(&location)?.clone();
+        self.prepared_preview_handlers
+            .entry(location)
+            .or_insert(PreparedHandler {
+                plan: plan.clone(),
+                expression: handler,
+            });
+        let Some(qrl_local) = self.preview_qrl_local else {
+            self.diagnostics.push(
+                emit_error(
+                    "FICT-OXC-PREVIEW-IMPORT",
+                    "Preview handler plan has no QRL runtime import",
+                    GuaranteeClass::Internal,
+                )
+                .with_primary_span(
+                    SourceSpan::new(location.0, location.1)
+                        .expect("ordered Preview handler location"),
+                ),
+            );
+            return None;
+        };
+        let builder = AstBuilder::new(self.allocator);
+        let mut arguments = ArenaVec::new_in(&self.allocator);
+        arguments.extend([
+            Argument::from(Expression::new_string_literal(
+                span,
+                self.allocator.alloc_str(&plan.module_specifier),
+                None,
+                &builder,
+            )),
+            Argument::from(Expression::new_string_literal(
+                span, "default", None, &builder,
+            )),
+        ]);
+        if prevent_default {
+            arguments.push(Argument::from(Expression::new_string_literal(
+                span, "pd", None, &builder,
+            )));
+        }
+        Some(Expression::new_call_expression(
+            span,
+            Expression::new_identifier(span, self.allocator.alloc_str(qrl_local), &builder),
+            NONE,
+            arguments,
+            false,
+            &builder,
+        ))
+    }
+
     fn lower_template_clone(
         &mut self,
         clone: CloneRewrite,
@@ -3709,7 +3936,45 @@ impl<'a> AstRewriter<'a, '_> {
                         continue;
                     };
                     self.visit_expression(&mut handler);
+                    let prevent_default = handler_may_prevent_default(&handler);
                     handler = ignore_inline_event_handler_return(self.allocator, handler, span);
+                    if self.preview_handlers.contains_key(&location) {
+                        let Some(qrl) =
+                            self.prepare_preview_qrl(location, handler, prevent_default, span)
+                        else {
+                            continue;
+                        };
+                        let target = Expression::new_identifier(
+                            span,
+                            self.allocator.alloc_str(&element),
+                            &builder,
+                        );
+                        let callee = Expression::new_static_member_expression(
+                            span,
+                            target,
+                            IdentifierName::new(span, "setAttribute", &builder),
+                            false,
+                            &builder,
+                        );
+                        let mut arguments = ArenaVec::new_in(&self.allocator);
+                        arguments.extend([
+                            Argument::from(Expression::new_string_literal(
+                                span,
+                                self.allocator.alloc_str(&format!("on:{event}")),
+                                None,
+                                &builder,
+                            )),
+                            Argument::from(qrl),
+                        ]);
+                        statements.push(Statement::new_expression_statement(
+                            span,
+                            Expression::new_call_expression(
+                                span, callee, NONE, arguments, false, &builder,
+                            ),
+                            &builder,
+                        ));
+                        continue;
+                    }
                     let callee = Expression::new_identifier(
                         span,
                         self.allocator.alloc_str(&helper),
@@ -4824,7 +5089,35 @@ impl<'a> AstRewriter<'a, '_> {
                 JSXAttributeItem::Attribute(attribute) => {
                     let attribute = attribute.unbox();
                     let (name, name_span) = jsx_attribute_name(attribute.name);
-                    let value = self.lower_jsx_attribute_value(attribute.value, attribute.span);
+                    let preview = jsx_attribute_source_span(&attribute.value).and_then(|source| {
+                        let location = (source.start, source.end);
+                        self.preview_handlers
+                            .get(&location)
+                            .map(|handler| (location, handler.event.clone()))
+                    });
+                    let mut value = self.lower_jsx_attribute_value(attribute.value, attribute.span);
+                    if let Some((location, event)) = preview {
+                        let prevent_default = handler_may_prevent_default(&value);
+                        value = ignore_inline_event_handler_return(
+                            self.allocator,
+                            value,
+                            attribute.span,
+                        );
+                        let Some(qrl) = self.prepare_preview_qrl(
+                            location,
+                            value,
+                            prevent_default,
+                            attribute.span,
+                        ) else {
+                            continue;
+                        };
+                        properties.push(self.object_property(
+                            name_span,
+                            &format!("attr:on:{event}"),
+                            qrl,
+                        ));
+                        continue;
+                    }
                     if name == "key" {
                         key = Some(value);
                     } else {
@@ -5836,6 +6129,56 @@ fn ignore_inline_event_handler_return<'a>(
     }
 }
 
+fn handler_may_prevent_default(handler: &Expression<'_>) -> bool {
+    let handler = handler.get_inner_expression();
+    let parameters = match handler {
+        Expression::ArrowFunctionExpression(function) => &function.params,
+        Expression::FunctionExpression(function) => &function.params,
+        _ => return false,
+    };
+    let Some(parameter) = parameters.items.first() else {
+        return false;
+    };
+    let BindingPattern::BindingIdentifier(parameter) = &parameter.pattern else {
+        return false;
+    };
+    let mut finder = PreventDefaultFinder {
+        event_parameter: parameter.name.as_str(),
+        found: false,
+    };
+    finder.visit_expression(handler);
+    finder.found
+}
+
+struct PreventDefaultFinder<'name> {
+    event_parameter: &'name str,
+    found: bool,
+}
+
+impl<'a> Visit<'a> for PreventDefaultFinder<'_> {
+    fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        if self.found {
+            return;
+        }
+        let member_matches = match call.callee.get_inner_expression() {
+            Expression::StaticMemberExpression(member) => {
+                matches!(member.object.get_inner_expression(), Expression::Identifier(object) if object.name == self.event_parameter)
+                    && member.property.name == "preventDefault"
+            }
+            Expression::ComputedMemberExpression(member) => {
+                matches!(member.object.get_inner_expression(), Expression::Identifier(object) if object.name == self.event_parameter)
+                    && matches!(member.expression.get_inner_expression(), Expression::StringLiteral(property) if property.value == "preventDefault")
+            }
+            _ => false,
+        };
+        if member_matches {
+            self.found = true;
+            return;
+        }
+        walk::walk_call_expression(self, call);
+    }
+}
+
 #[derive(Default)]
 struct IdentifierCollector {
     names: BTreeSet<String>,
@@ -6610,7 +6953,7 @@ fn rename_callee<'a>(expression: &mut Expression<'a>, local: &'a str) -> bool {
     }
 }
 
-struct ZeroSpans;
+pub(crate) struct ZeroSpans;
 
 impl<'a> VisitMut<'a> for ZeroSpans {
     fn visit_span(&mut self, span: &mut Span) {
@@ -6729,6 +7072,7 @@ mod tests {
         EmitProgram {
             runtime_family: RuntimeFamily::Runtime,
             preview: false,
+            preview_plan: None,
             strict_rejected: false,
             module: EmitModulePlan {
                 source_fragment: None,

@@ -481,6 +481,12 @@ fn verify_imports(program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {
                         .filter_map(|props| props.rest.as_ref().map(|rest| rest.helper)),
                 )
         })
+        .chain(
+            program
+                .preview_plan
+                .iter()
+                .flat_map(|preview| preview.helpers.iter().copied()),
+        )
         .collect();
     let imported: BTreeSet<_> = program.imports.iter().map(|intent| intent.helper).collect();
     if imported != used
@@ -519,6 +525,12 @@ fn verify_imports(program: &EmitProgram, diagnostics: &mut DiagnosticBundle) {
                 "Core EmitIR cannot import a Preview-only helper",
             ));
         }
+    }
+    if !program.preview && program.preview_plan.is_some() {
+        diagnostics.push(emit_error(
+            "FICT-EMIT-PREVIEW",
+            "Core EmitIR cannot carry a Preview plan",
+        ));
     }
 }
 

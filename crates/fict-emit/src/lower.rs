@@ -308,6 +308,7 @@ fn lower_program(
     let program = EmitProgram {
         runtime_family: options.runtime_family,
         preview: options.preview,
+        preview_plan: None,
         strict_rejected: false,
         module: EmitModulePlan {
             source_fragment: module_source_fragment(hir),
@@ -1487,6 +1488,7 @@ fn lower_component_props_plan(
             )]));
         };
         bindings.push(EmitPropBinding {
+            binding: property.binding,
             path: property.path.clone(),
             local: binding.display_name.clone(),
             mode: match property.mode {

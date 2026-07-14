@@ -11,10 +11,11 @@ mod verify;
 pub use ir::{
     CleanupOwner, ComponentChild, ComponentProp, ComponentTarget, ConditionalKind, DomBindingKind,
     DomNamespace, EmitContext, EmitControlArm, EmitFunction, EmitModulePlan, EmitOperation,
-    EmitProgram, EmitPropBinding, EmitPropCheck, EmitPropMode, EmitPropsDefault, EmitPropsPlan,
-    EmitPropsRest, EmitSlotId, EmitTemporary, EmitTemporaryId, EmitValueRef, PropsOperation,
-    ReactivePatternTarget, ReactiveSlot, ReactiveSlotKind, ReactiveSlotStorage,
-    RuntimeImportIntent,
+    EmitPreviewComponent, EmitPreviewHandler, EmitPreviewLexicalCapture, EmitPreviewModuleCapture,
+    EmitPreviewPlan, EmitPreviewPropCapture, EmitProgram, EmitPropBinding, EmitPropCheck,
+    EmitPropMode, EmitPropsDefault, EmitPropsPlan, EmitPropsRest, EmitSlotId, EmitTemporary,
+    EmitTemporaryId, EmitValueRef, PropsOperation, ReactivePatternTarget, ReactiveSlot,
+    ReactiveSlotKind, ReactiveSlotStorage, RuntimeImportIntent,
 };
 pub use lower::{NoJsxLoweringOptions, lower_core, lower_no_jsx};
 

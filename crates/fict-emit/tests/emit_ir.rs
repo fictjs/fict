@@ -72,6 +72,7 @@ fn program() -> EmitProgram {
     EmitProgram {
         runtime_family: RuntimeFamily::Runtime,
         preview: false,
+        preview_plan: None,
         strict_rejected: false,
         module: EmitModulePlan {
             source_fragment: None,

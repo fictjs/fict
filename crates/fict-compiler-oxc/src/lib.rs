@@ -13,11 +13,13 @@ mod facts;
 mod frontend;
 mod hir_builder;
 mod jsx_text;
+mod preview_codegen;
 mod scan;
 mod typescript;
 
 pub use compile::{
-    OxcCompileOptions, OxcCompileOutput, OxcModuleKind, OxcSourceLanguage, compile_passthrough,
+    OxcCompileOptions, OxcCompileOutput, OxcHandlerArtifact, OxcModuleKind, OxcSourceLanguage,
+    compile_passthrough,
 };
 pub use emit_codegen::emit_program;
 pub use facts::{

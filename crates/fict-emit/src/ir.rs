@@ -720,6 +720,7 @@ pub struct EmitContext {
 /// One component prop destructured into a reactive local accessor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmitPropBinding {
+    pub binding: BindingId,
     pub path: Vec<String>,
     pub local: String,
     pub mode: EmitPropMode,
@@ -773,6 +774,67 @@ pub struct EmitPropsPlan {
     pub helper: Option<RuntimeHelper>,
 }
 
+/// One reactive lexical binding restored by a Preview handler artifact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmitPreviewLexicalCapture {
+    pub binding: BindingId,
+    pub local: String,
+}
+
+/// One component-prop accessor restored from the serialized Preview scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmitPreviewPropCapture {
+    pub binding: BindingId,
+    pub local: String,
+    pub path: Vec<String>,
+    pub default_value: Option<Origin>,
+}
+
+/// One stable module binding made available to an isolated handler artifact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmitPreviewModuleCapture {
+    pub binding: BindingId,
+    pub local: String,
+    pub source_export_name: String,
+}
+
+/// Structured handler plan produced by the optional Preview crate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmitPreviewHandler {
+    pub owner: FunctionId,
+    pub handler_function: Option<FunctionId>,
+    pub handler_origin: Origin,
+    pub event: String,
+    pub explicit: bool,
+    pub source_export_name: String,
+    pub artifact_id: String,
+    pub module_specifier: String,
+    pub lexical_captures: Vec<EmitPreviewLexicalCapture>,
+    pub prop_captures: Vec<EmitPreviewPropCapture>,
+    pub props_object_local: Option<String>,
+    pub module_captures: Vec<EmitPreviewModuleCapture>,
+}
+
+/// Structured component-resume plan produced by the optional Preview crate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmitPreviewComponent {
+    pub function: FunctionId,
+    pub name: String,
+    pub resume_export_name: String,
+    pub metadata_local: String,
+    pub origin: Origin,
+}
+
+/// Optional Preview payload attached to otherwise stable EmitIR.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmitPreviewPlan {
+    pub source_module_id: String,
+    pub public_module_id: Option<String>,
+    pub helpers: Vec<RuntimeHelper>,
+    pub handlers: Vec<EmitPreviewHandler>,
+    pub components: Vec<EmitPreviewComponent>,
+}
+
 /// Emit plan for one HIR function.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmitFunction {
@@ -791,6 +853,7 @@ pub struct EmitFunction {
 pub struct EmitProgram {
     pub runtime_family: RuntimeFamily,
     pub preview: bool,
+    pub preview_plan: Option<EmitPreviewPlan>,
     pub strict_rejected: bool,
     pub module: EmitModulePlan,
     pub imports: Vec<RuntimeImportIntent>,

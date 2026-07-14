@@ -65,8 +65,22 @@ pub struct OxcCompileOutput {
     pub code: String,
     /// Source Map v3 JSON, when requested and emission succeeds.
     pub source_map_json: Option<String>,
+    /// Standalone Preview handler modules emitted from the same in-memory OXC program.
+    pub handler_artifacts: Vec<OxcHandlerArtifact>,
     /// Owned structured diagnostics.
     pub diagnostics: Vec<Diagnostic>,
+}
+
+/// Arena-independent handler module returned by OXC code generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OxcHandlerArtifact {
+    pub id: String,
+    pub code: String,
+    pub source_map_json: Option<String>,
+    pub source_export_name: String,
+    pub artifact_export_name: String,
+    pub module_specifier: String,
+    pub source_span: SourceSpan,
 }
 
 /// Parse, run semantic checks, strip ordinary TypeScript, and generate code.
@@ -190,6 +204,7 @@ pub fn compile_passthrough(
     OxcCompileOutput {
         code: generated.code,
         source_map_json: generated.map.map(|map| map.to_json_string()),
+        handler_artifacts: Vec::new(),
         diagnostics: sorted(diagnostics),
     }
 }
@@ -214,6 +229,7 @@ pub(crate) fn failed_output(diagnostics: Vec<Diagnostic>) -> OxcCompileOutput {
     OxcCompileOutput {
         code: String::new(),
         source_map_json: None,
+        handler_artifacts: Vec::new(),
         diagnostics: sorted(diagnostics),
     }
 }

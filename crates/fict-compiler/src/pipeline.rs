@@ -16,9 +16,10 @@ use crate::diagnostic_policy::{apply_diagnostic_policy, configured_diagnostic_se
 use crate::metadata_analysis::generate_module_metadata;
 use crate::source_map::compose_source_maps;
 use crate::{
-    CompileRequest, CompileResult, CompilerExplainArtifact, CompilerExplainEvent,
-    CompilerExplainEventKind, CompilerStats, CorePassOptions, ModuleKind, NormalizedCompileRequest,
-    RawSourceMap, SourceLanguage, run_core_passes,
+    CompileRequest, CompileResult, CompilerArtifact, CompilerArtifactKind, CompilerExplainArtifact,
+    CompilerExplainEvent, CompilerExplainEventKind, CompilerStats, CorePassOptions,
+    HandlerArtifactMetadata, ModuleKind, NormalizedCompileRequest, RawSourceMap, SourceLanguage,
+    run_core_passes,
 };
 
 /// Execute the currently connected native pipeline and return a complete result.
@@ -56,7 +57,13 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     let mut result = CompileResult::empty();
     result.diagnostics = request.integration_diagnostics.clone();
 
-    if request.options.preview.is_some() {
+    #[cfg(not(feature = "preview"))]
+    if request
+        .options
+        .preview
+        .as_ref()
+        .is_some_and(|preview| preview.resumable)
+    {
         result.diagnostics.push(
             diagnostic(
                 "FICT-PREVIEW-UNAVAILABLE",
@@ -237,7 +244,11 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
         NoJsxLoweringOptions {
             runtime_family,
             strict_guarantee: request.options.strict_guarantee,
-            preview: false,
+            preview: request
+                .options
+                .preview
+                .as_ref()
+                .is_some_and(|preview| preview.resumable),
             fine_grained_dom: request.options.fine_grained_dom,
         },
     ) {
@@ -249,6 +260,37 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
             return result;
         }
     };
+    #[allow(unused_mut)]
+    let mut emit = emit;
+    #[cfg(feature = "preview")]
+    if let Some(preview) = request
+        .options
+        .preview
+        .as_ref()
+        .filter(|preview| preview.resumable)
+    {
+        if let Err(diagnostics) = fict_compiler_preview::attach_preview_plan(
+            &core.hir,
+            &mut emit,
+            &fict_compiler_preview::PreviewOptions {
+                source_module_id: request.module_id.clone(),
+                auto_extract_handlers: preview.auto_extract_handlers,
+                auto_extract_threshold: preview.auto_extract_threshold,
+                public_module_id: request.public_module_id.clone(),
+            },
+        ) {
+            result.diagnostics.extend(diagnostics.into_sorted());
+            finalize_diagnostics(&mut result, &request.options);
+            attach_explain_if_requested(&mut result, &request, &source_events, &[]);
+            return result;
+        }
+        if let Err(diagnostics) = fict_emit::verify_emit_program(&core.hir, &regions, &emit) {
+            result.diagnostics.extend(diagnostics.into_sorted());
+            finalize_diagnostics(&mut result, &request.options);
+            attach_explain_if_requested(&mut result, &request, &source_events, &[]);
+            return result;
+        }
+    }
     let helpers: Vec<_> = emit
         .imports
         .iter()
@@ -261,57 +303,110 @@ fn compile_normalized(request: NormalizedCompileRequest) -> CompileResult {
     if !result.has_errors() {
         result.code = output.code;
         if let Some(source_map_json) = output.source_map_json {
-            match serde_json::from_str::<RawSourceMap>(&source_map_json)
-                .map_err(|error| error.to_string())
-                .and_then(|map| {
-                    map.validate()
-                        .map(|()| map)
-                        .map_err(|error| error.to_string())
-                }) {
-                Ok(map) => {
-                    let composed = match request.input_source_map.as_ref() {
-                        Some(input) => compose_source_maps(&map, input),
-                        None => Ok(map),
-                    };
-                    match composed.and_then(|map| {
-                        map.validate()
-                            .map(|()| map)
-                            .map_err(|error| error.to_string())
-                    }) {
-                        Ok(map) => result.map = Some(map),
-                        Err(error) => result.diagnostics.push(
-                            diagnostic(
-                                "FICT-SOURCEMAP-COMPOSE",
-                                DiagnosticSeverity::Error,
-                                format!("failed to compose the native source map: {error}"),
-                                GuaranteeClass::Internal,
-                            )
-                            .with_help(
-                                "report the source-map fixture; partial output was discarded",
-                            ),
-                        ),
-                    }
-                }
-                Err(error) => result.diagnostics.push(
-                    diagnostic(
-                        "FICT-I002",
-                        DiagnosticSeverity::Error,
-                        format!("OXC emitted an invalid source map: {error}"),
-                        GuaranteeClass::Internal,
-                    )
-                    .with_help("report the source-map fixture; partial output was discarded"),
-                ),
+            match decode_native_source_map(
+                &source_map_json,
+                request.input_source_map.as_ref(),
+                "main output",
+            ) {
+                Ok(map) => result.map = Some(map),
+                Err(diagnostic) => result.diagnostics.push(diagnostic),
             }
         }
+        for artifact in output.handler_artifacts {
+            let map = match artifact.source_map_json.as_deref() {
+                Some(source_map_json) => match decode_native_source_map(
+                    source_map_json,
+                    request.input_source_map.as_ref(),
+                    &format!("handler artifact {}", artifact.id),
+                ) {
+                    Ok(map) => Some(map),
+                    Err(diagnostic) => {
+                        result.diagnostics.push(diagnostic);
+                        break;
+                    }
+                },
+                None => None,
+            };
+            result.artifacts.push(CompilerArtifact {
+                id: artifact.id,
+                kind: CompilerArtifactKind::HandlerModule,
+                code: artifact.code,
+                map,
+                handler: Some(HandlerArtifactMetadata {
+                    source_export_name: artifact.source_export_name,
+                    artifact_export_name: artifact.artifact_export_name,
+                    module_specifier: artifact.module_specifier,
+                    source_span: artifact.source_span,
+                }),
+            });
+        }
+        let expected_artifacts = emit
+            .preview_plan
+            .as_ref()
+            .map_or(0, |preview| preview.handlers.len());
+        if result.artifacts.len() != expected_artifacts {
+            result.diagnostics.push(diagnostic(
+                "FICT-OXC-PREVIEW-ARTIFACT",
+                DiagnosticSeverity::Error,
+                "OXC did not emit exactly one structured artifact for every Preview handler",
+                GuaranteeClass::Internal,
+            ));
+        }
+        result
+            .artifacts
+            .sort_by(|left, right| left.id.cmp(&right.id));
     }
 
     finalize_diagnostics(&mut result, &request.options);
     if result.has_errors() {
         result.code.clear();
         result.map = None;
+        result.artifacts.clear();
     }
     attach_explain_if_requested(&mut result, &request, &source_events, &helpers);
     result
+}
+
+fn decode_native_source_map(
+    source_map_json: &str,
+    input_source_map: Option<&RawSourceMap>,
+    output_name: &str,
+) -> Result<RawSourceMap, Diagnostic> {
+    let map = serde_json::from_str::<RawSourceMap>(source_map_json)
+        .map_err(|error| error.to_string())
+        .and_then(|map| {
+            map.validate()
+                .map(|()| map)
+                .map_err(|error| error.to_string())
+        })
+        .map_err(|error| {
+            diagnostic(
+                "FICT-I002",
+                DiagnosticSeverity::Error,
+                format!("OXC emitted an invalid source map for {output_name}: {error}"),
+                GuaranteeClass::Internal,
+            )
+            .with_help("report the source-map fixture; partial output was discarded")
+        })?;
+    let map = match input_source_map {
+        Some(input) => compose_source_maps(&map, input),
+        None => Ok(map),
+    }
+    .and_then(|map| {
+        map.validate()
+            .map(|()| map)
+            .map_err(|error| error.to_string())
+    })
+    .map_err(|error| {
+        diagnostic(
+            "FICT-SOURCEMAP-COMPOSE",
+            DiagnosticSeverity::Error,
+            format!("failed to compose the native source map for {output_name}: {error}"),
+            GuaranteeClass::Internal,
+        )
+        .with_help("report the source-map fixture; partial output was discarded")
+    })?;
+    Ok(map)
 }
 
 pub(crate) fn oxc_language(language: SourceLanguage) -> OxcSourceLanguage {
@@ -521,7 +616,7 @@ mod tests {
     use super::{compile, internal_error_result};
     use crate::{
         COMPILER_PROTOCOL_VERSION, CompileRequest, CompilerExplainEventKind, CompilerOptions,
-        ModuleKind, RawSourceMap, WarningLevel, WarningsAsErrors,
+        CompilerPreviewOptions, ModuleKind, RawSourceMap, WarningLevel, WarningsAsErrors,
     };
 
     fn request(code: &str, filename: &str) -> CompileRequest {
@@ -4716,10 +4811,14 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "preview"))]
     #[test]
     fn rejects_preview_options_until_the_optional_pass_graph_is_connected() {
         let mut input = request("export const value = 1", "preview.js");
-        input.options.preview = Some(Default::default());
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            ..CompilerPreviewOptions::default()
+        });
         let result = compile(input);
 
         assert!(result.has_errors());
@@ -4728,6 +4827,86 @@ mod tests {
             result.diagnostics[0].code.as_str(),
             "FICT-PREVIEW-UNAVAILABLE"
         );
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn accepts_preview_options_when_the_optional_pass_graph_is_enabled() {
+        let mut input = request("export const value = 1", "preview.js");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            ..CompilerPreviewOptions::default()
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.code.contains("export const value = 1"));
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn emits_structured_preview_handlers_and_component_resume_entries() {
+        let source = "import { $state } from 'fict'; export function App() { const count = $state(0); return <button onClick$={(event) => { event.preventDefault(); count++; }}>{count}</button>; }";
+        let mut input = request(source, "preview-handler.tsx");
+        input.public_module_id = Some("/src/preview-handler.tsx".into());
+        input.options.sourcemap = true;
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: false,
+            ..CompilerPreviewOptions::default()
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.code.contains("setAttribute(\"on:click\""));
+        assert!(result.code.contains("fict:compiler-artifact:handler-0"));
+        assert!(result.code.contains("\"default\", \"pd\""));
+        assert!(result.code.contains("export const __fict_r0"));
+        assert!(result.code.contains("/src/preview-handler.tsx"));
+        assert_eq!(result.artifacts.len(), 1);
+        let artifact = &result.artifacts[0];
+        assert_eq!(artifact.id, "handler-0");
+        assert!(artifact.code.contains("export default"));
+        assert!(
+            artifact.code.contains("__fictUseLexicalScope"),
+            "{}",
+            artifact.code
+        );
+        assert!(artifact.map.is_some());
+        let handler = artifact.handler.as_ref().expect("handler routing metadata");
+        assert_eq!(handler.source_export_name, "__fict_e0");
+        assert_eq!(handler.artifact_export_name, "default");
+        assert_eq!(handler.module_specifier, "fict:compiler-artifact:handler-0");
+        assert_eq!(
+            &source[handler.source_span.start() as usize..handler.source_span.end() as usize],
+            "(event) => { event.preventDefault(); count++; }"
+        );
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn emits_preview_vnode_qrls_with_prop_and_module_capture_artifacts() {
+        let source = "const moduleHelper = () => 1; export function App({ label = 'fallback' }) { return <button on:click$={() => { moduleHelper(); label(); }}>{label}</button>; }";
+        let mut input = request(source, "preview-vnode.tsx");
+        input.options.fine_grained_dom = false;
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: false,
+            ..CompilerPreviewOptions::default()
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.code.contains("\"attr:on:click\""), "{}", result.code);
+        assert!(
+            result
+                .code
+                .contains("export { moduleHelper as __fict_dep_0 }")
+        );
+        let artifact = result.artifacts.first().expect("one handler artifact");
+        assert!(artifact.code.contains("__fictGetScopeProps"));
+        assert!(artifact.code.contains("__fict_dep_0 as moduleHelper"));
+        assert!(artifact.code.contains("label = () =>"));
     }
 
     #[test]
