@@ -15,7 +15,10 @@ import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { relativeFileDependency } from './native-compiler-package-smoke.mjs'
+import {
+  packageCommandInvocation,
+  relativeFileDependency,
+} from './native-compiler-package-smoke.mjs'
 import {
   NATIVE_COMPILER_NODE_LANES,
   NATIVE_COMPILER_TARGETS,
@@ -354,6 +357,37 @@ test('canonicalizes symlinked temp roots before creating local package dependenc
   } finally {
     rmSync(tempRoot, { recursive: true, force: true })
   }
+})
+
+test('invokes smoke package managers through the Windows command interpreter', () => {
+  const args = ['--dir', 'D:\\a\\fict package', 'pack']
+  const commandInterpreter = 'C:\\Windows\\System32\\cmd.exe'
+  assert.deepEqual(
+    packageCommandInvocation('pnpm', args, { platform: 'win32', commandInterpreter }),
+    {
+      command: commandInterpreter,
+      args: ['/d', '/s', '/c', 'pnpm.cmd', ...args],
+    },
+  )
+  assert.deepEqual(
+    packageCommandInvocation('npm.cmd', args, { platform: 'win32', commandInterpreter }),
+    {
+      command: commandInterpreter,
+      args: ['/d', '/s', '/c', 'npm.cmd', ...args],
+    },
+  )
+  assert.deepEqual(packageCommandInvocation('node.exe', args, { platform: 'win32' }), {
+    command: 'node.exe',
+    args,
+  })
+  assert.deepEqual(packageCommandInvocation('pnpm', args, { platform: 'linux' }), {
+    command: 'pnpm',
+    args,
+  })
+  assert.throws(
+    () => packageCommandInvocation('pnpm', ['install', 1], { platform: 'win32' }),
+    /must be strings/,
+  )
 })
 
 test('keeps facade optional dependencies, package manifests, allowlist, and Changesets aligned', () => {
