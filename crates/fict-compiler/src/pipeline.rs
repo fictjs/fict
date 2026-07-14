@@ -5510,6 +5510,51 @@ mod tests {
 
     #[cfg(feature = "preview")]
     #[test]
+    fn rejects_preview_handlers_that_capture_keyed_list_aliases() {
+        let source = "import { $state } from 'fict'; const remove = id => id; export function App() { const rows = $state([]); return <ul>{rows.map((row, index) => <li key={row.id}><button onClick$={() => remove(row.id + index)}>X</button></li>)}</ul>; }";
+        let mut input = request(source, "preview-keyed-alias.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: false,
+            ..CompilerPreviewOptions::default()
+        });
+        let result = compile(input);
+
+        assert!(result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.code.is_empty(), "{}", result.code);
+        assert!(
+            result.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_str() == "FICT-PREVIEW-CAPTURE"
+                    && diagnostic.message.contains("non-serializable locals:")
+                    && diagnostic.message.contains("row")
+                    && diagnostic.message.contains("index")
+            }),
+            "{:?}",
+            result.diagnostics
+        );
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
+    fn keeps_auto_keyed_list_alias_handlers_eager() {
+        let source = "import { $state } from 'fict'; const remove = id => id; export function App() { const rows = $state([]); return <ul>{rows.map((row, index) => <li key={row.id}><button onClick={() => remove(row.id + index)}>X</button></li>)}</ul>; }";
+        let mut input = request(source, "preview-keyed-alias-auto.tsx");
+        input.options.preview = Some(CompilerPreviewOptions {
+            resumable: true,
+            auto_extract_handlers: true,
+            auto_extract_threshold: 1,
+        });
+        let result = compile(input);
+
+        assert!(!result.has_errors(), "{:?}", result.diagnostics);
+        assert!(result.artifacts.is_empty(), "{:?}", result.artifacts);
+        assert!(result.code.contains("createKeyedList"), "{}", result.code);
+        assert!(result.code.contains("addEventListener"), "{}", result.code);
+        assert!(!result.code.contains("fict:compiler-artifact:"));
+    }
+
+    #[cfg(feature = "preview")]
+    #[test]
     fn rejects_explicit_preview_handlers_that_capture_lexical_execution_context() {
         for (name, source, expected) in [
             (

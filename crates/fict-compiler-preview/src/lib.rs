@@ -15,7 +15,7 @@ use fict_emit::{
     parse_event_attribute,
 };
 use fict_hir::{
-    BindingId, BindingKind, ContextValueKind, FunctionId, FunctionKind, HirFile,
+    BindingId, BindingKind, ContextValueKind, DeclarationKind, FunctionId, FunctionKind, HirFile,
     HirInstructionKind, JsxAttribute, JsxAttributeValue, JsxChild, JsxElementName, JsxNode,
     LocalKind, Origin, PlaceBase, ValueId, ValueKind,
 };
@@ -55,6 +55,7 @@ pub fn attach_preview_plan(
             })
         })
         .collect();
+    let keyed_render_parameters = keyed_render_parameter_bindings(hir, emit);
 
     for owner_emit in &emit.functions {
         let Some(owner) = hir.functions.get(owner_emit.source.as_usize()) else {
@@ -272,6 +273,29 @@ pub fn attach_preview_plan(
                         .with_primary_span(handler_origin)
                         .with_help(
                             "use ordinary helper functions with their own dynamic context, or remove the `$` suffix",
+                        ),
+                    );
+                }
+                continue;
+            }
+            let keyed_alias_captures: Vec<_> = captures
+                .intersection(&keyed_render_parameters)
+                .filter_map(|binding| hir.bindings.get(binding.as_usize()))
+                .map(|binding| binding.display_name.as_str())
+                .collect();
+            if !keyed_alias_captures.is_empty() {
+                if candidate.explicit {
+                    diagnostics.push(
+                        preview_error(
+                            "FICT-PREVIEW-CAPTURE",
+                            format!(
+                                "resumable handler captures values that cannot be restored: non-serializable locals: {}",
+                                keyed_alias_captures.join(", ")
+                            ),
+                        )
+                        .with_primary_span(handler_origin)
+                        .with_help(
+                            "keyed-list item and index aliases exist only while rendering an item; remove the `$` suffix to keep the handler eager",
                         ),
                     );
                 }
@@ -591,6 +615,23 @@ pub fn attach_preview_plan(
         components,
     });
     Ok(())
+}
+
+fn keyed_render_parameter_bindings(hir: &HirFile, emit: &EmitProgram) -> BTreeSet<BindingId> {
+    emit.functions
+        .iter()
+        .flat_map(|function| &function.operations)
+        .filter_map(|operation| match operation {
+            EmitOperation::KeyedChild { render, .. } | EmitOperation::KeyedList { render, .. } => {
+                Some(*render)
+            }
+            _ => None,
+        })
+        .filter_map(|render| hir.functions.get(render.as_usize()))
+        .flat_map(|render| &render.locals)
+        .filter(|local| local.declaration_kind == DeclarationKind::Parameter)
+        .filter_map(|local| local.binding)
+        .collect()
 }
 
 #[derive(Debug, Clone)]
